@@ -1,0 +1,11 @@
+# Secrets
+.env
+
+# Runtime state
+*.log
+state.json
+*.lock
+*.pid
+
+# OS
+.DS_Store
