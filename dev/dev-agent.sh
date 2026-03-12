@@ -973,7 +973,7 @@ while [ "$REVIEW_ROUND" -lt "$MAX_REVIEW_ROUNDS" ]; do
 
     CI_ERROR_LOG=""
     if [ -n "$PIPELINE_NUM" ]; then
-      CI_ERROR_LOG=$(bash "${FACTORY_ROOT}/dev/ci-debug.sh" failures "$PIPELINE_NUM" 2>/dev/null | tail -80 | head -c 8000 || echo "")
+      CI_ERROR_LOG=$(bash "${FACTORY_ROOT}/lib/ci-debug.sh" failures "$PIPELINE_NUM" 2>/dev/null | tail -80 | head -c 8000 || echo "")
     fi
 
     log "CI code failure — feeding back to claude (attempt ${CI_FIX_COUNT})"
@@ -984,9 +984,9 @@ You are in worktree ${WORKTREE} on branch ${BRANCH}.
 
 ## CI Debug Tool
 \`\`\`bash
-bash "${FACTORY_ROOT}/dev/ci-debug.sh" status ${PIPELINE_NUM:-0}
-bash "${FACTORY_ROOT}/dev/ci-debug.sh" logs ${PIPELINE_NUM:-0} <step-name>
-bash "${FACTORY_ROOT}/dev/ci-debug.sh" failures ${PIPELINE_NUM:-0}
+bash "${FACTORY_ROOT}/lib/ci-debug.sh" status ${PIPELINE_NUM:-0}
+bash "${FACTORY_ROOT}/lib/ci-debug.sh" logs ${PIPELINE_NUM:-0} <step-name>
+bash "${FACTORY_ROOT}/lib/ci-debug.sh" failures ${PIPELINE_NUM:-0}
 \`\`\`
 
 ## Failed step: ${FAILED_STEP:-unknown} (exit code ${FAILED_EXIT:-?}, pipeline #${PIPELINE_NUM:-?})

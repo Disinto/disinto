@@ -7,7 +7,7 @@ Autonomous CI/CD factory for [harb](https://codeberg.org/johba/harb). Three agen
 ```
 cron (*/10) ──→ factory-poll.sh   ← supervisor (bash checks, zero tokens)
                  ├── all clear? → exit 0
-                 └── problem? → alert (or claude -p for complex fixes)
+                 └── problem? → claude -p (diagnose, fix, or escalate)
 
 cron (*/10) ──→ dev-poll.sh       ← pulls ready issues, spawns dev-agent
                  └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
@@ -27,12 +27,12 @@ cd dark-factory
 cp .env.example .env
 # Fill in your tokens (see .env.example for descriptions)
 
-# 3. Install cron
+# 3. Install cron (staggered — supervisor first, then review, then dev)
 crontab -e
 # Add:
-#   */10 * * * * /path/to/dark-factory/factory/factory-poll.sh
-#   */10 * * * * /path/to/dark-factory/dev/dev-poll.sh
-#   */10 * * * * /path/to/dark-factory/review/review-poll.sh
+#   0,10,20,30,40,50 * * * * /path/to/dark-factory/factory/factory-poll.sh
+#   3,13,23,33,43,53 * * * * /path/to/dark-factory/review/review-poll.sh
+#   6,16,26,36,46,56 * * * * /path/to/dark-factory/dev/dev-poll.sh
 
 # 4. Verify
 bash factory/factory-poll.sh   # should log "all clear"
@@ -45,45 +45,34 @@ dark-factory/
 ├── .env.example        # Template — copy to .env, add secrets
 ├── .gitignore          # Excludes .env, logs, state files
 ├── lib/
-│   └── env.sh          # Shared: load .env, PATH, API helpers
+│   ├── env.sh          # Shared: load .env, PATH, API helpers
+│   └── ci-debug.sh     # Woodpecker CI log/failure helper
 ├── dev/
 │   ├── dev-poll.sh     # Cron entry: find ready issues
-│   ├── dev-agent.sh    # Implementation agent (claude -p)
-│   └── ci-debug.sh     # Woodpecker CI log helper
+│   └── dev-agent.sh    # Implementation agent (claude -p)
 ├── review/
 │   ├── review-poll.sh  # Cron entry: find unreviewed PRs
 │   └── review-pr.sh    # Review agent (claude -p)
 └── factory/
-    └── factory-poll.sh # Supervisor: health checks + auto-fix
+    ├── factory-poll.sh # Supervisor: health checks + claude -p
+    ├── PROMPT.md       # Supervisor's system prompt
+    ├── update-prompt.sh# Self-learning: append to best-practices
+    └── best-practices/ # Progressive disclosure knowledge base
+        ├── memory.md
+        ├── disk.md
+        ├── ci.md
+        ├── codeberg.md
+        ├── dev-agent.md
+        ├── review-agent.md
+        └── git.md
 ```
 
-## How It Works
+## Design Principles
 
-### Dev Agent (Pull System)
-1. `dev-poll.sh` scans `backlog`-labeled issues
-2. Checks if all dependencies are merged into master
-3. Picks the first ready issue, spawns `dev-agent.sh`
-4. Agent: creates worktree → `claude -p` implements → commits → pushes → creates PR
-5. Waits for CI. If CI fails: feeds errors back to claude (max 2 attempts per phase)
-6. Waits for review. If REQUEST_CHANGES: feeds review back to claude
-7. On APPROVE: merges PR, cleans up, closes issue
-
-### Review Agent
-1. `review-poll.sh` finds open PRs with passing CI and no review
-2. Spawns `review-pr.sh` which runs `claude -p` to review the diff
-3. Posts structured review comment with verdict (APPROVE / REQUEST_CHANGES / DISCUSS)
-4. Creates follow-up issues for pre-existing bugs found during review
-
-### Factory Supervisor
-1. `factory-poll.sh` runs pure bash checks every 10 minutes:
-   - CI: stuck or failing pipelines
-   - PRs: derailed (CI fail + no activity)
-   - Dev-agent: alive and making progress
-   - Git: clean state on master
-   - Infra: RAM, swap, disk, Anvil health
-   - Review: unreviewed PRs with passing CI
-2. Auto-fixes simple issues (restart Anvil, retrigger CI)
-3. Escalates complex issues via openclaw system event
+- **Bash for checks, AI for judgment** — health checks are shell scripts; AI is only invoked when something needs diagnosing or fixing
+- **Pull over push** — dev-agent derives readiness from merged dependencies, not labels or manual assignment
+- **Progressive disclosure** — the supervisor reads only the best-practices file relevant to the current problem, not all of them
+- **Self-improving** — when the AI fixes something new, it appends the lesson to best-practices for next time
 
 ## Requirements
 
@@ -91,13 +80,5 @@ dark-factory/
 - [Foundry](https://getfoundry.sh/) (`forge`, `cast`, `anvil`)
 - [Woodpecker CI](https://woodpecker-ci.org/) (local instance)
 - PostgreSQL client (`psql`)
-- [OpenClaw](https://openclaw.ai/) (for system event notifications, optional)
+- [OpenClaw](https://openclaw.ai/) (for escalation notifications, optional)
 - `jq`, `curl`, `git`
-
-## Design Principles
-
-- **Bash for checks, AI for fixes** — don't burn tokens on health checks
-- **Pull system** — readiness derived from merged dependencies, not labels
-- **CI fix loop** — each phase gets fresh retry budget
-- **Prior art** — dev-agent searches closed PRs to avoid rework
-- **No secrets in repo** — everything via `.env`

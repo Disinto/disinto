@@ -13,8 +13,8 @@
   ```
 - Restart woodpecker-agent: `sudo systemctl restart woodpecker-agent`
 - View pipeline status: `wpdb -c "SELECT number, status FROM pipelines WHERE repo_id=2 ORDER BY number DESC LIMIT 5;"`
-- View failed steps: `bash ${FACTORY_ROOT}/dev/ci-debug.sh failures <pipeline-number>`
-- View step logs: `bash ${FACTORY_ROOT}/dev/ci-debug.sh logs <pipeline-number> <step-name>`
+- View failed steps: `bash ${FACTORY_ROOT}/lib/ci-debug.sh failures <pipeline-number>`
+- View step logs: `bash ${FACTORY_ROOT}/lib/ci-debug.sh logs <pipeline-number> <step-name>`
 
 ## Dangerous (escalate)
 - Restarting woodpecker-server (drops all running pipelines)
