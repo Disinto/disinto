@@ -24,6 +24,13 @@
 - `git worktree add` fails if target directory exists (even empty). Remove first.
 - Many old branches exist locally (100+). Normal — don't bulk-delete.
 
+## Evolution Pipeline
+- The evolution pipeline (`tools/push3-evolution/evolve.sh`) temporarily modifies
+  `onchain/src/OptimizerV3.sol` and `onchain/src/OptimizerV3Push3.sol` during runs.
+- **DO NOT revert these files while evolution is running** (check: `pgrep -f evolve.sh`).
+- If `/tmp/evolution.pid` exists and the PID is alive, the dirty state is intentional.
+- Evolution will restore the files when it finishes.
+
 ## Lessons Learned
 - NEVER delete remote branches before confirming merge. Close PR, rebase locally, force-push if needed.
 - Stale rebase caused 5h factory stall once (2026-03-11). Auto-heal added to dev-agent.
