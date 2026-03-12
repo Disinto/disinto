@@ -193,6 +193,30 @@ if [ "$GIT_BRANCH" != "master" ] && [ "$GIT_BRANCH" != "unknown" ]; then
 fi
 
 # =============================================================================
+# P2b: FACTORY STALLED — backlog exists but no agent running
+# =============================================================================
+status "P2: checking factory stall"
+
+BACKLOG_COUNT=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
+IN_PROGRESS=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
+
+if [ "${BACKLOG_COUNT:-0}" -gt 0 ] && [ "${IN_PROGRESS:-0}" -eq 0 ]; then
+  # Backlog exists but nothing in progress — check if dev-agent ran recently
+  DEV_LOG="${FACTORY_ROOT}/dev/dev-agent.log"
+  if [ -f "$DEV_LOG" ]; then
+    LAST_LOG_EPOCH=$(stat -c %Y "$DEV_LOG" 2>/dev/null || echo 0)
+  else
+    LAST_LOG_EPOCH=0
+  fi
+  NOW_EPOCH=$(date +%s)
+  IDLE_MIN=$(( (NOW_EPOCH - LAST_LOG_EPOCH) / 60 ))
+
+  if [ "$IDLE_MIN" -gt 20 ]; then
+    p2 "Factory stalled: ${BACKLOG_COUNT} backlog issue(s), no agent ran for ${IDLE_MIN}min"
+  fi
+fi
+
+# =============================================================================
 # P3: FACTORY DEGRADED — derailed PRs, unreviewed PRs
 # =============================================================================
 status "P3: checking PRs"

@@ -19,6 +19,7 @@ Before acting, read the relevant best-practices file:
 - Memory issues → `cat ${FACTORY_ROOT}/factory/best-practices/memory.md`
 - Disk issues → `cat ${FACTORY_ROOT}/factory/best-practices/disk.md`
 - CI issues → `cat ${FACTORY_ROOT}/factory/best-practices/ci.md`
+- Codeberg / rate limits → `cat ${FACTORY_ROOT}/factory/best-practices/codeberg.md`
 - Dev-agent issues → `cat ${FACTORY_ROOT}/factory/best-practices/dev-agent.md`
 - Review-agent issues → `cat ${FACTORY_ROOT}/factory/best-practices/review-agent.md`
 - Git issues → `cat ${FACTORY_ROOT}/factory/best-practices/git.md`
