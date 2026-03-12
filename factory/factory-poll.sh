@@ -267,19 +267,15 @@ ALL_ALERTS="${P0_ALERTS}${P1_ALERTS}${P2_ALERTS}${P3_ALERTS}${P4_ALERTS}"
 
 if [ -n "$ALL_ALERTS" ]; then
   ALERT_TEXT=$(echo -e "$ALL_ALERTS")
-  FIX_TEXT=""
-  [ -n "$FIXES" ] && FIX_TEXT="\n\nAuto-fixed:\n$(echo -e "$FIXES")"
 
-  # If P0 or P1 alerts remain after auto-fix, invoke claude -p
-  if [ -n "$P0_ALERTS" ] || [ -n "$P1_ALERTS" ]; then
-    flog "Invoking claude -p for critical alert"
+  flog "Invoking claude -p for alerts"
 
-    CLAUDE_PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || echo "You are a factory supervisor. Fix the issue below.")
+  CLAUDE_PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || echo "You are a factory supervisor. Fix the issue below.")
 
-## Current Alert
+## Current Alerts
 ${ALERT_TEXT}
 
-## Auto-fixes already applied
+## Auto-fixes already applied by bash
 $(echo -e "${FIXES:-None}")
 
 ## System State
@@ -288,30 +284,12 @@ Disk: $(df -h / | awk 'NR==2{printf "%s used of %s (%s)", $3, $2, $5}')
 Docker: $(sudo docker ps --format '{{.Names}}' 2>/dev/null | wc -l) containers running
 Claude procs: $(pgrep -f "claude" 2>/dev/null | wc -l)
 
-## Instructions
-Fix whatever you can. Follow priority order. Output FIXED/ESCALATE summary."
+Fix what you can. Escalate what you can't. Read the relevant best-practices file first."
 
-    CLAUDE_OUTPUT=$(timeout 300 claude -p --model sonnet --dangerously-skip-permissions \
-      "$CLAUDE_PROMPT" 2>&1) || true
-    flog "claude output: ${CLAUDE_OUTPUT}"
-
-    # If claude fixed things, don't escalate
-    if echo "$CLAUDE_OUTPUT" | grep -q "^FIXED:"; then
-      flog "claude fixed the issue"
-      ALL_ALERTS=""  # Clear — handled
-    fi
-  fi
-
-  # Escalate remaining alerts
-  if [ -n "$ALL_ALERTS" ]; then
-    openclaw system event \
-      --text "🏭 Factory Alert:
-${ALERT_TEXT}${FIX_TEXT}" \
-      --mode now 2>/dev/null || true
-    status "alerts escalated"
-  else
-    status "all issues auto-resolved"
-  fi
+  CLAUDE_OUTPUT=$(timeout 300 claude -p --model sonnet --dangerously-skip-permissions \
+    "$CLAUDE_PROMPT" 2>&1) || true
+  flog "claude output: $(echo "$CLAUDE_OUTPUT" | tail -20)"
+  status "claude responded"
 else
   [ -n "$FIXES" ] && flog "Housekeeping: $(echo -e "$FIXES")"
   status "all clear"
