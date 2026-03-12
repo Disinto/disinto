@@ -60,7 +60,7 @@ status "P0: checking memory"
 AVAIL_MB=$(free -m | awk '/Mem:/{print $7}')
 SWAP_USED_MB=$(free -m | awk '/Swap:/{print $3}')
 
-if [ "${AVAIL_MB:-9999}" -lt 500 ] || [ "${SWAP_USED_MB:-0}" -gt 3000 ]; then
+if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "${AVAIL_MB:-9999}" -lt 2000 ]; }; then
   flog "MEMORY CRISIS: avail=${AVAIL_MB}MB swap_used=${SWAP_USED_MB}MB — auto-fixing"
 
   # Kill stale claude processes (>3h old)
