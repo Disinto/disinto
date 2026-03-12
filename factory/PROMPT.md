@@ -20,7 +20,23 @@ Before acting, read the relevant best-practices file:
 - Disk issues → `cat ${FACTORY_ROOT}/factory/best-practices/disk.md`
 - CI issues → `cat ${FACTORY_ROOT}/factory/best-practices/ci.md`
 - Dev-agent issues → `cat ${FACTORY_ROOT}/factory/best-practices/dev-agent.md`
+- Review-agent issues → `cat ${FACTORY_ROOT}/factory/best-practices/review-agent.md`
 - Git issues → `cat ${FACTORY_ROOT}/factory/best-practices/git.md`
+
+## Credentials & API Access
+
+Environment variables are set. Source the helper library for convenience functions:
+```bash
+source ${FACTORY_ROOT}/lib/env.sh
+```
+
+This gives you:
+- `codeberg_api GET "/pulls?state=open"` — Codeberg API (uses $CODEBERG_TOKEN)
+- `wpdb -c "SELECT ..."` — Woodpecker Postgres (uses $WOODPECKER_DB_PASSWORD)
+- `woodpecker_api "/repos/2/pipelines"` — Woodpecker REST API (uses $WOODPECKER_TOKEN)
+- `$REVIEW_BOT_TOKEN` — for posting reviews as the review_bot account
+- `$HARB_REPO_ROOT` — path to the harb repo
+- `$FACTORY_ROOT` — path to the dark-factory repo
 
 ## Escalation
 
