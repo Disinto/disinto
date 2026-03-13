@@ -1,0 +1,22 @@
+# STATE.md — What harb currently is and does
+
+- [2026-03-13] Evolution pipeline works end-to-end: Push3 → transpile → compile → revm fitness evaluation → selection (#665)
+- [2026-03-13] Diverse seed generation for evolution population (#656)
+- [2026-03-13] Crossover operator for Push3 programs (#657)
+- [2026-03-13] Elitism preserves top N candidates unchanged across generations (#643)
+- [2026-03-13] Gas limit as evolutionary fitness pressure (#645)
+- [2026-03-13] Default bear outputs for crashed/broken Push3 programs (#651)
+- [2026-03-13] Normalized inputs for Push3 optimizer (0..1e18 indicators) (#649)
+- [2026-03-13] Bootstrap VWAP with seed trade during deployment (#633)
+- [2026-03-13] e2e tests skip for tools-only and docs-only PRs (#641)
+- [2026-03-13] Issue templates for bug, feature, push3-seed, refactor (#678)
+- [2026-03-13] revm fitness evaluator with UUPS bypass and graceful attack ops (#629)
+- [2026-03-12] Dark factory: dev-agent, review-agent, supervisor with cron */10 staggered
+- [2026-03-12] CI: single build-and-test pipeline + e2e with path filtering
+- [2026-03-12] Ponder indexing: transfers, mints, burns, staking, protocol stats
+- [2026-03-12] Landing page with LiveStats, WalletCard, contract addresses
+- [2026-03-12] Staking app with position dashboard and P&L tracking
+- [2026-03-12] OptimizerV3 with Push3 transpiler output injection
+- [2026-03-12] Three-position strategy: Floor, Anchor, Discovery
+- [2026-03-12] VWAPTracker for price oracle
+- [2026-03-12] Harberger tax staking mechanism
