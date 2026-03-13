@@ -267,6 +267,13 @@ done
 # =============================================================================
 # P4: HOUSEKEEPING — stale processes
 # =============================================================================
+# Check for dev-agent escalations
+ESCALATION_FILE="${FACTORY_ROOT}/factory/escalations.jsonl"
+if [ -s "$ESCALATION_FILE" ]; then
+  ESCALATION_COUNT=$(wc -l < "$ESCALATION_FILE")
+  p3 "Dev-agent escalated ${ESCALATION_COUNT} issue(s) — see ${ESCALATION_FILE}"
+fi
+
 status "P4: housekeeping"
 
 # Stale claude processes (>3h, not caught by P0)
