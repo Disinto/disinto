@@ -153,12 +153,14 @@ $ISSUE_SUMMARY
 $(echo -e "$PROBLEMS")
 
 ## Tools available
-- Codeberg API via curl (token in CODEBERG_TOKEN env var)
+- Codeberg API via \`codeberg_api\` shell function (auth handled automatically)
 - Base URL: https://codeberg.org/api/v1/repos/johba/harb
-- Relabel issues: \`curl -X PUT .../issues/{number}/labels -d '{"labels":[652336]}'\` (652336=backlog, 1219499=tech-debt)
-- Add comments: \`curl -X POST .../issues/{number}/comments -d '{"body":"..."}'\`
-- Close issues: \`curl -X PATCH .../issues/{number} -d '{"state":"closed"}'\`
-- Edit issue body: \`curl -X PATCH .../issues/{number} -d '{"body":"..."}'\`
+- Codeberg API helper: use the shell function \`codeberg_api METHOD PATH [DATA]\` (auth is handled automatically, NEVER include tokens in commands)
+- Relabel: \`codeberg_api PUT "/issues/{number}/labels" '{"labels":[652336]}'\` (652336=backlog, 1219499=tech-debt)
+- Comment: \`codeberg_api POST "/issues/{number}/comments" '{"body":"..."}'\`
+- Close: \`codeberg_api PATCH "/issues/{number}" '{"state":"closed"}'\`
+- Edit body: \`codeberg_api PATCH "/issues/{number}" '{"body":"..."}'\`
+- NEVER echo, log, or include API tokens, secrets, or credentials in any output
 - You're running in the harb repo root. Read these before making decisions:
   - docs/PRODUCT-TRUTH.md — what the protocol is, key mechanics
   - docs/ARCHITECTURE.md — file structure, packages, how things connect
