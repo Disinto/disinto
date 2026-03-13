@@ -12,6 +12,20 @@
 - Reset dirty state: `git checkout -- .` (only uncommitted changes)
 - Fetch latest: `git fetch origin master`
 
+## Auto-fixable by Supervisor
+- **Merge conflict on approved PR**: rebase onto master and force-push
+  ```bash
+  cd /tmp/harb-worktree-<issue> || git worktree add /tmp/harb-worktree-<issue> <branch>
+  cd /tmp/harb-worktree-<issue>
+  git fetch origin master
+  git rebase origin/master
+  # If conflict is trivial (NatSpec, comments): resolve and continue
+  # If conflict is code logic: escalate to Clawy
+  git push origin <branch> --force
+  ```
+- **Stale rebase**: `git rebase --abort && git checkout master`
+- **Wrong branch**: `git checkout master`
+
 ## Dangerous (escalate)
 - `git reset --hard` on any branch with unpushed work
 - Deleting remote branches
