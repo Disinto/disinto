@@ -78,9 +78,9 @@ DUPES=""
 while IFS=$'\t' read -r num1 title1; do
   while IFS=$'\t' read -r num2 title2; do
     [ "$num1" -ge "$num2" ] && continue
-    # Normalize: lowercase, strip common prefixes, collapse whitespace
-    t1=$(echo "$title1" | tr '[:upper:]' '[:lower:]' | sed 's/^feat:\|^fix:\|^refactor://;s/[^a-z0-9 ]//g;s/  */ /g')
-    t2=$(echo "$title2" | tr '[:upper:]' '[:lower:]' | sed 's/^feat:\|^fix:\|^refactor://;s/[^a-z0-9 ]//g;s/  */ /g')
+    # Normalize: lowercase, strip prefixes + series names, collapse whitespace
+    t1=$(echo "$title1" | tr '[:upper:]' '[:lower:]' | sed 's/^feat:\|^fix:\|^refactor://;s/llm seed[^—]*—\s*//;s/push3 evolution[^—]*—\s*//;s/[^a-z0-9 ]//g;s/  */ /g')
+    t2=$(echo "$title2" | tr '[:upper:]' '[:lower:]' | sed 's/^feat:\|^fix:\|^refactor://;s/llm seed[^—]*—\s*//;s/push3 evolution[^—]*—\s*//;s/[^a-z0-9 ]//g;s/  */ /g')
     # Count shared words (>60% overlap = suspect)
     WORDS1=$(echo "$t1" | tr ' ' '\n' | sort -u)
     WORDS2=$(echo "$t2" | tr ' ' '\n' | sort -u)
