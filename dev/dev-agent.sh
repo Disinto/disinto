@@ -917,7 +917,7 @@ do_merge() {
     "${API}/pulls/${PR_NUMBER}/merge" \
     -d '{"Do":"merge","delete_branch_after_merge":true}')
 
-  if [ "$http_code" = "200" ] || [ "$http_code" = "204" ] || [ "$http_code" = "405" ]; then
+  if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
     log "PR #${PR_NUMBER} merged!"
 
     curl -sf -X DELETE \
@@ -1131,10 +1131,12 @@ ${CI_ERROR_LOG:-No logs available. Use ci-debug.sh to query the pipeline.}
       fi
 
       if [ "$VERDICT" = "APPROVE" ]; then
-        append_state_log
-        # Re-read SHA after STATE.md commit
-        CURRENT_SHA=$(cd "${WORKTREE:-$REPO_ROOT}" && git rev-parse HEAD)
+        # NOTE: STATE.md append moved to AFTER merge.
+        # Pushing before merge creates a new commit that dismisses
+        # the stale approval (dismiss_stale_approvals=true), causing
+        # 405 "not enough approvals" on merge.
         do_merge "$CURRENT_SHA"
+        # If merge succeeded, append_state_log was already called inside do_merge
       fi
 
       [ -n "$VERDICT" ] && break
