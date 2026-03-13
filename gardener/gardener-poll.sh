@@ -155,17 +155,32 @@ $(echo -e "$PROBLEMS")
 ## Tools available
 - Codeberg API via curl (token in CODEBERG_TOKEN env var)
 - Base URL: https://codeberg.org/api/v1/repos/johba/harb
+- Relabel issues: \`curl -X PUT .../issues/{number}/labels -d '{"labels":[652336]}'\` (652336=backlog, 1219499=tech-debt)
+- Add comments: \`curl -X POST .../issues/{number}/comments -d '{"body":"..."}'\`
+- Close issues: \`curl -X PATCH .../issues/{number} -d '{"state":"closed"}'\`
+- Edit issue body: \`curl -X PATCH .../issues/{number} -d '{"body":"..."}'\`
 - You're running in the harb repo root. Read these before making decisions:
   - docs/PRODUCT-TRUTH.md — what the protocol is, key mechanics
   - docs/ARCHITECTURE.md — file structure, packages, how things connect
   - AGENTS.md — repo conventions, dev-agent expectations
   - tools/push3-transpiler/README.md — Push3 instruction set (for seed issues)
 
-## Rules
+## Primary mission: promote tech-debt → backlog
+Most open issues are raw review-bot findings labeled \`tech-debt\`. Your main job is to convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
+1. Read the issue body + referenced source files to understand the real problem
+2. Check docs/PRODUCT-TRUTH.md and docs/ARCHITECTURE.md for context
+3. Add missing sections: \`## Affected files\`, \`## Acceptance criteria\` (checkboxes, max 5), \`## Dependencies\`
+4. If the issue is clear and actionable → relabel: remove \`tech-debt\`, add \`backlog\`
+5. If scope is ambiguous or needs a design decision → ESCALATE with options
+6. If superseded by a merged PR or another issue → close with explanation
+
+Process up to 10 tech-debt issues per run (stay within API rate limits).
+
+## Other rules
 1. **Duplicates**: If confident (>80% overlap + same scope after reading bodies), close the newer one with a comment referencing the older. If unsure, ESCALATE.
-2. **Thin issues**: Add a standard acceptance criteria section: \`## Acceptance Criteria\n- [ ] ...\`. Read the body first to understand intent.
+2. **Thin issues** (non-tech-debt): Add acceptance criteria. Read the body first.
 3. **Stale issues**: If clearly superseded or no longer relevant, close with explanation. If unclear, ESCALATE.
-4. **Oversized issues**: If an issue has >5 acceptance criteria touching different files/concerns, propose a split. Don't split automatically — ESCALATE with suggested breakdown.
+4. **Oversized issues**: If >5 acceptance criteria touching different files/concerns, ESCALATE with suggested split.
 5. **Dependencies**: If an issue references another that must land first, add a \`## Dependencies\n- #NNN\` section if missing.
 
 ## Escalation format
