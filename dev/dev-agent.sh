@@ -879,21 +879,21 @@ append_state_log() {
 
   echo "$line" >> "$state_file"
 
-  # STATE.md lives in dark-factory repo (not harb — master is protected)
-  local df_state="${FACTORY_ROOT}/STATE.md"
-  if [ ! -f "$df_state" ]; then
-    echo "# STATE.md — What harb currently is and does" > "$df_state"
-    echo "" >> "$df_state"
-  fi
-  echo "$line" >> "$df_state"
+  # Append to STATE.md on the PR branch, push before merge
+  local worktree="${WORKTREE:-}"
+  local target="${worktree:-$REPO_ROOT}"
+  local state_file="${target}/STATE.md"
 
-  # Commit to dark-factory
-  cd "$FACTORY_ROOT"
+  if [ ! -f "$state_file" ]; then
+    printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
+  fi
+  echo "$line" >> "$state_file"
+
+  cd "$target"
   git add STATE.md 2>/dev/null || true
   git diff --cached --quiet && return 0
   git commit -m "state: ${description} (#${PR_NUMBER})" --no-verify 2>/dev/null || true
-  git push origin main 2>/dev/null || log "STATE.md push failed — will retry next merge"
-  cd "$REPO_ROOT"
+  git push origin "${BRANCH}" 2>/dev/null || log "STATE.md push failed — will be missing from this merge"
   log "STATE.md updated: ${line}"
 }
 
@@ -919,9 +919,6 @@ do_merge() {
 
   if [ "$http_code" = "200" ] || [ "$http_code" = "204" ] || [ "$http_code" = "405" ]; then
     log "PR #${PR_NUMBER} merged!"
-
-    # Append to STATE.md — one-line description of what now exists
-    append_state_log
 
     curl -sf -X DELETE \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -1133,7 +1130,12 @@ ${CI_ERROR_LOG:-No logs available. Use ci-debug.sh to query the pipeline.}
         fi
       fi
 
-      [ "$VERDICT" = "APPROVE" ] && do_merge "$CURRENT_SHA"
+      if [ "$VERDICT" = "APPROVE" ]; then
+        append_state_log
+        # Re-read SHA after STATE.md commit
+        CURRENT_SHA=$(cd "${WORKTREE:-$REPO_ROOT}" && git rev-parse HEAD)
+        do_merge "$CURRENT_SHA"
+      fi
 
       [ -n "$VERDICT" ] && break
 
