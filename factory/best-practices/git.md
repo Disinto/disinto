@@ -49,3 +49,13 @@
 - NEVER delete remote branches before confirming merge. Close PR, rebase locally, force-push if needed.
 - Stale rebase caused 5h factory stall once (2026-03-11). Auto-heal added to dev-agent.
 - lint-staged hooks fail when `forge` not in PATH. Use `--no-verify` when committing from scripts.
+
+### PR #608 Post-Mortem (2026-03-12/13)
+PR sat blocked for 24 hours while 21 other PRs merged. Root causes:
+1. **Supervisor didn't detect merge conflicts** — only checked CI state, not `mergeable`. Fixed: now checks `mergeable=false` as first condition.
+2. **Supervisor didn't detect stale REQUEST_CHANGES** — review bot requested changes, dev-agent never came back to fix them, moved on to other issues. Need: detect "PR has REQUEST_CHANGES older than N hours with no new push."
+3. **No staleness kill switch** — after N merge conflicts or N days, a PR should be auto-closed and the issue reopened for a fresh attempt. Rebasing across 21 commits is more work than starting over.
+
+**Rules derived:**
+- Supervisor should close PRs that are >24h old with merge conflicts and no recent activity. Reopen the parent issue with a note pointing to the closed PR as prior art.
+- Dev-agent must not abandon a PR with REQUEST_CHANGES — either fix or close it before moving to new work.
