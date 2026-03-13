@@ -130,6 +130,13 @@ while IFS=$'\t' read -r num body; do
   done
 done < <(echo "$ISSUES_JSON" | jq -r '.[] | "\(.number)\t\(.body // "")"' | head -20)
 
+# 5. Tech-debt issues needing promotion to backlog (primary mission)
+TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"' | head -10)
+if [ -n "$TECH_DEBT_ISSUES" ]; then
+  TECH_DEBT_COUNT=$(echo "$TECH_DEBT_ISSUES" | wc -l)
+  PROBLEMS="${PROBLEMS}tech_debt_promotion: ${TECH_DEBT_COUNT} tech-debt issues need promotion to backlog (max 10 per run):\n${TECH_DEBT_ISSUES}\n"
+fi
+
 PROBLEM_COUNT=$(echo -e "$PROBLEMS" | grep -c '.' || true)
 log "Detected $PROBLEM_COUNT potential problems"
 
@@ -202,7 +209,7 @@ CLAUDE_OUTPUT=$(cd /home/debian/harb && timeout "$CLAUDE_TIMEOUT" \
   claude -p "$PROMPT" \
     --model sonnet \
     --dangerously-skip-permissions \
-    --max-turns 10 \
+    --max-turns 30 \
   2>/dev/null) || true
 
 log "claude finished ($(echo "$CLAUDE_OUTPUT" | wc -c) bytes)"
