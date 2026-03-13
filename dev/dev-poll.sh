@@ -60,15 +60,24 @@ dep_is_merged() {
     return 1
   fi
 
-  # Check there's a merged PR for this issue
-  # Search closed PRs for title containing "#NNN" or body containing "Fixes #NNN"
+  # Check there's a merged PR for this issue.
+  # Strategy: search closed PRs for title/body containing "#NNN",
+  # OR check if a PR with the same number exists and is merged.
   local has_merged
   has_merged=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls?state=closed&limit=30" | \
     jq -r --arg num "#${dep_num}" \
     '[.[] | select(.merged == true) | select((.title | contains($num)) or (.body // "" | test("ixes " + $num + "\\b"; "i")))] | length')
 
-  [ "${has_merged:-0}" -gt 0 ]
+  if [ "${has_merged:-0}" -gt 0 ]; then
+    return 0
+  fi
+
+  # Fallback: check if PR with same number is merged (Codeberg uses shared numbering)
+  local same_pr_merged
+  same_pr_merged=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${dep_num}" 2>/dev/null | jq -r '.merged // false')
+  [ "$same_pr_merged" = "true" ]
 }
 
 # =============================================================================
