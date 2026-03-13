@@ -910,6 +910,34 @@ do_merge() {
     sleep 30
   done
 
+  # Check if PR is mergeable — rebase if not
+  local mergeable
+  mergeable=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${PR_NUMBER}" | jq -r '.mergeable // true')
+  if [ "$mergeable" = "false" ]; then
+    log "PR #${PR_NUMBER} has merge conflicts — attempting rebase"
+    local work_dir="${WORKTREE:-$REPO_ROOT}"
+    if (cd "$work_dir" && git fetch origin master && git rebase origin/master 2>&1); then
+      log "rebase succeeded — force pushing"
+      (cd "$work_dir" && git push origin "${BRANCH}" --force-with-lease 2>&1) || true
+      # Wait for CI on the new commit
+      sha=$(cd "$work_dir" && git rev-parse HEAD)
+      log "waiting for CI on rebased commit ${sha:0:7}"
+      for r in $(seq 1 20); do
+        ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+          "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
+        [ "$ci" = "success" ] && break
+        [ "$ci" = "failure" ] || [ "$ci" = "error" ] && { log "CI failed after rebase"; notify "PR #${PR_NUMBER} CI failed after rebase. Needs manual fix."; exit 0; }
+        sleep 30
+      done
+    else
+      log "rebase failed — aborting and escalating"
+      (cd "$work_dir" && git rebase --abort 2>/dev/null) || true
+      notify "PR #${PR_NUMBER} has merge conflicts that need manual resolution."
+      exit 0
+    fi
+  fi
+
   local http_code
   http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Authorization: token ${CODEBERG_TOKEN}" \
