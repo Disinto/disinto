@@ -30,3 +30,8 @@
 - Exit code 128 on git step = Codeberg rate limit, not a code problem. Retrigger.
 - Exit code 137 = OOM kill. Check memory, kill stale processes, retrigger.
 - `node-quality` step fails on eslint/typescript errors — these need code fixes, not CI fixes.
+
+### FEE_DEST address must match DeployLocal.sol
+When DeployLocal.sol changes the feeDest address, bootstrap-common.sh must also be updated.
+Current feeDest = keccak256('harb.local.feeDest') = 0x8A9145E1Ea4C4d7FB08cF1011c8ac1F0e10F9383.
+Symptom: bootstrap step exits 1 after 'Granting recenter access to deployer' with no error — setRecenterAccess reverts because wrong address is impersonated.
