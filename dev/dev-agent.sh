@@ -854,6 +854,49 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
 fi
 
 # =============================================================================
+# STATE.MD APPEND
+# =============================================================================
+# After each merge, append one line to STATE.md describing what now exists.
+# Format: - [YYYY-MM-DD] what is now true about harb (#PR)
+# The planner will collapse this into a compact snapshot later.
+append_state_log() {
+  local state_file="${REPO_ROOT}/STATE.md"
+  local today
+  today=$(date -u +%Y-%m-%d)
+
+  # Derive a "what now exists" description from the issue title.
+  # Strip prefixes (feat:/fix:/refactor:) to get the essence.
+  local description
+  description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
+
+  local line="- [${today}] ${description} (#${PR_NUMBER})"
+
+  # Create file with header if it doesn't exist
+  if [ ! -f "$state_file" ]; then
+    echo "# STATE.md — What harb currently is and does" > "$state_file"
+    echo "" >> "$state_file"
+  fi
+
+  echo "$line" >> "$state_file"
+
+  # STATE.md lives in dark-factory repo (not harb — master is protected)
+  local df_state="${FACTORY_ROOT}/STATE.md"
+  if [ ! -f "$df_state" ]; then
+    echo "# STATE.md — What harb currently is and does" > "$df_state"
+    echo "" >> "$df_state"
+  fi
+  echo "$line" >> "$df_state"
+
+  # Commit to dark-factory
+  cd "$FACTORY_ROOT"
+  git add STATE.md 2>/dev/null || true
+  git diff --cached --quiet && return 0
+  git commit -m "state: ${description} (#${PR_NUMBER})" --no-verify 2>/dev/null || true
+  git push origin main 2>/dev/null || log "STATE.md push failed — will retry next merge"
+  cd "$REPO_ROOT"
+  log "STATE.md updated: ${line}"
+}
+
 # MERGE HELPER
 # =============================================================================
 do_merge() {
@@ -876,6 +919,9 @@ do_merge() {
 
   if [ "$http_code" = "200" ] || [ "$http_code" = "204" ] || [ "$http_code" = "405" ]; then
     log "PR #${PR_NUMBER} merged!"
+
+    # Append to STATE.md — one-line description of what now exists
+    append_state_log
 
     curl -sf -X DELETE \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
