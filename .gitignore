@@ -3,10 +3,12 @@
 
 # Runtime state
 *.log
+*.log.*
+*.log.old
 state.json
 *.lock
 *.pid
+escalations.jsonl
 
 # OS
 .DS_Store
-gardener.log
