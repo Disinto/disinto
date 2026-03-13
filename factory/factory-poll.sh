@@ -230,7 +230,11 @@ for pr in $OPEN_PRS; do
 
   CI_STATE=$(codeberg_api GET "/commits/${PR_SHA}/status" 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null || true)
 
-  if [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
+  # Check for merge conflicts first (approved + CI pass but unmergeable)
+  MERGEABLE=$(echo "$PR_JSON" | jq -r '.mergeable // true')
+  if [ "$MERGEABLE" = "false" ] && [ "$CI_STATE" = "success" ]; then
+    p3 "PR #${pr}: CI pass but merge conflict — needs rebase"
+  elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
     UPDATED=$(echo "$PR_JSON" | jq -r '.updated_at // ""')
     if [ -n "$UPDATED" ]; then
       UPDATED_EPOCH=$(date -d "$UPDATED" +%s 2>/dev/null || echo 0)
