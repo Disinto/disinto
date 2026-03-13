@@ -35,3 +35,15 @@
 - Feature issues MUST list affected e2e test files
 - CI fix loop is essential — first attempt rarely works
 - CLAUDE_TIMEOUT=7200 (2h) is needed for complex issues
+
+## Dependency Resolution
+
+**Trust closed state.** If a dependency issue is closed, the code is on master. Period.
+
+DO NOT try to find the specific PR that closed an issue. This is over-engineering that causes false negatives:
+- Codeberg shares issue/PR numbering — no guaranteed relationship
+- PRs don't always mention the issue number in title/body
+- Searching last N closed PRs misses older merges
+- The factory itself closes issues after merging, so closed = merged
+
+The only check needed: `issue.state == "closed"`.
