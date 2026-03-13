@@ -35,3 +35,6 @@
 When DeployLocal.sol changes the feeDest address, bootstrap-common.sh must also be updated.
 Current feeDest = keccak256('harb.local.feeDest') = 0x8A9145E1Ea4C4d7FB08cF1011c8ac1F0e10F9383.
 Symptom: bootstrap step exits 1 after 'Granting recenter access to deployer' with no error — setRecenterAccess reverts because wrong address is impersonated.
+
+### keccak-derived FEE_DEST requires anvil_setBalance before impersonation
+When FEE_DEST is a keccak-derived address (e.g. keccak256('harb.local.feeDest')), it has zero ETH balance. Any function that calls `anvil_impersonateAccount` then `cast send --from $FEE_DEST --unlocked` will fail silently (output redirected to LOG_FILE) but exit 1 due to gas deduction failure. Fix: add `cast rpc anvil_setBalance "$FEE_DEST" "0xDE0B6B3A7640000"` before impersonation. Applied in both bootstrap-common.sh and red-team.sh.
