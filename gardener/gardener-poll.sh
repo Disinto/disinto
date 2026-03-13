@@ -160,14 +160,14 @@ $ISSUE_SUMMARY
 $(echo -e "$PROBLEMS")
 
 ## Tools available
-- Codeberg API via \`codeberg_api\` shell function (auth handled automatically)
+- Codeberg API: use curl with the CODEBERG_TOKEN env var (already set in your environment)
 - Base URL: https://codeberg.org/api/v1/repos/johba/harb
-- Codeberg API helper: use the shell function \`codeberg_api METHOD PATH [DATA]\` (auth is handled automatically, NEVER include tokens in commands)
-- Relabel: \`codeberg_api PUT "/issues/{number}/labels" '{"labels":[652336]}'\` (652336=backlog, 1219499=tech-debt)
-- Comment: \`codeberg_api POST "/issues/{number}/comments" '{"body":"..."}'\`
-- Close: \`codeberg_api PATCH "/issues/{number}" '{"state":"closed"}'\`
-- Edit body: \`codeberg_api PATCH "/issues/{number}" '{"body":"..."}'\`
-- NEVER echo, log, or include API tokens, secrets, or credentials in any output
+- Read issue: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' | jq '.body'\`
+- Relabel: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}/labels' -d '{\"labels\":[652336]}'\` (652336=backlog, 1219499=tech-debt)
+- Comment: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}/comments' -d '{\"body\":\"...\"}'\`
+- Close: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' -d '{\"state\":\"closed\"}'\`
+- Edit body: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' -d '{\"body\":\"new body\"}'\`
+- NEVER echo, log, or include the actual token value in any output — always reference \$CODEBERG_TOKEN
 - You're running in the harb repo root. Read these before making decisions:
   - docs/PRODUCT-TRUTH.md — what the protocol is, key mechanics
   - docs/ARCHITECTURE.md — file structure, packages, how things connect
@@ -205,7 +205,7 @@ ESCALATE
 - For escalations, use the ESCALATE block above
 - If nothing to do after analysis, print: CLEAN"
 
-CLAUDE_OUTPUT=$(cd /home/debian/harb && timeout "$CLAUDE_TIMEOUT" \
+CLAUDE_OUTPUT=$(cd /home/debian/harb && CODEBERG_TOKEN="$CODEBERG_TOKEN" timeout "$CLAUDE_TIMEOUT" \
   claude -p "$PROMPT" \
     --model sonnet \
     --dangerously-skip-permissions \
