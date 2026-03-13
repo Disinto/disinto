@@ -47,3 +47,6 @@ DO NOT try to find the specific PR that closed an issue. This is over-engineerin
 - The factory itself closes issues after merging, so closed = merged
 
 The only check needed: `issue.state == "closed"`.
+
+### False Positive: Status Unchanged Alert
+The factory-poll alert 'status unchanged for Nmin' is a false positive for complex implementation tasks. The status is set to 'claude assessing + implementing' at the START of the `timeout 7200 claude -p ...` call and only updates after Claude finishes. Normal complex tasks (multi-file Solidity changes + forge test) take 45-90 minutes. To distinguish a false positive from a real stuck agent: check that the claude PID is alive (`ps -p <PID>`), consuming CPU (>0%), and has active threads (`pstree -p <PID>`). If the process is alive and using CPU, do NOT restart it — this wastes completed work.
