@@ -155,6 +155,11 @@ $(echo -e "$PROBLEMS")
 ## Tools available
 - Codeberg API via curl (token in CODEBERG_TOKEN env var)
 - Base URL: https://codeberg.org/api/v1/repos/johba/harb
+- You're running in the harb repo root. Read these before making decisions:
+  - docs/PRODUCT-TRUTH.md — what the protocol is, key mechanics
+  - docs/ARCHITECTURE.md — file structure, packages, how things connect
+  - AGENTS.md — repo conventions, dev-agent expectations
+  - tools/push3-transpiler/README.md — Push3 instruction set (for seed issues)
 
 ## Rules
 1. **Duplicates**: If confident (>80% overlap + same scope after reading bodies), close the newer one with a comment referencing the older. If unsure, ESCALATE.
