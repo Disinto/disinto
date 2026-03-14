@@ -200,10 +200,17 @@ ESCALATE
 2. #NNN \"title\" — reason (a) option1 (b) option2
 \`\`\`
 
-## Output
-- For each action taken, print: ACTION: <description>
-- For escalations, use the ESCALATE block above
-- If nothing to do after analysis, print: CLEAN"
+## Output format (MANDATORY — the script parses these exact prefixes)
+- After EVERY action you take, print exactly: ACTION: <description>
+- For issues needing human decision, output EXACTLY:
+ESCALATE
+1. #NNN \"title\" — reason (a) option1 (b) option2
+- If truly nothing to do, print: CLEAN
+
+## Important
+- You MUST process the tech_debt_promotion items listed above. Read each issue, add acceptance criteria + affected files, then relabel to backlog.
+- If an issue is ambiguous or needs a design decision, ESCALATE it — don't skip it silently.
+- Every tech-debt issue in the list above should result in either an ACTION (promoted) or an ESCALATE (needs decision). Never skip silently."
 
 CLAUDE_OUTPUT=$(cd /home/debian/harb && CODEBERG_TOKEN="$CODEBERG_TOKEN" timeout "$CLAUDE_TIMEOUT" \
   claude -p "$PROMPT" \
