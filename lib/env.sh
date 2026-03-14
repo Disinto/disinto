@@ -16,7 +16,7 @@ if [ -f "$FACTORY_ROOT/.env" ]; then
 fi
 
 # PATH: foundry, node, system
-export PATH="${HOME}/.foundry/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+export PATH="${HOME}/.local/bin:${HOME}/.foundry/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 export HOME="${HOME:-/home/debian}"
 
 # Codeberg token: env var > ~/.netrc
