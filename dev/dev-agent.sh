@@ -93,21 +93,20 @@ trap cleanup EXIT
 
 # STATE.MD helpers (must be defined before use at worktree setup)
 write_state_entry() {
-  local status_word="${1:-in-progress}"
   local target="${WORKTREE:-$REPO_ROOT}"
   local state_file="${target}/STATE.md"
   local today
   today=$(date -u +%Y-%m-%d)
   local description
   description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
-  local line="- [${today}] [${status_word}] ${description} (#${ISSUE})"
+  local line="- [${today}] ${description} (#${ISSUE})"
   if [ ! -f "$state_file" ]; then
     printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
   fi
   echo "$line" >> "$state_file"
   log "STATE.md: ${line}"
 }
-append_state_log() { write_state_entry "done"; }
+append_state_log() { write_state_entry; }
 
 # --- Log rotation ---
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
@@ -564,8 +563,8 @@ else
   git checkout -B "$BRANCH" origin/master 2>/dev/null
   git submodule update --init --recursive 2>/dev/null || true
 
-  # Write STATE.md entry — will be included in the first commit
-  write_state_entry "in-progress"
+  # Write STATE.md entry — included in the first commit, reads as done once PR merges
+  write_state_entry
 
   # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
   for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
