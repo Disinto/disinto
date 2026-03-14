@@ -157,7 +157,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           "${API}/issues/${ISSUE_NUM}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
         curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
           "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
-        openclaw system event --text "✅ PR #${HAS_PR} merged! Issue #${ISSUE_NUM} done." --mode now 2>/dev/null || true
+        matrix_send "dev" "✅ PR #${HAS_PR} merged! Issue #${ISSUE_NUM} done." 2>/dev/null || true
       else
         log "merge failed (HTTP ${MERGE_CODE})"
       fi
@@ -235,7 +235,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${STUCK_ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      openclaw system event --text "✅ PR #${PR_NUM} merged! Issue #${STUCK_ISSUE} done." --mode now 2>/dev/null || true
+      matrix_send "dev" "✅ PR #${PR_NUM} merged! Issue #${STUCK_ISSUE} done." 2>/dev/null || true
     fi
     continue
   fi
@@ -309,7 +309,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
         curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
           -H "Content-Type: application/json" \
           "${API}/issues/${ISSUE_NUM}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-        openclaw system event --text "✅ PR #${EXISTING_PR} merged! Issue #${ISSUE_NUM} done." --mode now 2>/dev/null || true
+        matrix_send "dev" "✅ PR #${EXISTING_PR} merged! Issue #${ISSUE_NUM} done." 2>/dev/null || true
       fi
       continue
 

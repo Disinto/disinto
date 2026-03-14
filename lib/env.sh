@@ -55,7 +55,7 @@ codeberg_api() {
 woodpecker_api() {
   local path="$1"
   shift
-  curl -sf \
+  curl -sfL \
     -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
     "${WOODPECKER_SERVER}/api${path}" "$@"
 }
@@ -67,4 +67,36 @@ wpdb() {
     -h "${WOODPECKER_DB_HOST:-127.0.0.1}" \
     -d "${WOODPECKER_DB_NAME:-woodpecker}" \
     -t "$@" 2>/dev/null
+}
+
+# Matrix messaging helper — usage: matrix_send <prefix> <message> [thread_event_id]
+# Returns event_id on stdout. Registers threads for listener dispatch.
+MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
+matrix_send() {
+  [ -z "${MATRIX_TOKEN:-}" ] && return 0
+  local prefix="$1" msg="$2" thread_id="${3:-}"
+  local room_encoded="${MATRIX_ROOM_ID//!/%21}"
+  local txn="$(date +%s%N)$$"
+  local body
+  if [ -n "$thread_id" ]; then
+    body=$(jq -nc --arg m "[${prefix}] ${msg}" --arg t "$thread_id" \
+      '{msgtype:"m.text",body:$m,"m.relates_to":{rel_type:"m.thread",event_id:$t}}')
+  else
+    body=$(jq -nc --arg m "[${prefix}] ${msg}" '{msgtype:"m.text",body:$m}')
+  fi
+  local response
+  response=$(curl -s -X PUT \
+    -H "Authorization: Bearer ${MATRIX_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${MATRIX_HOMESERVER}/_matrix/client/v3/rooms/${room_encoded}/send/m.room.message/${txn}" \
+    -d "$body" 2>/dev/null) || return 0
+  local event_id
+  event_id=$(printf '%s' "$response" | jq -r '.event_id // empty' 2>/dev/null)
+  if [ -n "$event_id" ]; then
+    printf '%s' "$event_id"
+    # Register thread root for listener dispatch (escalations only)
+    if [ -z "$thread_id" ]; then
+      printf '%s\t%s\t%s\n' "$event_id" "$prefix" "$(date +%s)" >> "$MATRIX_THREAD_MAP" 2>/dev/null || true
+    fi
+  fi
 }

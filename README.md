@@ -19,6 +19,11 @@ cron (*/10) ──→ review-poll.sh     ← finds unreviewed PRs, spawns review
 
 cron (daily) ──→ gardener-poll.sh  ← backlog grooming (duplicates, stale, tech-debt)
                   └── claude -p: triage → promote/close/escalate
+
+systemd ──→ matrix_listener.sh   ← long-poll daemon for human replies
+              └── dispatches thread replies → supervisor/gardener
+
+all agents ──→ matrix_send()     ← status updates, escalations, merge notifications
 ```
 
 ## Prerequisites
@@ -34,7 +39,7 @@ cron (daily) ──→ gardener-poll.sh  ← backlog grooming (duplicates, stale
 
 **Optional:**
 
-- [OpenClaw](https://openclaw.ai/) — escalation notifications; when agents hit something they can't resolve, they send a system event via `openclaw` CLI
+- [Matrix](https://matrix.org/) homeserver ([Dendrite](https://github.com/matrix-org/dendrite) or Synapse) — real-time notifications, escalation threads with human-in-the-loop replies
 - [Foundry](https://getfoundry.sh/) (`forge`, `cast`, `anvil`) — only needed if your target project uses Solidity
 - [Node.js](https://nodejs.org/) — only needed if your target project uses Node
 
@@ -93,8 +98,10 @@ dark-factory/
 ├── .env.example          # Template — copy to .env, add secrets + project config
 ├── .gitignore            # Excludes .env, logs, state files
 ├── lib/
-│   ├── env.sh            # Shared: load .env, PATH, Codeberg/Woodpecker API helpers
-│   └── ci-debug.sh       # Woodpecker CI log/failure helper
+│   ├── env.sh              # Shared: load .env, PATH, API helpers, matrix_send()
+│   ├── ci-debug.sh         # Woodpecker CI log/failure helper
+│   ├── matrix_listener.sh  # Matrix long-poll daemon (dispatches replies)
+│   └── matrix_listener.service  # systemd unit for the listener
 ├── dev/
 │   ├── dev-poll.sh       # Cron entry: find ready issues
 │   └── dev-agent.sh      # Implementation agent (claude -p)

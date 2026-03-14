@@ -53,6 +53,14 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 
 log "--- Gardener poll start ---"
 
+# ── Check for escalation replies from Matrix ──────────────────────────────
+ESCALATION_REPLY=""
+if [ -s /tmp/gardener-escalation-reply ]; then
+  ESCALATION_REPLY=$(cat /tmp/gardener-escalation-reply)
+  rm -f /tmp/gardener-escalation-reply
+  log "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
+fi
+
 # ── Fetch all open issues ─────────────────────────────────────────────────
 ISSUES_JSON=$(codeberg_api GET "/issues?state=open&type=issues&limit=50&sort=updated&direction=desc" 2>/dev/null || true)
 if [ -z "$ISSUES_JSON" ] || [ "$ISSUES_JSON" = "null" ]; then
@@ -207,7 +215,17 @@ ESCALATE
 ## Important
 - You MUST process the tech_debt_promotion items listed above. Read each issue, add acceptance criteria + affected files, then relabel to backlog.
 - If an issue is ambiguous or needs a design decision, ESCALATE it — don't skip it silently.
-- Every tech-debt issue in the list above should result in either an ACTION (promoted) or an ESCALATE (needs decision). Never skip silently."
+- Every tech-debt issue in the list above should result in either an ACTION (promoted) or an ESCALATE (needs decision). Never skip silently.
+$(if [ -n "$ESCALATION_REPLY" ]; then echo "
+## Human Response to Previous Escalation
+The human replied with shorthand choices keyed to the previous ESCALATE block.
+Format: '1a 2c 3b' means question 1→option (a), question 2→option (c), question 3→option (b).
+
+Raw reply:
+${ESCALATION_REPLY}
+
+Execute each chosen option NOW via the Codeberg API before processing new items.
+If a choice is unclear, re-escalate that single item with a clarifying question."; fi)"
 
 CLAUDE_OUTPUT=$(cd "${PROJECT_REPO_ROOT}" && CODEBERG_TOKEN="$CODEBERG_TOKEN" timeout "$CLAUDE_TIMEOUT" \
   claude -p "$PROMPT" \
@@ -228,8 +246,8 @@ if [ -n "$ESCALATION" ]; then
   ITEM_COUNT=$(echo "$ESCALATION" | grep -c '.' || true)
   log "Escalating $ITEM_COUNT items to human"
 
-  # Send via openclaw system event
-  openclaw system event "🌱 Issue Gardener — ${ITEM_COUNT} item(s) need attention
+  # Send via Matrix (threaded — replies route back via listener)
+  matrix_send "gardener" "🌱 Issue Gardener — ${ITEM_COUNT} item(s) need attention
 
 ${ESCALATION}
 

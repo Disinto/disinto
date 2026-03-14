@@ -36,6 +36,14 @@ status() {
   flog "$*"
 }
 
+# ── Check for escalation replies from Matrix ──────────────────────────────
+ESCALATION_REPLY=""
+if [ -s /tmp/factory-escalation-reply ]; then
+  ESCALATION_REPLY=$(cat /tmp/factory-escalation-reply)
+  rm -f /tmp/factory-escalation-reply
+  flog "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
+fi
+
 # Alerts by priority
 P0_ALERTS=""
 P1_ALERTS=""
@@ -154,10 +162,10 @@ fi
 status "P2: checking factory"
 
 # CI stuck
-STUCK_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='running' AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs)
-[ "${STUCK_CI:-0}" -gt 0 ] && p2 "CI: ${STUCK_CI} pipeline(s) running >20min"
+STUCK_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='running' AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs || true)
+[ "${STUCK_CI:-0}" -gt 0 ] 2>/dev/null && p2 "CI: ${STUCK_CI} pipeline(s) running >20min"
 
-PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs)
+PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs || true)
 [ "${PENDING_CI:-0}" -gt 0 ] && p2 "CI: ${PENDING_CI} pipeline(s) pending >30min"
 
 # Dev-agent health
@@ -304,6 +312,10 @@ ALL_ALERTS="${P0_ALERTS}${P1_ALERTS}${P2_ALERTS}${P3_ALERTS}${P4_ALERTS}"
 if [ -n "$ALL_ALERTS" ]; then
   ALERT_TEXT=$(echo -e "$ALL_ALERTS")
 
+  # Notify Matrix
+  matrix_send "supervisor" "⚠️ Factory alerts:
+${ALERT_TEXT}" 2>/dev/null || true
+
   flog "Invoking claude -p for alerts"
 
   CLAUDE_PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || echo "You are a factory supervisor. Fix the issue below.")
@@ -319,6 +331,12 @@ RAM: $(free -m | awk '/Mem:/{printf "avail=%sMB", $7}') $(free -m | awk '/Swap:/
 Disk: $(df -h / | awk 'NR==2{printf "%s used of %s (%s)", $3, $2, $5}')
 Docker: $(sudo docker ps --format '{{.Names}}' 2>/dev/null | wc -l) containers running
 Claude procs: $(pgrep -f "claude" 2>/dev/null | wc -l)
+
+$(if [ -n "$ESCALATION_REPLY" ]; then echo "
+## Human Response to Previous Escalation
+${ESCALATION_REPLY}
+
+Act on this response."; fi)
 
 Fix what you can. Escalate what you can't. Read the relevant best-practices file first."
 

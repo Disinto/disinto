@@ -55,7 +55,7 @@ status() {
 }
 
 notify() {
-  openclaw system event --text "🔧 dev-agent #${ISSUE}: $*" --mode now 2>/dev/null || true
+  matrix_send "dev" "🔧 #${ISSUE}: $*" 2>/dev/null || true
 }
 
 cleanup_worktree() {

@@ -40,12 +40,14 @@ This gives you:
 - `$PROJECT_NAME` — short project name (for worktree prefixes, container names)
 - `$PRIMARY_BRANCH` — main branch (master or main)
 - `$FACTORY_ROOT` — path to the dark-factory repo
+- `matrix_send <prefix> <message>` — send notifications to the Matrix coordination room
 
 ## Escalation
 
-If you can't fix it, escalate to Clawy (the main agent):
+If you can't fix it, escalate via Matrix:
 ```bash
-openclaw system event --text "🏭 ESCALATE: <what's wrong and why you can't fix it>" --mode now
+source ${FACTORY_ROOT}/lib/env.sh
+matrix_send "supervisor" "🏭 ESCALATE: <what's wrong and why you can't fix it>"
 ```
 
 Do NOT escalate if you can fix it. Do NOT ask permission. Fix first, report after.

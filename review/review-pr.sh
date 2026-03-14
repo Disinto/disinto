@@ -485,9 +485,7 @@ A maintainer should review this PR manually, or re-trigger with \`--force\`.
     [ -f "$f" ] && cp "$f" "${LOGDIR}/review-pr${PR_NUMBER}-$(basename "$f")"
   done
 
-  openclaw system event \
-    --text "⚠️ PR #${PR_NUMBER} review failed — no valid JSON output" \
-    --mode now 2>/dev/null || true
+  matrix_send "review" "⚠️ PR #${PR_NUMBER} review failed — no valid JSON output" 2>/dev/null || true
 
   exit 1
 fi
@@ -726,9 +724,7 @@ ${FU_DETAILS}
   log "created ${CREATED_COUNT} follow-up issues total"
 fi
 
-# --- Notify OpenClaw ---
-openclaw system event \
-  --text "🤖 PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" \
-  --mode now 2>/dev/null || true
+# --- Notify Matrix ---
+matrix_send "review" "🤖 PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" 2>/dev/null || true
 
 log "DONE: ${VERDICT} (${ELAPSED}s, re-review: ${IS_RE_REVIEW})"
