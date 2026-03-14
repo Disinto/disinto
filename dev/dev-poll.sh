@@ -198,8 +198,12 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   PR_BRANCH=$(echo "$OPEN_PRS" | jq -r ".[$i].head.ref")
   PR_SHA=$(echo "$OPEN_PRS" | jq -r ".[$i].head.sha")
 
-  # Extract issue number from branch name (fix/issue-NNN)
+  # Extract issue number from branch name (fix/issue-NNN) or PR title (#NNN)
+  PR_TITLE=$(echo "$OPEN_PRS" | jq -r ".[$i].title")
   STUCK_ISSUE=$(echo "$PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
+  if [ -z "$STUCK_ISSUE" ]; then
+    STUCK_ISSUE=$(echo "$PR_TITLE" | grep -oP '#\K\d+' | tail -1 || true)
+  fi
   [ -z "$STUCK_ISSUE" ] && continue
 
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
