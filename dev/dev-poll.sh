@@ -198,13 +198,20 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   PR_BRANCH=$(echo "$OPEN_PRS" | jq -r ".[$i].head.ref")
   PR_SHA=$(echo "$OPEN_PRS" | jq -r ".[$i].head.sha")
 
-  # Extract issue number from branch name (fix/issue-NNN) or PR title (#NNN)
+  # Extract issue number from branch name (fix/issue-NNN), PR title (#NNN), or PR body (Closes #NNN)
   PR_TITLE=$(echo "$OPEN_PRS" | jq -r ".[$i].title")
+  PR_BODY=$(echo "$OPEN_PRS" | jq -r ".[$i].body // \"\"")
   STUCK_ISSUE=$(echo "$PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
   if [ -z "$STUCK_ISSUE" ]; then
     STUCK_ISSUE=$(echo "$PR_TITLE" | grep -oP '#\K\d+' | tail -1 || true)
   fi
-  [ -z "$STUCK_ISSUE" ] && continue
+  if [ -z "$STUCK_ISSUE" ]; then
+    STUCK_ISSUE=$(echo "$PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
+  fi
+  if [ -z "$STUCK_ISSUE" ]; then
+    log "PR #${PR_NUM} has no issue ref — cannot spawn dev-agent, skipping"
+    continue
+  fi
 
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
