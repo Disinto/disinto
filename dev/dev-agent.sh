@@ -91,6 +91,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# STATE.MD helpers (must be defined before use at worktree setup)
+write_state_entry() {
+  local status_word="${1:-in-progress}"
+  local target="${WORKTREE:-$REPO_ROOT}"
+  local state_file="${target}/STATE.md"
+  local today
+  today=$(date -u +%Y-%m-%d)
+  local description
+  description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
+  local line="- [${today}] [${status_word}] ${description} (#${ISSUE})"
+  if [ ! -f "$state_file" ]; then
+    printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
+  fi
+  echo "$line" >> "$state_file"
+  log "STATE.md: ${line}"
+}
+append_state_log() { write_state_entry "done"; }
+
 # --- Log rotation ---
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
   mv "$LOGFILE" "$LOGFILE.old"
@@ -856,37 +874,6 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
   log "created PR #${PR_NUMBER}"
   notify "PR #${PR_NUMBER} created for issue #${ISSUE}: ${ISSUE_TITLE}"
 fi
-
-# =============================================================================
-# STATE.MD APPEND
-# =============================================================================
-# Write STATE.md entry in the worktree BEFORE implementation starts.
-# This ensures the STATE.md update is part of the first commit, not a separate
-# push that would dismiss stale approvals.
-# Format: - [YYYY-MM-DD] <in-progress|done> description (#ISSUE)
-write_state_entry() {
-  local status_word="${1:-in-progress}"  # "in-progress" or "done"
-  local target="${WORKTREE:-$REPO_ROOT}"
-  local state_file="${target}/STATE.md"
-  local today
-  today=$(date -u +%Y-%m-%d)
-
-  local description
-  description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
-
-  local line="- [${today}] [${status_word}] ${description} (#${ISSUE})"
-
-  if [ ! -f "$state_file" ]; then
-    printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
-  fi
-  echo "$line" >> "$state_file"
-  log "STATE.md: ${line}"
-}
-
-# Alias for backward compat
-append_state_log() {
-  write_state_entry "done"
-}
 
 # MERGE HELPER
 # =============================================================================
