@@ -150,7 +150,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         "${API}/pulls/${HAS_PR}/merge" \
         -d '{"Do":"merge","delete_branch_after_merge":true}')
 
-      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] || [ "$MERGE_CODE" = "405" ]; then
+      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] ; then
         log "PR #${HAS_PR} merged! Closing #${ISSUE_NUM}"
         curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
           -H "Content-Type: application/json" \
@@ -185,6 +185,63 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     exit 0
   fi
 fi
+
+# =============================================================================
+# PRIORITY 1.5: any open PR with REQUEST_CHANGES or CI failure (stuck PRs)
+# =============================================================================
+log "checking for stuck PRs"
+OPEN_PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API}/pulls?state=open&limit=20")
+
+for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
+  PR_NUM=$(echo "$OPEN_PRS" | jq -r ".[$i].number")
+  PR_BRANCH=$(echo "$OPEN_PRS" | jq -r ".[$i].head.ref")
+  PR_SHA=$(echo "$OPEN_PRS" | jq -r ".[$i].head.sha")
+
+  # Extract issue number from branch name (fix/issue-NNN)
+  STUCK_ISSUE=$(echo "$PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
+  [ -z "$STUCK_ISSUE" ] && continue
+
+  CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+  HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${PR_NUM}/reviews" | \
+    jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+  HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${PR_NUM}/reviews" | \
+    jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
+
+  # Try merge if approved + CI green
+  if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → merging"
+    MERGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/pulls/${PR_NUM}/merge" \
+      -d '{"Do":"merge","delete_branch_after_merge":true}')
+    if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ]; then
+      log "PR #${PR_NUM} merged! Closing #${STUCK_ISSUE}"
+      curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/issues/${STUCK_ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
+      openclaw system event --text "✅ PR #${PR_NUM} merged! Issue #${STUCK_ISSUE} done." --mode now 2>/dev/null || true
+    fi
+    continue
+  fi
+
+  # Stuck: REQUEST_CHANGES or CI failure → spawn agent
+  if [ "$CI_STATE" = "success" ] && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+    exit 0
+  elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing first"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+    exit 0
+  fi
+done
 
 # =============================================================================
 # PRIORITY 2: find ready backlog issues (pull system)
@@ -236,7 +293,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
         -H "Content-Type: application/json" \
         "${API}/pulls/${EXISTING_PR}/merge" \
         -d '{"Do":"merge","delete_branch_after_merge":true}')
-      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] || [ "$MERGE_CODE" = "405" ]; then
+      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] ; then
         log "PR #${EXISTING_PR} merged! Closing #${ISSUE_NUM}"
         curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
           -H "Content-Type: application/json" \

@@ -545,6 +545,10 @@ else
   cd "$WORKTREE"
   git checkout -B "$BRANCH" origin/master 2>/dev/null
   git submodule update --init --recursive 2>/dev/null || true
+
+  # Write STATE.md entry — will be included in the first commit
+  write_state_entry "in-progress"
+
   # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
   for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
     lib_name=$(basename "$lib_dir")
@@ -856,45 +860,32 @@ fi
 # =============================================================================
 # STATE.MD APPEND
 # =============================================================================
-# After each merge, append one line to STATE.md describing what now exists.
-# Format: - [YYYY-MM-DD] what is now true about harb (#PR)
-# The planner will collapse this into a compact snapshot later.
-append_state_log() {
-  local state_file="${REPO_ROOT}/STATE.md"
+# Write STATE.md entry in the worktree BEFORE implementation starts.
+# This ensures the STATE.md update is part of the first commit, not a separate
+# push that would dismiss stale approvals.
+# Format: - [YYYY-MM-DD] <in-progress|done> description (#ISSUE)
+write_state_entry() {
+  local status_word="${1:-in-progress}"  # "in-progress" or "done"
+  local target="${WORKTREE:-$REPO_ROOT}"
+  local state_file="${target}/STATE.md"
   local today
   today=$(date -u +%Y-%m-%d)
 
-  # Derive a "what now exists" description from the issue title.
-  # Strip prefixes (feat:/fix:/refactor:) to get the essence.
   local description
   description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
 
-  local line="- [${today}] ${description} (#${PR_NUMBER})"
-
-  # Create file with header if it doesn't exist
-  if [ ! -f "$state_file" ]; then
-    echo "# STATE.md — What harb currently is and does" > "$state_file"
-    echo "" >> "$state_file"
-  fi
-
-  echo "$line" >> "$state_file"
-
-  # Append to STATE.md on the PR branch, push before merge
-  local worktree="${WORKTREE:-}"
-  local target="${worktree:-$REPO_ROOT}"
-  local state_file="${target}/STATE.md"
+  local line="- [${today}] [${status_word}] ${description} (#${ISSUE})"
 
   if [ ! -f "$state_file" ]; then
     printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
   fi
   echo "$line" >> "$state_file"
+  log "STATE.md: ${line}"
+}
 
-  cd "$target"
-  git add STATE.md 2>/dev/null || true
-  git diff --cached --quiet && return 0
-  git commit -m "state: ${description} (#${PR_NUMBER})" --no-verify 2>/dev/null || true
-  git push origin "${BRANCH}" 2>/dev/null || log "STATE.md push failed — will be missing from this merge"
-  log "STATE.md updated: ${line}"
+# Alias for backward compat
+append_state_log() {
+  write_state_entry "done"
 }
 
 # MERGE HELPER
@@ -947,6 +938,10 @@ do_merge() {
 
   if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
     log "PR #${PR_NUMBER} merged!"
+
+    # Update STATE.md on master (pull merged changes first)
+    (cd "$REPO_ROOT" && git checkout master 2>/dev/null && git pull --ff-only origin master 2>/dev/null) || true
+    append_state_log || log "WARNING: STATE.md update failed (non-fatal)"
 
     curl -sf -X DELETE \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
