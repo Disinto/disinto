@@ -10,8 +10,8 @@ Codeberg rate-limits SSH and HTTPS clones. Symptoms:
 - **Do NOT retrigger** during a rate-limit storm. Wait 10-15 minutes.
 - Check if multiple pipelines failed on `git` step recently:
   ```bash
-  wpdb -c "SELECT number, status, to_timestamp(started) FROM pipelines WHERE repo_id=2 AND status='failure' ORDER BY number DESC LIMIT 5;"
-  wpdb -c "SELECT s.name, s.exit_code FROM steps s JOIN pipelines p ON s.pipeline_id=p.id WHERE p.number=<N> AND p.repo_id=2 AND s.state='failure';"
+  wpdb -c "SELECT number, status, to_timestamp(started) FROM pipelines WHERE repo_id=$WOODPECKER_REPO_ID AND status='failure' ORDER BY number DESC LIMIT 5;"
+  wpdb -c "SELECT s.name, s.exit_code FROM steps s JOIN pipelines p ON s.pipeline_id=p.id WHERE p.number=<N> AND p.repo_id=$WOODPECKER_REPO_ID AND s.state='failure';"
   ```
 - If multiple `git` failures with exit 128 in the last 15 min → it's rate limiting. Wait.
 - Only retrigger after 15+ minutes of no CI activity.

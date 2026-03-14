@@ -25,10 +25,14 @@ if [ -z "${CODEBERG_TOKEN:-}" ]; then
 fi
 export CODEBERG_TOKEN
 
-# Defaults
+# Project config
 export CODEBERG_REPO="${CODEBERG_REPO:-johba/harb}"
 export CODEBERG_API="${CODEBERG_API:-https://codeberg.org/api/v1/repos/${CODEBERG_REPO}}"
-export HARB_REPO_ROOT="${HARB_REPO_ROOT:-/home/debian/harb}"
+export PROJECT_NAME="${PROJECT_NAME:-${CODEBERG_REPO##*/}}"
+export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-${HARB_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}}}"
+export HARB_REPO_ROOT="${PROJECT_REPO_ROOT}"  # deprecated alias
+export PRIMARY_BRANCH="${PRIMARY_BRANCH:-master}"
+export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-2}"
 export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 

@@ -9,8 +9,8 @@
 #   - Auto-creates follow-up issues for pre-existing bugs flagged by reviewer
 #   - JSON output format with validation + retry
 #
-# Peek while running:  cat /tmp/harb-review-status
-# Watch log:           tail -f ~/scripts/harb-review/review.log
+# Peek while running:  cat /tmp/<project>-review-status
+# Watch log:           tail -f <factory-root>/review/review.log
 
 set -euo pipefail
 
@@ -21,12 +21,12 @@ source "$(dirname "$0")/../lib/env.sh"
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
 REPO="${CODEBERG_REPO}"
-REPO_ROOT="/home/debian/harb"
+REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 # Bot account for posting reviews (separate user required for branch protection approvals)
 API_BASE="${CODEBERG_API}"
-LOCKFILE="/tmp/harb-review.lock"
-STATUSFILE="/tmp/harb-review-status"
+LOCKFILE="/tmp/${PROJECT_NAME}-review.lock"
+STATUSFILE="/tmp/${PROJECT_NAME}-review-status"
 LOGDIR="${FACTORY_ROOT}/review"
 LOGFILE="$LOGDIR/review.log"
 MIN_MEM_MB=1500
@@ -91,8 +91,8 @@ log "${PR_TITLE} (${PR_HEAD}→${PR_BASE} ${PR_SHA:0:7})"
 if [ "$PR_STATE" != "open" ]; then
   log "SKIP: state=${PR_STATE}"
   cd "$REPO_ROOT"
-  git worktree remove "/tmp/harb-review-${PR_NUMBER}" --force 2>/dev/null || true
-  rm -rf "/tmp/harb-review-${PR_NUMBER}" 2>/dev/null || true
+  git worktree remove "/tmp/${PROJECT_NAME}-review-${PR_NUMBER}" --force 2>/dev/null || true
+  rm -rf "/tmp/${PROJECT_NAME}-review-${PR_NUMBER}" 2>/dev/null || true
   exit 0
 fi
 
@@ -181,7 +181,7 @@ fi
 status "checking out PR branch"
 cd "$REPO_ROOT"
 git fetch origin "$PR_HEAD" 2>/dev/null || true
-REVIEW_WORKTREE="/tmp/harb-review-${PR_NUMBER}"
+REVIEW_WORKTREE="/tmp/${PROJECT_NAME}-review-${PR_NUMBER}"
 
 if [ -d "$REVIEW_WORKTREE" ]; then
   cd "$REVIEW_WORKTREE"
@@ -340,7 +340,7 @@ DEVRESP_EOF
 ${INCREMENTAL_DIFF}
 \`\`\`
 
-### Full Diff (master..${PR_SHA:0:7})
+### Full Diff (${PRIMARY_BRANCH}..${PR_SHA:0:7})
 \`\`\`diff
 ${DIFF}
 \`\`\`

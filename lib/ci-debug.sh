@@ -12,10 +12,9 @@ set -euo pipefail
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 
-export WOODPECKER_SERVER="http://localhost:8000"
 # WOODPECKER_TOKEN loaded from .env via env.sh
-REPO="johba/harb"
-API="${WOODPECKER_SERVER}/api/repos/2"
+REPO="${CODEBERG_REPO}"
+API="${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}"
 
 api() {
   curl -sf -H "Authorization: Bearer ${WOODPECKER_TOKEN}" "${API}/$1"

@@ -5,13 +5,13 @@
 - `dev-agent.sh` uses `claude -p` for implementation, runs in git worktree
 - Lock file: `/tmp/dev-agent.lock` (contains PID)
 - Status file: `/tmp/dev-agent-status`
-- Worktrees: `/tmp/harb-worktree-<issue-number>/`
+- Worktrees: `/tmp/${PROJECT_NAME}-worktree-<issue-number>/`
 
 ## Safe Fixes
 - Remove stale lock: `rm -f /tmp/dev-agent.lock` (only if PID is dead)
 - Kill stuck agent: `kill <pid>` then clean lock
 - Restart on derailed PR: `bash ${FACTORY_ROOT}/dev/dev-agent.sh <issue-number> &`
-- Clean worktree: `cd /home/debian/harb && git worktree remove /tmp/harb-worktree-<N> --force`
+- Clean worktree: `cd $PROJECT_REPO_ROOT && git worktree remove /tmp/${PROJECT_NAME}-worktree-<N> --force`
 - Remove `in-progress` label if agent died without cleanup:
   ```bash
   codeberg_api DELETE "/issues/<N>/labels/in-progress"
@@ -38,7 +38,7 @@
 
 ## Dependency Resolution
 
-**Trust closed state.** If a dependency issue is closed, the code is on master. Period.
+**Trust closed state.** If a dependency issue is closed, the code is on the primary branch. Period.
 
 DO NOT try to find the specific PR that closed an issue. This is over-engineering that causes false negatives:
 - Codeberg shares issue/PR numbering — no guaranteed relationship

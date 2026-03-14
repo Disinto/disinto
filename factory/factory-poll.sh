@@ -75,9 +75,10 @@ if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "
   fixed "Dropped filesystem caches"
 
   # Restart Anvil if it's bloated (>1GB RSS)
-  ANVIL_RSS=$(sudo docker stats harb-anvil-1 --no-stream --format '{{.MemUsage}}' 2>/dev/null | grep -oP '^\S+' | head -1 || echo "0")
+  ANVIL_CONTAINER="${ANVIL_CONTAINER:-${PROJECT_NAME}-anvil-1}"
+  ANVIL_RSS=$(sudo docker stats "$ANVIL_CONTAINER" --no-stream --format '{{.MemUsage}}' 2>/dev/null | grep -oP '^\S+' | head -1 || echo "0")
   if echo "$ANVIL_RSS" | grep -qP '\dGiB'; then
-    sudo docker restart harb-anvil-1 >/dev/null 2>&1 && fixed "Restarted bloated Anvil (${ANVIL_RSS})"
+    sudo docker restart "$ANVIL_CONTAINER" >/dev/null 2>&1 && fixed "Restarted bloated Anvil (${ANVIL_RSS})"
   fi
 
   # Re-check after fixes
@@ -116,12 +117,12 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   done
 
   # Clean old worktrees
-  IDLE_WORKTREES=$(find /tmp/harb-worktree-* -maxdepth 0 -mmin +360 2>/dev/null || true)
+  IDLE_WORKTREES=$(find /tmp/${PROJECT_NAME}-worktree-* -maxdepth 0 -mmin +360 2>/dev/null || true)
   if [ -n "$IDLE_WORKTREES" ]; then
-    cd "${HARB_REPO_ROOT}" && git worktree prune 2>/dev/null
+    cd "${PROJECT_REPO_ROOT}" && git worktree prune 2>/dev/null
     for wt in $IDLE_WORKTREES; do
       # Only remove if dev-agent is not running on it
-      ISSUE_NUM=$(basename "$wt" | sed 's/harb-worktree-//')
+      ISSUE_NUM=$(basename "$wt" | sed "s/${PROJECT_NAME}-worktree-//")
       if ! pgrep -f "dev-agent.sh ${ISSUE_NUM}" >/dev/null 2>&1; then
         rm -rf "$wt" && fixed "Removed stale worktree: $wt"
       fi
@@ -153,10 +154,10 @@ fi
 status "P2: checking factory"
 
 # CI stuck
-STUCK_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=2 AND status='running' AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs)
+STUCK_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='running' AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs)
 [ "${STUCK_CI:-0}" -gt 0 ] && p2 "CI: ${STUCK_CI} pipeline(s) running >20min"
 
-PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=2 AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs)
+PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs)
 [ "${PENDING_CI:-0}" -gt 0 ] && p2 "CI: ${PENDING_CI} pipeline(s) pending >30min"
 
 # Dev-agent health
@@ -177,19 +178,19 @@ if [ -f "$DEV_LOCK" ]; then
 fi
 
 # Git repo health
-cd "${HARB_REPO_ROOT}" 2>/dev/null || true
+cd "${PROJECT_REPO_ROOT}" 2>/dev/null || true
 GIT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 GIT_REBASE=$([ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] && echo "yes" || echo "no")
 
 if [ "$GIT_REBASE" = "yes" ]; then
-  git rebase --abort 2>/dev/null && git checkout master 2>/dev/null && \
-    fixed "Aborted stale rebase, switched to master" || \
+  git rebase --abort 2>/dev/null && git checkout "${PRIMARY_BRANCH}" 2>/dev/null && \
+    fixed "Aborted stale rebase, switched to ${PRIMARY_BRANCH}" || \
     p2 "Git: stale rebase, auto-abort failed"
 fi
-if [ "$GIT_BRANCH" != "master" ] && [ "$GIT_BRANCH" != "unknown" ]; then
-  git checkout master 2>/dev/null && \
-    fixed "Switched main repo from '${GIT_BRANCH}' to master" || \
-    p2 "Git: on '${GIT_BRANCH}' instead of master"
+if [ "$GIT_BRANCH" != "${PRIMARY_BRANCH}" ] && [ "$GIT_BRANCH" != "unknown" ]; then
+  git checkout "${PRIMARY_BRANCH}" 2>/dev/null && \
+    fixed "Switched main repo from '${GIT_BRANCH}' to ${PRIMARY_BRANCH}" || \
+    p2 "Git: on '${GIT_BRANCH}' instead of ${PRIMARY_BRANCH}"
 fi
 
 # =============================================================================

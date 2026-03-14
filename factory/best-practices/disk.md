@@ -3,14 +3,14 @@
 ## Safe Fixes
 - Docker cleanup: `sudo docker system prune -f` (keeps images, removes stopped containers + dangling layers)
 - Truncate factory logs >5MB: `truncate -s 0 <file>`
-- Remove stale worktrees: check `/tmp/harb-worktree-*`, only if dev-agent not running on them
+- Remove stale worktrees: check `/tmp/${PROJECT_NAME}-worktree-*`, only if dev-agent not running on them
 - Woodpecker log_entries: `DELETE FROM log_entries WHERE id < (SELECT max(id) - 100000 FROM log_entries);` then `VACUUM;`
-- Node module caches in worktrees: `rm -rf /tmp/harb-worktree-*/node_modules/`
-- Git garbage collection: `cd /home/debian/harb && git gc --prune=now`
+- Node module caches in worktrees: `rm -rf /tmp/${PROJECT_NAME}-worktree-*/node_modules/`
+- Git garbage collection: `cd $PROJECT_REPO_ROOT && git gc --prune=now`
 
 ## Dangerous (escalate)
 - `docker system prune -a --volumes` — deletes ALL images including CI build cache
-- Deleting anything in `/home/debian/harb/` that's tracked by git
+- Deleting anything in `$PROJECT_REPO_ROOT/` that's tracked by git
 - Truncating Woodpecker DB tables other than log_entries
 
 ## Known Disk Hogs

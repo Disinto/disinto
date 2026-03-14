@@ -151,7 +151,7 @@ log "Invoking claude -p for grooming"
 # Build issue summary for context (titles + labels + deps)
 ISSUE_SUMMARY=$(echo "$ISSUES_JSON" | jq -r '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"')
 
-PROMPT="You are harb's issue gardener. Your job: keep the backlog clean, well-structured, and actionable.
+PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Your job: keep the backlog clean, well-structured, and actionable.
 
 ## Current open issues
 $ISSUE_SUMMARY
@@ -161,18 +161,15 @@ $(echo -e "$PROBLEMS")
 
 ## Tools available
 - Codeberg API: use curl with the CODEBERG_TOKEN env var (already set in your environment)
-- Base URL: https://codeberg.org/api/v1/repos/johba/harb
-- Read issue: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' | jq '.body'\`
-- Relabel: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}/labels' -d '{\"labels\":[652336]}'\` (652336=backlog, 1219499=tech-debt)
-- Comment: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}/comments' -d '{\"body\":\"...\"}'\`
-- Close: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' -d '{\"state\":\"closed\"}'\`
-- Edit body: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' 'https://codeberg.org/api/v1/repos/johba/harb/issues/{number}' -d '{\"body\":\"new body\"}'\`
+- Base URL: ${CODEBERG_API}
+- Read issue: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/issues/{number}' | jq '.body'\`
+- Relabel: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'\`
+- Comment: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/comments' -d '{\"body\":\"...\"}'\`
+- Close: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"state\":\"closed\"}'\`
+- Edit body: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"body\":\"new body\"}'\`
+- List labels: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/labels'\` (to find label IDs)
 - NEVER echo, log, or include the actual token value in any output — always reference \$CODEBERG_TOKEN
-- You're running in the harb repo root. Read these before making decisions:
-  - docs/PRODUCT-TRUTH.md — what the protocol is, key mechanics
-  - docs/ARCHITECTURE.md — file structure, packages, how things connect
-  - AGENTS.md — repo conventions, dev-agent expectations
-  - tools/push3-transpiler/README.md — Push3 instruction set (for seed issues)
+- You're running in the project repo root. Read README.md and any docs/ files before making decisions.
 
 ## Primary mission: promote tech-debt → backlog
 Most open issues are raw review-bot findings labeled \`tech-debt\`. Your main job is to convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
@@ -212,7 +209,7 @@ ESCALATE
 - If an issue is ambiguous or needs a design decision, ESCALATE it — don't skip it silently.
 - Every tech-debt issue in the list above should result in either an ACTION (promoted) or an ESCALATE (needs decision). Never skip silently."
 
-CLAUDE_OUTPUT=$(cd /home/debian/harb && CODEBERG_TOKEN="$CODEBERG_TOKEN" timeout "$CLAUDE_TIMEOUT" \
+CLAUDE_OUTPUT=$(cd "${PROJECT_REPO_ROOT}" && CODEBERG_TOKEN="$CODEBERG_TOKEN" timeout "$CLAUDE_TIMEOUT" \
   claude -p "$PROMPT" \
     --model sonnet \
     --dangerously-skip-permissions \

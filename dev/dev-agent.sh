@@ -20,7 +20,7 @@
 #   {"status": "already_done", "reason": "..."}
 #
 # Peek:    cat /tmp/dev-agent-status
-# Log:     tail -f ~/scripts/harb-dev/dev-agent.log
+# Log:     tail -f dev-agent.log
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ source "$(dirname "$0")/../lib/env.sh"
 # --- Config ---
 ISSUE="${1:?Usage: dev-agent.sh <issue-number>}"
 REPO="${CODEBERG_REPO}"
-REPO_ROOT="${HARB_REPO_ROOT}"
+REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent.lock"
@@ -39,7 +39,7 @@ STATUSFILE="/tmp/dev-agent-status"
 LOGFILE="${FACTORY_ROOT}/dev/dev-agent.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 BRANCH="fix/issue-${ISSUE}"
-WORKTREE="/tmp/harb-worktree-${ISSUE}"
+WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
 REVIEW_POLL_INTERVAL=300  # 5 min between review checks
 MAX_REVIEW_ROUNDS=5
 CLAUDE_TIMEOUT=7200
@@ -101,7 +101,7 @@ write_state_entry() {
   description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
   local line="- [${today}] ${description} (#${ISSUE})"
   if [ ! -f "$state_file" ]; then
-    printf '# STATE.md — What harb currently is and does\n\n' > "$state_file"
+    printf '# STATE.md — What %s currently is and does\n\n' "${PROJECT_NAME}" > "$state_file"
   fi
   echo "$line" >> "$state_file"
   log "STATE.md: ${line}"
@@ -425,7 +425,7 @@ if [ -n "$EXISTING_PR" ]; then
     fi
 
     REVIEW_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
-This is issue #${ISSUE} for the harb DeFi protocol.
+This is issue #${ISSUE} for the ${CODEBERG_REPO} project.
 
 ## Issue: ${ISSUE_TITLE}
 
@@ -539,28 +539,28 @@ else
   status "creating worktree"
   cd "$REPO_ROOT"
 
-  # Ensure repo is in clean state (abort stale rebases, checkout master)
+  # Ensure repo is in clean state (abort stale rebases, checkout primary branch)
   if [ -d "$REPO_ROOT/.git/rebase-merge" ] || [ -d "$REPO_ROOT/.git/rebase-apply" ]; then
     log "WARNING: stale rebase detected in main repo — aborting"
     git rebase --abort 2>/dev/null || true
   fi
   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-  if [ "$CURRENT_BRANCH" != "master" ]; then
-    log "WARNING: main repo on '$CURRENT_BRANCH' instead of master — switching"
-    git checkout master 2>/dev/null || true
+  if [ "$CURRENT_BRANCH" != "${PRIMARY_BRANCH}" ]; then
+    log "WARNING: main repo on '$CURRENT_BRANCH' instead of ${PRIMARY_BRANCH} — switching"
+    git checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
   fi
 
-  git fetch origin master 2>/dev/null
-  git pull --ff-only origin master 2>/dev/null || true
+  git fetch origin "${PRIMARY_BRANCH}" 2>/dev/null
+  git pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
   cleanup_worktree
-  git worktree add "$WORKTREE" origin/master -B "$BRANCH" 2>&1 || {
+  git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 || {
     log "ERROR: worktree creation failed"
-    git worktree add "$WORKTREE" origin/master -B "$BRANCH" 2>&1 | while read -r wt_line; do log "  $wt_line"; done || true
+    git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 | while read -r wt_line; do log "  $wt_line"; done || true
     cleanup_labels
     exit 1
   }
   cd "$WORKTREE"
-  git checkout -B "$BRANCH" origin/master 2>/dev/null
+  git checkout -B "$BRANCH" "origin/${PRIMARY_BRANCH}" 2>/dev/null
   git submodule update --init --recursive 2>/dev/null || true
 
   # Write STATE.md entry — included in the first commit, reads as done once PR merges
@@ -581,7 +581,7 @@ else
     jq -r '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "(could not fetch)")
 
   PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
-You have been assigned issue #${ISSUE} for the harb DeFi protocol.
+You have been assigned issue #${ISSUE} for the ${CODEBERG_REPO} project.
 
 ## Issue: ${ISSUE_TITLE}
 
@@ -680,7 +680,7 @@ If you cannot or should not implement this issue, output ONLY a JSON object (no 
 
   # But only treat as refusal if there are NO commits (claude might output JSON-like text AND commit)
   cd "$WORKTREE"
-  AHEAD=$(git rev-list origin/master..HEAD --count 2>/dev/null || echo "0")
+  AHEAD=$(git rev-list "origin/${PRIMARY_BRANCH}..HEAD" --count 2>/dev/null || echo "0")
   HAS_CHANGES=$(git status --porcelain)
 
   if [ -n "$REFUSAL_JSON" ] && [ "$AHEAD" -eq 0 ] && [ -z "$HAS_CHANGES" ]; then
@@ -839,7 +839,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
     --arg title "fix: ${ISSUE_TITLE} (#${ISSUE})" \
     --rawfile body "/tmp/pr-body-${ISSUE}.txt" \
     --arg head "$BRANCH" \
-    --arg base "master" \
+    --arg base "${PRIMARY_BRANCH}" \
     '{title: $title, body: $body, head: $head, base: $base}' > /tmp/pr-request-${ISSUE}.json
 
   PR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
@@ -894,7 +894,7 @@ do_merge() {
   if [ "$mergeable" = "false" ]; then
     log "PR #${PR_NUMBER} has merge conflicts — attempting rebase"
     local work_dir="${WORKTREE:-$REPO_ROOT}"
-    if (cd "$work_dir" && git fetch origin master && git rebase origin/master 2>&1); then
+    if (cd "$work_dir" && git fetch origin "${PRIMARY_BRANCH}" && git rebase "origin/${PRIMARY_BRANCH}" 2>&1); then
       log "rebase succeeded — force pushing"
       (cd "$work_dir" && git push origin "${BRANCH}" --force-with-lease 2>&1) || true
       # Wait for CI on the new commit
@@ -925,8 +925,8 @@ do_merge() {
   if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
     log "PR #${PR_NUMBER} merged!"
 
-    # Update STATE.md on master (pull merged changes first)
-    (cd "$REPO_ROOT" && git checkout master 2>/dev/null && git pull --ff-only origin master 2>/dev/null) || true
+    # Update STATE.md on primary branch (pull merged changes first)
+    (cd "$REPO_ROOT" && git checkout "${PRIMARY_BRANCH}" 2>/dev/null && git pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null) || true
     append_state_log || log "WARNING: STATE.md update failed (non-fatal)"
 
     curl -sf -X DELETE \
@@ -995,7 +995,7 @@ while [ "$REVIEW_ROUND" -lt "$MAX_REVIEW_ROUNDS" ]; do
     if [ -n "$PIPELINE_NUM" ]; then
       FAILED_INFO=$(curl -sf \
         -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
-        "http://localhost:8000/api/repos/2/pipelines/${PIPELINE_NUM}" | \
+        "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${PIPELINE_NUM}" | \
         jq -r '.workflows[]?.children[]? | select(.state=="failure") | "\(.name)|\(.exit_code)"' | head -1)
       FAILED_STEP=$(echo "$FAILED_INFO" | cut -d'|' -f1)
       FAILED_EXIT=$(echo "$FAILED_INFO" | cut -d'|' -f2)

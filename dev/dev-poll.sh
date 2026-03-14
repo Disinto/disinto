@@ -2,7 +2,7 @@
 # dev-poll.sh — Pull-based factory: find the next ready issue and start dev-agent
 #
 # Pull system: issues labeled "backlog" are candidates. An issue is READY when
-# ALL its dependency issues are closed AND their PRs are merged into master.
+# ALL its dependency issues are closed (and their PRs merged).
 # No "todo" label needed — readiness is derived from reality.
 #
 # Priority:

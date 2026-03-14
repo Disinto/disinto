@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # review-poll.sh — Poll open PRs and review those with green CI
 #
-# Peek while running:  cat /tmp/harb-review-status
-# Full log:            tail -f ~/scripts/harb-review/review.log
+# Peek while running:  cat /tmp/<project>-review-status
+# Full log:            tail -f <factory-root>/review/review.log
 
 set -euo pipefail
 
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 
-export HOME="${HOME:-/home/debian}"
 
 REPO="${CODEBERG_REPO}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -35,10 +34,10 @@ log "--- Poll start ---"
 
 PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/pulls?state=open&limit=20" | \
-  jq -r '.[] | select(.base.ref == "master") | select(.draft != true) | select(.title | test("^\\[?WIP[\\]:]"; "i") | not) | "\(.number) \(.head.sha)"')
+  jq -r --arg branch "${PRIMARY_BRANCH}" '.[] | select(.base.ref == $branch) | select(.draft != true) | select(.title | test("^\\[?WIP[\\]:]"; "i") | not) | "\(.number) \(.head.sha)"')
 
 if [ -z "$PRS" ]; then
-  log "No open PRs targeting master"
+  log "No open PRs targeting ${PRIMARY_BRANCH}"
   exit 0
 fi
 
