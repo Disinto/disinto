@@ -292,6 +292,22 @@ if [ -n "$STALE_CLAUDES" ]; then
   fixed "Killed stale claude processes: $(echo $STALE_CLAUDES | wc -w) procs"
 fi
 
+# Clean stale git worktrees (>2h, no active agent)
+NOW_TS=$(date +%s)
+for wt in /tmp/${PROJECT_NAME}-worktree-* /tmp/${PROJECT_NAME}-review-*; do
+  [ -d "$wt" ] || continue
+  WT_AGE_MIN=$(( (NOW_TS - $(stat -c %Y "$wt")) / 60 ))
+  if [ "$WT_AGE_MIN" -gt 120 ]; then
+    # Skip if an agent is still using it
+    WT_BASE=$(basename "$wt")
+    if ! pgrep -f "$WT_BASE" >/dev/null 2>&1; then
+      git -C "$PROJECT_REPO_ROOT" worktree remove --force "$wt" 2>/dev/null && \
+        fixed "Removed stale worktree: $wt (${WT_AGE_MIN}min old)" || true
+    fi
+  fi
+done
+git -C "$PROJECT_REPO_ROOT" worktree prune 2>/dev/null || true
+
 # Rotate factory log if >5MB
 for logfile in "${FACTORY_ROOT}"/{dev,review,factory}/*.log; do
   if [ -f "$logfile" ]; then
