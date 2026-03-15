@@ -91,22 +91,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# STATE.MD helpers (must be defined before use at worktree setup)
-write_state_entry() {
-  local target="${WORKTREE:-$REPO_ROOT}"
-  local state_file="${target}/STATE.md"
-  local today
-  today=$(date -u +%Y-%m-%d)
-  local description
-  description=$(echo "$ISSUE_TITLE" | sed 's/^feat:\s*//i;s/^fix:\s*//i;s/^refactor:\s*//i')
-  local line="- [${today}] ${description} (#${ISSUE})"
-  if [ ! -f "$state_file" ]; then
-    printf '# STATE.md — What %s currently is and does\n\n' "${PROJECT_NAME}" > "$state_file"
-  fi
-  echo "$line" >> "$state_file"
-  log "STATE.md: ${line}"
-}
-append_state_log() { write_state_entry; }
 
 # --- Log rotation ---
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
@@ -563,8 +547,6 @@ else
   git checkout -B "$BRANCH" "origin/${PRIMARY_BRANCH}" 2>/dev/null
   git submodule update --init --recursive 2>/dev/null || true
 
-  # Write STATE.md entry — included in the first commit, reads as done once PR merges
-  write_state_entry
 
   # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
   for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
@@ -925,9 +907,6 @@ do_merge() {
   if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
     log "PR #${PR_NUMBER} merged!"
 
-    # Update STATE.md on primary branch (pull merged changes first)
-    (cd "$REPO_ROOT" && git checkout "${PRIMARY_BRANCH}" 2>/dev/null && git pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null) || true
-    append_state_log || log "WARNING: STATE.md update failed (non-fatal)"
 
     curl -sf -X DELETE \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -1140,12 +1119,7 @@ ${CI_ERROR_LOG:-No logs available. Use ci-debug.sh to query the pipeline.}
       fi
 
       if [ "$VERDICT" = "APPROVE" ]; then
-        # NOTE: STATE.md append moved to AFTER merge.
-        # Pushing before merge creates a new commit that dismisses
-        # the stale approval (dismiss_stale_approvals=true), causing
-        # 405 "not enough approvals" on merge.
         do_merge "$CURRENT_SHA"
-        # If merge succeeded, append_state_log was already called inside do_merge
       fi
 
       [ -n "$VERDICT" ] && break
