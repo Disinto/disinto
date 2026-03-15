@@ -51,30 +51,23 @@ try_merge_or_rebase() {
     return 0
   fi
 
-  # Merge failed — check if it's a conflict (mergeable=false)
-  mergeable=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/pulls/${pr_num}" | jq -r '.mergeable // true')
-
-  if [ "$mergeable" = "false" ]; then
-    log "PR #${pr_num} has conflicts — rebasing"
-    matrix_send "dev" "🔀 PR #${pr_num} has merge conflicts — auto-rebasing" 2>/dev/null || true
-    local worktree="/tmp/rebase-pr-${pr_num}"
-    rm -rf "$worktree"
-    if git -C "${PROJECT_REPO_ROOT}" worktree add "$worktree" "$branch" 2>/dev/null &&
-       git -C "$worktree" rebase "origin/${PRIMARY_BRANCH}" 2>/dev/null &&
-       git -C "$worktree" push --force-with-lease origin "$branch" 2>/dev/null; then
-      log "PR #${pr_num} rebased — CI will re-run, merge on next poll"
-      git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
-    else
-      log "PR #${pr_num} rebase failed — spawning dev-agent to fix"
-      matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent" 2>/dev/null || true
-      git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
-    fi
+  # Merge failed — always try rebase (Codeberg mergeable field is unreliable)
+  log "PR #${pr_num} merge failed (HTTP ${merge_code}) — attempting rebase"
+  matrix_send "dev" "🔀 PR #${pr_num} merge failed (${merge_code}) — auto-rebasing" 2>/dev/null || true
+  local worktree="/tmp/rebase-pr-${pr_num}"
+  rm -rf "$worktree"
+  git -C "${PROJECT_REPO_ROOT}" fetch origin 2>/dev/null || true
+  if git -C "${PROJECT_REPO_ROOT}" worktree add "$worktree" "$branch" 2>/dev/null &&
+     git -C "$worktree" rebase "origin/${PRIMARY_BRANCH}" 2>/dev/null &&
+     git -C "$worktree" push --force-with-lease origin "$branch" 2>/dev/null; then
+    log "PR #${pr_num} rebased — CI will re-run, merge on next poll"
+    git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
   else
-    log "merge failed (HTTP ${merge_code}) — not a conflict, may need approval"
-    matrix_send "dev" "⚠️ PR #${pr_num} merge failed (HTTP ${merge_code})" 2>/dev/null || true
+    log "PR #${pr_num} rebase failed — spawning dev-agent to fix"
+    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent" 2>/dev/null || true
+    git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
   fi
   return 1
 }
