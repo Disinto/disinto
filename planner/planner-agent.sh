@@ -124,9 +124,12 @@ Your response must start with '- ' on the very first character. No summary, no m
     exit 1
   fi
 
-  # Validate output starts with bullet points (reject meta-commentary)
-  if ! echo "$PHASE1_OUTPUT" | head -1 | grep -q '^- '; then
-    log "ERROR: phase 1 output is not a bullet list — got: $(echo "$PHASE1_OUTPUT" | head -1)"
+  # Strip any non-bullet preamble (Sonnet sometimes narrates before the bullets)
+  PHASE1_OUTPUT=$(echo "$PHASE1_OUTPUT" | sed -n '/^- /,$p')
+
+  # Validate output has bullet points
+  if [ -z "$PHASE1_OUTPUT" ] || ! echo "$PHASE1_OUTPUT" | head -1 | grep -q '^- '; then
+    log "ERROR: phase 1 output contains no bullet list"
     exit 1
   fi
 
