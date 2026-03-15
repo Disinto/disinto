@@ -71,8 +71,8 @@ SWAP_USED_MB=$(free -m | awk '/Swap:/{print $3}')
 if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "${AVAIL_MB:-9999}" -lt 2000 ]; }; then
   flog "MEMORY CRISIS: avail=${AVAIL_MB}MB swap_used=${SWAP_USED_MB}MB — auto-fixing"
 
-  # Kill stale claude processes (>3h old)
-  STALE_CLAUDES=$(pgrep -f "claude" --older 10800 2>/dev/null || true)
+  # Kill stale factory-spawned claude processes (>3h old) — skip interactive sessions
+  STALE_CLAUDES=$(pgrep -f "claude -p" --older 10800 2>/dev/null || true)
   if [ -n "$STALE_CLAUDES" ]; then
     echo "$STALE_CLAUDES" | xargs kill 2>/dev/null || true
     fixed "Killed stale claude processes: ${STALE_CLAUDES}"
@@ -285,8 +285,8 @@ fi
 
 status "P4: housekeeping"
 
-# Stale claude processes (>3h, not caught by P0)
-STALE_CLAUDES=$(pgrep -f "claude" --older 10800 2>/dev/null || true)
+# Stale factory-spawned claude processes (>3h, not caught by P0) — skip interactive sessions
+STALE_CLAUDES=$(pgrep -f "claude -p" --older 10800 2>/dev/null || true)
 if [ -n "$STALE_CLAUDES" ]; then
   echo "$STALE_CLAUDES" | xargs kill 2>/dev/null || true
   fixed "Killed stale claude processes: $(echo $STALE_CLAUDES | wc -w) procs"
