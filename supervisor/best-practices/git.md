@@ -34,7 +34,7 @@
 
 ## Known Issues
 - Main repo MUST be on $PRIMARY_BRANCH at all times. Dev work happens in worktrees.
-- Stale rebases (detached HEAD) break all worktree creation — silent factory stall.
+- Stale rebases (detached HEAD) break all worktree creation — silent pipeline stall.
 - `git worktree add` fails if target directory exists (even empty). Remove first.
 - Many old branches exist locally (100+). Normal — don't bulk-delete.
 
@@ -47,7 +47,7 @@
 
 ## Lessons Learned
 - NEVER delete remote branches before confirming merge. Close PR, rebase locally, force-push if needed.
-- Stale rebase caused 5h factory stall once (2026-03-11). Auto-heal added to dev-agent.
+- Stale rebase caused 5h pipeline stall once (2026-03-11). Auto-heal added to dev-agent.
 - lint-staged hooks fail when `forge` not in PATH. Use `--no-verify` when committing from scripts.
 
 ### PR #608 Post-Mortem (2026-03-12/13)

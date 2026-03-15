@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-poll.sh — Pull-based factory: find the next ready issue and start dev-agent
+# dev-poll.sh — Pull-based scheduler: find the next ready issue and start dev-agent
 #
 # Pull system: issues labeled "backlog" are candidates. An issue is READY when
 # ALL its dependency issues are closed (and their PRs merged).
@@ -104,7 +104,7 @@ dep_is_merged() {
     return 1
   fi
 
-  # Issue closed = dep satisfied. The factory only closes issues after
+  # Issue closed = dep satisfied. The scheduler only closes issues after
   # merging, so closed state is trustworthy. No need to hunt for the
   # specific PR — that was over-engineering that caused false negatives.
   return 0

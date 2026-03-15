@@ -1106,9 +1106,9 @@ while [ "$REVIEW_ROUND" -lt "$MAX_REVIEW_ROUNDS" ]; do
     CI_FIX_COUNT=$(( ${CI_FIX_COUNT:-0} + 1 ))
     if [ "$CI_FIX_COUNT" -gt 2 ]; then
       log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts"
-      # Escalate to supervisor — write marker for factory-poll.sh to pick up
+      # Escalate to supervisor — write marker for supervisor-poll.sh to pick up
       echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER},\"reason\":\"ci_exhausted\",\"step\":\"${FAILED_STEP:-unknown}\",\"attempts\":${CI_FIX_COUNT},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/factory/escalations.jsonl"
+        >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
       log "escalated to supervisor via escalations.jsonl"
       break
     fi

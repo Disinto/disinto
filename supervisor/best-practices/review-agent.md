@@ -19,7 +19,7 @@
 - **Hallucinated findings** — bot may flag non-issues. This needs Clawy's judgment — escalate.
 
 ## Monitoring
-- Unreviewed PRs with CI pass for >1h → factory-poll.sh auto-triggers review
+- Unreviewed PRs with CI pass for >1h → supervisor-poll.sh auto-triggers review
 - Review errors should resolve on next poll cycle
 - If same PR fails review 3+ times → likely a prompt issue, escalate
 

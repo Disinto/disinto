@@ -22,7 +22,7 @@ cd <worktree> && git commit --allow-empty -m "ci: retrigger" --no-verify && git 
 ```
 
 ### Prevention
-- The factory runs 3 agents staggered by 3 minutes. During heavy development, many PRs trigger CI simultaneously.
+- The system runs 3 agents staggered by 3 minutes. During heavy development, many PRs trigger CI simultaneously.
 - One pipeline at a time is ideal on this VPS (resource + rate limit reasons).
 - If >3 pipelines are pending/running, do NOT create more work.
 

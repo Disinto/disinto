@@ -55,7 +55,7 @@ CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 
 ### Required: CI pipeline
 
-The repo needs at least one Woodpecker pipeline. Dark-factory monitors CI status to decide when a PR is ready for review and when it can merge.
+The repo needs at least one Woodpecker pipeline. Disinto monitors CI status to decide when a PR is ready for review and when it can merge.
 
 ### Required: `CLAUDE.md`
 
@@ -155,7 +155,7 @@ Add (adjust paths):
 FACTORY_ROOT=/home/you/disinto
 
 # Supervisor — health checks, auto-healing (every 10 min)
-0,10,20,30,40,50 * * * * $FACTORY_ROOT/factory/factory-poll.sh
+0,10,20,30,40,50 * * * * $FACTORY_ROOT/supervisor/supervisor-poll.sh
 
 # Review agent — find unreviewed PRs (every 10 min, offset +3)
 3,13,23,33,43,53 * * * * $FACTORY_ROOT/review/review-poll.sh
@@ -176,7 +176,7 @@ The 3-minute offsets prevent agents from competing for resources.
 
 ```bash
 # Should complete with "all clear" (no problems to fix)
-bash factory/factory-poll.sh
+bash supervisor/supervisor-poll.sh
 
 # Should list backlog issues (or "no backlog issues")
 bash dev/dev-poll.sh
@@ -188,7 +188,7 @@ bash review/review-poll.sh
 Check logs after a few cycles:
 
 ```bash
-tail -30 factory/factory.log
+tail -30 supervisor/supervisor.log
 tail -30 dev/dev-agent.log
 tail -30 review/review.log
 ```
@@ -203,7 +203,7 @@ If you want real-time notifications and human-in-the-loop escalation:
    sudo cp lib/matrix_listener.service /etc/systemd/system/
    sudo systemctl enable --now matrix_listener
    ```
-3. The factory and gardener will post status updates and escalation threads to the configured room. Reply in-thread to answer escalations.
+3. The supervisor and gardener will post status updates and escalation threads to the configured room. Reply in-thread to answer escalations.
 
 ## Lifecycle
 
@@ -219,7 +219,7 @@ You write issues (with backlog label)
             → merge, close issue, clean up
 
 Meanwhile:
-  factory-poll monitors health, kills stale processes, manages resources
+  supervisor-poll monitors health, kills stale processes, manages resources
   gardener grooms backlog: closes duplicates, promotes tech-debt, escalates ambiguity
   planner rebuilds AGENTS.md from git history, gap-analyses against VISION.md
 ```
@@ -233,4 +233,4 @@ Meanwhile:
 | CI stuck | `bash lib/ci-debug.sh` — check Woodpecker. Rate-limited? (exit 128 = wait 15 min) |
 | Claude not found | `which claude` — must be in PATH. Check `lib/env.sh` adds `~/.local/bin`. |
 | Merge fails | Branch protection misconfigured? Review bot needs write access to the repo. |
-| Memory issues | Factory auto-heals at <500 MB free. Check `factory/factory.log` for P0 alerts. |
+| Memory issues | Supervisor auto-heals at <500 MB free. Check `supervisor/supervisor.log` for P0 alerts. |

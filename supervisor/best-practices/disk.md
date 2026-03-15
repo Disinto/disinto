@@ -2,7 +2,7 @@
 
 ## Safe Fixes
 - Docker cleanup: `sudo docker system prune -f` (keeps images, removes stopped containers + dangling layers)
-- Truncate factory logs >5MB: `truncate -s 0 <file>`
+- Truncate supervisor logs >5MB: `truncate -s 0 <file>`
 - Remove stale worktrees: check `/tmp/${PROJECT_NAME}-worktree-*`, only if dev-agent not running on them
 - Woodpecker log_entries: `DELETE FROM log_entries WHERE id < (SELECT max(id) - 100000 FROM log_entries);` then `VACUUM;`
 - Node module caches in worktrees: `rm -rf /tmp/${PROJECT_NAME}-worktree-*/node_modules/`

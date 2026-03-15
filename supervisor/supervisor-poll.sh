@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# factory-poll.sh — Factory supervisor: bash checks + claude -p for fixes
+# supervisor-poll.sh — Supervisor agent: bash checks + claude -p for fixes
 #
 # Runs every 10min via cron. Does all health checks in bash (zero tokens).
 # Only invokes claude -p when auto-fix fails or issue is complex.
 #
-# Cron: */10 * * * * /path/to/disinto/factory/factory-poll.sh
+# Cron: */10 * * * * /path/to/disinto/supervisor/supervisor-poll.sh
 #
-# Peek:  cat /tmp/factory-status
-# Log:   tail -f /path/to/disinto/factory/factory.log
+# Peek:  cat /tmp/supervisor-status
+# Log:   tail -f /path/to/disinto/supervisor/supervisor.log
 
 source "$(dirname "$0")/../lib/env.sh"
 
-LOGFILE="${FACTORY_ROOT}/factory/factory.log"
-STATUSFILE="/tmp/factory-status"
-LOCKFILE="/tmp/factory-poll.lock"
-PROMPT_FILE="${FACTORY_ROOT}/factory/PROMPT.md"
+LOGFILE="${FACTORY_ROOT}/supervisor/supervisor.log"
+STATUSFILE="/tmp/supervisor-status"
+LOCKFILE="/tmp/supervisor-poll.lock"
+PROMPT_FILE="${FACTORY_ROOT}/supervisor/PROMPT.md"
 
 # Prevent overlapping runs
 if [ -f "$LOCKFILE" ]; then
@@ -32,15 +32,15 @@ flog() {
 }
 
 status() {
-  printf '[%s] factory: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" > "$STATUSFILE"
+  printf '[%s] supervisor: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" > "$STATUSFILE"
   flog "$*"
 }
 
 # ── Check for escalation replies from Matrix ──────────────────────────────
 ESCALATION_REPLY=""
-if [ -s /tmp/factory-escalation-reply ]; then
-  ESCALATION_REPLY=$(cat /tmp/factory-escalation-reply)
-  rm -f /tmp/factory-escalation-reply
+if [ -s /tmp/supervisor-escalation-reply ]; then
+  ESCALATION_REPLY=$(cat /tmp/supervisor-escalation-reply)
+  rm -f /tmp/supervisor-escalation-reply
   flog "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
 fi
 
@@ -71,7 +71,7 @@ SWAP_USED_MB=$(free -m | awk '/Swap:/{print $3}')
 if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "${AVAIL_MB:-9999}" -lt 2000 ]; }; then
   flog "MEMORY CRISIS: avail=${AVAIL_MB}MB swap_used=${SWAP_USED_MB}MB — auto-fixing"
 
-  # Kill stale factory-spawned claude processes (>3h old) — skip interactive sessions
+  # Kill stale agent-spawned claude processes (>3h old) — skip interactive sessions
   STALE_CLAUDES=$(pgrep -f "claude -p" --older 10800 2>/dev/null || true)
   if [ -n "$STALE_CLAUDES" ]; then
     echo "$STALE_CLAUDES" | xargs kill 2>/dev/null || true
@@ -113,7 +113,7 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   # Docker cleanup (safe — keeps images)
   sudo docker system prune -f >/dev/null 2>&1 && fixed "Docker prune"
 
-  # Truncate factory logs >10MB
+  # Truncate supervisor logs >10MB
   for logfile in "${FACTORY_ROOT}"/{dev,review,factory}/*.log; do
     if [ -f "$logfile" ]; then
       SIZE_KB=$(du -k "$logfile" 2>/dev/null | cut -f1)
@@ -159,7 +159,7 @@ fi
 # =============================================================================
 # P2: FACTORY STOPPED — CI, dev-agent, git
 # =============================================================================
-status "P2: checking factory"
+status "P2: checking pipeline"
 
 # CI stuck
 STUCK_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='running' AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs || true)
@@ -204,7 +204,7 @@ fi
 # =============================================================================
 # P2b: FACTORY STALLED — backlog exists but no agent running
 # =============================================================================
-status "P2: checking factory stall"
+status "P2: checking pipeline stall"
 
 BACKLOG_COUNT=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
 IN_PROGRESS=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
@@ -221,7 +221,7 @@ if [ "${BACKLOG_COUNT:-0}" -gt 0 ] && [ "${IN_PROGRESS:-0}" -eq 0 ]; then
   IDLE_MIN=$(( (NOW_EPOCH - LAST_LOG_EPOCH) / 60 ))
 
   if [ "$IDLE_MIN" -gt 20 ]; then
-    p2 "Factory stalled: ${BACKLOG_COUNT} backlog issue(s), no agent ran for ${IDLE_MIN}min"
+    p2 "Pipeline stalled: ${BACKLOG_COUNT} backlog issue(s), no agent ran for ${IDLE_MIN}min"
   fi
 fi
 
@@ -277,7 +277,7 @@ done
 # P4: HOUSEKEEPING — stale processes
 # =============================================================================
 # Check for dev-agent escalations
-ESCALATION_FILE="${FACTORY_ROOT}/factory/escalations.jsonl"
+ESCALATION_FILE="${FACTORY_ROOT}/supervisor/escalations.jsonl"
 if [ -s "$ESCALATION_FILE" ]; then
   ESCALATION_COUNT=$(wc -l < "$ESCALATION_FILE")
   p3 "Dev-agent escalated ${ESCALATION_COUNT} issue(s) — see ${ESCALATION_FILE}"
@@ -285,7 +285,7 @@ fi
 
 status "P4: housekeeping"
 
-# Stale factory-spawned claude processes (>3h, not caught by P0) — skip interactive sessions
+# Stale agent-spawned claude processes (>3h, not caught by P0) — skip interactive sessions
 STALE_CLAUDES=$(pgrep -f "claude -p" --older 10800 2>/dev/null || true)
 if [ -n "$STALE_CLAUDES" ]; then
   echo "$STALE_CLAUDES" | xargs kill 2>/dev/null || true
@@ -308,7 +308,7 @@ for wt in /tmp/${PROJECT_NAME}-worktree-* /tmp/${PROJECT_NAME}-review-*; do
 done
 git -C "$PROJECT_REPO_ROOT" worktree prune 2>/dev/null || true
 
-# Rotate factory log if >5MB
+# Rotate supervisor log if >5MB
 for logfile in "${FACTORY_ROOT}"/{dev,review,factory}/*.log; do
   if [ -f "$logfile" ]; then
     SIZE_KB=$(du -k "$logfile" 2>/dev/null | cut -f1)
@@ -329,12 +329,12 @@ if [ -n "$ALL_ALERTS" ]; then
   ALERT_TEXT=$(echo -e "$ALL_ALERTS")
 
   # Notify Matrix
-  matrix_send "supervisor" "⚠️ Factory alerts:
+  matrix_send "supervisor" "⚠️ Supervisor alerts:
 ${ALERT_TEXT}" 2>/dev/null || true
 
   flog "Invoking claude -p for alerts"
 
-  CLAUDE_PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || echo "You are a factory supervisor. Fix the issue below.")
+  CLAUDE_PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || echo "You are a supervisor agent. Fix the issue below.")
 
 ## Current Alerts
 ${ALERT_TEXT}

@@ -9,7 +9,7 @@ Point it at a Codeberg repo with a Woodpecker CI pipeline and it will pick up is
 ## Architecture
 
 ```
-cron (*/10) ──→ factory-poll.sh    ← supervisor (bash checks, zero tokens)
+cron (*/10) ──→ supervisor-poll.sh    ← supervisor (bash checks, zero tokens)
                  ├── all clear? → exit 0
                  └── problem? → claude -p (diagnose, fix, or escalate)
 
@@ -33,9 +33,9 @@ all agents ──→ matrix_send()     ← status updates, escalations, merge no
 **Required:**
 
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) — `claude` in PATH, authenticated
-- [Codeberg](https://codeberg.org/) account with an API token — the factory reads issues, opens PRs, posts comments, and merges via the Codeberg API
+- [Codeberg](https://codeberg.org/) account with an API token — disinto reads issues, opens PRs, posts comments, and merges via the Codeberg API
 - A second Codeberg account for the review bot — reviews posted under a separate identity so the dev-agent doesn't review its own PRs (`REVIEW_BOT_TOKEN`)
-- [Woodpecker CI](https://woodpecker-ci.org/) — local instance connected to your Codeberg repo; the factory monitors pipelines, retries failures, and queries the Woodpecker Postgres DB directly
+- [Woodpecker CI](https://woodpecker-ci.org/) — local instance connected to your Codeberg repo; disinto monitors pipelines, retries failures, and queries the Woodpecker Postgres DB directly
 - PostgreSQL client (`psql`) — for Woodpecker DB queries (pipeline status, build counts)
 - `jq`, `curl`, `git`
 
@@ -84,13 +84,13 @@ CLAUDE_TIMEOUT=7200         # max seconds per Claude invocation (default: 2h)
 # 3. Install cron (staggered to avoid overlap)
 crontab -e
 # Add:
-#   0,10,20,30,40,50 * * * * /path/to/disinto/factory/factory-poll.sh
+#   0,10,20,30,40,50 * * * * /path/to/disinto/supervisor/supervisor-poll.sh
 #   3,13,23,33,43,53 * * * * /path/to/disinto/review/review-poll.sh
 #   6,16,26,36,46,56 * * * * /path/to/disinto/dev/dev-poll.sh
 #   15 8 * * *                /path/to/disinto/gardener/gardener-poll.sh
 
 # 4. Verify
-bash factory/factory-poll.sh   # should log "all clear"
+bash supervisor/supervisor-poll.sh   # should log "all clear"
 ```
 
 ## Directory Structure
@@ -113,8 +113,8 @@ disinto/
 ├── gardener/
 │   ├── gardener-poll.sh  # Cron entry: backlog grooming
 │   └── best-practices.md # Gardener knowledge base
-└── factory/
-    ├── factory-poll.sh   # Supervisor: health checks + claude -p
+└── supervisor/
+    ├── supervisor-poll.sh   # Supervisor: health checks + claude -p
     ├── PROMPT.md         # Supervisor's system prompt
     ├── update-prompt.sh  # Self-learning: append to best-practices
     └── best-practices/   # Progressive disclosure knowledge base
@@ -131,7 +131,7 @@ disinto/
 
 | Agent | Trigger | Job |
 |-------|---------|-----|
-| **Factory** (supervisor) | Every 10 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
+| **Supervisor** | Every 10 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
 | **Dev** | Every 10 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
 | **Review** | Every 10 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
 | **Gardener** | Daily | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |

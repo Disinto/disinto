@@ -2,15 +2,15 @@
 # update-prompt.sh — Append a lesson to a best-practices file
 #
 # Usage:
-#   ./factory/update-prompt.sh "best-practices/memory.md" "### Title\nBody text"
-#   ./factory/update-prompt.sh --from-file "best-practices/memory.md" /tmp/lesson.md
+#   ./supervisor/update-prompt.sh "best-practices/memory.md" "### Title\nBody text"
+#   ./supervisor/update-prompt.sh --from-file "best-practices/memory.md" /tmp/lesson.md
 #
 # Called by claude -p when it learns something during a fix.
 # Commits and pushes the update to the disinto repo.
 
 source "$(dirname "$0")/../lib/env.sh"
 
-TARGET_FILE="${FACTORY_ROOT}/factory/$1"
+TARGET_FILE="${FACTORY_ROOT}/supervisor/$1"
 shift
 
 if [ "$1" = "--from-file" ] && [ -f "$2" ]; then
@@ -40,8 +40,8 @@ else
 fi
 
 cd "$FACTORY_ROOT"
-git add "factory/$1" 2>/dev/null || git add "$TARGET_FILE"
-git commit -m "factory: learned — $(echo "$LESSON" | head -1 | sed 's/^#* *//')" --no-verify 2>/dev/null
+git add "supervisor/$1" 2>/dev/null || git add "$TARGET_FILE"
+git commit -m "supervisor: learned — $(echo "$LESSON" | head -1 | sed 's/^#* *//')" --no-verify 2>/dev/null
 git push origin main 2>/dev/null
 
 log "Updated $(basename "$TARGET_FILE") with new lesson"

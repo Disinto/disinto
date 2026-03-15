@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # matrix_listener.sh — Long-poll Matrix sync daemon
 #
-# Listens for replies in the factory Matrix room and dispatches them
+# Listens for replies in the Matrix coordination room and dispatches them
 # to the appropriate agent via well-known files.
 #
 # Dispatch:
-#   Thread reply to [supervisor] message → /tmp/factory-escalation-reply
+#   Thread reply to [supervisor] message → /tmp/supervisor-escalation-reply
 #   Thread reply to [gardener] message   → /tmp/gardener-escalation-reply
 #
 # Run as systemd service (see matrix_listener.service) or manually:
@@ -18,7 +18,7 @@ source "$(dirname "$0")/../lib/env.sh"
 
 SINCE_FILE="/tmp/matrix-listener-since"
 THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
-LOGFILE="${FACTORY_ROOT}/factory/matrix-listener.log"
+LOGFILE="${FACTORY_ROOT}/supervisor/matrix-listener.log"
 SYNC_TIMEOUT=30000  # 30s long-poll
 BACKOFF=5
 MAX_BACKOFF=60
@@ -133,7 +133,7 @@ while true; do
 
     case "$AGENT" in
       supervisor)
-        printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/factory-escalation-reply
+        printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/supervisor-escalation-reply
         # Acknowledge
         matrix_send "supervisor" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
