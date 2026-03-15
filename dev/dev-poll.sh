@@ -29,6 +29,53 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
+# HELPER: try merge, rebase if mergeable=false, then retry once
+try_merge_or_rebase() {
+  local pr_num="$1" issue_num="$2" branch="$3"
+  local merge_code mergeable
+
+  merge_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${API}/pulls/${pr_num}/merge" \
+    -d '{"Do":"merge","delete_branch_after_merge":true}')
+
+  if [ "$merge_code" = "200" ] || [ "$merge_code" = "204" ]; then
+    log "PR #${pr_num} merged! Closing #${issue_num}"
+    curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${issue_num}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
+    curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
+    matrix_send "dev" "✅ PR #${pr_num} merged! Issue #${issue_num} done." 2>/dev/null || true
+    return 0
+  fi
+
+  # Merge failed — check if it's a conflict (mergeable=false)
+  mergeable=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${pr_num}" | jq -r '.mergeable // true')
+
+  if [ "$mergeable" = "false" ]; then
+    log "PR #${pr_num} has conflicts — rebasing"
+    local worktree="/tmp/rebase-pr-${pr_num}"
+    rm -rf "$worktree"
+    if git -C "${PROJECT_REPO_ROOT}" worktree add "$worktree" "$branch" 2>/dev/null &&
+       git -C "$worktree" rebase "origin/${PRIMARY_BRANCH}" 2>/dev/null &&
+       git -C "$worktree" push --force-with-lease origin "$branch" 2>/dev/null; then
+      log "PR #${pr_num} rebased — CI will re-run, merge on next poll"
+      git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
+    else
+      log "PR #${pr_num} rebase failed — spawning dev-agent to fix"
+      git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
+    fi
+  else
+    log "merge failed (HTTP ${merge_code}) — not a conflict, may need approval"
+  fi
+  return 1
+}
+
 # --- Check if dev-agent already running ---
 if [ -f "$LOCKFILE" ]; then
   LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null || echo "")
@@ -143,24 +190,10 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
     if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+      PR_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        "${API}/pulls/${HAS_PR}" | jq -r '.head.ref') || true
       log "PR #${HAS_PR} approved + CI green → merging"
-      MERGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/pulls/${HAS_PR}/merge" \
-        -d '{"Do":"merge","delete_branch_after_merge":true}')
-
-      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] ; then
-        log "PR #${HAS_PR} merged! Closing #${ISSUE_NUM}"
-        curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${API}/issues/${ISSUE_NUM}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-        curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
-        matrix_send "dev" "✅ PR #${HAS_PR} merged! Issue #${ISSUE_NUM} done." 2>/dev/null || true
-      else
-        log "merge failed (HTTP ${MERGE_CODE})"
-      fi
+      try_merge_or_rebase "$HAS_PR" "$ISSUE_NUM" "$PR_BRANCH"
       exit 0
 
     elif [ "$CI_STATE" = "success" ] && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
@@ -225,18 +258,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   # Try merge if approved + CI green
   if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → merging"
-    MERGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/pulls/${PR_NUM}/merge" \
-      -d '{"Do":"merge","delete_branch_after_merge":true}')
-    if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ]; then
-      log "PR #${PR_NUM} merged! Closing #${STUCK_ISSUE}"
-      curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/issues/${STUCK_ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      matrix_send "dev" "✅ PR #${PR_NUM} merged! Issue #${STUCK_ISSUE} done." 2>/dev/null || true
-    fi
+    try_merge_or_rebase "$PR_NUM" "$STUCK_ISSUE" "$PR_BRANCH"
     continue
   fi
 
@@ -298,19 +320,10 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
     if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+      EXISTING_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        "${API}/pulls/${EXISTING_PR}" | jq -r '.head.ref') || true
       log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → merging"
-      MERGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/pulls/${EXISTING_PR}/merge" \
-        -d '{"Do":"merge","delete_branch_after_merge":true}')
-      if [ "$MERGE_CODE" = "200" ] || [ "$MERGE_CODE" = "204" ] ; then
-        log "PR #${EXISTING_PR} merged! Closing #${ISSUE_NUM}"
-        curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${API}/issues/${ISSUE_NUM}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-        matrix_send "dev" "✅ PR #${EXISTING_PR} merged! Issue #${ISSUE_NUM} done." 2>/dev/null || true
-      fi
+      try_merge_or_rebase "$EXISTING_PR" "$ISSUE_NUM" "$EXISTING_BRANCH"
       continue
 
     elif [ "${HAS_CHANGES:-0}" -gt 0 ]; then
