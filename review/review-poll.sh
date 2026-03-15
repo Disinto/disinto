@@ -78,6 +78,7 @@ while IFS= read -r line; do
     REVIEWED=$((REVIEWED + 1))
   else
     log "  #${PR_NUM} review failed"
+    matrix_send "review" "❌ PR #${PR_NUM} review failed" 2>/dev/null || true
   fi
 
   if [ "$REVIEWED" -ge "$MAX_REVIEWS" ]; then

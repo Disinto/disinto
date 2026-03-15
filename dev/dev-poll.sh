@@ -57,6 +57,7 @@ try_merge_or_rebase() {
 
   if [ "$mergeable" = "false" ]; then
     log "PR #${pr_num} has conflicts — rebasing"
+    matrix_send "dev" "🔀 PR #${pr_num} has merge conflicts — auto-rebasing" 2>/dev/null || true
     local worktree="/tmp/rebase-pr-${pr_num}"
     rm -rf "$worktree"
     if git -C "${PROJECT_REPO_ROOT}" worktree add "$worktree" "$branch" 2>/dev/null &&
@@ -66,12 +67,14 @@ try_merge_or_rebase() {
       git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
     else
       log "PR #${pr_num} rebase failed — spawning dev-agent to fix"
+      matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent" 2>/dev/null || true
       git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
     fi
   else
     log "merge failed (HTTP ${merge_code}) — not a conflict, may need approval"
+    matrix_send "dev" "⚠️ PR #${pr_num} merge failed (HTTP ${merge_code})" 2>/dev/null || true
   fi
   return 1
 }
@@ -90,6 +93,7 @@ fi
 AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
 if [ "$AVAIL_MB" -lt 2000 ]; then
   log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
+  matrix_send "dev" "⚠️ Low memory (${AVAIL_MB}MB) — skipping dev-agent" 2>/dev/null || true
   exit 0
 fi
 
@@ -356,6 +360,7 @@ fi
 # LAUNCH: start dev-agent for the ready issue
 # =============================================================================
 log "launching dev-agent for #${READY_ISSUE}"
+matrix_send "dev" "🚀 Starting dev-agent on issue #${READY_ISSUE}" 2>/dev/null || true
 rm -f "$PREFLIGHT_RESULT"
 
 nohup "${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1 &
