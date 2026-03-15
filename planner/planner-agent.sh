@@ -40,11 +40,15 @@ if [ -f "$MARKER_FILE" ]; then
     GIT_RANGE="${LAST_SHA}..HEAD"
   else
     log "WARNING: marker SHA ${LAST_SHA:0:7} not found, using 30-day window"
-    GIT_RANGE="$(git log --format=%H --after='30 days ago' --reverse | head -1 2>/dev/null || echo HEAD~30)..HEAD"
+    local first_sha
+    first_sha=$(git log --format=%H --after='30 days ago' --reverse 2>/dev/null | head -1) || true
+    GIT_RANGE="${first_sha:-HEAD~30}..HEAD"
   fi
 else
   log "No marker file, using 30-day window"
-  GIT_RANGE="$(git log --format=%H --after='30 days ago' --reverse | head -1 2>/dev/null || echo HEAD~30)..HEAD"
+  local first_sha
+  first_sha=$(git log --format=%H --after='30 days ago' --reverse 2>/dev/null | head -1) || true
+  GIT_RANGE="${first_sha:-HEAD~30}..HEAD"
 fi
 
 GIT_LOG=$(git log "$GIT_RANGE" --oneline --no-merges 2>/dev/null || true)
