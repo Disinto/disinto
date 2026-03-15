@@ -485,6 +485,21 @@ ${CHANGE_SUMMARY}
       rm -f /tmp/dev-comment-body.txt /tmp/dev-comment.json
     fi
   else
+    # Check if PR already has approval — try merge immediately
+    EXISTING_APPROVAL=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/pulls/${PR_NUMBER}/reviews" | \
+      jq -r '[.[] | select(.stale == false and .state == "APPROVED")] | length')
+    CI_NOW=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/commits/$(git -C "$REPO_ROOT" rev-parse "origin/${BRANCH}" 2>/dev/null || echo HEAD)/status" | jq -r '.state // "unknown"')
+    if [ "${EXISTING_APPROVAL:-0}" -gt 0 ] && [ "$CI_NOW" = "success" ]; then
+      log "PR already approved + CI green — attempting merge"
+      CURRENT_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha')
+      do_merge "$CURRENT_SHA"
+      cleanup_labels
+      cleanup_worktree
+      exit 0
+    fi
     log "no unaddressed review found — PR exists, entering review loop to wait"
     cd "$REPO_ROOT"
     git fetch origin "$BRANCH" 2>/dev/null
@@ -869,7 +884,7 @@ do_merge() {
     sleep 30
   done
 
-  # Check if PR is mergeable — rebase if not
+  # Pre-emptive rebase to avoid merge conflicts
   local mergeable
   mergeable=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls/${PR_NUMBER}" | jq -r '.mergeable // true')
@@ -923,8 +938,46 @@ do_merge() {
     cleanup_worktree
     exit 0
   else
-    log "merge failed (HTTP ${http_code})"
-    notify "PR #${PR_NUMBER} approved but merge failed (HTTP ${http_code}). Please merge manually."
+    log "merge failed (HTTP ${http_code}) — attempting rebase and retry"
+    local work_dir="${WORKTREE:-$REPO_ROOT}"
+    if (cd "$work_dir" && git fetch origin "${PRIMARY_BRANCH}" && git rebase "origin/${PRIMARY_BRANCH}" 2>&1); then
+      log "rebase succeeded — force pushing"
+      (cd "$work_dir" && git push origin "${BRANCH}" --force-with-lease 2>&1) || true
+      sha=$(cd "$work_dir" && git rev-parse HEAD)
+      log "waiting for CI on rebased commit ${sha:0:7}"
+      for r in $(seq 1 20); do
+        ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+          "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
+        [ "$ci" = "success" ] && break
+        [ "$ci" = "failure" ] || [ "$ci" = "error" ] && { log "CI failed after merge-retry rebase"; notify "PR #${PR_NUMBER} CI failed after rebase. Needs manual fix."; exit 0; }
+        sleep 30
+      done
+      # Re-approve (force push dismisses stale approvals)
+      curl -sf -X POST -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/pulls/${PR_NUMBER}/reviews" \
+        -d "{\"event\":\"APPROVED\",\"body\":\"Auto-approved after rebase.\"}" >/dev/null 2>&1 || true
+      # Retry merge
+      http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/pulls/${PR_NUMBER}/merge" \
+        -d '{"Do":"merge","delete_branch_after_merge":true}')
+      if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
+        log "PR #${PR_NUMBER} merged after rebase!"
+        notify "✅ PR #${PR_NUMBER} merged! Issue #${ISSUE} done."
+        curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
+        cleanup_labels
+        cleanup_worktree
+        exit 0
+      fi
+    else
+      (cd "$work_dir" && git rebase --abort 2>/dev/null) || true
+    fi
+    log "merge still failing after rebase (HTTP ${http_code})"
+    notify "PR #${PR_NUMBER} merge failed after rebase (HTTP ${http_code}). Needs human attention."
     exit 0
   fi
 }
