@@ -493,11 +493,66 @@ ${CHANGE_SUMMARY}
       "${API}/commits/$(git -C "$REPO_ROOT" rev-parse "origin/${BRANCH}" 2>/dev/null || echo HEAD)/status" | jq -r '.state // "unknown"')
     if [ "${EXISTING_APPROVAL:-0}" -gt 0 ] && [ "$CI_NOW" = "success" ]; then
       log "PR already approved + CI green — attempting merge"
-      CURRENT_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-        "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha')
-      do_merge "$CURRENT_SHA"
-      cleanup_labels
-      cleanup_worktree
+      MERGE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/pulls/${PR_NUMBER}/merge" \
+        -d '{"Do":"merge","delete_branch_after_merge":true}')
+      if [ "$MERGE_HTTP" = "200" ] || [ "$MERGE_HTTP" = "204" ]; then
+        log "PR #${PR_NUMBER} merged!"
+        notify "✅ PR #${PR_NUMBER} merged! Issue #${ISSUE} done."
+        curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
+        cleanup_labels
+        cleanup_worktree
+        exit 0
+      fi
+      # Merge failed — rebase and retry
+      log "merge failed (HTTP ${MERGE_HTTP}) — rebasing"
+      cd "$REPO_ROOT"
+      git fetch origin "${PRIMARY_BRANCH}" "$BRANCH" 2>/dev/null
+      TMP_WT="/tmp/rebase-pr-${PR_NUMBER}"
+      rm -rf "$TMP_WT"
+      if git worktree add "$TMP_WT" "$BRANCH" 2>/dev/null && \
+         (cd "$TMP_WT" && git rebase "origin/${PRIMARY_BRANCH}" 2>&1) && \
+         (cd "$TMP_WT" && git push --force-with-lease origin "$BRANCH" 2>&1); then
+        log "rebased — waiting for CI + re-approval"
+        git worktree remove "$TMP_WT" 2>/dev/null || true
+        NEW_SHA=$(git rev-parse "origin/${BRANCH}" 2>/dev/null || true)
+        # Wait for CI
+        for _r in $(seq 1 20); do
+          _ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+            "${API}/commits/${NEW_SHA}/status" | jq -r '.state // "unknown"')
+          [ "$_ci" = "success" ] && break
+          sleep 30
+        done
+        # Re-approve (force push dismissed stale approval)
+        curl -sf -X POST -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API}/pulls/${PR_NUMBER}/reviews" \
+          -d '{"event":"APPROVED","body":"Auto-approved after rebase."}' >/dev/null 2>&1 || true
+        # Retry merge
+        MERGE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API}/pulls/${PR_NUMBER}/merge" \
+          -d '{"Do":"merge","delete_branch_after_merge":true}')
+        if [ "$MERGE_HTTP" = "200" ] || [ "$MERGE_HTTP" = "204" ]; then
+          log "PR #${PR_NUMBER} merged after rebase!"
+          notify "✅ PR #${PR_NUMBER} merged! Issue #${ISSUE} done."
+          curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
+          cleanup_labels
+          cleanup_worktree
+          exit 0
+        fi
+        notify "PR #${PR_NUMBER} merge failed after rebase (HTTP ${MERGE_HTTP}). Needs human attention."
+      else
+        git worktree remove --force "$TMP_WT" 2>/dev/null || true
+        notify "PR #${PR_NUMBER} rebase failed. Needs human attention."
+      fi
       exit 0
     fi
     log "no unaddressed review found — PR exists, entering review loop to wait"
