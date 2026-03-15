@@ -95,18 +95,38 @@ On Codeberg, set up branch protection for your primary branch:
 
 This ensures dev-agent can't merge its own PRs — it must wait for review-agent (running as the bot account) to approve.
 
-### Optional: `STATE.md`
+### Required: Seed the `AGENTS.md` tree
 
-Dev-agent creates this file automatically on first merge. It tracks what was delivered and when:
+The planner-agent maintains an `AGENTS.md` tree — architecture docs with
+per-file `<!-- last-reviewed: SHA -->` watermarks. You must seed this before
+the first planner run, otherwise the planner sees no watermarks and treats the
+entire repo as "new", generating a noisy first-run diff.
 
-```markdown
-# STATE.md — What <project> currently is and does
+1. **Create `AGENTS.md` in the repo root** with a one-page overview of the
+   project: what it is, tech stack, directory layout, key conventions. Link
+   to sub-directory AGENTS.md files.
 
-- [2026-03-14] lint: upgrade frontend ESLint (#4)
-- [2026-03-15] fix: form validation on submit (#7)
-```
+2. **Create sub-directory `AGENTS.md` files** for each major directory
+   (e.g. `frontend/AGENTS.md`, `backend/AGENTS.md`). Keep each under ~200
+   lines — architecture and conventions, not implementation details.
 
-No action needed — just don't be surprised when it appears.
+3. **Set the watermark** on line 1 of every AGENTS.md file to the current HEAD:
+   ```bash
+   SHA=$(git rev-parse --short HEAD)
+   for f in $(find . -name "AGENTS.md" -not -path "./.git/*"); do
+     sed -i "1s/^/<!-- last-reviewed: ${SHA} -->\n/" "$f"
+   done
+   ```
+
+4. **Symlink `CLAUDE.md`** so Claude Code picks up the same file:
+   ```bash
+   ln -sf AGENTS.md CLAUDE.md
+   ```
+
+5. Commit and push. The planner will now see 0 changes on its first run and
+   only update files when real commits land.
+
+See `planner/planner-agent.sh` for the full AGENTS.md conventions.
 
 ## 3. Write Good Issues
 
@@ -145,6 +165,9 @@ FACTORY_ROOT=/home/you/dark-factory
 
 # Gardener — backlog grooming (daily)
 15 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh
+
+# Planner — AGENTS.md maintenance + gap analysis (weekly)
+0 9 * * 1                 $FACTORY_ROOT/planner/planner-poll.sh
 ```
 
 The 3-minute offsets prevent agents from competing for resources.
@@ -198,6 +221,7 @@ You write issues (with backlog label)
 Meanwhile:
   factory-poll monitors health, kills stale processes, manages resources
   gardener grooms backlog: closes duplicates, promotes tech-debt, escalates ambiguity
+  planner rebuilds AGENTS.md from git history, gap-analyses against VISION.md
 ```
 
 ## Troubleshooting
