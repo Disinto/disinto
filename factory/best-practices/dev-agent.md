@@ -50,3 +50,6 @@ The only check needed: `issue.state == "closed"`.
 
 ### False Positive: Status Unchanged Alert
 The factory-poll alert 'status unchanged for Nmin' is a false positive for complex implementation tasks. The status is set to 'claude assessing + implementing' at the START of the `timeout 7200 claude -p ...` call and only updates after Claude finishes. Normal complex tasks (multi-file Solidity changes + forge test) take 45-90 minutes. To distinguish a false positive from a real stuck agent: check that the claude PID is alive (`ps -p <PID>`), consuming CPU (>0%), and has active threads (`pstree -p <PID>`). If the process is alive and using CPU, do NOT restart it — this wastes completed work.
+
+### False Positive: 'Waiting for CI + Review' Alert
+The 'status unchanged for Nmin' alert is also a false positive when status is 'waiting for CI + review on PR #N (round R)'. This is an intentional sleep/poll loop — the agent is waiting for CI to pass and then for review-poll to post a review. CI can take 20–40 minutes; review follows. Do NOT restart the agent. Confirm by checking: (1) agent PID is alive, (2) CI commit status via `codeberg_api GET /commits/<sha>/status`, (3) review-poll log shows it will pick up the PR on next cycle.
