@@ -4,7 +4,7 @@
 #
 # Two-phase planner run:
 #   Phase 1: Navigate and update AGENTS.md tree using Claude with tool access
-#   Phase 2: Compare AGENTS.md + STATE.md vs VISION.md, create backlog issues
+#   Phase 2: Compare AGENTS.md vs VISION.md, create backlog issues for gaps
 #
 # Usage: planner-agent.sh  (no args — uses env vars from .env / env.sh)
 # =============================================================================
@@ -18,7 +18,6 @@ source "$FACTORY_ROOT/lib/env.sh"
 
 LOG_FILE="$SCRIPT_DIR/planner.log"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
-STATE_FILE="${PROJECT_REPO_ROOT}/STATE.md"
 VISION_FILE="${PROJECT_REPO_ROOT}/VISION.md"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
@@ -120,9 +119,7 @@ $(echo -e "$AGENTS_INFO")
     git checkout "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
   else
     # Commit and push
-    git add -A "*.md" 2>/dev/null || git add -A 2>/dev/null
-    # Only add AGENTS.md files and STATE.md
-    git diff --cached --name-only | grep -vE '(AGENTS|STATE)\.md$' | xargs -r git reset HEAD -- 2>/dev/null || true
+    find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
 
     if ! git diff --cached --quiet; then
       git commit -m "chore: planner update AGENTS.md tree" --quiet 2>/dev/null
@@ -163,7 +160,7 @@ fi
 # ── Phase 2: Gap analysis ───────────────────────────────────────────────
 log "Phase 2: gap analysis"
 
-# Build project state from AGENTS.md tree + STATE.md
+# Build project state from AGENTS.md tree
 PROJECT_STATE=""
 for f in $(find . -name "AGENTS.md" -not -path "./.git/*" | sort); do
   PROJECT_STATE="${PROJECT_STATE}
@@ -171,10 +168,6 @@ for f in $(find . -name "AGENTS.md" -not -path "./.git/*" | sort); do
 $(cat "$f")
 "
 done
-[ -f "$STATE_FILE" ] && PROJECT_STATE="${PROJECT_STATE}
-### STATE.md
-$(cat "$STATE_FILE")
-"
 
 VISION=""
 [ -f "$VISION_FILE" ] && VISION=$(cat "$VISION_FILE")
@@ -202,7 +195,7 @@ PHASE2_PROMPT="You are the planner for ${CODEBERG_REPO}. Your job: find gaps bet
 ## VISION.md (human-maintained goals)
 ${VISION}
 
-## Current project state (AGENTS.md tree + STATE.md)
+## Current project state (AGENTS.md tree)
 ${PROJECT_STATE}
 
 ## Vision-labeled issues (goal anchors)
@@ -219,7 +212,7 @@ For each gap, output a JSON object (one per line, no array wrapper):
 
 ## Rules
 - Max 5 new issues — focus on highest-leverage gaps only
-- Do NOT create issues for things already documented in AGENTS.md or STATE.md
+- Do NOT create issues for things already documented in AGENTS.md
 - Do NOT create issues that overlap with ANY existing open issue, even partially
 - Do NOT create issues about vision items, tech-debt, or in-progress work
 - Each title should be a plain, action-oriented sentence
@@ -277,6 +270,7 @@ ${DEPS}"
   RESULT=$(codeberg_api POST "/issues" -d "$CREATE_PAYLOAD" 2>/dev/null || true)
   ISSUE_NUM=$(echo "$RESULT" | jq -r '.number // "?"' 2>/dev/null || echo "?")
   log "Created #${ISSUE_NUM}: ${TITLE}"
+  matrix_send "planner" "📋 Gap issue #${ISSUE_NUM}: ${TITLE}" 2>/dev/null || true
   CREATED=$((CREATED + 1))
 
   [ "$CREATED" -ge 5 ] && break
