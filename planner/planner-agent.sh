@@ -110,7 +110,7 @@ Update STATE.md to describe what the project IS right now — its architecture, 
 - No more than 25 bullet points — be concise and architectural
 - First bullet should be a one-line project description
 
-IMPORTANT: Output ONLY the bullet list. No summary of changes, no meta-commentary, no preamble, no markdown fences. Just bullets starting with '- '."
+Your response must start with '- ' on the very first character. No summary, no meta-commentary, no preamble, no markdown fences, no 'Here is...' or 'I have...'. ONLY the bullet list. Any response not starting with '- ' will be rejected."
 
   PHASE1_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$PHASE1_PROMPT" \
     --model sonnet \
