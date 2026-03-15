@@ -1,8 +1,18 @@
-# Disinto
+<div align="center">
+  <img src="al76.png" alt="A tiny robot commanding a mountain-eating machine" width="600">
+  <br><br>
 
-Autonomous CI/CD factory — [disinto.ai](https://disinto.ai)
+  # Disinto
 
-Four agents, zero supervision needed.
+  **Autonomous code factory** — [disinto.ai](https://disinto.ai)
+
+  *A mining robot, lost and confused, builds a Disinto from scrap —<br>
+  a device so powerful it vaporizes three-quarters of a mountain on a single battery.*<br>
+  — Isaac Asimov, "Robot AL-76 Goes Astray" (1942)
+
+</div>
+
+<br>
 
 Point it at a Codeberg repo with a Woodpecker CI pipeline and it will pick up issues, implement them, review PRs, and keep the system healthy — all on its own.
 
