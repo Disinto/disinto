@@ -182,7 +182,7 @@ $(echo -e "$PROBLEMS")
 ## Primary mission: promote tech-debt → backlog
 Most open issues are raw review-bot findings labeled \`tech-debt\`. Your main job is to convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
 1. Read the issue body + referenced source files to understand the real problem
-2. Check docs/PRODUCT-TRUTH.md and docs/ARCHITECTURE.md for context
+2. Check AGENTS.md (and sub-directory AGENTS.md files) for architecture context
 3. Add missing sections: \`## Affected files\`, \`## Acceptance criteria\` (checkboxes, max 5), \`## Dependencies\`
 4. If the issue is clear and actionable → relabel: remove \`tech-debt\`, add \`backlog\`
 5. If scope is ambiguous or needs a design decision → ESCALATE with options

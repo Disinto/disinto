@@ -301,7 +301,7 @@ You are running in a checkout of the PR branch. You can read ANY file in the rep
 claims, check existing code, or understand context. Use this to avoid false positives —
 if you're unsure whether something "already exists", read the file before flagging it.
 
-Key docs available: docs/PRODUCT-TRUTH.md, docs/ARCHITECTURE.md, docs/UX-DECISIONS.md, docs/ENVIRONMENT.md
+Key docs available: AGENTS.md (root + sub-directory files), docs/UX-DECISIONS.md, docs/ENVIRONMENT.md
 PROMPT_EOF
 
 if [ "$DIFF_TRUNCATED" = true ]; then
@@ -357,10 +357,10 @@ else
   # Build task description based on scope
   TASK_DESC="Review this ${SCOPE_DESC} PR."
   if [ "$NEEDS_CLAIM_CHECK" = true ]; then
-    TASK_DESC="${TASK_DESC} Check all user-facing claims against docs/PRODUCT-TRUTH.md."
+    TASK_DESC="${TASK_DESC} Check all user-facing claims against AGENTS.md."
   fi
   TASK_DESC="${TASK_DESC} Check for bugs, logic errors, missing edge cases, broken imports."
-  TASK_DESC="${TASK_DESC} Verify architecture patterns match docs/ARCHITECTURE.md."
+  TASK_DESC="${TASK_DESC} Verify architecture patterns match AGENTS.md."
   if [ "$NEEDS_UX_CHECK" = true ]; then
     TASK_DESC="${TASK_DESC} Check UX/messaging against docs/UX-DECISIONS.md."
   fi
@@ -616,7 +616,7 @@ COMMENT_BODY="## 🤖 AI ${REVIEW_TYPE}
 ${REVIEW_MD}
 
 ---
-*Reviewed at \`${PR_SHA:0:7}\`$(if [ "$IS_RE_REVIEW" = true ]; then echo " · Previous: \`${PREV_REVIEW_SHA:0:7}\`"; fi) · [PRODUCT-TRUTH.md](../docs/PRODUCT-TRUTH.md) · [ARCHITECTURE.md](../docs/ARCHITECTURE.md)*"
+*Reviewed at \`${PR_SHA:0:7}\`$(if [ "$IS_RE_REVIEW" = true ]; then echo " · Previous: \`${PREV_REVIEW_SHA:0:7}\`"; fi) · [AGENTS.md](AGENTS.md)*"
 
 printf '%s' "$COMMENT_BODY" > "${TMPDIR}/comment-body.txt"
 jq -Rs '{body: .}' < "${TMPDIR}/comment-body.txt" > "${TMPDIR}/comment.json"

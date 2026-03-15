@@ -21,7 +21,7 @@ A "ready" issue has:
 ## When to escalate (NEVER decide these)
 - Issue scope is ambiguous — could be interpreted multiple ways
 - Two issues overlap but aren't exact duplicates — need human to pick scope
-- Issue contradicts a design decision (check PRODUCT-TRUTH.md, ARCHITECTURE.md)
+- Issue contradicts a design decision (check AGENTS.md tree)
 - Issue is feature request vs bug — classification matters for priority
 - Closing would lose important context that isn't captured elsewhere
 
