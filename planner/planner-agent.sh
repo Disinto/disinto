@@ -65,11 +65,24 @@ else
   CURRENT_STATE=""
   [ -f "$STATE_FILE" ] && CURRENT_STATE=$(cat "$STATE_FILE")
 
+  # Read project docs for high-level understanding
+  PROJECT_DOCS=""
+  for doc in AGENTS.md docs/PRODUCT-TRUTH.md docs/ARCHITECTURE.md docs/UX-DECISIONS.md; do
+    [ -f "${PROJECT_REPO_ROOT}/${doc}" ] && \
+      PROJECT_DOCS="${PROJECT_DOCS}
+### ${doc}
+$(cat "${PROJECT_REPO_ROOT}/${doc}")
+"
+  done
+
   # Fetch recently closed issues for context
   CLOSED_ISSUES=$(codeberg_api GET "/issues?state=closed&type=issues&limit=30&sort=updated&direction=desc" 2>/dev/null | \
     jq -r '.[] | "#\(.number) \(.title)"' 2>/dev/null || true)
 
   PHASE1_PROMPT="You are maintaining STATE.md — a compact factual snapshot of what ${PROJECT_NAME} currently is and does.
+
+## Project Documentation (read for context — understand the system before writing)
+${PROJECT_DOCS:-"(no docs found)"}
 
 ## Current STATE.md
 ${CURRENT_STATE:-"(empty — create from scratch)"}
@@ -84,15 +97,20 @@ ${MERGE_LOG:-"(none)"}
 ${CLOSED_ISSUES:-"(none)"}
 
 ## Task
-Update STATE.md by merging the new commits/issues into the existing snapshot.
-- Collapse redundant entries, merge related ones, discard superseded facts
-- Output should read as a description of what the project IS, not a history of changes
-- Plain bullets, no headers, no dates, no changelog framing
-- Preserve issue/PR references (e.g. #42) on each line for traceability
-- No more than 30 bullet points — be concise and factual
-- If current STATE.md is empty, build the snapshot from scratch using the git log and issues
+Update STATE.md to describe what the project IS right now — its architecture, capabilities, and current state.
 
-IMPORTANT: Output ONLY the updated bullet list. No summary of changes, no meta-commentary, no preamble, no markdown fences, no explanation of what you did. Just the bullets starting with '- '."
+### Writing style
+- Describe the SYSTEM, not the changes. Think: 'What would a new developer need to know?'
+- Lead with what the project does at a high level, then drill into subsystems
+- Group related capabilities together (e.g. all evolution stuff in one bullet)
+- Issue/PR references (#42) are good for traceability but should SUPPORT descriptions, not replace them
+- Bad: 'evolve.sh: auto-incrementing results directory (#752), cleans stale tmpdirs (#750)'
+- Good: 'Evolution pipeline runs perpetually on a dedicated VPS, breeding Push3 optimizer bytecode through mutation, crossover, and elitism against a revm fitness evaluator'
+- No dates, no changelog framing, no 'fixed X' or 'added Y' language
+- No more than 25 bullet points — be concise and architectural
+- First bullet should be a one-line project description
+
+IMPORTANT: Output ONLY the bullet list. No summary of changes, no meta-commentary, no preamble, no markdown fences. Just bullets starting with '- '."
 
   PHASE1_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$PHASE1_PROMPT" \
     --model sonnet \
