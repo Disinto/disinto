@@ -40,7 +40,7 @@ if [ -f "$MARKER_FILE" ]; then
     GIT_RANGE="${LAST_SHA}..HEAD"
   else
     log "WARNING: marker SHA ${LAST_SHA:0:7} not found, using 30-day window"
-    local first_sha
+    first_sha=""
     first_sha=$(git log --format=%H --after='30 days ago' --reverse 2>/dev/null | head -1) || true
     GIT_RANGE="${first_sha:-HEAD~30}..HEAD"
   fi
@@ -111,12 +111,29 @@ Output ONLY the bullet list — no preamble, no markdown fences, no explanation.
   printf '%s\n' "$PHASE1_OUTPUT" > "$TEMP_STATE"
   mv "$TEMP_STATE" "$STATE_FILE"
 
-  # Commit STATE.md if changed
+  # Commit STATE.md via PR (master is protected)
   if ! git diff --quiet "$STATE_FILE" 2>/dev/null; then
+    branch_name="chore/planner-state-$(date -u +%Y%m%d)"
+    git checkout -B "$branch_name" 2>/dev/null
     git add "$STATE_FILE"
     git commit -m "chore: planner rebuild STATE.md" --quiet 2>/dev/null
-    git push origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
-    log "STATE.md committed and pushed"
+    git push -f origin "$branch_name" --quiet 2>/dev/null || { log "ERROR: failed to push $branch_name"; git checkout "${PRIMARY_BRANCH}" 2>/dev/null; return 1; }
+    git checkout "${PRIMARY_BRANCH}" 2>/dev/null
+
+    # Create or update PR
+    EXISTING_PR=$(codeberg_api GET "/pulls?state=open&head=${CODEBERG_REPO%%/*}:${branch_name}&limit=1" 2>/dev/null | jq -r '.[0].number // empty')
+    if [ -z "$EXISTING_PR" ]; then
+      PR_RESPONSE=$(codeberg_api POST "/pulls" "{\"title\":\"chore: planner rebuild STATE.md\",\"head\":\"${branch_name}\",\"base\":\"${PRIMARY_BRANCH}\",\"body\":\"Automated STATE.md rebuild from git history + closed issues.\"}" 2>/dev/null)
+      PR_NUM=$(echo "$PR_RESPONSE" | jq -r '.number // empty')
+      if [ -n "$PR_NUM" ]; then
+        log "Created PR #${PR_NUM} for STATE.md update"
+        matrix_send "planner" "📋 PR #${PR_NUM}: planner rebuild STATE.md" 2>/dev/null || true
+      else
+        log "ERROR: failed to create PR"
+      fi
+    else
+      log "Updated existing PR #${EXISTING_PR}"
+    fi
   fi
 
   # Update marker
