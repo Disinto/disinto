@@ -46,7 +46,6 @@ if [ -f "$MARKER_FILE" ]; then
   fi
 else
   log "No marker file, using 30-day window"
-  local first_sha
   first_sha=$(git log --format=%H --after='30 days ago' --reverse 2>/dev/null | head -1) || true
   GIT_RANGE="${first_sha:-HEAD~30}..HEAD"
 fi
