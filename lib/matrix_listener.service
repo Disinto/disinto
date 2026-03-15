@@ -1,14 +1,14 @@
 [Unit]
-Description=Dark Factory Matrix Listener
+Description=Disinto Matrix Listener
 After=network.target dendrite.service
 
 [Service]
 Type=simple
-ExecStart=/home/admin/dark-factory/lib/matrix_listener.sh
+ExecStart=/home/admin/disinto/lib/matrix_listener.sh
 Restart=always
 RestartSec=10
 User=admin
-WorkingDirectory=/home/admin/dark-factory
+WorkingDirectory=/home/admin/disinto
 
 [Install]
 WantedBy=multi-user.target

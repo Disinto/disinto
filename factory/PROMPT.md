@@ -39,7 +39,7 @@ This gives you:
 - `$PROJECT_REPO_ROOT` — path to the target project repo
 - `$PROJECT_NAME` — short project name (for worktree prefixes, container names)
 - `$PRIMARY_BRANCH` — main branch (master or main)
-- `$FACTORY_ROOT` — path to the dark-factory repo
+- `$FACTORY_ROOT` — path to the disinto repo
 - `matrix_send <prefix> <message>` — send notifications to the Matrix coordination room
 
 ## Escalation

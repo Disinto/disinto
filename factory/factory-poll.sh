@@ -4,10 +4,10 @@
 # Runs every 10min via cron. Does all health checks in bash (zero tokens).
 # Only invokes claude -p when auto-fix fails or issue is complex.
 #
-# Cron: */10 * * * * /path/to/dark-factory/factory/factory-poll.sh
+# Cron: */10 * * * * /path/to/disinto/factory/factory-poll.sh
 #
 # Peek:  cat /tmp/factory-status
-# Log:   tail -f /path/to/dark-factory/factory/factory.log
+# Log:   tail -f /path/to/disinto/factory/factory.log
 
 source "$(dirname "$0")/../lib/env.sh"
 

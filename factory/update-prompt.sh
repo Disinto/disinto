@@ -6,7 +6,7 @@
 #   ./factory/update-prompt.sh --from-file "best-practices/memory.md" /tmp/lesson.md
 #
 # Called by claude -p when it learns something during a fix.
-# Commits and pushes the update to the dark-factory repo.
+# Commits and pushes the update to the disinto repo.
 
 source "$(dirname "$0")/../lib/env.sh"
 

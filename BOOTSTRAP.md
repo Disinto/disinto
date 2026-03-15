@@ -1,6 +1,6 @@
 # Bootstrapping a New Project
 
-How to point dark-factory at a new target project and get all four agents running.
+How to point disinto at a new target project and get all four agents running.
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ Before starting, ensure you have:
 - [ ] A **Codeberg repo** with at least one issue labeled `backlog`
 - [ ] A **Woodpecker CI** pipeline (`.woodpecker/` dir with at least one `.yml`)
 - [ ] A **second Codeberg account** for the review bot (branch protection requires reviews from a different user)
-- [ ] A **local clone** of the target repo on the same machine as dark-factory
+- [ ] A **local clone** of the target repo on the same machine as disinto
 - [ ] `claude` CLI installed and authenticated (`claude --version`)
 
 ## 1. Configure `.env`
@@ -152,7 +152,7 @@ crontab -e
 Add (adjust paths):
 
 ```cron
-FACTORY_ROOT=/home/you/dark-factory
+FACTORY_ROOT=/home/you/disinto
 
 # Supervisor — health checks, auto-healing (every 10 min)
 0,10,20,30,40,50 * * * * $FACTORY_ROOT/factory/factory-poll.sh

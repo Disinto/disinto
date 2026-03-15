@@ -1,6 +1,8 @@
-# Dark Factory
+# Disinto
 
-Autonomous CI/CD factory. Four agents, zero supervision needed.
+Autonomous CI/CD factory — [disinto.ai](https://disinto.ai)
+
+Four agents, zero supervision needed.
 
 Point it at a Codeberg repo with a Woodpecker CI pipeline and it will pick up issues, implement them, review PRs, and keep the system healthy — all on its own.
 
@@ -47,8 +49,8 @@ all agents ──→ matrix_send()     ← status updates, escalations, merge no
 
 ```bash
 # 1. Clone
-git clone ssh://git@codeberg.org/johba/dark-factory.git
-cd dark-factory
+git clone ssh://git@codeberg.org/johba/disinto.git
+cd disinto
 
 # 2. Configure
 cp .env.example .env
@@ -82,10 +84,10 @@ CLAUDE_TIMEOUT=7200         # max seconds per Claude invocation (default: 2h)
 # 3. Install cron (staggered to avoid overlap)
 crontab -e
 # Add:
-#   0,10,20,30,40,50 * * * * /path/to/dark-factory/factory/factory-poll.sh
-#   3,13,23,33,43,53 * * * * /path/to/dark-factory/review/review-poll.sh
-#   6,16,26,36,46,56 * * * * /path/to/dark-factory/dev/dev-poll.sh
-#   15 8 * * *                /path/to/dark-factory/gardener/gardener-poll.sh
+#   0,10,20,30,40,50 * * * * /path/to/disinto/factory/factory-poll.sh
+#   3,13,23,33,43,53 * * * * /path/to/disinto/review/review-poll.sh
+#   6,16,26,36,46,56 * * * * /path/to/disinto/dev/dev-poll.sh
+#   15 8 * * *                /path/to/disinto/gardener/gardener-poll.sh
 
 # 4. Verify
 bash factory/factory-poll.sh   # should log "all clear"
@@ -94,7 +96,7 @@ bash factory/factory-poll.sh   # should log "all clear"
 ## Directory Structure
 
 ```
-dark-factory/
+disinto/
 ├── .env.example          # Template — copy to .env, add secrets + project config
 ├── .gitignore            # Excludes .env, logs, state files
 ├── lib/
