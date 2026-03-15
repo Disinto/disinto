@@ -120,8 +120,8 @@ Output ONLY the bullet list — no preamble, no markdown fences, no explanation.
     git push -f origin "$branch_name" --quiet 2>/dev/null || { log "ERROR: failed to push $branch_name"; git checkout "${PRIMARY_BRANCH}" 2>/dev/null; return 1; }
     git checkout "${PRIMARY_BRANCH}" 2>/dev/null
 
-    # Create or update PR
-    EXISTING_PR=$(codeberg_api GET "/pulls?state=open&head=${CODEBERG_REPO%%/*}:${branch_name}&limit=1" 2>/dev/null | jq -r '.[0].number // empty')
+    # Create or update PR (filter by head ref — Codeberg's head param is unreliable)
+    EXISTING_PR=$(codeberg_api GET "/pulls?state=open&limit=50" 2>/dev/null | jq -r --arg branch "$branch_name" '.[] | select(.head.ref == $branch) | .number' | head -1)
     if [ -z "$EXISTING_PR" ]; then
       PR_RESPONSE=$(codeberg_api POST "/pulls" "{\"title\":\"chore: planner rebuild STATE.md\",\"head\":\"${branch_name}\",\"base\":\"${PRIMARY_BRANCH}\",\"body\":\"Automated STATE.md rebuild from git history + closed issues.\"}" 2>/dev/null)
       PR_NUM=$(echo "$PR_RESPONSE" | jq -r '.number // empty')
