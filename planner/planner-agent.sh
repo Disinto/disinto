@@ -92,7 +92,7 @@ Update STATE.md by merging the new commits/issues into the existing snapshot.
 - No more than 30 bullet points — be concise and factual
 - If current STATE.md is empty, build the snapshot from scratch using the git log and issues
 
-Output ONLY the bullet list — no preamble, no markdown fences, no explanation."
+IMPORTANT: Output ONLY the updated bullet list. No summary of changes, no meta-commentary, no preamble, no markdown fences, no explanation of what you did. Just the bullets starting with '- '."
 
   PHASE1_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$PHASE1_PROMPT" \
     --model sonnet \
@@ -103,6 +103,12 @@ Output ONLY the bullet list — no preamble, no markdown fences, no explanation.
 
   if [ -z "$PHASE1_OUTPUT" ]; then
     log "ERROR: empty output from phase 1"
+    exit 1
+  fi
+
+  # Validate output starts with bullet points (reject meta-commentary)
+  if ! echo "$PHASE1_OUTPUT" | head -1 | grep -q '^- '; then
+    log "ERROR: phase 1 output is not a bullet list — got: $(echo "$PHASE1_OUTPUT" | head -1)"
     exit 1
   fi
 
