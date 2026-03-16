@@ -138,7 +138,43 @@ while IFS=$'\t' read -r num body; do
   done
 done < <(echo "$ISSUES_JSON" | jq -r '.[] | "\(.number)\t\(.body // "")"' | head -20)
 
-# 5. Tech-debt issues needing promotion to backlog (primary mission)
+# 5. Blocker detection: find issues blocking backlog items that aren't themselves backlog
+# This is the HIGHEST PRIORITY — a non-backlog blocker starves the entire factory
+BACKLOG_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("backlog")) | .number')
+BLOCKER_NUMS=""
+for BNUM in $BACKLOG_ISSUES; do
+  BBODY=$(echo "$ISSUES_JSON" | jq -r --arg n "$BNUM" '.[] | select(.number == ($n | tonumber)) | .body // ""')
+  # Extract deps from ## Dependencies / ## Depends on / ## Blocked by
+  IN_SECTION=false
+  while IFS= read -r line; do
+    if echo "$line" | grep -qiP '^##?\s*(Dependencies|Depends on|Blocked by)'; then IN_SECTION=true; continue; fi
+    if echo "$line" | grep -qP '^##?\s' && [ "$IN_SECTION" = true ]; then IN_SECTION=false; fi
+    if [ "$IN_SECTION" = true ]; then
+      for dep in $(echo "$line" | grep -oP '#\d+' | grep -oP '\d+'); do
+        [ "$dep" = "$BNUM" ] && continue
+        # Check if dep is open but NOT backlog-labeled
+        DEP_STATE=$(echo "$ISSUES_JSON" | jq -r --arg n "$dep" '.[] | select(.number == ($n | tonumber)) | .state' 2>/dev/null || true)
+        DEP_LABELS=$(echo "$ISSUES_JSON" | jq -r --arg n "$dep" '.[] | select(.number == ($n | tonumber)) | [.labels[].name] | join(",")' 2>/dev/null || true)
+        if [ "$DEP_STATE" = "open" ] && ! echo ",$DEP_LABELS," | grep -q ',backlog,'; then
+          BLOCKER_NUMS="${BLOCKER_NUMS} ${dep}"
+        fi
+      done
+    fi
+  done <<< "$BBODY"
+done
+# Deduplicate blockers
+BLOCKER_NUMS=$(echo "$BLOCKER_NUMS" | tr ' ' '\n' | sort -un | head -10)
+if [ -n "$BLOCKER_NUMS" ]; then
+  BLOCKER_LIST=""
+  for bnum in $BLOCKER_NUMS; do
+    BTITLE=$(echo "$ISSUES_JSON" | jq -r --arg n "$bnum" '.[] | select(.number == ($n | tonumber)) | .title' 2>/dev/null || true)
+    BLABELS=$(echo "$ISSUES_JSON" | jq -r --arg n "$bnum" '.[] | select(.number == ($n | tonumber)) | [.labels[].name] | join(",")' 2>/dev/null || true)
+    BLOCKER_LIST="${BLOCKER_LIST}#${bnum} [${BLABELS:-unlabeled}] ${BTITLE}\n"
+  done
+  PROBLEMS="${PROBLEMS}PRIORITY_blockers_starving_factory: these issues block backlog items but are NOT labeled backlog — promote them FIRST:\n${BLOCKER_LIST}\n"
+fi
+
+# 6. Tech-debt issues needing promotion to backlog (secondary to blockers)
 TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"' | head -10)
 if [ -n "$TECH_DEBT_ISSUES" ]; then
   TECH_DEBT_COUNT=$(echo "$TECH_DEBT_ISSUES" | wc -l)
@@ -179,8 +215,11 @@ $(echo -e "$PROBLEMS")
 - NEVER echo, log, or include the actual token value in any output — always reference \$CODEBERG_TOKEN
 - You're running in the project repo root. Read README.md and any docs/ files before making decisions.
 
-## Primary mission: promote tech-debt → backlog
-Most open issues are raw review-bot findings labeled \`tech-debt\`. Your main job is to convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
+## Primary mission: unblock the factory
+Issues prefixed with PRIORITY_blockers_starving_factory are your TOP priority. These are non-backlog issues that block existing backlog items — the dev-agent is completely starved until these are promoted. Process ALL of them before touching regular tech-debt.
+
+## Secondary mission: promote tech-debt → backlog
+Most open issues are raw review-bot findings labeled \`tech-debt\`. Convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
 1. Read the issue body + referenced source files to understand the real problem
 2. Check AGENTS.md (and sub-directory AGENTS.md files) for architecture context
 3. Add missing sections: \`## Affected files\`, \`## Acceptance criteria\` (checkboxes, max 5), \`## Dependencies\`
