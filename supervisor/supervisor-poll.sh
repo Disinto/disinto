@@ -297,57 +297,61 @@ status "P3: checking for circular dependencies"
 BACKLOG_FOR_DEPS=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null || true)
 if [ -n "$BACKLOG_FOR_DEPS" ] && [ "$BACKLOG_FOR_DEPS" != "null" ] && [ "$(echo "$BACKLOG_FOR_DEPS" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
 
-  PARSE_DEPS="${FACTORY_ROOT}/lib/parse-deps.py"
+  PARSE_DEPS="${FACTORY_ROOT}/lib/parse-deps.sh"
+  ISSUE_COUNT=$(echo "$BACKLOG_FOR_DEPS" | jq 'length')
 
-  CYCLES=$(echo "$BACKLOG_FOR_DEPS" | python3 -c '
-import sys, json, importlib.util
+  # Build dep graph: DEPS_OF[issue_num]="dep1 dep2 ..."
+  declare -A DEPS_OF
+  declare -A BACKLOG_NUMS
+  for i in $(seq 0 $((ISSUE_COUNT - 1))); do
+    NUM=$(echo "$BACKLOG_FOR_DEPS" | jq -r ".[$i].number")
+    BODY=$(echo "$BACKLOG_FOR_DEPS" | jq -r ".[$i].body // \"\"")
+    ISSUE_DEPS=$(echo "$BODY" | bash "$PARSE_DEPS" | grep -v "^${NUM}$" || true)
+    [ -n "$ISSUE_DEPS" ] && DEPS_OF[$NUM]="$ISSUE_DEPS"
+    BACKLOG_NUMS[$NUM]=1
+  done
 
-spec = importlib.util.spec_from_file_location("parse_deps", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+  # DFS cycle detection using color marking (0=white, 1=gray, 2=black)
+  declare -A NODE_COLOR
+  for node in "${!DEPS_OF[@]}"; do NODE_COLOR[$node]=0; done
 
-issues = json.load(sys.stdin)
-graph = {}
-for issue in issues:
-    num = issue["number"]
-    deps = [d for d in mod.parse_deps(issue.get("body", "")) if d != num]
-    if deps:
-        graph[num] = set(deps)
+  FOUND_CYCLES=""
+  declare -A SEEN_CYCLES
 
-WHITE, GRAY, BLACK = 0, 1, 2
-color = {n: WHITE for n in graph}
-cycles = []
+  dfs_detect_cycle() {
+    local node="$1" path="$2"
+    NODE_COLOR[$node]=1
+    for dep in ${DEPS_OF[$node]:-}; do
+      [ -z "${NODE_COLOR[$dep]+x}" ] && continue  # not in graph
+      if [ "${NODE_COLOR[$dep]}" = "1" ]; then
+        # Cycle found — normalize for dedup
+        local cycle_key=$(echo "$path $dep" | tr ' ' '\n' | sort -n | tr '\n' ' ')
+        if [ -z "${SEEN_CYCLES[$cycle_key]+x}" ]; then
+          SEEN_CYCLES[$cycle_key]=1
+          # Extract cycle portion from path (from $dep onward)
+          local in_cycle=0 cycle_str=""
+          for p in $path $dep; do
+            [ "$p" = "$dep" ] && in_cycle=1
+            [ "$in_cycle" = "1" ] && cycle_str="${cycle_str:+$cycle_str -> }#${p}"
+          done
+          FOUND_CYCLES="${FOUND_CYCLES}${cycle_str}\n"
+        fi
+      elif [ "${NODE_COLOR[$dep]}" = "0" ]; then
+        dfs_detect_cycle "$dep" "$path $dep"
+      fi
+    done
+    NODE_COLOR[$node]=2
+  }
 
-def dfs(u, path):
-    color[u] = GRAY
-    path.append(u)
-    for v in graph.get(u, set()):
-        if v not in color:
-            continue
-        if color[v] == GRAY:
-            cycles.append(path[path.index(v):] + [v])
-        elif color[v] == WHITE:
-            dfs(v, path)
-    path.pop()
-    color[u] = BLACK
+  for node in "${!DEPS_OF[@]}"; do
+    [ "${NODE_COLOR[$node]:-2}" = "0" ] && dfs_detect_cycle "$node" "$node"
+  done
 
-for node in list(graph.keys()):
-    if color.get(node) == WHITE:
-        dfs(node, [])
-
-seen = set()
-for cycle in cycles:
-    key = tuple(sorted(set(cycle)))
-    if key not in seen:
-        seen.add(key)
-        print(" -> ".join(f"#{n}" for n in cycle))
-' "$PARSE_DEPS" 2>/dev/null || true)
-
-  if [ -n "$CYCLES" ]; then
-    while IFS= read -r cycle; do
+  if [ -n "$FOUND_CYCLES" ]; then
+    echo -e "$FOUND_CYCLES" | while IFS= read -r cycle; do
       [ -z "$cycle" ] && continue
       p3 "Circular dependency deadlock: ${cycle}"
-    done <<< "$CYCLES"
+    done
   fi
 
   # ===========================================================================
@@ -355,59 +359,42 @@ for cycle in cycles:
   # ===========================================================================
   status "P3: checking for stale dependencies"
 
-  STALE_DEPS=$(echo "$BACKLOG_FOR_DEPS" | CODEBERG_TOKEN="$CODEBERG_TOKEN" CODEBERG_API="$CODEBERG_API" python3 -c '
-import sys, json, os, importlib.util
-from datetime import datetime, timezone
-from urllib.request import Request, urlopen
+  NOW_EPOCH=$(date +%s)
+  THIRTY_DAYS=$((30 * 86400))
+  declare -A DEP_CACHE
 
-spec = importlib.util.spec_from_file_location("parse_deps", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+  for issue_num in "${!DEPS_OF[@]}"; do
+    for dep in ${DEPS_OF[$issue_num]}; do
+      # Check cache first
+      if [ -n "${DEP_CACHE[$dep]+x}" ]; then
+        DEP_INFO="${DEP_CACHE[$dep]}"
+      else
+        DEP_JSON=$(codeberg_api GET "/issues/${dep}" 2>/dev/null || true)
+        [ -z "$DEP_JSON" ] && continue
+        DEP_STATE=$(echo "$DEP_JSON" | jq -r '.state // "unknown"')
+        DEP_CREATED=$(echo "$DEP_JSON" | jq -r '.created_at // ""')
+        DEP_TITLE=$(echo "$DEP_JSON" | jq -r '.title // ""' | head -c 50)
+        DEP_INFO="${DEP_STATE}|${DEP_CREATED}|${DEP_TITLE}"
+        DEP_CACHE[$dep]="$DEP_INFO"
+      fi
 
-issues = json.load(sys.stdin)
-token = os.environ.get("CODEBERG_TOKEN", "")
-api = os.environ.get("CODEBERG_API", "")
-issue_map = {i["number"]: i for i in issues}
-now = datetime.now(timezone.utc)
+      DEP_STATE="${DEP_INFO%%|*}"
+      [ "$DEP_STATE" != "open" ] && continue
 
-checked = {}
-for issue in issues:
-    num = issue["number"]
-    deps = [d for d in mod.parse_deps(issue.get("body", "")) if d != num]
-    for dep in deps:
-        if dep in checked:
-            dep_data = checked[dep]
-        elif dep in issue_map:
-            dep_data = issue_map[dep]
-            checked[dep] = dep_data
-        else:
-            try:
-                req = Request(f"{api}/issues/{dep}",
-                    headers={"Authorization": f"token {token}"})
-                with urlopen(req, timeout=5) as resp:
-                    dep_data = json.loads(resp.read())
-                checked[dep] = dep_data
-            except Exception:
-                continue
-        if dep_data.get("state") != "open":
-            continue
-        created = dep_data.get("created_at", "")
-        try:
-            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            age_days = (now - created_dt).days
-            if age_days > 30:
-                dep_title = dep_data.get("title", "")[:50]
-                print(f"#{num} blocked by #{dep} \"{dep_title}\" (open {age_days} days)")
-        except Exception:
-            pass
-' "$PARSE_DEPS" 2>/dev/null || true)
+      DEP_REST="${DEP_INFO#*|}"
+      DEP_CREATED="${DEP_REST%%|*}"
+      DEP_TITLE="${DEP_REST#*|}"
 
-  if [ -n "$STALE_DEPS" ]; then
-    while IFS= read -r stale; do
-      [ -z "$stale" ] && continue
-      p3 "Stale dependency: ${stale}"
-    done <<< "$STALE_DEPS"
-  fi
+      [ -z "$DEP_CREATED" ] && continue
+      CREATED_EPOCH=$(date -d "$DEP_CREATED" +%s 2>/dev/null || echo 0)
+      AGE_DAYS=$(( (NOW_EPOCH - CREATED_EPOCH) / 86400 ))
+      if [ "$AGE_DAYS" -gt 30 ]; then
+        p3 "Stale dependency: #${issue_num} blocked by #${dep} \"${DEP_TITLE}\" (open ${AGE_DAYS} days)"
+      fi
+    done
+  done
+
+  unset DEPS_OF BACKLOG_NUMS NODE_COLOR SEEN_CYCLES DEP_CACHE
 fi
 
 # =============================================================================

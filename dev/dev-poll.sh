@@ -115,8 +115,8 @@ dep_is_merged() {
 # =============================================================================
 get_deps() {
   local issue_body="$1"
-  # Shared parser: lib/parse-deps.py (single source of truth)
-  echo "$issue_body" | python3 "${FACTORY_ROOT}/lib/parse-deps.py"
+  # Shared parser: lib/parse-deps.sh (single source of truth)
+  echo "$issue_body" | bash "${FACTORY_ROOT}/lib/parse-deps.sh"
 }
 
 # =============================================================================
