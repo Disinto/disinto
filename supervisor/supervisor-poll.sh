@@ -297,33 +297,22 @@ status "P3: checking for circular dependencies"
 BACKLOG_FOR_DEPS=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null || true)
 if [ -n "$BACKLOG_FOR_DEPS" ] && [ "$BACKLOG_FOR_DEPS" != "null" ] && [ "$(echo "$BACKLOG_FOR_DEPS" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
 
+  PARSE_DEPS="${FACTORY_ROOT}/lib/parse-deps.py"
+
   CYCLES=$(echo "$BACKLOG_FOR_DEPS" | python3 -c '
-import sys, json, re
+import sys, json, importlib.util
+
+spec = importlib.util.spec_from_file_location("parse_deps", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
 
 issues = json.load(sys.stdin)
-
-def parse_deps(body):
-    deps = set()
-    in_section = False
-    for line in (body or "").split("\n"):
-        if re.match(r"^##?\s*(Depends on|Blocked by|Dependencies)", line, re.IGNORECASE):
-            in_section = True
-            continue
-        if in_section and re.match(r"^##?\s", line):
-            in_section = False
-        if in_section:
-            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
-        if re.search(r"(depends on|blocked by)", line, re.IGNORECASE):
-            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
-    return deps
-
 graph = {}
 for issue in issues:
     num = issue["number"]
-    deps = parse_deps(issue.get("body", ""))
-    deps.discard(num)
+    deps = [d for d in mod.parse_deps(issue.get("body", "")) if d != num]
     if deps:
-        graph[num] = deps
+        graph[num] = set(deps)
 
 WHITE, GRAY, BLACK = 0, 1, 2
 color = {n: WHITE for n in graph}
@@ -352,7 +341,7 @@ for cycle in cycles:
     if key not in seen:
         seen.add(key)
         print(" -> ".join(f"#{n}" for n in cycle))
-' 2>/dev/null || true)
+' "$PARSE_DEPS" 2>/dev/null || true)
 
   if [ -n "$CYCLES" ]; then
     while IFS= read -r cycle; do
@@ -367,9 +356,13 @@ for cycle in cycles:
   status "P3: checking for stale dependencies"
 
   STALE_DEPS=$(echo "$BACKLOG_FOR_DEPS" | CODEBERG_TOKEN="$CODEBERG_TOKEN" CODEBERG_API="$CODEBERG_API" python3 -c '
-import sys, json, re, os
+import sys, json, os, importlib.util
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
+
+spec = importlib.util.spec_from_file_location("parse_deps", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
 
 issues = json.load(sys.stdin)
 token = os.environ.get("CODEBERG_TOKEN", "")
@@ -377,26 +370,10 @@ api = os.environ.get("CODEBERG_API", "")
 issue_map = {i["number"]: i for i in issues}
 now = datetime.now(timezone.utc)
 
-def parse_deps(body):
-    deps = set()
-    in_section = False
-    for line in (body or "").split("\n"):
-        if re.match(r"^##?\s*(Depends on|Blocked by|Dependencies)", line, re.IGNORECASE):
-            in_section = True
-            continue
-        if in_section and re.match(r"^##?\s", line):
-            in_section = False
-        if in_section:
-            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
-        if re.search(r"(depends on|blocked by)", line, re.IGNORECASE):
-            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
-    return deps
-
 checked = {}
 for issue in issues:
     num = issue["number"]
-    deps = parse_deps(issue.get("body", ""))
-    deps.discard(num)
+    deps = [d for d in mod.parse_deps(issue.get("body", "")) if d != num]
     for dep in deps:
         if dep in checked:
             dep_data = checked[dep]
@@ -423,7 +400,7 @@ for issue in issues:
                 print(f"#{num} blocked by #{dep} \"{dep_title}\" (open {age_days} days)")
         except Exception:
             pass
-' 2>/dev/null || true)
+' "$PARSE_DEPS" 2>/dev/null || true)
 
   if [ -n "$STALE_DEPS" ]; then
     while IFS= read -r stale; do

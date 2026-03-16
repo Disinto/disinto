@@ -115,18 +115,8 @@ dep_is_merged() {
 # =============================================================================
 get_deps() {
   local issue_body="$1"
-  # Extract #NNN references from "Depends on" / "Blocked by" sections
-  # Capture the header line AND subsequent lines until next ## section
-  {
-    echo "$issue_body" | awk '
-      BEGIN { IGNORECASE=1 }
-      /^##? *(Depends on|Blocked by|Dependencies)/ { capture=1; next }
-      capture && /^##? / { capture=0 }
-      capture { print }
-    ' | grep -oP '#\K[0-9]+' || true
-    # Also check inline deps on same line as keyword
-    echo "$issue_body" | grep -iE '(depends on|blocked by)' | grep -oP '#\K[0-9]+' || true
-  } | sort -un
+  # Shared parser: lib/parse-deps.py (single source of truth)
+  echo "$issue_body" | python3 "${FACTORY_ROOT}/lib/parse-deps.py"
 }
 
 # =============================================================================
