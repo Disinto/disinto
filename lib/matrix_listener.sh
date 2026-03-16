@@ -141,6 +141,29 @@ while true; do
         printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/gardener-escalation-reply
         matrix_send "gardener" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
+      vault)
+        # Parse APPROVE <id> or REJECT <id> from reply
+        VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
+        if [ -n "$VAULT_CMD" ]; then
+          VAULT_ACTION=$(echo "$VAULT_CMD" | awk '{print $1}')
+          VAULT_ID=$(echo "$BODY" | awk '{print $2}')  # preserve original case for ID
+          log "vault dispatch: $VAULT_ACTION $VAULT_ID"
+          VAULT_DIR="${FACTORY_ROOT}/vault"
+          if [ "$VAULT_ACTION" = "APPROVE" ]; then
+            if bash "${VAULT_DIR}/vault-fire.sh" "$VAULT_ID" >> "${VAULT_DIR}/vault.log" 2>&1; then
+              matrix_send "vault" "✓ approved and fired: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            else
+              matrix_send "vault" "✓ approved but fire failed — will retry: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            fi
+          else
+            bash "${VAULT_DIR}/vault-reject.sh" "$VAULT_ID" "rejected by ${SENDER}" >> "${VAULT_DIR}/vault.log" 2>&1 || true
+            matrix_send "vault" "✓ rejected: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          fi
+        else
+          log "vault: unrecognized reply format: ${BODY:0:100}"
+          matrix_send "vault" "⚠️ Reply with APPROVE <id> or REJECT <id>" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        fi
+        ;;
       *)
         log "no handler for agent '${AGENT}'"
         ;;
