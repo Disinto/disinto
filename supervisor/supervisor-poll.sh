@@ -226,6 +226,22 @@ if [ "${BACKLOG_COUNT:-0}" -gt 0 ] && [ "${IN_PROGRESS:-0}" -eq 0 ]; then
 fi
 
 # =============================================================================
+# P2c: DEV-AGENT PRODUCTIVITY — all backlog blocked for too long
+# =============================================================================
+status "P2: checking dev-agent productivity"
+
+DEV_LOG_FILE="${FACTORY_ROOT}/dev/dev-agent.log"
+if [ -f "$DEV_LOG_FILE" ]; then
+  # Check if last 6 poll entries all report "no ready issues" (~1 hour at 10min intervals)
+  RECENT_POLLS=$(tail -100 "$DEV_LOG_FILE" | grep "poll:" | tail -6)
+  TOTAL_RECENT=$(echo "$RECENT_POLLS" | grep -c "." || true)
+  BLOCKED_IN_RECENT=$(echo "$RECENT_POLLS" | grep -c "no ready issues" || true)
+  if [ "$TOTAL_RECENT" -ge 6 ] && [ "$BLOCKED_IN_RECENT" -eq "$TOTAL_RECENT" ]; then
+    p2 "Dev-agent blocked: last ${BLOCKED_IN_RECENT} polls all report 'no ready issues' — all backlog issues may be dep-blocked or have circular deps"
+  fi
+fi
+
+# =============================================================================
 # P3: FACTORY DEGRADED — derailed PRs, unreviewed PRs
 # =============================================================================
 status "P3: checking PRs"
@@ -272,6 +288,150 @@ for pr in $OPEN_PRS; do
     fi
   fi
 done
+
+# =============================================================================
+# P3b: CIRCULAR DEPENDENCIES — deadlock detection
+# =============================================================================
+status "P3: checking for circular dependencies"
+
+BACKLOG_FOR_DEPS=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null || true)
+if [ -n "$BACKLOG_FOR_DEPS" ] && [ "$BACKLOG_FOR_DEPS" != "null" ] && [ "$(echo "$BACKLOG_FOR_DEPS" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
+
+  CYCLES=$(echo "$BACKLOG_FOR_DEPS" | python3 -c '
+import sys, json, re
+
+issues = json.load(sys.stdin)
+
+def parse_deps(body):
+    deps = set()
+    in_section = False
+    for line in (body or "").split("\n"):
+        if re.match(r"^##?\s*(Depends on|Blocked by|Dependencies)", line, re.IGNORECASE):
+            in_section = True
+            continue
+        if in_section and re.match(r"^##?\s", line):
+            in_section = False
+        if in_section:
+            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
+        if re.search(r"(depends on|blocked by)", line, re.IGNORECASE):
+            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
+    return deps
+
+graph = {}
+for issue in issues:
+    num = issue["number"]
+    deps = parse_deps(issue.get("body", ""))
+    deps.discard(num)
+    if deps:
+        graph[num] = deps
+
+WHITE, GRAY, BLACK = 0, 1, 2
+color = {n: WHITE for n in graph}
+cycles = []
+
+def dfs(u, path):
+    color[u] = GRAY
+    path.append(u)
+    for v in graph.get(u, set()):
+        if v not in color:
+            continue
+        if color[v] == GRAY:
+            cycles.append(path[path.index(v):] + [v])
+        elif color[v] == WHITE:
+            dfs(v, path)
+    path.pop()
+    color[u] = BLACK
+
+for node in list(graph.keys()):
+    if color.get(node) == WHITE:
+        dfs(node, [])
+
+seen = set()
+for cycle in cycles:
+    key = tuple(sorted(set(cycle)))
+    if key not in seen:
+        seen.add(key)
+        print(" -> ".join(f"#{n}" for n in cycle))
+' 2>/dev/null || true)
+
+  if [ -n "$CYCLES" ]; then
+    while IFS= read -r cycle; do
+      [ -z "$cycle" ] && continue
+      p3 "Circular dependency deadlock: ${cycle}"
+    done <<< "$CYCLES"
+  fi
+
+  # ===========================================================================
+  # P3c: STALE DEPENDENCIES — blocked by old open issues (>30 days)
+  # ===========================================================================
+  status "P3: checking for stale dependencies"
+
+  STALE_DEPS=$(echo "$BACKLOG_FOR_DEPS" | CODEBERG_TOKEN="$CODEBERG_TOKEN" CODEBERG_API="$CODEBERG_API" python3 -c '
+import sys, json, re, os
+from datetime import datetime, timezone
+from urllib.request import Request, urlopen
+
+issues = json.load(sys.stdin)
+token = os.environ.get("CODEBERG_TOKEN", "")
+api = os.environ.get("CODEBERG_API", "")
+issue_map = {i["number"]: i for i in issues}
+now = datetime.now(timezone.utc)
+
+def parse_deps(body):
+    deps = set()
+    in_section = False
+    for line in (body or "").split("\n"):
+        if re.match(r"^##?\s*(Depends on|Blocked by|Dependencies)", line, re.IGNORECASE):
+            in_section = True
+            continue
+        if in_section and re.match(r"^##?\s", line):
+            in_section = False
+        if in_section:
+            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
+        if re.search(r"(depends on|blocked by)", line, re.IGNORECASE):
+            deps.update(int(m) for m in re.findall(r"#(\d+)", line))
+    return deps
+
+checked = {}
+for issue in issues:
+    num = issue["number"]
+    deps = parse_deps(issue.get("body", ""))
+    deps.discard(num)
+    for dep in deps:
+        if dep in checked:
+            dep_data = checked[dep]
+        elif dep in issue_map:
+            dep_data = issue_map[dep]
+            checked[dep] = dep_data
+        else:
+            try:
+                req = Request(f"{api}/issues/{dep}",
+                    headers={"Authorization": f"token {token}"})
+                with urlopen(req, timeout=5) as resp:
+                    dep_data = json.loads(resp.read())
+                checked[dep] = dep_data
+            except Exception:
+                continue
+        if dep_data.get("state") != "open":
+            continue
+        created = dep_data.get("created_at", "")
+        try:
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            age_days = (now - created_dt).days
+            if age_days > 30:
+                dep_title = dep_data.get("title", "")[:50]
+                print(f"#{num} blocked by #{dep} \"{dep_title}\" (open {age_days} days)")
+        except Exception:
+            pass
+' 2>/dev/null || true)
+
+  if [ -n "$STALE_DEPS" ]; then
+    while IFS= read -r stale; do
+      [ -z "$stale" ] && continue
+      p3 "Stale dependency: ${stale}"
+    done <<< "$STALE_DEPS"
+  fi
+fi
 
 # =============================================================================
 # P4: HOUSEKEEPING — stale processes

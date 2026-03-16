@@ -196,6 +196,7 @@ Process up to 10 tech-debt issues per run (stay within API rate limits).
 3. **Stale issues**: If clearly superseded or no longer relevant, close with explanation. If unclear, ESCALATE.
 4. **Oversized issues**: If >5 acceptance criteria touching different files/concerns, ESCALATE with suggested split.
 5. **Dependencies**: If an issue references another that must land first, add a \`## Dependencies\n- #NNN\` section if missing.
+6. **Sibling issues**: When creating multiple issues from the same source (PR review, code audit), NEVER add bidirectional dependencies between them. Siblings are independent work items, not parent/child. Use \`## Related\n- #NNN (sibling)\` for cross-references between siblings — NOT \`## Dependencies\`. The dev-poll \`get_deps()\` parser only reads \`## Dependencies\` / \`## Depends on\` / \`## Blocked by\` headers, so \`## Related\` is safely ignored. Bidirectional deps create permanent deadlocks that stall the entire factory.
 
 ## Escalation format
 For anything needing human decision, output EXACTLY this format (one block, all items):
