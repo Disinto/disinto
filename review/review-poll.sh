@@ -101,11 +101,14 @@ Instructions:
   local inject_tmp
   inject_tmp=$(mktemp /tmp/review-inject-XXXXXX)
   printf '%s' "${inject_msg}" > "${inject_tmp}"
-  tmux load-buffer -b "review-inject-${issue_num}" "${inject_tmp}"
-  tmux paste-buffer -t "${session}" -b "review-inject-${issue_num}"
+  # All tmux calls guarded with || true: the dev session is external and may die
+  # between the has-session check above and here; a non-zero exit must not abort
+  # the outer poll loop under set -euo pipefail.
+  tmux load-buffer -b "review-inject-${pr_num}" "${inject_tmp}" || true
+  tmux paste-buffer -t "${session}" -b "review-inject-${pr_num}" || true
   sleep 0.5
-  tmux send-keys -t "${session}" "" Enter
-  tmux delete-buffer -b "review-inject-${issue_num}" 2>/dev/null || true
+  tmux send-keys -t "${session}" "" Enter || true
+  tmux delete-buffer -b "review-inject-${pr_num}" 2>/dev/null || true
   rm -f "${inject_tmp}"
   log "  #${pr_num} review (${verdict}) injected into session ${session}"
 }
@@ -146,7 +149,12 @@ while IFS= read -r line; do
 
   if "${SCRIPT_DIR}/review-pr.sh" "$PR_NUM" 2>&1; then
     REVIEWED=$((REVIEWED + 1))
-    inject_review_into_dev_session "$PR_NUM" "$PR_SHA" "$PR_BRANCH"
+    # Re-fetch current SHA: review-pr.sh fetches the PR independently and tags its
+    # comment with whatever SHA it saw.  If a commit arrived while review-pr.sh was
+    # running those two SHA captures diverge and we would miss the comment.
+    FRESH_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API_BASE}/pulls/${PR_NUM}" | jq -r '.head.sha // ""') || true
+    inject_review_into_dev_session "$PR_NUM" "${FRESH_SHA:-$PR_SHA}" "$PR_BRANCH"
   else
     log "  #${PR_NUM} review failed"
     matrix_send "review" "❌ PR #${PR_NUM} review failed" 2>/dev/null || true
