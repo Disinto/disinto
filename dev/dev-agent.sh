@@ -832,7 +832,14 @@ A maintainer should split this issue or add more detail to the spec."
 
 ${REASON}
 
-This issue may be ready to close."
+Closing as already implemented."
+
+        # Close the issue to prevent retry loops
+        curl -sf -X PATCH \
+          -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API}/issues/${ISSUE}" \
+          -d '{"state":"closed"}' >/dev/null 2>&1 || true
         ;;
       *)
         log "unknown refusal status: ${REFUSAL_STATUS}"
