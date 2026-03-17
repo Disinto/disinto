@@ -95,6 +95,12 @@ On Codeberg, set up branch protection for your primary branch:
 
 This ensures dev-agent can't merge its own PRs — it must wait for review-agent (running as the bot account) to approve.
 
+> **Common pitfall:** Approvals alone are not enough. You must also:
+> 1. Add `review_bot` as a **write** collaborator on the repo (Settings → Collaborators)
+> 2. Set both `approvals_whitelist_username` **and** `merge_whitelist_usernames` to include `review_bot` in the branch protection rule
+>
+> Without write access, the bot's approval is counted but the merge API returns HTTP 405.
+
 ### Required: Seed the `AGENTS.md` tree
 
 The planner-agent maintains an `AGENTS.md` tree — architecture docs with
@@ -149,6 +155,8 @@ Dev-agent checks that all referenced issues are closed (= merged) before startin
 crontab -e
 ```
 
+### Single project
+
 Add (adjust paths):
 
 ```cron
@@ -158,10 +166,10 @@ FACTORY_ROOT=/home/you/disinto
 0,10,20,30,40,50 * * * * $FACTORY_ROOT/supervisor/supervisor-poll.sh
 
 # Review agent — find unreviewed PRs (every 10 min, offset +3)
-3,13,23,33,43,53 * * * * $FACTORY_ROOT/review/review-poll.sh
+3,13,23,33,43,53 * * * * $FACTORY_ROOT/review/review-poll.sh $FACTORY_ROOT/projects/myproject.toml
 
 # Dev agent — find ready issues, implement (every 10 min, offset +6)
-6,16,26,36,46,56 * * * * $FACTORY_ROOT/dev/dev-poll.sh
+6,16,26,36,46,56 * * * * $FACTORY_ROOT/dev/dev-poll.sh $FACTORY_ROOT/projects/myproject.toml
 
 # Gardener — backlog grooming (daily)
 15 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh
@@ -170,7 +178,34 @@ FACTORY_ROOT=/home/you/disinto
 0 9 * * 1                 $FACTORY_ROOT/planner/planner-poll.sh
 ```
 
-The 3-minute offsets prevent agents from competing for resources.
+Both `review-poll.sh` and `dev-poll.sh` take a project TOML file as their first argument.
+
+### Multiple projects
+
+Stagger each project's dev-poll and review-poll by 3 minutes so they don't overlap:
+
+```cron
+FACTORY_ROOT=/home/you/disinto
+
+# Supervisor (shared)
+0,10,20,30,40,50 * * * * $FACTORY_ROOT/supervisor/supervisor-poll.sh
+
+# Project A — review +3, dev +6
+3,13,23,33,43,53 * * * * $FACTORY_ROOT/review/review-poll.sh $FACTORY_ROOT/projects/project-a.toml
+6,16,26,36,46,56 * * * * $FACTORY_ROOT/dev/dev-poll.sh     $FACTORY_ROOT/projects/project-a.toml
+
+# Project B — review +8, dev +11  (3-min gap from project A)
+8,18,28,38,48,58 * * * * $FACTORY_ROOT/review/review-poll.sh $FACTORY_ROOT/projects/project-b.toml
+1,11,21,31,41,51 * * * * $FACTORY_ROOT/dev/dev-poll.sh     $FACTORY_ROOT/projects/project-b.toml
+
+# Gardener — backlog grooming (daily)
+15 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh
+
+# Planner — AGENTS.md maintenance + gap analysis (weekly)
+0 9 * * 1                 $FACTORY_ROOT/planner/planner-poll.sh
+```
+
+The 3-minute offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
 
 ## 5. Verify
 
@@ -205,6 +240,26 @@ If you want real-time notifications and human-in-the-loop escalation:
    ```
 3. The supervisor and gardener will post status updates and escalation threads to the configured room. Reply in-thread to answer escalations.
 
+### Per-project Matrix setup
+
+Each project can post to its own Matrix room. For each project:
+
+1. **Create a Matrix room** and note its room ID (e.g. `!abc123:matrix.example.org`)
+2. **Create a bot user** (or reuse one) and join it to the room
+3. **Add the token** to `.env` using a project-prefixed name:
+   ```bash
+   PROJECTNAME_MATRIX_TOKEN=syt_xxxxx
+   ```
+4. **Configure the TOML** with a `[matrix]` section:
+   ```toml
+   [matrix]
+   room_id   = "!abc123:matrix.example.org"
+   bot_user  = "@projectname-bot:matrix.example.org"
+   token_env = "PROJECTNAME_MATRIX_TOKEN"
+   ```
+
+The `token_env` field points to the environment variable name, not the token value itself, so you can have multiple bots with separate credentials in a single `.env`.
+
 ## Lifecycle
 
 Once running, the system operates autonomously:
@@ -234,3 +289,13 @@ Meanwhile:
 | Claude not found | `which claude` — must be in PATH. Check `lib/env.sh` adds `~/.local/bin`. |
 | Merge fails | Branch protection misconfigured? Review bot needs write access to the repo. |
 | Memory issues | Supervisor auto-heals at <500 MB free. Check `supervisor/supervisor.log` for P0 alerts. |
+
+### Multi-project common blockers
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Dev-agent for project B never starts | Shared lock file path | Each TOML `name` field must be unique — lock is `/tmp/dev-agent-{name}.lock` |
+| Review-poll skips all PRs | CI gate with no CI configured | Set `woodpecker_repo_id = 0` in the TOML `[ci]` section to bypass the CI check |
+| Approved PRs never merge (HTTP 405) | `review_bot` not in merge/approvals whitelist | Add as write collaborator; set both `approvals_whitelist_username` and `merge_whitelist_usernames` in branch protection |
+| Dev-agent churns through issues without waiting for open PRs to land | No single-threaded enforcement | `WAITING_PRS` check in dev-poll holds new work — verify TOML `name` is consistent across invocations |
+| Label ping-pong (issue reopened then immediately re-closed) | `already_done` handler doesn't close issue | Review dev-agent log; `already_done` status should auto-close the issue |
