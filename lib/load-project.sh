@@ -54,6 +54,15 @@ svc = cfg.get('services', {})
 if 'containers' in svc:
     emit('PROJECT_CONTAINERS', svc['containers'])
 
+# [matrix] section
+mx = cfg.get('matrix', {})
+if 'room_id' in mx:
+    emit('MATRIX_ROOM_ID', mx['room_id'])
+if 'bot_user' in mx:
+    emit('MATRIX_BOT_USER', mx['bot_user'])
+if 'token_env' in mx:
+    emit('MATRIX_TOKEN_ENV', mx['token_env'])
+
 # [monitoring] section
 mon = cfg.get('monitoring', {})
 for key in ['check_prs', 'check_dev_agent', 'check_pipeline_stall']:
@@ -78,6 +87,12 @@ fi
 # Derive PROJECT_REPO_ROOT if not explicitly set
 if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
   export PROJECT_REPO_ROOT="/home/${USER}/${PROJECT_NAME}"
+fi
+
+# Resolve MATRIX_TOKEN from env var name (token_env points to an env var, not the token itself)
+if [ -n "${MATRIX_TOKEN_ENV:-}" ]; then
+  export MATRIX_TOKEN="${!MATRIX_TOKEN_ENV:-}"
+  unset MATRIX_TOKEN_ENV
 fi
 
 unset _PROJECT_TOML _PROJECT_VARS _key _val
