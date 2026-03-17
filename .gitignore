@@ -9,6 +9,7 @@ state.json
 *.lock
 *.pid
 escalations.jsonl
+metrics/supervisor-metrics.jsonl
 
 # OS
 .DS_Store
