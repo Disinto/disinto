@@ -23,8 +23,22 @@ PROJECTS_DIR="${FACTORY_ROOT}/projects"
 METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
 
 emit_metric() {
-  mkdir -p "$(dirname "$METRICS_FILE")"
   printf '%s\n' "$1" >> "$METRICS_FILE"
+}
+
+# Count all matching items from a paginated Codeberg API endpoint.
+# Usage: codeberg_count_paginated "/issues?state=open&labels=backlog&type=issues"
+# Returns total count across all pages (max 20 pages = 1000 items).
+codeberg_count_paginated() {
+  local endpoint="$1" total=0 page=1 count
+  while true; do
+    count=$(codeberg_api GET "${endpoint}&limit=50&page=${page}" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+    total=$((total + ${count:-0}))
+    [ "${count:-0}" -lt 50 ] && break
+    page=$((page + 1))
+    [ "$page" -gt 20 ] && break
+  done
+  echo "$total"
 }
 
 rotate_metrics() {
@@ -32,8 +46,14 @@ rotate_metrics() {
   local cutoff tmpfile
   cutoff=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M)
   tmpfile="${METRICS_FILE}.tmp"
-  awk -F'"' -v cutoff="$cutoff" 'NF >= 4 && $2 == "ts" && $4 >= cutoff' \
-    "$METRICS_FILE" > "$tmpfile" && mv "$tmpfile" "$METRICS_FILE" || rm -f "$tmpfile"
+  jq -c --arg cutoff "$cutoff" 'select(.ts >= $cutoff)' \
+    "$METRICS_FILE" > "$tmpfile" 2>/dev/null
+  # Only replace if jq produced output, or the source is already empty
+  if [ -s "$tmpfile" ] || [ ! -s "$METRICS_FILE" ]; then
+    mv "$tmpfile" "$METRICS_FILE"
+  else
+    rm -f "$tmpfile"
+  fi
 }
 
 # Prevent overlapping runs
@@ -46,6 +66,7 @@ if [ -f "$LOCKFILE" ]; then
 fi
 echo $$ > "$LOCKFILE"
 trap 'rm -f "$LOCKFILE" "$STATUSFILE"' EXIT
+mkdir -p "$(dirname "$METRICS_FILE")"
 rotate_metrics
 
 flog() {
@@ -164,7 +185,7 @@ fi
 
 # Emit infra metric
 _RAM_TOTAL_MB=$(free -m | awk '/Mem:/{print $2}')
-_RAM_USED_PCT=$(( _RAM_TOTAL_MB > 0 ? (_RAM_TOTAL_MB - AVAIL_MB) * 100 / _RAM_TOTAL_MB : 0 ))
+_RAM_USED_PCT=$(( ${_RAM_TOTAL_MB:-0} > 0 ? (${_RAM_TOTAL_MB:-0} - ${AVAIL_MB:-0}) * 100 / ${_RAM_TOTAL_MB:-1} : 0 ))
 emit_metric "$(jq -nc \
   --arg ts "$(date -u +%Y-%m-%dT%H:%MZ)" \
   --argjson ram "${_RAM_USED_PCT:-0}" \
@@ -224,8 +245,8 @@ check_project() {
   PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs || true)
   [ "${PENDING_CI:-0}" -gt 0 ] && p2 "${proj_name}: CI: ${PENDING_CI} pipeline(s) pending >30min"
 
-  # Emit CI metric (last completed pipeline)
-  _CI_ROW=$(wpdb -A -F ',' -c "SELECT id, COALESCE(ROUND(EXTRACT(EPOCH FROM (to_timestamp(finished) - to_timestamp(started)))/60)::int, 0), status FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status IN ('success','failure','error') AND finished > 0 ORDER BY id DESC LIMIT 1;" 2>/dev/null | grep -E '^[0-9]' | head -1 || true)
+  # Emit CI metric (last completed pipeline within 24h — skip if project has no recent CI)
+  _CI_ROW=$(wpdb -A -F ',' -c "SELECT id, COALESCE(ROUND(EXTRACT(EPOCH FROM (to_timestamp(finished) - to_timestamp(started)))/60)::int, 0), status FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status IN ('success','failure','error') AND finished > 0 AND to_timestamp(finished) > now() - interval '24 hours' ORDER BY id DESC LIMIT 1;" 2>/dev/null | grep -E '^[0-9]' | head -1 || true)
   if [ -n "$_CI_ROW" ]; then
     _CI_ID=$(echo "$_CI_ROW" | cut -d',' -f1 | tr -d ' ')
     _CI_DUR=$(echo "$_CI_ROW" | cut -d',' -f2 | tr -d ' ')
@@ -467,10 +488,10 @@ check_project() {
     unset DEPS_OF BACKLOG_NUMS NODE_COLOR SEEN_CYCLES DEP_CACHE
   fi
 
-  # Emit dev metric
-  _BACKLOG_COUNT=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
-  _BLOCKED_COUNT=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
-  _PR_COUNT=$(codeberg_api GET "/pulls?state=open&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  # Emit dev metric (paginated to avoid silent cap at 50)
+  _BACKLOG_COUNT=$(codeberg_count_paginated "/issues?state=open&labels=backlog&type=issues")
+  _BLOCKED_COUNT=$(codeberg_count_paginated "/issues?state=open&labels=blocked&type=issues")
+  _PR_COUNT=$(codeberg_count_paginated "/pulls?state=open")
   emit_metric "$(jq -nc \
     --arg ts "$(date -u +%Y-%m-%dT%H:%MZ)" \
     --arg proj "$proj_name" \

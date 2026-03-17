@@ -195,15 +195,15 @@ METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
 METRICS_SUMMARY="(no metrics data — supervisor has not yet written metrics)"
 if [ -f "$METRICS_FILE" ] && [ -s "$METRICS_FILE" ]; then
   _METRICS_CUTOFF=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M)
-  METRICS_SUMMARY=$(awk -F'"' -v cutoff="$_METRICS_CUTOFF" \
-    'NF >= 4 && $2 == "ts" && $4 >= cutoff' "$METRICS_FILE" 2>/dev/null | \
-    jq -rs '
-      ( [.[] | select(.type=="ci") | .duration_min] | if length>0 then add/length|round else null end ) as $ci_avg |
-      ( [.[] | select(.type=="ci") | select(.status=="success")] | length ) as $ci_ok |
-      ( [.[] | select(.type=="ci")] | length ) as $ci_n |
+  METRICS_SUMMARY=$(jq -c --arg cutoff "$_METRICS_CUTOFF" 'select(.ts >= $cutoff)' \
+    "$METRICS_FILE" 2>/dev/null | \
+    jq -rs --arg proj "${PROJECT_NAME:-}" '
+      ( [.[] | select(.type=="ci" and .project==$proj) | .duration_min] | if length>0 then add/length|round else null end ) as $ci_avg |
+      ( [.[] | select(.type=="ci" and .project==$proj) | select(.status=="success")] | length ) as $ci_ok |
+      ( [.[] | select(.type=="ci" and .project==$proj)] | length ) as $ci_n |
       ( [.[] | select(.type=="infra") | .ram_used_pct] | if length>0 then add/length|round else null end ) as $ram_avg |
       ( [.[] | select(.type=="infra") | .disk_used_pct] | if length>0 then add/length|round else null end ) as $disk_avg |
-      ( [.[] | select(.type=="dev")] | last ) as $dev_last |
+      ( [.[] | select(.type=="dev" and .project==$proj)] | last ) as $dev_last |
       "CI (\($ci_n) pipelines): avg \(if $ci_avg then "\($ci_avg)min" else "n/a" end), success rate \(if $ci_n > 0 then "\($ci_ok * 100 / $ci_n | round)%" else "n/a" end)\n" +
       "Infra: avg RAM \(if $ram_avg then "\($ram_avg)%" else "n/a" end) used, avg disk \(if $disk_avg then "\($disk_avg)%" else "n/a" end) used\n" +
       "Dev (latest): \(if $dev_last then "\($dev_last.issues_in_backlog) in backlog, \($dev_last.issues_blocked) blocked (\(if $dev_last.issues_in_backlog > 0 then $dev_last.issues_blocked * 100 / $dev_last.issues_in_backlog | round else 0 end)% blocked), \($dev_last.pr_open) open PRs" else "n/a" end)
