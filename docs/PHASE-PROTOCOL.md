@@ -78,8 +78,10 @@ PHASE:awaiting_review → wait for review-poll.sh to post review comment
                          on timeout (3h)    → inject "no review, escalating"
 
 PHASE:needs_human     → send Matrix notification with issue/PR link
-                         on reply   → inject human reply into session
-                         on timeout → re-notify, then escalate after 24h
+                         on reply   → supervisor-poll.sh injects reply into tmux session
+                                      (gardener-poll.sh as backup if supervisor missed it)
+                                      reply file: /tmp/dev-escalation-reply (written by matrix_listener.sh)
+                         on timeout → re-notify at 6h, escalate at 24h (supervisor-poll.sh)
 
 PHASE:done            → verify PR merged on Codeberg
                          if merged   → kill tmux session, clean labels, close issue
@@ -139,6 +141,8 @@ file and git history.
 | `/tmp/dev-session-{proj}-{issue}.phase` | Claude (in session) | Current phase |
 | `/tmp/ci-result-{proj}-{issue}.txt` | Orchestrator | Last CI output for injection |
 | `/tmp/dev-{proj}-{issue}.log` | Orchestrator | Session transcript (aspirational — path TBD when tmux session manager is implemented in #80) |
+| `/tmp/dev-escalation-reply` | matrix_listener.sh | Human reply to `needs_human` escalation (consumed by supervisor-poll.sh) |
+| `/tmp/dev-renotify-{proj}-{issue}` | supervisor-poll.sh | Marker to prevent duplicate 6h re-notifications |
 | `WORKTREE` (git worktree) | dev-agent.sh | Code checkpoint |
 
 ## Sequence Diagram

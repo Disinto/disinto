@@ -514,6 +514,76 @@ check_project() {
     '{ts:$ts,type:"dev",project:$proj,issues_in_backlog:$backlog,issues_blocked:$blocked,pr_open:$prs}' 2>/dev/null)" 2>/dev/null || true
 
   # ===========================================================================
+  # P2d: NEEDS_HUMAN — inject human replies into blocked dev sessions
+  # ===========================================================================
+  status "P2: ${proj_name}: checking needs_human sessions"
+
+  HUMAN_REPLY_FILE="/tmp/dev-escalation-reply"
+
+  for _nh_phase_file in /tmp/dev-session-"${proj_name}"-*.phase; do
+    [ -f "$_nh_phase_file" ] || continue
+    _nh_phase=$(head -1 "$_nh_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+    [ "$_nh_phase" = "PHASE:needs_human" ] || continue
+
+    _nh_issue=$(basename "$_nh_phase_file" .phase)
+    _nh_issue="${_nh_issue#dev-session-${proj_name}-}"
+    [ -z "$_nh_issue" ] && continue
+    _nh_session="dev-${proj_name}-${_nh_issue}"
+
+    # Check tmux session is alive
+    if ! tmux has-session -t "$_nh_session" 2>/dev/null; then
+      flog "${proj_name}: #${_nh_issue} phase=needs_human but tmux session gone"
+      continue
+    fi
+
+    # Inject human reply if available
+    if [ -s "$HUMAN_REPLY_FILE" ]; then
+      _nh_reply=$(cat "$HUMAN_REPLY_FILE")
+      _nh_inject_msg="Human reply received for issue #${_nh_issue}:
+
+${_nh_reply}
+
+Instructions:
+1. Read the human's guidance carefully.
+2. Continue your work based on their input.
+3. When done, push your changes and write the appropriate phase:
+   echo \"PHASE:awaiting_ci\" > \"${_nh_phase_file}\""
+
+      _nh_tmpfile=$(mktemp /tmp/human-inject-XXXXXX)
+      printf '%s' "$_nh_inject_msg" > "$_nh_tmpfile"
+      # All tmux calls guarded: session may die between has-session and here
+      tmux load-buffer -b "human-inject-${_nh_issue}" "$_nh_tmpfile" || true
+      tmux paste-buffer -t "$_nh_session" -b "human-inject-${_nh_issue}" || true
+      sleep 0.5
+      tmux send-keys -t "$_nh_session" "" Enter || true
+      tmux delete-buffer -b "human-inject-${_nh_issue}" 2>/dev/null || true
+      rm -f "$_nh_tmpfile"
+
+      rm -f "$HUMAN_REPLY_FILE"
+      rm -f "/tmp/dev-renotify-${proj_name}-${_nh_issue}"
+      flog "${proj_name}: #${_nh_issue} human reply injected into session ${_nh_session}"
+      fixed "${proj_name}: Injected human reply into dev session #${_nh_issue}"
+    else
+      # No reply yet — check for timeout (re-notify at 6h, alert at 24h)
+      _nh_mtime=$(stat -c %Y "$_nh_phase_file" 2>/dev/null || echo 0)
+      _nh_now=$(date +%s)
+      _nh_age=$(( _nh_now - _nh_mtime ))
+
+      if [ "$_nh_age" -gt 86400 ]; then
+        p2 "${proj_name}: Dev session #${_nh_issue} stuck in needs_human for >24h"
+      elif [ "$_nh_age" -gt 21600 ]; then
+        _nh_renotify="/tmp/dev-renotify-${proj_name}-${_nh_issue}"
+        if [ ! -f "$_nh_renotify" ]; then
+          _nh_age_h=$(( _nh_age / 3600 ))
+          matrix_send "dev" "⏰ Reminder: Issue #${_nh_issue} still needs human input (waiting ${_nh_age_h}h)" 2>/dev/null || true
+          touch "$_nh_renotify"
+          flog "${proj_name}: #${_nh_issue} re-notified (needs_human for ${_nh_age_h}h)"
+        fi
+      fi
+    fi
+  done
+
+  # ===========================================================================
   # P4-PROJECT: Clean stale worktrees for this project
   # ===========================================================================
   NOW_TS=$(date +%s)

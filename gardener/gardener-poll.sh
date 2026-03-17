@@ -64,6 +64,47 @@ if [ -s /tmp/gardener-escalation-reply ]; then
   log "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
 fi
 
+# ── Inject human replies into needs_human dev sessions (backup to supervisor) ─
+HUMAN_REPLY_FILE="/tmp/dev-escalation-reply"
+if [ -s "$HUMAN_REPLY_FILE" ]; then
+  _gr_reply=$(cat "$HUMAN_REPLY_FILE")
+  for _gr_phase_file in /tmp/dev-session-"${PROJECT_NAME}"-*.phase; do
+    [ -f "$_gr_phase_file" ] || continue
+    _gr_phase=$(head -1 "$_gr_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+    [ "$_gr_phase" = "PHASE:needs_human" ] || continue
+
+    _gr_issue=$(basename "$_gr_phase_file" .phase)
+    _gr_issue="${_gr_issue#dev-session-${PROJECT_NAME}-}"
+    [ -z "$_gr_issue" ] && continue
+    _gr_session="dev-${PROJECT_NAME}-${_gr_issue}"
+
+    tmux has-session -t "$_gr_session" 2>/dev/null || continue
+
+    _gr_inject_msg="Human reply received for issue #${_gr_issue}:
+
+${_gr_reply}
+
+Instructions:
+1. Read the human's guidance carefully.
+2. Continue your work based on their input.
+3. When done, push your changes and write the appropriate phase:
+   echo \"PHASE:awaiting_ci\" > \"${_gr_phase_file}\""
+
+    _gr_tmpfile=$(mktemp /tmp/human-inject-XXXXXX)
+    printf '%s' "$_gr_inject_msg" > "$_gr_tmpfile"
+    tmux load-buffer -b "human-inject-${_gr_issue}" "$_gr_tmpfile" || true
+    tmux paste-buffer -t "$_gr_session" -b "human-inject-${_gr_issue}" || true
+    sleep 0.5
+    tmux send-keys -t "$_gr_session" "" Enter || true
+    tmux delete-buffer -b "human-inject-${_gr_issue}" 2>/dev/null || true
+    rm -f "$_gr_tmpfile"
+
+    rm -f "$HUMAN_REPLY_FILE"
+    log "${PROJECT_NAME}: #${_gr_issue} human reply injected into session ${_gr_session} (gardener)"
+    break  # only one reply to deliver
+  done
+fi
+
 # ── Fetch all open issues ─────────────────────────────────────────────────
 ISSUES_JSON=$(codeberg_api GET "/issues?state=open&type=issues&limit=50&sort=updated&direction=desc" 2>/dev/null || true)
 if [ -z "$ISSUES_JSON" ] || [ "$ISSUES_JSON" = "null" ]; then
