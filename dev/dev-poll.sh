@@ -57,6 +57,32 @@ json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 }
 
+# Check whether an issue/PR has been escalated to supervisor (unprocessed or processed)
+is_escalated() {
+  local issue="$1" pr="$2"
+  python3 -c "
+import json, sys
+try:
+  issue, pr = int('${issue}'), int('${pr}')
+except (ValueError, TypeError):
+  sys.exit(1)
+for path in ['${FACTORY_ROOT}/supervisor/escalations.jsonl',
+             '${FACTORY_ROOT}/supervisor/escalations.done.jsonl']:
+  try:
+    with open(path) as fh:
+      for line in fh:
+        line = line.strip()
+        if not line:
+          continue
+        d = json.loads(line)
+        if d.get('issue') == issue and d.get('pr') == pr:
+          sys.exit(0)
+  except OSError:
+    pass
+sys.exit(1)
+" 2>/dev/null && return 0 || return 1
+}
+
 REPO="${CODEBERG_REPO}"
 
 API="${CODEBERG_API}"
@@ -232,9 +258,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
       FIX_ATTEMPTS=$(ci_fix_count "$HAS_PR")
-      if [ "$FIX_ATTEMPTS" -ge 3 ]; then
+      if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$ISSUE_NUM" "$HAS_PR"; then
         # Already escalated — skip silently, let pipeline continue to backlog
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI exhausted (${FIX_ATTEMPTS} attempts) — skipping"
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to supervisor, skipping"
         # Only write escalation + alert once (first time hitting 3)
         if [ "$FIX_ATTEMPTS" -eq 3 ]; then
           echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
@@ -313,9 +339,9 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     exit 0
   elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
     FIX_ATTEMPTS=$(ci_fix_count "$PR_NUM")
-    if [ "$FIX_ATTEMPTS" -ge 3 ]; then
+    if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$STUCK_ISSUE" "$PR_NUM"; then
       # Already escalated — skip to let pipeline continue
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI exhausted (${FIX_ATTEMPTS} attempts) — skipping"
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to supervisor, skipping"
       if [ "$FIX_ATTEMPTS" -eq 3 ]; then
         echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
           >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
@@ -390,11 +416,14 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
       FIX_ATTEMPTS=$(ci_fix_count "$EXISTING_PR")
-      if [ "$FIX_ATTEMPTS" -ge 3 ]; then
-        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — exhausted ${FIX_ATTEMPTS} attempts, escalated (not blocking pipeline)"
-        echo "{\"issue\":${ISSUE_NUM},\"pr\":${EXISTING_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
-        matrix_send "dev" "🚨 PR #${EXISTING_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+      if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$ISSUE_NUM" "$EXISTING_PR"; then
+        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — escalated to supervisor, skipping (not blocking pipeline)"
+        if [ "$FIX_ATTEMPTS" -eq 3 ]; then
+          echo "{\"issue\":${ISSUE_NUM},\"pr\":${EXISTING_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+          matrix_send "dev" "🚨 PR #${EXISTING_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+          ci_fix_increment "$EXISTING_PR"  # bump to 4 to prevent re-alert
+        fi
         # Don't add to WAITING_PRS — escalated PRs should not block new work
         continue
       fi
