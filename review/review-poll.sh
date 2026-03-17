@@ -56,10 +56,16 @@ while IFS= read -r line; do
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
+  # Skip if CI is running/failed. Allow "success" or no CI configured (empty/pending with no pipelines)
   if [ "$CI_STATE" != "success" ]; then
-    log "  #${PR_NUM} CI=${CI_STATE}, skip"
-    SKIPPED=$((SKIPPED + 1))
-    continue
+    # Projects without CI (woodpecker_repo_id=0) treat empty/pending as pass
+    if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && [ "$CI_STATE" = "" ] || [ "$CI_STATE" = "pending" ]; then
+      : # no CI configured, proceed to review
+    else
+      log "  #${PR_NUM} CI=${CI_STATE}, skip"
+      SKIPPED=$((SKIPPED + 1))
+      continue
+    fi
   fi
 
   # Check formal Codeberg reviews (not comment markers)
