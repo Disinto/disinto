@@ -84,6 +84,7 @@ Optional but recommended:
 |-------|---------|
 | `tech-debt` | Gardener can promote these to `backlog` |
 | `blocked` | Dev-agent marks issues with unmet dependencies |
+| `formula` | *(requires `feat/formula` merge)* Dev-agent uses a structured TOML formula instead of freeform. Issue body must include YAML front matter, e.g.:<br>`---`<br>`formula: upgrade-dependency`<br>`vars:`<br>`  package: viem`<br>`  ecosystem: npm`<br>`---` |
 
 ### Required: Branch protection
 
