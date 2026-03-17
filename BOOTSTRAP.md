@@ -178,11 +178,11 @@ FACTORY_ROOT=/home/you/disinto
 0 9 * * 1                 $FACTORY_ROOT/planner/planner-poll.sh
 ```
 
-Both `review-poll.sh` and `dev-poll.sh` take a project TOML file as their first argument.
+`review-poll.sh`, `dev-poll.sh`, and `gardener-poll.sh` all take a project TOML file as their first argument.
 
 ### Multiple projects
 
-Stagger each project's dev-poll and review-poll by 3 minutes so they don't overlap:
+Stagger each project's polls so they don't overlap. With the example below, cross-project gaps are 2 minutes:
 
 ```cron
 FACTORY_ROOT=/home/you/disinto
@@ -194,18 +194,19 @@ FACTORY_ROOT=/home/you/disinto
 3,13,23,33,43,53 * * * * $FACTORY_ROOT/review/review-poll.sh $FACTORY_ROOT/projects/project-a.toml
 6,16,26,36,46,56 * * * * $FACTORY_ROOT/dev/dev-poll.sh     $FACTORY_ROOT/projects/project-a.toml
 
-# Project B — review +8, dev +11  (3-min gap from project A)
+# Project B — review +8, dev +1  (2-min gap from project A)
 8,18,28,38,48,58 * * * * $FACTORY_ROOT/review/review-poll.sh $FACTORY_ROOT/projects/project-b.toml
 1,11,21,31,41,51 * * * * $FACTORY_ROOT/dev/dev-poll.sh     $FACTORY_ROOT/projects/project-b.toml
 
-# Gardener — backlog grooming (daily)
-15 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh
+# Gardener — per-project backlog grooming (daily)
+15 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh $FACTORY_ROOT/projects/project-a.toml
+45 8 * * *                $FACTORY_ROOT/gardener/gardener-poll.sh $FACTORY_ROOT/projects/project-b.toml
 
 # Planner — AGENTS.md maintenance + gap analysis (weekly)
 0 9 * * 1                 $FACTORY_ROOT/planner/planner-poll.sh
 ```
 
-The 3-minute offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
+The staggered offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
 
 ## 5. Verify
 
