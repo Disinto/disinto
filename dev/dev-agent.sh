@@ -79,9 +79,25 @@ read_phase() {
   { cat "$PHASE_FILE" 2>/dev/null || true; } | head -1 | tr -d '[:space:]'
 }
 
+wait_for_claude_ready() {
+  local timeout="${1:-120}"
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    # Claude Code shows ❯ when ready for input
+    if tmux capture-pane -t "${SESSION_NAME}" -p 2>/dev/null | grep -q '❯'; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  log "WARNING: claude not ready after ${timeout}s — proceeding anyway"
+  return 1
+}
+
 inject_into_session() {
   local text="$1"
   local tmpfile
+  wait_for_claude_ready 120
   tmpfile=$(mktemp /tmp/tmux-inject-XXXXXX)
   printf '%s' "$text" > "$tmpfile"
   tmux load-buffer -b "inject-${ISSUE}" "$tmpfile"
@@ -811,9 +827,6 @@ if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
   tmux new-session -d -s "${SESSION_NAME}" -c "${WORKTREE}" \
     "claude --dangerously-skip-permissions"
 
-  # Wait for Claude to initialize
-  sleep 3
-
   if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
     log "ERROR: failed to create tmux session ${SESSION_NAME}"
     cleanup_labels
@@ -821,20 +834,21 @@ if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
     exit 1
   fi
   log "tmux session created: ${SESSION_NAME}"
+
+  # Wait for Claude to be ready (polls for ❯ prompt)
+  if ! wait_for_claude_ready 120; then
+    log "ERROR: claude did not become ready in ${SESSION_NAME}"
+    kill_tmux_session
+    cleanup_labels
+    cleanup_worktree
+    exit 1
+  fi
 else
   log "reusing existing tmux session: ${SESSION_NAME}"
 fi
 
-# Send initial prompt via paste buffer (handles long text and special chars)
-PROMPT_TMPFILE=$(mktemp /tmp/dev-prompt-XXXXXX)
-printf '%s' "$INITIAL_PROMPT" > "$PROMPT_TMPFILE"
-tmux load-buffer -b "prompt-${ISSUE}" "$PROMPT_TMPFILE"
-tmux paste-buffer -t "${SESSION_NAME}" -b "prompt-${ISSUE}"
-sleep 1
-tmux send-keys -t "${SESSION_NAME}" "" Enter
-tmux delete-buffer -b "prompt-${ISSUE}" 2>/dev/null || true
-rm -f "$PROMPT_TMPFILE"
-
+# Send initial prompt (inject_into_session waits for claude to be ready)
+inject_into_session "$INITIAL_PROMPT"
 log "initial prompt sent to tmux session"
 
 # Signal to dev-poll.sh that we're running (session is up)
@@ -882,7 +896,6 @@ Phase file: ${PHASE_FILE}"
 
         if tmux new-session -d -s "${SESSION_NAME}" -c "${WORKTREE}" \
           "claude --dangerously-skip-permissions" 2>/dev/null; then
-          sleep 3
           inject_into_session "$RECOVERY_MSG"
           log "recovery session started"
           IDLE_ELAPSED=0
