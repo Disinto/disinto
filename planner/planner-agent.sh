@@ -19,6 +19,7 @@ source "$FACTORY_ROOT/lib/env.sh"
 LOG_FILE="$SCRIPT_DIR/planner.log"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
 VISION_FILE="${PROJECT_REPO_ROOT}/VISION.md"
+RESOURCES_FILE="${FACTORY_ROOT}/RESOURCES.md"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
@@ -178,6 +179,9 @@ if [ -z "$VISION" ]; then
   exit 0
 fi
 
+RESOURCES=""
+[ -f "$RESOURCES_FILE" ] && RESOURCES=$(cat "$RESOURCES_FILE")
+
 # Fetch open issues (all labels)
 OPEN_ISSUES=$(codeberg_api GET "/issues?state=open&type=issues&limit=50&sort=updated&direction=desc" 2>/dev/null || true)
 if [ -z "$OPEN_ISSUES" ] || [ "$OPEN_ISSUES" = "null" ]; then
@@ -198,6 +202,9 @@ ${VISION}
 ## Current project state (AGENTS.md tree)
 ${PROJECT_STATE}
 
+## RESOURCES.md (shared factory infrastructure)
+${RESOURCES:-"(not found — copy RESOURCES.example.md to RESOURCES.md and fill in your infrastructure)"}
+
 ## Vision-labeled issues (goal anchors)
 ${VISION_ISSUES:-"(none)"}
 
@@ -206,6 +213,7 @@ ${OPEN_SUMMARY}
 
 ## Task
 Identify gaps — things implied by VISION.md that are neither reflected in the project state nor covered by an existing open issue.
+When a gap involves deploying, hosting, or operating a service, reference the specific resource alias from RESOURCES.md (e.g. \"deploy to <host-alias>\") so issues are actionable.
 
 For each gap, output a JSON object (one per line, no array wrapper):
 {\"title\": \"action-oriented title\", \"body\": \"problem statement + why it matters + rough approach\", \"depends\": [list of blocking issue numbers or empty]}
