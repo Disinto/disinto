@@ -57,7 +57,7 @@ json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 }
 
-# Check whether an issue/PR has been escalated to supervisor (unprocessed or processed)
+# Check whether an issue/PR has been escalated (unprocessed or processed)
 is_escalated() {
   local issue="$1" pr="$2"
   python3 -c "
@@ -66,8 +66,8 @@ try:
   issue, pr = int('${issue}'), int('${pr}')
 except (ValueError, TypeError):
   sys.exit(1)
-for path in ['${FACTORY_ROOT}/supervisor/escalations.jsonl',
-             '${FACTORY_ROOT}/supervisor/escalations.done.jsonl']:
+for path in ['${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl',
+             '${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.done.jsonl']:
   try:
     with open(path) as fh:
       for line in fh:
@@ -263,8 +263,8 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         log "issue #${ISSUE_NUM} PR #${HAS_PR} CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to supervisor, skipping"
         # Only write escalation + alert once (first time hitting 3)
         if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-          echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+          echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
           matrix_send "dev" "🚨 PR #${HAS_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated to supervisor" 2>/dev/null || true
           ci_fix_increment "$HAS_PR"  # bump to 4 so we don't re-alert
         fi
@@ -343,8 +343,8 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       # Already escalated — skip to let pipeline continue
       log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to supervisor, skipping"
       if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-        echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+        echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
         matrix_send "dev" "🚨 PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
         ci_fix_increment "$PR_NUM"  # bump to 4 to prevent re-alert
       fi
@@ -419,8 +419,8 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$ISSUE_NUM" "$EXISTING_PR"; then
         log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — escalated to supervisor, skipping (not blocking pipeline)"
         if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-          echo "{\"issue\":${ISSUE_NUM},\"pr\":${EXISTING_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+          echo "{\"issue\":${ISSUE_NUM},\"pr\":${EXISTING_PR},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
           matrix_send "dev" "🚨 PR #${EXISTING_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
           ci_fix_increment "$EXISTING_PR"  # bump to 4 to prevent re-alert
         fi

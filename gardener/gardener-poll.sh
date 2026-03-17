@@ -305,4 +305,190 @@ if [ -n "$ACTIONS" ]; then
   done
 fi
 
+# ── Process dev-agent escalations (per-project) ──────────────────────────
+ESCALATION_FILE="${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+ESCALATION_DONE="${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.done.jsonl"
+
+if [ -s "$ESCALATION_FILE" ]; then
+  # Atomically snapshot the file before processing to prevent race with
+  # concurrent dev-poll appends: new entries go to a fresh ESCALATION_FILE
+  # while we process the snapshot, so nothing is ever silently dropped.
+  ESCALATION_SNAP="${ESCALATION_FILE}.processing.$$"
+  mv "$ESCALATION_FILE" "$ESCALATION_SNAP"
+
+  ESCALATION_COUNT=$(wc -l < "$ESCALATION_SNAP")
+  log "Processing ${ESCALATION_COUNT} escalation(s) for ${PROJECT_NAME}"
+
+  while IFS= read -r esc_entry; do
+    [ -z "$esc_entry" ] && continue
+
+    ESC_ISSUE=$(echo "$esc_entry" | jq -r '.issue // empty')
+    ESC_PR=$(echo "$esc_entry" | jq -r '.pr // empty')
+    ESC_ATTEMPTS=$(echo "$esc_entry" | jq -r '.attempts // 3')
+
+    if [ -z "$ESC_ISSUE" ] || [ -z "$ESC_PR" ]; then
+      echo "$esc_entry" >> "$ESCALATION_DONE"
+      continue
+    fi
+
+    log "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} (${ESC_ATTEMPTS} CI attempt(s))"
+
+    # Fetch the failing pipeline for this PR
+    ESC_PR_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${CODEBERG_API}/pulls/${ESC_PR}" 2>/dev/null | jq -r '.head.sha // ""') || true
+
+    ESC_PIPELINE=""
+    ESC_SUB_ISSUES_CREATED=0
+    ESC_GENERIC_FAIL=""
+    ESC_LOGS_AVAILABLE=0
+
+    if [ -n "$ESC_PR_SHA" ]; then
+      # Validate SHA is a 40-char hex string before interpolating into SQL
+      if [[ "$ESC_PR_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        ESC_PIPELINE=$(wpdb -c "SELECT number FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND commit='${ESC_PR_SHA}' ORDER BY created DESC LIMIT 1;" 2>/dev/null | xargs || true)
+      else
+        log "WARNING: ESC_PR_SHA '${ESC_PR_SHA}' is not a valid hex SHA — skipping pipeline lookup"
+      fi
+    fi
+
+    if [ -n "$ESC_PIPELINE" ]; then
+      FAILED_STEPS=$(curl -sf \
+        -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
+        "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null | \
+        jq -r '.workflows[]?.children[]? | select(.state=="failure") | "\(.pid)\t\(.name)"' 2>/dev/null || true)
+
+      while IFS=$'\t' read -r step_pid step_name; do
+        [ -z "$step_pid" ] && continue
+        [[ "$step_pid" =~ ^[0-9]+$ ]] || { log "WARNING: invalid step_pid '${step_pid}' — skipping"; continue; }
+        step_logs=$(woodpecker-cli pipeline log show "${CODEBERG_REPO}" "${ESC_PIPELINE}" "${step_pid}" 2>/dev/null | tail -150 || true)
+        [ -z "$step_logs" ] && continue
+        ESC_LOGS_AVAILABLE=1
+
+        if echo "$step_name" | grep -qi "shellcheck"; then
+          # Create one sub-issue per file with ShellCheck errors
+          sc_files=$(echo "$step_logs" | grep -oP '(?<=In )\S+(?= line \d+:)' | sort -u || true)
+
+          while IFS= read -r sc_file; do
+            [ -z "$sc_file" ] && continue
+            # grep -F for literal filename match (dots in filenames are regex wildcards)
+            file_errors=$(echo "$step_logs" | grep -F -A3 "In ${sc_file} line" | head -30)
+            # SC codes only from this file's errors, not the whole step log
+            sc_codes=$(echo "$file_errors" | grep -oP 'SC\d+' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
+
+            sub_title="fix: ShellCheck errors in ${sc_file} (from PR #${ESC_PR})"
+            sub_body="## ShellCheck CI failure — \`${sc_file}\`
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Errors
+\`\`\`
+${file_errors}
+\`\`\`
+
+Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${ESC_PR} CI passes.
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}
+- Pipeline: #${ESC_PIPELINE} (step: ${step_name})"
+
+            new_issue=$(curl -sf -X POST \
+              -H "Authorization: token ${CODEBERG_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${CODEBERG_API}/issues" \
+              -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+                '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+            if [ -n "$new_issue" ]; then
+              log "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
+              ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+              matrix_send "gardener" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+            fi
+          done <<< "$sc_files"
+
+        else
+          # Accumulate non-ShellCheck failures for one combined issue
+          esc_section="=== ${step_name} ===
+$(echo "$step_logs" | tail -50)"
+          if [ -z "$ESC_GENERIC_FAIL" ]; then
+            ESC_GENERIC_FAIL="$esc_section"
+          else
+            ESC_GENERIC_FAIL="${ESC_GENERIC_FAIL}
+${esc_section}"
+          fi
+        fi
+      done <<< "$FAILED_STEPS"
+    fi
+
+    # Create one sub-issue for all non-ShellCheck CI failures
+    if [ -n "$ESC_GENERIC_FAIL" ]; then
+      sub_title="fix: CI failures in PR #${ESC_PR} (from issue #${ESC_ISSUE})"
+      sub_body="## CI failure — fix required
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Failed step output
+\`\`\`
+${ESC_GENERIC_FAIL}
+\`\`\`
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}${ESC_PIPELINE:+
+- Pipeline: #${ESC_PIPELINE}}"
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        log "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
+        ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+        matrix_send "gardener" "📋 Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    fi
+
+    # Fallback: no sub-issues created — differentiate logs-unavailable from creation failure
+    if [ "$ESC_SUB_ISSUES_CREATED" -eq 0 ]; then
+      sub_title="fix: investigate CI failure for PR #${ESC_PR} (from issue #${ESC_ISSUE})"
+      if [ "$ESC_LOGS_AVAILABLE" -eq 1 ]; then
+        # Logs were fetched but all issue creation API calls failed
+        sub_body="## CI failure — investigation required
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). CI logs were retrieved but sub-issue creation failed (API error).
+
+Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the PR can merge."
+      else
+        # Could not retrieve CI logs at all
+        sub_body="## CI failure — investigation required
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). CI logs were unavailable at escalation time.
+
+Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the PR can merge."
+      fi
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        log "Created fallback sub-issue #${new_issue} for escalated #${ESC_ISSUE}"
+        matrix_send "gardener" "📋 Created sub-issue #${new_issue}: investigate CI for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    fi
+
+    # Mark as processed
+    echo "$esc_entry" >> "$ESCALATION_DONE"
+  done < "$ESCALATION_SNAP"
+
+  rm -f "$ESCALATION_SNAP"
+  log "Escalations processed — moved to $(basename "$ESCALATION_DONE")"
+fi
+
 log "--- Gardener poll done ---"
