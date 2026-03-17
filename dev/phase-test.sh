@@ -59,7 +59,7 @@ check_phase "PHASE:failed"
 echo "PHASE:awaiting_ci" > "$PHASE_FILE"
 echo "PHASE:awaiting_review" > "$PHASE_FILE"
 line_count=$(wc -l < "$PHASE_FILE")
-file_content=$(cat "$PHASE_FILE")
+file_content=$(< "$PHASE_FILE")
 if [ "$line_count" -eq 1 ]; then
   ok "phase file overwrite (single line after two writes)"
 else

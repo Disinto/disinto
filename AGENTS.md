@@ -63,7 +63,7 @@ the orchestrator at each phase boundary by writing to a well-known file.
 ### Phase file path
 
 ```
-/tmp/dev-session-{PROJECT_NAME}-{ISSUE}.phase
+/tmp/dev-session-{project}-{issue}.phase
 ```
 
 ### Required phase sentinels
