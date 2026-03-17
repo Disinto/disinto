@@ -142,18 +142,19 @@ log "Issue: ${ISSUE_TITLE}"
 status "preflight check"
 
 # Extract dependency references from issue body
-# Formats supported:
-#   - Depends on #315
-#   - depends on #315, #316
-#   - Blocked by #315
-#   - Requires #315
-#   - ## Dependencies\n- #315\n- #316
-DEP_NUMBERS=$(echo "$ISSUE_BODY" | \
-  grep -ioP '(?:depends on|blocked by|requires|after)\s+#\K[0-9]+|(?:^|\n)\s*-\s*#\K[0-9]+' | \
-  sort -un || true)
+# Only from ## Dependencies / ## Depends on / ## Blocked by sections
+# and inline "depends on #NNN" / "blocked by #NNN" phrases.
+# NEVER extract from ## Related or other sections.
+DEP_NUMBERS=""
 
-# Also extract from a ## Dependencies section (lines starting with - #NNN or - Depends on #NNN)
-DEP_SECTION=$(echo "$ISSUE_BODY" | sed -n '/^## Dependencies/,/^## /p' | sed '1d;$d')
+# 1. Inline phrases anywhere in body (explicit dep language only)
+INLINE_DEPS=$(echo "$ISSUE_BODY" | \
+  grep -ioP '(?:depends on|blocked by)\s+#\K[0-9]+' | \
+  sort -un || true)
+[ -n "$INLINE_DEPS" ] && DEP_NUMBERS="$INLINE_DEPS"
+
+# 2. ## Dependencies / ## Depends on / ## Blocked by section (bullet items)
+DEP_SECTION=$(echo "$ISSUE_BODY" | sed -n '/^##\?\s*\(Dependencies\|Depends on\|Blocked by\)/I,/^##/p' | sed '1d;$d')
 if [ -n "$DEP_SECTION" ]; then
   SECTION_DEPS=$(echo "$DEP_SECTION" | grep -oP '#\K[0-9]+' | sort -un || true)
   DEP_NUMBERS=$(printf '%s\n%s' "$DEP_NUMBERS" "$SECTION_DEPS" | sort -un | grep -v '^$' || true)
