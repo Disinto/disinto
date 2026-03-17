@@ -492,7 +492,13 @@ ${CHANGE_SUMMARY}
       jq -r '[.[] | select(.stale == false and .state == "APPROVED")] | length')
     CI_NOW=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/commits/$(git -C "$REPO_ROOT" rev-parse "origin/${BRANCH}" 2>/dev/null || echo HEAD)/status" | jq -r '.state // "unknown"')
-    if [ "${EXISTING_APPROVAL:-0}" -gt 0 ] && [ "$CI_NOW" = "success" ]; then
+    CI_PASS=false
+    if [ "$CI_NOW" = "success" ]; then
+      CI_PASS=true
+    elif [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$CI_NOW" ] || [ "$CI_NOW" = "pending" ] || [ "$CI_NOW" = "unknown" ]; }; then
+      CI_PASS=true  # no CI configured for this project
+    fi
+    if [ "${EXISTING_APPROVAL:-0}" -gt 0 ] && [ "$CI_PASS" = true ]; then
       log "PR already approved + CI green — attempting merge"
       MERGE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Authorization: token ${CODEBERG_TOKEN}" \
