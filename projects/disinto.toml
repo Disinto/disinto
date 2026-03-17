@@ -9,8 +9,7 @@ repo_root       = "/home/debian/dark-factory"
 primary_branch  = "main"
 
 [ci]
-# No Woodpecker CI for disinto yet — bash scripts, no build pipeline
-woodpecker_repo_id = 0
+woodpecker_repo_id = 4
 stale_minutes      = 60
 
 [services]

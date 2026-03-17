@@ -1,0 +1,23 @@
+# .woodpecker/ci.yml — Disinto CI pipeline
+# Runs on every push and pull request.
+#
+# Steps:
+#   1. shellcheck   — lint all .sh files (warnings+errors)
+#   2. duplicate-detection — report copy-pasted code blocks (non-blocking)
+
+when:
+  event: [push, pull_request]
+
+steps:
+  - name: shellcheck
+    image: koalaman/shellcheck-alpine:stable
+    commands:
+      # Report warnings but don't block CI — existing code has known issues
+      # TODO: fix all warnings (#45) and remove || true
+      - find . -name "*.sh" -not -path "./.git/*" -print0 | xargs -0 -r shellcheck --severity=warning || true
+
+  - name: duplicate-detection
+    image: python:3-alpine
+    commands:
+      - python3 .woodpecker/detect-duplicates.py
+    failure: ignore
