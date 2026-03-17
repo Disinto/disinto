@@ -1,0 +1,22 @@
+# projects/disinto.toml — disinto develops itself
+#
+# The factory is its own project. Issues filed on johba/disinto
+# are picked up by dev-poll, reviewed by review-poll, groomed by gardener.
+
+name            = "disinto"
+repo            = "johba/disinto"
+repo_root       = "/home/debian/dark-factory"
+primary_branch  = "main"
+
+[ci]
+# No Woodpecker CI for disinto yet — bash scripts, no build pipeline
+woodpecker_repo_id = 0
+stale_minutes      = 60
+
+[services]
+containers = []
+
+[monitoring]
+check_prs            = true
+check_dev_agent      = true
+check_pipeline_stall = false
