@@ -117,6 +117,16 @@ status "checking existing reviews"
 ALL_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/issues/${PR_NUMBER}/comments?limit=50")
 
+# Check review-comment watermarks — skip if a comment with <!-- reviewed: SHA --> exists
+COMMENT_REVIEWED=$(echo "$ALL_COMMENTS" | \
+  jq -r --arg sha "$PR_SHA" \
+  '[.[] | select(.body | contains("<!-- reviewed: " + $sha + " -->"))] | length')
+
+if [ "${COMMENT_REVIEWED:-0}" -gt "0" ] && [ "$FORCE" != "--force" ]; then
+  log "SKIP: review comment exists for ${PR_SHA:0:7}"
+  exit 0
+fi
+
 # Check formal Codeberg reviews — skip if a non-stale review exists for this SHA
 EXISTING=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/pulls/${PR_NUMBER}/reviews" | \
