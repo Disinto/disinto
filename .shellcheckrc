@@ -1,0 +1,6 @@
+# .shellcheckrc — project-level ShellCheck configuration
+#
+# SC1090/SC1091: all scripts source lib/env.sh via a dynamic path
+#   (source "$(dirname "$0")/../lib/env.sh") — this is intentional.
+#   Individual source calls that should be checked use explicit directives.
+disable=SC1090,SC1091
