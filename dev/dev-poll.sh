@@ -23,8 +23,8 @@ source "$(dirname "$0")/../lib/env.sh"
 REPO="${CODEBERG_REPO}"
 
 API="${CODEBERG_API}"
-LOCKFILE="/tmp/dev-agent.lock"
-LOGFILE="${FACTORY_ROOT}/dev/dev-agent.log"
+LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
+LOGFILE="${FACTORY_ROOT}/dev/dev-agent-${PROJECT_NAME:-harb}.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
