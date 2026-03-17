@@ -50,6 +50,10 @@ IDLE_TIMEOUT=7200         # 2h: kill session if phase stale this long
 CI_POLL_TIMEOUT=1800      # 30min max for CI to complete
 REVIEW_POLL_TIMEOUT=10800 # 3h max wait for review
 
+# Limits
+MAX_CI_FIXES=3
+MAX_REVIEW_ROUNDS=5
+
 # Counters — global state across phase transitions
 CI_RETRY_COUNT=0
 CI_FIX_COUNT=0
@@ -97,8 +101,8 @@ post_refusal_comment() {
   local emoji="$1" title="$2" body="$3"
   local last_has_title
   last_has_title=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/issues/${ISSUE}/comments?limit=1" | \
-    jq -r --arg t "Dev-agent: ${title}" '.[0].body // "" | contains($t)') || true
+    "${API}/issues/${ISSUE}/comments?limit=5" | \
+    jq -r --arg t "Dev-agent: ${title}" '[.[] | .body // ""] | any(contains($t)) | tostring') || true
   if [ "$last_has_title" = "true" ]; then
     log "skipping duplicate refusal comment: ${title}"
     return 0
@@ -139,6 +143,8 @@ cleanup_labels() {
 CLAIMED=false
 cleanup() {
   rm -f "$LOCKFILE" "$STATUSFILE"
+  # Kill any live session so Claude doesn't run without an orchestrator attached
+  kill_tmux_session
   # If we claimed the issue but never created a PR, unclaim it
   if [ "$CLAIMED" = true ] && [ -z "${PR_NUMBER:-}" ]; then
     log "cleanup: unclaiming issue (no PR created)"
@@ -166,6 +172,11 @@ do_merge() {
     ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
     [ "$ci" = "success" ] && break
+    if [ "$ci" = "failure" ] || [ "$ci" = "error" ]; then
+      log "CI is red before merge attempt — aborting"
+      notify "PR #${pr} CI is failing; cannot merge."
+      return 1
+    fi
     sleep 30
   done
 
@@ -471,10 +482,6 @@ curl -sf -X POST \
   -H "Content-Type: application/json" \
   "${API}/issues/${ISSUE}/labels" \
   -d '{"labels":["in-progress"]}' >/dev/null 2>&1 || true
-
-curl -sf -X DELETE \
-  -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${API}/issues/${ISSUE}/labels/backlog" >/dev/null 2>&1 || true
 
 curl -sf -X DELETE \
   -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -1138,7 +1145,8 @@ Instructions:
       NEW_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
       if [ "$NEW_MTIME" -gt "$LAST_PHASE_MTIME" ]; then
         log "phase file updated during review wait — re-entering main loop"
-        LAST_PHASE_MTIME="$NEW_MTIME"
+        # Do NOT update LAST_PHASE_MTIME here — leave it stale so the outer
+        # loop detects the change on its next tick and dispatches the new phase.
         REVIEW_FOUND=true  # Prevent timeout injection
         break
       fi
