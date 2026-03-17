@@ -101,8 +101,13 @@ CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
 if [ "$CI_STATE" != "success" ]; then
-  log "SKIP: CI=${CI_STATE}"
-  exit 0
+  # Projects without CI (woodpecker_repo_id=0) treat empty/pending as pass
+  if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$CI_STATE" ] || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ]; }; then
+    log "no CI configured, proceeding without CI gate"
+  else
+    log "SKIP: CI=${CI_STATE}"
+    exit 0
+  fi
 fi
 
 # --- Check for existing reviews ---
