@@ -216,11 +216,162 @@ for logfile in "${FACTORY_ROOT}"/{dev,review,supervisor}/*.log; do
   fi
 done
 
-# Check for dev-agent escalations
+# Process dev-agent escalations — create sub-issues for each CI failure
 ESCALATION_FILE="${FACTORY_ROOT}/supervisor/escalations.jsonl"
+ESCALATION_DONE="${FACTORY_ROOT}/supervisor/escalations.done.jsonl"
+
 if [ -s "$ESCALATION_FILE" ]; then
   ESCALATION_COUNT=$(wc -l < "$ESCALATION_FILE")
-  p3 "Dev-agent escalated ${ESCALATION_COUNT} issue(s) — see ${ESCALATION_FILE}"
+  flog "Processing ${ESCALATION_COUNT} escalation(s) from dev-agent"
+
+  while IFS= read -r esc_entry; do
+    [ -z "$esc_entry" ] && continue
+
+    ESC_ISSUE=$(echo "$esc_entry" | jq -r '.issue // empty')
+    ESC_PR=$(echo "$esc_entry" | jq -r '.pr // empty')
+    ESC_ATTEMPTS=$(echo "$esc_entry" | jq -r '.attempts // 3')
+
+    if [ -z "$ESC_ISSUE" ] || [ -z "$ESC_PR" ]; then
+      echo "$esc_entry" >> "$ESCALATION_DONE"
+      continue
+    fi
+
+    flog "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} (${ESC_ATTEMPTS} CI attempt(s))"
+
+    # Fetch the failing pipeline for this PR
+    ESC_PR_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${CODEBERG_API}/pulls/${ESC_PR}" 2>/dev/null | jq -r '.head.sha // ""') || true
+
+    ESC_PIPELINE=""
+    ESC_SUB_ISSUES_CREATED=0
+    ESC_GENERIC_FAIL=""
+
+    if [ -n "$ESC_PR_SHA" ]; then
+      ESC_PIPELINE=$(wpdb -c "SELECT number FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND commit='${ESC_PR_SHA}' ORDER BY created DESC LIMIT 1;" 2>/dev/null | xargs || true)
+    fi
+
+    if [ -n "$ESC_PIPELINE" ]; then
+      FAILED_STEPS=$(curl -sf \
+        -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
+        "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null | \
+        jq -r '.workflows[]?.children[]? | select(.state=="failure") | "\(.pid)\t\(.name)"' 2>/dev/null || true)
+
+      while IFS=$'\t' read -r step_pid step_name; do
+        [ -z "$step_pid" ] && continue
+        step_logs=$(woodpecker-cli pipeline log show "${CODEBERG_REPO}" "${ESC_PIPELINE}" "${step_pid}" 2>/dev/null | tail -150 || true)
+        [ -z "$step_logs" ] && continue
+
+        if echo "$step_name" | grep -qi "shellcheck"; then
+          # Create one sub-issue per file with ShellCheck errors
+          sc_files=$(echo "$step_logs" | grep -oP '(?<=In )\S+(?= line \d+:)' | sort -u || true)
+
+          while IFS= read -r sc_file; do
+            [ -z "$sc_file" ] && continue
+            file_errors=$(echo "$step_logs" | grep -A3 "In ${sc_file} line" | head -30)
+            sc_codes=$(echo "$step_logs" | grep -oP 'SC\d+' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
+
+            sub_title="fix: ShellCheck errors in ${sc_file} (from PR #${ESC_PR})"
+            sub_body="## ShellCheck CI failure — \`${sc_file}\`
+
+Spawned by supervisor from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Errors
+\`\`\`
+${file_errors}
+\`\`\`
+
+Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${ESC_PR} CI passes.
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}
+- Pipeline: #${ESC_PIPELINE} (step: ${step_name})"
+
+            new_issue=$(curl -sf -X POST \
+              -H "Authorization: token ${CODEBERG_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${CODEBERG_API}/issues" \
+              -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+                '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+            if [ -n "$new_issue" ]; then
+              flog "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
+              fixed "Sub-issue #${new_issue}: ShellCheck errors in ${sc_file} (escalated from #${ESC_ISSUE})"
+              ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+              matrix_send "supervisor" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+            fi
+          done <<< "$sc_files"
+
+        else
+          # Accumulate non-ShellCheck failures for one combined issue
+          ESC_GENERIC_FAIL="${ESC_GENERIC_FAIL}
+=== ${step_name} ===
+$(echo "$step_logs" | tail -50)"
+        fi
+      done <<< "$FAILED_STEPS"
+    fi
+
+    # Create one sub-issue for all non-ShellCheck CI failures
+    if [ -n "$ESC_GENERIC_FAIL" ]; then
+      sub_title="fix: CI failures in PR #${ESC_PR} (from issue #${ESC_ISSUE})"
+      sub_body="## CI failure — fix required
+
+Spawned by supervisor from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Failed step output
+\`\`\`${ESC_GENERIC_FAIL}
+\`\`\`
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}${ESC_PIPELINE:+
+- Pipeline: #${ESC_PIPELINE}}"
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        flog "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
+        fixed "Sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (escalated from #${ESC_ISSUE})"
+        ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+        matrix_send "supervisor" "📋 Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    fi
+
+    # Fallback: no CI logs available — create a generic investigation issue
+    if [ "$ESC_SUB_ISSUES_CREATED" -eq 0 ]; then
+      sub_title="fix: investigate CI failure for PR #${ESC_PR} (from issue #${ESC_ISSUE})"
+      sub_body="## CI failure — investigation required
+
+Spawned by supervisor from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). CI logs were unavailable at escalation time.
+
+Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the PR can merge."
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        flog "Created fallback sub-issue #${new_issue} for escalated #${ESC_ISSUE}"
+        fixed "Fallback sub-issue #${new_issue}: investigate CI for PR #${ESC_PR} (escalated from #${ESC_ISSUE})"
+        matrix_send "supervisor" "📋 Created sub-issue #${new_issue}: investigate CI for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    fi
+
+    # Mark as processed
+    echo "$esc_entry" >> "$ESCALATION_DONE"
+  done < "$ESCALATION_FILE"
+
+  # Clear processed escalations
+  > "$ESCALATION_FILE"
+  flog "Escalations processed — moved to $(basename "$ESCALATION_DONE")"
 fi
 
 # #############################################################################
