@@ -84,6 +84,7 @@ Optional but recommended:
 |-------|---------|
 | `tech-debt` | Gardener can promote these to `backlog` |
 | `blocked` | Dev-agent marks issues with unmet dependencies |
+| `formula` | Dev-agent uses a structured TOML formula instead of freeform — issue body must have YAML front matter specifying the formula name and variables (see `formulas/`) |
 
 ### Required: Branch protection
 

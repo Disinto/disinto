@@ -1,0 +1,92 @@
+# formulas/add-rpc-method.toml — Add a new JSON-RPC method to a server
+
+name        = "add-rpc-method"
+description = "Add JSON-RPC method {{method_name}} to the server"
+version     = 1
+
+[vars.method_name]
+description = "Full method name (e.g. eth_getBalance, harb_listPositions)"
+required    = true
+
+[vars.params_spec]
+description = "Comma-separated parameter names and types (e.g. 'address: Address, blockTag: BlockTag')"
+required    = false
+default     = ""
+
+[vars.return_type]
+description = "Return type description (e.g. 'U256 balance', 'Vec<Position>')"
+required    = false
+default     = "result"
+
+[vars.namespace]
+description = "RPC namespace prefix (e.g. eth, harb, net) — derived from method_name if omitted"
+required    = false
+default     = ""
+
+[[steps]]
+id          = "read-existing"
+title       = "Read existing RPC methods for patterns"
+description = """
+Find and read 2-3 existing RPC method implementations in this codebase.
+Identify:
+- Where method handlers are defined (trait, module, file)
+- How methods are registered with the router/server
+- How params are deserialized and validated
+- How errors are returned (error type, codes)
+- How tests are structured for RPC methods
+Note the file paths so subsequent steps can follow the same patterns.
+"""
+
+[[steps]]
+id          = "implement-handler"
+title       = "Implement {{method_name}} handler"
+description = """
+Create the handler for {{method_name}} following the patterns found above.
+
+Method signature should accept: {{params_spec}}
+Return type: {{return_type}}
+
+Requirements:
+- Validate input parameters; return appropriate JSON-RPC error codes for invalid input
+- Implement the core logic
+- Add inline documentation describing the method's purpose and params
+- Follow the naming conventions and error-handling style of existing methods
+"""
+needs       = ["read-existing"]
+
+[[steps]]
+id          = "register-method"
+title       = "Register {{method_name}} with the RPC router"
+description = """
+Add {{method_name}} to the server's method registry / router, following the
+same registration pattern used by existing methods.
+
+Verify the method is reachable — check that no namespace filter or
+allowlist would block it in the default configuration.
+"""
+needs       = ["implement-handler"]
+
+[[steps]]
+id          = "write-tests"
+title       = "Write tests for {{method_name}}"
+description = """
+Add at least two tests for {{method_name}}:
+1. Happy path — valid input, expected {{return_type}} returned
+2. Error path — invalid or missing params, correct JSON-RPC error returned
+
+Follow the test patterns found in read-existing.
+Use any existing test fixtures or mock server helpers.
+"""
+needs       = ["register-method"]
+
+[[steps]]
+id          = "run-tests"
+title       = "Run tests and verify"
+description = """
+Run the full test suite (e.g. cargo test, npm test, forge test).
+Confirm:
+- New tests pass
+- No existing tests were broken
+Fix any compilation errors or assertion failures before finishing.
+"""
+needs       = ["write-tests"]
