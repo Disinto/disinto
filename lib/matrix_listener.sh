@@ -141,6 +141,10 @@ while true; do
         printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/gardener-escalation-reply
         matrix_send "gardener" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
+      dev)
+        printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
+        matrix_send "dev" "✓ received, will inject on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        ;;
       vault)
         # Parse APPROVE <id> or REJECT <id> from reply
         VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
