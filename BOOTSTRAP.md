@@ -11,6 +11,7 @@ Before starting, ensure you have:
 - [ ] A **second Codeberg account** for the review bot (branch protection requires reviews from a different user)
 - [ ] A **local clone** of the target repo on the same machine as disinto
 - [ ] `claude` CLI installed and authenticated (`claude --version`)
+- [ ] `tmux` installed (`tmux -V`) — required for persistent dev sessions (issue #80+)
 
 ## 1. Configure `.env`
 
