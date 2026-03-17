@@ -27,11 +27,11 @@ MIN_FILES = int(os.environ.get("DUP_MIN_FILES", "2"))
 ANTI_PATTERNS = [
     (
         r'"\$CI_STATE"\s*=\s*"success"',
-        'Hardcoded CI_STATE="success" check — use ci_passed() from dev-poll.sh instead',
+        'Hardcoded CI_STATE="success" check — extract ci_passed() to lib/ and call it here',
     ),
     (
-        r'\$CI_STATE\s*!=\s*"success"',
-        'Hardcoded CI_STATE!="success" check — use ci_passed() from dev-poll.sh instead',
+        r'"?\$CI_STATE"?\s*!=\s*"success"',
+        'Hardcoded CI_STATE!="success" check — extract ci_passed() to lib/ and call it here',
     ),
     (
         r'WOODPECKER_REPO_ID\s*=\s*[1-9][0-9]*',
