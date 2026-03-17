@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# review-pr.sh — AI-powered PR review using claude CLI
+# review-pr.sh — AI-powered PR review using persistent Claude tmux session
 #
 # Usage: ./review-pr.sh <pr-number> [--force]
 #
-# Features:
-#   - Full review on first pass
-#   - Incremental re-review when previous review exists (verifies findings addressed)
-#   - Auto-creates follow-up issues for pre-existing bugs flagged by reviewer
-#   - JSON output format with validation + retry
+# Session lifecycle:
+#   1. Creates/reuses tmux session: review-{project}-{pr}
+#   2. Injects PR diff + review guidelines into interactive claude
+#   3. Claude reviews, writes structured JSON to output file
+#   4. Script posts review to Codeberg
+#   5. Session stays alive for re-reviews and human questions
 #
-# Peek while running:  cat /tmp/<project>-review-status
-# Watch log:           tail -f <factory-root>/review/review.log
+# Re-review (new commits pushed):
+#   Same session → Claude remembers previous findings, verifies they're addressed
+#
+# Review output:   /tmp/{project}-review-output-{pr}.json
+# Phase file:      /tmp/review-session-{project}-{pr}.phase
+# Session:         review-{project}-{pr} (tmux)
+# Peek:            cat /tmp/<project>-review-status
+# Log:             tail -f <factory-root>/review/review.log
 
 set -euo pipefail
 
@@ -36,6 +43,14 @@ MAX_DIFF=25000
 MAX_ATTEMPTS=2
 TMPDIR=$(mktemp -d)
 
+# Tmux session + review output protocol
+SESSION_NAME="review-${PROJECT_NAME}-${PR_NUMBER}"
+PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.phase"
+REVIEW_OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"
+REVIEW_THREAD_MAP="/tmp/review-thread-map"
+REVIEW_WAIT_INTERVAL=10   # seconds between phase checks
+REVIEW_WAIT_TIMEOUT=600   # 10 min max for a single review cycle
+
 log() {
   printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"
 }
@@ -48,6 +63,7 @@ status() {
 cleanup() {
   rm -rf "$TMPDIR"
   rm -f "$LOCKFILE" "$STATUSFILE"
+  # tmux session persists for re-reviews and human questions
 }
 trap cleanup EXIT
 
@@ -76,7 +92,56 @@ if [ -f "$LOCKFILE" ]; then
 fi
 echo $$ > "$LOCKFILE"
 
-# Fetch PR metadata
+# --- Tmux session helpers ---
+wait_for_claude_ready() {
+  local timeout="${1:-120}"
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if tmux capture-pane -t "${SESSION_NAME}" -p 2>/dev/null | grep -q '❯'; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  log "WARNING: claude not ready after ${timeout}s — proceeding anyway"
+  return 1
+}
+
+inject_into_session() {
+  local text="$1"
+  local tmpfile
+  wait_for_claude_ready 120
+  tmpfile=$(mktemp /tmp/review-inject-XXXXXX)
+  printf '%s' "$text" > "$tmpfile"
+  tmux load-buffer -b "review-inject-${PR_NUMBER}" "$tmpfile"
+  tmux paste-buffer -t "${SESSION_NAME}" -b "review-inject-${PR_NUMBER}"
+  sleep 0.5
+  tmux send-keys -t "${SESSION_NAME}" "" Enter
+  tmux delete-buffer -b "review-inject-${PR_NUMBER}" 2>/dev/null || true
+  rm -f "$tmpfile"
+}
+
+wait_for_review_output() {
+  local timeout="$REVIEW_WAIT_TIMEOUT"
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    sleep "$REVIEW_WAIT_INTERVAL"
+    elapsed=$((elapsed + REVIEW_WAIT_INTERVAL))
+    if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+      log "ERROR: session died during review"
+      return 1
+    fi
+    local phase
+    phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ "$phase" = "PHASE:review_complete" ]; then
+      return 0
+    fi
+  done
+  log "ERROR: review did not complete within ${timeout}s"
+  return 1
+}
+
+# --- Fetch PR metadata ---
 status "fetching metadata"
 PR_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/pulls/${PR_NUMBER}")
@@ -93,8 +158,11 @@ log "${PR_TITLE} (${PR_HEAD}→${PR_BASE} ${PR_SHA:0:7})"
 if [ "$PR_STATE" != "open" ]; then
   log "SKIP: state=${PR_STATE}"
   cd "$REPO_ROOT"
+  # Kill review session for non-open PR
+  tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
   git worktree remove "/tmp/${PROJECT_NAME}-review-${PR_NUMBER}" --force 2>/dev/null || true
   rm -rf "/tmp/${PROJECT_NAME}-review-${PR_NUMBER}" 2>/dev/null || true
+  rm -f "${PHASE_FILE}" "${REVIEW_OUTPUT_FILE}"
   exit 0
 fi
 
@@ -366,7 +434,13 @@ ${DIFF}
 Review the incremental diff. For each finding in the previous review, check if it was addressed.
 Then check for new issues introduced by the fix.
 
-## OUTPUT FORMAT — MANDATORY
+## OUTPUT — MANDATORY
+Write your review as a single JSON object to this file: ${REVIEW_OUTPUT_FILE}
+After writing the file, signal completion by running this exact command:
+  echo "PHASE:review_complete" > "${PHASE_FILE}"
+Then STOP and wait for further instructions. The orchestrator will post your review.
+
+The JSON must follow this exact schema:
 ${JSON_SCHEMA_REREVIEW}
 INCR_EOF
 
@@ -392,7 +466,13 @@ ${DIFF}
 ## Your Task
 ${TASK_DESC}
 
-## OUTPUT FORMAT — MANDATORY
+## OUTPUT — MANDATORY
+Write your review as a single JSON object to this file: ${REVIEW_OUTPUT_FILE}
+After writing the file, signal completion by running this exact command:
+  echo "PHASE:review_complete" > "${PHASE_FILE}"
+Then STOP and wait for further instructions. The orchestrator will post your review.
+
+The JSON must follow this exact schema:
 ${JSON_SCHEMA_FRESH}
 DIFF_EOF
 fi
@@ -400,76 +480,104 @@ fi
 PROMPT_SIZE=$(stat -c%s "${TMPDIR}/prompt.md")
 log "Prompt: ${PROMPT_SIZE} bytes (re-review: ${IS_RE_REVIEW})"
 
-# --- Run claude with retry on invalid JSON ---
-CONTINUE_FLAG=""
-if [ "$IS_RE_REVIEW" = true ]; then
-  CONTINUE_FLAG="-c"
+# ==========================================================================
+# CREATE / REUSE TMUX SESSION
+# ==========================================================================
+status "preparing tmux session: ${SESSION_NAME}"
+
+if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+  # Kill any stale entry
+  tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
+
+  # Create new detached session running interactive claude in the review worktree
+  tmux new-session -d -s "${SESSION_NAME}" -c "${REVIEW_WORKTREE}" \
+    "claude --model sonnet --dangerously-skip-permissions"
+
+  if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+    log "ERROR: failed to create tmux session ${SESSION_NAME}"
+    exit 1
+  fi
+
+  # Wait for Claude to be ready (polls for prompt)
+  if ! wait_for_claude_ready 120; then
+    log "ERROR: claude not ready in ${SESSION_NAME}"
+    tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
+    exit 1
+  fi
+  log "tmux session created: ${SESSION_NAME}"
+else
+  log "reusing existing tmux session: ${SESSION_NAME}"
 fi
 
+# Clear previous review output and phase signal
+rm -f "${REVIEW_OUTPUT_FILE}" "${PHASE_FILE}"
+
+# Inject prompt into session
+inject_into_session "$(cat "${TMPDIR}/prompt.md")"
+log "prompt injected into tmux session"
+
+# ==========================================================================
+# WAIT FOR REVIEW OUTPUT (with retry on invalid JSON)
+# ==========================================================================
 REVIEW_JSON=""
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
-  status "running claude attempt ${attempt}/${MAX_ATTEMPTS}"
+  status "waiting for review output (attempt ${attempt}/${MAX_ATTEMPTS})"
   SECONDS=0
 
-  RAW_OUTPUT=$(cd "$REVIEW_WORKTREE" && claude -p $CONTINUE_FLAG \
-    --model sonnet \
-    --dangerously-skip-permissions \
-    --output-format text \
-    < "${TMPDIR}/prompt.md" 2>"${TMPDIR}/claude-stderr.log") || true
+  if wait_for_review_output; then
+    ELAPSED=$SECONDS
 
-  ELAPSED=$SECONDS
+    if [ -f "${REVIEW_OUTPUT_FILE}" ]; then
+      RAW_OUTPUT=$(cat "${REVIEW_OUTPUT_FILE}")
+      RAW_SIZE=$(printf '%s' "$RAW_OUTPUT" | wc -c)
+      log "attempt ${attempt}: ${RAW_SIZE} bytes in ${ELAPSED}s"
 
-  if [ -z "$RAW_OUTPUT" ]; then
-    log "attempt ${attempt}: empty output after ${ELAPSED}s"
-    continue
-  fi
-
-  RAW_SIZE=$(printf '%s' "$RAW_OUTPUT" | wc -c)
-  log "attempt ${attempt}: ${RAW_SIZE} bytes in ${ELAPSED}s"
-
-  # Extract JSON — claude might wrap it in ```json ... ``` or add preamble
-  # Try raw first, then extract from code fence
-  if printf '%s' "$RAW_OUTPUT" | jq -e '.verdict' > /dev/null 2>&1; then
-    REVIEW_JSON="$RAW_OUTPUT"
-  else
-    # Try extracting from code fence
-    EXTRACTED=$(printf '%s' "$RAW_OUTPUT" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
-    if [ -n "$EXTRACTED" ] && printf '%s' "$EXTRACTED" | jq -e '.verdict' > /dev/null 2>&1; then
-      REVIEW_JSON="$EXTRACTED"
-    else
-      # Try extracting first { ... } block
-      EXTRACTED=$(printf '%s' "$RAW_OUTPUT" | sed -n '/^{/,/^}/p')
-      if [ -n "$EXTRACTED" ] && printf '%s' "$EXTRACTED" | jq -e '.verdict' > /dev/null 2>&1; then
-        REVIEW_JSON="$EXTRACTED"
+      # Try raw JSON first
+      if printf '%s' "$RAW_OUTPUT" | jq -e '.verdict' > /dev/null 2>&1; then
+        REVIEW_JSON="$RAW_OUTPUT"
+      else
+        # Try extracting from code fence
+        EXTRACTED=$(printf '%s' "$RAW_OUTPUT" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
+        if [ -n "$EXTRACTED" ] && printf '%s' "$EXTRACTED" | jq -e '.verdict' > /dev/null 2>&1; then
+          REVIEW_JSON="$EXTRACTED"
+        else
+          # Try extracting first { ... } block
+          EXTRACTED=$(printf '%s' "$RAW_OUTPUT" | sed -n '/^{/,/^}/p')
+          if [ -n "$EXTRACTED" ] && printf '%s' "$EXTRACTED" | jq -e '.verdict' > /dev/null 2>&1; then
+            REVIEW_JSON="$EXTRACTED"
+          fi
+        fi
       fi
-    fi
-  fi
 
-  if [ -n "$REVIEW_JSON" ]; then
-    # Validate required fields
-    VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict // empty')
-    if [ -n "$VERDICT" ]; then
-      log "attempt ${attempt}: valid JSON, verdict=${VERDICT}"
-      break
+      if [ -n "$REVIEW_JSON" ]; then
+        VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict // empty')
+        if [ -n "$VERDICT" ]; then
+          log "attempt ${attempt}: valid JSON, verdict=${VERDICT}"
+          break
+        else
+          log "attempt ${attempt}: JSON missing verdict"
+          REVIEW_JSON=""
+        fi
+      else
+        log "attempt ${attempt}: no valid JSON found in output file"
+        printf '%s' "$RAW_OUTPUT" > "${LOGDIR}/review-pr${PR_NUMBER}-raw-attempt-${attempt}.txt"
+      fi
     else
-      log "attempt ${attempt}: JSON missing verdict"
-      REVIEW_JSON=""
+      log "attempt ${attempt}: output file not found after ${ELAPSED}s"
     fi
   else
-    log "attempt ${attempt}: no valid JSON found in output"
-    # Save raw output for debugging
-    printf '%s' "$RAW_OUTPUT" > "${TMPDIR}/raw-attempt-${attempt}.txt"
+    ELAPSED=$SECONDS
+    log "attempt ${attempt}: timeout or session died after ${ELAPSED}s"
   fi
 
-  # For retry, add explicit correction to prompt
+  # For retry, inject correction into session
   if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-    cat >> "${TMPDIR}/prompt.md" << RETRY_EOF
-
-## RETRY — Your previous response was not valid JSON
-You MUST output a single JSON object with a "verdict" field. No markdown wrapping. No prose.
-Start your response with { and end with }.
-RETRY_EOF
-    log "appended retry instruction to prompt"
+    rm -f "${PHASE_FILE}"
+    inject_into_session "RETRY — Your previous review output was not valid JSON.
+You MUST write a single JSON object (with a \"verdict\" field) to: ${REVIEW_OUTPUT_FILE}
+Then signal: echo \"PHASE:review_complete\" > \"${PHASE_FILE}\"
+Start the JSON with { and end with }. No markdown wrapping. No prose outside the JSON."
+    log "retry instruction injected"
   fi
 done
 
@@ -477,10 +585,10 @@ done
 if [ -z "$REVIEW_JSON" ]; then
   log "ERROR: no valid JSON after ${MAX_ATTEMPTS} attempts"
 
-  ERROR_BODY="## 🤖 AI Review — Error
+  ERROR_BODY="## AI Review — Error
 <!-- review-error: ${PR_SHA} -->
 
-⚠️ Review failed: could not produce structured output after ${MAX_ATTEMPTS} attempts.
+Review failed: could not produce structured output after ${MAX_ATTEMPTS} attempts.
 
 A maintainer should review this PR manually, or re-trigger with \`--force\`.
 
@@ -498,16 +606,16 @@ A maintainer should review this PR manually, or re-trigger with \`--force\`.
     --data-binary @"${TMPDIR}/comment.json" > /dev/null
 
   # Save raw outputs for debugging
-  for f in "${TMPDIR}"/raw-attempt-*.txt; do
-    [ -f "$f" ] && cp "$f" "${LOGDIR}/review-pr${PR_NUMBER}-$(basename "$f")"
+  for f in "${LOGDIR}"/review-pr"${PR_NUMBER}"-raw-attempt-*.txt; do
+    [ -f "$f" ] && log "raw output saved: $f"
   done
 
-  matrix_send "review" "⚠️ PR #${PR_NUMBER} review failed — no valid JSON output" 2>/dev/null || true
+  matrix_send "review" "PR #${PR_NUMBER} review failed — no valid JSON output" 2>/dev/null || true
 
   exit 1
 fi
 
-# --- Render JSON → Markdown ---
+# --- Render JSON -> Markdown ---
 VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict')
 VERDICT_REASON=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict_reason // ""')
 
@@ -523,19 +631,19 @@ render_markdown() {
     if [ "$prev_count" -gt 0 ]; then
       md+="### Previous Findings"$'\n'
       while IFS= read -r finding; do
-        local summary status explanation
+        local summary finding_status explanation
         summary=$(printf '%s' "$finding" | jq -r '.summary')
-        status=$(printf '%s' "$finding" | jq -r '.status')
+        finding_status=$(printf '%s' "$finding" | jq -r '.status')
         explanation=$(printf '%s' "$finding" | jq -r '.explanation')
 
-        local icon="❓"
-        case "$status" in
-          fixed) icon="✅" ;;
-          not_fixed) icon="❌" ;;
-          partial) icon="⚠️" ;;
+        local icon="?"
+        case "$finding_status" in
+          fixed) icon="FIXED" ;;
+          not_fixed) icon="NOT FIXED" ;;
+          partial) icon="PARTIAL" ;;
         esac
 
-        md+="- ${summary} → ${icon} ${explanation}"$'\n'
+        md+="- ${summary} -> ${icon} ${explanation}"$'\n'
       done < <(printf '%s' "$json" | jq -c '.previous_findings[]')
       md+=$'\n'
     fi
@@ -550,14 +658,7 @@ render_markdown() {
         loc=$(printf '%s' "$issue" | jq -r '.location')
         desc=$(printf '%s' "$issue" | jq -r '.description')
 
-        local icon="ℹ️"
-        case "$sev" in
-          bug) icon="🐛" ;;
-          warning) icon="⚠️" ;;
-          nit) icon="💅" ;;
-        esac
-
-        md+="- ${icon} **${sev}** \`${loc}\`: ${desc}"$'\n'
+        md+="- **${sev}** \`${loc}\`: ${desc}"$'\n'
       done < <(printf '%s' "$json" | jq -c '.new_issues[]')
       md+=$'\n'
     fi
@@ -581,14 +682,7 @@ render_markdown() {
           loc=$(printf '%s' "$finding" | jq -r '.location')
           desc=$(printf '%s' "$finding" | jq -r '.description')
 
-          local icon="ℹ️"
-          case "$sev" in
-            bug) icon="🐛" ;;
-            warning) icon="⚠️" ;;
-            nit) icon="💅" ;;
-          esac
-
-          md+="- ${icon} **${sev}** \`${loc}\`: ${desc}"$'\n'
+          md+="- **${sev}** \`${loc}\`: ${desc}"$'\n'
         done < <(printf '%s' "$section" | jq -c '.findings[]')
         md+=$'\n'
       fi
@@ -627,13 +721,13 @@ if [ "$IS_RE_REVIEW" = true ]; then
   REVIEW_TYPE="Re-review (round ${ROUND})"
 fi
 
-COMMENT_BODY="## 🤖 AI ${REVIEW_TYPE}
+COMMENT_BODY="## AI ${REVIEW_TYPE}
 <!-- reviewed: ${PR_SHA} -->
 
 ${REVIEW_MD}
 
 ---
-*Reviewed at \`${PR_SHA:0:7}\`$(if [ "$IS_RE_REVIEW" = true ]; then echo " · Previous: \`${PREV_REVIEW_SHA:0:7}\`"; fi) · [AGENTS.md](AGENTS.md)*"
+*Reviewed at \`${PR_SHA:0:7}\`$(if [ "$IS_RE_REVIEW" = true ]; then echo " | Previous: \`${PREV_REVIEW_SHA:0:7}\`"; fi) | [AGENTS.md](AGENTS.md)*"
 
 printf '%s' "$COMMENT_BODY" > "${TMPDIR}/comment-body.txt"
 jq -Rs '{body: .}' < "${TMPDIR}/comment-body.txt" > "${TMPDIR}/comment.json"
@@ -741,7 +835,10 @@ ${FU_DETAILS}
   log "created ${CREATED_COUNT} follow-up issues total"
 fi
 
-# --- Notify Matrix ---
-matrix_send "review" "🤖 PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" 2>/dev/null || true
+# --- Notify Matrix (with thread mapping for human questions) ---
+EVENT_ID=$(matrix_send "review" "PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" 2>/dev/null || true)
+if [ -n "$EVENT_ID" ]; then
+  printf '%s\t%s\n' "$EVENT_ID" "$PR_NUMBER" >> "$REVIEW_THREAD_MAP" 2>/dev/null || true
+fi
 
-log "DONE: ${VERDICT} (${ELAPSED}s, re-review: ${IS_RE_REVIEW})"
+log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
