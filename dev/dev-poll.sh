@@ -233,17 +233,23 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
       FIX_ATTEMPTS=$(ci_fix_count "$HAS_PR")
       if [ "$FIX_ATTEMPTS" -ge 3 ]; then
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — exhausted ${FIX_ATTEMPTS} fix attempts, escalating"
-        echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
-        matrix_send "dev" "🚨 PR #${HAS_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated to supervisor" 2>/dev/null || true
+        # Already escalated — skip silently, let pipeline continue to backlog
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI exhausted (${FIX_ATTEMPTS} attempts) — skipping"
+        # Only write escalation + alert once (first time hitting 3)
+        if [ "$FIX_ATTEMPTS" -eq 3 ]; then
+          echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+          matrix_send "dev" "🚨 PR #${HAS_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated to supervisor" 2>/dev/null || true
+          ci_fix_increment "$HAS_PR"  # bump to 4 so we don't re-alert
+        fi
+        # Fall through to backlog scan instead of exit
       else
         ci_fix_increment "$HAS_PR"
         log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt $((FIX_ATTEMPTS+1))/3)"
         nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
         log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
+        exit 0
       fi
-      exit 0
 
     else
       log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
@@ -308,17 +314,22 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
     FIX_ATTEMPTS=$(ci_fix_count "$PR_NUM")
     if [ "$FIX_ATTEMPTS" -ge 3 ]; then
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — exhausted ${FIX_ATTEMPTS} attempts, escalating"
-      echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
-      matrix_send "dev" "🚨 PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+      # Already escalated — skip to let pipeline continue
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI exhausted (${FIX_ATTEMPTS} attempts) — skipping"
+      if [ "$FIX_ATTEMPTS" -eq 3 ]; then
+        echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+          >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+        matrix_send "dev" "🚨 PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+        ci_fix_increment "$PR_NUM"  # bump to 4 to prevent re-alert
+      fi
+      continue  # skip this PR, check next stuck PR or fall through to backlog
     else
       ci_fix_increment "$PR_NUM"
       log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt $((FIX_ATTEMPTS+1))/3)"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+      exit 0
     fi
-    exit 0
   fi
 done
 
