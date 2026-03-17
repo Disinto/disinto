@@ -190,6 +190,27 @@ OPEN_SUMMARY=$(echo "$OPEN_ISSUES" | jq -r '.[] | "#\(.number) [\(.labels | map(
 # Fetch vision-labeled issues specifically
 VISION_ISSUES=$(echo "$OPEN_ISSUES" | jq -r '.[] | select(.labels | map(.name) | index("vision")) | "#\(.number) \(.title)\n\(.body)"' 2>/dev/null || true)
 
+# Read supervisor metrics for trend analysis (last 7 days)
+METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
+METRICS_SUMMARY="(no metrics data — supervisor has not yet written metrics)"
+if [ -f "$METRICS_FILE" ] && [ -s "$METRICS_FILE" ]; then
+  _METRICS_CUTOFF=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M)
+  METRICS_SUMMARY=$(awk -F'"' -v cutoff="$_METRICS_CUTOFF" \
+    'NF >= 4 && $2 == "ts" && $4 >= cutoff' "$METRICS_FILE" 2>/dev/null | \
+    jq -rs '
+      ( [.[] | select(.type=="ci") | .duration_min] | if length>0 then add/length|round else null end ) as $ci_avg |
+      ( [.[] | select(.type=="ci") | select(.status=="success")] | length ) as $ci_ok |
+      ( [.[] | select(.type=="ci")] | length ) as $ci_n |
+      ( [.[] | select(.type=="infra") | .ram_used_pct] | if length>0 then add/length|round else null end ) as $ram_avg |
+      ( [.[] | select(.type=="infra") | .disk_used_pct] | if length>0 then add/length|round else null end ) as $disk_avg |
+      ( [.[] | select(.type=="dev")] | last ) as $dev_last |
+      "CI (\($ci_n) pipelines): avg \(if $ci_avg then "\($ci_avg)min" else "n/a" end), success rate \(if $ci_n > 0 then "\($ci_ok * 100 / $ci_n | round)%" else "n/a" end)\n" +
+      "Infra: avg RAM \(if $ram_avg then "\($ram_avg)%" else "n/a" end) used, avg disk \(if $disk_avg then "\($disk_avg)%" else "n/a" end) used\n" +
+      "Dev (latest): \(if $dev_last then "\($dev_last.issues_in_backlog) in backlog, \($dev_last.issues_blocked) blocked (\(if $dev_last.issues_in_backlog > 0 then $dev_last.issues_blocked * 100 / $dev_last.issues_in_backlog | round else 0 end)% blocked), \($dev_last.pr_open) open PRs" else "n/a" end)
+    ' 2>/dev/null) || METRICS_SUMMARY="(metrics parse error)"
+  log "Metrics: ${METRICS_SUMMARY:0:120}"
+fi
+
 PHASE2_PROMPT="You are the planner for ${CODEBERG_REPO}. Your job: find gaps between the project vision and current reality.
 
 ## VISION.md (human-maintained goals)
@@ -203,6 +224,9 @@ ${VISION_ISSUES:-"(none)"}
 
 ## All open issues
 ${OPEN_SUMMARY}
+
+## Operational metrics (last 7 days from supervisor)
+${METRICS_SUMMARY}
 
 ## Task
 Identify gaps — things implied by VISION.md that are neither reflected in the project state nor covered by an existing open issue.
@@ -218,6 +242,7 @@ For each gap, output a JSON object (one per line, no array wrapper):
 - Each title should be a plain, action-oriented sentence
 - Each body should explain: what's missing, why it matters for the vision, rough approach
 - Reference blocking issues by number in depends array
+- When metrics indicate a systemic problem conflicting with VISION.md (slow CI, high blocked ratio, disk pressure), create an optimization issue even if not explicitly in VISION.md
 
 If there are no gaps, output exactly: NO_GAPS
 

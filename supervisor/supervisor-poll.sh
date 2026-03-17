@@ -20,6 +20,22 @@ LOCKFILE="/tmp/supervisor-poll.lock"
 PROMPT_FILE="${FACTORY_ROOT}/supervisor/PROMPT.md"
 PROJECTS_DIR="${FACTORY_ROOT}/projects"
 
+METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
+
+emit_metric() {
+  mkdir -p "$(dirname "$METRICS_FILE")"
+  printf '%s\n' "$1" >> "$METRICS_FILE"
+}
+
+rotate_metrics() {
+  [ -f "$METRICS_FILE" ] || return 0
+  local cutoff tmpfile
+  cutoff=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M)
+  tmpfile="${METRICS_FILE}.tmp"
+  awk -F'"' -v cutoff="$cutoff" 'NF >= 4 && $2 == "ts" && $4 >= cutoff' \
+    "$METRICS_FILE" > "$tmpfile" && mv "$tmpfile" "$METRICS_FILE" || rm -f "$tmpfile"
+}
+
 # Prevent overlapping runs
 if [ -f "$LOCKFILE" ]; then
   LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null)
@@ -30,6 +46,7 @@ if [ -f "$LOCKFILE" ]; then
 fi
 echo $$ > "$LOCKFILE"
 trap 'rm -f "$LOCKFILE" "$STATUSFILE"' EXIT
+rotate_metrics
 
 flog() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
@@ -145,6 +162,16 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   fi
 fi
 
+# Emit infra metric
+_RAM_TOTAL_MB=$(free -m | awk '/Mem:/{print $2}')
+_RAM_USED_PCT=$(( _RAM_TOTAL_MB > 0 ? (_RAM_TOTAL_MB - AVAIL_MB) * 100 / _RAM_TOTAL_MB : 0 ))
+emit_metric "$(jq -nc \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%MZ)" \
+  --argjson ram "${_RAM_USED_PCT:-0}" \
+  --argjson disk "${DISK_PERCENT:-0}" \
+  --argjson swap "${SWAP_USED_MB:-0}" \
+  '{ts:$ts,type:"infra",ram_used_pct:$ram,disk_used_pct:$disk,swap_mb:$swap}' 2>/dev/null)" 2>/dev/null || true
+
 # =============================================================================
 # P4-INFRA: HOUSEKEEPING — stale processes, log rotation (project-agnostic)
 # =============================================================================
@@ -196,6 +223,21 @@ check_project() {
 
   PENDING_CI=$(wpdb -c "SELECT count(*) FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status='pending' AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs || true)
   [ "${PENDING_CI:-0}" -gt 0 ] && p2 "${proj_name}: CI: ${PENDING_CI} pipeline(s) pending >30min"
+
+  # Emit CI metric (last completed pipeline)
+  _CI_ROW=$(wpdb -A -F ',' -c "SELECT id, COALESCE(ROUND(EXTRACT(EPOCH FROM (to_timestamp(finished) - to_timestamp(started)))/60)::int, 0), status FROM pipelines WHERE repo_id=${WOODPECKER_REPO_ID} AND status IN ('success','failure','error') AND finished > 0 ORDER BY id DESC LIMIT 1;" 2>/dev/null | grep -E '^[0-9]' | head -1 || true)
+  if [ -n "$_CI_ROW" ]; then
+    _CI_ID=$(echo "$_CI_ROW" | cut -d',' -f1 | tr -d ' ')
+    _CI_DUR=$(echo "$_CI_ROW" | cut -d',' -f2 | tr -d ' ')
+    _CI_STAT=$(echo "$_CI_ROW" | cut -d',' -f3 | tr -d ' ')
+    emit_metric "$(jq -nc \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%MZ)" \
+      --arg proj "$proj_name" \
+      --argjson pipeline "${_CI_ID:-0}" \
+      --argjson duration "${_CI_DUR:-0}" \
+      --arg status "${_CI_STAT:-unknown}" \
+      '{ts:$ts,type:"ci",project:$proj,pipeline:$pipeline,duration_min:$duration,status:$status}' 2>/dev/null)" 2>/dev/null || true
+  fi
 
   # Dev-agent health (only if monitoring enabled)
   if [ "${CHECK_DEV_AGENT:-true}" = "true" ]; then
@@ -424,6 +466,18 @@ check_project() {
 
     unset DEPS_OF BACKLOG_NUMS NODE_COLOR SEEN_CYCLES DEP_CACHE
   fi
+
+  # Emit dev metric
+  _BACKLOG_COUNT=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  _BLOCKED_COUNT=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  _PR_COUNT=$(codeberg_api GET "/pulls?state=open&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  emit_metric "$(jq -nc \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%MZ)" \
+    --arg proj "$proj_name" \
+    --argjson backlog "${_BACKLOG_COUNT:-0}" \
+    --argjson blocked "${_BLOCKED_COUNT:-0}" \
+    --argjson prs "${_PR_COUNT:-0}" \
+    '{ts:$ts,type:"dev",project:$proj,issues_in_backlog:$backlog,issues_blocked:$blocked,pr_open:$prs}' 2>/dev/null)" 2>/dev/null || true
 
   # ===========================================================================
   # P4-PROJECT: Clean stale worktrees for this project
