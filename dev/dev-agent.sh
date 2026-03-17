@@ -34,7 +34,7 @@ REPO="${CODEBERG_REPO}"
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 API="${CODEBERG_API}"
-LOCKFILE="/tmp/dev-agent.lock"
+LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
 STATUSFILE="/tmp/dev-agent-status"
 LOGFILE="${FACTORY_ROOT}/dev/dev-agent.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
