@@ -1069,6 +1069,15 @@ while [ "$REVIEW_ROUND" -lt "$MAX_REVIEW_ROUNDS" ]; do
     CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/commits/${CURRENT_SHA}/status" | jq -r '.state // "unknown"')
 
+    # No CI configured — treat as success immediately
+    if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$CI_STATE" ] || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ]; }; then
+      log "no CI configured — skipping CI wait"
+      CI_STATE="success"
+      CI_DONE=true
+      CI_FIX_COUNT=0
+      break
+    fi
+
     if [ "$CI_STATE" = "success" ] || [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
       log "CI: ${CI_STATE}"
       CI_DONE=true
