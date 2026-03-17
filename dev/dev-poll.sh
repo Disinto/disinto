@@ -328,6 +328,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
 
     else
       log "#${ISSUE_NUM} PR #${EXISTING_PR} exists (CI: ${CI_STATE}, waiting)"
+      WAITING_PRS="${WAITING_PRS:-}${WAITING_PRS:+, }#${EXISTING_PR}"
       continue
     fi
   fi
@@ -336,6 +337,13 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   log "#${ISSUE_NUM} is READY (all deps merged, no existing PR)"
   break
 done
+
+# Single-threaded per project: if any issue has an open PR waiting for review/CI,
+# don't start new work — let the pipeline drain first
+if [ -n "$READY_ISSUE" ] && [ -n "${WAITING_PRS:-}" ]; then
+  log "holding #${READY_ISSUE} — waiting for open PR(s) to land first: ${WAITING_PRS}"
+  exit 0
+fi
 
 if [ -z "$READY_ISSUE" ]; then
   log "no ready issues (all blocked by unmerged deps)"
