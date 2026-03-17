@@ -37,7 +37,7 @@ Claude writes exactly one of these lines to the phase file when a phase ends:
 ### Writing a phase (from within Claude's session)
 
 ```bash
-PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.phase"
+PHASE_FILE="/tmp/dev-session-${PROJECT_NAME:-project}-${ISSUE:-0}.phase"
 
 # Signal awaiting CI
 echo "PHASE:awaiting_ci" > "$PHASE_FILE"
@@ -58,8 +58,11 @@ echo "PHASE:failed" > "$PHASE_FILE"
 The orchestrator reads with:
 
 ```bash
-phase=$(cat "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]')
+phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]')
 ```
+
+Using `head -1` is required: `PHASE:failed` may have a reason line on line 2,
+and reading all lines would produce `PHASE:failedReason:...` which never matches.
 
 ## Orchestrator Reaction Matrix
 
@@ -102,7 +105,8 @@ If the tmux session dies (Claude crash, OOM, kernel OOM-kill, compaction):
 ```bash
 # 1. Read current state from disk
 git_diff=$(git -C "$WORKTREE" diff origin/main..HEAD --stat 2>/dev/null)
-last_phase=$(cat "$PHASE_FILE" 2>/dev/null || echo "PHASE:unknown")
+last_phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]')
+last_phase="${last_phase:-PHASE:unknown}"
 last_ci=$(cat "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || echo "")
 review_comments=$(curl -sf ... "${API}/issues/${PR}/comments" | jq ...)
 
@@ -134,7 +138,7 @@ file and git history.
 |------|-----------|---------|
 | `/tmp/dev-session-{proj}-{issue}.phase` | Claude (in session) | Current phase |
 | `/tmp/ci-result-{proj}-{issue}.txt` | Orchestrator | Last CI output for injection |
-| `/tmp/dev-{proj}-{issue}.log` | Orchestrator | Session transcript |
+| `/tmp/dev-{proj}-{issue}.log` | Orchestrator | Session transcript (aspirational — path TBD when tmux session manager is implemented in #80) |
 | `WORKTREE` (git worktree) | dev-agent.sh | Code checkpoint |
 
 ## Sequence Diagram

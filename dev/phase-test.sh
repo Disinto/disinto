@@ -41,7 +41,7 @@ check_phase() {
   local sentinel="$1"
   echo "$sentinel" > "$PHASE_FILE"
   local got
-  got=$(cat "$PHASE_FILE" | tr -d '[:space:]')
+  got=$(tr -d '[:space:]' < "$PHASE_FILE")
   if [ "$got" = "$sentinel" ]; then
     ok "write/read: $sentinel"
   else
@@ -59,10 +59,16 @@ check_phase "PHASE:failed"
 echo "PHASE:awaiting_ci" > "$PHASE_FILE"
 echo "PHASE:awaiting_review" > "$PHASE_FILE"
 line_count=$(wc -l < "$PHASE_FILE")
+file_content=$(cat "$PHASE_FILE")
 if [ "$line_count" -eq 1 ]; then
   ok "phase file overwrite (single line after two writes)"
 else
   fail "phase file should have 1 line, got $line_count"
+fi
+if [ "$file_content" = "PHASE:awaiting_review" ]; then
+  ok "phase file overwrite (content is second write, not first)"
+else
+  fail "phase file content should be 'PHASE:awaiting_review', got '$file_content'"
 fi
 
 # ── Test 4: failed phase with reason ──────────────────────────────────────────
