@@ -9,11 +9,14 @@
 #   1. Orphaned "in-progress" issues (agent died or PR needs attention)
 #   2. Ready "backlog" issues (all deps merged)
 #
-# Usage: cron every 10min
+# Usage:
+#   cron every 10min
+#   dev-poll.sh [projects/harb.toml]   # optional project config
 
 set -euo pipefail
 
-# Load shared environment
+# Load shared environment (with optional project TOML override)
+export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 
 

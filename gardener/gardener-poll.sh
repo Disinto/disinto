@@ -30,6 +30,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Load shared environment (with optional project TOML override)
+# Usage: gardener-poll.sh [projects/harb.toml]
+export PROJECT_TOML="${1:-}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
 

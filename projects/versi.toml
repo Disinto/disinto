@@ -1,0 +1,21 @@
+# projects/versi.toml — Project config for johba/versi
+#
+# This file defines project-specific settings for disinto agents.
+# Drop a new TOML file here to add another project — no code changes needed.
+
+name            = "versi"
+repo            = "johba/versi"
+repo_root       = "/home/admin/versi"
+primary_branch  = "main"
+
+[ci]
+woodpecker_repo_id = 3
+stale_minutes      = 60
+
+[services]
+containers = []
+
+[monitoring]
+check_prs            = true
+check_dev_agent      = true
+check_pipeline_stall = true

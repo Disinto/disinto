@@ -19,6 +19,11 @@ fi
 export PATH="${HOME}/.local/bin:${HOME}/.foundry/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 export HOME="${HOME:-/home/debian}"
 
+# Load project TOML if PROJECT_TOML is set (by poll scripts that accept project arg)
+if [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
+  source "${FACTORY_ROOT}/lib/load-project.sh" "$PROJECT_TOML"
+fi
+
 # Codeberg token: env var > ~/.netrc
 if [ -z "${CODEBERG_TOKEN:-}" ]; then
   CODEBERG_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
