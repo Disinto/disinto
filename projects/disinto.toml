@@ -16,6 +16,11 @@ stale_minutes      = 60
 [services]
 containers = []
 
+[matrix]
+room_id = "!ynKSMyWU7OSkbNjR:matrix.allf.in"
+bot_user = "@disinto-factory:matrix.allf.in"
+token_env = "DISINTO_MATRIX_TOKEN"
+
 [monitoring]
 check_prs            = true
 check_dev_agent      = true
