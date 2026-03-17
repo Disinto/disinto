@@ -18,11 +18,6 @@ description = "Return type description (e.g. 'U256 balance', 'Vec<Position>')"
 required    = false
 default     = "result"
 
-[vars.namespace]
-description = "RPC namespace prefix (e.g. eth, harb, net) — derived from method_name if omitted"
-required    = false
-default     = ""
-
 [[steps]]
 id          = "read-existing"
 title       = "Read existing RPC methods for patterns"
@@ -61,8 +56,9 @@ description = """
 Add {{method_name}} to the server's method registry / router, following the
 same registration pattern used by existing methods.
 
-Verify the method is reachable — check that no namespace filter or
-allowlist would block it in the default configuration.
+The namespace is the prefix of {{method_name}} before the underscore
+(e.g. "eth" for "eth_getBalance"). Verify the server's namespace filter or
+allowlist includes this namespace in the default configuration.
 """
 needs       = ["implement-handler"]
 

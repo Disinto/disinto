@@ -1,7 +1,7 @@
 # formulas/upgrade-dependency.toml — Upgrade a package dependency
 
 name        = "upgrade-dependency"
-description = "Upgrade {{package}} from {{from_version}} to {{to_version}}"
+description = "Upgrade {{package}} to {{to_version}}"
 version     = 1
 
 [vars.package]
@@ -38,11 +38,11 @@ description = """
 Run the appropriate upgrade command for ecosystem={{ecosystem}}:
 
 - npm:   npm install {{package}}@{{to_version}} (or @latest)
-         Then: npm install  (to sync lockfile)
 - cargo: cargo update -p {{package}} [--precise {{to_version}}]
          Or bump version in Cargo.toml, then: cargo build
-- forge: Update version in foundry.toml or gitmodules, then:
-         forge install {{package}}  (or forge update {{package}})
+- forge: forge update {{package}}
+         (Use forge install only if reinstalling from scratch after manually
+          editing the commit hash in .gitmodules or lib/)
 
 Confirm the lockfile / manifest now reflects {{to_version}}.
 """
