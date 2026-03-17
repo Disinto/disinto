@@ -6,7 +6,9 @@
 
 set -euo pipefail
 
-# Load shared environment
+# Load shared environment (with optional project TOML override)
+# Usage: review-poll.sh [projects/harb.toml]
+export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 
 

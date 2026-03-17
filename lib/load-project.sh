@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# load-project.sh — Load project config from a TOML file into env vars
+#
+# Usage (source, don't execute):
+#   source lib/load-project.sh projects/harb.toml
+#
+# Exports:
+#   PROJECT_NAME, CODEBERG_REPO, CODEBERG_API, PROJECT_REPO_ROOT,
+#   PRIMARY_BRANCH, WOODPECKER_REPO_ID, PROJECT_CONTAINERS,
+#   CHECK_PRS, CHECK_DEV_AGENT, CHECK_PIPELINE_STALL, CI_STALE_MINUTES
+#
+# If no argument given, does nothing (allows poll scripts to work with
+# plain .env fallback for backwards compatibility).
+
+_PROJECT_TOML="${1:-}"
+
+if [ -z "$_PROJECT_TOML" ] || [ ! -f "$_PROJECT_TOML" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+# Parse TOML to shell variable assignments via Python
+_PROJECT_VARS=$(python3 -c "
+import sys, tomllib
+
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+
+def emit(key, val):
+    if isinstance(val, bool):
+        print(f'{key}={str(val).lower()}')
+    elif isinstance(val, list):
+        print(f'{key}={\" \".join(str(v) for v in val)}')
+    else:
+        print(f'{key}={val}')
+
+# Top-level
+emit('PROJECT_NAME', cfg.get('name', ''))
+emit('CODEBERG_REPO', cfg.get('repo', ''))
+
+if 'repo_root' in cfg:
+    emit('PROJECT_REPO_ROOT', cfg['repo_root'])
+if 'primary_branch' in cfg:
+    emit('PRIMARY_BRANCH', cfg['primary_branch'])
+
+# [ci] section
+ci = cfg.get('ci', {})
+if 'woodpecker_repo_id' in ci:
+    emit('WOODPECKER_REPO_ID', ci['woodpecker_repo_id'])
+if 'stale_minutes' in ci:
+    emit('CI_STALE_MINUTES', ci['stale_minutes'])
+
+# [services] section
+svc = cfg.get('services', {})
+if 'containers' in svc:
+    emit('PROJECT_CONTAINERS', svc['containers'])
+
+# [monitoring] section
+mon = cfg.get('monitoring', {})
+for key in ['check_prs', 'check_dev_agent', 'check_pipeline_stall']:
+    if key in mon:
+        emit(key.upper(), mon[key])
+" "$_PROJECT_TOML" 2>/dev/null) || {
+  echo "WARNING: failed to parse project TOML: $_PROJECT_TOML" >&2
+  return 1 2>/dev/null || exit 1
+}
+
+# Export parsed variables
+while IFS='=' read -r _key _val; do
+  [ -z "$_key" ] && continue
+  export "$_key=$_val"
+done <<< "$_PROJECT_VARS"
+
+# Derive CODEBERG_API if repo changed
+if [ -n "$CODEBERG_REPO" ]; then
+  export CODEBERG_API="https://codeberg.org/api/v1/repos/${CODEBERG_REPO}"
+fi
+
+# Derive PROJECT_REPO_ROOT if not explicitly set
+if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
+  export PROJECT_REPO_ROOT="/home/${USER}/${PROJECT_NAME}"
+fi
+
+unset _PROJECT_TOML _PROJECT_VARS _key _val
