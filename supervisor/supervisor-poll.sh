@@ -540,7 +540,6 @@ check_project() {
     _nh_claimed="/tmp/dev-escalation-reply.supervisor.$$"
     if [ -s "$HUMAN_REPLY_FILE" ] && mv "$HUMAN_REPLY_FILE" "$_nh_claimed" 2>/dev/null; then
       _nh_reply=$(cat "$_nh_claimed")
-      rm -f "$_nh_claimed"
       _nh_inject_msg="Human reply received for issue #${_nh_issue}:
 
 ${_nh_reply}
@@ -558,7 +557,7 @@ Instructions:
       sleep 0.5
       tmux send-keys -t "$_nh_session" "" Enter || true
       tmux delete-buffer -b "human-inject-${_nh_issue}" 2>/dev/null || true
-      rm -f "$_nh_tmpfile"
+      rm -f "$_nh_tmpfile" "$_nh_claimed"
 
       rm -f "/tmp/dev-renotify-${proj_name}-${_nh_issue}"
       flog "${proj_name}: #${_nh_issue} human reply injected into session ${_nh_session}"
