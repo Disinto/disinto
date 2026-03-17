@@ -219,12 +219,22 @@ done
 # Report pending escalations (processing has moved to gardener-poll.sh per-project)
 for _esc_file in "${FACTORY_ROOT}/supervisor/escalations-"*.jsonl; do
   [ -f "$_esc_file" ] || continue
-  _esc_count=$(grep -c . "$_esc_file" 2>/dev/null || true)
+  [[ "$_esc_file" == *.done.jsonl ]] && continue
+  _esc_count=$(wc -l < "$_esc_file" 2>/dev/null || true)
   [ "${_esc_count:-0}" -gt 0 ] || continue
   _esc_proj=$(basename "$_esc_file" .jsonl)
   _esc_proj="${_esc_proj#escalations-}"
   flog "${_esc_proj}: ${_esc_count} escalation(s) pending (gardener will process)"
 done
+
+# Pick up escalation resolutions handled by gardener
+_gesc_log="${FACTORY_ROOT}/supervisor/gardener-esc-resolved.log"
+if [ -f "$_gesc_log" ]; then
+  while IFS=' ' read -r _gn _gp; do
+    [ -n "${_gn:-}" ] && fixed "${_gp:-unknown}: gardener created ${_gn} sub-issue(s) from escalations"
+  done < "$_gesc_log"
+  rm -f "$_gesc_log"
+fi
 
 # #############################################################################
 #                      LAYER 2: PER-PROJECT CHECKS

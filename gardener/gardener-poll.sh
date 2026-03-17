@@ -318,6 +318,7 @@ if [ -s "$ESCALATION_FILE" ]; then
 
   ESCALATION_COUNT=$(wc -l < "$ESCALATION_SNAP")
   log "Processing ${ESCALATION_COUNT} escalation(s) for ${PROJECT_NAME}"
+  _esc_total_created=0
 
   while IFS= read -r esc_entry; do
     [ -z "$esc_entry" ] && continue
@@ -402,6 +403,7 @@ Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${
             if [ -n "$new_issue" ]; then
               log "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
               ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+              _esc_total_created=$((_esc_total_created + 1))
               matrix_send "gardener" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
             fi
           done <<< "$sc_files"
@@ -447,6 +449,7 @@ ${ESC_GENERIC_FAIL}
       if [ -n "$new_issue" ]; then
         log "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
         ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
+        _esc_total_created=$((_esc_total_created + 1))
         matrix_send "gardener" "📋 Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
       fi
     fi
@@ -479,6 +482,7 @@ Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the 
 
       if [ -n "$new_issue" ]; then
         log "Created fallback sub-issue #${new_issue} for escalated #${ESC_ISSUE}"
+        _esc_total_created=$((_esc_total_created + 1))
         matrix_send "gardener" "📋 Created sub-issue #${new_issue}: investigate CI for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
       fi
     fi
@@ -489,6 +493,12 @@ Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the 
 
   rm -f "$ESCALATION_SNAP"
   log "Escalations processed — moved to $(basename "$ESCALATION_DONE")"
+
+  # Report resolution count to supervisor for its fixed() summary
+  if [ "${_esc_total_created:-0}" -gt 0 ]; then
+    printf '%d %s\n' "$_esc_total_created" "$PROJECT_NAME" \
+      >> "${FACTORY_ROOT}/supervisor/gardener-esc-resolved.log"
+  fi
 fi
 
 log "--- Gardener poll done ---"
