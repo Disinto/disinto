@@ -773,15 +773,15 @@ ${body}
 ---
 *Automated assessment by dev-agent · $(date -u '+%Y-%m-%d %H:%M UTC')*"
 
-      printf '%s' "$comment" > "${TMPDIR}/refusal-comment.txt"
-      jq -Rs '{body: .}' < "${TMPDIR}/refusal-comment.txt" > "${TMPDIR}/refusal-comment.json"
+      printf '%s' "$comment" > "/tmp/refusal-comment.txt"
+      jq -Rs '{body: .}' < "/tmp/refusal-comment.txt" > "/tmp/refusal-comment.json"
       curl -sf -o /dev/null -X POST \
         -H "Authorization: token ${CODEBERG_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${ISSUE}/comments" \
-        --data-binary @"${TMPDIR}/refusal-comment.json" 2>/dev/null || \
+        --data-binary @"/tmp/refusal-comment.json" 2>/dev/null || \
         log "WARNING: failed to post refusal comment"
-      rm -f "${TMPDIR}/refusal-comment.txt" "${TMPDIR}/refusal-comment.json"
+      rm -f "/tmp/refusal-comment.txt" "/tmp/refusal-comment.json"
     }
 
     case "$REFUSAL_STATUS" in
