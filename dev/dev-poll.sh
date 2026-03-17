@@ -20,6 +20,16 @@ export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 
 
+# Helper: check if CI is passing (or no CI configured)
+ci_passed() {
+  local state="$1"
+  if [ "$state" = "success" ]; then return 0; fi
+  if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$state" ] || [ "$state" = "pending" ] || [ "$state" = "unknown" ]; }; then
+    return 0  # no CI configured
+  fi
+  return 1
+}
+
 REPO="${CODEBERG_REPO}"
 
 API="${CODEBERG_API}"
@@ -179,20 +189,20 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       "${API}/pulls/${HAS_PR}/reviews" | \
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
-    if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+    if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
       PR_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
         "${API}/pulls/${HAS_PR}" | jq -r '.head.ref') || true
       log "PR #${HAS_PR} approved + CI green → merging"
       try_merge_or_rebase "$HAS_PR" "$ISSUE_NUM" "$PR_BRANCH"
       exit 0
 
-    elif [ "$CI_STATE" = "success" ] && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+    elif ci_passed "$CI_STATE" && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
       log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
       exit 0
 
-    elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
+    elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
       log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
@@ -246,19 +256,19 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
 
   # Try merge if approved + CI green
-  if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+  if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → merging"
     try_merge_or_rebase "$PR_NUM" "$STUCK_ISSUE" "$PR_BRANCH"
     continue
   fi
 
   # Stuck: REQUEST_CHANGES or CI failure → spawn agent
-  if [ "$CI_STATE" = "success" ] && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+  if ci_passed "$CI_STATE" && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
-  elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
+  elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing first"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
@@ -309,7 +319,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       "${API}/pulls/${EXISTING_PR}/reviews" | \
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
-    if [ "$CI_STATE" = "success" ] && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+    if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
       EXISTING_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
         "${API}/pulls/${EXISTING_PR}" | jq -r '.head.ref') || true
       log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → merging"
@@ -321,7 +331,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       READY_ISSUE="$ISSUE_NUM"
       break
 
-    elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
+    elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
       log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up"
       READY_ISSUE="$ISSUE_NUM"
       break
