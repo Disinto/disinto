@@ -1272,7 +1272,7 @@ Instructions:
     HUMAN_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
     notify "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}"
     log "phase: needs_human — notified via Matrix, waiting for external injection"
-    # Don't inject anything — supervisor-poll.sh (#81) and review-poll.sh (#82) inject replies
+    # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
   elif [ "$CURRENT_PHASE" = "PHASE:done" ]; then

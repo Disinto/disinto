@@ -66,8 +66,10 @@ fi
 
 # ── Inject human replies into needs_human dev sessions (backup to supervisor) ─
 HUMAN_REPLY_FILE="/tmp/dev-escalation-reply"
-if [ -s "$HUMAN_REPLY_FILE" ]; then
-  _gr_reply=$(cat "$HUMAN_REPLY_FILE")
+_gr_claimed="/tmp/dev-escalation-reply.gardener.$$"
+if [ -s "$HUMAN_REPLY_FILE" ] && mv "$HUMAN_REPLY_FILE" "$_gr_claimed" 2>/dev/null; then
+  _gr_reply=$(cat "$_gr_claimed")
+  rm -f "$_gr_claimed"
   for _gr_phase_file in /tmp/dev-session-"${PROJECT_NAME}"-*.phase; do
     [ -f "$_gr_phase_file" ] || continue
     _gr_phase=$(head -1 "$_gr_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
@@ -87,8 +89,7 @@ ${_gr_reply}
 Instructions:
 1. Read the human's guidance carefully.
 2. Continue your work based on their input.
-3. When done, push your changes and write the appropriate phase:
-   echo \"PHASE:awaiting_ci\" > \"${_gr_phase_file}\""
+3. When done, push your changes and write the appropriate phase."
 
     _gr_tmpfile=$(mktemp /tmp/human-inject-XXXXXX)
     printf '%s' "$_gr_inject_msg" > "$_gr_tmpfile"
@@ -99,7 +100,7 @@ Instructions:
     tmux delete-buffer -b "human-inject-${_gr_issue}" 2>/dev/null || true
     rm -f "$_gr_tmpfile"
 
-    rm -f "$HUMAN_REPLY_FILE"
+    rm -f "/tmp/dev-renotify-${PROJECT_NAME}-${_gr_issue}"
     log "${PROJECT_NAME}: #${_gr_issue} human reply injected into session ${_gr_session} (gardener)"
     break  # only one reply to deliver
   done

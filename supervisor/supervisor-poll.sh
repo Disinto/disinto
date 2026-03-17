@@ -536,9 +536,11 @@ check_project() {
       continue
     fi
 
-    # Inject human reply if available
-    if [ -s "$HUMAN_REPLY_FILE" ]; then
-      _nh_reply=$(cat "$HUMAN_REPLY_FILE")
+    # Inject human reply if available (atomic mv to prevent double-injection with gardener)
+    _nh_claimed="/tmp/dev-escalation-reply.supervisor.$$"
+    if [ -s "$HUMAN_REPLY_FILE" ] && mv "$HUMAN_REPLY_FILE" "$_nh_claimed" 2>/dev/null; then
+      _nh_reply=$(cat "$_nh_claimed")
+      rm -f "$_nh_claimed"
       _nh_inject_msg="Human reply received for issue #${_nh_issue}:
 
 ${_nh_reply}
@@ -546,8 +548,7 @@ ${_nh_reply}
 Instructions:
 1. Read the human's guidance carefully.
 2. Continue your work based on their input.
-3. When done, push your changes and write the appropriate phase:
-   echo \"PHASE:awaiting_ci\" > \"${_nh_phase_file}\""
+3. When done, push your changes and write the appropriate phase."
 
       _nh_tmpfile=$(mktemp /tmp/human-inject-XXXXXX)
       printf '%s' "$_nh_inject_msg" > "$_nh_tmpfile"
@@ -559,10 +560,10 @@ Instructions:
       tmux delete-buffer -b "human-inject-${_nh_issue}" 2>/dev/null || true
       rm -f "$_nh_tmpfile"
 
-      rm -f "$HUMAN_REPLY_FILE"
       rm -f "/tmp/dev-renotify-${proj_name}-${_nh_issue}"
       flog "${proj_name}: #${_nh_issue} human reply injected into session ${_nh_session}"
       fixed "${proj_name}: Injected human reply into dev session #${_nh_issue}"
+      break  # one reply to deliver
     else
       # No reply yet — check for timeout (re-notify at 6h, alert at 24h)
       _nh_mtime=$(stat -c %Y "$_nh_phase_file" 2>/dev/null || echo 0)
