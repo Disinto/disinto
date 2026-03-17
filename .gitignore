@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# Infrastructure manifest (local only — commit RESOURCES.example.md instead)
+RESOURCES.md
+
 # Runtime state
 *.log
 *.log.*
