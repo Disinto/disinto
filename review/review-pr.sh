@@ -17,6 +17,8 @@ set -euo pipefail
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 
+# Auto-pull factory code to pick up merged fixes before any logic runs
+git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
