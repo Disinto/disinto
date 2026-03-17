@@ -60,10 +60,12 @@ json.dump(d,open(f,'w'))
 # Check whether an issue/PR has been escalated to supervisor (unprocessed or processed)
 is_escalated() {
   local issue="$1" pr="$2"
-  local esc_file="${FACTORY_ROOT}/supervisor/escalations.jsonl"
-  local done_file="${FACTORY_ROOT}/supervisor/escalations.done.jsonl"
   python3 -c "
 import json, sys
+try:
+  issue, pr = int('${issue}'), int('${pr}')
+except (ValueError, TypeError):
+  sys.exit(1)
 for path in ['${FACTORY_ROOT}/supervisor/escalations.jsonl',
              '${FACTORY_ROOT}/supervisor/escalations.done.jsonl']:
   try:
@@ -73,7 +75,7 @@ for path in ['${FACTORY_ROOT}/supervisor/escalations.jsonl',
         if not line:
           continue
         d = json.loads(line)
-        if d.get('issue') == ${issue} and d.get('pr') == ${pr}:
+        if d.get('issue') == issue and d.get('pr') == pr:
           sys.exit(0)
   except OSError:
     pass
