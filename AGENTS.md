@@ -2,9 +2,10 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages four agents (dev, review,
-gardener, supervisor) that pick up issues from Codeberg, implement them,
-review PRs, and keep the system healthy — all via cron and `claude -p`.
+Disinto is an autonomous code factory. It manages five agents (dev, review,
+gardener, supervisor, planner) that pick up issues from Codeberg, implement
+them, review PRs, plan from the vision, and keep the system healthy — all
+via cron and `claude -p`.
 
 See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 
@@ -15,6 +16,7 @@ disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-poll.sh — backlog grooming
+├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── lib/           env.sh, ci-debug.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config

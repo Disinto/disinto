@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="al76.png" alt="A tiny robot commanding a mountain-eating machine" width="600">
+  <img src="site/al76.jpg" alt="A tiny robot commanding a mountain-eating machine" width="600">
   <br><br>
 
   # Disinto
