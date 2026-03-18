@@ -13,6 +13,7 @@
 # Log:   tail -f /path/to/disinto/supervisor/supervisor.log
 
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 LOGFILE="${FACTORY_ROOT}/supervisor/supervisor.log"
 STATUSFILE="/tmp/supervisor-status"
@@ -462,7 +463,7 @@ check_project() {
       CI_STATE=$(codeberg_api GET "/commits/${PR_SHA}/status" 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null || true)
 
       MERGEABLE=$(echo "$PR_JSON" | jq -r '.mergeable // true')
-      if [ "$MERGEABLE" = "false" ] && [ "$CI_STATE" = "success" ]; then
+      if [ "$MERGEABLE" = "false" ] && ci_passed "$CI_STATE"; then
         p3 "${proj_name}: PR #${pr}: CI pass but merge conflict — needs rebase"
       elif [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
         UPDATED=$(echo "$PR_JSON" | jq -r '.updated_at // ""')
@@ -472,7 +473,7 @@ check_project() {
           AGE_MIN=$(( (NOW_EPOCH - UPDATED_EPOCH) / 60 ))
           [ "$AGE_MIN" -gt 30 ] && p3 "${proj_name}: PR #${pr}: CI=${CI_STATE}, stale ${AGE_MIN}min"
         fi
-      elif [ "$CI_STATE" = "success" ]; then
+      elif ci_passed "$CI_STATE"; then
         HAS_REVIEW=$(codeberg_api GET "/issues/${pr}/comments?limit=50" 2>/dev/null | \
           jq -r --arg sha "$PR_SHA" '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | length' 2>/dev/null || echo "0")
 

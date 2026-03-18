@@ -10,6 +10,7 @@ set -euo pipefail
 # Usage: review-poll.sh [projects/harb.toml]
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 
 # shellcheck disable=SC2034
@@ -167,15 +168,10 @@ while IFS= read -r line; do
     "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
   # Skip if CI is running/failed. Allow "success" or no CI configured (empty/pending with no pipelines)
-  if [ "$CI_STATE" != "success" ]; then
-    # Projects without CI (woodpecker_repo_id=0) treat empty/pending as pass
-    if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ "$CI_STATE" = "" ] || [ "$CI_STATE" = "pending" ]; }; then
-      : # no CI configured, proceed to review
-    else
-      log "  #${PR_NUM} CI=${CI_STATE}, skip"
-      SKIPPED=$((SKIPPED + 1))
-      continue
-    fi
+  if ! ci_passed "$CI_STATE"; then
+    log "  #${PR_NUM} CI=${CI_STATE}, skip"
+    SKIPPED=$((SKIPPED + 1))
+    continue
   fi
 
   # Check formal Codeberg reviews (not comment markers)

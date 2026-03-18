@@ -48,7 +48,7 @@ shellcheck dev/dev-poll.sh dev/dev-agent.sh dev/phase-test.sh \
            review/review-poll.sh review/review-pr.sh \
            gardener/gardener-poll.sh \
            supervisor/supervisor-poll.sh supervisor/update-prompt.sh \
-           lib/env.sh lib/ci-debug.sh lib/load-project.sh \
+           lib/env.sh lib/ci-debug.sh lib/ci-helpers.sh lib/load-project.sh \
            lib/parse-deps.sh lib/matrix_listener.sh
 
 # Run phase protocol test
