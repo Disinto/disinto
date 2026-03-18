@@ -44,6 +44,10 @@ PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.phase"
 SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE}"
 IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 
+# Matrix thread tracking — one thread per issue for conversational notifications
+THREAD_FILE="/tmp/dev-thread-${PROJECT_NAME}-${ISSUE}"
+CODEBERG_WEB="https://codeberg.org/${CODEBERG_REPO}"
+
 # Timing
 PHASE_POLL_INTERVAL=30    # seconds between phase checks
 IDLE_TIMEOUT=7200         # 2h: kill session if phase stale this long
@@ -71,7 +75,17 @@ status() {
 }
 
 notify() {
-  matrix_send "dev" "🔧 #${ISSUE}: $*" 2>/dev/null || true
+  local thread_id=""
+  [ -f "${THREAD_FILE}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  matrix_send "dev" "🔧 #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
+}
+
+# notify_ctx — Send rich notification with HTML links/context into the issue thread
+notify_ctx() {
+  local plain="$1" html="$2"
+  local thread_id=""
+  [ -f "${THREAD_FILE}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
 }
 
 # --- Phase helpers ---
@@ -246,10 +260,12 @@ do_merge() {
       "${API}/issues/${ISSUE}" \
       -d '{"state":"closed"}' >/dev/null 2>&1 || true
     cleanup_labels
-    notify "✅ PR #${pr} merged! Issue #${ISSUE} done."
+    notify_ctx \
+      "✅ PR #${pr} merged! Issue #${ISSUE} done." \
+      "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
     kill_tmux_session
     cleanup_worktree
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$THREAD_FILE"
     exit 0
   else
     log "merge failed (HTTP ${http_code}) — attempting rebase and retry"
@@ -285,14 +301,16 @@ do_merge() {
         -d '{"Do":"merge","delete_branch_after_merge":true}')
       if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
         log "PR #${pr} merged after rebase!"
-        notify "✅ PR #${pr} merged! Issue #${ISSUE} done."
+        notify_ctx \
+          "✅ PR #${pr} merged! Issue #${ISSUE} done." \
+          "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
         curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
           -H "Content-Type: application/json" \
           "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
         cleanup_labels
         kill_tmux_session
         cleanup_worktree
-        rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE"
+        rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
         exit 0
       fi
     else
@@ -853,6 +871,14 @@ log "initial prompt sent to tmux session"
 
 # Signal to dev-poll.sh that we're running (session is up)
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
+# Create Matrix thread for this issue (or reuse existing one)
+if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
+  ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
+  _thread_id=$(matrix_send "dev" "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" "" "${ISSUE}") || true
+  if [ -n "${_thread_id:-}" ]; then
+    printf '%s' "$_thread_id" > "$THREAD_FILE"
+  fi
+fi
 notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}"
 
 # =============================================================================
@@ -972,7 +998,10 @@ Phase file: ${PHASE_FILE}"
       if [ "$PR_HTTP_CODE" = "201" ] || [ "$PR_HTTP_CODE" = "200" ]; then
         PR_NUMBER=$(echo "$PR_RESPONSE_BODY" | jq -r '.number')
         log "created PR #${PR_NUMBER}"
-        notify "PR #${PR_NUMBER} created for issue #${ISSUE}: ${ISSUE_TITLE}"
+        PR_URL="${CODEBERG_WEB}/pulls/${PR_NUMBER}"
+        notify_ctx \
+          "PR #${PR_NUMBER} created: ${ISSUE_TITLE}" \
+          "PR <a href='${PR_URL}'>#${PR_NUMBER}</a> created: ${ISSUE_TITLE}"
       elif [ "$PR_HTTP_CODE" = "409" ]; then
         # PR already exists (race condition) — find it
         FOUND_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -1085,7 +1114,10 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
         echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER},\"reason\":\"ci_exhausted\",\"step\":\"${FAILED_STEP:-unknown}\",\"attempts\":${CI_FIX_COUNT},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
           >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
-        notify "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor"
+        PIPELINE_URL="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
+        notify_ctx \
+          "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor" \
+          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-#}'>#${PR_NUMBER}</a> | <a href='${PIPELINE_URL}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
         printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
         LAST_PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
         continue
@@ -1100,6 +1132,13 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       printf 'CI failed (attempt %d/%d)\nStep: %s\nExit: %s\n\n%s' \
         "$CI_FIX_COUNT" "$MAX_CI_FIXES" "${FAILED_STEP:-unknown}" "${FAILED_EXIT:-?}" "$CI_ERROR_LOG" \
         > "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || true
+
+      # Notify Matrix with rich CI failure context
+      _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
+      _ci_snippet=$(printf '%s' "${CI_ERROR_LOG:-}" | tail -5 | head -c 500)
+      notify_ctx \
+        "CI failed on PR #${PR_NUMBER}: step=${FAILED_STEP:-unknown} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES})" \
+        "CI failed on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline #${PIPELINE_NUM:-?}</a><br>Step: <code>${FAILED_STEP:-unknown}</code> (exit ${FAILED_EXIT:-?})<br>Attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}<br><pre>${_ci_snippet:-no logs}</pre>"
 
       inject_into_session "CI failed on PR #${PR_NUMBER} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}).
 
@@ -1238,14 +1277,16 @@ Instructions:
       if [ "$PR_STATE" != "open" ]; then
         if [ "$PR_MERGED" = "true" ]; then
           log "PR #${PR_NUMBER} was merged externally"
-          notify "✅ PR #${PR_NUMBER} merged externally! Issue #${ISSUE} done."
+          notify_ctx \
+            "✅ PR #${PR_NUMBER} merged externally! Issue #${ISSUE} done." \
+            "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged externally! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
           curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
           cleanup_labels
           kill_tmux_session
           cleanup_worktree
-          rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE"
+          rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
           exit 0
         else
           log "PR #${PR_NUMBER} was closed WITHOUT merge — NOT closing issue"
@@ -1270,7 +1311,12 @@ Instructions:
   elif [ "$CURRENT_PHASE" = "PHASE:needs_human" ]; then
     status "needs human input on issue #${ISSUE}"
     HUMAN_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
-    notify "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}"
+    _issue_url="${CODEBERG_WEB}/issues/${ISSUE}"
+    _pr_link=""
+    [ -n "${PR_NUMBER:-}" ] && _pr_link=" | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>"
+    notify_ctx \
+      "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}" \
+      "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}<br>Reply in this thread to send guidance to the dev agent."
     log "phase: needs_human — notified via Matrix, waiting for external injection"
     # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
@@ -1383,13 +1429,15 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       CLAIMED=false  # Don't unclaim again in cleanup()
       kill_tmux_session
       cleanup_worktree
-      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE"
+      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
       break
 
     else
       # Genuine unrecoverable failure — escalate to supervisor
       log "session failed: ${FAILURE_REASON}"
-      notify "❌ Issue #${ISSUE} session failed: ${FAILURE_REASON}"
+      notify_ctx \
+        "❌ Issue #${ISSUE} session failed: ${FAILURE_REASON}" \
+        "❌ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> session failed: ${FAILURE_REASON}${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
       echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${FAILURE_REASON}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
         >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
 
@@ -1408,7 +1456,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       else
         cleanup_worktree
       fi
-      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE"
+      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
       break
     fi
 
