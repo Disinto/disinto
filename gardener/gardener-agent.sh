@@ -31,21 +31,15 @@ source "$FACTORY_ROOT/lib/env.sh"
 source "$FACTORY_ROOT/lib/agent-session.sh"
 
 LOG_FILE="$SCRIPT_DIR/gardener.log"
-CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
-
 SESSION_NAME="gardener-${PROJECT_NAME}"
 PHASE_FILE="/tmp/gardener-session-${PROJECT_NAME}.phase"
 RESULT_FILE="/tmp/gardener-result-${PROJECT_NAME}.txt"
 DUST_FILE="$SCRIPT_DIR/dust.jsonl"
 
+# shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
 PHASE_POLL_INTERVAL=15
-MAX_RUNTIME="${CLAUDE_TIMEOUT}"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
-
-read_phase() {
-  { cat "$PHASE_FILE" 2>/dev/null || true; } | head -1 | tr -d '[:space:]'
-}
 
 log "--- gardener-agent start ---"
 
@@ -165,113 +159,94 @@ if [ "$PROBLEM_COUNT" -eq 0 ] && [ -z "$ESCALATION_REPLY" ]; then
   exit 0
 fi
 
-# ── Build prompt ──────────────────────────────────────────────────────────
-log "Building gardener prompt"
+# ── Load formula ─────────────────────────────────────────────────────────
+log "Loading groom-backlog formula"
+FORMULA_FILE="$FACTORY_ROOT/formulas/groom-backlog.toml"
+if [ ! -f "$FORMULA_FILE" ]; then
+  log "ERROR: formula not found: $FORMULA_FILE"
+  exit 1
+fi
+FORMULA_CONTENT=$(cat "$FORMULA_FILE")
 
-# Build issue summary for context (titles + labels + deps)
+# ── Read context files from project root ──────────────────────────────────
+CONTEXT_BLOCK=""
+for ctx in README.md AGENTS.md VISION.md; do
+  ctx_path="${PROJECT_REPO_ROOT}/${ctx}"
+  if [ -f "$ctx_path" ]; then
+    CONTEXT_BLOCK="${CONTEXT_BLOCK}
+### ${ctx}
+$(cat "$ctx_path")
+"
+  fi
+done
+
+# ── Build issue context ────────────────────────────────────────────────────
 ISSUE_SUMMARY=$(echo "$ISSUES_JSON" | jq -r '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"')
 
-# Build list of issues already staged as dust (so LLM doesn't re-emit them)
 STAGED_DUST=""
 if [ -s "$DUST_FILE" ]; then
   STAGED_DUST=$(jq -r '"#\(.issue) (\(.group))"' "$DUST_FILE" 2>/dev/null | sort -u || true)
 fi
 
-PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Your job: keep the backlog clean, well-structured, and actionable.
+# ── Build optional prompt sections ────────────────────────────────────────
+CONTEXT_SECTION=""
+if [ -n "$CONTEXT_BLOCK" ]; then
+  CONTEXT_SECTION="## Project context
+${CONTEXT_BLOCK}"
+fi
 
-## Current open issues
-$ISSUE_SUMMARY
+STAGED_DUST_SECTION=""
+if [ -n "$STAGED_DUST" ]; then
+  STAGED_DUST_SECTION="
+### Already staged as dust — do NOT re-emit DUST for these
+${STAGED_DUST}"
+fi
 
-## Problems detected
-$(echo -e "$PROBLEMS")
-## Tools available
-- Codeberg API: use curl with the CODEBERG_TOKEN env var (already set in your environment)
-- Base URL: ${CODEBERG_API}
-- Read issue: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/issues/{number}' | jq '.body'\`
-- Relabel: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'\`
-- Comment: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/comments' -d '{\"body\":\"...\"}'\`
-- Close: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"state\":\"closed\"}'\`
-- Edit body: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"body\":\"new body\"}'\`
-- List labels: \`curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/labels'\` (to find label IDs)
-- NEVER echo, log, or include the actual token value in any output — always reference \$CODEBERG_TOKEN
-- You're running in the project repo root. Read README.md and any docs/ files before making decisions.
+ESCALATION_SECTION=""
+if [ -n "$ESCALATION_REPLY" ]; then
+  ESCALATION_SECTION="
+### Human response to previous escalation
+Format: '1a 2c 3b' means question 1→option (a), 2→option (c), 3→option (b).
+Execute each chosen option via the Codeberg API FIRST, before processing new items.
+If a choice is unclear, re-escalate that single item with a clarifying question.
 
-## Primary mission: unblock the factory
-Issues prefixed with PRIORITY_blockers_starving_factory are your TOP priority. These are non-backlog issues that block existing backlog items — the dev-agent is completely starved until these are promoted. Process ALL of them before touching regular tech-debt.
+${ESCALATION_REPLY}"
+fi
 
-## Your objective: zero tech-debt issues
+# ── Build prompt from formula + dynamic context ────────────────────────────
+log "Building gardener prompt from formula"
 
-Tech-debt is unprocessed work — it sits outside the factory pipeline
-(dev-agent only pulls backlog). Every tech-debt issue is a decision
-you haven't made yet:
+PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Work through the formula below — there is no time limit, run until PHASE:done.
 
-- Substantial? → promote to backlog (add affected files, acceptance
-  criteria, dependencies)
-- Dust? → bundle into an ore issue
-- Duplicate? → close with cross-reference
-- Invalid/wontfix? → close with explanation
-- Needs human decision? → escalate
+${CONTEXT_SECTION}
+## Formula
+${FORMULA_CONTENT}
 
-Process ALL tech-debt issues every run. The goal is zero tech-debt
-when you're done. If you can't reach zero (needs human input,
-unclear scope), escalate those specifically and close out everything
-else.
+## Runtime context (bash pre-analysis)
+### All open issues
+${ISSUE_SUMMARY}
 
-Tech-debt is your inbox. An empty inbox is a healthy factory.
-
-## Dust vs Ore — bundle trivial tech-debt
-Don't promote trivial tech-debt individually — each costs a full factory cycle (CI + dev-agent + review + merge). If an issue is dust (comment fix, rename, style-only, single-line change, trivial cleanup), output a DUST line instead of promoting:
-
-DUST: {\"issue\": NNN, \"group\": \"<file-or-subsystem>\", \"title\": \"issue title\", \"reason\": \"why it's dust\"}
-
-Group by file or subsystem (e.g. \"gardener\", \"lib/env.sh\", \"dev-poll\"). The script collects dust items into a staging file. When a group accumulates 3+ items, the script bundles them into one backlog issue automatically.
-
-Only promote tech-debt that is substantial: multi-file changes, behavioral fixes, architectural improvements. Dust is any issue where the fix is a single-line edit, a rename, a comment tweak, or a style-only change.
-$(if [ -n "$STAGED_DUST" ]; then echo "
-These issues are ALREADY staged as dust — do NOT emit DUST lines for them again:
-${STAGED_DUST}"; fi)
-
-## Other rules
-1. **Duplicates**: If confident (>80% overlap + same scope after reading bodies), close the newer one with a comment referencing the older. If unsure, ESCALATE.
-2. **Thin issues** (non-tech-debt): Add acceptance criteria. Read the body first.
-3. **Stale issues**: If clearly superseded or no longer relevant, close with explanation. If unclear, ESCALATE.
-4. **Oversized issues**: If >5 acceptance criteria touching different files/concerns, ESCALATE with suggested split.
-5. **Dependencies**: If an issue references another that must land first, add a \`## Dependencies\n- #NNN\` section if missing.
-6. **Sibling issues**: When creating multiple issues from the same source (PR review, code audit), NEVER add bidirectional dependencies between them. Siblings are independent work items, not parent/child. Use \`## Related\n- #NNN (sibling)\` for cross-references between siblings — NOT \`## Dependencies\`. The dev-poll \`get_deps()\` parser only reads \`## Dependencies\` / \`## Depends on\` / \`## Blocked by\` headers, so \`## Related\` is safely ignored. Bidirectional deps create permanent deadlocks that stall the entire factory.
-
-## Escalation format
-For anything needing human decision, output EXACTLY this format (one block, all items):
-\`\`\`
-ESCALATE
-1. #NNN \"title\" — reason (a) option1 (b) option2 (c) option3
-2. #NNN \"title\" — reason (a) option1 (b) option2
-\`\`\`
+### Problems detected
+$(echo -e "$PROBLEMS")${STAGED_DUST_SECTION}${ESCALATION_SECTION}
+## Codeberg API reference
+Base URL: ${CODEBERG_API}
+Auth header: -H \"Authorization: token \$CODEBERG_TOKEN\"
+  Read issue:  curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/issues/{number}' | jq '.body'
+  Relabel:     curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'
+  Comment:     curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/comments' -d '{\"body\":\"...\"}'
+  Close:       curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"state\":\"closed\"}'
+  Edit body:   curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"body\":\"new body\"}'
+  List labels: curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/labels'
+NEVER echo or include the actual token value in output — always reference \$CODEBERG_TOKEN.
 
 ## Output format (MANDATORY — write each line to result file using bash)
-Write your structured output to ${RESULT_FILE}. Use bash to append each line:
   echo \"ACTION: description of what you did\" >> '${RESULT_FILE}'
   echo 'DUST: {\"issue\": NNN, \"group\": \"...\", \"title\": \"...\", \"reason\": \"...\"}' >> '${RESULT_FILE}'
-For escalations, write the full block to the result file:
   printf 'ESCALATE\n1. #NNN \"title\" — reason (a) option1 (b) option2\n' >> '${RESULT_FILE}'
-If truly nothing to do: echo 'CLEAN' >> '${RESULT_FILE}'
-
-## Important
-- You MUST process the tech_debt_promotion items listed above. Read each issue, add acceptance criteria + affected files, then relabel to backlog.
-- If an issue is ambiguous or needs a design decision, ESCALATE it — don't skip it silently.
-- Every tech-debt issue in the list above should result in either an ACTION (promoted) or an ESCALATE (needs decision). Never skip silently.
-$(if [ -n "$ESCALATION_REPLY" ]; then echo "
-## Human Response to Previous Escalation
-The human replied with shorthand choices keyed to the previous ESCALATE block.
-Format: '1a 2c 3b' means question 1→option (a), question 2→option (c), question 3→option (b).
-
-Raw reply:
-${ESCALATION_REPLY}
-
-Execute each chosen option NOW via the Codeberg API before processing new items.
-If a choice is unclear, re-escalate that single item with a clarifying question."; fi)
+  echo 'CLEAN' >> '${RESULT_FILE}'  # only if truly nothing to do
 
 ## Phase protocol (REQUIRED)
-When you have finished ALL work, write to the phase file:
+When all work is done and verify confirms zero tech-debt:
   echo 'PHASE:done' > '${PHASE_FILE}'
 On unrecoverable error:
   printf 'PHASE:failed\nReason: %s\n' 'describe error' > '${PHASE_FILE}'"
@@ -294,81 +269,36 @@ matrix_send "gardener" "🌱 Gardener session started for ${CODEBERG_REPO}" 2>/d
 
 # ── Phase monitoring loop ─────────────────────────────────────────────────
 log "Monitoring phase file: ${PHASE_FILE}"
-LAST_PHASE_MTIME=0
-IDLE_ELAPSED=0
-CRASHED=false
+GARDENER_CRASH_COUNT=0
 
-while true; do
-  sleep "$PHASE_POLL_INTERVAL"
-  IDLE_ELAPSED=$((IDLE_ELAPSED + PHASE_POLL_INTERVAL))
-
-  # --- Session health check ---
-  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    CURRENT_PHASE=$(read_phase)
-    case "$CURRENT_PHASE" in
-      PHASE:done|PHASE:failed)
-        # Expected terminal phase — exit loop
-        break
-        ;;
-      *)
-        if [ "$CRASHED" = true ]; then
-          log "ERROR: session crashed again after recovery — giving up"
-          break
-        fi
-        CRASHED=true
-        log "WARNING: tmux session died unexpectedly (phase: ${CURRENT_PHASE:-none})"
-        # Attempt one crash recovery
-        RECOVERY_MSG="The previous gardener session was interrupted unexpectedly.
-
-Re-run your analysis from scratch:
-1. Fetch open issues and identify problems using the Codeberg API
-2. Take all necessary actions (close dupes, add criteria, promote tech-debt, etc.)
-3. Write structured output to ${RESULT_FILE}:
-   - echo \"ACTION: ...\" >> '${RESULT_FILE}'
-   - echo 'DUST: {...}' >> '${RESULT_FILE}'
-   - printf 'ESCALATE\n1. ...\n' >> '${RESULT_FILE}'
-4. When finished: echo 'PHASE:done' > '${PHASE_FILE}'"
-
-        rm -f "$RESULT_FILE"
-        touch "$RESULT_FILE"
-        if create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" 2>/dev/null; then
-          agent_inject_into_session "$SESSION_NAME" "$RECOVERY_MSG"
-          log "Recovery session started"
-          IDLE_ELAPSED=0
-        else
-          log "ERROR: could not restart session after crash"
-          break
-        fi
-        continue
-        ;;
-    esac
-  fi
-
-  # --- Check phase file for changes ---
-  PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
-  CURRENT_PHASE=$(read_phase)
-
-  if [ -z "$CURRENT_PHASE" ] || [ "$PHASE_MTIME" -le "$LAST_PHASE_MTIME" ]; then
-    # No phase change — check idle timeout
-    if [ "$IDLE_ELAPSED" -ge "$MAX_RUNTIME" ]; then
-      log "TIMEOUT: gardener session idle for ${MAX_RUNTIME}s — killing"
-      matrix_send "gardener" "⚠️ Gardener session timed out after ${MAX_RUNTIME}s" 2>/dev/null || true
+gardener_phase_callback() {
+  local phase="$1"
+  log "phase: ${phase}"
+  case "$phase" in
+    PHASE:crashed)
+      if [ "$GARDENER_CRASH_COUNT" -gt 0 ]; then
+        log "ERROR: session crashed again after recovery — giving up"
+        return 0
+      fi
+      GARDENER_CRASH_COUNT=$((GARDENER_CRASH_COUNT + 1))
+      log "WARNING: tmux session died unexpectedly — attempting recovery"
+      rm -f "$RESULT_FILE"
+      touch "$RESULT_FILE"
+      if create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" 2>/dev/null; then
+        agent_inject_into_session "$SESSION_NAME" "$PROMPT"
+        log "Recovery session started"
+      else
+        log "ERROR: could not restart session after crash"
+      fi
+      ;;
+    PHASE:done|PHASE:failed|PHASE:needs_human|PHASE:merged)
       agent_kill_session "$SESSION_NAME"
-      break
-    fi
-    continue
-  fi
+      ;;
+  esac
+}
 
-  # Phase changed
-  LAST_PHASE_MTIME="$PHASE_MTIME"
-  IDLE_ELAPSED=0
-  log "phase: ${CURRENT_PHASE}"
-
-  if [ "$CURRENT_PHASE" = "PHASE:done" ] || [ "$CURRENT_PHASE" = "PHASE:failed" ]; then
-    agent_kill_session "$SESSION_NAME"
-    break
-  fi
-done
+# No idle timeout — gardener runs until PHASE:done or PHASE:failed
+monitor_phase_loop "$PHASE_FILE" 999999 "gardener_phase_callback"
 
 FINAL_PHASE=$(read_phase)
 log "Final phase: ${FINAL_PHASE:-none}"
