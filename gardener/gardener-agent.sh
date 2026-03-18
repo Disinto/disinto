@@ -41,6 +41,12 @@ PHASE_POLL_INTERVAL=15
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
+# Gitea labels API requires []int64 — look up the "backlog" label ID once
+# Falls back to the known Codeberg repo ID if the API call fails
+BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
+
 log "--- gardener-agent start ---"
 
 # ── Read escalation reply (passed via env by gardener-poll.sh) ────────────
@@ -430,7 +436,7 @@ Fix all items above in a single PR. Each is a small change (rename, comment, sty
       -H "Content-Type: application/json" \
       "${CODEBERG_API}/issues" \
       -d "$(jq -nc --arg t "$bundle_title" --arg b "$bundle_body" \
-        '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+        --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
     if [ -n "$new_bundle" ]; then
       log "Created bundle issue #${new_bundle} for dust group '$group' ($DISTINCT_COUNT items)"

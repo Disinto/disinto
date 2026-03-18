@@ -50,6 +50,12 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 
 log "--- Gardener poll start ---"
 
+# Gitea labels API requires []int64 — look up the "backlog" label ID once
+# Falls back to the known Codeberg repo ID if the API call fails
+BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
+
 # ── Check for escalation replies from Matrix ──────────────────────────────
 ESCALATION_REPLY=""
 if [ -s /tmp/gardener-escalation-reply ]; then
@@ -243,7 +249,7 @@ Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${
         -H "Content-Type: application/json" \
         "${CODEBERG_API}/issues" \
         -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+          --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
       if [ -n "$new_issue" ]; then
         log "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
@@ -307,7 +313,7 @@ Fix all errors${sc_codes:+ (${sc_codes})} in \`${lint_file}\` so PR #${ESC_PR} C
         -H "Content-Type: application/json" \
         "${CODEBERG_API}/issues" \
         -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+          --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
       if [ -n "$new_issue" ]; then
         log "Created sub-issue #${new_issue}: lint in ${lint_file} (from #${ESC_ISSUE})"
@@ -363,7 +369,7 @@ ${generic_fail}
     -H "Content-Type: application/json" \
     "${CODEBERG_API}/issues" \
     -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+      --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
   if [ -n "$new_issue" ]; then
     log "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
@@ -399,7 +405,7 @@ Failing step(s): ${failing_steps}
     -H "Content-Type: application/json" \
     "${CODEBERG_API}/issues" \
     -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+      --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
   if [ -n "$new_issue" ]; then
     log "Created #${new_issue}: make step non-blocking (chicken-egg from #${ESC_ISSUE})"
@@ -429,7 +435,7 @@ All per-file fix issues created from escalated issue #${ESC_ISSUE}.
     -H "Content-Type: application/json" \
     "${CODEBERG_API}/issues" \
     -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+      --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
   if [ -n "$new_issue" ]; then
     log "Created follow-up #${new_issue}: remove bypass (from #${ESC_ISSUE})"
@@ -550,7 +556,7 @@ Failing step(s): ${failing_steps:-unknown}
     -H "Content-Type: application/json" \
     "${CODEBERG_API}/issues" \
     -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+      --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
   if [ -n "$new_issue" ]; then
     log "Created quarantine issue #${new_issue} for flaky test (from #${ESC_ISSUE})"
@@ -638,7 +644,7 @@ The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase up
         -H "Content-Type: application/json" \
         "${CODEBERG_API}/issues" \
         -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+          --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
       if [ -n "$new_issue" ]; then
         log "Created idle-timeout sub-issue #${new_issue} for #${ESC_ISSUE}"
@@ -736,7 +742,7 @@ Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the 
         -H "Content-Type: application/json" \
         "${CODEBERG_API}/issues" \
         -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+          --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
       if [ -n "$new_issue" ]; then
         log "Created fallback sub-issue #${new_issue} for escalated #${ESC_ISSUE}"
