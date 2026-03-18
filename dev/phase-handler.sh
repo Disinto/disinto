@@ -524,6 +524,10 @@ Instructions:
   elif [ "$phase" = "PHASE:failed" ]; then
     FAILURE_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "unspecified")
     log "phase: failed — reason: ${FAILURE_REASON}"
+    # Gitea labels API requires []int64 — look up the "backlog" label ID once
+    BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+      | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+    BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
 
     # Check if this is a refusal (Claude wrote refusal JSON to IMPL_SUMMARY_FILE)
     REFUSAL_JSON=""
@@ -544,7 +548,7 @@ Instructions:
         -H "Authorization: token ${CODEBERG_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${ISSUE}/labels" \
-        -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+        -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
 
       case "$REFUSAL_STATUS" in
         unmet_dependency)
@@ -625,7 +629,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
         -H "Authorization: token ${CODEBERG_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${ISSUE}/labels" \
-        -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+        -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
 
       CLAIMED=false  # Don't unclaim again in cleanup()
       agent_kill_session "$SESSION_NAME"
