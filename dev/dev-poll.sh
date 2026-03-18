@@ -356,7 +356,11 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   fi
 
   # Stuck: REQUEST_CHANGES or CI failure → spawn agent
-  if ci_passed "$CI_STATE" && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+  # Do NOT gate REQUEST_CHANGES on ci_passed: if a reviewer leaves REQUEST_CHANGES
+  # while CI is still pending/unknown, we must act immediately rather than wait for
+  # CI to settle. Definitive CI failure (non-pending, non-unknown) is handled by
+  # the elif below, so we only spawn here when CI has not definitively failed.
+  if [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
