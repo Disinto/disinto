@@ -92,18 +92,40 @@ sys.exit(1)
 
 # =============================================================================
 # HELPER: handle CI-exhaustion check/escalate (DRY for 3 call sites)
-# Atomically checks and increments the fix counter via ci_fix_check_and_increment;
-# sets CI_FIX_ATTEMPTS to the new count for caller use.
-# Returns 0 if exhausted, 1 if not.
+# Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
+#
+# Pass "check_only" as third arg to skip the atomic increment (backlog scan
+# path). The caller must then call handle_ci_exhaustion again at launch time
+# (without check_only) to atomically increment and confirm the decision.
 # =============================================================================
 handle_ci_exhaustion() {
-  local pr_num="$1" issue_num="$2" result
+  local pr_num="$1" issue_num="$2"
+  local check_only="${3:-}"
+  local result
 
   # Fast path: already in the escalation file — skip without touching counter.
   if is_escalated "$issue_num" "$pr_num"; then
     CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
     log "PR #${pr_num} (issue #${issue_num}) already escalated (${CI_FIX_ATTEMPTS} attempts) — skipping"
     return 0
+  fi
+
+  if [ "$check_only" = "check_only" ]; then
+    # Read-only path for the backlog scan: do not increment here — the counter
+    # is bumped atomically at LAUNCH time so a WAITING_PRS exit cannot waste an
+    # attempt on a poll cycle that never spawns a dev-agent.
+    CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
+    if [ "$CI_FIX_ATTEMPTS" -ge 3 ]; then
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+      if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
+        echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+        matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+        ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
+      fi
+      return 0
+    fi
+    return 1
   fi
 
   # Single flock-protected call: read + threshold-check + conditional increment.
@@ -469,12 +491,13 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       break
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
-      if handle_ci_exhaustion "$EXISTING_PR" "$ISSUE_NUM"; then
+      if handle_ci_exhaustion "$EXISTING_PR" "$ISSUE_NUM" "check_only"; then
         # Don't add to WAITING_PRS — escalated PRs should not block new work
         continue
       fi
-      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt ${CI_FIX_ATTEMPTS}/3)"
+      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt $((CI_FIX_ATTEMPTS+1))/3)"
       READY_ISSUE="$ISSUE_NUM"
+      READY_PR_FOR_INCREMENT="$EXISTING_PR"
       break
 
     else
@@ -504,6 +527,17 @@ fi
 # =============================================================================
 # LAUNCH: start dev-agent for the ready issue
 # =============================================================================
+# Deferred CI fix increment — only now that we're certain we are launching.
+# Uses the atomic ci_fix_check_and_increment (inside handle_ci_exhaustion) so
+# the counter is bumped exactly once even under concurrent poll invocations,
+# and a WAITING_PRS exit above cannot silently consume a fix attempt.
+if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
+  if handle_ci_exhaustion "$READY_PR_FOR_INCREMENT" "$READY_ISSUE"; then
+    # exhausted (another poller incremented between scan and launch) — bail out
+    exit 0
+  fi
+fi
+
 log "launching dev-agent for #${READY_ISSUE}"
 matrix_send "dev" "🚀 Starting dev-agent on issue #${READY_ISSUE}" 2>/dev/null || true
 rm -f "$PREFLIGHT_RESULT"
