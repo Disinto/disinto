@@ -241,6 +241,10 @@ fi
 #               (iterated over projects/*.toml, config-driven)
 # #############################################################################
 
+# Infra retry tracking (shared across projects, created once)
+_RETRY_DIR="/tmp/supervisor-infra-retries"
+mkdir -p "$_RETRY_DIR"
+
 # Function: run all per-project checks for the currently loaded project config
 check_project() {
   local proj_name="${PROJECT_NAME:-unknown}"
@@ -277,14 +281,10 @@ check_project() {
   # P2e: INFRA FAILURES — auto-retrigger pipelines with infra failures
   # ===========================================================================
   if [ "${CHECK_INFRA_RETRY:-true}" = "true" ]; then
-    status "P2: ${proj_name}: checking infra failures"
-
-    _RETRY_DIR="/tmp/supervisor-infra-retries"
-    mkdir -p "$_RETRY_DIR"
+    status "P2e: ${proj_name}: checking infra failures"
 
     # Recent failed pipelines (last 6h)
-    # shellcheck disable=SC2086
-    _failed_nums=$(wpdb -A -t -c "
+    _failed_nums=$(wpdb -A -c "
       SELECT number FROM pipelines
       WHERE repo_id = ${WOODPECKER_REPO_ID}
         AND status IN ('failure', 'error')
@@ -293,14 +293,18 @@ check_project() {
       ORDER BY number DESC LIMIT 5;" 2>/dev/null \
       | tr -d ' ' | grep -E '^[0-9]+$' || true)
 
+    # shellcheck disable=SC2086
     for _pip_num in $_failed_nums; do
       [ -z "$_pip_num" ] && continue
 
-      # Skip if already retried twice for this pipeline
+      # Check retry count; alert if retries exhausted
       _retry_file="${_RETRY_DIR}/${WOODPECKER_REPO_ID}-${_pip_num}"
       _retries=0
       [ -f "$_retry_file" ] && _retries=$(cat "$_retry_file" 2>/dev/null || echo 0)
-      [ "${_retries:-0}" -ge 2 ] && continue
+      if [ "${_retries:-0}" -ge 2 ]; then
+        p2 "${proj_name}: Pipeline #${_pip_num}: infra retries exhausted (2/2), needs manual investigation"
+        continue
+      fi
 
       # Get pipeline details via Woodpecker API
       _pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${_pip_num}" 2>/dev/null || true)
@@ -335,7 +339,8 @@ check_project() {
 
         # Check step logs for docker pull / connection timeout patterns
         if [ -n "$_spid" ] && [ "$_spid" != "null" ]; then
-          _log_data=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${_pip_num}/${_spid}" 2>/dev/null \
+          _log_data=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${_pip_num}/${_spid}" \
+            --max-time 15 2>/dev/null \
             | jq -r '.[].data // empty' 2>/dev/null | tail -200 || true)
           if echo "$_log_data" | grep -qiE 'Failed to connect|connection timed out|docker pull.*timeout|TLS handshake timeout'; then
             _is_infra=true
@@ -352,6 +357,7 @@ check_project() {
           echo "$_new_retries" > "$_retry_file"
           fixed "${proj_name}: Retriggered pipeline #${_pip_num} (${_infra_reason}, retry ${_new_retries}/2)"
         else
+          p2 "${proj_name}: Pipeline #${_pip_num}: infra failure (${_infra_reason}) but retrigger API call failed"
           flog "${proj_name}: Failed to retrigger pipeline #${_pip_num}: API error"
         fi
       fi
