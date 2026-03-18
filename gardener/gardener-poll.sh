@@ -1001,8 +1001,8 @@ if [ -s "$ESCALATION_FILE" ]; then
 
     # Handle idle_timeout escalations — no CI steps to inspect, just notify
     if [[ "$ESC_REASON" == idle_timeout* ]]; then
-      _issue_url="${CODEBERG_WEB}/issues/${ESC_ISSUE}"
-      sub_title="fix: investigate idle timeout for issue #${ESC_ISSUE}"
+      _issue_url="https://codeberg.org/${CODEBERG_REPO}/issues/${ESC_ISSUE}"
+      sub_title="chore: investigate idle timeout for issue #${ESC_ISSUE}"
       sub_body="## Dev-agent idle timeout
 
 The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase update and was killed.$([ "${ESC_PR:-0}" != "0" ] && printf '\n\nPR #%s may still be open.' "$ESC_PR")
@@ -1025,7 +1025,7 @@ The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase up
       if [ -n "$new_issue" ]; then
         log "Created idle-timeout sub-issue #${new_issue} for #${ESC_ISSUE}"
         _esc_total_created=$((_esc_total_created + 1))
-        matrix_send "gardener" "Created #${new_issue}: idle timeout on #${ESC_ISSUE}" 2>/dev/null || true
+        matrix_send "gardener" "⏱ Created #${new_issue}: idle timeout on #${ESC_ISSUE}" 2>/dev/null || true
       fi
 
       echo "$esc_entry" >> "$ESCALATION_DONE"
