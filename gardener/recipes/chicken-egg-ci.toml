@@ -17,8 +17,8 @@ action      = "make-step-non-blocking"
 description = "Make failing step non-blocking (|| true) in the PR"
 
 [[playbook]]
-action      = "create-per-file-issues"
-description = "Create per-file fix issues for pre-existing violations"
+action      = "lint-per-file"
+description = "Create per-file fix issues for pre-existing violations (generic linter support)"
 
 [[playbook]]
 action      = "create-followup-remove-bypass"

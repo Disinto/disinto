@@ -495,8 +495,13 @@ RECIPE_DIR="$SCRIPT_DIR/recipes"
 # Args: $1=step_names_json  $2=output_file_path  $3=pr_info_json
 # Stdout: JSON {name, playbook} — "generic" fallback if no match
 match_recipe() {
-  RECIPE_DIR="$RECIPE_DIR" python3 - "$1" "$2" "$3" <<'PYEOF'
-import sys, os, re, json, glob, tomllib
+  _mr_stderr=$(mktemp /tmp/recipe-match-err-XXXXXX)
+  _mr_result=$(RECIPE_DIR="$RECIPE_DIR" python3 - "$1" "$2" "$3" 2>"$_mr_stderr" <<'PYEOF'
+import sys, os, re, json, glob
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # Python < 3.11 fallback (pip install tomli)
 
 recipe_dir = os.environ["RECIPE_DIR"]
 recipes = []
@@ -542,7 +547,11 @@ for recipe in recipes:
 
     if matched and trigger.get("failures_on_unchanged"):
         # Check if errors reference files NOT changed in the PR
-        error_files = set(re.findall(r"(?:In |Error[: ]+)(\S+\.\w+)", step_output))
+        # Patterns: ShellCheck "In file.sh line 5:", generic "file.sh:5:10: error",
+        #           ESLint/pylint "file.py:10:5: E123", Go "file.go:5:3:"
+        error_files = set()
+        error_files.update(re.findall(r"(?<=In )\S+(?= line \d+:)", step_output))
+        error_files.update(re.findall(r"^(\S+\.\w+):\d+", step_output, re.MULTILINE))
         changed = set(pr_info.get("changed_files", []))
         if not error_files or error_files <= changed:
             matched = False
@@ -553,6 +562,16 @@ for recipe in recipes:
 
 print(json.dumps({"name": "generic", "playbook": [{"action": "create-generic-issue"}]}))
 PYEOF
+) || true
+  if [ -s "$_mr_stderr" ]; then
+    log "WARNING: match_recipe error: $(head -3 "$_mr_stderr" | tr '\n' ' ')"
+  fi
+  rm -f "$_mr_stderr"
+  if [ -z "$_mr_result" ] || ! echo "$_mr_result" | jq -e '.name' >/dev/null 2>&1; then
+    echo '{"name":"generic","playbook":[{"action":"create-generic-issue"}]}'
+  else
+    echo "$_mr_result"
+  fi
 }
 
 # ── Playbook action functions ────────────────────────────────────────────
@@ -615,6 +634,70 @@ Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${
         matrix_send "gardener" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
       fi
     done <<< "$sc_files"
+  done <<< "$_PB_FAILED_STEPS"
+}
+
+# Create per-file issues from any lint/check CI output (generic — no step name filter)
+playbook_lint_per_file() {
+  local step_pid step_name step_log_file step_logs
+  while IFS=$'\t' read -r step_pid step_name; do
+    [ -z "$step_pid" ] && continue
+    step_log_file="${_PB_LOG_DIR}/step-${step_pid}.log"
+    [ -f "$step_log_file" ] || continue
+    step_logs=$(cat "$step_log_file")
+
+    # Extract unique file paths from lint output (multiple formats):
+    #   ShellCheck: "In file.sh line 5:"
+    #   Generic:    "file.sh:5:10: error"
+    local lint_files
+    lint_files=$( {
+      echo "$step_logs" | grep -oP '(?<=In )\S+(?= line \d+:)' || true
+      echo "$step_logs" | grep -oP '^\S+\.\w+(?=:\d+)' || true
+    } | sort -u)
+
+    local lint_file file_errors sc_codes sub_title sub_body new_issue
+    while IFS= read -r lint_file; do
+      [ -z "$lint_file" ] && continue
+      # Extract errors for this file (try both formats)
+      file_errors=$(echo "$step_logs" | grep -F -A3 "In ${lint_file} line" 2>/dev/null | head -30 || true)
+      if [ -z "$file_errors" ]; then
+        file_errors=$(echo "$step_logs" | grep -F "${lint_file}:" | head -30 || true)
+      fi
+      [ -z "$file_errors" ] && continue
+      # Extract SC codes if present (harmless for non-ShellCheck output)
+      sc_codes=$(echo "$file_errors" | grep -oP 'SC\d+' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
+
+      sub_title="fix: lint errors in ${lint_file} (from PR #${ESC_PR})"
+      sub_body="## Lint CI failure — \`${lint_file}\`
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Errors
+\`\`\`
+${file_errors}
+\`\`\`
+
+Fix all errors${sc_codes:+ (${sc_codes})} in \`${lint_file}\` so PR #${ESC_PR} CI passes.
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}
+- Pipeline: #${ESC_PIPELINE} (step: ${step_name})"
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        log "Created sub-issue #${new_issue}: lint in ${lint_file} (from #${ESC_ISSUE})"
+        _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+        _esc_total_created=$((_esc_total_created + 1))
+        matrix_send "gardener" "📋 Created sub-issue #${new_issue}: lint in ${lint_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    done <<< "$lint_files"
   done <<< "$_PB_FAILED_STEPS"
 }
 
@@ -741,18 +824,19 @@ All per-file fix issues created from escalated issue #${ESC_ISSUE}.
 playbook_rebase_pr() {
   log "Rebasing PR #${ESC_PR} onto ${PRIMARY_BRANCH}"
   local result
-  result=$(curl -sf -X POST \
+  local http_code
+  http_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: token ${CODEBERG_TOKEN}" \
     -H "Content-Type: application/json" \
     "${CODEBERG_API}/pulls/${ESC_PR}/update" \
     -d '{"style":"rebase"}' 2>/dev/null) || true
 
-  if [ -n "$result" ]; then
-    log "Rebase initiated for PR #${ESC_PR}"
+  if [ "${http_code:-0}" -ge 200 ] && [ "${http_code:-0}" -lt 300 ]; then
+    log "Rebase initiated for PR #${ESC_PR} (HTTP ${http_code})"
     _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
     matrix_send "gardener" "🔄 Rebased PR #${ESC_PR} onto ${PRIMARY_BRANCH} (cascade-rebase, from #${ESC_ISSUE})" 2>/dev/null || true
   else
-    log "WARNING: rebase API call failed for PR #${ESC_PR}"
+    log "WARNING: rebase API call failed for PR #${ESC_PR} (HTTP ${http_code:-error})"
   fi
 }
 
@@ -802,11 +886,18 @@ playbook_retrigger_ci() {
     return 0
   fi
   log "Retriggering CI pipeline #${ESC_PIPELINE} (attempt ${ESC_ATTEMPTS})"
-  curl -sf -X POST \
+  local http_code
+  http_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
-    "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null || true
-  _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
-  matrix_send "gardener" "🔄 Retriggered CI for PR #${ESC_PR} (flaky-test, attempt ${ESC_ATTEMPTS})" 2>/dev/null || true
+    "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null) || true
+
+  if [ "${http_code:-0}" -ge 200 ] && [ "${http_code:-0}" -lt 300 ]; then
+    log "Pipeline #${ESC_PIPELINE} retriggered (HTTP ${http_code})"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    matrix_send "gardener" "🔄 Retriggered CI for PR #${ESC_PR} (flaky-test, attempt ${ESC_ATTEMPTS})" 2>/dev/null || true
+  else
+    log "WARNING: retrigger failed for pipeline #${ESC_PIPELINE} (HTTP ${http_code:-error})"
+  fi
 }
 
 # Quarantine flaky test and create fix issue (flaky-test)
@@ -863,7 +954,7 @@ run_playbook() {
     [ -z "$action" ] && continue
     case "$action" in
       shellcheck-per-file)           playbook_shellcheck_per_file ;;
-      create-per-file-issues)        playbook_shellcheck_per_file ;;
+      lint-per-file)                 playbook_lint_per_file ;;
       create-generic-issue)          playbook_create_generic_issue ;;
       make-step-non-blocking)        playbook_make_step_non_blocking ;;
       create-followup-remove-bypass) playbook_create_followup_remove_bypass ;;
@@ -910,8 +1001,8 @@ if [ -s "$ESCALATION_FILE" ]; then
     # Fetch PR metadata (SHA, mergeable status)
     ESC_PR_DATA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${CODEBERG_API}/pulls/${ESC_PR}" 2>/dev/null || true)
-    ESC_PR_SHA=$(echo "$ESC_PR_DATA" | jq -r '.head.sha // ""')
-    _PB_PR_MERGEABLE=$(echo "$ESC_PR_DATA" | jq '.mergeable // null')
+    ESC_PR_SHA=$(echo "$ESC_PR_DATA" | jq -r '.head.sha // ""' 2>/dev/null || true)
+    _PB_PR_MERGEABLE=$(echo "$ESC_PR_DATA" | jq '.mergeable // null' 2>/dev/null || true)
 
     ESC_PIPELINE=""
     if [ -n "$ESC_PR_SHA" ]; then
@@ -965,8 +1056,7 @@ if [ -s "$ESCALATION_FILE" ]; then
       '{mergeable:$m, attempts:$a, changed_files:$files}')
 
     # Match escalation against recipes and execute playbook
-    MATCHED_RECIPE=$(match_recipe "$_RECIPE_STEP_NAMES" "$_RECIPE_OUTPUT_FILE" "$_RECIPE_PR_INFO" 2>/dev/null \
-      || echo '{"name":"generic","playbook":[{"action":"create-generic-issue"}]}')
+    MATCHED_RECIPE=$(match_recipe "$_RECIPE_STEP_NAMES" "$_RECIPE_OUTPUT_FILE" "$_RECIPE_PR_INFO")
     RECIPE_NAME=$(echo "$MATCHED_RECIPE" | jq -r '.name')
     log "Recipe matched: ${RECIPE_NAME} for #${ESC_ISSUE} PR #${ESC_PR}"
 
