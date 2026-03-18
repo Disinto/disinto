@@ -7,7 +7,12 @@
 - Example (harb): CI images pre-built at `registry.niovi.voyage/harb/*:latest`
 
 ## Safe Fixes
-- Retrigger CI: push empty commit to PR branch
+- Retrigger CI (preferred, automated): Woodpecker API POST
+  ```bash
+  woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${PIPELINE_NUMBER}" -X POST
+  ```
+  supervisor-poll.sh does this automatically for infra failures (max 2 retries).
+- Retrigger CI (manual fallback): push empty commit to PR branch
   ```bash
   cd /tmp/${PROJECT_NAME}-worktree-<issue> && git commit --allow-empty -m "ci: retrigger" --no-verify && git push origin <branch> --force
   ```
