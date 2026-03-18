@@ -274,6 +274,15 @@ Most open issues are raw review-bot findings labeled \`tech-debt\`. Convert them
 
 Process up to 10 tech-debt issues per run (stay within API rate limits).
 
+## Dust vs Ore — bundle trivial tech-debt
+Don't promote trivial tech-debt individually — each costs a full factory cycle (CI + dev-agent + review + merge). If an issue is dust (comment fix, rename, style-only, single-line change, trivial cleanup), output a DUST line instead of promoting:
+
+DUST: {\"issue\": NNN, \"group\": \"<file-or-subsystem>\", \"title\": \"issue title\", \"reason\": \"why it's dust\"}
+
+Group by file or subsystem (e.g. \"gardener\", \"lib/env.sh\", \"dev-poll\"). The script collects dust items into a staging file. When a group accumulates 3+ items, the script bundles them into one backlog issue automatically.
+
+Only promote tech-debt that is substantial: multi-file changes, behavioral fixes, architectural improvements. Dust is any issue where the fix is a single-line edit, a rename, a comment tweak, or a style-only change.
+
 ## Other rules
 1. **Duplicates**: If confident (>80% overlap + same scope after reading bodies), close the newer one with a comment referencing the older. If unsure, ESCALATE.
 2. **Thin issues** (non-tech-debt): Add acceptance criteria. Read the body first.
@@ -292,6 +301,7 @@ ESCALATE
 
 ## Output format (MANDATORY — the script parses these exact prefixes)
 - After EVERY action you take, print exactly: ACTION: <description>
+- For trivial tech-debt (dust), print exactly: DUST: {\"issue\": NNN, \"group\": \"<subsystem>\", \"title\": \"...\", \"reason\": \"...\"}
 - For issues needing human decision, output EXACTLY:
 ESCALATE
 1. #NNN \"title\" — reason (a) option1 (b) option2
@@ -345,6 +355,89 @@ if [ -n "$ACTIONS" ]; then
   echo "$ACTIONS" | while read -r line; do
     log "  $line"
   done
+fi
+
+# ── Collect dust items ───────────────────────────────────────────────────
+DUST_FILE="$SCRIPT_DIR/dust.jsonl"
+DUST_LINES=$(echo "$CLAUDE_OUTPUT" | grep "^DUST: " | sed 's/^DUST: //' || true)
+if [ -n "$DUST_LINES" ]; then
+  DUST_COUNT=0
+  while IFS= read -r dust_json; do
+    [ -z "$dust_json" ] && continue
+    # Validate JSON and add timestamp
+    if echo "$dust_json" | jq -e '.issue and .group' >/dev/null 2>&1; then
+      echo "$dust_json" | jq -c '. + {"ts": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$DUST_FILE"
+      DUST_COUNT=$((DUST_COUNT + 1))
+    else
+      log "WARNING: invalid dust JSON: $dust_json"
+    fi
+  done <<< "$DUST_LINES"
+  log "Collected $DUST_COUNT dust item(s)"
+fi
+
+# ── Bundle dust groups with 3+ items ────────────────────────────────────
+if [ -s "$DUST_FILE" ]; then
+  # Find groups with 3+ items
+  DUST_GROUPS=$(jq -r '.group' "$DUST_FILE" | sort | uniq -c | sort -rn || true)
+  while read -r count group; do
+    [ -z "$group" ] && continue
+    [ "$count" -lt 3 ] && continue
+
+    log "Bundling dust group '$group' ($count items)"
+
+    # Collect issue references and details for this group
+    BUNDLE_ISSUES=$(jq -r --arg g "$group" 'select(.group == $g) | "#\(.issue) \(.title // "untitled") — \(.reason // "dust")"' "$DUST_FILE")
+    BUNDLE_ISSUE_NUMS=$(jq -r --arg g "$group" 'select(.group == $g) | .issue' "$DUST_FILE" | sort -u)
+
+    bundle_title="fix: bundled dust cleanup — ${group}"
+    bundle_body="## Bundled dust cleanup — \`${group}\`
+
+Gardener bundled ${count} trivial tech-debt items into one issue to save factory cycles.
+
+### Items
+$(echo "$BUNDLE_ISSUES" | sed 's/^/- /')
+
+### Instructions
+Fix all items above in a single PR. Each is a small change (rename, comment, style fix, single-line edit).
+
+## Affected files
+- Files in \`${group}\` subsystem
+
+## Acceptance criteria
+- [ ] All listed items resolved
+- [ ] ShellCheck passes"
+
+    new_bundle=$(curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/issues" \
+      -d "$(jq -nc --arg t "$bundle_title" --arg b "$bundle_body" \
+        '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+    if [ -n "$new_bundle" ]; then
+      log "Created bundle issue #${new_bundle} for dust group '$group' ($count items)"
+      matrix_send "gardener" "📦 Bundled ${count} dust items (${group}) → #${new_bundle}" 2>/dev/null || true
+
+      # Close source issues with cross-reference
+      for src_issue in $BUNDLE_ISSUE_NUMS; do
+        curl -sf -X POST \
+          -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${CODEBERG_API}/issues/${src_issue}/comments" \
+          -d "$(jq -nc --arg b "Bundled into #${new_bundle} (dust cleanup)" '{"body":$b}')" 2>/dev/null || true
+        curl -sf -X PATCH \
+          -H "Authorization: token ${CODEBERG_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${CODEBERG_API}/issues/${src_issue}" \
+          -d '{"state":"closed"}' 2>/dev/null || true
+        log "Closed source issue #${src_issue} → bundled into #${new_bundle}"
+      done
+
+      # Remove bundled items from dust.jsonl
+      jq -c --arg g "$group" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" 2>/dev/null || true
+      mv "${DUST_FILE}.tmp" "$DUST_FILE"
+    fi
+  done <<< "$DUST_GROUPS"
 fi
 
 # ── Process dev-agent escalations (per-project) ──────────────────────────
