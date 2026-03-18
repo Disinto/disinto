@@ -68,7 +68,7 @@ codeberg_api_all() {
   esac
   page=1
   while true; do
-    page_items=$(codeberg_api GET "${path_prefix}${sep}limit=50&page=${page}") || break
+    page_items=$(codeberg_api GET "${path_prefix}${sep}limit=50&page=${page}")
     count=$(printf '%s' "$page_items" | jq 'length')
     [ "$count" -eq 0 ] && break
     all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
