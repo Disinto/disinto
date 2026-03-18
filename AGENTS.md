@@ -46,12 +46,7 @@ disinto/
 
 ```bash
 # ShellCheck all scripts
-shellcheck dev/dev-poll.sh dev/dev-agent.sh dev/phase-handler.sh dev/phase-test.sh \
-           review/review-poll.sh review/review-pr.sh \
-           gardener/gardener-poll.sh gardener/gardener-agent.sh \
-           supervisor/supervisor-poll.sh supervisor/update-prompt.sh \
-           lib/env.sh lib/agent-session.sh lib/ci-debug.sh lib/ci-helpers.sh lib/load-project.sh \
-           lib/parse-deps.sh lib/matrix_listener.sh
+git ls-files '*.sh' | xargs shellcheck
 
 # Run phase protocol test
 bash dev/phase-test.sh
@@ -202,7 +197,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, and vault reply routing. Run as systemd service. | Standalone daemon |
-| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`. | gardener-agent.sh |
+| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. | dev-agent.sh, phase-handler.sh, gardener-agent.sh |
 
 ---
 
