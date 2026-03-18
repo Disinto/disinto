@@ -54,7 +54,8 @@ if [ -n "$REVIEW_SESSIONS" ]; then
     if [ "$pr_state" != "open" ]; then
       log "cleanup: killing session ${session} (PR #${pr_num} state=${pr_state})"
       tmux kill-session -t "$session" 2>/dev/null || true
-      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
+      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
+        "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
       # Prune review-thread-map entries for this PR
       sed -i "/\t${pr_num}$/d" /tmp/review-thread-map 2>/dev/null || true
       cd "$REPO_ROOT"
@@ -69,7 +70,8 @@ if [ -n "$REVIEW_SESSIONS" ]; then
     if [ "$phase_mtime" -gt 0 ] && [ $(( now - phase_mtime )) -gt "$REVIEW_IDLE_TIMEOUT" ]; then
       log "cleanup: killing session ${session} (idle > 4h)"
       tmux kill-session -t "$session" 2>/dev/null || true
-      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
+      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
+        "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
       # Prune review-thread-map entries for this PR
       sed -i "/\t${pr_num}$/d" /tmp/review-thread-map 2>/dev/null || true
       cd "$REPO_ROOT"
