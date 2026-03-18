@@ -384,6 +384,17 @@ fi
 log "Issue: ${ISSUE_TITLE}"
 
 # =============================================================================
+# GUARD: Reject formula-labeled issues (feat/formula not yet merged)
+# =============================================================================
+ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(",")') || true
+if echo "$ISSUE_LABELS" | grep -qw 'formula'; then
+  log "SKIP: issue #${ISSUE} has 'formula' label but formula dispatch is not yet implemented (feat/formula branch not merged)"
+  notify "issue #${ISSUE} skipped — formula label requires feat/formula branch (not yet merged to main)"
+  echo '{"status":"unmet_dependency","blocked_by":"formula dispatch not implemented — feat/formula branch not merged to main","suggestion":null}' > "$PREFLIGHT_RESULT"
+  exit 0
+fi
+
+# =============================================================================
 # PREFLIGHT: Check dependencies before doing any work
 # =============================================================================
 status "preflight check"
