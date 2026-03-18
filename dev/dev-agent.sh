@@ -81,11 +81,17 @@ notify() {
 }
 
 # notify_ctx — Send rich notification with HTML links/context into the issue thread
+# Falls back to plain matrix_send (which registers a thread root) when no thread exists.
 notify_ctx() {
   local plain="$1" html="$2"
   local thread_id=""
   [ -f "${THREAD_FILE}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
+  if [ -n "$thread_id" ]; then
+    matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
+  else
+    # No thread — fall back to plain send so a thread root is registered
+    matrix_send "dev" "🔧 #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
+  fi
 }
 
 # --- Phase helpers ---
@@ -265,7 +271,7 @@ do_merge() {
       "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
     kill_tmux_session
     cleanup_worktree
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$THREAD_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
     exit 0
   else
     log "merge failed (HTTP ${http_code}) — attempting rebase and retry"
@@ -874,9 +880,13 @@ echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 # Create Matrix thread for this issue (or reuse existing one)
 if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
   ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
-  _thread_id=$(matrix_send "dev" "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" "" "${ISSUE}") || true
+  _thread_id=$(matrix_send_ctx "dev" \
+    "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
+    "🔧 <a href='${ISSUE_URL}'>Issue #${ISSUE}</a>: ${ISSUE_TITLE}") || true
   if [ -n "${_thread_id:-}" ]; then
     printf '%s' "$_thread_id" > "$THREAD_FILE"
+    # Register thread root in map for listener dispatch
+    printf '%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
   fi
 fi
 notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}"
@@ -1110,14 +1120,14 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       fi
 
       CI_FIX_COUNT=$(( CI_FIX_COUNT + 1 ))
+      _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
       if [ "$CI_FIX_COUNT" -gt "$MAX_CI_FIXES" ]; then
         log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
         echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER},\"reason\":\"ci_exhausted\",\"step\":\"${FAILED_STEP:-unknown}\",\"attempts\":${CI_FIX_COUNT},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
           >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
-        PIPELINE_URL="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
         notify_ctx \
           "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor" \
-          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-#}'>#${PR_NUMBER}</a> | <a href='${PIPELINE_URL}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
+          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
         printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
         LAST_PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
         continue
@@ -1134,8 +1144,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         > "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || true
 
       # Notify Matrix with rich CI failure context
-      _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
-      _ci_snippet=$(printf '%s' "${CI_ERROR_LOG:-}" | tail -5 | head -c 500)
+      _ci_snippet=$(printf '%s' "${CI_ERROR_LOG:-}" | tail -5 | head -c 500 | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
       notify_ctx \
         "CI failed on PR #${PR_NUMBER}: step=${FAILED_STEP:-unknown} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES})" \
         "CI failed on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline #${PIPELINE_NUM:-?}</a><br>Step: <code>${FAILED_STEP:-unknown}</code> (exit ${FAILED_EXIT:-?})<br>Attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}<br><pre>${_ci_snippet:-no logs}</pre>"

@@ -142,11 +142,9 @@ while true; do
         matrix_send "gardener" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
       dev)
-        # Write to flat file for backward compat
-        printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
-
         # Route reply into the dev tmux session using context_tag (issue number)
         DEV_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        DEV_INJECTED=false
         if [ -n "$DEV_ISSUE" ]; then
           DEV_SESSION="dev-${PROJECT_NAME}-${DEV_ISSUE}"
           DEV_PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${DEV_ISSUE}.phase"
@@ -166,6 +164,7 @@ Consider this guidance for your current work."
               tmux send-keys -t "$DEV_SESSION" "" Enter || true
               tmux delete-buffer -b "dev-q-${DEV_ISSUE}" 2>/dev/null || true
               rm -f "$DEV_INJECT_TMP"
+              DEV_INJECTED=true
               log "human guidance from ${SENDER} injected into ${DEV_SESSION}"
               matrix_send "dev" "✓ guidance forwarded to dev session for issue #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
             else
@@ -179,6 +178,11 @@ Consider this guidance for your current work."
         else
           log "dev thread ${THREAD_ROOT:0:20} has no issue mapping"
           matrix_send "dev" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        fi
+        # Only write to flat file when direct injection didn't happen,
+        # to avoid supervisor/gardener poll re-injecting the same message.
+        if [ "$DEV_INJECTED" = false ]; then
+          printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
         fi
         ;;
       review)
