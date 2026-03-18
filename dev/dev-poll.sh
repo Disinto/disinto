@@ -243,6 +243,16 @@ ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
 
+  # Formula guard: formula-labeled issues should not be worked on by dev-agent.
+  # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
+  ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
+  if echo "$ORPHAN_LABELS" | grep -qw 'formula'; then
+    log "issue #${ISSUE_NUM} has 'formula' label — removing in-progress, skipping"
+    curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
+    exit 0
+  fi
+
   # Check if there's already an open PR for this issue
   HAS_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
