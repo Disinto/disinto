@@ -1,5 +1,9 @@
 # Gardener Prompt — Dust vs Ore
 
+> **Note:** This is human documentation. The actual LLM prompt is built
+> inline in `gardener-poll.sh` (with dynamic context injection). This file
+> documents the design rationale for reference.
+
 ## Rule
 
 Don't promote trivial tech-debt individually. Each promotion costs a full

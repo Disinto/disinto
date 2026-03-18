@@ -240,6 +240,13 @@ log "Invoking claude -p for grooming"
 # Build issue summary for context (titles + labels + deps)
 ISSUE_SUMMARY=$(echo "$ISSUES_JSON" | jq -r '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"')
 
+# Build list of issues already staged as dust (so LLM doesn't re-emit them)
+DUST_FILE="$SCRIPT_DIR/dust.jsonl"
+STAGED_DUST=""
+if [ -s "$DUST_FILE" ]; then
+  STAGED_DUST=$(jq -r '"#\(.issue) (\(.group))"' "$DUST_FILE" 2>/dev/null | sort -u || true)
+fi
+
 PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Your job: keep the backlog clean, well-structured, and actionable.
 
 ## Current open issues
@@ -282,6 +289,9 @@ DUST: {\"issue\": NNN, \"group\": \"<file-or-subsystem>\", \"title\": \"issue ti
 Group by file or subsystem (e.g. \"gardener\", \"lib/env.sh\", \"dev-poll\"). The script collects dust items into a staging file. When a group accumulates 3+ items, the script bundles them into one backlog issue automatically.
 
 Only promote tech-debt that is substantial: multi-file changes, behavioral fixes, architectural improvements. Dust is any issue where the fix is a single-line edit, a rename, a comment tweak, or a style-only change.
+$(if [ -n "$STAGED_DUST" ]; then echo "
+These issues are ALREADY staged as dust — do NOT emit DUST lines for them again:
+${STAGED_DUST}"; fi)
 
 ## Other rules
 1. **Duplicates**: If confident (>80% overlap + same scope after reading bodies), close the newer one with a comment referencing the older. If unsure, ESCALATE.
@@ -358,41 +368,74 @@ if [ -n "$ACTIONS" ]; then
 fi
 
 # ── Collect dust items ───────────────────────────────────────────────────
-DUST_FILE="$SCRIPT_DIR/dust.jsonl"
+# DUST_FILE already set above (before prompt construction)
 DUST_LINES=$(echo "$CLAUDE_OUTPUT" | grep "^DUST: " | sed 's/^DUST: //' || true)
 if [ -n "$DUST_LINES" ]; then
+  # Build set of issue numbers already in dust.jsonl for dedup
+  EXISTING_DUST_ISSUES=""
+  if [ -s "$DUST_FILE" ]; then
+    EXISTING_DUST_ISSUES=$(jq -r '.issue' "$DUST_FILE" 2>/dev/null | sort -nu || true)
+  fi
+
   DUST_COUNT=0
   while IFS= read -r dust_json; do
     [ -z "$dust_json" ] && continue
-    # Validate JSON and add timestamp
-    if echo "$dust_json" | jq -e '.issue and .group' >/dev/null 2>&1; then
-      echo "$dust_json" | jq -c '. + {"ts": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$DUST_FILE"
-      DUST_COUNT=$((DUST_COUNT + 1))
-    else
+    # Validate JSON
+    if ! echo "$dust_json" | jq -e '.issue and .group' >/dev/null 2>&1; then
       log "WARNING: invalid dust JSON: $dust_json"
+      continue
     fi
+    # Deduplicate: skip if this issue is already staged
+    dust_issue_num=$(echo "$dust_json" | jq -r '.issue')
+    if echo "$EXISTING_DUST_ISSUES" | grep -qx "$dust_issue_num" 2>/dev/null; then
+      log "Skipping duplicate dust entry for issue #${dust_issue_num}"
+      continue
+    fi
+    EXISTING_DUST_ISSUES="${EXISTING_DUST_ISSUES}
+${dust_issue_num}"
+    echo "$dust_json" | jq -c '. + {"ts": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$DUST_FILE"
+    DUST_COUNT=$((DUST_COUNT + 1))
   done <<< "$DUST_LINES"
-  log "Collected $DUST_COUNT dust item(s)"
+  log "Collected $DUST_COUNT dust item(s) (duplicates skipped)"
 fi
 
-# ── Bundle dust groups with 3+ items ────────────────────────────────────
+# ── Expire stale dust entries (30-day TTL) ───────────────────────────────
 if [ -s "$DUST_FILE" ]; then
-  # Find groups with 3+ items
-  DUST_GROUPS=$(jq -r '.group' "$DUST_FILE" | sort | uniq -c | sort -rn || true)
+  CUTOFF=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+  if [ -n "$CUTOFF" ]; then
+    BEFORE_COUNT=$(wc -l < "$DUST_FILE")
+    if jq -c --arg c "$CUTOFF" 'select(.ts >= $c)' "$DUST_FILE" > "${DUST_FILE}.ttl" 2>/dev/null; then
+      mv "${DUST_FILE}.ttl" "$DUST_FILE"
+      AFTER_COUNT=$(wc -l < "$DUST_FILE")
+      EXPIRED=$((BEFORE_COUNT - AFTER_COUNT))
+      [ "$EXPIRED" -gt 0 ] && log "Expired $EXPIRED stale dust entries (>30 days old)"
+    else
+      rm -f "${DUST_FILE}.ttl"
+      log "WARNING: TTL cleanup failed — dust.jsonl left unchanged"
+    fi
+  fi
+fi
+
+# ── Bundle dust groups with 3+ distinct issues ──────────────────────────
+if [ -s "$DUST_FILE" ]; then
+  # Count distinct issues per group (not raw entries)
+  DUST_GROUPS=$(jq -r '[.group, (.issue | tostring)] | join("\t")' "$DUST_FILE" 2>/dev/null \
+    | sort -u | cut -f1 | sort | uniq -c | sort -rn || true)
   while read -r count group; do
     [ -z "$group" ] && continue
     [ "$count" -lt 3 ] && continue
 
-    log "Bundling dust group '$group' ($count items)"
+    log "Bundling dust group '$group' ($count distinct issues)"
 
-    # Collect issue references and details for this group
-    BUNDLE_ISSUES=$(jq -r --arg g "$group" 'select(.group == $g) | "#\(.issue) \(.title // "untitled") — \(.reason // "dust")"' "$DUST_FILE")
-    BUNDLE_ISSUE_NUMS=$(jq -r --arg g "$group" 'select(.group == $g) | .issue' "$DUST_FILE" | sort -u)
+    # Collect deduplicated issue references and details for this group
+    BUNDLE_ISSUES=$(jq -r --arg g "$group" 'select(.group == $g) | "#\(.issue) \(.title // "untitled") — \(.reason // "dust")"' "$DUST_FILE" | sort -u)
+    BUNDLE_ISSUE_NUMS=$(jq -r --arg g "$group" 'select(.group == $g) | .issue' "$DUST_FILE" | sort -nu)
+    DISTINCT_COUNT=$(echo "$BUNDLE_ISSUE_NUMS" | grep -c '.' || true)
 
     bundle_title="fix: bundled dust cleanup — ${group}"
     bundle_body="## Bundled dust cleanup — \`${group}\`
 
-Gardener bundled ${count} trivial tech-debt items into one issue to save factory cycles.
+Gardener bundled ${DISTINCT_COUNT} trivial tech-debt items into one issue to save factory cycles.
 
 ### Items
 $(echo "$BUNDLE_ISSUES" | sed 's/^/- /')
@@ -400,10 +443,10 @@ $(echo "$BUNDLE_ISSUES" | sed 's/^/- /')
 ### Instructions
 Fix all items above in a single PR. Each is a small change (rename, comment, style fix, single-line edit).
 
-## Affected files
+### Affected files
 - Files in \`${group}\` subsystem
 
-## Acceptance criteria
+### Acceptance criteria
 - [ ] All listed items resolved
 - [ ] ShellCheck passes"
 
@@ -415,8 +458,8 @@ Fix all items above in a single PR. Each is a small change (rename, comment, sty
         '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
 
     if [ -n "$new_bundle" ]; then
-      log "Created bundle issue #${new_bundle} for dust group '$group' ($count items)"
-      matrix_send "gardener" "📦 Bundled ${count} dust items (${group}) → #${new_bundle}" 2>/dev/null || true
+      log "Created bundle issue #${new_bundle} for dust group '$group' ($DISTINCT_COUNT items)"
+      matrix_send "gardener" "📦 Bundled ${DISTINCT_COUNT} dust items (${group}) → #${new_bundle}" 2>/dev/null || true
 
       # Close source issues with cross-reference
       for src_issue in $BUNDLE_ISSUE_NUMS; do
@@ -433,9 +476,13 @@ Fix all items above in a single PR. Each is a small change (rename, comment, sty
         log "Closed source issue #${src_issue} → bundled into #${new_bundle}"
       done
 
-      # Remove bundled items from dust.jsonl
-      jq -c --arg g "$group" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" 2>/dev/null || true
-      mv "${DUST_FILE}.tmp" "$DUST_FILE"
+      # Remove bundled items from dust.jsonl — only if jq succeeds
+      if jq -c --arg g "$group" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" 2>/dev/null; then
+        mv "${DUST_FILE}.tmp" "$DUST_FILE"
+      else
+        rm -f "${DUST_FILE}.tmp"
+        log "WARNING: failed to prune bundled group '$group' from dust.jsonl"
+      fi
     fi
   done <<< "$DUST_GROUPS"
 fi
