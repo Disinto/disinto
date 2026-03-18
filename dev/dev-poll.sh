@@ -49,13 +49,21 @@ json.dump(d,open(f,'w'))
 }
 ci_fix_check_and_increment() {
   local pr="$1"
+  local check_only="${2:-}"
   flock "$CI_FIX_LOCK" python3 -c "
 import json,os
 f='$CI_FIX_TRACKER'
+check_only = '${check_only}' == 'check_only'
 d=json.load(open(f)) if os.path.exists(f) else {}
 count=d.get(str($pr),0)
-if count>=3:
+if count>3:
     print('exhausted:'+str(count))
+elif count==3:
+    d[str($pr)]=4
+    json.dump(d,open(f,'w'))
+    print('exhausted_first_time:3')
+elif check_only:
+    print('ok:'+str(count))
 else:
     count+=1
     d[str($pr)]=count
@@ -94,9 +102,11 @@ sys.exit(1)
 # HELPER: handle CI-exhaustion check/escalate (DRY for 3 call sites)
 # Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
 #
-# Pass "check_only" as third arg to skip the atomic increment (backlog scan
-# path). The caller must then call handle_ci_exhaustion again at launch time
-# (without check_only) to atomically increment and confirm the decision.
+# Pass "check_only" as third arg for the backlog scan path: ok-counts are
+# returned without incrementing (deferred to launch time so a WAITING_PRS
+# exit cannot waste a fix attempt). The 3→4 sentinel bump is always atomic
+# regardless of mode, preventing duplicate escalation writes from concurrent
+# pollers.
 # =============================================================================
 handle_ci_exhaustion() {
   local pr_num="$1" issue_num="$2"
@@ -110,49 +120,33 @@ handle_ci_exhaustion() {
     return 0
   fi
 
-  if [ "$check_only" = "check_only" ]; then
-    # Read-only path for the backlog scan: do not increment here — the counter
-    # is bumped atomically at LAUNCH time so a WAITING_PRS exit cannot waste an
-    # attempt on a poll cycle that never spawns a dev-agent.
-    CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
-    if [ "$CI_FIX_ATTEMPTS" -ge 3 ]; then
-      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-      if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
-        echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-        matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
-        ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
-      fi
-      return 0
-    fi
-    return 1
-  fi
-
-  # Single flock-protected call: read + threshold-check + conditional increment.
-  # Prevents two concurrent pollers from both passing the threshold and spawning
-  # duplicate dev-agents for the same PR.
-  result=$(ci_fix_check_and_increment "$pr_num")
+  # Single flock-protected call: read + threshold-check + conditional bump.
+  # In check_only mode, ok-counts are returned without incrementing (deferred
+  # to launch time). In both modes, the 3→4 sentinel bump is atomic, so only
+  # one concurrent poller can ever receive exhausted_first_time:3 and write
+  # the escalation entry.
+  result=$(ci_fix_check_and_increment "$pr_num" "$check_only")
   case "$result" in
     ok:*)
       CI_FIX_ATTEMPTS="${result#ok:}"
       return 1
       ;;
+    exhausted_first_time:*)
+      CI_FIX_ATTEMPTS="${result#exhausted_first_time:}"
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+      echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+      ;;
     exhausted:*)
       CI_FIX_ATTEMPTS="${result#exhausted:}"
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
       ;;
     *)
       CI_FIX_ATTEMPTS=99
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
       ;;
   esac
-
-  log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-  # Only write escalation + alert once (first time hitting 3)
-  if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
-    echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-    matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
-    ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
-  fi
   return 0
 }
 
