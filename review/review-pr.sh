@@ -200,8 +200,7 @@ if [ "${COMMENT_REVIEWED:-0}" -gt "0" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 # Check formal Codeberg reviews — skip if a non-stale review exists for this SHA
-EXISTING=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${API_BASE}/pulls/${PR_NUMBER}/reviews" | \
+EXISTING=$(codeberg_api_all "/pulls/${PR_NUMBER}/reviews" | \
   jq -r --arg sha "$PR_SHA" \
   '[.[] | select(.commit_id == $sha) | select(.state != "COMMENT")] | length')
 
@@ -760,9 +759,7 @@ if [ "${POST_CODE}" = "201" ]; then
       REVIEW_BOT_LOGIN=$(printf '%s' "$REVIEW_BOT_RESP" | jq -r '.login // empty')
     fi
     if [ -n "$REVIEW_BOT_LOGIN" ]; then
-      ALL_PR_REVIEWS=$(curl -sf \
-        -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
-        "${API_BASE}/pulls/${PR_NUMBER}/reviews" 2>/dev/null || echo "[]")
+      ALL_PR_REVIEWS=$(codeberg_api_all "/pulls/${PR_NUMBER}/reviews" || echo "[]")
       while IFS= read -r review_id; do
         DISMISS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST \
