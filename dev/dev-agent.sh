@@ -1142,8 +1142,8 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
           -m "ci: retrigger after infra failure (#${ISSUE})" --no-verify 2>&1 | tail -1)
         (cd "$WORKTREE" && git push origin "$BRANCH" --force 2>&1 | tail -3)
         # Touch phase file so we recheck CI on the new SHA
+        # Do NOT update LAST_PHASE_MTIME here — let the main loop detect the fresh mtime
         touch "$PHASE_FILE"
-        LAST_PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
         CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || true)
         continue
       fi
@@ -1158,7 +1158,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
           "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor" \
           "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
         printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
-        LAST_PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
+        # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:failed
         continue
       fi
 
