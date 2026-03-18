@@ -20,7 +20,7 @@ FAILED=0
 # Extract function names defined in a bash script (top-level or indented).
 get_fns() {
   local f="$1"
-  grep -Eo '[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)' "$f" 2>/dev/null \
+  grep -Eo '[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*[(][)]' "$f" 2>/dev/null \
     | sed 's/[[:space:]]*()//' | sort -u || true
 }
 
