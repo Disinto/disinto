@@ -968,14 +968,30 @@ Phase file: ${PHASE_FILE}"
     # No phase change — check idle timeout
     if [ "$IDLE_ELAPSED" -ge "$IDLE_TIMEOUT" ]; then
       log "TIMEOUT: no phase update for ${IDLE_TIMEOUT}s — killing session"
-      notify "session idle for 2h — killed"
+      notify_ctx \
+        "session idle for 2h — killed. Escalating to gardener." \
+        "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
       kill_tmux_session
+
+      # Escalate: write to project-suffixed escalation file so gardener picks it up
+      echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+
+      # Restore labels: remove in-progress, add backlog
       cleanup_labels
+      curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/issues/${ISSUE}/labels" \
+        -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+
+      CLAIMED=false  # Don't unclaim again in cleanup()
       if [ -n "${PR_NUMBER:-}" ]; then
         log "keeping worktree (PR #${PR_NUMBER} still open)"
       else
         cleanup_worktree
       fi
+      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
       break
     fi
     continue
@@ -1138,7 +1154,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       if [ "$CI_FIX_COUNT" -gt "$MAX_CI_FIXES" ]; then
         log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
         echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER},\"reason\":\"ci_exhausted\",\"step\":\"${FAILED_STEP:-unknown}\",\"attempts\":${CI_FIX_COUNT},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
         notify_ctx \
           "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor" \
           "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
@@ -1462,7 +1478,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
         "❌ Issue #${ISSUE} session failed: ${FAILURE_REASON}" \
         "❌ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> session failed: ${FAILURE_REASON}${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
       echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${FAILURE_REASON}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations.jsonl"
+        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
 
       # Restore backlog label
       cleanup_labels

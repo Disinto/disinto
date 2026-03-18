@@ -11,7 +11,7 @@ RESOURCES.md
 state.json
 *.lock
 *.pid
-escalations.jsonl
+escalations*.jsonl
 metrics/supervisor-metrics.jsonl
 
 # OS
