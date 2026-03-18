@@ -146,3 +146,10 @@ agent_kill_session() {
   local session="${1:-}"
   [ -n "$session" ] && tmux kill-session -t "$session" 2>/dev/null || true
 }
+
+# Read the current phase from a phase file, stripped of whitespace.
+# Usage: read_phase [file]  — defaults to $PHASE_FILE
+read_phase() {
+  local file="${1:-${PHASE_FILE:-}}"
+  { cat "$file" 2>/dev/null || true; } | head -1 | tr -d '[:space:]'
+}
