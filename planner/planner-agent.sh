@@ -215,6 +215,20 @@ if [ -f "$METRICS_FILE" ] && [ -s "$METRICS_FILE" ]; then
   log "Metrics: ${METRICS_SUMMARY:0:120}"
 fi
 
+# ── Build formula catalog ──────────────────────────────────────────────
+FORMULA_DIR="$FACTORY_ROOT/formulas"
+FORMULA_CATALOG=""
+if [ -d "$FORMULA_DIR" ]; then
+  for formula_file in "$FORMULA_DIR"/*.toml; do
+    [ -f "$formula_file" ] || continue
+    formula_name=$(basename "$formula_file" .toml)
+    FORMULA_CATALOG="${FORMULA_CATALOG}
+--- ${formula_name} ---
+$(cat "$formula_file")
+"
+  done
+fi
+
 PHASE2_PROMPT="You are the planner for ${CODEBERG_REPO}. Your job: find gaps between the project vision and current reality.
 
 ## VISION.md (human-maintained goals)
@@ -235,12 +249,24 @@ ${OPEN_SUMMARY}
 ## Operational metrics (last 7 days from supervisor)
 ${METRICS_SUMMARY}
 
+## Available formulas (from formulas/ directory)
+When a gap maps directly to one of these formula types, emit a formula instance
+instead of a freeform issue. Only use a formula when the gap clearly fits —
+do not force-fit gaps into formulas. Fill in the formula vars with concrete values.
+
+${FORMULA_CATALOG:-"(no formulas available)"}
+
 ## Task
 Identify gaps — things implied by VISION.md that are neither reflected in the project state nor covered by an existing open issue.
 When a gap involves deploying, hosting, or operating a service, reference the specific resource alias from RESOURCES.md (e.g. \"deploy to <host-alias>\") so issues are actionable.
 
-For each gap, output a JSON object (one per line, no array wrapper):
-{\"title\": \"action-oriented title\", \"body\": \"problem statement + why it matters + rough approach\", \"depends\": [list of blocking issue numbers or empty]}
+For each gap, output a JSON object (one per line, no array wrapper).
+
+If a gap matches an available formula, emit a formula instance:
+{\"title\": \"action-oriented title\", \"formula\": \"<formula-name>\", \"vars\": {\"var1\": \"value1\", ...}, \"body\": \"why this matters\", \"depends\": [...]}
+
+Otherwise, emit a freeform issue:
+{\"title\": \"action-oriented title\", \"body\": \"problem statement + why it matters + rough approach\", \"depends\": [...]}
 
 ## Rules
 - Max 5 new issues — focus on highest-leverage gaps only
@@ -250,6 +276,7 @@ For each gap, output a JSON object (one per line, no array wrapper):
 - Each title should be a plain, action-oriented sentence
 - Each body should explain: what's missing, why it matters for the vision, rough approach
 - Reference blocking issues by number in depends array
+- Prefer formula instances when a gap clearly fits a known formula — but freeform is fine when none matches
 - When metrics indicate a systemic problem conflicting with VISION.md (slow CI, high blocked ratio, disk pressure), create an optimization issue even if not explicitly in VISION.md
 
 If there are no gaps, output exactly: NO_GAPS
@@ -274,6 +301,15 @@ fi
 BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null | \
   jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
 
+# Build list of valid formula names from disk for validation
+VALID_FORMULAS=""
+if [ -d "$FORMULA_DIR" ]; then
+  for _vf in "$FORMULA_DIR"/*.toml; do
+    [ -f "$_vf" ] || continue
+    VALID_FORMULAS="${VALID_FORMULAS} $(basename "$_vf" .toml)"
+  done
+fi
+
 CREATED=0
 while IFS= read -r line; do
   [ -z "$line" ] && continue
@@ -281,8 +317,36 @@ while IFS= read -r line; do
   echo "$line" | jq -e . >/dev/null 2>&1 || continue
 
   TITLE=$(echo "$line" | jq -r '.title')
-  BODY=$(echo "$line" | jq -r '.body')
   DEPS=$(echo "$line" | jq -r '.depends // [] | map("#\(.)") | join(", ")')
+
+  # Check if this is a formula instance and validate against on-disk catalog
+  FORMULA_NAME=$(echo "$line" | jq -r '.formula // empty')
+  if [ -n "$FORMULA_NAME" ]; then
+    if ! echo "$VALID_FORMULAS" | grep -qw "$FORMULA_NAME"; then
+      log "WARN: Claude emitted unknown formula '${FORMULA_NAME}' — falling back to freeform"
+      FORMULA_NAME=""
+    fi
+  fi
+
+  if [ -n "$FORMULA_NAME" ]; then
+    # Build YAML front matter for formula instance (values quoted for safety)
+    # Note: formula label is NOT applied — dev-agent does not yet support
+    # formula dispatch, so adding the label would block the dev pipeline.
+    # The YAML front matter is enough structure for future formula dispatch.
+    VARS_YAML=$(echo "$line" | jq -r '
+      .vars // {} | to_entries |
+      map("  " + .key + ": " + (.value | @json)) | join("\n")')
+    EXTRA_BODY=$(echo "$line" | jq -r '.body // ""')
+    BODY="---
+formula: ${FORMULA_NAME}
+vars:
+${VARS_YAML}
+---
+
+${EXTRA_BODY}"
+  else
+    BODY=$(echo "$line" | jq -r '.body')
+  fi
 
   # Add dependency section if present
   if [ -n "$DEPS" ] && [ "$DEPS" != "" ]; then
@@ -292,18 +356,23 @@ while IFS= read -r line; do
 ${DEPS}"
   fi
 
-  # Create issue
+  # Create issue (backlog label only — no formula label until dev-agent supports dispatch)
   CREATE_PAYLOAD=$(jq -nc --arg t "$TITLE" --arg b "$BODY" '{title:$t, body:$b}')
 
-  # Add label if we found the backlog label ID
   if [ -n "$BACKLOG_LABEL_ID" ]; then
     CREATE_PAYLOAD=$(echo "$CREATE_PAYLOAD" | jq --argjson lid "$BACKLOG_LABEL_ID" '.labels = [$lid]')
   fi
 
   RESULT=$(codeberg_api POST "/issues" -d "$CREATE_PAYLOAD" 2>/dev/null || true)
   ISSUE_NUM=$(echo "$RESULT" | jq -r '.number // "?"' 2>/dev/null || echo "?")
-  log "Created #${ISSUE_NUM}: ${TITLE}"
-  matrix_send "planner" "📋 Gap issue #${ISSUE_NUM}: ${TITLE}" 2>/dev/null || true
+
+  if [ -n "$FORMULA_NAME" ]; then
+    log "Created #${ISSUE_NUM} (formula:${FORMULA_NAME}): ${TITLE}"
+    matrix_send "planner" "📋 Formula issue #${ISSUE_NUM} [${FORMULA_NAME}]: ${TITLE}" 2>/dev/null || true
+  else
+    log "Created #${ISSUE_NUM}: ${TITLE}"
+    matrix_send "planner" "📋 Gap issue #${ISSUE_NUM}: ${TITLE}" 2>/dev/null || true
+  fi
   CREATED=$((CREATED + 1))
 
   [ "$CREATED" -ge 5 ] && break
