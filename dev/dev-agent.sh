@@ -28,7 +28,9 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 # --- Config ---
 ISSUE="${1:?Usage: dev-agent.sh <issue-number>}"
+# shellcheck disable=SC2034
 REPO="${CODEBERG_REPO}"
+# shellcheck disable=SC2034
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 API="${CODEBERG_API}"
@@ -143,7 +145,8 @@ post_refusal_comment() {
     log "skipping duplicate refusal comment: ${title}"
     return 0
   fi
-  local comment="${emoji} **Dev-agent: ${title}**
+  local comment
+  comment="${emoji} **Dev-agent: ${title}**
 
 ${body}
 

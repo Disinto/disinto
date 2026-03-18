@@ -83,6 +83,7 @@ sys.exit(1)
 " 2>/dev/null && return 0 || return 1
 }
 
+# shellcheck disable=SC2034
 REPO="${CODEBERG_REPO}"
 
 API="${CODEBERG_API}"
@@ -98,7 +99,7 @@ log() {
 # HELPER: try merge, rebase if mergeable=false, then retry once
 try_merge_or_rebase() {
   local pr_num="$1" issue_num="$2" branch="$3"
-  local merge_code mergeable
+  local merge_code
 
   merge_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -472,7 +473,7 @@ nohup "${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1 &
 AGENT_PID=$!
 
 # Wait briefly for preflight (agent writes result before claiming)
-for w in $(seq 1 30); do
+for _w in $(seq 1 30); do
   if [ -f "$PREFLIGHT_RESULT" ]; then
     break
   fi

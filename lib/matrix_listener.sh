@@ -34,6 +34,7 @@ if [ -z "${MATRIX_TOKEN:-}" ] || [ -z "${MATRIX_ROOM_ID:-}" ]; then
 fi
 
 # URL-encode room ID
+# shellcheck disable=SC2034
 ROOM_ENCODED="${MATRIX_ROOM_ID//!/%21}"
 
 # Build sync filter — only our room, only messages
@@ -108,6 +109,7 @@ while true; do
   while IFS= read -r event; do
     SENDER=$(printf '%s' "$event" | jq -r '.sender')
     BODY=$(printf '%s' "$event" | jq -r '.content.body // ""')
+    # shellcheck disable=SC2034
     EVENT_ID=$(printf '%s' "$event" | jq -r '.event_id')
 
     # Check if this is a thread reply

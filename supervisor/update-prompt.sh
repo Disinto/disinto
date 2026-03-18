@@ -39,7 +39,7 @@ else
   echo "$LESSON" >> "$TARGET_FILE"
 fi
 
-cd "$FACTORY_ROOT"
+cd "$FACTORY_ROOT" || exit 1
 git add "supervisor/$1" 2>/dev/null || git add "$TARGET_FILE"
 git commit -m "supervisor: learned — $(echo "$LESSON" | head -1 | sed 's/^#* *//')" --no-verify 2>/dev/null
 git push origin main 2>/dev/null

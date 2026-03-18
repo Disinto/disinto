@@ -511,6 +511,7 @@ check_project() {
       BODY=$(echo "$BACKLOG_FOR_DEPS" | jq -r ".[$i].body // \"\"")
       ISSUE_DEPS=$(echo "$BODY" | bash "$PARSE_DEPS" | grep -v "^${NUM}$" || true)
       [ -n "$ISSUE_DEPS" ] && DEPS_OF[$NUM]="$ISSUE_DEPS"
+      # shellcheck disable=SC2034
       BACKLOG_NUMS[$NUM]=1
     done
 
@@ -526,7 +527,8 @@ check_project() {
       for dep in ${DEPS_OF[$node]:-}; do
         [ -z "${NODE_COLOR[$dep]+x}" ] && continue
         if [ "${NODE_COLOR[$dep]}" = "1" ]; then
-          local cycle_key=$(echo "$path $dep" | tr ' ' '\n' | sort -n | tr '\n' ' ')
+          local cycle_key
+              cycle_key=$(echo "$path $dep" | tr ' ' '\n' | sort -n | tr '\n' ' ')
           if [ -z "${SEEN_CYCLES[$cycle_key]+x}" ]; then
             SEEN_CYCLES[$cycle_key]=1
             local in_cycle=0 cycle_str=""

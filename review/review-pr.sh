@@ -29,7 +29,9 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
+# shellcheck disable=SC2034
 REPO="${CODEBERG_REPO}"
+# shellcheck disable=SC2034
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 # Bot account for posting reviews (separate user required for branch protection approvals)
