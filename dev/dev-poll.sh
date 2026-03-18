@@ -18,17 +18,7 @@ set -euo pipefail
 # Load shared environment (with optional project TOML override)
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
-
-
-# Helper: check if CI is passing (or no CI configured)
-ci_passed() {
-  local state="$1"
-  if [ "$state" = "success" ]; then return 0; fi
-  if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$state" ] || [ "$state" = "pending" ] || [ "$state" = "unknown" ]; }; then
-    return 0  # no CI configured
-  fi
-  return 1
-}
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 # Track CI fix attempts per PR to avoid infinite respawn loops
 CI_FIX_TRACKER="${FACTORY_ROOT}/dev/ci-fixes-${PROJECT_NAME:-harb}.json"

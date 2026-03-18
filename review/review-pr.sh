@@ -23,6 +23,7 @@ set -euo pipefail
 
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -179,14 +180,9 @@ status "checking CI"
 CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
-if [ "$CI_STATE" != "success" ]; then
-  # Projects without CI (woodpecker_repo_id=0) treat empty/pending as pass
-  if [ "${WOODPECKER_REPO_ID:-2}" = "0" ] && { [ -z "$CI_STATE" ] || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ]; }; then
-    log "no CI configured, proceeding without CI gate"
-  else
-    log "SKIP: CI=${CI_STATE}"
-    exit 0
-  fi
+if ! ci_passed "$CI_STATE"; then
+  log "SKIP: CI=${CI_STATE}"
+  exit 0
 fi
 
 # --- Check for existing reviews ---
