@@ -277,7 +277,7 @@ On unrecoverable error:
   printf 'PHASE:failed\nReason: %s\n' 'describe error' > '${PHASE_FILE}'"
 
 # ── Reset phase + result files ────────────────────────────────────────────
-agent_kill_session
+agent_kill_session "$SESSION_NAME"
 rm -f "$PHASE_FILE" "$RESULT_FILE"
 touch "$RESULT_FILE"
 
@@ -288,7 +288,7 @@ if ! create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT"; then
   exit 1
 fi
 
-agent_inject_into_session "$PROMPT"
+agent_inject_into_session "$SESSION_NAME" "$PROMPT"
 log "Prompt sent to tmux session"
 matrix_send "gardener" "🌱 Gardener session started for ${CODEBERG_REPO}" 2>/dev/null || true
 
@@ -332,7 +332,7 @@ Re-run your analysis from scratch:
         rm -f "$RESULT_FILE"
         touch "$RESULT_FILE"
         if create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" 2>/dev/null; then
-          agent_inject_into_session "$RECOVERY_MSG"
+          agent_inject_into_session "$SESSION_NAME" "$RECOVERY_MSG"
           log "Recovery session started"
           IDLE_ELAPSED=0
         else
@@ -353,7 +353,7 @@ Re-run your analysis from scratch:
     if [ "$IDLE_ELAPSED" -ge "$MAX_RUNTIME" ]; then
       log "TIMEOUT: gardener session idle for ${MAX_RUNTIME}s — killing"
       matrix_send "gardener" "⚠️ Gardener session timed out after ${MAX_RUNTIME}s" 2>/dev/null || true
-      agent_kill_session
+      agent_kill_session "$SESSION_NAME"
       break
     fi
     continue
@@ -365,7 +365,7 @@ Re-run your analysis from scratch:
   log "phase: ${CURRENT_PHASE}"
 
   if [ "$CURRENT_PHASE" = "PHASE:done" ] || [ "$CURRENT_PHASE" = "PHASE:failed" ]; then
-    agent_kill_session
+    agent_kill_session "$SESSION_NAME"
     break
   fi
 done

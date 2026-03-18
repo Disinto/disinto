@@ -121,7 +121,7 @@ do_merge() {
     notify_ctx \
       "✅ PR #${pr} merged! Issue #${ISSUE} done." \
       "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
-    agent_kill_session
+    agent_kill_session "$SESSION_NAME"
     cleanup_worktree
     rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
     exit 0
@@ -166,7 +166,7 @@ do_merge() {
           -H "Content-Type: application/json" \
           "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
         cleanup_labels
-        agent_kill_session
+        agent_kill_session "$SESSION_NAME"
         cleanup_worktree
         rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
         exit 0
@@ -240,13 +240,13 @@ _on_phase_change() {
           log "PR already exists: #${PR_NUMBER}"
         else
           log "ERROR: PR creation got 409 but no existing PR found"
-          agent_inject_into_session "ERROR: Could not create PR (HTTP 409, no existing PR found). Check the Codeberg API. Retry by writing PHASE:awaiting_ci again after verifying the branch was pushed."
+          agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP 409, no existing PR found). Check the Codeberg API. Retry by writing PHASE:awaiting_ci again after verifying the branch was pushed."
           return 0
         fi
       else
         log "ERROR: PR creation failed (HTTP ${PR_HTTP_CODE})"
         notify "failed to create PR (HTTP ${PR_HTTP_CODE})"
-        agent_inject_into_session "ERROR: Could not create PR (HTTP ${PR_HTTP_CODE}). Check branch was pushed: git push origin ${BRANCH}. Then write PHASE:awaiting_ci again."
+        agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP ${PR_HTTP_CODE}). Check branch was pushed: git push origin ${BRANCH}. Then write PHASE:awaiting_ci again."
         return 0
       fi
     fi
@@ -254,7 +254,7 @@ _on_phase_change() {
     # No CI configured? Treat as success immediately
     if [ "${WOODPECKER_REPO_ID:-2}" = "0" ]; then
       log "no CI configured — treating as passed"
-      agent_inject_into_session "CI passed on PR #${PR_NUMBER} (no CI configured for this project).
+      agent_inject_into_session "$SESSION_NAME" "CI passed on PR #${PR_NUMBER} (no CI configured for this project).
 Write PHASE:awaiting_review to the phase file, then stop and wait for review feedback."
       return 0
     fi
@@ -290,14 +290,14 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
     if ! $CI_DONE; then
       log "TIMEOUT: CI didn't complete in ${CI_POLL_TIMEOUT}s"
       notify "CI timeout on PR #${PR_NUMBER}"
-      agent_inject_into_session "CI TIMEOUT: CI did not complete within 30 minutes for PR #${PR_NUMBER} (SHA: ${CI_CURRENT_SHA:0:7}). This may be an infrastructure issue. Write PHASE:needs_human if you cannot proceed."
+      agent_inject_into_session "$SESSION_NAME" "CI TIMEOUT: CI did not complete within 30 minutes for PR #${PR_NUMBER} (SHA: ${CI_CURRENT_SHA:0:7}). This may be an infrastructure issue. Write PHASE:needs_human if you cannot proceed."
       return 0
     fi
 
     log "CI: ${CI_STATE}"
 
     if [ "$CI_STATE" = "success" ]; then
-      agent_inject_into_session "CI passed on PR #${PR_NUMBER}.
+      agent_inject_into_session "$SESSION_NAME" "CI passed on PR #${PR_NUMBER}.
 Write PHASE:awaiting_review to the phase file, then stop and wait for review feedback:
   echo \"PHASE:awaiting_review\" > \"${PHASE_FILE}\""
     else
@@ -366,7 +366,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         "CI failed on PR #${PR_NUMBER}: step=${FAILED_STEP:-unknown} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES})" \
         "CI failed on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline #${PIPELINE_NUM:-?}</a><br>Step: <code>${FAILED_STEP:-unknown}</code> (exit ${FAILED_EXIT:-?})<br>Attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}<br><pre>${_ci_snippet:-no logs}</pre>"
 
-      agent_inject_into_session "CI failed on PR #${PR_NUMBER} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}).
+      agent_inject_into_session "$SESSION_NAME" "CI failed on PR #${PR_NUMBER} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}).
 
 Failed step: ${FAILED_STEP:-unknown} (exit code ${FAILED_EXIT:-?}, pipeline #${PIPELINE_NUM:-?})
 
@@ -401,7 +401,7 @@ Instructions:
         PR_NUMBER="$FOUND_PR"
         log "found PR #${PR_NUMBER}"
       else
-        agent_inject_into_session "ERROR: Cannot find open PR for branch ${BRANCH}. Did you push? Verify with git status and git push origin ${BRANCH}, then write PHASE:awaiting_ci."
+        agent_inject_into_session "$SESSION_NAME" "ERROR: Cannot find open PR for branch ${BRANCH}. Did you push? Verify with git status and git push origin ${BRANCH}, then write PHASE:awaiting_ci."
         return 0
       fi
     fi
@@ -473,7 +473,7 @@ Instructions:
 
         if [ "$VERDICT" = "APPROVE" ]; then
           REVIEW_FOUND=true
-          agent_inject_into_session "Approved! PR #${PR_NUMBER} has been approved by the reviewer.
+          agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved by the reviewer.
 Write PHASE:done to the phase file — the orchestrator will handle the merge:
   echo \"PHASE:done\" > \"${PHASE_FILE}\""
           break
@@ -485,7 +485,7 @@ Write PHASE:done to the phase file — the orchestrator will handle the merge:
             notify "PR #${PR_NUMBER}: hit ${MAX_REVIEW_ROUNDS} review rounds, needs human attention"
           fi
           REVIEW_FOUND=true
-          agent_inject_into_session "Review feedback (round ${REVIEW_ROUND}) on PR #${PR_NUMBER}:
+          agent_inject_into_session "$SESSION_NAME" "Review feedback (round ${REVIEW_ROUND}) on PR #${PR_NUMBER}:
 
 ${REVIEW_TEXT}
 
@@ -520,7 +520,7 @@ Instructions:
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
           cleanup_labels
-          agent_kill_session
+          agent_kill_session "$SESSION_NAME"
           cleanup_worktree
           rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
           exit 0
@@ -528,7 +528,7 @@ Instructions:
           log "PR #${PR_NUMBER} was closed WITHOUT merge — NOT closing issue"
           notify "⚠️ PR #${PR_NUMBER} closed without merge. Issue #${ISSUE} remains open."
           cleanup_labels
-          agent_kill_session
+          agent_kill_session "$SESSION_NAME"
           cleanup_worktree
           exit 0
         fi
@@ -540,7 +540,7 @@ Instructions:
     if ! $REVIEW_FOUND && [ "$REVIEW_POLL_ELAPSED" -ge "$REVIEW_POLL_TIMEOUT" ]; then
       log "TIMEOUT: no review after 3h"
       notify "no review received for PR #${PR_NUMBER} after 3h"
-      agent_inject_into_session "TIMEOUT: No review received after 3 hours for PR #${PR_NUMBER}. Write PHASE:needs_human to escalate to a human reviewer."
+      agent_inject_into_session "$SESSION_NAME" "TIMEOUT: No review received after 3 hours for PR #${PR_NUMBER}. Write PHASE:needs_human to escalate to a human reviewer."
     fi
 
   # ── PHASE: needs_human ──────────────────────────────────────────────────────
@@ -563,7 +563,7 @@ Instructions:
     if [ -z "${PR_NUMBER:-}" ]; then
       log "ERROR: PHASE:done but no PR_NUMBER — cannot merge"
       notify "PHASE:done but no PR known — needs human attention"
-      agent_kill_session
+      agent_kill_session "$SESSION_NAME"
       cleanup_labels
       return 1
     fi
@@ -576,7 +576,7 @@ Instructions:
 
     # If we reach here, merge failed (do_merge returned 1)
     log "merge failed — injecting error into session"
-    agent_inject_into_session "Merge failed for PR #${PR_NUMBER}. The orchestrator could not merge automatically. This may be due to merge conflicts or CI. Investigate the PR state and write PHASE:needs_human if human intervention is required."
+    agent_inject_into_session "$SESSION_NAME" "Merge failed for PR #${PR_NUMBER}. The orchestrator could not merge automatically. This may be due to merge conflicts or CI. Investigate the PR state and write PHASE:needs_human if human intervention is required."
 
   # ── PHASE: failed ───────────────────────────────────────────────────────────
   elif [ "$phase" = "PHASE:failed" ]; then
@@ -663,7 +663,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       esac
 
       CLAIMED=false  # Don't unclaim again in cleanup()
-      agent_kill_session
+      agent_kill_session "$SESSION_NAME"
       cleanup_worktree
       rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
       return 1
@@ -686,7 +686,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
         -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
 
       CLAIMED=false  # Don't unclaim again in cleanup()
-      agent_kill_session
+      agent_kill_session "$SESSION_NAME"
       if [ -n "${PR_NUMBER:-}" ]; then
         log "keeping worktree (PR #${PR_NUMBER} still open)"
       else

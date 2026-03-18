@@ -100,7 +100,7 @@ CLAIMED=false
 cleanup() {
   rm -f "$LOCKFILE" "$STATUSFILE"
   # Kill any live session so Claude doesn't run without an orchestrator attached
-  agent_kill_session
+  agent_kill_session "$SESSION_NAME"
   # If we claimed the issue but never created a PR, unclaim it
   if [ "$CLAIMED" = true ] && [ -z "${PR_NUMBER:-}" ]; then
     log "cleanup: unclaiming issue (no PR created)"

@@ -60,5 +60,6 @@ inject_formula() {
 
 # Kill a tmux session gracefully (no-op if not found).
 agent_kill_session() {
-  tmux kill-session -t "$1" 2>/dev/null || true
+  local session="${1:-}"
+  [ -n "$session" ] && tmux kill-session -t "$session" 2>/dev/null || true
 }
