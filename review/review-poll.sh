@@ -13,11 +13,13 @@ source "$(dirname "$0")/../lib/env.sh"
 
 
 REPO="${CODEBERG_REPO}"
+REPO_ROOT="${PROJECT_REPO_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 API_BASE="${CODEBERG_API}"
 LOGFILE="$SCRIPT_DIR/review.log"
 MAX_REVIEWS=3
+REVIEW_IDLE_TIMEOUT=14400  # 4h: kill review session if idle
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
@@ -33,6 +35,47 @@ if [ -f "$LOGFILE" ]; then
 fi
 
 log "--- Poll start ---"
+
+# --- Clean up stale review sessions ---
+# Kill sessions for merged/closed PRs or idle > 4h
+REVIEW_SESSIONS=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^review-${PROJECT_NAME}-" || true)
+if [ -n "$REVIEW_SESSIONS" ]; then
+  while IFS= read -r session; do
+    pr_num="${session#review-"${PROJECT_NAME}"-}"
+    phase_file="/tmp/review-session-${PROJECT_NAME}-${pr_num}.phase"
+
+    # Check if PR is still open
+    pr_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API_BASE}/pulls/${pr_num}" | jq -r '.state // "unknown"' 2>/dev/null) || true
+
+    if [ "$pr_state" != "open" ]; then
+      log "cleanup: killing session ${session} (PR #${pr_num} state=${pr_state})"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
+      # Prune review-thread-map entries for this PR
+      sed -i "/\t${pr_num}$/d" /tmp/review-thread-map 2>/dev/null || true
+      cd "$REPO_ROOT"
+      git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
+      rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
+      continue
+    fi
+
+    # Check idle timeout (4h)
+    phase_mtime=$(stat -c %Y "$phase_file" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if [ "$phase_mtime" -gt 0 ] && [ $(( now - phase_mtime )) -gt "$REVIEW_IDLE_TIMEOUT" ]; then
+      log "cleanup: killing session ${session} (idle > 4h)"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
+      # Prune review-thread-map entries for this PR
+      sed -i "/\t${pr_num}$/d" /tmp/review-thread-map 2>/dev/null || true
+      cd "$REPO_ROOT"
+      git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
+      rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
+      continue
+    fi
+  done <<< "$REVIEW_SESSIONS"
+fi
 
 PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/pulls?state=open&limit=20" | \

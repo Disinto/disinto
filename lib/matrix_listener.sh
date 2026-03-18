@@ -145,6 +145,44 @@ while true; do
         printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
         matrix_send "dev" "✓ received, will inject on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
+      review)
+        # Route human questions to persistent review tmux session
+        REVIEW_PR_NUM=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $2}' /tmp/review-thread-map 2>/dev/null || true)
+        if [ -n "$REVIEW_PR_NUM" ]; then
+          REVIEW_SESSION="review-${PROJECT_NAME}-${REVIEW_PR_NUM}"
+          REVIEW_PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${REVIEW_PR_NUM}.phase"
+          if tmux has-session -t "$REVIEW_SESSION" 2>/dev/null; then
+            # Skip injection if Claude is mid-review (phase file absent = actively writing)
+            REVIEW_CUR_PHASE=$(head -1 "$REVIEW_PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+            if [ -z "$REVIEW_CUR_PHASE" ]; then
+              log "review session ${REVIEW_SESSION} is mid-review, deferring question"
+              matrix_send "review" "reviewer is busy — question queued, try again shortly" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            else
+              REVIEW_INJECT_MSG="Human question from ${SENDER} in Matrix:
+
+${BODY}
+
+Please answer this question about your review. Explain your reasoning."
+              REVIEW_INJECT_TMP=$(mktemp /tmp/review-q-inject-XXXXXX)
+              printf '%s' "$REVIEW_INJECT_MSG" > "$REVIEW_INJECT_TMP"
+              tmux load-buffer -b "review-q-${REVIEW_PR_NUM}" "$REVIEW_INJECT_TMP" || true
+              tmux paste-buffer -t "$REVIEW_SESSION" -b "review-q-${REVIEW_PR_NUM}" || true
+              sleep 0.5
+              tmux send-keys -t "$REVIEW_SESSION" "" Enter || true
+              tmux delete-buffer -b "review-q-${REVIEW_PR_NUM}" 2>/dev/null || true
+              rm -f "$REVIEW_INJECT_TMP"
+              log "review question from ${SENDER} injected into ${REVIEW_SESSION}"
+              matrix_send "review" "✓ question forwarded to reviewer session" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            fi
+          else
+            log "review session ${REVIEW_SESSION} not found for PR #${REVIEW_PR_NUM}"
+            matrix_send "review" "review session not active for PR #${REVIEW_PR_NUM}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          fi
+        else
+          log "review thread ${THREAD_ROOT:0:20} has no PR mapping"
+          matrix_send "review" "review session not available" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        fi
+        ;;
       vault)
         # Parse APPROVE <id> or REJECT <id> from reply
         VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
