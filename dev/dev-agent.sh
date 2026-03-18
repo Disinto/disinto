@@ -1244,8 +1244,7 @@ Instructions:
 
       REVIEW_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
         "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha') || true
-      REVIEW_COMMENT=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-        "${API}/issues/${PR_NUMBER}/comments?limit=50" | \
+      REVIEW_COMMENT=$(codeberg_api_all "/issues/${PR_NUMBER}/comments" | \
         jq -r --arg sha "$REVIEW_SHA" \
         '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
 

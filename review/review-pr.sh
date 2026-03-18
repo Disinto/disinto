@@ -187,8 +187,7 @@ fi
 
 # --- Check for existing reviews ---
 status "checking existing reviews"
-ALL_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${API_BASE}/issues/${PR_NUMBER}/comments?limit=50")
+ALL_COMMENTS=$(codeberg_api_all "/issues/${PR_NUMBER}/comments")
 
 # Check review-comment watermarks — skip if a comment with <!-- reviewed: SHA --> exists
 COMMENT_REVIEWED=$(echo "$ALL_COMMENTS" | \
@@ -797,8 +796,7 @@ if [ "$FOLLOWUP_COUNT" -gt 0 ]; then
     FU_DETAILS=$(printf '%s' "$fu" | jq -r '.details')
 
     # Check for duplicate
-    EXISTING=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API_BASE}/issues?state=open&labels=tech-debt&limit=50" | \
+    EXISTING=$(codeberg_api_all "/issues?state=open&labels=tech-debt" | \
       jq -r --arg t "$FU_TITLE" '[.[] | select(.title == $t)] | length')
 
     if [ "${EXISTING:-0}" -gt 0 ]; then

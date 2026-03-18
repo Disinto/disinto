@@ -112,8 +112,7 @@ inject_review_into_dev_session() {
   [ "${current_phase}" = "PHASE:awaiting_review" ] || return 0
 
   local review_comment
-  review_comment=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API_BASE}/issues/${pr_num}/comments?limit=50" | \
+  review_comment=$(codeberg_api_all "/issues/${pr_num}/comments" | \
     jq -r --arg sha "${pr_sha}" \
     '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
   if [ -z "${review_comment}" ] || [ "${review_comment}" = "null" ]; then

@@ -56,6 +56,28 @@ codeberg_api() {
     "${CODEBERG_API}${path}" "$@"
 }
 
+# Paginate a Codeberg API GET endpoint and return all items as a merged JSON array.
+# Usage: codeberg_api_all /path             (no existing query params)
+#        codeberg_api_all /path?a=b         (with existing params — appends &limit=50&page=N)
+codeberg_api_all() {
+  local path_prefix="$1"
+  local sep page page_items count all_items="[]"
+  case "$path_prefix" in
+    *"?"*) sep="&" ;;
+    *) sep="?" ;;
+  esac
+  page=1
+  while true; do
+    page_items=$(codeberg_api GET "${path_prefix}${sep}limit=50&page=${page}") || break
+    count=$(printf '%s' "$page_items" | jq 'length')
+    [ "$count" -eq 0 ] && break
+    all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
+    [ "$count" -lt 50 ] && break
+    page=$((page + 1))
+  done
+  printf '%s' "$all_items"
+}
+
 # Woodpecker API helper
 woodpecker_api() {
   local path="$1"
