@@ -42,11 +42,11 @@ do_merge() {
     return 0
   fi
 
-  # HTTP 405 "not enough approvals" — structural, not transient — escalate immediately
-  if [ "$merge_http_code" = "405" ] && echo "$merge_body" | grep -qi "not enough"; then
-    log "do_merge: PR #${pr_num} blocked — not enough approvals (HTTP 405): ${merge_body:0:200}"
+  # HTTP 405 — merge requirements not met (approvals, branch protection); structural, not transient
+  if [ "$merge_http_code" = "405" ]; then
+    log "do_merge: PR #${pr_num} blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}"
     printf 'PHASE:needs_human\nReason: %s\n' \
-      "PR #${pr_num} merge blocked — not enough approvals (HTTP 405): ${merge_body:0:200}" \
+      "PR #${pr_num} merge blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}" \
       > "$PHASE_FILE"
     return 2
   fi
@@ -366,19 +366,22 @@ Instructions:
           [ -n "$VERDICT" ] && log "verdict from formal review: $VERDICT"
         fi
 
-        # Skip injection if review-poll.sh already injected (sentinel present)
+        # Skip injection if review-poll.sh already injected (sentinel present).
+        # Exception: APPROVE always falls through so do_merge() runs even when
+        # review-poll injected first — prevents Claude writing PHASE:done on a
+        # failed merge without the orchestrator detecting the error.
         REVIEW_SENTINEL="/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
-        if [ -n "$VERDICT" ] && [ -f "$REVIEW_SENTINEL" ]; then
+        if [ -n "$VERDICT" ] && [ -f "$REVIEW_SENTINEL" ] && [ "$VERDICT" != "APPROVE" ]; then
           log "review already injected by review-poll (sentinel exists) — skipping"
           rm -f "$REVIEW_SENTINEL"
           REVIEW_FOUND=true
           break
         fi
+        rm -f "$REVIEW_SENTINEL"  # consume sentinel before APPROVE handling below
 
         if [ "$VERDICT" = "APPROVE" ]; then
           REVIEW_FOUND=true
-          do_merge "$PR_NUMBER"
-          _merge_rc=$?
+          _merge_rc=0; do_merge "$PR_NUMBER" || _merge_rc=$?
           if [ "$_merge_rc" -eq 0 ]; then
             # Merge succeeded — close issue and signal done
             curl -sf -X PATCH \
@@ -499,11 +502,11 @@ Instructions:
     # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
-  # The agent already merged the PR and closed the issue. Just clean up local state.
+  # PR merged and issue closed (by orchestrator or Claude). Just clean up local state.
   elif [ "$phase" = "PHASE:done" ]; then
-    status "phase done — agent merged PR #${PR_NUMBER:-?}, cleaning up"
+    status "phase done — PR #${PR_NUMBER:-?} merged, cleaning up"
 
-    # Notify Matrix (agent already closed the issue and removed labels via API)
+    # Notify Matrix (issue already closed and labels removed via API)
     notify_ctx \
       "✅ PR #${PR_NUMBER:-?} merged! Issue #${ISSUE} done." \
       "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER:-?}'>#${PR_NUMBER:-?}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
