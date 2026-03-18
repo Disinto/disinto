@@ -40,6 +40,24 @@ agent_inject_into_session() {
   rm -f "$tmpfile"
 }
 
+# Create a tmux session running Claude in the given workdir.
+# Returns 0 if session is ready, 1 otherwise.
+create_agent_session() {
+  local session="$1"
+  local workdir="${2:-.}"
+  tmux new-session -d -s "$session" -c "$workdir" \
+    "claude --dangerously-skip-permissions" 2>/dev/null
+  sleep 1
+  tmux has-session -t "$session" 2>/dev/null || return 1
+  agent_wait_for_claude_ready "$session" 120 || return 1
+  return 0
+}
+
+# Inject a prompt/formula into a session (alias for agent_inject_into_session).
+inject_formula() {
+  agent_inject_into_session "$@"
+}
+
 # Kill a tmux session gracefully (no-op if not found).
 agent_kill_session() {
   tmux kill-session -t "$1" 2>/dev/null || true
