@@ -19,6 +19,42 @@
 # shellcheck disable=SC2154  # globals are set in dev-agent.sh before calling
 # shellcheck disable=SC2034  # CLAIMED is read by cleanup() in dev-agent.sh
 
+# --- Merge helper ---
+# do_merge — attempt to merge PR via Codeberg API.
+# Args: pr_num
+# Returns:
+#   0 = merged successfully
+#   1 = other failure (conflict, network error, etc.)
+#   2 = not enough approvals (HTTP 405) — PHASE:needs_human already written
+do_merge() {
+  local pr_num="$1"
+  local merge_response merge_http_code merge_body
+  merge_response=$(curl -s -w "\n%{http_code}" -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    "${API}/pulls/${pr_num}/merge" \
+    -d '{"Do":"merge","delete_branch_after_merge":true}') || true
+  merge_http_code=$(echo "$merge_response" | tail -1)
+  merge_body=$(echo "$merge_response" | sed '$d')
+
+  if [ "$merge_http_code" = "200" ] || [ "$merge_http_code" = "204" ]; then
+    log "do_merge: PR #${pr_num} merged (HTTP ${merge_http_code})"
+    return 0
+  fi
+
+  # HTTP 405 — merge requirements not met (approvals, branch protection); structural, not transient
+  if [ "$merge_http_code" = "405" ]; then
+    log "do_merge: PR #${pr_num} blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}"
+    printf 'PHASE:needs_human\nReason: %s\n' \
+      "PR #${pr_num} merge blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}" \
+      > "$PHASE_FILE"
+    return 2
+  fi
+
+  log "do_merge: PR #${pr_num} merge failed (HTTP ${merge_http_code}): ${merge_body:0:200}"
+  return 1
+}
+
 # --- Refusal comment helper ---
 post_refusal_comment() {
   local emoji="$1" title="$2" body="$3"
@@ -330,18 +366,33 @@ Instructions:
           [ -n "$VERDICT" ] && log "verdict from formal review: $VERDICT"
         fi
 
-        # Skip injection if review-poll.sh already injected (sentinel present)
+        # Skip injection if review-poll.sh already injected (sentinel present).
+        # Exception: APPROVE always falls through so do_merge() runs even when
+        # review-poll injected first — prevents Claude writing PHASE:done on a
+        # failed merge without the orchestrator detecting the error.
         REVIEW_SENTINEL="/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
-        if [ -n "$VERDICT" ] && [ -f "$REVIEW_SENTINEL" ]; then
+        if [ -n "$VERDICT" ] && [ -f "$REVIEW_SENTINEL" ] && [ "$VERDICT" != "APPROVE" ]; then
           log "review already injected by review-poll (sentinel exists) — skipping"
           rm -f "$REVIEW_SENTINEL"
           REVIEW_FOUND=true
           break
         fi
+        rm -f "$REVIEW_SENTINEL"  # consume sentinel before APPROVE handling below
 
         if [ "$VERDICT" = "APPROVE" ]; then
           REVIEW_FOUND=true
-          agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved.
+          _merge_rc=0; do_merge "$PR_NUMBER" || _merge_rc=$?
+          if [ "$_merge_rc" -eq 0 ]; then
+            # Merge succeeded — close issue and signal done
+            curl -sf -X PATCH \
+              -H "Authorization: token ${CODEBERG_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              "${API}/issues/${ISSUE}" \
+              -d '{"state":"closed"}' >/dev/null 2>&1 || true
+            printf 'PHASE:done\n' > "$PHASE_FILE"
+          elif [ "$_merge_rc" -ne 2 ]; then
+            # Other merge failure (conflict, etc.) — delegate to Claude for rebase + retry
+            agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved.
 
 Merge the PR and close the issue directly — do NOT wait for the orchestrator:
 
@@ -368,6 +419,8 @@ After a successful merge write PHASE:done:
   echo \"PHASE:done\" > \"${PHASE_FILE}\"
 
 If merge repeatedly fails, write PHASE:needs_human with a reason."
+          fi
+          # _merge_rc=2: PHASE:needs_human already written by do_merge()
           break
 
         elif [ "$VERDICT" = "REQUEST_CHANGES" ] || [ "$VERDICT" = "DISCUSS" ]; then
@@ -449,11 +502,11 @@ Instructions:
     # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
-  # The agent already merged the PR and closed the issue. Just clean up local state.
+  # PR merged and issue closed (by orchestrator or Claude). Just clean up local state.
   elif [ "$phase" = "PHASE:done" ]; then
-    status "phase done — agent merged PR #${PR_NUMBER:-?}, cleaning up"
+    status "phase done — PR #${PR_NUMBER:-?} merged, cleaning up"
 
-    # Notify Matrix (agent already closed the issue and removed labels via API)
+    # Notify Matrix (issue already closed and labels removed via API)
     notify_ctx \
       "✅ PR #${PR_NUMBER:-?} merged! Issue #${ISSUE} done." \
       "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER:-?}'>#${PR_NUMBER:-?}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
