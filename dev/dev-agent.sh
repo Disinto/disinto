@@ -39,6 +39,11 @@ REPO_ROOT="${PROJECT_REPO_ROOT}"
 API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
 STATUSFILE="/tmp/dev-agent-status"
+
+status() {
+  printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
+  log "$*"
+}
 LOGFILE="${FACTORY_ROOT}/dev/dev-agent.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 BRANCH="fix/issue-${ISSUE}"
@@ -95,7 +100,7 @@ CLAIMED=false
 cleanup() {
   rm -f "$LOCKFILE" "$STATUSFILE"
   # Kill any live session so Claude doesn't run without an orchestrator attached
-  kill_tmux_session
+  agent_kill_session
   # If we claimed the issue but never created a PR, unclaim it
   if [ "$CLAIMED" = true ] && [ -z "${PR_NUMBER:-}" ]; then
     log "cleanup: unclaiming issue (no PR created)"
