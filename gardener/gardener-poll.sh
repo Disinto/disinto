@@ -220,10 +220,10 @@ if [ -n "$BLOCKER_NUMS" ]; then
 fi
 
 # 6. Tech-debt issues needing promotion to backlog (secondary to blockers)
-TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"' | head -10)
+TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"')
 if [ -n "$TECH_DEBT_ISSUES" ]; then
   TECH_DEBT_COUNT=$(echo "$TECH_DEBT_ISSUES" | wc -l)
-  PROBLEMS="${PROBLEMS}tech_debt_promotion: ${TECH_DEBT_COUNT} tech-debt issues need promotion to backlog (max 10 per run):\n${TECH_DEBT_ISSUES}\n"
+  PROBLEMS="${PROBLEMS}tech_debt_promotion: ${TECH_DEBT_COUNT} tech-debt issues need processing (goal: zero tech-debt):\n$(echo "$TECH_DEBT_ISSUES" | head -50)\n"
 fi
 
 PROBLEM_COUNT=$(echo -e "$PROBLEMS" | grep -c '.' || true)
@@ -270,16 +270,25 @@ $(echo -e "$PROBLEMS")
 ## Primary mission: unblock the factory
 Issues prefixed with PRIORITY_blockers_starving_factory are your TOP priority. These are non-backlog issues that block existing backlog items — the dev-agent is completely starved until these are promoted. Process ALL of them before touching regular tech-debt.
 
-## Secondary mission: promote tech-debt → backlog
-Most open issues are raw review-bot findings labeled \`tech-debt\`. Convert them into well-structured \`backlog\` items the dev-agent can execute. For each tech-debt issue:
-1. Read the issue body + referenced source files to understand the real problem
-2. Check AGENTS.md (and sub-directory AGENTS.md files) for architecture context
-3. Add missing sections: \`## Affected files\`, \`## Acceptance criteria\` (checkboxes, max 5), \`## Dependencies\`
-4. If the issue is clear and actionable → relabel: remove \`tech-debt\`, add \`backlog\`
-5. If scope is ambiguous or needs a design decision → ESCALATE with options
-6. If superseded by a merged PR or another issue → close with explanation
+## Your objective: zero tech-debt issues
 
-Process up to 10 tech-debt issues per run (stay within API rate limits).
+Tech-debt is unprocessed work — it sits outside the factory pipeline
+(dev-agent only pulls backlog). Every tech-debt issue is a decision
+you haven't made yet:
+
+- Substantial? → promote to backlog (add affected files, acceptance
+  criteria, dependencies)
+- Dust? → bundle into an ore issue
+- Duplicate? → close with cross-reference
+- Invalid/wontfix? → close with explanation
+- Needs human decision? → escalate
+
+Process ALL tech-debt issues every run. The goal is zero tech-debt
+when you're done. If you can't reach zero (needs human input,
+unclear scope), escalate those specifically and close out everything
+else.
+
+Tech-debt is your inbox. An empty inbox is a healthy factory.
 
 ## Dust vs Ore — bundle trivial tech-debt
 Don't promote trivial tech-debt individually — each costs a full factory cycle (CI + dev-agent + review + merge). If an issue is dust (comment fix, rename, style-only, single-line change, trivial cleanup), output a DUST line instead of promoting:
