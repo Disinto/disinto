@@ -142,8 +142,48 @@ while true; do
         matrix_send "gardener" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
         ;;
       dev)
-        printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
-        matrix_send "dev" "✓ received, will inject on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        # Route reply into the dev tmux session using context_tag (issue number)
+        DEV_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        DEV_INJECTED=false
+        if [ -n "$DEV_ISSUE" ]; then
+          DEV_SESSION="dev-${PROJECT_NAME}-${DEV_ISSUE}"
+          DEV_PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${DEV_ISSUE}.phase"
+          if tmux has-session -t "$DEV_SESSION" 2>/dev/null; then
+            DEV_CUR_PHASE=$(head -1 "$DEV_PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+            if [ "$DEV_CUR_PHASE" = "PHASE:needs_human" ] || [ "$DEV_CUR_PHASE" = "PHASE:awaiting_review" ]; then
+              DEV_INJECT_MSG="Human guidance from ${SENDER} in Matrix:
+
+${BODY}
+
+Consider this guidance for your current work."
+              DEV_INJECT_TMP=$(mktemp /tmp/dev-q-inject-XXXXXX)
+              printf '%s' "$DEV_INJECT_MSG" > "$DEV_INJECT_TMP"
+              tmux load-buffer -b "dev-q-${DEV_ISSUE}" "$DEV_INJECT_TMP" || true
+              tmux paste-buffer -t "$DEV_SESSION" -b "dev-q-${DEV_ISSUE}" || true
+              sleep 0.5
+              tmux send-keys -t "$DEV_SESSION" "" Enter || true
+              tmux delete-buffer -b "dev-q-${DEV_ISSUE}" 2>/dev/null || true
+              rm -f "$DEV_INJECT_TMP"
+              DEV_INJECTED=true
+              log "human guidance from ${SENDER} injected into ${DEV_SESSION}"
+              matrix_send "dev" "✓ guidance forwarded to dev session for issue #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            else
+              log "dev session ${DEV_SESSION} is busy (phase: ${DEV_CUR_PHASE:-active}), queuing"
+              matrix_send "dev" "✓ received — session is busy, will be available when dev pauses" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            fi
+          else
+            log "dev session ${DEV_SESSION} not found for issue #${DEV_ISSUE}"
+            matrix_send "dev" "dev session not active for issue #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          fi
+        else
+          log "dev thread ${THREAD_ROOT:0:20} has no issue mapping"
+          matrix_send "dev" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        fi
+        # Only write to flat file when direct injection didn't happen,
+        # to avoid supervisor/gardener poll re-injecting the same message.
+        if [ "$DEV_INJECTED" = false ]; then
+          printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SENDER" "$BODY" >> /tmp/dev-escalation-reply
+        fi
         ;;
       review)
         # Route human questions to persistent review tmux session
