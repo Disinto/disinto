@@ -220,10 +220,10 @@ if [ -n "$BLOCKER_NUMS" ]; then
 fi
 
 # 6. Tech-debt issues needing promotion to backlog (secondary to blockers)
-TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"' | head -10)
+TECH_DEBT_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.[] | select(.labels | map(.name) | index("tech-debt")) | "#\(.number) \(.title)"')
 if [ -n "$TECH_DEBT_ISSUES" ]; then
   TECH_DEBT_COUNT=$(echo "$TECH_DEBT_ISSUES" | wc -l)
-  PROBLEMS="${PROBLEMS}tech_debt_promotion: ${TECH_DEBT_COUNT} tech-debt issues need promotion to backlog (max 10 per run):\n${TECH_DEBT_ISSUES}\n"
+  PROBLEMS="${PROBLEMS}tech_debt_promotion: ${TECH_DEBT_COUNT} tech-debt issues need processing (goal: zero tech-debt):\n$(echo "$TECH_DEBT_ISSUES" | head -50)\n"
 fi
 
 PROBLEM_COUNT=$(echo -e "$PROBLEMS" | grep -c '.' || true)
