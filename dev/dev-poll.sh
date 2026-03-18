@@ -144,9 +144,14 @@ try_merge_or_rebase() {
     log "PR #${pr_num} rebased — CI will re-run, merge on next poll"
     git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
   else
-    log "PR #${pr_num} rebase failed — spawning dev-agent to fix"
-    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent" 2>/dev/null || true
     git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
+    if handle_ci_exhaustion "$pr_num" "$issue_num"; then
+      log "PR #${pr_num} rebase failed — CI exhausted, not spawning"
+      return 1
+    fi
+    ci_fix_increment "$pr_num"
+    log "PR #${pr_num} rebase failed — spawning dev-agent to fix (attempt $((CI_FIX_ATTEMPTS+1))/3)"
+    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent (attempt $((CI_FIX_ATTEMPTS+1))/3)" 2>/dev/null || true
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
   fi
