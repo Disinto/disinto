@@ -22,6 +22,7 @@ set -euo pipefail
 
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/agent-session.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -50,7 +51,7 @@ IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 THREAD_FILE="/tmp/dev-thread-${PROJECT_NAME}-${ISSUE}"
 
 # Timing
-PHASE_POLL_INTERVAL=30    # seconds between phase checks
+export PHASE_POLL_INTERVAL=30    # seconds between phase checks (read by agent-session.sh)
 IDLE_TIMEOUT=7200         # 2h: kill session if phase stale this long
 CI_POLL_TIMEOUT=1800      # 30min max for CI to complete
 REVIEW_POLL_TIMEOUT=10800 # 3h max wait for review
@@ -64,74 +65,6 @@ CI_RETRY_COUNT=0
 CI_FIX_COUNT=0
 REVIEW_ROUND=0
 PR_NUMBER=""
-
-# --- Logging ---
-log() {
-  printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
-}
-
-status() {
-  printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
-  log "$*"
-}
-
-notify() {
-  local thread_id=""
-  [ -f "${THREAD_FILE}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  matrix_send "dev" "🔧 #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
-}
-
-# notify_ctx — Send rich notification with HTML links/context into the issue thread
-# Falls back to plain matrix_send (which registers a thread root) when no thread exists.
-notify_ctx() {
-  local plain="$1" html="$2"
-  local thread_id=""
-  [ -f "${THREAD_FILE}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  if [ -n "$thread_id" ]; then
-    matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
-  else
-    # No thread — fall back to plain send so a thread root is registered
-    matrix_send "dev" "🔧 #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
-  fi
-}
-
-# --- Phase helpers ---
-read_phase() {
-  { cat "$PHASE_FILE" 2>/dev/null || true; } | head -1 | tr -d '[:space:]'
-}
-
-wait_for_claude_ready() {
-  local timeout="${1:-120}"
-  local elapsed=0
-  while [ "$elapsed" -lt "$timeout" ]; do
-    # Claude Code shows ❯ when ready for input
-    if tmux capture-pane -t "${SESSION_NAME}" -p 2>/dev/null | grep -q '❯'; then
-      return 0
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  log "WARNING: claude not ready after ${timeout}s — proceeding anyway"
-  return 1
-}
-
-inject_into_session() {
-  local text="$1"
-  local tmpfile
-  wait_for_claude_ready 120
-  tmpfile=$(mktemp /tmp/tmux-inject-XXXXXX)
-  printf '%s' "$text" > "$tmpfile"
-  tmux load-buffer -b "inject-${ISSUE}" "$tmpfile"
-  tmux paste-buffer -t "${SESSION_NAME}" -b "inject-${ISSUE}"
-  sleep 0.5
-  tmux send-keys -t "${SESSION_NAME}" "" Enter
-  tmux delete-buffer -b "inject-${ISSUE}" 2>/dev/null || true
-  rm -f "$tmpfile"
-}
-
-kill_tmux_session() {
-  tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
-}
 
 # --- Refusal comment helper (used in PHASE:failed handler) ---
 post_refusal_comment() {
@@ -855,37 +788,15 @@ fi
 # =============================================================================
 status "creating tmux session: ${SESSION_NAME}"
 
-# Reuse existing session if still alive (orchestrator may have been restarted)
-if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
-  # Kill any stale entry
-  tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
-
-  # Create new detached session running interactive claude in the worktree
-  tmux new-session -d -s "${SESSION_NAME}" -c "${WORKTREE}" \
-    "claude --dangerously-skip-permissions"
-
-  if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
-    log "ERROR: failed to create tmux session ${SESSION_NAME}"
-    cleanup_labels
-    cleanup_worktree
-    exit 1
-  fi
-  log "tmux session created: ${SESSION_NAME}"
-
-  # Wait for Claude to be ready (polls for ❯ prompt)
-  if ! wait_for_claude_ready 120; then
-    log "ERROR: claude did not become ready in ${SESSION_NAME}"
-    kill_tmux_session
-    cleanup_labels
-    cleanup_worktree
-    exit 1
-  fi
-else
-  log "reusing existing tmux session: ${SESSION_NAME}"
+if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}"; then
+  log "ERROR: failed to create agent session"
+  cleanup_labels
+  cleanup_worktree
+  exit 1
 fi
 
-# Send initial prompt (inject_into_session waits for claude to be ready)
-inject_into_session "$INITIAL_PROMPT"
+# Send initial prompt into the session
+inject_formula "${SESSION_NAME}" "${INITIAL_PROMPT}"
 log "initial prompt sent to tmux session"
 
 # Signal to dev-poll.sh that we're running (session is up)
@@ -907,103 +818,15 @@ notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}
 # =============================================================================
 # PHASE MONITORING LOOP
 # =============================================================================
-status "monitoring phase: ${PHASE_FILE}"
 
-LAST_PHASE_MTIME=0
-IDLE_ELAPSED=0
-
-while true; do
-  sleep "$PHASE_POLL_INTERVAL"
-  IDLE_ELAPSED=$(( IDLE_ELAPSED + PHASE_POLL_INTERVAL ))
-
-  # --- Session health check ---
-  if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
-    CURRENT_PHASE=$(read_phase)
-    case "$CURRENT_PHASE" in
-      PHASE:done|PHASE:failed)
-        # Expected terminal phases — fall through to phase handler below
-        ;;
-      *)
-        log "WARNING: tmux session died unexpectedly (phase: ${CURRENT_PHASE:-none})"
-        notify "session crashed (phase: ${CURRENT_PHASE:-none}), attempting recovery"
-
-        # Attempt crash recovery: restart session with recovery context
-        CRASH_DIFF=$(git -C "${WORKTREE}" diff "origin/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
-        RECOVERY_MSG="## Session Recovery
-
-Your Claude Code session for issue #${ISSUE} was interrupted unexpectedly.
-The git worktree at ${WORKTREE} is intact — your changes survived.
-
-Last known phase: ${CURRENT_PHASE:-unknown}
-
-Work so far:
-${CRASH_DIFF}
-
-Run: git log --oneline -5 && git status
-Then resume from the last phase following the original phase protocol.
-Phase file: ${PHASE_FILE}"
-
-        if tmux new-session -d -s "${SESSION_NAME}" -c "${WORKTREE}" \
-          "claude --dangerously-skip-permissions" 2>/dev/null; then
-          inject_into_session "$RECOVERY_MSG"
-          log "recovery session started"
-          IDLE_ELAPSED=0
-        else
-          log "ERROR: could not restart session after crash"
-          notify "session crashed and could not recover — needs human attention"
-          cleanup_labels
-          break
-        fi
-        continue
-        ;;
-    esac
-  fi
-
-  # --- Check phase file for changes ---
-  PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
-  CURRENT_PHASE=$(read_phase)
-
-  if [ -z "$CURRENT_PHASE" ] || [ "$PHASE_MTIME" -le "$LAST_PHASE_MTIME" ]; then
-    # No phase change — check idle timeout
-    if [ "$IDLE_ELAPSED" -ge "$IDLE_TIMEOUT" ]; then
-      log "TIMEOUT: no phase update for ${IDLE_TIMEOUT}s — killing session"
-      notify_ctx \
-        "session idle for 2h — killed. Escalating to gardener." \
-        "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
-      kill_tmux_session
-
-      # Escalate: write to project-suffixed escalation file so gardener picks it up
-      echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-
-      # Restore labels: remove in-progress, add backlog
-      cleanup_labels
-      curl -sf -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/issues/${ISSUE}/labels" \
-        -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
-
-      CLAIMED=false  # Don't unclaim again in cleanup()
-      if [ -n "${PR_NUMBER:-}" ]; then
-        log "keeping worktree (PR #${PR_NUMBER} still open)"
-      else
-        cleanup_worktree
-      fi
-      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
-      break
-    fi
-    continue
-  fi
-
-  # Phase changed — handle it
-  LAST_PHASE_MTIME="$PHASE_MTIME"
-  IDLE_ELAPSED=0
-  log "phase: ${CURRENT_PHASE}"
-  status "${CURRENT_PHASE}"
+# _on_phase_change — Phase dispatch callback for monitor_phase_loop
+# Receives the current phase as $1.
+# Returns 0 to continue the loop, 1 to break (terminal phase reached).
+_on_phase_change() {
+  local phase="$1"
 
   # ── PHASE: awaiting_ci ──────────────────────────────────────────────────────
-  if [ "$CURRENT_PHASE" = "PHASE:awaiting_ci" ]; then
+  if [ "$phase" = "PHASE:awaiting_ci" ]; then
 
     # Create PR if not yet created
     if [ -z "${PR_NUMBER:-}" ]; then
@@ -1053,13 +876,13 @@ Phase file: ${PHASE_FILE}"
         else
           log "ERROR: PR creation got 409 but no existing PR found"
           inject_into_session "ERROR: Could not create PR (HTTP 409, no existing PR found). Check the Codeberg API. Retry by writing PHASE:awaiting_ci again after verifying the branch was pushed."
-          continue
+          return 0
         fi
       else
         log "ERROR: PR creation failed (HTTP ${PR_HTTP_CODE})"
         notify "failed to create PR (HTTP ${PR_HTTP_CODE})"
         inject_into_session "ERROR: Could not create PR (HTTP ${PR_HTTP_CODE}). Check branch was pushed: git push origin ${BRANCH}. Then write PHASE:awaiting_ci again."
-        continue
+        return 0
       fi
     fi
 
@@ -1068,7 +891,7 @@ Phase file: ${PHASE_FILE}"
       log "no CI configured — treating as passed"
       inject_into_session "CI passed on PR #${PR_NUMBER} (no CI configured for this project).
 Write PHASE:awaiting_review to the phase file, then stop and wait for review feedback."
-      continue
+      return 0
     fi
 
     # Poll CI until done or timeout
@@ -1103,7 +926,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       log "TIMEOUT: CI didn't complete in ${CI_POLL_TIMEOUT}s"
       notify "CI timeout on PR #${PR_NUMBER}"
       inject_into_session "CI TIMEOUT: CI did not complete within 30 minutes for PR #${PR_NUMBER} (SHA: ${CI_CURRENT_SHA:0:7}). This may be an infrastructure issue. Write PHASE:needs_human if you cannot proceed."
-      continue
+      return 0
     fi
 
     log "CI: ${CI_STATE}"
@@ -1145,7 +968,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect the fresh mtime
         touch "$PHASE_FILE"
         CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || true)
-        continue
+        return 0
       fi
 
       CI_FIX_COUNT=$(( CI_FIX_COUNT + 1 ))
@@ -1159,7 +982,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
           "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
         printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:failed
-        continue
+        return 0
       fi
 
       CI_ERROR_LOG=""
@@ -1199,7 +1022,7 @@ Instructions:
     fi
 
   # ── PHASE: awaiting_review ──────────────────────────────────────────────────
-  elif [ "$CURRENT_PHASE" = "PHASE:awaiting_review" ]; then
+  elif [ "$phase" = "PHASE:awaiting_review" ]; then
     status "waiting for review on PR #${PR_NUMBER:-?}"
     CI_FIX_COUNT=0  # Reset CI fix budget for this review cycle
 
@@ -1214,7 +1037,7 @@ Instructions:
         log "found PR #${PR_NUMBER}"
       else
         inject_into_session "ERROR: Cannot find open PR for branch ${BRANCH}. Did you push? Verify with git status and git push origin ${BRANCH}, then write PHASE:awaiting_ci."
-        continue
+        return 0
       fi
     fi
 
@@ -1356,7 +1179,7 @@ Instructions:
     fi
 
   # ── PHASE: needs_human ──────────────────────────────────────────────────────
-  elif [ "$CURRENT_PHASE" = "PHASE:needs_human" ]; then
+  elif [ "$phase" = "PHASE:needs_human" ]; then
     status "needs human input on issue #${ISSUE}"
     HUMAN_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
     _issue_url="${CODEBERG_WEB}/issues/${ISSUE}"
@@ -1369,7 +1192,7 @@ Instructions:
     # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
-  elif [ "$CURRENT_PHASE" = "PHASE:done" ]; then
+  elif [ "$phase" = "PHASE:done" ]; then
     status "phase done — merging PR #${PR_NUMBER:-?}"
 
     if [ -z "${PR_NUMBER:-}" ]; then
@@ -1377,7 +1200,7 @@ Instructions:
       notify "PHASE:done but no PR known — needs human attention"
       kill_tmux_session
       cleanup_labels
-      break
+      return 1
     fi
 
     MERGE_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -1391,7 +1214,7 @@ Instructions:
     inject_into_session "Merge failed for PR #${PR_NUMBER}. The orchestrator could not merge automatically. This may be due to merge conflicts or CI. Investigate the PR state and write PHASE:needs_human if human intervention is required."
 
   # ── PHASE: failed ───────────────────────────────────────────────────────────
-  elif [ "$CURRENT_PHASE" = "PHASE:failed" ]; then
+  elif [ "$phase" = "PHASE:failed" ]; then
     FAILURE_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "unspecified")
     log "phase: failed — reason: ${FAILURE_REASON}"
 
@@ -1478,7 +1301,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       kill_tmux_session
       cleanup_worktree
       rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
-      break
+      return 1
 
     else
       # Genuine unrecoverable failure — escalate to supervisor
@@ -1505,12 +1328,44 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
         cleanup_worktree
       fi
       rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
-      break
+      return 1
     fi
 
   else
-    log "WARNING: unknown phase value: ${CURRENT_PHASE}"
+    log "WARNING: unknown phase value: ${phase}"
   fi
-done
+}
+
+status "monitoring phase: ${PHASE_FILE}"
+monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change
+
+# Handle exit reason from monitor_phase_loop
+case "${_MONITOR_LOOP_EXIT:-}" in
+  idle_timeout)
+    notify_ctx \
+      "session idle for 2h — killed. Escalating to gardener." \
+      "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+    # Escalate: write to project-suffixed escalation file so gardener picks it up
+    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+    # Restore labels: remove in-progress, add backlog
+    cleanup_labels
+    curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${ISSUE}/labels" \
+      -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+    CLAIMED=false  # Don't unclaim again in cleanup()
+    if [ -n "${PR_NUMBER:-}" ]; then
+      log "keeping worktree (PR #${PR_NUMBER} still open)"
+    else
+      cleanup_worktree
+    fi
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    ;;
+  crash_recovery_failed)
+    cleanup_labels
+    ;;
+esac
 
 log "dev-agent finished for issue #${ISSUE}"
