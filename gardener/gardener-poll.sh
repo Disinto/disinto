@@ -990,13 +990,47 @@ if [ -s "$ESCALATION_FILE" ]; then
     ESC_ISSUE=$(echo "$esc_entry" | jq -r '.issue // empty')
     ESC_PR=$(echo "$esc_entry" | jq -r '.pr // empty')
     ESC_ATTEMPTS=$(echo "$esc_entry" | jq -r '.attempts // 3')
+    ESC_REASON=$(echo "$esc_entry" | jq -r '.reason // empty')
 
     if [ -z "$ESC_ISSUE" ] || [ -z "$ESC_PR" ]; then
       echo "$esc_entry" >> "$ESCALATION_DONE"
       continue
     fi
 
-    log "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} (${ESC_ATTEMPTS} CI attempt(s))"
+    log "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} reason=${ESC_REASON} (${ESC_ATTEMPTS} CI attempt(s))"
+
+    # Handle idle_timeout escalations — no CI steps to inspect, just notify
+    if [[ "$ESC_REASON" == idle_timeout* ]]; then
+      _issue_url="https://codeberg.org/${CODEBERG_REPO}/issues/${ESC_ISSUE}"
+      sub_title="chore: investigate idle timeout for issue #${ESC_ISSUE}"
+      sub_body="## Dev-agent idle timeout
+
+The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase update and was killed.$([ "${ESC_PR:-0}" != "0" ] && printf '\n\nPR #%s may still be open.' "$ESC_PR")
+
+### What to check
+1. Was the agent stuck waiting for input? Check the issue spec for ambiguity.
+2. Was there an infrastructure issue (tmux crash, disk full, etc.)?
+3. Re-run the issue by restoring the \`backlog\` label if the spec is clear.
+
+### Context
+- Issue: [#${ESC_ISSUE}](${_issue_url})$([ "${ESC_PR:-0}" != "0" ] && printf '\n- PR: #%s' "$ESC_PR")"
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        log "Created idle-timeout sub-issue #${new_issue} for #${ESC_ISSUE}"
+        _esc_total_created=$((_esc_total_created + 1))
+        matrix_send "gardener" "⏱ Created #${new_issue}: idle timeout on #${ESC_ISSUE}" 2>/dev/null || true
+      fi
+
+      echo "$esc_entry" >> "$ESCALATION_DONE"
+      continue
+    fi
 
     # Fetch PR metadata (SHA, mergeable status)
     ESC_PR_DATA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
