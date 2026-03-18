@@ -1239,6 +1239,8 @@ Instructions:
         # Do NOT update LAST_PHASE_MTIME here — leave it stale so the outer
         # loop detects the change on its next tick and dispatches the new phase.
         REVIEW_FOUND=true  # Prevent timeout injection
+        # Clean up review-poll sentinel if it exists (session already advanced)
+        rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
         break
       fi
 
@@ -1271,6 +1273,15 @@ Instructions:
             VERDICT=""
           fi
           [ -n "$VERDICT" ] && log "verdict from formal review: $VERDICT"
+        fi
+
+        # Skip injection if review-poll.sh already injected (sentinel present)
+        REVIEW_SENTINEL="/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+        if [ -n "$VERDICT" ] && [ -f "$REVIEW_SENTINEL" ]; then
+          log "review already injected by review-poll (sentinel exists) — skipping"
+          rm -f "$REVIEW_SENTINEL"
+          REVIEW_FOUND=true
+          break
         fi
 
         if [ "$VERDICT" = "APPROVE" ]; then

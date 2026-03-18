@@ -156,6 +156,8 @@ Instructions:
   tmux delete-buffer -b "review-inject-${pr_num}" 2>/dev/null || true
   rm -f "${inject_tmp}"
   log "  #${pr_num} review (${verdict}) injected into session ${session}"
+  # Write sentinel so dev-agent.sh awaiting_review loop skips its own injection
+  touch "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
 }
 
 while IFS= read -r line; do
