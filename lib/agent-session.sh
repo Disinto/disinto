@@ -7,6 +7,7 @@
 #   agent_wait_for_claude_ready SESSION_NAME [TIMEOUT_SECS]
 #   agent_inject_into_session   SESSION_NAME TEXT
 #   agent_kill_session          SESSION_NAME
+#   monitor_phase_loop          PHASE_FILE IDLE_TIMEOUT_SECS CALLBACK_FN [SESSION_NAME]
 
 # Wait for the Claude ❯ ready prompt in a tmux pane.
 # Returns 0 if ready within TIMEOUT_SECS (default 120), 1 otherwise.
@@ -60,11 +61,13 @@ inject_formula() {
 
 # Monitor a phase file, calling a callback on changes and handling idle timeout.
 # Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, done, failed, break).
-# Args: phase_file idle_timeout_secs callback_fn
+# Args: phase_file idle_timeout_secs callback_fn [session_name]
+#   session_name — tmux session to health-check; falls back to $SESSION_NAME global
 monitor_phase_loop() {
   local phase_file="$1"
   local idle_timeout="$2"
   local callback="$3"
+  local _session="${4:-${SESSION_NAME:-}}"
   local poll_interval="${PHASE_POLL_INTERVAL:-10}"
   local last_mtime=0
   local idle_elapsed=0
@@ -74,7 +77,7 @@ monitor_phase_loop() {
     idle_elapsed=$(( idle_elapsed + poll_interval ))
 
     # Session health check
-    if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+    if ! tmux has-session -t "${_session}" 2>/dev/null; then
       local current_phase
       current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
       case "$current_phase" in
@@ -86,7 +89,7 @@ monitor_phase_loop() {
             "$callback" "PHASE:crashed"
           fi
           # If callback didn't restart session, break
-          if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+          if ! tmux has-session -t "${_session}" 2>/dev/null; then
             _MONITOR_LOOP_EXIT="crashed"
             return 1
           fi
@@ -106,7 +109,7 @@ monitor_phase_loop() {
       # No phase change — check idle timeout
       if [ "$idle_elapsed" -ge "$idle_timeout" ]; then
         _MONITOR_LOOP_EXIT="idle_timeout"
-        agent_kill_session "${SESSION_NAME}"
+        agent_kill_session "${_session}"
         return 0
       fi
       continue
