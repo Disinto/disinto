@@ -17,3 +17,4 @@ metrics/supervisor-metrics.jsonl
 # OS
 .DS_Store
 dev/ci-fixes-*.json
+gardener/dust.jsonl
