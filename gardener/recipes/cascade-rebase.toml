@@ -1,0 +1,16 @@
+# gardener/recipes/cascade-rebase.toml — PR outdated after main moved
+#
+# Trigger: PR mergeable=false (stale branch or dismissed approval)
+# Playbook: rebase only — merge and re-approval happen on subsequent cycles
+#   after CI reruns on the rebased branch (rebase is async via Gitea API)
+
+name        = "cascade-rebase"
+description = "PR outdated after main moved — mergeable=false or stale approval"
+priority    = 20
+
+[trigger]
+pr_mergeable = false
+
+[[playbook]]
+action      = "rebase-pr"
+description = "Rebase PR onto main (async — CI reruns, merge on next cycle)"
