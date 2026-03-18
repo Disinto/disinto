@@ -47,6 +47,22 @@ d.pop(str($pr),None)
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 }
+ci_fix_check_and_increment() {
+  local pr="$1"
+  flock "$CI_FIX_LOCK" python3 -c "
+import json,os
+f='$CI_FIX_TRACKER'
+d=json.load(open(f)) if os.path.exists(f) else {}
+count=d.get(str($pr),0)
+if count>=3:
+    print('exhausted:'+str(count))
+else:
+    count+=1
+    d[str($pr)]=count
+    json.dump(d,open(f,'w'))
+    print('ok:'+str(count))
+" 2>/dev/null || echo "exhausted:99"
+}
 
 # Check whether an issue/PR has been escalated (unprocessed or processed)
 is_escalated() {
@@ -76,25 +92,46 @@ sys.exit(1)
 
 # =============================================================================
 # HELPER: handle CI-exhaustion check/escalate (DRY for 3 call sites)
-# Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
+# Atomically checks and increments the fix counter via ci_fix_check_and_increment;
+# sets CI_FIX_ATTEMPTS to the new count for caller use.
+# Returns 0 if exhausted, 1 if not.
 # =============================================================================
 handle_ci_exhaustion() {
-  local pr_num="$1" issue_num="$2"
-  CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
+  local pr_num="$1" issue_num="$2" result
 
-  if [ "$CI_FIX_ATTEMPTS" -ge 3 ] || is_escalated "$issue_num" "$pr_num"; then
-    log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-    # Only write escalation + alert once (first time hitting 3)
-    if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
-      echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
-      ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
-    fi
+  # Fast path: already in the escalation file — skip without touching counter.
+  if is_escalated "$issue_num" "$pr_num"; then
+    CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
+    log "PR #${pr_num} (issue #${issue_num}) already escalated (${CI_FIX_ATTEMPTS} attempts) — skipping"
     return 0
   fi
 
-  return 1
+  # Single flock-protected call: read + threshold-check + conditional increment.
+  # Prevents two concurrent pollers from both passing the threshold and spawning
+  # duplicate dev-agents for the same PR.
+  result=$(ci_fix_check_and_increment "$pr_num")
+  case "$result" in
+    ok:*)
+      CI_FIX_ATTEMPTS="${result#ok:}"
+      return 1
+      ;;
+    exhausted:*)
+      CI_FIX_ATTEMPTS="${result#exhausted:}"
+      ;;
+    *)
+      CI_FIX_ATTEMPTS=99
+      ;;
+  esac
+
+  log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+  # Only write escalation + alert once (first time hitting 3)
+  if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
+    echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+    matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+    ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
+  fi
+  return 0
 }
 
 # shellcheck disable=SC2034
@@ -150,9 +187,8 @@ try_merge_or_rebase() {
       log "PR #${pr_num} rebase failed — CI exhausted, not spawning"
       return 1
     fi
-    ci_fix_increment "$pr_num"
-    log "PR #${pr_num} rebase failed — spawning dev-agent to fix (attempt $((CI_FIX_ATTEMPTS+1))/3)"
-    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent (attempt $((CI_FIX_ATTEMPTS+1))/3)" 2>/dev/null || true
+    log "PR #${pr_num} rebase failed — spawning dev-agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
+    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent (attempt ${CI_FIX_ATTEMPTS}/3)" 2>/dev/null || true
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
   fi
@@ -291,8 +327,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         # Fall through to backlog scan instead of exit
         :
       else
-        ci_fix_increment "$HAS_PR"
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt $((CI_FIX_ATTEMPTS+1))/3)"
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
         nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
         log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
         exit 0
@@ -362,8 +397,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
     else
-      ci_fix_increment "$PR_NUM"
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt $((CI_FIX_ATTEMPTS+1))/3)"
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for stuck PR #${PR_NUM}"
       exit 0
@@ -439,9 +473,8 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
         # Don't add to WAITING_PRS — escalated PRs should not block new work
         continue
       fi
-      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt $((CI_FIX_ATTEMPTS+1))/3)"
+      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt ${CI_FIX_ATTEMPTS}/3)"
       READY_ISSUE="$ISSUE_NUM"
-      READY_PR_FOR_INCREMENT="$EXISTING_PR"
       break
 
     else
@@ -471,11 +504,6 @@ fi
 # =============================================================================
 # LAUNCH: start dev-agent for the ready issue
 # =============================================================================
-# Deferred CI fix increment — only now that we're actually launching
-if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
-  ci_fix_increment "$READY_PR_FOR_INCREMENT"
-fi
-
 log "launching dev-agent for #${READY_ISSUE}"
 matrix_send "dev" "🚀 Starting dev-agent on issue #${READY_ISSUE}" 2>/dev/null || true
 rm -f "$PREFLIGHT_RESULT"
