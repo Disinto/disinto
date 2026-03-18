@@ -58,6 +58,89 @@ inject_formula() {
   agent_inject_into_session "$@"
 }
 
+# Monitor a phase file, calling a callback on changes and handling idle timeout.
+# Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, done, failed, break).
+# Args: phase_file idle_timeout_secs callback_fn
+monitor_phase_loop() {
+  local phase_file="$1"
+  local idle_timeout="$2"
+  local callback="$3"
+  local poll_interval="${PHASE_POLL_INTERVAL:-10}"
+  local last_mtime=0
+  local idle_elapsed=0
+
+  while true; do
+    sleep "$poll_interval"
+    idle_elapsed=$(( idle_elapsed + poll_interval ))
+
+    # Session health check
+    if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+      local current_phase
+      current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+      case "$current_phase" in
+        PHASE:done|PHASE:failed|PHASE:merged)
+          ;; # terminal — fall through to phase handler
+        *)
+          # Call callback with "crashed" — let agent-specific code handle recovery
+          if type "${callback}" &>/dev/null; then
+            "$callback" "PHASE:crashed"
+          fi
+          # If callback didn't restart session, break
+          if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+            _MONITOR_LOOP_EXIT="crashed"
+            return 1
+          fi
+          idle_elapsed=0
+          continue
+          ;;
+      esac
+    fi
+
+    # Check phase file for changes
+    local phase_mtime
+    phase_mtime=$(stat -c %Y "$phase_file" 2>/dev/null || echo 0)
+    local current_phase
+    current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+
+    if [ -z "$current_phase" ] || [ "$phase_mtime" -le "$last_mtime" ]; then
+      # No phase change — check idle timeout
+      if [ "$idle_elapsed" -ge "$idle_timeout" ]; then
+        _MONITOR_LOOP_EXIT="idle_timeout"
+        agent_kill_session "${SESSION_NAME}"
+        return 0
+      fi
+      continue
+    fi
+
+    # Phase changed
+    last_mtime="$phase_mtime"
+    idle_elapsed=0
+
+    # Terminal phases
+    case "$current_phase" in
+      PHASE:done|PHASE:merged)
+        _MONITOR_LOOP_EXIT="done"
+        if type "${callback}" &>/dev/null; then
+          "$callback" "$current_phase"
+        fi
+        return 0
+        ;;
+      PHASE:failed|PHASE:needs_human)
+        _MONITOR_LOOP_EXIT="$current_phase"
+        if type "${callback}" &>/dev/null; then
+          "$callback" "$current_phase"
+        fi
+        return 0
+        ;;
+    esac
+
+    # Non-terminal phase — call callback
+    if type "${callback}" &>/dev/null; then
+      "$callback" "$current_phase"
+    fi
+  done
+}
+
 # Kill a tmux session gracefully (no-op if not found).
 agent_kill_session() {
   local session="${1:-}"
