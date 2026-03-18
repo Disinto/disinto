@@ -48,7 +48,6 @@ IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 
 # Matrix thread tracking — one thread per issue for conversational notifications
 THREAD_FILE="/tmp/dev-thread-${PROJECT_NAME}-${ISSUE}"
-CODEBERG_WEB="https://codeberg.org/${CODEBERG_REPO}"
 
 # Timing
 PHASE_POLL_INTERVAL=30    # seconds between phase checks
