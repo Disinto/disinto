@@ -1,0 +1,152 @@
+# formulas/groom-backlog.toml — Groom the backlog: triage all tech-debt with verify loop
+
+name        = "groom-backlog"
+description = "Triage and process all tech-debt issues — blockers first, then by impact score, verify to zero"
+version     = 1
+
+[context]
+files = ["README.md", "AGENTS.md", "VISION.md"]
+
+[[steps]]
+id    = "inventory"
+title = "Fetch, score, and classify all tech-debt issues"
+description = """
+Fetch all open tech-debt issues:
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+    jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))]'
+
+For each issue compute a triage score:
+  impact:    blocker=13 / velocity-drag=8 / quality=5 / cosmetic=2
+  effort:    trivial=1 / gardener-can-fix=3 / needs-human=8 / unknown=13
+  score      = impact / effort  (higher = do first)
+  staleness: last update >90 days ago = stale candidate
+
+Flag likely duplicates (similar title/body, >70% word overlap).
+
+Separate into tiers:
+  tier-0 = blockers: issues blocking the factory pipeline (impact >= 13, or flagged as PRIORITY_blockers_starving_factory)
+  tier-1 = high-value: score >= 1.0, gardener can process
+  tier-2 = dust: score < 1.0, cosmetic, single-line, trivial
+
+Print tier counts before proceeding.
+"""
+
+[[steps]]
+id    = "process-blockers"
+title = "Resolve all tier-0 blockers — factory cannot proceed until these reach zero"
+description = """
+Process EVERY tier-0 issue. No skipping.
+
+The bash pre-analysis above may have flagged PRIORITY_blockers_starving_factory issues.
+These are issues that block backlog items but are not themselves labeled backlog.
+The dev-agent is completely starved until they are promoted or resolved.
+
+For each tier-0 issue:
+  - Read the full body: curl -sf -H "Authorization: token $CODEBERG_TOKEN" "$CODEBERG_API/issues/{number}"
+  - If resolvable: promote to backlog — add acceptance criteria, affected files, relabel
+  - If needs human decision: add to ESCALATE block
+  - If invalid / wontfix: close with explanation comment
+
+After completing all tier-0, re-fetch to check for new blockers:
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+    jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))]'
+
+If new tier-0 blockers appeared, process those too.
+Tier-0 MUST reach zero before proceeding to tier-1.
+"""
+needs = ["inventory"]
+
+[[steps]]
+id    = "process-scored"
+title = "Process tier-1 issues in descending score order"
+description = """
+Work through tier-1 issues from highest score to lowest.
+
+For each issue choose ONE action and write its result to the result file:
+
+PROMOTE (substantial work — multi-file, behavioral, architectural, security):
+  1. Read full body
+  2. Add ## Acceptance criteria with checkboxes
+  3. Add ## Affected files section
+  4. Add ## Dependencies if needed
+  5. Relabel from tech-debt to backlog
+  6. Write: echo "ACTION: promoted #NNN to backlog — <reason>" >> "$RESULT_FILE"
+
+DUST (trivial — single-line edit, rename, comment, style, whitespace):
+  Write: echo 'DUST: {"issue": NNN, "group": "<file-or-subsystem>", "title": "...", "reason": "..."}' >> "$RESULT_FILE"
+  Group by file or subsystem: e.g. "gardener", "lib/env.sh", "dev-poll"
+  Do NOT close the issue — the script auto-bundles groups of 3+ into a backlog issue.
+
+DUPLICATE (>80% overlap after reading both bodies — confirm before closing):
+  Post comment: curl -X POST ... /issues/NNN/comments -d '{"body":"Duplicate of #OLDER"}'
+  Close:        curl -X PATCH ... /issues/NNN -d '{"state":"closed"}'
+  Write: echo "ACTION: closed #NNN as duplicate of #OLDER" >> "$RESULT_FILE"
+
+ESCALATE (ambiguous scope, architectural question, needs human decision):
+  Collect into the ESCALATE block written to the result file at the end.
+
+Dust vs ore rules:
+  Dust: comment fix, variable rename, whitespace/formatting, single-line edit, trivial cleanup with no behavior change
+  Ore:  multi-file changes, behavioral fixes, architectural improvements, security/correctness issues
+
+Sibling dependency rule (CRITICAL):
+  Issues created from the same PR review or code audit are SIBLINGS — independent work items.
+  NEVER add bidirectional ## Dependencies between siblings — this creates permanent deadlocks.
+  Use ## Related for cross-references: "## Related\n- #NNN (sibling)"
+  The dev-poll parser only reads ## Dependencies / ## Depends on / ## Blocked by headers.
+
+Every 5 issues processed, check for new tier-0 blockers. If found, stop and handle them before continuing.
+"""
+needs = ["process-blockers"]
+
+[[steps]]
+id    = "classify-dust"
+title = "Triage tier-2 dust items"
+description = """
+For tier-2 items (trivial, cosmetic, score < 1.0):
+  - Write DUST lines grouped by file/subsystem (script auto-bundles 3+ into one backlog issue)
+  - Close stale/invalid with explanation comment
+  - Close duplicates with cross-reference comment
+
+These do not need promotion — just classification so they leave the tech-debt queue.
+The script handles the bundling; emit correct DUST lines for each item.
+"""
+needs = ["process-scored"]
+
+[[steps]]
+id    = "verify"
+title = "Verify completion and loop until zero tech-debt"
+description = """
+Re-fetch ALL open tech-debt issues and count them:
+  REMAINING=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+    jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))] | length')
+  echo "Remaining tech-debt: $REMAINING"
+
+Check each tier:
+  tier-0 count == 0  (HARD REQUIREMENT — factory is blocked until zero)
+  tier-1 all processed or escalated
+  tier-2 all classified
+
+If tier-0 > 0:
+  Go back to process-blockers. Repeat until tier-0 == 0.
+
+If tier-1 has unprocessed issues:
+  Go back to process-scored.
+
+If tier-2 still has unclassified dust:
+  Go back to classify-dust.
+
+If all tiers clear, write the completion summary and signal done:
+  echo "ACTION: grooming complete — 0 tech-debt remaining" >> "$RESULT_FILE"
+  echo 'PHASE:done' > "$PHASE_FILE"
+
+Escalation format (for items needing human decision — write to result file):
+  printf 'ESCALATE\n1. #NNN "title" — reason (a) option1 (b) option2 (c) option3\n' >> "$RESULT_FILE"
+
+On unrecoverable error (API unavailable, repeated failures):
+  printf 'PHASE:failed\nReason: %s\n' 'describe what failed' > "$PHASE_FILE"
+"""
+needs = ["classify-dust"]
