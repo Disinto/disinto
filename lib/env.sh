@@ -82,7 +82,8 @@ matrix_send() {
   [ -z "${MATRIX_TOKEN:-}" ] && return 0
   local prefix="$1" msg="$2" thread_id="${3:-}" ctx_tag="${4:-}"
   local room_encoded="${MATRIX_ROOM_ID//!/%21}"
-  local txn="$(date +%s%N)$$"
+  local txn
+  txn="$(date +%s%N)$$"
   local body
   if [ -n "$thread_id" ]; then
     body=$(jq -nc --arg m "[${prefix}] ${msg}" --arg t "$thread_id" \
