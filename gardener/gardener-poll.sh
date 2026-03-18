@@ -487,7 +487,398 @@ Fix all items above in a single PR. Each is a small change (rename, comment, sty
   done <<< "$DUST_GROUPS"
 fi
 
-# ── Process dev-agent escalations (per-project) ──────────────────────────
+
+# ── Recipe matching engine ────────────────────────────────────────────────
+RECIPE_DIR="$SCRIPT_DIR/recipes"
+
+# match_recipe — Find first matching recipe for escalation context
+# Args: $1=step_names_json  $2=output_file_path  $3=pr_info_json
+# Stdout: JSON {name, playbook} — "generic" fallback if no match
+match_recipe() {
+  RECIPE_DIR="$RECIPE_DIR" python3 - "$1" "$2" "$3" <<'PYEOF'
+import sys, os, re, json, glob, tomllib
+
+recipe_dir = os.environ["RECIPE_DIR"]
+recipes = []
+for path in sorted(glob.glob(os.path.join(recipe_dir, "*.toml"))):
+    with open(path, "rb") as f:
+        recipes.append(tomllib.load(f))
+
+recipes.sort(key=lambda r: r.get("priority", 50))
+
+step_names = json.loads(sys.argv[1])
+output_path = sys.argv[2]
+pr_info = json.loads(sys.argv[3])
+
+step_output = ""
+if os.path.isfile(output_path):
+    with open(output_path) as f:
+        step_output = f.read()
+
+for recipe in recipes:
+    trigger = recipe.get("trigger", {})
+    matched = True
+
+    if matched and "step_name" in trigger:
+        if not any(re.search(trigger["step_name"], n) for n in step_names):
+            matched = False
+
+    if matched and "output" in trigger:
+        if not re.search(trigger["output"], step_output):
+            matched = False
+
+    if matched and "pr_mergeable" in trigger:
+        if pr_info.get("mergeable") != trigger["pr_mergeable"]:
+            matched = False
+
+    if matched and "pr_files" in trigger:
+        changed = pr_info.get("changed_files", [])
+        if not any(re.search(trigger["pr_files"], f) for f in changed):
+            matched = False
+
+    if matched and "min_attempts" in trigger:
+        if pr_info.get("attempts", 1) < trigger["min_attempts"]:
+            matched = False
+
+    if matched and trigger.get("failures_on_unchanged"):
+        # Check if errors reference files NOT changed in the PR
+        error_files = set(re.findall(r"(?:In |Error[: ]+)(\S+\.\w+)", step_output))
+        changed = set(pr_info.get("changed_files", []))
+        if not error_files or error_files <= changed:
+            matched = False
+
+    if matched:
+        print(json.dumps({"name": recipe["name"], "playbook": recipe.get("playbook", [])}))
+        sys.exit(0)
+
+print(json.dumps({"name": "generic", "playbook": [{"action": "create-generic-issue"}]}))
+PYEOF
+}
+
+# ── Playbook action functions ────────────────────────────────────────────
+# Globals used by playbook functions (set by escalation loop):
+#   ESC_ISSUE, ESC_PR, ESC_ATTEMPTS, ESC_PIPELINE — escalation context
+#   _PB_FAILED_STEPS — "pid\tname" per line of failed CI steps
+#   _PB_LOG_DIR — temp dir with step-{pid}.log files
+#   _PB_SUB_CREATED — sub-issue counter for current escalation
+#   _esc_total_created — running total across all escalations
+
+# Create per-file ShellCheck sub-issues from CI output
+playbook_shellcheck_per_file() {
+  local step_pid step_name step_log_file step_logs
+  while IFS=$'\t' read -r step_pid step_name; do
+    [ -z "$step_pid" ] && continue
+    echo "$step_name" | grep -qi "shellcheck" || continue
+    step_log_file="${_PB_LOG_DIR}/step-${step_pid}.log"
+    [ -f "$step_log_file" ] || continue
+    step_logs=$(cat "$step_log_file")
+
+    local sc_files
+    sc_files=$(echo "$step_logs" | grep -oP '(?<=In )\S+(?= line \d+:)' | sort -u || true)
+
+    local sc_file file_errors sc_codes sub_title sub_body new_issue
+    while IFS= read -r sc_file; do
+      [ -z "$sc_file" ] && continue
+      # grep -F for literal filename match (dots in filenames are regex wildcards)
+      file_errors=$(echo "$step_logs" | grep -F -A3 "In ${sc_file} line" | head -30)
+      # SC codes only from this file's errors, not the whole step log
+      sc_codes=$(echo "$file_errors" | grep -oP 'SC\d+' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
+
+      sub_title="fix: ShellCheck errors in ${sc_file} (from PR #${ESC_PR})"
+      sub_body="## ShellCheck CI failure — \`${sc_file}\`
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Errors
+\`\`\`
+${file_errors}
+\`\`\`
+
+Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${ESC_PR} CI passes.
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}
+- Pipeline: #${ESC_PIPELINE} (step: ${step_name})"
+
+      new_issue=$(curl -sf -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${CODEBERG_API}/issues" \
+        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+      if [ -n "$new_issue" ]; then
+        log "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
+        _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+        _esc_total_created=$((_esc_total_created + 1))
+        matrix_send "gardener" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+      fi
+    done <<< "$sc_files"
+  done <<< "$_PB_FAILED_STEPS"
+}
+
+# Create one combined issue for non-ShellCheck CI failures
+playbook_create_generic_issue() {
+  local generic_fail="" step_pid step_name step_log_file step_logs esc_section
+  while IFS=$'\t' read -r step_pid step_name; do
+    [ -z "$step_pid" ] && continue
+    # Skip shellcheck steps (handled by shellcheck-per-file action)
+    echo "$step_name" | grep -qi "shellcheck" && continue
+    step_log_file="${_PB_LOG_DIR}/step-${step_pid}.log"
+    [ -f "$step_log_file" ] || continue
+    step_logs=$(cat "$step_log_file")
+
+    esc_section="=== ${step_name} ===
+$(echo "$step_logs" | tail -50)"
+    if [ -z "$generic_fail" ]; then
+      generic_fail="$esc_section"
+    else
+      generic_fail="${generic_fail}
+${esc_section}"
+    fi
+  done <<< "$_PB_FAILED_STEPS"
+
+  [ -z "$generic_fail" ] && return 0
+
+  local sub_title sub_body new_issue
+  sub_title="fix: CI failures in PR #${ESC_PR} (from issue #${ESC_ISSUE})"
+  sub_body="## CI failure — fix required
+
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
+
+### Failed step output
+\`\`\`
+${generic_fail}
+\`\`\`
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}${ESC_PIPELINE:+
+- Pipeline: #${ESC_PIPELINE}}"
+
+  new_issue=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues" \
+    -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+  if [ -n "$new_issue" ]; then
+    log "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    _esc_total_created=$((_esc_total_created + 1))
+    matrix_send "gardener" "📋 Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
+  fi
+}
+
+# Create issue to make failing CI step non-blocking (chicken-egg-ci)
+playbook_make_step_non_blocking() {
+  local failing_steps sub_title sub_body new_issue
+  failing_steps=$(echo "$_PB_FAILED_STEPS" | cut -f2 | tr '\n' ', ' | sed 's/,$//' || true)
+
+  sub_title="fix: make CI step non-blocking for pre-existing failures (PR #${ESC_PR})"
+  sub_body="## Chicken-egg CI failure
+
+PR #${ESC_PR} (issue #${ESC_ISSUE}) introduces a CI step that fails on pre-existing code.
+
+Failing step(s): ${failing_steps}
+
+### Playbook
+1. Add \`|| true\` to the failing step(s) in the Woodpecker config
+2. This makes the step advisory (non-blocking) until pre-existing violations are fixed
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}${ESC_PIPELINE:+
+- Pipeline: #${ESC_PIPELINE}}"
+
+  new_issue=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues" \
+    -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+  if [ -n "$new_issue" ]; then
+    log "Created #${new_issue}: make step non-blocking (chicken-egg from #${ESC_ISSUE})"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    _esc_total_created=$((_esc_total_created + 1))
+    matrix_send "gardener" "📋 Created #${new_issue}: make CI step non-blocking (chicken-egg, from #${ESC_ISSUE})" 2>/dev/null || true
+  fi
+}
+
+# Create follow-up issue to remove || true bypass (chicken-egg-ci)
+playbook_create_followup_remove_bypass() {
+  local sub_title sub_body new_issue
+  sub_title="fix: remove || true bypass once pre-existing violations are fixed (PR #${ESC_PR})"
+  sub_body="## Follow-up: remove CI bypass
+
+After all pre-existing violation issues from PR #${ESC_PR} are resolved, remove the \`|| true\` bypass from the CI step to make it blocking again.
+
+### Depends on
+All per-file fix issues created from escalated issue #${ESC_ISSUE}.
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}"
+
+  new_issue=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues" \
+    -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+  if [ -n "$new_issue" ]; then
+    log "Created follow-up #${new_issue}: remove bypass (from #${ESC_ISSUE})"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    _esc_total_created=$((_esc_total_created + 1))
+  fi
+}
+
+# Rebase PR onto main branch (cascade-rebase)
+playbook_rebase_pr() {
+  log "Rebasing PR #${ESC_PR} onto ${PRIMARY_BRANCH}"
+  local result
+  result=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/pulls/${ESC_PR}/update" \
+    -d '{"style":"rebase"}' 2>/dev/null) || true
+
+  if [ -n "$result" ]; then
+    log "Rebase initiated for PR #${ESC_PR}"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    matrix_send "gardener" "🔄 Rebased PR #${ESC_PR} onto ${PRIMARY_BRANCH} (cascade-rebase, from #${ESC_ISSUE})" 2>/dev/null || true
+  else
+    log "WARNING: rebase API call failed for PR #${ESC_PR}"
+  fi
+}
+
+# Re-approve PR if review was dismissed by force-push (cascade-rebase)
+playbook_re_approve_if_dismissed() {
+  local reviews dismissed
+  reviews=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${CODEBERG_API}/pulls/${ESC_PR}/reviews" 2>/dev/null || true)
+  [ -z "$reviews" ] || [ "$reviews" = "null" ] && return 0
+
+  dismissed=$(echo "$reviews" | jq -r '[.[] | select(.state == "APPROVED" and .dismissed == true)] | length' 2>/dev/null || true)
+  if [ "${dismissed:-0}" -gt 0 ]; then
+    curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/pulls/${ESC_PR}/reviews" \
+      -d '{"event":"APPROVED","body":"Re-approved after rebase (cascade-rebase recipe)"}' 2>/dev/null || true
+    log "Re-approved PR #${ESC_PR} after rebase"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+  fi
+}
+
+# Retry merging the PR (cascade-rebase)
+playbook_retry_merge() {
+  local result
+  result=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/pulls/${ESC_PR}/merge" \
+    -d '{"Do":"rebase","delete_branch_after_merge":true}' 2>/dev/null) || true
+
+  if [ -n "$result" ]; then
+    log "Merge retry initiated for PR #${ESC_PR}"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    matrix_send "gardener" "✅ Merge retry for PR #${ESC_PR} (cascade-rebase, from #${ESC_ISSUE})" 2>/dev/null || true
+  else
+    log "WARNING: merge retry failed for PR #${ESC_PR}"
+  fi
+}
+
+# Retrigger CI pipeline (flaky-test)
+playbook_retrigger_ci() {
+  [ -z "$ESC_PIPELINE" ] && return 0
+  # Max 2 retriggers per issue spec
+  if [ "${ESC_ATTEMPTS:-1}" -ge 3 ]; then
+    log "Max retriggers reached for pipeline #${ESC_PIPELINE} (${ESC_ATTEMPTS} attempts)"
+    return 0
+  fi
+  log "Retriggering CI pipeline #${ESC_PIPELINE} (attempt ${ESC_ATTEMPTS})"
+  curl -sf -X POST \
+    -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
+    "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null || true
+  _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+  matrix_send "gardener" "🔄 Retriggered CI for PR #${ESC_PR} (flaky-test, attempt ${ESC_ATTEMPTS})" 2>/dev/null || true
+}
+
+# Quarantine flaky test and create fix issue (flaky-test)
+playbook_quarantine_test() {
+  # Only quarantine if retriggers exhausted
+  if [ "${ESC_ATTEMPTS:-1}" -lt 3 ]; then
+    return 0
+  fi
+
+  local failing_steps sub_title sub_body new_issue
+  failing_steps=$(echo "$_PB_FAILED_STEPS" | cut -f2 | tr '\n' ', ' | sed 's/,$//' || true)
+
+  sub_title="fix: quarantine flaky test (PR #${ESC_PR}, from #${ESC_ISSUE})"
+  sub_body="## Flaky test detected
+
+CI for PR #${ESC_PR} (issue #${ESC_ISSUE}) failed intermittently across ${ESC_ATTEMPTS} attempts.
+
+Failing step(s): ${failing_steps:-unknown}
+
+### Playbook
+1. Identify the flaky test(s) from CI output
+2. Quarantine (skip/mark pending) the flaky test(s)
+3. Create targeted fix for the root cause
+
+### Context
+- Parent issue: #${ESC_ISSUE}
+- PR: #${ESC_PR}${ESC_PIPELINE:+
+- Pipeline: #${ESC_PIPELINE}}"
+
+  new_issue=$(curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues" \
+    -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
+      '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
+
+  if [ -n "$new_issue" ]; then
+    log "Created quarantine issue #${new_issue} for flaky test (from #${ESC_ISSUE})"
+    _PB_SUB_CREATED=$((_PB_SUB_CREATED + 1))
+    _esc_total_created=$((_esc_total_created + 1))
+    matrix_send "gardener" "📋 Created #${new_issue}: quarantine flaky test (from #${ESC_ISSUE})" 2>/dev/null || true
+  fi
+}
+
+# run_playbook — Execute matched recipe's playbook actions
+# Args: $1=recipe_json from match_recipe
+run_playbook() {
+  local recipe_json="$1"
+  local recipe_name actions action
+  recipe_name=$(echo "$recipe_json" | jq -r '.name')
+  actions=$(echo "$recipe_json" | jq -r '.playbook[].action' 2>/dev/null || true)
+
+  while IFS= read -r action; do
+    [ -z "$action" ] && continue
+    case "$action" in
+      shellcheck-per-file)           playbook_shellcheck_per_file ;;
+      create-per-file-issues)        playbook_shellcheck_per_file ;;
+      create-generic-issue)          playbook_create_generic_issue ;;
+      make-step-non-blocking)        playbook_make_step_non_blocking ;;
+      create-followup-remove-bypass) playbook_create_followup_remove_bypass ;;
+      rebase-pr)                     playbook_rebase_pr ;;
+      re-approve-if-dismissed)       playbook_re_approve_if_dismissed ;;
+      retry-merge)                   playbook_retry_merge ;;
+      retrigger-ci)                  playbook_retrigger_ci ;;
+      quarantine-test)               playbook_quarantine_test ;;
+      label-backlog)                 ;; # default label, no-op (issues created with backlog)
+      *)                             log "WARNING: unknown playbook action '${action}' in recipe '${recipe_name}'" ;;
+    esac
+  done <<< "$actions"
+}
+
+# ── Process dev-agent escalations (per-project, recipe-driven) ───────────
 ESCALATION_FILE="${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
 ESCALATION_DONE="${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.done.jsonl"
 
@@ -516,15 +907,13 @@ if [ -s "$ESCALATION_FILE" ]; then
 
     log "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} (${ESC_ATTEMPTS} CI attempt(s))"
 
-    # Fetch the failing pipeline for this PR
-    ESC_PR_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/pulls/${ESC_PR}" 2>/dev/null | jq -r '.head.sha // ""') || true
+    # Fetch PR metadata (SHA, mergeable status)
+    ESC_PR_DATA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${CODEBERG_API}/pulls/${ESC_PR}" 2>/dev/null || true)
+    ESC_PR_SHA=$(echo "$ESC_PR_DATA" | jq -r '.head.sha // ""')
+    _PB_PR_MERGEABLE=$(echo "$ESC_PR_DATA" | jq '.mergeable // null')
 
     ESC_PIPELINE=""
-    ESC_SUB_ISSUES_CREATED=0
-    ESC_GENERIC_FAIL=""
-    ESC_LOGS_AVAILABLE=0
-
     if [ -n "$ESC_PR_SHA" ]; then
       # Validate SHA is a 40-char hex string before interpolating into SQL
       if [[ "$ESC_PR_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
@@ -534,8 +923,14 @@ if [ -s "$ESCALATION_FILE" ]; then
       fi
     fi
 
+    # Fetch failed CI steps and their logs into temp dir
+    _PB_FAILED_STEPS=""
+    _PB_LOG_DIR=$(mktemp -d /tmp/recipe-logs-XXXXXX)
+    _PB_SUB_CREATED=0
+    _PB_LOGS_AVAILABLE=0
+
     if [ -n "$ESC_PIPELINE" ]; then
-      FAILED_STEPS=$(curl -sf \
+      _PB_FAILED_STEPS=$(curl -sf \
         -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
         "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines/${ESC_PIPELINE}" 2>/dev/null | \
         jq -r '.workflows[]?.children[]? | select(.state=="failure") | "\(.pid)\t\(.name)"' 2>/dev/null || true)
@@ -544,110 +939,49 @@ if [ -s "$ESCALATION_FILE" ]; then
         [ -z "$step_pid" ] && continue
         [[ "$step_pid" =~ ^[0-9]+$ ]] || { log "WARNING: invalid step_pid '${step_pid}' — skipping"; continue; }
         step_logs=$(woodpecker-cli pipeline log show "${CODEBERG_REPO}" "${ESC_PIPELINE}" "${step_pid}" 2>/dev/null | tail -150 || true)
-        [ -z "$step_logs" ] && continue
-        ESC_LOGS_AVAILABLE=1
-
-        if echo "$step_name" | grep -qi "shellcheck"; then
-          # Create one sub-issue per file with ShellCheck errors
-          sc_files=$(echo "$step_logs" | grep -oP '(?<=In )\S+(?= line \d+:)' | sort -u || true)
-
-          while IFS= read -r sc_file; do
-            [ -z "$sc_file" ] && continue
-            # grep -F for literal filename match (dots in filenames are regex wildcards)
-            file_errors=$(echo "$step_logs" | grep -F -A3 "In ${sc_file} line" | head -30)
-            # SC codes only from this file's errors, not the whole step log
-            sc_codes=$(echo "$file_errors" | grep -oP 'SC\d+' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
-
-            sub_title="fix: ShellCheck errors in ${sc_file} (from PR #${ESC_PR})"
-            sub_body="## ShellCheck CI failure — \`${sc_file}\`
-
-Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
-
-### Errors
-\`\`\`
-${file_errors}
-\`\`\`
-
-Fix all ShellCheck errors${sc_codes:+ (${sc_codes})} in \`${sc_file}\` so PR #${ESC_PR} CI passes.
-
-### Context
-- Parent issue: #${ESC_ISSUE}
-- PR: #${ESC_PR}
-- Pipeline: #${ESC_PIPELINE} (step: ${step_name})"
-
-            new_issue=$(curl -sf -X POST \
-              -H "Authorization: token ${CODEBERG_TOKEN}" \
-              -H "Content-Type: application/json" \
-              "${CODEBERG_API}/issues" \
-              -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-                '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
-
-            if [ -n "$new_issue" ]; then
-              log "Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from #${ESC_ISSUE})"
-              ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
-              _esc_total_created=$((_esc_total_created + 1))
-              matrix_send "gardener" "📋 Created sub-issue #${new_issue}: ShellCheck in ${sc_file} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
-            fi
-          done <<< "$sc_files"
-
-        else
-          # Accumulate non-ShellCheck failures for one combined issue
-          esc_section="=== ${step_name} ===
-$(echo "$step_logs" | tail -50)"
-          if [ -z "$ESC_GENERIC_FAIL" ]; then
-            ESC_GENERIC_FAIL="$esc_section"
-          else
-            ESC_GENERIC_FAIL="${ESC_GENERIC_FAIL}
-${esc_section}"
-          fi
+        if [ -n "$step_logs" ]; then
+          echo "$step_logs" > "${_PB_LOG_DIR}/step-${step_pid}.log"
+          _PB_LOGS_AVAILABLE=1
         fi
-      done <<< "$FAILED_STEPS"
+      done <<< "$_PB_FAILED_STEPS"
     fi
 
-    # Create one sub-issue for all non-ShellCheck CI failures
-    if [ -n "$ESC_GENERIC_FAIL" ]; then
-      sub_title="fix: CI failures in PR #${ESC_PR} (from issue #${ESC_ISSUE})"
-      sub_body="## CI failure — fix required
-
-Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)).
-
-### Failed step output
-\`\`\`
-${ESC_GENERIC_FAIL}
-\`\`\`
-
-### Context
-- Parent issue: #${ESC_ISSUE}
-- PR: #${ESC_PR}${ESC_PIPELINE:+
-- Pipeline: #${ESC_PIPELINE}}"
-
-      new_issue=$(curl -sf -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${CODEBERG_API}/issues" \
-        -d "$(jq -nc --arg t "$sub_title" --arg b "$sub_body" \
-          '{"title":$t,"body":$b,"labels":["backlog"]}')" 2>/dev/null | jq -r '.number // ""') || true
-
-      if [ -n "$new_issue" ]; then
-        log "Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from #${ESC_ISSUE})"
-        ESC_SUB_ISSUES_CREATED=$((ESC_SUB_ISSUES_CREATED + 1))
-        _esc_total_created=$((_esc_total_created + 1))
-        matrix_send "gardener" "📋 Created sub-issue #${new_issue}: CI failures for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
-      fi
+    # Fetch PR changed files for recipe matching
+    _PB_PR_FILES_JSON="[]"
+    _PB_PR_FILES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${CODEBERG_API}/pulls/${ESC_PR}/files" 2>/dev/null | jq -r '.[].filename // empty' 2>/dev/null || true)
+    if [ -n "$_PB_PR_FILES" ]; then
+      _PB_PR_FILES_JSON=$(echo "$_PB_PR_FILES" | jq -Rsc 'split("\n") | map(select(length > 0))')
     fi
 
-    # Fallback: no sub-issues created — differentiate logs-unavailable from creation failure
-    if [ "$ESC_SUB_ISSUES_CREATED" -eq 0 ]; then
+    # Build recipe matching context
+    _RECIPE_STEP_NAMES=$(echo "$_PB_FAILED_STEPS" | cut -f2 | jq -Rsc 'split("\n") | map(select(length > 0))')
+    _RECIPE_OUTPUT_FILE="${_PB_LOG_DIR}/all-output.txt"
+    cat "${_PB_LOG_DIR}"/step-*.log > "$_RECIPE_OUTPUT_FILE" 2>/dev/null || touch "$_RECIPE_OUTPUT_FILE"
+    _RECIPE_PR_INFO=$(jq -nc \
+      --argjson m "${_PB_PR_MERGEABLE:-null}" \
+      --argjson a "${ESC_ATTEMPTS}" \
+      --argjson files "${_PB_PR_FILES_JSON}" \
+      '{mergeable:$m, attempts:$a, changed_files:$files}')
+
+    # Match escalation against recipes and execute playbook
+    MATCHED_RECIPE=$(match_recipe "$_RECIPE_STEP_NAMES" "$_RECIPE_OUTPUT_FILE" "$_RECIPE_PR_INFO" 2>/dev/null \
+      || echo '{"name":"generic","playbook":[{"action":"create-generic-issue"}]}')
+    RECIPE_NAME=$(echo "$MATCHED_RECIPE" | jq -r '.name')
+    log "Recipe matched: ${RECIPE_NAME} for #${ESC_ISSUE} PR #${ESC_PR}"
+
+    run_playbook "$MATCHED_RECIPE"
+
+    # Fallback: no sub-issues created — create investigation issue
+    if [ "$_PB_SUB_CREATED" -eq 0 ]; then
       sub_title="fix: investigate CI failure for PR #${ESC_PR} (from issue #${ESC_ISSUE})"
-      if [ "$ESC_LOGS_AVAILABLE" -eq 1 ]; then
-        # Logs were fetched but all issue creation API calls failed
+      if [ "$_PB_LOGS_AVAILABLE" -eq 1 ]; then
         sub_body="## CI failure — investigation required
 
-Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). CI logs were retrieved but sub-issue creation failed (API error).
+Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). Recipe '${RECIPE_NAME}' matched but produced no sub-issues.
 
 Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the PR can merge."
       else
-        # Could not retrieve CI logs at all
         sub_body="## CI failure — investigation required
 
 Spawned by gardener from escalated issue #${ESC_ISSUE} (PR #${ESC_PR} failed CI after ${ESC_ATTEMPTS} attempt(s)). CI logs were unavailable at escalation time.
@@ -668,6 +1002,9 @@ Check PR #${ESC_PR} CI output, identify the failing checks, and fix them so the 
         matrix_send "gardener" "📋 Created sub-issue #${new_issue}: investigate CI for PR #${ESC_PR} (from escalated #${ESC_ISSUE})" 2>/dev/null || true
       fi
     fi
+
+    # Cleanup temp files
+    rm -rf "$_PB_LOG_DIR"
 
     # Mark as processed
     echo "$esc_entry" >> "$ESCALATION_DONE"

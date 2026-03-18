@@ -1,0 +1,23 @@
+# gardener/recipes/cascade-rebase.toml — PR outdated after main moved
+#
+# Trigger: PR mergeable=false (stale branch or dismissed approval)
+# Playbook: rebase, re-approve if dismissed, retry merge
+
+name        = "cascade-rebase"
+description = "PR outdated after main moved — mergeable=false or stale approval"
+priority    = 20
+
+[trigger]
+pr_mergeable = false
+
+[[playbook]]
+action      = "rebase-pr"
+description = "Rebase PR onto main"
+
+[[playbook]]
+action      = "re-approve-if-dismissed"
+description = "Re-approve if approval was dismissed by push"
+
+[[playbook]]
+action      = "retry-merge"
+description = "Retry merge"
