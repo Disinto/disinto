@@ -22,13 +22,14 @@ source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 # Track CI fix attempts per PR to avoid infinite respawn loops
 CI_FIX_TRACKER="${FACTORY_ROOT}/dev/ci-fixes-${PROJECT_NAME:-harb}.json"
+CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
 ci_fix_count() {
   local pr="$1"
-  python3 -c "import json,sys;d=json.load(open('$CI_FIX_TRACKER')) if __import__('os').path.exists('$CI_FIX_TRACKER') else {};print(d.get(str($pr),0))" 2>/dev/null || echo 0
+  flock "$CI_FIX_LOCK" python3 -c "import json,sys;d=json.load(open('$CI_FIX_TRACKER')) if __import__('os').path.exists('$CI_FIX_TRACKER') else {};print(d.get(str($pr),0))" 2>/dev/null || echo 0
 }
 ci_fix_increment() {
   local pr="$1"
-  python3 -c "
+  flock "$CI_FIX_LOCK" python3 -c "
 import json,os
 f='$CI_FIX_TRACKER'
 d=json.load(open(f)) if os.path.exists(f) else {}
@@ -38,7 +39,7 @@ json.dump(d,open(f,'w'))
 }
 ci_fix_reset() {
   local pr="$1"
-  python3 -c "
+  flock "$CI_FIX_LOCK" python3 -c "
 import json,os
 f='$CI_FIX_TRACKER'
 d=json.load(open(f)) if os.path.exists(f) else {}
