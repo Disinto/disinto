@@ -392,6 +392,14 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   ISSUE_NUM=$(echo "$BACKLOG_JSON" | jq -r ".[$i].number")
   ISSUE_BODY=$(echo "$BACKLOG_JSON" | jq -r ".[$i].body // \"\"")
 
+  # Formula guard: formula-labeled issues must not be picked up by dev-agent.
+  # A formula issue that accidentally acquires the backlog label should be skipped.
+  ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
+  if echo "$ISSUE_LABELS" | grep -qw 'formula'; then
+    log "issue #${ISSUE_NUM} has 'formula' label — skipping in backlog scan"
+    continue
+  fi
+
   if ! issue_is_ready "$ISSUE_NUM" "$ISSUE_BODY"; then
     continue
   fi
