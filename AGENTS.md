@@ -15,11 +15,11 @@ See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-poll.sh — backlog grooming
+├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
 ├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
-├── lib/           env.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
+├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config
 ├── formulas/      Issue templates
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, etc.)
@@ -48,10 +48,10 @@ disinto/
 # ShellCheck all scripts
 shellcheck dev/dev-poll.sh dev/dev-agent.sh dev/phase-test.sh \
            review/review-poll.sh review/review-pr.sh \
-           gardener/gardener-poll.sh \
+           gardener/gardener-poll.sh gardener/gardener-agent.sh \
            supervisor/supervisor-poll.sh supervisor/update-prompt.sh \
            lib/env.sh lib/ci-debug.sh lib/ci-helpers.sh lib/load-project.sh \
-           lib/parse-deps.sh lib/matrix_listener.sh
+           lib/parse-deps.sh lib/matrix_listener.sh lib/agent-session.sh
 
 # Run phase protocol test
 bash dev/phase-test.sh
@@ -116,10 +116,11 @@ Claude to fix or escalate to a human via Matrix.
 optional project TOML argument.
 
 **Key files**:
-- `gardener/gardener-poll.sh` — All-in-one: bash pre-analysis (duplicates, missing criteria, staleness, etc.) then `claude -p` for remediation
+- `gardener/gardener-poll.sh` — Cron wrapper: lock, escalation-reply injection for dev sessions, calls `gardener-agent.sh`, then processes dev-agent CI escalations via recipe engine
+- `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE), handles dust bundling
 
 **Environment variables consumed**:
-- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`
+- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `CLAUDE_TIMEOUT`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
@@ -200,6 +201,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, and vault reply routing. Run as systemd service. | Standalone daemon |
+| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`. | gardener-agent.sh |
 
 ---
 
