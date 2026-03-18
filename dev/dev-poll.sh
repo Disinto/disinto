@@ -163,54 +163,6 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
-# HELPER: try merge, rebase if mergeable=false, then retry once
-try_merge_or_rebase() {
-  local pr_num="$1" issue_num="$2" branch="$3"
-  local merge_code
-
-  merge_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${API}/pulls/${pr_num}/merge" \
-    -d '{"Do":"merge","delete_branch_after_merge":true}')
-
-  if [ "$merge_code" = "200" ] || [ "$merge_code" = "204" ]; then
-    log "PR #${pr_num} merged! Closing #${issue_num}"
-    curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${issue_num}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-    curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
-    matrix_send "dev" "✅ PR #${pr_num} merged! Issue #${issue_num} done." 2>/dev/null || true
-    ci_fix_reset "$pr_num"
-    return 0
-  fi
-
-  # Merge failed — always try rebase (Codeberg mergeable field is unreliable)
-  log "PR #${pr_num} merge failed (HTTP ${merge_code}) — attempting rebase"
-  matrix_send "dev" "🔀 PR #${pr_num} merge failed (${merge_code}) — auto-rebasing" 2>/dev/null || true
-  local worktree="/tmp/rebase-pr-${pr_num}"
-  rm -rf "$worktree"
-  git -C "${PROJECT_REPO_ROOT}" fetch origin 2>/dev/null || true
-  if git -C "${PROJECT_REPO_ROOT}" worktree add "$worktree" "$branch" 2>/dev/null &&
-     git -C "$worktree" rebase "origin/${PRIMARY_BRANCH}" 2>/dev/null &&
-     git -C "$worktree" push --force-with-lease origin "$branch" 2>/dev/null; then
-    log "PR #${pr_num} rebased — CI will re-run, merge on next poll"
-    git -C "${PROJECT_REPO_ROOT}" worktree remove "$worktree" 2>/dev/null || true
-  else
-    git -C "${PROJECT_REPO_ROOT}" worktree remove --force "$worktree" 2>/dev/null || true
-    if handle_ci_exhaustion "$pr_num" "$issue_num"; then
-      log "PR #${pr_num} rebase failed — CI exhausted, not spawning"
-      return 1
-    fi
-    log "PR #${pr_num} rebase failed — spawning dev-agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
-    matrix_send "dev" "❌ PR #${pr_num} rebase failed — spawning dev-agent (attempt ${CI_FIX_ATTEMPTS}/3)" 2>/dev/null || true
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$issue_num" >> "$LOGFILE" 2>&1 &
-    log "started dev-agent PID $! for PR #${pr_num} (rebase fix)"
-  fi
-  return 1
-}
-
 # --- Check if dev-agent already running ---
 if [ -f "$LOCKFILE" ]; then
   LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null || echo "")
@@ -326,10 +278,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      PR_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-        "${API}/pulls/${HAS_PR}" | jq -r '.head.ref') || true
-      log "PR #${HAS_PR} approved + CI green → merging"
-      try_merge_or_rebase "$HAS_PR" "$ISSUE_NUM" "$PR_BRANCH"
+      log "PR #${HAS_PR} approved + CI green → spawning dev-agent to merge"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
 
     elif ci_passed "$CI_STATE" && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
@@ -396,11 +347,12 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     "${API}/pulls/${PR_NUM}/reviews" | \
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
 
-  # Try merge if approved + CI green
+  # Spawn agent to merge if approved + CI green
   if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → merging"
-    try_merge_or_rebase "$PR_NUM" "$STUCK_ISSUE" "$PR_BRANCH"
-    continue
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → spawning dev-agent to merge"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
+    exit 0
   fi
 
   # Stuck: REQUEST_CHANGES or CI failure → spawn agent
@@ -473,11 +425,10 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      EXISTING_BRANCH=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-        "${API}/pulls/${EXISTING_PR}" | jq -r '.head.ref') || true
-      log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → merging"
-      try_merge_or_rebase "$EXISTING_PR" "$ISSUE_NUM" "$EXISTING_BRANCH"
-      continue
+      log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → spawning dev-agent to merge"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
+      exit 0
 
     elif [ "${HAS_CHANGES:-0}" -gt 0 ]; then
       log "#${ISSUE_NUM} PR #${EXISTING_PR} has REQUEST_CHANGES — picking up"

@@ -76,7 +76,7 @@ backlog issues (all deps closed) or orphaned in-progress issues and spawns
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
-- `CODEBERG_TOKEN` — API auth for issue/PR operations
+- `CODEBERG_TOKEN` — Dev-agent token (push, PR creation, merge) — use the dedicated bot account
 - `CODEBERG_REPO`, `CODEBERG_API` — Target repository
 - `PROJECT_NAME`, `PROJECT_REPO_ROOT` — Local checkout path
 - `PRIMARY_BRANCH` — Branch to merge into (e.g. `main`, `master`)
@@ -101,7 +101,8 @@ spawns `review-pr.sh <pr-number>`.
 - `review/review-pr.sh` — Creates/reuses a tmux session (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output, posts markdown review + formal Codeberg review, auto-creates follow-up issues for pre-existing tech debt
 
 **Environment variables consumed**:
-- `CODEBERG_TOKEN`, `REVIEW_BOT_TOKEN` — Separate tokens for posting reviews (branch protection requires a different user)
+- `CODEBERG_TOKEN` — Dev-agent token (must not be the same account as REVIEW_BOT_TOKEN)
+- `REVIEW_BOT_TOKEN` — Review-agent token for approvals (use human/admin account; branch protection: in approvals whitelist)
 - `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `WOODPECKER_REPO_ID`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
