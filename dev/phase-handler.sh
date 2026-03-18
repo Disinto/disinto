@@ -2,7 +2,7 @@
 # dev/phase-handler.sh — Phase callback functions for dev-agent.sh
 #
 # Source this file from dev-agent.sh after lib/agent-session.sh is loaded.
-# Defines: post_refusal_comment(), do_merge(), _on_phase_change()
+# Defines: post_refusal_comment(), _on_phase_change()
 #
 # Required globals from dev-agent.sh:
 #   ISSUE, CODEBERG_TOKEN, API, CODEBERG_WEB, PROJECT_NAME, FACTORY_ROOT
@@ -10,7 +10,7 @@
 #   PRIMARY_BRANCH, SESSION_NAME, LOGFILE, ISSUE_TITLE
 #   CI_POLL_TIMEOUT, MAX_CI_FIXES, MAX_REVIEW_ROUNDS, REVIEW_POLL_TIMEOUT
 #   CI_RETRY_COUNT, CI_FIX_COUNT, REVIEW_ROUND, CLAIMED
-#   WOODPECKER_REPO_ID, WOODPECKER_TOKEN, WOODPECKER_SERVER, REVIEW_BOT_TOKEN
+#   WOODPECKER_REPO_ID, WOODPECKER_TOKEN, WOODPECKER_SERVER
 #
 # Calls back to dev-agent.sh-defined helpers:
 #   cleanup_worktree(), cleanup_labels()
@@ -46,138 +46,6 @@ ${body}
     --data-binary @"/tmp/refusal-comment.json" 2>/dev/null || \
     log "WARNING: failed to post refusal comment"
   rm -f "/tmp/refusal-comment.txt" "/tmp/refusal-comment.json"
-}
-
-# =============================================================================
-# MERGE HELPER
-# =============================================================================
-do_merge() {
-  local sha="$1"
-  local pr="${PR_NUMBER}"
-
-  for _m in $(seq 1 20); do
-    local ci
-    ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
-    [ "$ci" = "success" ] && break
-    if [ "$ci" = "failure" ] || [ "$ci" = "error" ]; then
-      log "CI is red before merge attempt — aborting"
-      notify "PR #${pr} CI is failing; cannot merge."
-      return 1
-    fi
-    sleep 30
-  done
-
-  # Pre-emptive rebase to avoid merge conflicts
-  local mergeable
-  mergeable=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/pulls/${pr}" | jq -r '.mergeable // true')
-  if [ "$mergeable" = "false" ]; then
-    log "PR #${pr} has merge conflicts — attempting rebase"
-    local work_dir="${WORKTREE:-$REPO_ROOT}"
-    if (cd "$work_dir" && git fetch origin "${PRIMARY_BRANCH}" && git rebase "origin/${PRIMARY_BRANCH}" 2>&1); then
-      log "rebase succeeded — force pushing"
-      (cd "$work_dir" && git push origin "${BRANCH}" --force-with-lease 2>&1) || true
-      sha=$(cd "$work_dir" && git rev-parse HEAD)
-      log "waiting for CI on rebased commit ${sha:0:7}"
-      local r_ci
-      for _r in $(seq 1 20); do
-        r_ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
-        [ "$r_ci" = "success" ] && break
-        if [ "$r_ci" = "failure" ] || [ "$r_ci" = "error" ]; then
-          log "CI failed after rebase"
-          notify "PR #${pr} CI failed after rebase. Needs manual fix."
-          return 1
-        fi
-        sleep 30
-      done
-    else
-      log "rebase failed — aborting and escalating"
-      (cd "$work_dir" && git rebase --abort 2>/dev/null) || true
-      notify "PR #${pr} has merge conflicts that need manual resolution."
-      return 1
-    fi
-  fi
-
-  local http_code
-  http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${API}/pulls/${pr}/merge" \
-    -d '{"Do":"merge","delete_branch_after_merge":true}')
-
-  if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
-    log "PR #${pr} merged!"
-    curl -sf -X DELETE \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/branches/${BRANCH}" >/dev/null 2>&1 || true
-    curl -sf -X PATCH \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${ISSUE}" \
-      -d '{"state":"closed"}' >/dev/null 2>&1 || true
-    cleanup_labels
-    notify_ctx \
-      "✅ PR #${pr} merged! Issue #${ISSUE} done." \
-      "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
-    agent_kill_session "$SESSION_NAME"
-    cleanup_worktree
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
-    exit 0
-  else
-    log "merge failed (HTTP ${http_code}) — attempting rebase and retry"
-    local work_dir="${WORKTREE:-$REPO_ROOT}"
-    if (cd "$work_dir" && git fetch origin "${PRIMARY_BRANCH}" && git rebase "origin/${PRIMARY_BRANCH}" 2>&1); then
-      log "rebase succeeded — force pushing"
-      (cd "$work_dir" && git push origin "${BRANCH}" --force-with-lease 2>&1) || true
-      sha=$(cd "$work_dir" && git rev-parse HEAD)
-      log "waiting for CI on rebased commit ${sha:0:7}"
-      local r2_ci
-      for _r2 in $(seq 1 20); do
-        r2_ci=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${API}/commits/${sha}/status" | jq -r '.state // "unknown"')
-        [ "$r2_ci" = "success" ] && break
-        if [ "$r2_ci" = "failure" ] || [ "$r2_ci" = "error" ]; then
-          log "CI failed after merge-retry rebase"
-          notify "PR #${pr} CI failed after rebase. Needs manual fix."
-          return 1
-        fi
-        sleep 30
-      done
-      # Re-approve (force push dismisses stale approvals)
-      curl -sf -X POST \
-        -H "Authorization: token ${REVIEW_BOT_TOKEN:-${CODEBERG_TOKEN}}" \
-        -H "Content-Type: application/json" \
-        "${API}/pulls/${pr}/reviews" \
-        -d '{"event":"APPROVED","body":"Auto-approved after rebase."}' >/dev/null 2>&1 || true
-      # Retry merge
-      http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/pulls/${pr}/merge" \
-        -d '{"Do":"merge","delete_branch_after_merge":true}')
-      if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
-        log "PR #${pr} merged after rebase!"
-        notify_ctx \
-          "✅ PR #${pr} merged! Issue #${ISSUE} done." \
-          "✅ PR <a href='${CODEBERG_WEB}/pulls/${pr}'>#${pr}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
-        curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-        cleanup_labels
-        agent_kill_session "$SESSION_NAME"
-        cleanup_worktree
-        rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
-        exit 0
-      fi
-    else
-      (cd "$work_dir" && git rebase --abort 2>/dev/null) || true
-    fi
-    log "merge still failing after rebase (HTTP ${http_code})"
-    notify "PR #${pr} merge failed after rebase (HTTP ${http_code}). Needs human attention."
-    return 1
-  fi
 }
 
 # =============================================================================
@@ -473,9 +341,33 @@ Instructions:
 
         if [ "$VERDICT" = "APPROVE" ]; then
           REVIEW_FOUND=true
-          agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved by the reviewer.
-Write PHASE:done to the phase file — the orchestrator will handle the merge:
-  echo \"PHASE:done\" > \"${PHASE_FILE}\""
+          agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved.
+
+Merge the PR and close the issue directly — do NOT wait for the orchestrator:
+
+  # Merge the PR:
+  curl -sf -X POST \\
+    -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
+    -H 'Content-Type: application/json' \\
+    \"${API}/pulls/${PR_NUMBER}/merge\" \\
+    -d '{\"Do\":\"merge\",\"delete_branch_after_merge\":true}'
+
+  # Close the issue:
+  curl -sf -X PATCH \\
+    -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
+    -H 'Content-Type: application/json' \\
+    \"${API}/issues/${ISSUE}\" \\
+    -d '{\"state\":\"closed\"}'
+
+If merge fails due to conflicts, rebase first:
+  git fetch origin ${PRIMARY_BRANCH} && git rebase origin/${PRIMARY_BRANCH}
+  git push --force-with-lease origin ${BRANCH}
+  # Then retry the merge curl above.
+
+After a successful merge write PHASE:done:
+  echo \"PHASE:done\" > \"${PHASE_FILE}\"
+
+If merge repeatedly fails, write PHASE:needs_human with a reason."
           break
 
         elif [ "$VERDICT" = "REQUEST_CHANGES" ] || [ "$VERDICT" = "DISCUSS" ]; then
@@ -557,26 +449,23 @@ Instructions:
     # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
+  # The agent already merged the PR and closed the issue. Just clean up local state.
   elif [ "$phase" = "PHASE:done" ]; then
-    status "phase done — merging PR #${PR_NUMBER:-?}"
+    status "phase done — agent merged PR #${PR_NUMBER:-?}, cleaning up"
 
-    if [ -z "${PR_NUMBER:-}" ]; then
-      log "ERROR: PHASE:done but no PR_NUMBER — cannot merge"
-      notify "PHASE:done but no PR known — needs human attention"
-      agent_kill_session "$SESSION_NAME"
-      cleanup_labels
-      return 1
-    fi
+    # Notify Matrix (agent already closed the issue and removed labels via API)
+    notify_ctx \
+      "✅ PR #${PR_NUMBER:-?} merged! Issue #${ISSUE} done." \
+      "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER:-?}'>#${PR_NUMBER:-?}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
 
-    MERGE_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha') || true
+    # Belt-and-suspenders: ensure in-progress label removed (idempotent)
+    cleanup_labels
 
-    # do_merge exits 0 on success; returns 1 on failure
-    do_merge "$MERGE_SHA" || true
-
-    # If we reach here, merge failed (do_merge returned 1)
-    log "merge failed — injecting error into session"
-    agent_inject_into_session "$SESSION_NAME" "Merge failed for PR #${PR_NUMBER}. The orchestrator could not merge automatically. This may be due to merge conflicts or CI. Investigate the PR state and write PHASE:needs_human if human intervention is required."
+    # Local cleanup
+    agent_kill_session "$SESSION_NAME"
+    cleanup_worktree
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    CLAIMED=false  # Don't unclaim again in cleanup()
 
   # ── PHASE: failed ───────────────────────────────────────────────────────────
   elif [ "$phase" = "PHASE:failed" ]; then
