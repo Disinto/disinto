@@ -283,7 +283,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
 
-    elif ci_passed "$CI_STATE" && [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+    # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
+    # pending/unknown. Definitive CI failure is handled by the elif below.
+    elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
       log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
