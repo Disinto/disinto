@@ -40,6 +40,27 @@ API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
 STATUSFILE="/tmp/dev-agent-status"
 
+log() {
+  printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
+}
+
+notify() {
+  local thread_id=""
+  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  matrix_send "dev" "🔧 #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
+}
+
+notify_ctx() {
+  local plain="$1" html="$2"
+  local thread_id=""
+  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  if [ -n "$thread_id" ]; then
+    matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
+  else
+    matrix_send "dev" "🔧 #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
+  fi
+}
+
 status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"
