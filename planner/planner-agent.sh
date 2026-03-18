@@ -297,10 +297,18 @@ if echo "$PHASE2_OUTPUT" | grep -q "NO_GAPS"; then
 fi
 
 # ── Create issues from gap analysis ──────────────────────────────────────
-# Find backlog and formula label IDs
-LABELS_JSON=$(codeberg_api GET "/labels" 2>/dev/null || true)
-BACKLOG_LABEL_ID=$(echo "$LABELS_JSON" | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
-FORMULA_LABEL_ID=$(echo "$LABELS_JSON" | jq -r '.[] | select(.name == "formula") | .id' 2>/dev/null || true)
+# Find backlog label ID
+BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null | \
+  jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+
+# Build list of valid formula names from disk for validation
+VALID_FORMULAS=""
+if [ -d "$FORMULA_DIR" ]; then
+  for _vf in "$FORMULA_DIR"/*.toml; do
+    [ -f "$_vf" ] || continue
+    VALID_FORMULAS="${VALID_FORMULAS} $(basename "$_vf" .toml)"
+  done
+fi
 
 CREATED=0
 while IFS= read -r line; do
@@ -311,14 +319,23 @@ while IFS= read -r line; do
   TITLE=$(echo "$line" | jq -r '.title')
   DEPS=$(echo "$line" | jq -r '.depends // [] | map("#\(.)") | join(", ")')
 
-  # Check if this is a formula instance
+  # Check if this is a formula instance and validate against on-disk catalog
   FORMULA_NAME=$(echo "$line" | jq -r '.formula // empty')
+  if [ -n "$FORMULA_NAME" ]; then
+    if ! echo "$VALID_FORMULAS" | grep -qw "$FORMULA_NAME"; then
+      log "WARN: Claude emitted unknown formula '${FORMULA_NAME}' — falling back to freeform"
+      FORMULA_NAME=""
+    fi
+  fi
 
   if [ -n "$FORMULA_NAME" ]; then
-    # Build YAML front matter for formula instance
+    # Build YAML front matter for formula instance (values quoted for safety)
+    # Note: formula label is NOT applied — dev-agent does not yet support
+    # formula dispatch, so adding the label would block the dev pipeline.
+    # The YAML front matter is enough structure for future formula dispatch.
     VARS_YAML=$(echo "$line" | jq -r '
       .vars // {} | to_entries |
-      map("  " + .key + ": " + (.value | tostring)) | join("\n")')
+      map("  " + .key + ": " + (.value | @json)) | join("\n")')
     EXTRA_BODY=$(echo "$line" | jq -r '.body // ""')
     BODY="---
 formula: ${FORMULA_NAME}
@@ -339,20 +356,14 @@ ${EXTRA_BODY}"
 ${DEPS}"
   fi
 
-  # Build label array
-  LABEL_IDS="[]"
+  # Create issue (backlog label only — no formula label until dev-agent supports dispatch)
+  CREATE_PAYLOAD=$(jq -nc --arg t "$TITLE" --arg b "$BODY" '{title:$t, body:$b}')
+
   if [ -n "$BACKLOG_LABEL_ID" ]; then
-    LABEL_IDS=$(echo "$LABEL_IDS" | jq --argjson lid "$BACKLOG_LABEL_ID" '. + [$lid]')
-  fi
-  if [ -n "$FORMULA_NAME" ] && [ -n "$FORMULA_LABEL_ID" ]; then
-    LABEL_IDS=$(echo "$LABEL_IDS" | jq --argjson lid "$FORMULA_LABEL_ID" '. + [$lid]')
+    CREATE_PAYLOAD=$(echo "$CREATE_PAYLOAD" | jq --argjson lid "$BACKLOG_LABEL_ID" '.labels = [$lid]')
   fi
 
-  # Create issue
-  CREATE_PAYLOAD=$(jq -nc --arg t "$TITLE" --arg b "$BODY" --argjson labels "$LABEL_IDS" \
-    '{title:$t, body:$b, labels:$labels}')
-
-  RESULT=$(codeberg_api POST "/issues" "$CREATE_PAYLOAD" 2>/dev/null || true)
+  RESULT=$(codeberg_api POST "/issues" -d "$CREATE_PAYLOAD" 2>/dev/null || true)
   ISSUE_NUM=$(echo "$RESULT" | jq -r '.number // "?"' 2>/dev/null || echo "?")
 
   if [ -n "$FORMULA_NAME" ]; then
