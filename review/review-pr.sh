@@ -750,6 +750,35 @@ if [ "${POST_CODE}" = "201" ]; then
     REQUEST_CHANGES|DISCUSS) REVIEW_EVENT="REQUEST_CHANGES" ;;
   esac
 
+  # Dismiss prior REQUEST_CHANGES reviews before posting APPROVED
+  if [ "$REVIEW_EVENT" = "APPROVED" ]; then
+    REVIEW_BOT_RESP=$(curl -sf \
+      -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+      "${API_BASE%%/repos*}/user" 2>/dev/null || true)
+    REVIEW_BOT_LOGIN=""
+    if [ -n "$REVIEW_BOT_RESP" ]; then
+      REVIEW_BOT_LOGIN=$(printf '%s' "$REVIEW_BOT_RESP" | jq -r '.login // empty')
+    fi
+    if [ -n "$REVIEW_BOT_LOGIN" ]; then
+      ALL_PR_REVIEWS=$(curl -sf \
+        -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+        "${API_BASE}/pulls/${PR_NUMBER}/reviews" 2>/dev/null || echo "[]")
+      while IFS= read -r review_id; do
+        DISMISS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST \
+          -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${API_BASE}/pulls/${PR_NUMBER}/reviews/${review_id}/dismissals" \
+          -d '{"message":"Superseded by approval"}' || echo "000")
+        log "dismissed prior REQUEST_CHANGES review ${review_id} (HTTP ${DISMISS_CODE})"
+      done < <(printf '%s' "$ALL_PR_REVIEWS" | \
+        jq -r --arg login "$REVIEW_BOT_LOGIN" \
+        '.[] | select(.state == "REQUEST_CHANGES") | select(.user.login == $login) | .id')
+    else
+      log "WARNING: could not determine review bot login — skipping dismiss step"
+    fi
+  fi
+
   FORMAL_BODY="AI ${REVIEW_TYPE}: **${VERDICT}** — ${VERDICT_REASON}"
   jq -n --arg body "$FORMAL_BODY" --arg event "$REVIEW_EVENT" --arg sha "$PR_SHA" \
     '{body: $body, event: $event, commit_id: $sha}' > "${TMPDIR}/formal-review.json"
