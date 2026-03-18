@@ -123,6 +123,15 @@ disinto/
 ├── gardener/
 │   ├── gardener-poll.sh  # Cron entry: backlog grooming
 │   └── best-practices.md # Gardener knowledge base
+├── planner/
+│   ├── planner-poll.sh   # Cron entry: weekly vision gap analysis
+│   └── planner-agent.sh  # Updates AGENTS.md, creates backlog issues (claude -p)
+├── vault/
+│   ├── vault-poll.sh     # Cron entry: process pending dangerous actions
+│   ├── vault-agent.sh    # Classifies and routes actions (claude -p)
+│   ├── vault-fire.sh     # Executes an approved action
+│   ├── vault-reject.sh   # Marks an action as rejected
+│   └── PROMPT.md         # System prompt for vault agent
 └── supervisor/
     ├── supervisor-poll.sh   # Supervisor: health checks + claude -p
     ├── PROMPT.md         # Supervisor's system prompt
@@ -145,6 +154,8 @@ disinto/
 | **Dev** | Every 10 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
 | **Review** | Every 10 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
 | **Gardener** | Daily | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
+| **Planner** | Weekly | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
+| **Vault** | Every 30 min | Safety gate for dangerous or irreversible actions. Classifies pending actions via Claude: auto-approve, auto-reject, or escalate to a human via Matrix. |
 
 ## Design Principles
 
