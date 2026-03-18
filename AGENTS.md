@@ -143,7 +143,8 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 **Environment variables consumed**:
 - All from `lib/env.sh` + per-project TOML overrides
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
-- `CHECK_PRS`, `CHECK_DEV_AGENT`, `CHECK_PIPELINE_STALL`, `CHECK_INFRA_RETRY` — Per-project monitoring toggles (from TOML `[monitoring]` section)
+- `CHECK_PRS`, `CHECK_DEV_AGENT`, `CHECK_PIPELINE_STALL` — Per-project monitoring toggles (from TOML `[monitoring]` section)
+- `CHECK_INFRA_RETRY` — Infra failure retry toggle (env var only, defaults to `true`; not configurable via project TOML)
 
 ### Planner (`planner/`)
 
@@ -156,7 +157,7 @@ gaps.
 
 **Key files**:
 - `planner/planner-poll.sh` — Cron wrapper: lock, memory guard, runs planner-agent.sh
-- `planner/planner-agent.sh` — Phase 1: uses `claude --model sonnet` with tool access to read/update AGENTS.md files. Phase 2: uses `claude -p` to compare AGENTS.md tree vs VISION.md and create gap issues
+- `planner/planner-agent.sh` — Phase 1: uses `claude -p --model sonnet --max-turns 30` (one-shot with tool access) to read/update AGENTS.md files. Phase 2: uses `claude -p --model sonnet` to compare AGENTS.md tree vs VISION.md and create gap issues. Both phases are one-shot (`claude -p`), not interactive sessions
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
@@ -166,15 +167,17 @@ gaps.
 
 ### Vault (`vault/`)
 
-**Role**: Human-in-the-loop gate for dangerous or irreversible actions.
-Actions enter a pending queue, get escalated to Matrix for APPROVE/REJECT,
-and are only fired after human approval.
+**Role**: Safety gate for dangerous or irreversible actions. Actions enter a
+pending queue and are classified by Claude via `vault-agent.sh`, which can
+auto-approve (call `vault-fire.sh` directly), auto-reject (call
+`vault-reject.sh`), or escalate to a human via Matrix for APPROVE/REJECT.
 
 **Trigger**: `vault-poll.sh` runs every 30 min via cron.
 
 **Key files**:
 - `vault/vault-poll.sh` — Processes pending actions: retry approved, auto-reject after 48h timeout, invoke vault-agent for new items
-- `vault/vault-agent.sh` — Evaluates pending actions via Claude
+- `vault/vault-agent.sh` — Classifies and routes pending actions via `claude -p`: auto-approve, auto-reject, or escalate to human
+- `vault/PROMPT.md` — System prompt for the vault agent's Claude invocation
 - `vault/vault-fire.sh` — Executes an approved action
 - `vault/vault-reject.sh` — Marks an action as rejected
 
@@ -192,10 +195,10 @@ sourced as needed.
 | File | What it provides | Sourced by |
 |---|---|---|
 | `lib/env.sh` | Loads `.env`, sets `FACTORY_ROOT`, exports project config (`CODEBERG_REPO`, `PROJECT_NAME`, etc.), defines `log()`, `codeberg_api()`, `woodpecker_api()`, `wpdb()`, `matrix_send()`, `matrix_send_ctx()`. Auto-loads project TOML if `PROJECT_TOML` is set. | Every agent |
-| `lib/ci-helpers.sh` | `ci_passed()` — returns 0 if CI state is "success" (or no CI configured). | dev-poll, review-pr, supervisor-poll |
+| `lib/ci-helpers.sh` | `ci_passed()` — returns 0 if CI state is "success" (or no CI configured). | dev-poll, review-poll, review-pr, supervisor-poll |
 | `lib/ci-debug.sh` | CLI tool for Woodpecker CI: `list`, `status`, `logs`, `failures` subcommands. Not sourced — run directly. | Humans / dev-agent (tool access) |
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
-| `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. | dev-poll, supervisor-poll |
+| `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, and vault reply routing. Run as systemd service. | Standalone daemon |
 
 ---
@@ -227,7 +230,7 @@ Issues flow through these states:
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. | dev-agent.sh (claims issue) |
 | `blocked` | Issue has unmet dependencies (other open issues). | gardener, supervisor (detected) |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
-| `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`) |
+| `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |
 
 ### Dependency conventions
