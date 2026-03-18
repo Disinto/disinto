@@ -128,8 +128,24 @@ inject_review_into_dev_session() {
   local inject_msg=""
   if [ "${verdict}" = "APPROVE" ]; then
     inject_msg="Approved! PR #${pr_num} has been approved by the reviewer.
-Write PHASE:done to the phase file — the orchestrator will handle the merge:
-  echo \"PHASE:done\" > \"${phase_file}\""
+Merge the PR and close the issue, then signal done:
+
+curl -sf -X POST \\
+  -H \"Authorization: token \$CODEBERG_TOKEN\" \\
+  -H 'Content-Type: application/json' \\
+  \"${API_BASE}/pulls/${pr_num}/merge\" \\
+  -d '{\"Do\":\"merge\",\"delete_branch_after_merge\":true}'
+
+curl -sf -X PATCH \\
+  -H \"Authorization: token \$CODEBERG_TOKEN\" \\
+  -H 'Content-Type: application/json' \\
+  \"${API_BASE}/issues/${issue_num}\" \\
+  -d '{\"state\":\"closed\"}'
+
+echo \"PHASE:done\" > \"${phase_file}\"
+
+If merge fails due to conflicts, rebase first then retry.
+If merge repeatedly fails, write PHASE:needs_human."
   elif [ "${verdict}" = "REQUEST_CHANGES" ] || [ "${verdict}" = "DISCUSS" ]; then
     inject_msg="Review: ${verdict} on PR #${pr_num}:
 
