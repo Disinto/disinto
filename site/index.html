@@ -3,8 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Disinto — Your AI Dev Team</title>
-  <meta name="description" content="Open-source autonomous code factory for solo founders. Write issues, set the vision — agents build, review, ship, and operate your startup.">
+  <title>Disinto — From Vision to Market Fit</title>
+  <meta name="description" content="Open-source autonomous startup engine for solo founders. Write the vision, define quality gates — agents build, ship, operate, and find market fit.">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta property="og:title" content="Disinto — From Vision to Market Fit">
+  <meta property="og:description" content="Open-source autonomous startup engine for solo founders. Write the vision, define quality gates — agents build, ship, operate, and find market fit.">
+  <meta property="og:image" content="https://disinto.ai/og-image.jpg">
+  <meta property="og:url" content="https://disinto.ai">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Disinto — From Vision to Market Fit">
+  <meta name="twitter:description" content="Open-source autonomous startup engine for solo founders.">
+  <meta name="twitter:image" content="https://disinto.ai/og-image.jpg">
   <style>
     :root {
       --bg: #0a0a0a;
@@ -35,7 +47,7 @@
     /* Hero */
     .hero {
       text-align: center;
-      margin-bottom: 4rem;
+      margin-bottom: 2rem;
     }
 
     .hero h1 {
@@ -49,8 +61,25 @@
 
     .hero .tagline {
       color: var(--dim);
-      font-size: 0.9rem;
-      letter-spacing: 0.1em;
+      font-size: 1.4rem;
+      letter-spacing: 0.15em;
+    }
+
+    /* Pitch */
+    .pitch {
+      text-align: center;
+      margin-bottom: 4rem;
+      padding: 0 1rem;
+    }
+
+    .pitch p {
+      color: var(--fg);
+      font-size: 0.95rem;
+      line-height: 1.9;
+    }
+
+    .pitch p strong {
+      color: var(--accent);
     }
 
     /* Origin story */
@@ -92,7 +121,7 @@
       font-style: normal;
     }
 
-    /* What it is */
+    /* Sections */
     .section {
       margin-bottom: 3rem;
     }
@@ -118,29 +147,33 @@
       color: var(--fg);
     }
 
-    /* Agent list */
-    .agents {
+    /* Value blocks */
+    .values {
       display: grid;
-      grid-template-columns: 1fr 1fr;
       gap: 1px;
       background: var(--border);
       margin-bottom: 3rem;
     }
 
-    .agent {
+    .value {
       background: var(--surface);
       padding: 1.5rem;
     }
 
-    .agent .name {
-      font-size: 0.8rem;
+    .value .headline {
+      font-size: 0.85rem;
       color: var(--accent);
-      margin-bottom: 0.25rem;
+      margin-bottom: 0.5rem;
     }
 
-    .agent .role {
-      font-size: 0.75rem;
+    .value .detail {
+      font-size: 0.8rem;
       color: var(--dim);
+      line-height: 1.7;
+    }
+
+    .value .detail strong {
+      color: var(--fg);
     }
 
     /* Pipeline */
@@ -152,6 +185,7 @@
       border: 1px solid var(--border);
       margin-bottom: 3rem;
       overflow-x: auto;
+      text-align: center;
     }
 
     .pipeline .step {
@@ -161,6 +195,70 @@
     .pipeline .arrow {
       color: var(--border);
       margin: 0 0.5rem;
+    }
+
+    /* Proof */
+    .proof {
+      padding: 1.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      margin-bottom: 3rem;
+      font-size: 0.8rem;
+      color: var(--dim);
+    }
+
+    .proof .number {
+      color: var(--accent);
+      font-size: 1.4rem;
+      font-weight: 300;
+    }
+
+    .proof .label {
+      color: var(--dim);
+      font-size: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .proof-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    .proof .context {
+      font-size: 0.75rem;
+      color: var(--dim);
+      text-align: center;
+      font-style: italic;
+    }
+
+    /* Principles */
+    .principles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 3rem;
+    }
+
+    .principle {
+      background: var(--surface);
+      padding: 1.2rem;
+    }
+
+    .principle .name {
+      font-size: 0.75rem;
+      color: var(--accent-dim);
+      margin-bottom: 0.25rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .principle .desc {
+      font-size: 0.75rem;
+      color: var(--dim);
     }
 
     /* Footer */
@@ -189,12 +287,19 @@
       margin: 0 1rem;
     }
 
+    .footer .under-hood {
+      margin-top: 1.5rem;
+      font-size: 0.7rem;
+      color: var(--border);
+    }
+
     /* Mobile */
     @media (max-width: 600px) {
       .hero h1 { font-size: 2rem; }
       .origin { flex-direction: column; align-items: center; }
       .origin img { max-width: 100%; }
-      .agents { grid-template-columns: 1fr; }
+      .principles { grid-template-columns: 1fr; }
+      .proof-grid { grid-template-columns: 1fr; }
       .container { padding: 2rem 1rem; }
     }
   </style>
@@ -204,7 +309,15 @@
 
     <div class="hero">
       <h1>Disinto</h1>
-      <div class="tagline">your AI dev team</div>
+      <div class="tagline">from vision to market fit</div>
+    </div>
+
+    <div class="pitch">
+      <p>
+        <strong>Set the vision. Define quality gates.</strong><br>
+        Agents derive the backlog, build, review, ship, and operate.<br>
+        You're the founder, not the developer.
+      </p>
     </div>
 
     <div class="origin">
@@ -222,49 +335,30 @@
       </blockquote>
     </div>
 
-    <div class="section">
-      <h2>What it is</h2>
-      <p>
-        Disinto is an <strong>open-source framework for solo founders</strong>
-        who want to ship without hiring a team. Set the vision. Define
-        your quality gates. Agents derive the backlog, build, review, ship,
-        and operate — you're the founder, not the developer.
-      </p>
-      <p>
-        Built for <strong>web apps and crypto projects</strong>.
-        SaaS dashboards, DeFi protocols, token launches — if it has
-        a repo and a CI pipeline, Disinto can work it.
-      </p>
-      <p>
-        Like AL-76, it works with whatever's available. Point it at a repo,
-        give it a vision, and it starts building.
-      </p>
-    </div>
-
-    <div class="agents">
-      <div class="agent">
-        <div class="name">dev-agent</div>
-        <div class="role">Picks up backlog issues, implements in isolated worktrees, opens PRs. Handles CI failures and review feedback autonomously.</div>
+    <div class="values">
+      <div class="value">
+        <div class="headline">Write the vision, not the code</div>
+        <div class="detail">
+          Describe what you want built. Agents figure out what's missing,
+          break it into tasks, and start working. You wake up to
+          <strong>progress, not process</strong>.
+        </div>
       </div>
-      <div class="agent">
-        <div class="name">review-agent</div>
-        <div class="role">Reviews PRs against project conventions. Approves, requests changes, or flags for discussion. JSON-structured verdicts.</div>
+      <div class="value">
+        <div class="headline">Nothing ships without your gates</div>
+        <div class="detail">
+          You define the boundaries — what gets auto-approved and what
+          needs your eyes. Agents work within them.
+          <strong>You steer. They row.</strong>
+        </div>
       </div>
-      <div class="agent">
-        <div class="name">supervisor</div>
-        <div class="role">Monitors health — memory, disk, CI, stale processes. Auto-heals what it can, escalates what it can't.</div>
-      </div>
-      <div class="agent">
-        <div class="name">planner</div>
-        <div class="role">Maintains documentation tree. Compares project state against vision, creates backlog issues for gaps.</div>
-      </div>
-      <div class="agent">
-        <div class="name">gardener</div>
-        <div class="role">Grooms the backlog. Closes duplicates, promotes tech debt, escalates ambiguous items.</div>
-      </div>
-      <div class="agent">
-        <div class="name">you</div>
-        <div class="role">Set the vision. Define quality gates. Approve what matters, reject what doesn't. Find market fit.</div>
+      <div class="value">
+        <div class="headline">Decisions, not busywork</div>
+        <div class="detail">
+          The work organizes itself. Duplicates get closed, priorities
+          get surfaced, gaps get found. Your job is
+          <strong>direction</strong> — not tickets, not triage, not grooming.
+        </div>
       </div>
     </div>
 
@@ -283,52 +377,74 @@
         <span class="arrow">→</span>
         <span class="step">operate</span>
         <span class="arrow">→</span>
-        <span class="step">measure</span>
+        <span class="step">learn</span>
         <span class="arrow">→</span>
         <span class="step">vision</span>
       </div>
     </div>
 
-    <div class="section">
-      <h2>How it works</h2>
-      <p>
-        Bash orchestration. <strong>Claude</strong> for implementation and review.
-        <strong>Woodpecker CI</strong> for build verification.
-        <strong>Codeberg</strong> for git hosting and issue tracking.
-        Cron jobs, shell scripts, and a lightweight listener daemon —
-        invoking an LLM only when thinking is needed.
-      </p>
-      <p>
-        Each agent is a pair of bash scripts — a cron-driven poller and an
-        implementation script. The supervisor runs every 10 minutes.
-        When something breaks, it fixes it. When it can't fix it, it asks.
-      </p>
+    <div class="proof">
+      <div class="proof-grid">
+        <div>
+          <div class="number">219</div>
+          <div class="label">commits in 6 days</div>
+        </div>
+        <div>
+          <div class="number">50</div>
+          <div class="label">issues closed</div>
+        </div>
+        <div>
+          <div class="number">2</div>
+          <div class="label">human repos</div>
+        </div>
+      </div>
+      <div class="context">
+        Disinto building itself — and a DeFi protocol — on a single 8GB VPS.
+      </div>
     </div>
 
     <div class="section">
-      <h2>For solo founders</h2>
+      <h2>One VPS, one repo, one battery</h2>
       <p>
-        You don't need a team. You need a <strong>VISION.md</strong> and a vault.
-        Disinto turns your product vision into a running development operation.
-        The <strong>vault</strong> is where you define what gets auto-approved
-        and what needs your sign-off — deployments, pricing changes, public posts.
-        Everything else runs without you.
+        <strong>Bash scripts and Claude.</strong> No Kubernetes, no microservices,
+        no SaaS dependencies. Runs on an 8GB VPS.
+        Point it at a <strong>Codeberg repo</strong> with a
+        <strong>Woodpecker CI</strong> pipeline and it starts building.
       </p>
       <p>
-        <strong>Opinionated over configurable.</strong> Good defaults, few knobs.
-        Works out of the box for web apps and crypto projects.
+        <strong>Built for web apps and crypto projects.</strong>
+        SaaS dashboards, DeFi protocols, token launches — if it has
+        a repo and tests, Disinto can work it.
       </p>
-      <p>
-        <strong>Bash over frameworks.</strong> If it can be a shell script, it should be.
-        Claude is the only dependency that matters.
-      </p>
+    </div>
+
+    <div class="principles">
+      <div class="principle">
+        <div class="name">Opinionated</div>
+        <div class="desc">Good defaults, few knobs. Works out of the box.</div>
+      </div>
+      <div class="principle">
+        <div class="name">Bash over frameworks</div>
+        <div class="desc">If it can be a shell script, it is.</div>
+      </div>
+      <div class="principle">
+        <div class="name">Pull over push</div>
+        <div class="desc">Agents pull work when ready. No orchestrator daemon.</div>
+      </div>
+      <div class="principle">
+        <div class="name">Self-improving</div>
+        <div class="desc">Every solved problem becomes a pattern for next time.</div>
+      </div>
     </div>
 
     <div class="footer">
-      <div>Your startup's dev team — built from scrap, powered by a single battery.</div>
+      <div>Built from scrap, powered by a single battery.</div>
       <div class="links">
         <a href="https://codeberg.org/johba/disinto">source</a>
         <a href="https://codeberg.org/johba/disinto/issues">issues</a>
+      </div>
+      <div class="under-hood">
+        Under the hood: dev, review, planner, gardener, supervisor, vault — six agents orchestrated by cron and bash.
       </div>
     </div>
 
