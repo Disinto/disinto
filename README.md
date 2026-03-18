@@ -165,3 +165,14 @@ disinto/
 - **Self-improving** — when Claude fixes something new, the lesson is appended to best-practices for next time
 - **Project-agnostic** — all project-specific values (repo, paths, CI IDs) come from `.env`, not hardcoded scripts
 
+### Runtime constraints
+
+Disinto is intentionally opinionated about its own runtime. These are hard constraints, not preferences:
+
+- **Debian + GNU userland** — all scripts target Debian with standard GNU tools (`bash`, `awk`, `sed`, `date`, `timeout`). No portability shims for macOS or BSD.
+- **Shell + a small set of runtimes** — every agent is a bash script. The only interpreted runtimes used by disinto core are `python3` (TOML parsing in `lib/load-project.sh`, JSON state tracking in `dev/dev-poll.sh`, recipe matching in `gardener/gardener-poll.sh`) and `claude` (the AI CLI). No Ruby, Perl, or other runtimes. Do not add new runtime dependencies without a strong justification.
+- **Few, powerful dependencies** — required non-standard tools: `jq`, `curl`, `git`, `tmux`, `psql`, and `python3` (≥ 3.11 for `tomllib`; or install `tomli` for older Pythons). Adding anything beyond this list requires justification.
+- **Node.js and Foundry are target-project dependencies** — if your target repo uses Node or Solidity, install those on the host. They are not part of disinto's core and must not be assumed present in disinto scripts.
+
+The goal: any Debian machine with the prerequisites listed above can run disinto. Keep it that way.
+
