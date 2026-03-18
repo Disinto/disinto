@@ -131,6 +131,42 @@ else
   fail "is_valid_phase should reject PHASE:unknown"
 fi
 
+# ── Test 8: needs_human mtime guard — no duplicate notify on second poll ─────
+# Simulates the LAST_PHASE_MTIME guard from dev-agent.sh: after the orchestrator
+# handles PHASE:needs_human once, subsequent poll cycles must not re-trigger
+# notify() if the phase file was not rewritten.
+NOTIFY_COUNT=0
+mock_notify() { NOTIFY_COUNT=$((NOTIFY_COUNT + 1)); }
+
+echo "PHASE:needs_human" > "$PHASE_FILE"
+LAST_PHASE_MTIME=0
+
+# --- First poll cycle: phase file is newer than LAST_PHASE_MTIME ---
+PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
+CURRENT_PHASE=$(tr -d '[:space:]' < "$PHASE_FILE")
+
+if [ -n "$CURRENT_PHASE" ] && [ "$PHASE_MTIME" -gt "$LAST_PHASE_MTIME" ]; then
+  # Orchestrator would handle the phase and call notify()
+  mock_notify
+  LAST_PHASE_MTIME="$PHASE_MTIME"
+fi
+
+# --- Second poll cycle: file not touched, mtime unchanged ---
+sleep 1  # ensure wall-clock advances past the original mtime
+PHASE_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
+CURRENT_PHASE=$(tr -d '[:space:]' < "$PHASE_FILE")
+
+if [ -n "$CURRENT_PHASE" ] && [ "$PHASE_MTIME" -gt "$LAST_PHASE_MTIME" ]; then
+  # This branch must NOT execute — mtime guard should block it
+  mock_notify
+fi
+
+if [ "$NOTIFY_COUNT" -eq 1 ]; then
+  ok "needs_human mtime guard: notify called once, blocked on second poll"
+else
+  fail "needs_human mtime guard: expected 1 notify call, got $NOTIFY_COUNT"
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 rm -f "$PHASE_FILE"
 
