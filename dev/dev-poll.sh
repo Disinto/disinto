@@ -73,6 +73,29 @@ sys.exit(1)
 " 2>/dev/null && return 0 || return 1
 }
 
+# =============================================================================
+# HELPER: handle CI-exhaustion check/escalate (DRY for 3 call sites)
+# Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
+# =============================================================================
+handle_ci_exhaustion() {
+  local pr_num="$1" issue_num="$2"
+  CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
+
+  if [ "$CI_FIX_ATTEMPTS" -ge 3 ] || is_escalated "$issue_num" "$pr_num"; then
+    log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+    # Only write escalation + alert once (first time hitting 3)
+    if [ "$CI_FIX_ATTEMPTS" -eq 3 ]; then
+      echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+      ci_fix_increment "$pr_num"  # bump to 4 to prevent re-alert
+    fi
+    return 0
+  fi
+
+  return 1
+}
+
 # shellcheck disable=SC2034
 REPO="${CODEBERG_REPO}"
 
@@ -248,21 +271,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       exit 0
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
-      FIX_ATTEMPTS=$(ci_fix_count "$HAS_PR")
-      if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$ISSUE_NUM" "$HAS_PR"; then
-        # Already escalated — skip silently, let pipeline continue to backlog
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-        # Only write escalation + alert once (first time hitting 3)
-        if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-          echo "{\"issue\":${ISSUE_NUM},\"pr\":${HAS_PR},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-          matrix_send "dev" "🚨 PR #${HAS_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated to gardener" 2>/dev/null || true
-          ci_fix_increment "$HAS_PR"  # bump to 4 so we don't re-alert
-        fi
+      if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
         # Fall through to backlog scan instead of exit
+        :
       else
         ci_fix_increment "$HAS_PR"
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt $((FIX_ATTEMPTS+1))/3)"
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt $((CI_FIX_ATTEMPTS+1))/3)"
         nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
         log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
         exit 0
@@ -329,20 +343,11 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
   elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
-    FIX_ATTEMPTS=$(ci_fix_count "$PR_NUM")
-    if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$STUCK_ISSUE" "$PR_NUM"; then
-      # Already escalated — skip to let pipeline continue
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI exhausted (${FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-      if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-        echo "{\"issue\":${STUCK_ISSUE},\"pr\":${PR_NUM},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-        matrix_send "dev" "🚨 PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
-        ci_fix_increment "$PR_NUM"  # bump to 4 to prevent re-alert
-      fi
+    if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
     else
       ci_fix_increment "$PR_NUM"
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt $((FIX_ATTEMPTS+1))/3)"
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt $((CI_FIX_ATTEMPTS+1))/3)"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for stuck PR #${PR_NUM}"
       exit 0
@@ -406,19 +411,11 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       break
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
-      FIX_ATTEMPTS=$(ci_fix_count "$EXISTING_PR")
-      if [ "$FIX_ATTEMPTS" -ge 3 ] || is_escalated "$ISSUE_NUM" "$EXISTING_PR"; then
-        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — escalated to gardener, skipping (not blocking pipeline)"
-        if [ "$FIX_ATTEMPTS" -eq 3 ]; then
-          echo "{\"issue\":${ISSUE_NUM},\"pr\":${EXISTING_PR},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-          matrix_send "dev" "🚨 PR #${EXISTING_PR} (issue #${ISSUE_NUM}) CI failed after ${FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
-          ci_fix_increment "$EXISTING_PR"  # bump to 4 to prevent re-alert
-        fi
+      if handle_ci_exhaustion "$EXISTING_PR" "$ISSUE_NUM"; then
         # Don't add to WAITING_PRS — escalated PRs should not block new work
         continue
       fi
-      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt $((FIX_ATTEMPTS+1))/3)"
+      log "#${ISSUE_NUM} PR #${EXISTING_PR} CI failed — picking up (attempt $((CI_FIX_ATTEMPTS+1))/3)"
       READY_ISSUE="$ISSUE_NUM"
       READY_PR_FOR_INCREMENT="$EXISTING_PR"
       break
