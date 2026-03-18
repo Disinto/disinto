@@ -97,7 +97,10 @@ wait_for_claude_ready() {
   local timeout="${1:-120}"
   local elapsed=0
   while [ "$elapsed" -lt "$timeout" ]; do
-    if tmux capture-pane -t "${SESSION_NAME}" -p 2>/dev/null | grep -q '❯'; then
+    # Check for Claude prompt: ❯ (UTF-8) or fallback to $ at line start
+    local pane_out
+    pane_out=$(tmux capture-pane -t "${SESSION_NAME}" -p 2>/dev/null || true)
+    if printf '%s' "$pane_out" | grep -qE '❯|^\$' 2>/dev/null; then
       return 0
     fi
     sleep 2
@@ -110,13 +113,16 @@ wait_for_claude_ready() {
 inject_into_session() {
   local text="$1"
   local tmpfile
-  wait_for_claude_ready 120
+  wait_for_claude_ready 120 || true
   tmpfile=$(mktemp /tmp/review-inject-XXXXXX)
   printf '%s' "$text" > "$tmpfile"
-  tmux load-buffer -b "review-inject-${PR_NUMBER}" "$tmpfile"
-  tmux paste-buffer -t "${SESSION_NAME}" -b "review-inject-${PR_NUMBER}"
+  # All tmux calls guarded with || true: the session is external and may die
+  # between the has-session check and here; a non-zero exit must not abort
+  # the script under set -euo pipefail.
+  tmux load-buffer -b "review-inject-${PR_NUMBER}" "$tmpfile" || true
+  tmux paste-buffer -t "${SESSION_NAME}" -b "review-inject-${PR_NUMBER}" || true
   sleep 0.5
-  tmux send-keys -t "${SESSION_NAME}" "" Enter
+  tmux send-keys -t "${SESSION_NAME}" "" Enter || true
   tmux delete-buffer -b "review-inject-${PR_NUMBER}" 2>/dev/null || true
   rm -f "$tmpfile"
 }
@@ -125,8 +131,7 @@ wait_for_review_output() {
   local timeout="$REVIEW_WAIT_TIMEOUT"
   local elapsed=0
   while [ "$elapsed" -lt "$timeout" ]; do
-    sleep "$REVIEW_WAIT_INTERVAL"
-    elapsed=$((elapsed + REVIEW_WAIT_INTERVAL))
+    # Check phase file before sleeping (avoids mandatory delay on fast reviews)
     if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
       log "ERROR: session died during review"
       return 1
@@ -136,6 +141,8 @@ wait_for_review_output() {
     if [ "$phase" = "PHASE:review_complete" ]; then
       return 0
     fi
+    sleep "$REVIEW_WAIT_INTERVAL"
+    elapsed=$((elapsed + REVIEW_WAIT_INTERVAL))
   done
   log "ERROR: review did not complete within ${timeout}s"
   return 1
@@ -486,9 +493,6 @@ log "Prompt: ${PROMPT_SIZE} bytes (re-review: ${IS_RE_REVIEW})"
 status "preparing tmux session: ${SESSION_NAME}"
 
 if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
-  # Kill any stale entry
-  tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
-
   # Create new detached session running interactive claude in the review worktree
   tmux new-session -d -s "${SESSION_NAME}" -c "${REVIEW_WORKTREE}" \
     "claude --model sonnet --dangerously-skip-permissions"
