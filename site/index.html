@@ -8,6 +8,7 @@
   <link rel="icon" href="favicon.ico" sizes="32x32">
   <link rel="icon" href="favicon-192.png" sizes="192x192" type="image/png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="canonical" href="https://disinto.ai/">
   <meta property="og:title" content="Disinto — From Vision to Market Fit">
   <meta property="og:description" content="Open-source autonomous startup engine for solo founders. Write the vision, define quality gates — agents build, ship, operate, and find market fit.">
   <meta property="og:image" content="https://disinto.ai/og-image.jpg">
@@ -235,31 +236,107 @@
       font-style: italic;
     }
 
-    /* Principles */
-    .principles {
+    /* Concrete example */
+    .example {
+      margin-bottom: 3rem;
+      padding: 2rem;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .example h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent-dim);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .example img {
+      width: 100%;
+      border: 1px solid var(--border);
+      margin-bottom: 1.5rem;
+      opacity: 0.9;
+    }
+
+    .example p {
+      color: var(--dim);
+      font-size: 0.85rem;
+      line-height: 1.8;
+    }
+
+    .example p strong {
+      color: var(--fg);
+    }
+
+    /* Benefits */
+    .benefits {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 1px;
       background: var(--border);
       margin-bottom: 3rem;
     }
 
-    .principle {
+    .benefit {
       background: var(--surface);
       padding: 1.2rem;
     }
 
-    .principle .name {
+    .benefit .name {
       font-size: 0.75rem;
       color: var(--accent-dim);
-      margin-bottom: 0.25rem;
+      margin-bottom: 0.5rem;
       text-transform: uppercase;
       letter-spacing: 0.1em;
     }
 
-    .principle .desc {
+    .benefit .desc {
       font-size: 0.75rem;
       color: var(--dim);
+      line-height: 1.7;
+    }
+
+    .benefit .desc strong {
+      color: var(--fg);
+    }
+
+    /* CTA */
+    .cta {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding: 2rem;
+      border: 1px solid var(--accent-dim);
+      background: var(--surface);
+    }
+
+    .cta p {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .cta .cta-links {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .cta .cta-links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--accent-dim);
+      transition: border-color 0.2s;
+    }
+
+    .cta .cta-links a:hover {
+      border-color: var(--accent);
     }
 
     /* Footer */
@@ -299,7 +376,7 @@
       .hero h1 { font-size: 2rem; }
       .origin { flex-direction: column; align-items: center; }
       .origin img { max-width: 100%; }
-      .principles { grid-template-columns: 1fr; }
+      .benefits { grid-template-columns: 1fr; }
       .proof-grid { grid-template-columns: 1fr; }
       .container { padding: 2rem 1rem; }
     }
@@ -384,6 +461,16 @@
       </div>
     </div>
 
+    <div class="example">
+      <h2>It happened today</h2>
+      <img src="factory-fixes-itself.jpg" alt="Screenshot: factory files a bug, fixes it, reviews it, and merges — 14 minutes">
+      <p>
+        We filed a bug about the review lifecycle. <strong>14 minutes later</strong>,
+        the dev-agent picked it up, built a fix, the review-agent approved it, and it
+        merged into main. The factory fixed a bug in its own code while we watched.
+      </p>
+    </div>
+
     <div class="proof">
       <div class="proof-grid">
         <div>
@@ -396,11 +483,11 @@
         </div>
         <div>
           <div class="number">2</div>
-          <div class="label">human repos</div>
+          <div class="label">repos managed</div>
         </div>
       </div>
       <div class="context">
-        Disinto building itself — and a DeFi protocol — on a single 8GB VPS.
+        Disinto building itself — and a DeFi protocol — on a single 8GB VPS. As of March 2026.
       </div>
     </div>
 
@@ -419,30 +506,33 @@
       </p>
     </div>
 
-    <div class="principles">
-      <div class="principle">
-        <div class="name">Opinionated</div>
-        <div class="desc">Good defaults, few knobs. Works out of the box.</div>
+    <div class="benefits">
+      <div class="benefit">
+        <div class="name">Runs on a single VPS</div>
+        <div class="desc">No cloud bills that scale with usage. <strong>One 8GB machine</strong> runs the whole factory. Your costs stay flat.</div>
       </div>
-      <div class="principle">
-        <div class="name">Bash over frameworks</div>
-        <div class="desc">If it can be a shell script, it is.</div>
+      <div class="benefit">
+        <div class="name">No vendor lock-in</div>
+        <div class="desc">Open source, bash scripts, standard git. <strong>You own every piece.</strong> Move it, fork it, read every line.</div>
       </div>
-      <div class="principle">
-        <div class="name">Pull over push</div>
-        <div class="desc">Agents pull work when ready. No orchestrator daemon.</div>
-      </div>
-      <div class="principle">
+      <div class="benefit">
         <div class="name">Self-improving</div>
-        <div class="desc">Every solved problem becomes a pattern for next time.</div>
+        <div class="desc">Every bug it fixes teaches it a pattern. Every review sharpens the next one. <strong>The factory gets better as it runs.</strong></div>
+      </div>
+    </div>
+
+    <div class="cta">
+      <p>The code is public. The factory is running. See for yourself.</p>
+      <div class="cta-links">
+        <a href="https://codeberg.org/johba/disinto">Browse the source</a>
+        <a href="https://codeberg.org/johba/disinto/issues">Watch it work</a>
       </div>
     </div>
 
     <div class="footer">
       <div>Built from scrap, powered by a single battery.</div>
       <div class="links">
-        <a href="https://codeberg.org/johba/disinto">source</a>
-        <a href="https://codeberg.org/johba/disinto/issues">issues</a>
+        <a href="https://codeberg.org/johba/disinto">codeberg.org/johba/disinto</a>
       </div>
       <div class="under-hood">
         Under the hood: dev, review, planner, gardener, supervisor, vault — six agents orchestrated by cron and bash.
