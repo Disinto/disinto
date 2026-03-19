@@ -368,6 +368,138 @@ check_project() {
     find "$_RETRY_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
   fi
 
+  # ===========================================================================
+  # P2f: ESCALATION TRIAGE — auto-retrigger ci_exhausted if infra-only
+  # ===========================================================================
+  if [ "${CHECK_INFRA_RETRY:-true}" = "true" ]; then
+    status "P2f: ${proj_name}: triaging ci_exhausted escalations"
+
+    _esc_file="${FACTORY_ROOT}/supervisor/escalations-${proj_name}.jsonl"
+    if [ -f "$_esc_file" ] && [ -s "$_esc_file" ]; then
+      _esc_tmp="${_esc_file}.sup.$$"
+      : > "$_esc_tmp"
+
+      while IFS= read -r _esc_line; do
+        [ -z "$_esc_line" ] && continue
+
+        _esc_reason=$(printf '%s' "$_esc_line" | jq -r '.reason // ""' 2>/dev/null)
+
+        # Only triage ci_exhausted entries (from dev-agent or dev-poll)
+        case "$_esc_reason" in
+          ci_exhausted|ci_exhausted_poll) ;;
+          *) printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue ;;
+        esac
+
+        _esc_pr=$(printf '%s' "$_esc_line" | jq -r '.pr // 0' 2>/dev/null)
+        _esc_issue=$(printf '%s' "$_esc_line" | jq -r '.issue // 0' 2>/dev/null)
+        _esc_ts=$(printf '%s' "$_esc_line" | jq -r '.ts // ""' 2>/dev/null)
+
+        # Validate pr/issue are numeric
+        [[ "$_esc_pr" =~ ^[0-9]+$ ]] || { printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue; }
+        [[ "$_esc_issue" =~ ^[0-9]+$ ]] || { printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue; }
+
+        # Cooldown: 30 min from last escalation timestamp
+        _esc_epoch=0
+        [ -n "$_esc_ts" ] && _esc_epoch=$(date -d "$_esc_ts" +%s 2>/dev/null || echo 0)
+        _esc_age_min=$(( ($(date +%s) - _esc_epoch) / 60 ))
+
+        if [ "$_esc_age_min" -lt 30 ]; then
+          flog "${proj_name}: PR #${_esc_pr} ci_exhausted cooldown (${_esc_age_min}/30min)"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"
+          continue
+        fi
+
+        # Get the PR's branch from Codeberg
+        _esc_pr_json=$(codeberg_api GET "/pulls/${_esc_pr}" 2>/dev/null) || {
+          flog "${proj_name}: PR #${_esc_pr}: failed to fetch PR info, keeping escalation"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
+        }
+        _esc_branch=$(printf '%s' "$_esc_pr_json" | jq -r '.head.ref // ""' 2>/dev/null)
+        if [ -z "$_esc_branch" ]; then
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
+        fi
+
+        # Validate branch name to prevent SQL injection
+        if ! [[ "$_esc_branch" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+          flog "${proj_name}: PR #${_esc_pr}: unsafe branch name, keeping escalation"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
+        fi
+
+        # Find the latest failed pipeline for this PR's branch via Woodpecker DB
+        _esc_pip=$(wpdb -A -c "
+          SELECT number FROM pipelines
+          WHERE repo_id = ${WOODPECKER_REPO_ID}
+            AND branch = '${_esc_branch}'
+            AND status IN ('failure', 'error')
+            AND finished > 0
+          ORDER BY number DESC LIMIT 1;" 2>/dev/null \
+          | tr -d ' ' | grep -E '^[0-9]+$' | head -1 || true)
+
+        if [ -z "$_esc_pip" ]; then
+          flog "${proj_name}: PR #${_esc_pr}: no failed pipeline for branch ${_esc_branch}, keeping escalation"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
+        fi
+
+        # Classify failure type via ci-helpers
+        _esc_failure=$(classify_pipeline_failure "${WOODPECKER_REPO_ID}" "$_esc_pip" 2>/dev/null || echo "code")
+
+        if [ "$_esc_failure" != "infra" ]; then
+          flog "${proj_name}: PR #${_esc_pr} pipeline #${_esc_pip}: code failure — leaving escalation for human"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
+        fi
+
+        # Infra-only — push empty commit to retrigger CI via temporary worktree
+        _esc_wt="/tmp/${proj_name}-sup-retry-${_esc_pr}"
+        _esc_retrigger_ok=false
+        if [ -d "${PROJECT_REPO_ROOT:-}" ]; then
+          # Clean up any leftover temp worktree from a previous failed run
+          git -C "${PROJECT_REPO_ROOT}" worktree remove --force "${_esc_wt}" 2>/dev/null || true
+
+          if git -C "${PROJECT_REPO_ROOT}" fetch origin "${_esc_branch}" --quiet 2>/dev/null && \
+             git -C "${PROJECT_REPO_ROOT}" worktree add --quiet --detach \
+               "${_esc_wt}" "origin/${_esc_branch}" 2>/dev/null; then
+            if git -C "${_esc_wt}" \
+                 -c user.email="supervisor@factory" \
+                 -c user.name="Supervisor" \
+                 commit --allow-empty --no-verify \
+                 -m "chore: retrigger CI after infra-only exhaustion" \
+                 --quiet 2>/dev/null && \
+               git -C "${_esc_wt}" push origin \
+                 "HEAD:refs/heads/${_esc_branch}" --quiet 2>/dev/null; then
+              _esc_retrigger_ok=true
+            fi
+            git -C "${PROJECT_REPO_ROOT}" worktree remove --force "${_esc_wt}" 2>/dev/null || true
+          fi
+        fi
+
+        if [ "$_esc_retrigger_ok" = true ]; then
+          # Reset CI fix counter so dev-poll can spawn the agent again if needed
+          _ci_fix_file="${FACTORY_ROOT}/dev/ci-fixes-${proj_name}.json"
+          _ci_fix_lock="${_ci_fix_file}.lock"
+          flock "$_ci_fix_lock" python3 -c "
+import json, os
+f='${_ci_fix_file}'
+if not os.path.exists(f):
+    exit()
+d = json.load(open(f))
+d.pop(str(${_esc_pr}), None)
+json.dump(d, open(f, 'w'))
+" 2>/dev/null || true
+
+          fixed "${proj_name}: auto-retriggered CI for PR #${_esc_pr} after infra-only exhaustion"
+          flog "${proj_name}: auto-retriggered CI for PR #${_esc_pr} (issue #${_esc_issue}) after infra-only exhaustion"
+          matrix_send "supervisor" "♻️ auto-retriggered CI for PR #${_esc_pr} (issue #${_esc_issue}) after infra-only exhaustion" 2>/dev/null || true
+          # Escalation removed — do NOT write to _esc_tmp
+        else
+          p2 "${proj_name}: PR #${_esc_pr}: infra-only CI exhaustion but retrigger push failed"
+          printf '%s\n' "$_esc_line" >> "$_esc_tmp"
+        fi
+      done < "$_esc_file"
+
+      mv "$_esc_tmp" "$_esc_file"
+    fi
+  fi
+
   # Dev-agent health (only if monitoring enabled)
   if [ "${CHECK_DEV_AGENT:-true}" = "true" ]; then
     DEV_LOCK="/tmp/dev-agent.lock"
