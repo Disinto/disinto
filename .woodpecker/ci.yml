@@ -3,7 +3,7 @@
 #
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
-#   2. duplicate-detection — report copy-pasted code blocks (non-blocking)
+#   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
 
 when:
   event: [push, pull_request]
@@ -23,5 +23,7 @@ steps:
   - name: duplicate-detection
     image: python:3-alpine
     commands:
+      - apk add --no-cache git
       - python3 .woodpecker/detect-duplicates.py
-    failure: ignore
+    environment:
+      DIFF_BASE: ${CI_COMMIT_TARGET_BRANCH}
