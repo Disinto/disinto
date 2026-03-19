@@ -681,7 +681,7 @@ fi
 # =============================================================================
 status "creating tmux session: ${SESSION_NAME}"
 
-if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}"; then
+if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}" "${PHASE_FILE}"; then
   log "ERROR: failed to create agent session"
   cleanup_labels
   cleanup_worktree
