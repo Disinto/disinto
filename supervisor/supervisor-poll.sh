@@ -141,6 +141,13 @@ if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "
   fi
 fi
 
+# P0 is urgent — send immediately before per-project checks can crash the script
+if [ -n "$P0_ALERTS" ]; then
+  matrix_send "supervisor" "🚨 Supervisor P0 alerts:
+$(printf '%b' "$P0_ALERTS")" 2>/dev/null || true
+  P0_ALERTS=""  # clear so it is not duplicated in the final consolidated send
+fi
+
 # =============================================================================
 # P1: DISK
 # =============================================================================
@@ -182,6 +189,13 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   else
     flog "Disk recovered: ${DISK_AFTER}%"
   fi
+fi
+
+# P1 is urgent — send immediately before per-project checks can crash the script
+if [ -n "$P1_ALERTS" ]; then
+  matrix_send "supervisor" "⚠️ Supervisor P1 alerts:
+$(printf '%b' "$P1_ALERTS")" 2>/dev/null || true
+  P1_ALERTS=""  # clear so it is not duplicated in the final consolidated send
 fi
 
 # Emit infra metric
@@ -963,14 +977,14 @@ if [ -d "$PROJECTS_DIR" ]; then
     # Load project config (overrides CODEBERG_REPO, PROJECT_REPO_ROOT, etc.)
     source "${FACTORY_ROOT}/lib/load-project.sh" "$project_toml"
 
-    check_project
+    check_project || flog "check_project failed for ${project_toml} (per-project checks incomplete)"
   done
 fi
 
 if [ "$PROJECT_COUNT" -eq 0 ]; then
   # Fallback: no project TOML files, use .env config (backwards compatible)
   flog "No projects/*.toml found, using .env defaults"
-  check_project
+  check_project || flog "check_project failed with .env defaults (per-project checks incomplete)"
 fi
 
 # #############################################################################
