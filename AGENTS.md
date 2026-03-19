@@ -20,6 +20,7 @@ disinto/
 ├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
+├── action/        action-poll.sh, action-agent.sh — operational task execution
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config
 ├── formulas/      Issue templates
@@ -165,6 +166,37 @@ gaps.
 - `CLAUDE_TIMEOUT`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
+### Action (`action/`)
+
+**Role**: Execute operational tasks described by action formulas — run scripts,
+call APIs, send messages, collect human approval. Unlike the dev-agent, the
+action-agent produces no PRs: Claude closes the issue directly after executing
+all formula steps.
+
+**Trigger**: `action-poll.sh` runs every 10 min via cron. It scans for open
+issues labeled `action` that have no active tmux session, then spawns
+`action-agent.sh <issue-number>`.
+
+**Key files**:
+- `action/action-poll.sh` — Cron scheduler: finds open action issues with no active tmux session, spawns action-agent.sh
+- `action/action-agent.sh` — Orchestrator: fetches issue body + prior comments, creates tmux session (`action-{issue_num}`) with interactive `claude`, injects formula prompt, monitors session until Claude exits or 4h idle timeout
+
+**Session lifecycle**:
+1. `action-poll.sh` finds open `action` issues with no active tmux session.
+2. Spawns `action-agent.sh <issue_num>`.
+3. Agent creates tmux session `action-{issue_num}`, injects prompt (formula + prior comments).
+4. Claude executes formula steps using Bash and other tools, posts progress as issue comments.
+5. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
+6. When complete: Claude closes the issue with a summary comment. Session exits.
+7. Poll detects no active session on next run — nothing further to do.
+
+**Environment variables consumed**:
+- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `CODEBERG_WEB`
+- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
+- `ACTION_IDLE_TIMEOUT` — Max seconds before killing idle session (default 14400 = 4h)
+
+---
+
 ### Vault (`vault/`)
 
 **Role**: Safety gate for dangerous or irreversible actions. Actions enter a
@@ -199,7 +231,7 @@ sourced as needed.
 | `lib/ci-debug.sh` | CLI tool for Woodpecker CI: `list`, `status`, `logs`, `failures` subcommands. Not sourced — run directly. | Humans / dev-agent (tool access) |
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
-| `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, and vault reply routing. Run as systemd service. | Standalone daemon |
+| `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
 | `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. | dev-agent.sh, gardener-agent.sh |
 
 ---

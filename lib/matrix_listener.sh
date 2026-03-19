@@ -225,6 +225,36 @@ Please answer this question about your review. Explain your reasoning."
           matrix_send "review" "review session not available" "$THREAD_ROOT" >/dev/null 2>&1 || true
         fi
         ;;
+      action)
+        # Route reply into the action tmux session using context_tag (issue number)
+        ACTION_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        if [ -n "$ACTION_ISSUE" ]; then
+          ACTION_SESSION="action-${ACTION_ISSUE}"
+          if tmux has-session -t "$ACTION_SESSION" 2>/dev/null; then
+            ACTION_INJECT_MSG="Human reply from ${SENDER} in Matrix:
+
+${BODY}
+
+Continue with the action formula based on this response."
+            ACTION_INJECT_TMP=$(mktemp /tmp/action-q-inject-XXXXXX)
+            printf '%s' "$ACTION_INJECT_MSG" > "$ACTION_INJECT_TMP"
+            tmux load-buffer -b "action-q-${ACTION_ISSUE}" "$ACTION_INJECT_TMP" || true
+            tmux paste-buffer -t "$ACTION_SESSION" -b "action-q-${ACTION_ISSUE}" || true
+            sleep 0.5
+            tmux send-keys -t "$ACTION_SESSION" "" Enter || true
+            tmux delete-buffer -b "action-q-${ACTION_ISSUE}" 2>/dev/null || true
+            rm -f "$ACTION_INJECT_TMP"
+            log "human reply from ${SENDER} injected into ${ACTION_SESSION}"
+            matrix_send "action" "✓ reply forwarded to action session for issue #${ACTION_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          else
+            log "action session ${ACTION_SESSION} not found for issue #${ACTION_ISSUE}"
+            matrix_send "action" "action session not active for issue #${ACTION_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          fi
+        else
+          log "action thread ${THREAD_ROOT:0:20} has no issue mapping"
+          matrix_send "action" "✓ received, no active session found" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        fi
+        ;;
       vault)
         # Parse APPROVE <id> or REJECT <id> from reply
         VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
