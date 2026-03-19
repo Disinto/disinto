@@ -269,6 +269,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
 
+    # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
+    if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$HAS_PR"; then
+      CI_STATE="success"
+      log "PR #${HAS_PR} has no code files — treating CI as passed"
+    fi
+
     # Check formal reviews
     HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/pulls/${HAS_PR}/reviews" | \
@@ -342,6 +348,13 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
 
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+
+  # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
+  if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$PR_NUM"; then
+    CI_STATE="success"
+    log "PR #${PR_NUM} has no code files — treating CI as passed"
+  fi
+
   HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls/${PR_NUM}/reviews" | \
     jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
@@ -423,6 +436,13 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       "${API}/pulls/${EXISTING_PR}" | jq -r '.head.sha') || true
     CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+
+    # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
+    if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$EXISTING_PR"; then
+      CI_STATE="success"
+      log "PR #${EXISTING_PR} has no code files — treating CI as passed"
+    fi
+
     HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}/reviews" | \
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
