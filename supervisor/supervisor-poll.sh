@@ -386,7 +386,8 @@ check_project() {
 
         # Only triage ci_exhausted entries (from dev-agent or dev-poll)
         case "$_esc_reason" in
-          ci_exhausted|ci_exhausted_poll) ;;
+          ci_exhausted)      ;;
+          ci_exhausted_poll) ;;
           *) printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue ;;
         esac
 
