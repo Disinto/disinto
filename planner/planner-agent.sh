@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# planner-agent.sh — Update AGENTS.md tree, then gap-analyse against VISION.md
+# planner-agent.sh — Update AGENTS.md tree, triage predictions, gap-analyse
 #
-# Two-phase planner run:
-#   Phase 1: Navigate and update AGENTS.md tree using Claude with tool access
-#   Phase 2: Compare AGENTS.md vs VISION.md, create backlog issues for gaps
+# Three-phase planner run:
+#   Phase 1:   Navigate and update AGENTS.md tree using Claude with tool access
+#   Phase 1.5: Triage prediction/unreviewed issues from the predictor (goblin)
+#   Phase 2:   Compare AGENTS.md vs VISION.md, create backlog issues for gaps
 #
 # Usage: planner-agent.sh  (no args — uses env vars from .env / env.sh)
 # =============================================================================
@@ -158,6 +159,242 @@ $(echo -e "$AGENTS_INFO")
   log "Phase 1 done"
 fi
 
+# ── Phase 1.5: Prediction Triage ──────────────────────────────────────
+log "Phase 1.5: prediction triage"
+
+PRED_ISSUES=$(codeberg_api GET "/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50" 2>/dev/null || true)
+PRED_COUNT=0
+if [ -n "$PRED_ISSUES" ] && [ "$PRED_ISSUES" != "null" ]; then
+  PRED_COUNT=$(printf '%s' "$PRED_ISSUES" | jq 'length' 2>/dev/null || echo 0)
+fi
+
+ACCEPTED_PREDICTIONS=""
+
+if [ "${PRED_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+  log "Found $PRED_COUNT prediction/unreviewed issues to triage"
+
+  # Build prediction details for the prompt
+  PRED_DETAILS=$(printf '%s' "$PRED_ISSUES" | jq -r \
+    '.[] | "### Prediction #\(.number): \(.title)\n\(.body)\n"' 2>/dev/null || true)
+
+  # Look up label IDs
+  ALL_LABELS=$(codeberg_api GET "/labels" 2>/dev/null || true)
+  UNREVIEWED_LABEL_ID=$(printf '%s' "$ALL_LABELS" | \
+    jq -r '.[] | select(.name == "prediction/unreviewed") | .id' 2>/dev/null || true)
+  BACKLOG_PRED_LABEL_ID=$(printf '%s' "$ALL_LABELS" | \
+    jq -r '.[] | select(.name == "prediction/backlog") | .id' 2>/dev/null || true)
+  BACKLOG_LABEL_ID_TRIAGE=$(printf '%s' "$ALL_LABELS" | \
+    jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+
+  # Create prediction/backlog label if missing
+  if [ -z "$BACKLOG_PRED_LABEL_ID" ]; then
+    LABEL_RESULT=$(codeberg_api POST "/labels" \
+      -d "$(jq -nc '{name:"prediction/backlog", color:"#0e8a16", description:"Triaged prediction — accepted by planner"}')" \
+      2>/dev/null || true)
+    BACKLOG_PRED_LABEL_ID=$(printf '%s' "$LABEL_RESULT" | jq -r '.id // empty' 2>/dev/null || true)
+    if [ -n "$BACKLOG_PRED_LABEL_ID" ]; then
+      log "Created 'prediction/backlog' label (id: $BACKLOG_PRED_LABEL_ID)"
+    else
+      log "WARN: failed to create 'prediction/backlog' label"
+    fi
+  fi
+
+  # Build formula catalog for triage prompt
+  TRIAGE_FORMULA_CATALOG=""
+  if [ -d "$FACTORY_ROOT/formulas" ]; then
+    for _tf in "$FACTORY_ROOT/formulas"/*.toml; do
+      [ -f "$_tf" ] || continue
+      TRIAGE_FORMULA_CATALOG="${TRIAGE_FORMULA_CATALOG}
+--- $(basename "$_tf" .toml) ---
+$(cat "$_tf")
+"
+    done
+  fi
+
+  # Fetch open issues summary for overlap check
+  _TRIAGE_ISSUES=$(codeberg_api GET "/issues?state=open&type=issues&limit=50&sort=updated&direction=desc" 2>/dev/null || true)
+  TRIAGE_OPEN_SUMMARY=""
+  if [ -n "$_TRIAGE_ISSUES" ] && [ "$_TRIAGE_ISSUES" != "null" ]; then
+    TRIAGE_OPEN_SUMMARY=$(printf '%s' "$_TRIAGE_ISSUES" | \
+      jq -r '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"' 2>/dev/null || true)
+  fi
+
+  # Load VISION for context
+  TRIAGE_VISION=""
+  [ -f "$VISION_FILE" ] && TRIAGE_VISION=$(cat "$VISION_FILE")
+
+  TRIAGE_PROMPT="You are the planner for ${CODEBERG_REPO}. The predictor has filed these observations:
+
+${PRED_DETAILS}
+
+For each prediction, decide:
+- ACCEPT_ACTION: maps to a formula → emit action issue JSON
+- ACCEPT_BACKLOG: warrants dev work → emit backlog issue JSON
+- DISMISS: noise, already covered, or not actionable → close with reason
+
+Context for your decisions:
+
+## VISION.md
+${TRIAGE_VISION:-"(not found)"}
+
+## Available formulas
+${TRIAGE_FORMULA_CATALOG:-"(no formulas available)"}
+
+## All open issues (check for overlap)
+${TRIAGE_OPEN_SUMMARY:-"(could not fetch)"}
+
+## Output format
+
+For each prediction, output one JSON object per line (no array wrapper, no markdown fences):
+
+{\"prediction\": <issue-number>, \"decision\": \"ACCEPT_ACTION\", \"title\": \"action title\", \"formula\": \"formula-name\", \"vars\": {\"var1\": \"value1\"}, \"reason\": \"why\"}
+{\"prediction\": <issue-number>, \"decision\": \"ACCEPT_BACKLOG\", \"title\": \"backlog issue title\", \"body\": \"problem + approach\", \"reason\": \"why\"}
+{\"prediction\": <issue-number>, \"decision\": \"DISMISS\", \"reason\": \"why this is noise or already covered\"}
+
+## Rules
+- Triage ALL predictions — every prediction must appear in output
+- Only use ACCEPT_ACTION when the prediction clearly maps to an available formula
+- ACCEPT_BACKLOG for predictions that warrant real dev work
+- DISMISS predictions that are noise, already covered by open issues, or not actionable
+- Be decisive — the predictor intentionally over-signals; your job is to filter
+
+Output ONLY the JSON lines — no preamble, no markdown fences."
+
+  TRIAGE_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$TRIAGE_PROMPT" \
+    --model sonnet \
+    2>/dev/null) || {
+    log "ERROR: claude exited with code $? during phase 1.5 — skipping triage"
+    TRIAGE_OUTPUT=""
+  }
+
+  if [ -n "$TRIAGE_OUTPUT" ]; then
+    log "Phase 1.5 claude finished ($(printf '%s' "$TRIAGE_OUTPUT" | wc -c) bytes)"
+
+    # Build valid formula list for validation
+    TRIAGE_VALID_FORMULAS=""
+    if [ -d "$FACTORY_ROOT/formulas" ]; then
+      for _vf in "$FACTORY_ROOT/formulas"/*.toml; do
+        [ -f "$_vf" ] || continue
+        TRIAGE_VALID_FORMULAS="${TRIAGE_VALID_FORMULAS} $(basename "$_vf" .toml)"
+      done
+    fi
+
+    TRIAGE_ACCEPTED=0
+    TRIAGE_DISMISSED=0
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      printf '%s' "$line" | jq -e . >/dev/null 2>&1 || continue
+
+      PRED_NUM=$(printf '%s' "$line" | jq -r '.prediction')
+      DECISION=$(printf '%s' "$line" | jq -r '.decision')
+      REASON=$(printf '%s' "$line" | jq -r '.reason // ""')
+
+      case "$DECISION" in
+        ACCEPT_ACTION)
+          A_TITLE=$(printf '%s' "$line" | jq -r '.title')
+          A_FORMULA=$(printf '%s' "$line" | jq -r '.formula // empty')
+
+          # Validate formula against on-disk catalog
+          if [ -n "$A_FORMULA" ] && ! echo "$TRIAGE_VALID_FORMULAS" | grep -qw "$A_FORMULA"; then
+            log "WARN: unknown formula '${A_FORMULA}' for prediction #${PRED_NUM} — falling back to ACCEPT_BACKLOG"
+            A_FORMULA=""
+          fi
+
+          if [ -n "$A_FORMULA" ]; then
+            A_VARS_YAML=$(printf '%s' "$line" | jq -r '
+              .vars // {} | to_entries |
+              map("  " + .key + ": " + (.value | @json)) | join("\n")')
+
+            A_BODY="---
+formula: ${A_FORMULA}
+vars:
+${A_VARS_YAML}
+---
+
+Triaged from prediction #${PRED_NUM}.
+Reason: ${REASON}"
+          else
+            A_BODY="Triaged from prediction #${PRED_NUM}.
+Reason: ${REASON}"
+          fi
+
+          A_PAYLOAD=$(jq -nc --arg t "$A_TITLE" --arg b "$A_BODY" '{title:$t, body:$b}')
+          if [ -n "$BACKLOG_LABEL_ID_TRIAGE" ]; then
+            A_PAYLOAD=$(printf '%s' "$A_PAYLOAD" | jq --argjson lid "$BACKLOG_LABEL_ID_TRIAGE" '.labels = [$lid]')
+          fi
+
+          A_RESULT=$(codeberg_api POST "/issues" -d "$A_PAYLOAD" 2>/dev/null || true)
+          A_ISSUE=$(printf '%s' "$A_RESULT" | jq -r '.number // "?"' 2>/dev/null || echo "?")
+          log "Created action issue #${A_ISSUE} from prediction #${PRED_NUM} (formula: ${A_FORMULA:-freeform})"
+          matrix_send "planner" "📋 Action #${A_ISSUE} from prediction #${PRED_NUM} [${A_FORMULA:-freeform}]: ${A_TITLE}" 2>/dev/null || true
+
+          ACCEPTED_PREDICTIONS="${ACCEPTED_PREDICTIONS}
+- Prediction #${PRED_NUM} → action issue #${A_ISSUE} (formula: ${A_FORMULA:-freeform}): ${A_TITLE}"
+          TRIAGE_ACCEPTED=$((TRIAGE_ACCEPTED + 1))
+
+          # Relabel: prediction/unreviewed → prediction/backlog
+          if [ -n "$UNREVIEWED_LABEL_ID" ]; then
+            codeberg_api DELETE "/issues/${PRED_NUM}/labels/${UNREVIEWED_LABEL_ID}" 2>/dev/null || true
+          fi
+          if [ -n "$BACKLOG_PRED_LABEL_ID" ]; then
+            codeberg_api POST "/issues/${PRED_NUM}/labels" \
+              -d "$(jq -nc --argjson lid "$BACKLOG_PRED_LABEL_ID" '{labels:[$lid]}')" 2>/dev/null || true
+          fi
+          ;;
+
+        ACCEPT_BACKLOG)
+          B_TITLE=$(printf '%s' "$line" | jq -r '.title')
+          B_BODY=$(printf '%s' "$line" | jq -r '.body // ""')
+          B_BODY="${B_BODY}
+
+Triaged from prediction #${PRED_NUM}.
+Reason: ${REASON}"
+
+          B_PAYLOAD=$(jq -nc --arg t "$B_TITLE" --arg b "$B_BODY" '{title:$t, body:$b}')
+          if [ -n "$BACKLOG_LABEL_ID_TRIAGE" ]; then
+            B_PAYLOAD=$(printf '%s' "$B_PAYLOAD" | jq --argjson lid "$BACKLOG_LABEL_ID_TRIAGE" '.labels = [$lid]')
+          fi
+
+          B_RESULT=$(codeberg_api POST "/issues" -d "$B_PAYLOAD" 2>/dev/null || true)
+          B_ISSUE=$(printf '%s' "$B_RESULT" | jq -r '.number // "?"' 2>/dev/null || echo "?")
+          log "Created backlog issue #${B_ISSUE} from prediction #${PRED_NUM}"
+          matrix_send "planner" "📋 Backlog #${B_ISSUE} from prediction #${PRED_NUM}: ${B_TITLE}" 2>/dev/null || true
+
+          ACCEPTED_PREDICTIONS="${ACCEPTED_PREDICTIONS}
+- Prediction #${PRED_NUM} → backlog issue #${B_ISSUE}: ${B_TITLE}"
+          TRIAGE_ACCEPTED=$((TRIAGE_ACCEPTED + 1))
+
+          # Relabel: prediction/unreviewed → prediction/backlog
+          if [ -n "$UNREVIEWED_LABEL_ID" ]; then
+            codeberg_api DELETE "/issues/${PRED_NUM}/labels/${UNREVIEWED_LABEL_ID}" 2>/dev/null || true
+          fi
+          if [ -n "$BACKLOG_PRED_LABEL_ID" ]; then
+            codeberg_api POST "/issues/${PRED_NUM}/labels" \
+              -d "$(jq -nc --argjson lid "$BACKLOG_PRED_LABEL_ID" '{labels:[$lid]}')" 2>/dev/null || true
+          fi
+          ;;
+
+        DISMISS)
+          codeberg_api POST "/issues/${PRED_NUM}/comments" \
+            -d "$(jq -nc --arg b "Dismissed by planner triage: ${REASON}" '{body:$b}')" 2>/dev/null || true
+          codeberg_api PATCH "/issues/${PRED_NUM}" \
+            -d '{"state":"closed"}' 2>/dev/null || true
+          log "Dismissed prediction #${PRED_NUM}: ${REASON}"
+          TRIAGE_DISMISSED=$((TRIAGE_DISMISSED + 1))
+          ;;
+
+        *)
+          log "WARN: unknown triage decision '${DECISION}' for prediction #${PRED_NUM}"
+          ;;
+      esac
+    done <<< "$TRIAGE_OUTPUT"
+
+    log "Phase 1.5 done — accepted: $TRIAGE_ACCEPTED, dismissed: $TRIAGE_DISMISSED"
+  fi
+else
+  log "No prediction/unreviewed issues found — skipping triage"
+fi
+
 # ── Phase 2: Gap analysis ───────────────────────────────────────────────
 log "Phase 2: gap analysis"
 
@@ -245,6 +482,9 @@ ${VISION_ISSUES:-"(none)"}
 
 ## All open issues
 ${OPEN_SUMMARY}
+
+## Recently accepted predictions (from triage)
+${ACCEPTED_PREDICTIONS:-"(none — no predictions were triaged this cycle)"}
 
 ## Operational metrics (last 7 days from supervisor)
 ${METRICS_SUMMARY}

@@ -147,16 +147,18 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 ### Planner (`planner/`)
 
-**Role**: Two-phase planning. Phase 1: update the AGENTS.md documentation
-tree to reflect recent code changes. Phase 2: gap-analyse VISION.md vs
-current project state, create up to 5 backlog issues for the highest-leverage
-gaps.
+**Role**: Three-phase planning. Phase 1: update the AGENTS.md documentation
+tree to reflect recent code changes. Phase 1.5: triage `prediction/unreviewed`
+issues filed by the predictor (goblin) — accept as action/backlog issues or
+dismiss as noise. Phase 2: gap-analyse VISION.md vs current project state
+(including accepted predictions), create up to 5 backlog issues for the
+highest-leverage gaps.
 
 **Trigger**: `planner-poll.sh` runs weekly via cron.
 
 **Key files**:
 - `planner/planner-poll.sh` — Cron wrapper: lock, memory guard, runs planner-agent.sh
-- `planner/planner-agent.sh` — Phase 1: uses `claude -p --model sonnet --max-turns 30` (one-shot with tool access) to read/update AGENTS.md files. Phase 2: uses `claude -p --model sonnet` to compare AGENTS.md tree vs VISION.md and create gap issues. Both phases are one-shot (`claude -p`), not interactive sessions
+- `planner/planner-agent.sh` — Phase 1: uses `claude -p --model sonnet --max-turns 30` (one-shot with tool access) to read/update AGENTS.md files. Phase 1.5: fetches `prediction/unreviewed` issues and uses `claude -p --model sonnet` to triage each prediction (ACCEPT_ACTION, ACCEPT_BACKLOG, or DISMISS); creates corresponding action/backlog issues and relabels predictions to `prediction/backlog` or closes them. Phase 2: uses `claude -p --model sonnet` to compare AGENTS.md tree vs VISION.md (plus accepted predictions from Phase 1.5) and create gap issues. All phases are one-shot (`claude -p`), not interactive sessions
 
 **Future direction**: The planner will read an `evidence/` directory of structured JSON written by sense/mutation processes (see `docs/EVIDENCE-ARCHITECTURE.md`). This replaces human "ship it" decisions with evidence-gated deployment across dimensions: holdout, red-team, user-test, evolution fitness, protocol metrics, funnel. Not yet implemented.
 
