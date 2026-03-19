@@ -759,7 +759,7 @@ if [ "${POST_CODE}" = "201" ]; then
       REVIEW_BOT_LOGIN=$(printf '%s' "$REVIEW_BOT_RESP" | jq -r '.login // empty')
     fi
     if [ -n "$REVIEW_BOT_LOGIN" ]; then
-      ALL_PR_REVIEWS=$(codeberg_api_all "/pulls/${PR_NUMBER}/reviews" || echo "[]")
+      ALL_PR_REVIEWS=$(codeberg_api_all "/pulls/${PR_NUMBER}/reviews" "$REVIEW_BOT_TOKEN" || echo "[]")
       while IFS= read -r review_id; do
         DISMISS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST \

@@ -60,8 +60,10 @@ codeberg_api() {
 # Paginate a Codeberg API GET endpoint and return all items as a merged JSON array.
 # Usage: codeberg_api_all /path             (no existing query params)
 #        codeberg_api_all /path?a=b         (with existing params — appends &limit=50&page=N)
+#        codeberg_api_all /path TOKEN       (optional second arg: token; defaults to $CODEBERG_TOKEN)
 codeberg_api_all() {
   local path_prefix="$1"
+  local CODEBERG_TOKEN="${2:-${CODEBERG_TOKEN}}"
   local sep page page_items count all_items="[]"
   case "$path_prefix" in
     *"?"*) sep="&" ;;
