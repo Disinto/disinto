@@ -120,6 +120,32 @@ create_agent_session() {
     fi
   fi
 
+  # Install Stop hook for Matrix streaming: when MATRIX_THREAD_ID is set,
+  # each Claude response is posted to the Matrix thread so humans can follow.
+  local matrix_hook_script="${FACTORY_ROOT}/lib/hooks/on-stop-matrix.sh"
+  if [ -n "${MATRIX_THREAD_ID:-}" ] && [ -x "$matrix_hook_script" ]; then
+    if [ -f "$settings" ]; then
+      jq --arg cmd "$matrix_hook_script" '
+        if (.hooks.Stop // [] | any(.[]; .hooks[]?.command == $cmd))
+        then .
+        else .hooks.Stop = (.hooks.Stop // []) + [{
+          matcher: "",
+          hooks: [{type: "command", command: $cmd}]
+        }]
+        end
+      ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+    else
+      jq -n --arg cmd "$matrix_hook_script" '{
+        hooks: {
+          Stop: [{
+            matcher: "",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+        }
+      }' > "$settings"
+    fi
+  fi
+
   rm -f "$idle_marker"
   tmux new-session -d -s "$session" -c "$workdir" \
     "claude --dangerously-skip-permissions" 2>/dev/null

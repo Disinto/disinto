@@ -218,11 +218,12 @@ issues labeled `action` that have no active tmux session, then spawns
 **Session lifecycle**:
 1. `action-poll.sh` finds open `action` issues with no active tmux session.
 2. Spawns `action-agent.sh <issue_num>`.
-3. Agent creates tmux session `action-{issue_num}`, injects prompt (formula + prior comments).
-4. Claude executes formula steps using Bash and other tools, posts progress as issue comments.
-5. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
-6. When complete: Claude closes the issue with a summary comment. Session exits.
-7. Poll detects no active session on next run — nothing further to do.
+3. Agent creates Matrix thread, exports `MATRIX_THREAD_ID` so Claude's output streams to the thread via a Stop hook (`on-stop-matrix.sh`).
+4. Agent creates tmux session `action-{issue_num}`, injects prompt (formula + prior comments).
+5. Claude executes formula steps using Bash and other tools, posts progress as issue comments. Each Claude turn is streamed to the Matrix thread for real-time human visibility.
+6. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
+7. When complete: Claude closes the issue with a summary comment. Session exits.
+8. Poll detects no active session on next run — nothing further to do.
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `CODEBERG_WEB`
@@ -266,7 +267,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
-| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh |
+| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh |
 
 ---
 
