@@ -5,6 +5,34 @@
 # ci_passed() requires: WOODPECKER_REPO_ID (from env.sh / project config)
 # classify_pipeline_failure() requires: woodpecker_api() (defined in env.sh)
 
+# diff_has_code_files — check if file list (stdin, one per line) contains code files
+# Non-code paths: docs/*, formulas/*, evidence/*, *.md
+# Returns 0 if any code file found, 1 if all files are non-code.
+diff_has_code_files() {
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in
+      docs/*|formulas/*|evidence/*) continue ;;
+      *.md) continue ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# ci_required_for_pr <pr_number> — check if CI is needed for this PR
+# Returns 0 if PR has code files (CI required), 1 if non-code only (CI not required).
+ci_required_for_pr() {
+  local pr_num="$1"
+  local files
+  files=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${CODEBERG_API}/pulls/${pr_num}/files" | jq -r '.[].filename' 2>/dev/null) || return 0
+  if [ -z "$files" ]; then
+    return 0  # empty file list — require CI as safety default
+  fi
+  echo "$files" | diff_has_code_files
+}
+
 # ci_passed <state> — check if CI is passing (or no CI configured)
 #   Returns 0 if state is "success", or if no CI is configured and
 #   state is empty/pending/unknown.

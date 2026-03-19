@@ -186,11 +186,14 @@ while IFS= read -r line; do
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
-  # Skip if CI is running/failed. Allow "success" or no CI configured (empty/pending with no pipelines)
+  # Skip if CI is running/failed. Allow "success", no CI configured, or non-code PRs
   if ! ci_passed "$CI_STATE"; then
-    log "  #${PR_NUM} CI=${CI_STATE}, skip"
-    SKIPPED=$((SKIPPED + 1))
-    continue
+    if ci_required_for_pr "$PR_NUM"; then
+      log "  #${PR_NUM} CI=${CI_STATE}, skip"
+      SKIPPED=$((SKIPPED + 1))
+      continue
+    fi
+    log "  #${PR_NUM} CI=${CI_STATE} but no code files — proceeding"
   fi
 
   # Check formal Codeberg reviews (not comment markers)

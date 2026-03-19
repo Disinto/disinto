@@ -181,8 +181,11 @@ CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
 if ! ci_passed "$CI_STATE"; then
-  log "SKIP: CI=${CI_STATE}"
-  exit 0
+  if ci_required_for_pr "$PR_NUMBER"; then
+    log "SKIP: CI=${CI_STATE}"
+    exit 0
+  fi
+  log "CI=${CI_STATE} but PR has no code files — skipping CI gate"
 fi
 
 # --- Check for existing reviews ---
