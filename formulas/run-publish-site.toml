@@ -1,0 +1,141 @@
+# formulas/run-publish-site.toml — Deploy disinto.ai landing page from site/ directory
+#
+# Trigger: action issue created by planner (gap analysis), dev-poll (post-merge
+# hook detecting site/ changes), or gardener (periodic SHA drift check).
+#
+# The action-agent picks up the issue, executes these steps, posts results
+# as a comment, and closes the issue.
+
+name        = "run-publish-site"
+description = "Deploy disinto.ai landing page from site/ directory"
+version     = 1
+
+[vars.commit_sha]
+description = "Git commit SHA to deploy (default: HEAD of main)"
+required    = false
+default     = "HEAD"
+
+[vars.site_source]
+description = "Source directory within the repo containing site files"
+required    = false
+default     = "site/"
+
+[vars.site_root]
+description = "Symlink path that Caddy serves (points to latest deploy)"
+required    = false
+default     = "/home/debian/disinto-site"
+
+[vars.deploy_dir]
+description = "Parent directory for timestamped deploy snapshots"
+required    = false
+default     = "/home/debian/disinto-deploys"
+
+[vars.max_deploys]
+description = "Number of historical deploys to keep (older ones are pruned)"
+required    = false
+default     = "5"
+
+[[steps]]
+id          = "pull-latest"
+title       = "Pull latest main and resolve target SHA"
+description = """
+Pull the latest changes and resolve the deploy target:
+
+  cd /home/debian/dark-factory
+  git pull origin main
+
+Resolve the commit SHA to deploy:
+  - If {{commit_sha}} is "HEAD", use the current HEAD of main.
+  - Otherwise, verify {{commit_sha}} exists in the repo.
+
+Record the resolved SHA for use in subsequent steps:
+  DEPLOY_SHA=$(git rev-parse {{commit_sha}})
+
+Check whether the currently deployed SHA (if any) already matches:
+  if [ -L {{site_root}} ]; then
+    CURRENT=$(cat "$(readlink -f {{site_root}})/.deploy-sha" 2>/dev/null || echo "none")
+    if [ "$CURRENT" = "$DEPLOY_SHA" ]; then
+      echo "Already deployed at $DEPLOY_SHA — nothing to do"
+      # Post comment and close issue as no-op
+    fi
+  fi
+"""
+
+[[steps]]
+id          = "create-deploy"
+title       = "Create timestamped deploy directory"
+description = """
+Create a timestamped deploy directory and extract site files into it:
+
+  TIMESTAMP=$(date -u '+%Y-%m-%d-%H%M%S')
+  TARGET="{{deploy_dir}}/${TIMESTAMP}"
+  mkdir -p "$TARGET"
+
+Extract site files from the resolved commit:
+  cd /home/debian/dark-factory
+  git archive "${DEPLOY_SHA}:{{site_source}}" | tar -x -C "$TARGET"
+
+Write deploy metadata:
+  echo "$DEPLOY_SHA" > "$TARGET/.deploy-sha"
+
+Verify the extraction produced files:
+  ls -la "$TARGET/"
+  [ -f "$TARGET/index.html" ] || { echo "ERROR: index.html missing"; exit 1; }
+"""
+needs       = ["pull-latest"]
+
+[[steps]]
+id          = "activate"
+title       = "Update symlink to new deploy"
+description = """
+Atomically switch the site root symlink to the new deploy:
+
+  ln -sfn "$TARGET" {{site_root}}
+
+Verify the symlink points to the correct directory:
+  readlink -f {{site_root}}
+"""
+needs       = ["create-deploy"]
+
+[[steps]]
+id          = "prune-old-deploys"
+title       = "Prune old deploys beyond max_deploys"
+description = """
+Keep only the last {{max_deploys}} deploys. Remove older ones:
+
+  cd {{deploy_dir}}
+  ls -1d 20*/ 2>/dev/null | sort | head -n -{{max_deploys}} | while read -r old; do
+    echo "Pruning old deploy: $old"
+    rm -rf "$old"
+  done
+
+Append to deploy history log:
+  printf '{"sha":"%s","ts":"%s","dir":"%s"}\n' \
+    "$DEPLOY_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET" \
+    >> "{{deploy_dir}}/.deploy-history.jsonl"
+"""
+needs       = ["activate"]
+
+[[steps]]
+id          = "verify"
+title       = "Verify live site matches deployed content"
+description = """
+Verify the site is serving the new content:
+
+  # Check site is reachable
+  curl -sf -o /dev/null -w '%{http_code}' https://disinto.ai/ | grep -q 200
+
+  # Verify content from the deployed index.html is present
+  # Extract a unique string from the deployed file to check
+  EXPECTED=$(grep -oP '(?<=<title>)[^<]+' "$TARGET/index.html" | head -1)
+  curl -sf https://disinto.ai/ | grep -qF "$EXPECTED" && echo "VERIFIED: title matches" \
+    || echo "WARNING: title mismatch — cache may need time to clear"
+
+  # List deployed files
+  echo "Deployed files:"
+  find "$TARGET" -type f | sort
+
+Report:
+  echo "Deploy complete: SHA=$DEPLOY_SHA dir=$TARGET"
+"""
+needs       = ["activate"]
