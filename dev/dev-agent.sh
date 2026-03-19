@@ -185,6 +185,18 @@ if [ -z "$ISSUE_JSON" ] || ! echo "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; t
 fi
 ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+ISSUE_BODY_ORIGINAL="$ISSUE_BODY"
+
+# Append human comments to issue body (filter out bot accounts)
+ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API}/issues/${ISSUE}/comments" | \
+  jq -r '.[] | select(.user.login != "Disinto_bot" and .user.login != "disinto-factory") | "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
+if [ -n "$ISSUE_COMMENTS" ]; then
+  ISSUE_BODY="${ISSUE_BODY}
+
+## Issue comments
+${ISSUE_COMMENTS}"
+fi
 ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
 
 if [ "$ISSUE_STATE" != "open" ]; then
@@ -211,8 +223,8 @@ fi
 # =============================================================================
 status "preflight check"
 
-# Extract dependency references using shared parser
-DEP_NUMBERS=$(echo "$ISSUE_BODY" | bash "${FACTORY_ROOT}/lib/parse-deps.sh")
+# Extract dependency references using shared parser (use original body only — not comments)
+DEP_NUMBERS=$(echo "$ISSUE_BODY_ORIGINAL" | bash "${FACTORY_ROOT}/lib/parse-deps.sh")
 
 BLOCKED_BY=()
 if [ -n "$DEP_NUMBERS" ]; then
@@ -346,7 +358,7 @@ EXISTING_PR=""
 EXISTING_BRANCH=""
 RECOVERY_MODE=false
 
-BODY_PR=$(echo "$ISSUE_BODY" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
+BODY_PR=$(echo "$ISSUE_BODY_ORIGINAL" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
 if [ -n "$BODY_PR" ]; then
   PR_CHECK=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls/${BODY_PR}" | jq -r '{state, head_ref: .head.ref}')
