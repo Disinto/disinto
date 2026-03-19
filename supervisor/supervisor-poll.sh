@@ -703,27 +703,64 @@ Instructions:
       _should_cleanup=true
       _cleanup_reason="issue #${_sess_issue} closed externally"
     else
-      # Issue still open — check if associated PR is closed/merged
+      # Issue still open — skip cleanup during active-wait phases (no PR yet is normal)
+      _phase_file="/tmp/dev-session-${proj_name}-${_sess_issue}.phase"
+      _curr_phase=$(head -1 "$_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+      case "${_curr_phase:-}" in
+        PHASE:needs_human|PHASE:awaiting_ci|PHASE:awaiting_review)
+          continue  # session has legitimate pending work
+          ;;
+      esac
+
+      # Check if associated PR is open (paginated)
       _pr_branch="fix/issue-${_sess_issue}"
-      _has_open_pr=$(codeberg_api GET "/pulls?state=open&limit=50" 2>/dev/null \
-        | jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
-        2>/dev/null || echo 0)
-
-      if [ "${_has_open_pr:-0}" -eq 0 ]; then
-        # No open PR — check for a closed/merged PR with this branch
-        _has_closed_pr=$(codeberg_api GET "/pulls?state=closed&limit=50" 2>/dev/null \
-          | jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
+      _has_open_pr=0
+      _pr_page=1
+      while true; do
+        _pr_page_json=$(codeberg_api GET "/pulls?state=open&limit=50&page=${_pr_page}" \
+          2>/dev/null || echo "[]")
+        _pr_page_len=$(printf '%s' "$_pr_page_json" | jq 'length' 2>/dev/null || echo 0)
+        _pr_match=$(printf '%s' "$_pr_page_json" | \
+          jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
           2>/dev/null || echo 0)
+        _has_open_pr=$(( _has_open_pr + ${_pr_match:-0} ))
+        [ "${_has_open_pr:-0}" -gt 0 ] && break
+        [ "${_pr_page_len:-0}" -lt 50 ] && break
+        _pr_page=$(( _pr_page + 1 ))
+        [ "$_pr_page" -gt 20 ] && break
+      done
 
-        if [ "${_has_closed_pr:-0}" -gt 0 ]; then
+      if [ "$_has_open_pr" -eq 0 ]; then
+        # No open PR — check for a closed/merged PR with this branch (paginated)
+        _has_closed_pr=0
+        _pr_page=1
+        while true; do
+          _pr_page_json=$(codeberg_api GET "/pulls?state=closed&limit=50&page=${_pr_page}" \
+            2>/dev/null || echo "[]")
+          _pr_page_len=$(printf '%s' "$_pr_page_json" | jq 'length' 2>/dev/null || echo 0)
+          _pr_match=$(printf '%s' "$_pr_page_json" | \
+            jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
+            2>/dev/null || echo 0)
+          _has_closed_pr=$(( _has_closed_pr + ${_pr_match:-0} ))
+          [ "${_has_closed_pr:-0}" -gt 0 ] && break
+          [ "${_pr_page_len:-0}" -lt 50 ] && break
+          _pr_page=$(( _pr_page + 1 ))
+          [ "$_pr_page" -gt 20 ] && break
+        done
+
+        if [ "$_has_closed_pr" -gt 0 ]; then
           _should_cleanup=true
           _cleanup_reason="PR for issue #${_sess_issue} is closed/merged"
         else
-          # No PR at all — clean up if session has been idle >30min
-          _sess_activity=$(tmux display-message -t "$_sess" -p '#{session_activity}' \
-            2>/dev/null || echo 0)
+          # No PR at all — clean up if session idle >30min
+          # On query failure, skip rather than defaulting to epoch 0
+          if ! _sess_activity=$(tmux display-message -t "$_sess" \
+              -p '#{session_activity}' 2>/dev/null); then
+            flog "${proj_name}: Could not query activity for session ${_sess}, skipping"
+            continue
+          fi
           _now_ts=$(date +%s)
-          _idle_min=$(( (_now_ts - ${_sess_activity:-0}) / 60 ))
+          _idle_min=$(( (_now_ts - _sess_activity) / 60 ))
           if [ "$_idle_min" -gt 30 ]; then
             _should_cleanup=true
             _cleanup_reason="no PR found, session idle ${_idle_min}min"
