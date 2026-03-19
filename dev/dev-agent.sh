@@ -40,6 +40,11 @@ API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
 STATUSFILE="/tmp/dev-agent-status"
 
+# Gitea labels API requires []int64 — look up the "backlog" label ID once
+BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
+
 log() {
   printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
@@ -132,7 +137,7 @@ cleanup() {
       -H "Authorization: token ${CODEBERG_TOKEN}" \
       -H "Content-Type: application/json" \
       "${API}/issues/${ISSUE}/labels" \
-      -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -710,7 +715,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
       -H "Authorization: token ${CODEBERG_TOKEN}" \
       -H "Content-Type: application/json" \
       "${API}/issues/${ISSUE}/labels" \
-      -d '{"labels":["backlog"]}' >/dev/null 2>&1 || true
+      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
     CLAIMED=false  # Don't unclaim again in cleanup()
     if [ -n "${PR_NUMBER:-}" ]; then
       log "keeping worktree (PR #${PR_NUMBER} still open)"
