@@ -290,15 +290,15 @@ gardener_phase_callback() {
       log "WARNING: tmux session died unexpectedly — attempting recovery"
       rm -f "$RESULT_FILE"
       touch "$RESULT_FILE"
-      if create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" 2>/dev/null; then
-        agent_inject_into_session "$SESSION_NAME" "$PROMPT"
+      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" 2>/dev/null; then
+        agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROMPT"
         log "Recovery session started"
       else
         log "ERROR: could not restart session after crash"
       fi
       ;;
     PHASE:done|PHASE:failed|PHASE:needs_human|PHASE:merged)
-      agent_kill_session "$SESSION_NAME"
+      agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
   esac
 }
