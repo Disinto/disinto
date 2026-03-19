@@ -31,6 +31,8 @@ agent_inject_into_session() {
   local text="$2"
   local tmpfile
   agent_wait_for_claude_ready "$session" 120 || true
+  # Clear idle marker — new work incoming
+  rm -f "/tmp/claude-idle-${session}.ts"
   tmpfile=$(mktemp /tmp/agent-inject-XXXXXX)
   printf '%s' "$text" > "$tmpfile"
   tmux load-buffer -b "agent-inject-$$" "$tmpfile"
@@ -42,10 +44,42 @@ agent_inject_into_session() {
 }
 
 # Create a tmux session running Claude in the given workdir.
+# Installs a Stop hook for idle detection (see monitor_phase_loop).
 # Returns 0 if session is ready, 1 otherwise.
 create_agent_session() {
   local session="$1"
   local workdir="${2:-.}"
+
+  # Install Stop hook for idle detection: when Claude finishes a response,
+  # the hook writes a timestamp to a marker file. monitor_phase_loop checks
+  # this marker instead of fragile tmux pane scraping.
+  local idle_marker="/tmp/claude-idle-${session}.ts"
+  local hook_script="${FACTORY_ROOT}/lib/hooks/on-idle-stop.sh"
+  if [ -x "$hook_script" ]; then
+    mkdir -p "${workdir}/.claude"
+    local settings="${workdir}/.claude/settings.json"
+    local hook_cmd="${hook_script} ${idle_marker}"
+    if [ -f "$settings" ]; then
+      # Append our Stop hook to existing project settings
+      jq --arg cmd "$hook_cmd" '
+        .hooks.Stop = (.hooks.Stop // []) + [{
+          matcher: "",
+          hooks: [{type: "command", command: $cmd}]
+        }]
+      ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+    else
+      jq -n --arg cmd "$hook_cmd" '{
+        hooks: {
+          Stop: [{
+            matcher: "",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+        }
+      }' > "$settings"
+    fi
+  fi
+
+  rm -f "$idle_marker"
   tmux new-session -d -s "$session" -c "$workdir" \
     "claude --dangerously-skip-permissions" 2>/dev/null
   sleep 1
@@ -66,10 +100,10 @@ inject_formula() {
 # Args: phase_file idle_timeout_secs callback_fn [session_name]
 #   session_name — tmux session to health-check; falls back to $SESSION_NAME global
 #
-# Idle prompt detection: if Claude returns to the ❯ prompt for 3 consecutive polls
-# WITHOUT having written any phase signal, the session is killed and the callback is
-# invoked with "PHASE:failed".  This handles the case where Claude completes its work
-# but skips the phase protocol entirely.
+# Idle detection: uses a Stop hook marker file (written by lib/hooks/on-idle-stop.sh)
+# to detect when Claude finishes responding without writing a phase signal.
+# If the marker exists for 3 consecutive polls with no phase written, the session
+# is killed and the callback invoked with "PHASE:failed".
 monitor_phase_loop() {
   local phase_file="$1"
   local idle_timeout="$2"
@@ -124,19 +158,16 @@ monitor_phase_loop() {
         agent_kill_session "${_session}"
         return 0
       fi
-      # Idle prompt detection: Claude finished without writing a phase signal.
-      # Only fires when current_phase is empty (no phase ever written).
-      # Note: tmux capture-pane captures the full visible pane area, not just the
-      # last line.  Prior tool output containing ❯ (e.g. a zsh subshell prompt in
-      # Claude's output) could trigger a false positive — the same risk exists in
-      # agent_wait_for_claude_ready().  Requiring 3 consecutive polls (≥2 poll
-      # intervals of sustained idle) reduces but does not eliminate this risk.
-      if [ -z "$current_phase" ] && tmux has-session -t "${_session}" 2>/dev/null && \
-         tmux capture-pane -t "${_session}" -p 2>/dev/null | grep -q '❯'; then
+      # Idle detection via Stop hook: the on-idle-stop.sh hook writes a marker
+      # file when Claude finishes a response. If the marker exists and no phase
+      # has been written, Claude returned to the prompt without following the
+      # phase protocol. 3 consecutive polls = confirmed idle (not mid-turn).
+      local idle_marker="/tmp/claude-idle-${_session}.ts"
+      if [ -z "$current_phase" ] && [ -f "$idle_marker" ]; then
         idle_pane_count=$(( idle_pane_count + 1 ))
         if [ "$idle_pane_count" -ge 3 ]; then
           _MONITOR_LOOP_EXIT="idle_prompt"
-          # Session is already killed before the callback is invoked.
+          # Session is killed before the callback is invoked.
           # Callbacks that handle PHASE:failed must not assume the session is alive.
           agent_kill_session "${_session}"
           if type "${callback}" &>/dev/null; then
@@ -185,6 +216,7 @@ monitor_phase_loop() {
 agent_kill_session() {
   local session="${1:-}"
   [ -n "$session" ] && tmux kill-session -t "$session" 2>/dev/null || true
+  rm -f "/tmp/claude-idle-${session}.ts"
 }
 
 # Read the current phase from a phase file, stripped of whitespace.
