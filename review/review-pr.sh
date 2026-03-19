@@ -616,7 +616,7 @@ A maintainer should review this PR manually, or re-trigger with \`--force\`.
 fi
 
 # --- Render JSON -> Markdown ---
-VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict')
+VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict' | tr '[:lower:]' '[:upper:]' | tr '-' '_')
 VERDICT_REASON=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict_reason // ""')
 
 render_markdown() {
