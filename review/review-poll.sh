@@ -178,6 +178,55 @@ Instructions:
   touch "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
 }
 
+# --- Re-review: trigger review for awaiting_changes sessions with new commits ---
+if [ -n "${REVIEW_SESSIONS:-}" ]; then
+  while IFS= read -r session; do
+    pr_num="${session#review-"${PROJECT_NAME}"-}"
+    phase_file="/tmp/review-session-${PROJECT_NAME}-${pr_num}.phase"
+
+    current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+    [ "$current_phase" = "PHASE:awaiting_changes" ] || continue
+
+    reviewed_sha=$(sed -n 's/^SHA://p' "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$reviewed_sha" ] || continue
+
+    pr_json=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API_BASE}/pulls/${pr_num}" 2>/dev/null || true)
+    [ -n "$pr_json" ] || continue
+
+    pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "unknown"')
+    [ "$pr_state" = "open" ] || continue
+
+    current_sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')
+    pr_branch=$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')
+    if [ -z "$current_sha" ] || [ "$current_sha" = "$reviewed_sha" ]; then continue; fi
+
+    ci_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API_BASE}/commits/${current_sha}/status" | jq -r '.state // "unknown"')
+
+    if ! ci_passed "$ci_state"; then
+      if ci_required_for_pr "$pr_num"; then
+        log "  #${pr_num} awaiting_changes: new SHA ${current_sha:0:7} CI=${ci_state}, waiting"
+        continue
+      fi
+    fi
+
+    log "  #${pr_num} re-review: new commits (${reviewed_sha:0:7}→${current_sha:0:7})"
+
+    if "${SCRIPT_DIR}/review-pr.sh" "$pr_num" 2>&1; then
+      REVIEWED=$((REVIEWED + 1))
+      FRESH_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        "${API_BASE}/pulls/${pr_num}" | jq -r '.head.sha // ""') || true
+      inject_review_into_dev_session "$pr_num" "${FRESH_SHA:-$current_sha}" "$pr_branch"
+    else
+      log "  #${pr_num} re-review failed"
+      matrix_send "review" "❌ PR #${pr_num} re-review failed" 2>/dev/null || true
+    fi
+
+    [ "$REVIEWED" -lt "$MAX_REVIEWS" ] || break
+  done <<< "$REVIEW_SESSIONS"
+fi
+
 while IFS= read -r line; do
   PR_NUM=$(echo "$line" | awk '{print $1}')
   PR_SHA=$(echo "$line" | awk '{print $2}')

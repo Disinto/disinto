@@ -871,3 +871,19 @@ if [ -n "$EVENT_ID" ]; then
 fi
 
 log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
+
+# --- Write phase based on verdict ---
+# Claude wrote PHASE:review_complete to signal JSON is ready; now overwrite
+# with the correct lifecycle phase so review-poll.sh knows what to do next.
+case "$VERDICT" in
+  APPROVE)
+    echo "PHASE:review_complete" > "${PHASE_FILE}"
+    ;;
+  REQUEST_CHANGES|DISCUSS)
+    printf 'PHASE:awaiting_changes\nSHA:%s\n' "$PR_SHA" > "${PHASE_FILE}"
+    log "awaiting new commits (PHASE:awaiting_changes)"
+    ;;
+  *)
+    echo "PHASE:review_complete" > "${PHASE_FILE}"
+    ;;
+esac
