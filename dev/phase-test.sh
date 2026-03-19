@@ -167,29 +167,59 @@ else
   fail "needs_human mtime guard: expected 1 notify call, got $NOTIFY_COUNT"
 fi
 
-# ── Test 9: PostToolUse hook writes marker on phase file reference ────────
+# ── Test 9: PostToolUse hook detects writes, ignores reads ────────────────
 HOOK_SCRIPT="$(dirname "$0")/../lib/hooks/on-phase-change.sh"
 MARKER_FILE="/tmp/phase-changed-test-session.marker"
 rm -f "$MARKER_FILE"
 
 if [ -x "$HOOK_SCRIPT" ]; then
-  # Simulate hook input that references the phase file
-  echo "{\"tool_input\":{\"command\":\"echo PHASE:awaiting_ci > ${PHASE_FILE}\"}}" \
-    | bash "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  # 9a: Bash redirect to phase file → marker written
+  printf '{"tool_name":"Bash","tool_input":{"command":"echo PHASE:awaiting_ci > %s"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
   if [ -f "$MARKER_FILE" ]; then
-    ok "PostToolUse hook writes marker when phase file referenced"
+    ok "PostToolUse hook writes marker on Bash redirect to phase file"
   else
-    fail "PostToolUse hook did not write marker"
+    fail "PostToolUse hook did not write marker on Bash redirect"
   fi
   rm -f "$MARKER_FILE"
 
-  # Simulate hook input that does NOT reference the phase file
-  echo "{\"tool_input\":{\"command\":\"echo hello > /tmp/other-file\"}}" \
-    | bash "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  # 9b: Write tool targeting phase file → marker written
+  printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"PHASE:done"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook writes marker on Write tool to phase file"
+  else
+    fail "PostToolUse hook did not write marker on Write tool"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9c: Bash read of phase file (cat) → NO marker (not a write)
+  printf '{"tool_name":"Bash","tool_input":{"command":"cat %s"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ ! -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook ignores Bash read of phase file (no false positive)"
+  else
+    fail "PostToolUse hook wrote marker for Bash read (false positive)"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9d: Unrelated Bash command → NO marker
+  printf '{"tool_name":"Bash","tool_input":{"command":"echo hello > /tmp/other-file"}}' \
+    | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
   if [ ! -f "$MARKER_FILE" ]; then
     ok "PostToolUse hook skips marker for unrelated operations"
   else
     fail "PostToolUse hook wrote marker for unrelated operation (false positive)"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9e: Write tool targeting different file → NO marker
+  printf '{"tool_name":"Write","tool_input":{"file_path":"/tmp/other-file","content":"hello"}}' \
+    | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ ! -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook skips marker for Write to different file"
+  else
+    fail "PostToolUse hook wrote marker for Write to different file (false positive)"
   fi
   rm -f "$MARKER_FILE"
 else

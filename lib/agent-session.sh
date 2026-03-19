@@ -110,8 +110,8 @@ create_agent_session() {
           }
         }' > "$settings"
       fi
+      rm -f "$phase_marker"
     fi
-    rm -f "$phase_marker"
   fi
 
   rm -f "$idle_marker"
