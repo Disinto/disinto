@@ -32,8 +32,14 @@ cron (*/10) ──→ review-poll.sh     ← finds unreviewed PRs, spawns review
 cron (daily) ──→ gardener-poll.sh  ← backlog grooming (duplicates, stale, tech-debt)
                   └── claude -p: triage → promote/close/escalate
 
+cron (weekly) ──→ planner-poll.sh  ← gap-analyse VISION.md, create backlog issues
+                   └── claude -p: update AGENTS.md → create issues
+
+cron (*/30) ──→ vault-poll.sh    ← safety gate for dangerous/irreversible actions
+                 └── claude -p: classify → auto-approve/reject or escalate
+
 systemd ──→ matrix_listener.sh   ← long-poll daemon for human replies
-              └── dispatches thread replies → supervisor/gardener
+              └── dispatches thread replies → supervisor/gardener/dev/review/vault
 
 all agents ──→ matrix_send()     ← status updates, escalations, merge notifications
 ```
@@ -98,6 +104,8 @@ crontab -e
 #   3,13,23,33,43,53 * * * * /path/to/disinto/review/review-poll.sh
 #   6,16,26,36,46,56 * * * * /path/to/disinto/dev/dev-poll.sh
 #   15 8 * * *                /path/to/disinto/gardener/gardener-poll.sh
+#   0,30 * * * *              /path/to/disinto/vault/vault-poll.sh
+#   0 9 * * 1                 /path/to/disinto/planner/planner-poll.sh
 
 # 4. Verify
 bash supervisor/supervisor-poll.sh   # should log "all clear"
