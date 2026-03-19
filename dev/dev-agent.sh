@@ -185,6 +185,17 @@ if [ -z "$ISSUE_JSON" ] || ! echo "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; t
 fi
 ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+
+# Append human comments to issue body (filter out bot accounts)
+ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API}/issues/${ISSUE}/comments" | \
+  jq -r '.[] | select(.user.login != "Disinto_bot" and .user.login != "disinto-factory") | "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
+if [ -n "$ISSUE_COMMENTS" ]; then
+  ISSUE_BODY="${ISSUE_BODY}
+
+## Issue comments
+${ISSUE_COMMENTS}"
+fi
 ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
 
 if [ "$ISSUE_STATE" != "open" ]; then
