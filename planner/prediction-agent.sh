@@ -34,7 +34,7 @@ export PROJECT_TOML="${1:-}"
 source "$FACTORY_ROOT/lib/env.sh"
 
 LOG_FILE="$SCRIPT_DIR/prediction.log"
-CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
+# env.sh already exports CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"; inherit that default
 EVIDENCE_DIR="${PROJECT_REPO_ROOT}/evidence"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
@@ -68,10 +68,13 @@ for subdir in red-team evolution user-test holdout resources protocol; do
     continue
   fi
 
-  file_ts=$(date -r "$latest" +%s)
+  latest_name=$(basename "$latest")
+  # Derive age from the date in the filename (YYYY-MM-DD.json) — more reliable
+  # than mtime, which changes when files are copied or synced.
+  file_date=$(basename "$latest" .json)
+  file_ts=$(date -d "$file_date" +%s 2>/dev/null || date -r "$latest" +%s)
   now_ts=$(date +%s)
   age_hours=$(( (now_ts - file_ts) / 3600 ))
-  latest_name=$(basename "$latest")
   content=$(head -c 3000 "$latest" 2>/dev/null || echo "{}")
 
   prev=$(prev_json "$subdir_path")
@@ -92,6 +95,9 @@ done
 
 # ── Secondary signals — Codeberg activity (last 24h) ─────────────────────
 SINCE_ISO=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+if [ -z "$SINCE_ISO" ]; then
+  log "WARN: date -d '24 hours ago' failed (non-GNU date?) — skipping Codeberg activity"
+fi
 RECENT_ISSUES=""
 RECENT_PRS=""
 if [ -n "$SINCE_ISO" ]; then
@@ -99,9 +105,11 @@ if [ -n "$SINCE_ISO" ]; then
     jq -r --arg since "$SINCE_ISO" \
     '.[] | select(.created_at >= $since) | "  #\(.number) [\(.labels | map(.name) | join(","))] \(.title)"' \
     2>/dev/null || true)
-  RECENT_PRS=$(codeberg_api GET "/pulls?state=open&limit=20&sort=newest" 2>/dev/null | \
+  # Use state=closed to capture recently-merged PRs — merged activity is the
+  # key signal (e.g. new red-team PR merged since last evolution run).
+  RECENT_PRS=$(codeberg_api GET "/pulls?state=closed&limit=20&sort=newest" 2>/dev/null | \
     jq -r --arg since "$SINCE_ISO" \
-    '.[] | select(.created_at >= $since) | "  #\(.number) \(.title)"' \
+    '.[] | select(.merged_at != null and .merged_at >= $since) | "  #\(.number) \(.title) (merged \(.merged_at[:10]))"' \
     2>/dev/null || true)
 fi
 
@@ -137,7 +145,7 @@ Active agent sessions (tmux): ${ACTIVE_SESSIONS}
 New issues:
 ${RECENT_ISSUES:-  (none)}
 
-Open PRs (recently updated):
+Recently merged PRs (last 24h):
 ${RECENT_PRS:-  (none)}
 
 ## Already-open predictions (do NOT duplicate these)
@@ -214,7 +222,7 @@ CLAUDE_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$PROMPT" \
 
 log "claude finished ($(printf '%s' "$CLAUDE_OUTPUT" | wc -c) bytes)"
 
-if printf '%s' "$CLAUDE_OUTPUT" | grep -q "NO_PREDICTIONS"; then
+if printf '%s' "$CLAUDE_OUTPUT" | grep -qxF "NO_PREDICTIONS"; then
   log "no predictions — evidence looks healthy for ${PROJECT_NAME}"
   log "--- prediction-agent done ---"
   exit 0

@@ -17,6 +17,9 @@ FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 source "$FACTORY_ROOT/lib/env.sh"
 
 LOG_FILE="$SCRIPT_DIR/prediction.log"
+# Global lock — projects are processed serially. If a single run takes longer
+# than the cron interval (1h), the next cron invocation will find the lock held
+# and exit silently. That is acceptable: LLM calls are cheap to skip.
 LOCK_FILE="/tmp/prediction-poll.lock"
 PROJECTS_DIR="$FACTORY_ROOT/projects"
 
