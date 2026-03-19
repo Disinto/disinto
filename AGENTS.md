@@ -1,3 +1,4 @@
+<!-- last-reviewed: e782119a15e41cfb02b537d2b2294ab6b93ff342 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -22,7 +23,7 @@ disinto/
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config
 ├── formulas/      Issue templates
-└── docs/          Protocol docs (PHASE-PROTOCOL.md, etc.)
+└── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ```
 
 ## Tech stack
@@ -156,6 +157,8 @@ gaps.
 - `planner/planner-poll.sh` — Cron wrapper: lock, memory guard, runs planner-agent.sh
 - `planner/planner-agent.sh` — Phase 1: uses `claude -p --model sonnet --max-turns 30` (one-shot with tool access) to read/update AGENTS.md files. Phase 2: uses `claude -p --model sonnet` to compare AGENTS.md tree vs VISION.md and create gap issues. Both phases are one-shot (`claude -p`), not interactive sessions
 
+**Future direction**: The planner will read an `evidence/` directory of structured JSON written by sense/mutation processes (see `docs/EVIDENCE-ARCHITECTURE.md`). This replaces human "ship it" decisions with evidence-gated deployment across dimensions: holdout, red-team, user-test, evolution fitness, protocol metrics, funnel. Not yet implemented.
+
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`
@@ -191,7 +194,7 @@ sourced as needed.
 
 | File | What it provides | Sourced by |
 |---|---|---|
-| `lib/env.sh` | Loads `.env`, sets `FACTORY_ROOT`, exports project config (`CODEBERG_REPO`, `PROJECT_NAME`, etc.), defines `log()`, `codeberg_api()`, `woodpecker_api()`, `wpdb()`, `matrix_send()`, `matrix_send_ctx()`. Auto-loads project TOML if `PROJECT_TOML` is set. | Every agent |
+| `lib/env.sh` | Loads `.env`, sets `FACTORY_ROOT`, exports project config (`CODEBERG_REPO`, `PROJECT_NAME`, etc.), defines `log()`, `codeberg_api()`, `codeberg_api_all()` (accepts optional second TOKEN parameter, defaults to `$CODEBERG_TOKEN`), `woodpecker_api()`, `wpdb()`, `matrix_send()`, `matrix_send_ctx()`. Auto-loads project TOML if `PROJECT_TOML` is set. | Every agent |
 | `lib/ci-helpers.sh` | `ci_passed()` — returns 0 if CI state is "success" (or no CI configured). | dev-poll, review-poll, review-pr, supervisor-poll |
 | `lib/ci-debug.sh` | CLI tool for Woodpecker CI: `list`, `status`, `logs`, `failures` subcommands. Not sourced — run directly. | Humans / dev-agent (tool access) |
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
