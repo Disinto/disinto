@@ -67,10 +67,13 @@ create_agent_session() {
     if [ -f "$settings" ]; then
       # Append our Stop hook to existing project settings
       jq --arg cmd "$hook_cmd" '
-        .hooks.Stop = (.hooks.Stop // []) + [{
+        if (.hooks.Stop // [] | any(.[]; .hooks[]?.command == $cmd))
+        then .
+        else .hooks.Stop = (.hooks.Stop // []) + [{
           matcher: "",
           hooks: [{type: "command", command: $cmd}]
         }]
+        end
       ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
     else
       jq -n --arg cmd "$hook_cmd" '{
@@ -95,10 +98,13 @@ create_agent_session() {
       local phase_hook_cmd="${phase_hook_script} ${phase_file} ${phase_marker}"
       if [ -f "$settings" ]; then
         jq --arg cmd "$phase_hook_cmd" '
-          .hooks.PostToolUse = (.hooks.PostToolUse // []) + [{
+          if (.hooks.PostToolUse // [] | any(.[]; .hooks[]?.command == $cmd))
+          then .
+          else .hooks.PostToolUse = (.hooks.PostToolUse // []) + [{
             matcher: "Bash|Write",
             hooks: [{type: "command", command: $cmd}]
           }]
+          end
         ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
       else
         jq -n --arg cmd "$phase_hook_cmd" '{
