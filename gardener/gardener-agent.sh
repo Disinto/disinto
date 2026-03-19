@@ -264,7 +264,7 @@ touch "$RESULT_FILE"
 
 # ── Create tmux session ───────────────────────────────────────────────────
 log "Creating tmux session: ${SESSION_NAME}"
-if ! create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT"; then
+if ! create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; then
   log "ERROR: failed to create tmux session ${SESSION_NAME}"
   exit 1
 fi
@@ -290,7 +290,7 @@ gardener_phase_callback() {
       log "WARNING: tmux session died unexpectedly — attempting recovery"
       rm -f "$RESULT_FILE"
       touch "$RESULT_FILE"
-      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" 2>/dev/null; then
+      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" "$PHASE_FILE" 2>/dev/null; then
         agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROMPT"
         log "Recovery session started"
       else

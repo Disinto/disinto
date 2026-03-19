@@ -45,10 +45,17 @@ agent_inject_into_session() {
 
 # Create a tmux session running Claude in the given workdir.
 # Installs a Stop hook for idle detection (see monitor_phase_loop).
+# Optionally installs a PostToolUse hook for phase file write detection.
+# Args: session workdir [phase_file]
 # Returns 0 if session is ready, 1 otherwise.
 create_agent_session() {
   local session="$1"
   local workdir="${2:-.}"
+  local phase_file="${3:-}"
+
+  # Prepare settings directory for hooks
+  mkdir -p "${workdir}/.claude"
+  local settings="${workdir}/.claude/settings.json"
 
   # Install Stop hook for idle detection: when Claude finishes a response,
   # the hook writes a timestamp to a marker file. monitor_phase_loop checks
@@ -56,8 +63,6 @@ create_agent_session() {
   local idle_marker="/tmp/claude-idle-${session}.ts"
   local hook_script="${FACTORY_ROOT}/lib/hooks/on-idle-stop.sh"
   if [ -x "$hook_script" ]; then
-    mkdir -p "${workdir}/.claude"
-    local settings="${workdir}/.claude/settings.json"
     local hook_cmd="${hook_script} ${idle_marker}"
     if [ -f "$settings" ]; then
       # Append our Stop hook to existing project settings
@@ -76,6 +81,36 @@ create_agent_session() {
           }]
         }
       }' > "$settings"
+    fi
+  fi
+
+  # Install PostToolUse hook for phase file write detection: when Claude
+  # writes to the phase file via Bash or Write, the hook writes a marker
+  # so monitor_phase_loop can react immediately instead of waiting for
+  # the next mtime-based poll cycle.
+  if [ -n "$phase_file" ]; then
+    local phase_marker="/tmp/phase-changed-${session}.marker"
+    local phase_hook_script="${FACTORY_ROOT}/lib/hooks/on-phase-change.sh"
+    if [ -x "$phase_hook_script" ]; then
+      local phase_hook_cmd="${phase_hook_script} ${phase_file} ${phase_marker}"
+      if [ -f "$settings" ]; then
+        jq --arg cmd "$phase_hook_cmd" '
+          .hooks.PostToolUse = (.hooks.PostToolUse // []) + [{
+            matcher: "Bash|Write",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+        ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+      else
+        jq -n --arg cmd "$phase_hook_cmd" '{
+          hooks: {
+            PostToolUse: [{
+              matcher: "Bash|Write",
+              hooks: [{type: "command", command: $cmd}]
+            }]
+          }
+        }' > "$settings"
+      fi
+      rm -f "$phase_marker"
     fi
   fi
 
@@ -143,6 +178,15 @@ monitor_phase_loop() {
           continue
           ;;
       esac
+    fi
+
+    # Check phase-changed marker from PostToolUse hook — if present, the hook
+    # detected a phase file write so we reset last_mtime to force processing
+    # this cycle instead of waiting for the next mtime change.
+    local phase_marker="/tmp/phase-changed-${_session}.marker"
+    if [ -f "$phase_marker" ]; then
+      rm -f "$phase_marker"
+      last_mtime=0
     fi
 
     # Check phase file for changes
@@ -217,6 +261,7 @@ agent_kill_session() {
   local session="${1:-}"
   [ -n "$session" ] && tmux kill-session -t "$session" 2>/dev/null || true
   rm -f "/tmp/claude-idle-${session}.ts"
+  rm -f "/tmp/phase-changed-${session}.marker"
 }
 
 # Read the current phase from a phase file, stripped of whitespace.

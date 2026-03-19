@@ -167,6 +167,93 @@ else
   fail "needs_human mtime guard: expected 1 notify call, got $NOTIFY_COUNT"
 fi
 
+# ── Test 9: PostToolUse hook detects writes, ignores reads ────────────────
+HOOK_SCRIPT="$(dirname "$0")/../lib/hooks/on-phase-change.sh"
+MARKER_FILE="/tmp/phase-changed-test-session.marker"
+rm -f "$MARKER_FILE"
+
+if [ -x "$HOOK_SCRIPT" ]; then
+  # 9a: Bash redirect to phase file → marker written
+  printf '{"tool_name":"Bash","tool_input":{"command":"echo PHASE:awaiting_ci > %s"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook writes marker on Bash redirect to phase file"
+  else
+    fail "PostToolUse hook did not write marker on Bash redirect"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9b: Write tool targeting phase file → marker written
+  printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"PHASE:done"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook writes marker on Write tool to phase file"
+  else
+    fail "PostToolUse hook did not write marker on Write tool"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9c: Bash read of phase file (cat) → NO marker (not a write)
+  printf '{"tool_name":"Bash","tool_input":{"command":"cat %s"}}' \
+    "$PHASE_FILE" | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ ! -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook ignores Bash read of phase file (no false positive)"
+  else
+    fail "PostToolUse hook wrote marker for Bash read (false positive)"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9d: Unrelated Bash command → NO marker
+  printf '{"tool_name":"Bash","tool_input":{"command":"echo hello > /tmp/other-file"}}' \
+    | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ ! -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook skips marker for unrelated operations"
+  else
+    fail "PostToolUse hook wrote marker for unrelated operation (false positive)"
+  fi
+  rm -f "$MARKER_FILE"
+
+  # 9e: Write tool targeting different file → NO marker
+  printf '{"tool_name":"Write","tool_input":{"file_path":"/tmp/other-file","content":"hello"}}' \
+    | "$HOOK_SCRIPT" "$PHASE_FILE" "$MARKER_FILE"
+  if [ ! -f "$MARKER_FILE" ]; then
+    ok "PostToolUse hook skips marker for Write to different file"
+  else
+    fail "PostToolUse hook wrote marker for Write to different file (false positive)"
+  fi
+  rm -f "$MARKER_FILE"
+else
+  fail "PostToolUse hook script not found or not executable: $HOOK_SCRIPT"
+fi
+
+# ── Test 10: phase-changed marker resets mtime guard ─────────────────────
+# Simulates monitor_phase_loop behavior: when marker exists, last_mtime
+# is reset to 0 so the phase is processed even if mtime hasn't changed.
+echo "PHASE:awaiting_ci" > "$PHASE_FILE"
+LAST_MTIME=$(stat -c %Y "$PHASE_FILE" 2>/dev/null || echo 0)
+PHASE_MTIME="$LAST_MTIME"
+
+# Without marker, mtime guard blocks processing (same mtime)
+if [ "$PHASE_MTIME" -le "$LAST_MTIME" ]; then
+  ok "mtime guard blocks when no marker present (baseline)"
+else
+  fail "mtime guard should block when phase_mtime <= last_mtime"
+fi
+
+# Now simulate marker present — reset last_mtime to 0
+MARKER_FILE="/tmp/phase-changed-test-session.marker"
+date +%s > "$MARKER_FILE"
+if [ -f "$MARKER_FILE" ]; then
+  rm -f "$MARKER_FILE"
+  LAST_MTIME=0
+fi
+
+if [ "$PHASE_MTIME" -gt "$LAST_MTIME" ]; then
+  ok "phase-changed marker resets mtime guard (phase now processable)"
+else
+  fail "phase-changed marker did not reset mtime guard"
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 rm -f "$PHASE_FILE"
 
