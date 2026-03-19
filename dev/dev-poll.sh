@@ -281,7 +281,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
     HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/pulls/${HAS_PR}/reviews" | \
-      jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+      jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
       log "PR #${HAS_PR} approved + CI green → spawning dev-agent to merge"
@@ -357,7 +357,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
 
   HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls/${PR_NUM}/reviews" | \
-    jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+    jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
   HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${API}/pulls/${PR_NUM}/reviews" | \
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
@@ -448,7 +448,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
     HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}/reviews" | \
-      jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+      jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
       log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → spawning dev-agent to merge"
