@@ -69,7 +69,7 @@ for i in $(seq 0 $((COUNT - 1))); do
   fi
 
   log "spawning action-agent for issue #${ISSUE_NUM}"
-  nohup "${SCRIPT_DIR}/action-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+  nohup "${SCRIPT_DIR}/action-agent.sh" "$ISSUE_NUM" "$PROJECT_TOML" >> "$LOGFILE" 2>&1 &
   log "started action-agent PID $! for issue #${ISSUE_NUM}"
   break
 done
