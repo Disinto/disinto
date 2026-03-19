@@ -35,28 +35,37 @@ description = "Number of historical deploys to keep (older ones are pruned)"
 required    = false
 default     = "5"
 
+[vars.repo_root]
+description = "Local checkout path for the disinto repo"
+required    = false
+default     = "/home/debian/dark-factory"
+
 [[steps]]
 id          = "pull-latest"
 title       = "Pull latest main and resolve target SHA"
 description = """
 Pull the latest changes and resolve the deploy target:
 
-  cd /home/debian/dark-factory
+  cd {{repo_root}}
   git pull origin main
 
 Resolve the commit SHA to deploy:
   - If {{commit_sha}} is "HEAD", use the current HEAD of main.
   - Otherwise, verify {{commit_sha}} exists in the repo.
 
-Record the resolved SHA for use in subsequent steps:
+Record the resolved SHA to a temp file so subsequent steps can read it
+(each step runs in a separate shell — variables do not persist):
   DEPLOY_SHA=$(git rev-parse {{commit_sha}})
+  echo "$DEPLOY_SHA" > /tmp/publish-site-deploy-sha
 
 Check whether the currently deployed SHA (if any) already matches:
   if [ -L {{site_root}} ]; then
     CURRENT=$(cat "$(readlink -f {{site_root}})/.deploy-sha" 2>/dev/null || echo "none")
     if [ "$CURRENT" = "$DEPLOY_SHA" ]; then
-      echo "Already deployed at $DEPLOY_SHA — nothing to do"
-      # Post comment and close issue as no-op
+      echo "Already deployed at $DEPLOY_SHA — nothing to do."
+      echo "NOOP" > /tmp/publish-site-deploy-sha
+      Post a comment on the issue noting the no-op, then close the issue
+      and stop. Do NOT proceed to subsequent steps.
     fi
   fi
 """
@@ -65,6 +74,11 @@ Check whether the currently deployed SHA (if any) already matches:
 id          = "create-deploy"
 title       = "Create timestamped deploy directory"
 description = """
+First, read the deploy SHA from the temp file written by pull-latest.
+If it says NOOP, stop — the site is already at the target SHA:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  [ "$DEPLOY_SHA" = "NOOP" ] && { echo "No-op deploy — skipping."; exit 0; }
+
 Create a timestamped deploy directory and extract site files into it:
 
   TIMESTAMP=$(date -u '+%Y-%m-%d-%H%M%S')
@@ -72,11 +86,14 @@ Create a timestamped deploy directory and extract site files into it:
   mkdir -p "$TARGET"
 
 Extract site files from the resolved commit:
-  cd /home/debian/dark-factory
+  cd {{repo_root}}
   git archive "${DEPLOY_SHA}:{{site_source}}" | tar -x -C "$TARGET"
 
 Write deploy metadata:
   echo "$DEPLOY_SHA" > "$TARGET/.deploy-sha"
+
+Persist TARGET path for subsequent steps:
+  echo "$TARGET" > /tmp/publish-site-deploy-target
 
 Verify the extraction produced files:
   ls -la "$TARGET/"
@@ -86,11 +103,16 @@ needs       = ["pull-latest"]
 
 [[steps]]
 id          = "activate"
-title       = "Update symlink to new deploy"
+title       = "Atomically switch symlink to new deploy"
 description = """
-Atomically switch the site root symlink to the new deploy:
+Read the deploy target from the temp file:
+  TARGET=$(cat /tmp/publish-site-deploy-target)
 
-  ln -sfn "$TARGET" {{site_root}}
+Atomically switch the site root symlink to the new deploy.
+Use ln + mv -T for a true atomic rename (single syscall):
+
+  ln -s "$TARGET" "{{site_root}}.new"
+  mv -T "{{site_root}}.new" {{site_root}}
 
 Verify the symlink points to the correct directory:
   readlink -f {{site_root}}
@@ -99,8 +121,18 @@ needs       = ["create-deploy"]
 
 [[steps]]
 id          = "prune-old-deploys"
-title       = "Prune old deploys beyond max_deploys"
+title       = "Log deploy and prune old snapshots"
 description = """
+Read state from temp files:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  TARGET=$(cat /tmp/publish-site-deploy-target)
+
+Append to deploy history log BEFORE pruning, so the record is written
+even if an old entry is about to be removed:
+  printf '{"sha":"%s","ts":"%s","dir":"%s"}\n' \
+    "$DEPLOY_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET" \
+    >> "{{deploy_dir}}/.deploy-history.jsonl"
+
 Keep only the last {{max_deploys}} deploys. Remove older ones:
 
   cd {{deploy_dir}}
@@ -108,11 +140,6 @@ Keep only the last {{max_deploys}} deploys. Remove older ones:
     echo "Pruning old deploy: $old"
     rm -rf "$old"
   done
-
-Append to deploy history log:
-  printf '{"sha":"%s","ts":"%s","dir":"%s"}\n' \
-    "$DEPLOY_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET" \
-    >> "{{deploy_dir}}/.deploy-history.jsonl"
 """
 needs       = ["activate"]
 
@@ -120,15 +147,24 @@ needs       = ["activate"]
 id          = "verify"
 title       = "Verify live site matches deployed content"
 description = """
+Read state from temp files:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  TARGET=$(cat /tmp/publish-site-deploy-target)
+
 Verify the site is serving the new content:
 
-  # Check site is reachable
-  curl -sf -o /dev/null -w '%{http_code}' https://disinto.ai/ | grep -q 200
+  # Check site is reachable (follow redirects with -L)
+  HTTP_CODE=$(curl -sL -o /dev/null -w '%{http_code}' https://disinto.ai/)
+  [ "$HTTP_CODE" = "200" ] || { echo "ERROR: site returned HTTP $HTTP_CODE"; exit 1; }
 
-  # Verify content from the deployed index.html is present
-  # Extract a unique string from the deployed file to check
+  # Extract a unique string from the deployed file to verify content
   EXPECTED=$(grep -oP '(?<=<title>)[^<]+' "$TARGET/index.html" | head -1)
-  curl -sf https://disinto.ai/ | grep -qF "$EXPECTED" && echo "VERIFIED: title matches" \
+  if [ -z "$EXPECTED" ]; then
+    echo "ERROR: could not extract <title> from deployed index.html"
+    exit 1
+  fi
+  curl -sL https://disinto.ai/ | grep -qF "$EXPECTED" \
+    && echo "VERIFIED: title matches" \
     || echo "WARNING: title mismatch — cache may need time to clear"
 
   # List deployed files
@@ -137,5 +173,8 @@ Verify the site is serving the new content:
 
 Report:
   echo "Deploy complete: SHA=$DEPLOY_SHA dir=$TARGET"
+
+Clean up temp files:
+  rm -f /tmp/publish-site-deploy-sha /tmp/publish-site-deploy-target
 """
-needs       = ["activate"]
+needs       = ["prune-old-deploys"]
