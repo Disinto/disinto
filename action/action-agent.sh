@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # action-agent.sh — Autonomous action agent: tmux + Claude + action formula
 #
-# Usage: ./action-agent.sh <issue-number>
+# Usage: ./action-agent.sh <issue-number> [project.toml]
 #
 # Lifecycle:
 #   1. Fetch issue body (action formula) + existing comments
@@ -16,10 +16,11 @@
 
 set -euo pipefail
 
+ISSUE="${1:?Usage: action-agent.sh <issue-number> [project.toml]}"
+export PROJECT_TOML="${2:-${PROJECT_TOML:-}}"
+
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
-
-ISSUE="${1:?Usage: action-agent.sh <issue-number>}"
 SESSION_NAME="action-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-harb}.log"
