@@ -1,0 +1,180 @@
+# formulas/run-publish-site.toml — Deploy disinto.ai landing page from site/ directory
+#
+# Trigger: action issue created by planner (gap analysis), dev-poll (post-merge
+# hook detecting site/ changes), or gardener (periodic SHA drift check).
+#
+# The action-agent picks up the issue, executes these steps, posts results
+# as a comment, and closes the issue.
+
+name        = "run-publish-site"
+description = "Deploy disinto.ai landing page from site/ directory"
+version     = 1
+
+[vars.commit_sha]
+description = "Git commit SHA to deploy (default: HEAD of main)"
+required    = false
+default     = "HEAD"
+
+[vars.site_source]
+description = "Source directory within the repo containing site files"
+required    = false
+default     = "site/"
+
+[vars.site_root]
+description = "Symlink path that Caddy serves (points to latest deploy)"
+required    = false
+default     = "/home/debian/disinto-site"
+
+[vars.deploy_dir]
+description = "Parent directory for timestamped deploy snapshots"
+required    = false
+default     = "/home/debian/disinto-deploys"
+
+[vars.max_deploys]
+description = "Number of historical deploys to keep (older ones are pruned)"
+required    = false
+default     = "5"
+
+[vars.repo_root]
+description = "Local checkout path for the disinto repo"
+required    = false
+default     = "/home/debian/dark-factory"
+
+[[steps]]
+id          = "pull-latest"
+title       = "Pull latest main and resolve target SHA"
+description = """
+Pull the latest changes and resolve the deploy target:
+
+  cd {{repo_root}}
+  git pull origin main
+
+Resolve the commit SHA to deploy:
+  - If {{commit_sha}} is "HEAD", use the current HEAD of main.
+  - Otherwise, verify {{commit_sha}} exists in the repo.
+
+Record the resolved SHA to a temp file so subsequent steps can read it
+(each step runs in a separate shell — variables do not persist):
+  DEPLOY_SHA=$(git rev-parse {{commit_sha}})
+  echo "$DEPLOY_SHA" > /tmp/publish-site-deploy-sha
+
+Check whether the currently deployed SHA (if any) already matches:
+  if [ -L {{site_root}} ]; then
+    CURRENT=$(cat "$(readlink -f {{site_root}})/.deploy-sha" 2>/dev/null || echo "none")
+    if [ "$CURRENT" = "$DEPLOY_SHA" ]; then
+      echo "Already deployed at $DEPLOY_SHA — nothing to do."
+      echo "NOOP" > /tmp/publish-site-deploy-sha
+      Post a comment on the issue noting the no-op, then close the issue
+      and stop. Do NOT proceed to subsequent steps.
+    fi
+  fi
+"""
+
+[[steps]]
+id          = "create-deploy"
+title       = "Create timestamped deploy directory"
+description = """
+First, read the deploy SHA from the temp file written by pull-latest.
+If it says NOOP, stop — the site is already at the target SHA:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  [ "$DEPLOY_SHA" = "NOOP" ] && { echo "No-op deploy — skipping."; exit 0; }
+
+Create a timestamped deploy directory and extract site files into it:
+
+  TIMESTAMP=$(date -u '+%Y-%m-%d-%H%M%S')
+  TARGET="{{deploy_dir}}/${TIMESTAMP}"
+  mkdir -p "$TARGET"
+
+Extract site files from the resolved commit:
+  cd {{repo_root}}
+  git archive "${DEPLOY_SHA}:{{site_source}}" | tar -x -C "$TARGET"
+
+Write deploy metadata:
+  echo "$DEPLOY_SHA" > "$TARGET/.deploy-sha"
+
+Persist TARGET path for subsequent steps:
+  echo "$TARGET" > /tmp/publish-site-deploy-target
+
+Verify the extraction produced files:
+  ls -la "$TARGET/"
+  [ -f "$TARGET/index.html" ] || { echo "ERROR: index.html missing"; exit 1; }
+"""
+needs       = ["pull-latest"]
+
+[[steps]]
+id          = "activate"
+title       = "Atomically switch symlink to new deploy"
+description = """
+Read the deploy target from the temp file:
+  TARGET=$(cat /tmp/publish-site-deploy-target)
+
+Atomically switch the site root symlink to the new deploy.
+Use ln + mv -T for a true atomic rename (single syscall):
+
+  ln -s "$TARGET" "{{site_root}}.new"
+  mv -T "{{site_root}}.new" {{site_root}}
+
+Verify the symlink points to the correct directory:
+  readlink -f {{site_root}}
+"""
+needs       = ["create-deploy"]
+
+[[steps]]
+id          = "prune-old-deploys"
+title       = "Log deploy and prune old snapshots"
+description = """
+Read state from temp files:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  TARGET=$(cat /tmp/publish-site-deploy-target)
+
+Append to deploy history log BEFORE pruning, so the record is written
+even if an old entry is about to be removed:
+  printf '{"sha":"%s","ts":"%s","dir":"%s"}\n' \
+    "$DEPLOY_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET" \
+    >> "{{deploy_dir}}/.deploy-history.jsonl"
+
+Keep only the last {{max_deploys}} deploys. Remove older ones:
+
+  cd {{deploy_dir}}
+  ls -1d 20*/ 2>/dev/null | sort | head -n -{{max_deploys}} | while read -r old; do
+    echo "Pruning old deploy: $old"
+    rm -rf "$old"
+  done
+"""
+needs       = ["activate"]
+
+[[steps]]
+id          = "verify"
+title       = "Verify live site matches deployed content"
+description = """
+Read state from temp files:
+  DEPLOY_SHA=$(cat /tmp/publish-site-deploy-sha)
+  TARGET=$(cat /tmp/publish-site-deploy-target)
+
+Verify the site is serving the new content:
+
+  # Check site is reachable (follow redirects with -L)
+  HTTP_CODE=$(curl -sL -o /dev/null -w '%{http_code}' https://disinto.ai/)
+  [ "$HTTP_CODE" = "200" ] || { echo "ERROR: site returned HTTP $HTTP_CODE"; exit 1; }
+
+  # Extract a unique string from the deployed file to verify content
+  EXPECTED=$(grep -oP '(?<=<title>)[^<]+' "$TARGET/index.html" | head -1)
+  if [ -z "$EXPECTED" ]; then
+    echo "ERROR: could not extract <title> from deployed index.html"
+    exit 1
+  fi
+  curl -sL https://disinto.ai/ | grep -qF "$EXPECTED" \
+    && echo "VERIFIED: title matches" \
+    || echo "WARNING: title mismatch — cache may need time to clear"
+
+  # List deployed files
+  echo "Deployed files:"
+  find "$TARGET" -type f | sort
+
+Report:
+  echo "Deploy complete: SHA=$DEPLOY_SHA dir=$TARGET"
+
+Clean up temp files:
+  rm -f /tmp/publish-site-deploy-sha /tmp/publish-site-deploy-target
+"""
+needs       = ["prune-old-deploys"]
