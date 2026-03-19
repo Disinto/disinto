@@ -18,6 +18,7 @@ disinto/
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
 ├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
+│                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
@@ -149,9 +150,9 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Role**: Three-phase planning. Phase 1: update the AGENTS.md documentation
 tree to reflect recent code changes. Phase 1.5: triage `prediction/unreviewed`
-issues filed by the predictor (goblin) — accept as action/backlog issues or
-dismiss as noise. Phase 2: gap-analyse VISION.md vs current project state
-(including accepted predictions), create up to 5 backlog issues for the
+issues filed by the [Predictor](#predictor-planner) — accept as action/backlog
+issues or dismiss as noise. Phase 2: gap-analyse VISION.md vs current project
+state (including accepted predictions), create up to 5 backlog issues for the
 highest-leverage gaps.
 
 **Trigger**: `planner-poll.sh` runs weekly via cron.
@@ -167,6 +168,37 @@ highest-leverage gaps.
 - `PRIMARY_BRANCH`
 - `CLAUDE_TIMEOUT`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
+
+### Predictor (`planner/`)
+
+**Role**: Evidence-based pattern detection (the "goblin"). Reads structured
+JSON from the project's `evidence/` directory (red-team, evolution, user-test,
+holdout, resources, protocol) plus secondary Codeberg signals (recent issues
+and merged PRs) and system resource snapshots. Asks Claude to identify
+staleness, regressions, opportunities, and risks, then files up to 5
+`prediction/unreviewed` issues for the [Planner](#planner-planner) to triage.
+The predictor MUST NOT emit feature work — only observations about evidence
+state, metric trends, and system conditions.
+
+**Trigger**: `prediction-poll.sh` runs hourly via cron. It iterates over all
+`projects/*.toml` files and runs `prediction-agent.sh` for each project.
+Guarded by a global lock (`/tmp/prediction-poll.lock`) and a memory check
+(skips if available RAM < 2000 MB).
+
+**Key files**:
+- `planner/prediction-poll.sh` — Cron wrapper: lock, memory guard, iterates projects, calls prediction-agent.sh per project
+- `planner/prediction-agent.sh` — Scans `evidence/` subdirectories for latest + previous JSON, fetches recent Codeberg activity, collects system resource snapshot, builds prompt, invokes `claude -p --model sonnet` (one-shot), parses JSON output lines, creates `prediction/unreviewed` issues on Codeberg, notifies Matrix
+
+**Environment variables consumed**:
+- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `CLAUDE_TIMEOUT` — Max seconds for the Claude invocation (default 7200)
+- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
+
+**Lifecycle**: prediction-poll.sh (hourly cron) → lock + memory guard →
+for each project TOML: prediction-agent.sh → scan `evidence/` →
+`claude -p --model sonnet` → parse JSON predictions → create
+`prediction/unreviewed` issues → Matrix notification. The planner's Phase 1.5
+later triages these predictions into action/backlog issues or dismisses them.
 
 ### Action (`action/`)
 
