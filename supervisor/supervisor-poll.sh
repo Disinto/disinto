@@ -681,6 +681,77 @@ Instructions:
   done
 
   # ===========================================================================
+  # P4-PROJECT: Orphaned tmux sessions — PR/issue closed externally
+  # ===========================================================================
+  status "P4: ${proj_name}: sweeping orphaned dev sessions"
+
+  while IFS= read -r _sess; do
+    [ -z "$_sess" ] && continue
+
+    # Extract issue number from dev-{project}-{issue}
+    _sess_issue="${_sess#dev-"${proj_name}"-}"
+    [[ "$_sess_issue" =~ ^[0-9]+$ ]] || continue
+
+    # Check Codeberg: is the issue still open?
+    _issue_state=$(codeberg_api GET "/issues/${_sess_issue}" 2>/dev/null \
+      | jq -r '.state // "open"' 2>/dev/null || echo "open")
+
+    _should_cleanup=false
+    _cleanup_reason=""
+
+    if [ "$_issue_state" = "closed" ]; then
+      _should_cleanup=true
+      _cleanup_reason="issue #${_sess_issue} closed externally"
+    else
+      # Issue still open — check if associated PR is closed/merged
+      _pr_branch="fix/issue-${_sess_issue}"
+      _has_open_pr=$(codeberg_api GET "/pulls?state=open&limit=50" 2>/dev/null \
+        | jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
+        2>/dev/null || echo 0)
+
+      if [ "${_has_open_pr:-0}" -eq 0 ]; then
+        # No open PR — check for a closed/merged PR with this branch
+        _has_closed_pr=$(codeberg_api GET "/pulls?state=closed&limit=50" 2>/dev/null \
+          | jq --arg b "$_pr_branch" '[.[] | select(.head.ref == $b)] | length' \
+          2>/dev/null || echo 0)
+
+        if [ "${_has_closed_pr:-0}" -gt 0 ]; then
+          _should_cleanup=true
+          _cleanup_reason="PR for issue #${_sess_issue} is closed/merged"
+        else
+          # No PR at all — clean up if session has been idle >30min
+          _sess_activity=$(tmux display-message -t "$_sess" -p '#{session_activity}' \
+            2>/dev/null || echo 0)
+          _now_ts=$(date +%s)
+          _idle_min=$(( (_now_ts - ${_sess_activity:-0}) / 60 ))
+          if [ "$_idle_min" -gt 30 ]; then
+            _should_cleanup=true
+            _cleanup_reason="no PR found, session idle ${_idle_min}min"
+          fi
+        fi
+      fi
+    fi
+
+    if [ "$_should_cleanup" = true ]; then
+      tmux kill-session -t "$_sess" 2>/dev/null || true
+      _wt="/tmp/${proj_name}-worktree-${_sess_issue}"
+      if [ -d "$_wt" ]; then
+        git -C "$PROJECT_REPO_ROOT" worktree remove --force "$_wt" 2>/dev/null || true
+      fi
+      # Remove lock only if its recorded PID is no longer alive
+      _lock="/tmp/dev-agent-${proj_name}.lock"
+      if [ -f "$_lock" ]; then
+        _lock_pid=$(cat "$_lock" 2>/dev/null || true)
+        if [ -n "${_lock_pid:-}" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+          rm -f "$_lock"
+        fi
+      fi
+      rm -f "/tmp/dev-session-${proj_name}-${_sess_issue}.phase"
+      fixed "${proj_name}: Cleaned orphaned session ${_sess} (${_cleanup_reason})"
+    fi
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^dev-${proj_name}-" || true)
+
+  # ===========================================================================
   # P4-PROJECT: Clean stale worktrees for this project
   # ===========================================================================
   NOW_TS=$(date +%s)
