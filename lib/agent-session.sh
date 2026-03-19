@@ -61,6 +61,8 @@ inject_formula() {
 
 # Monitor a phase file, calling a callback on changes and handling idle timeout.
 # Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, done, failed, break).
+# Sets _MONITOR_SESSION to the resolved session name (arg 4 or $SESSION_NAME).
+#   Callbacks should reference _MONITOR_SESSION instead of $SESSION_NAME directly.
 # Args: phase_file idle_timeout_secs callback_fn [session_name]
 #   session_name — tmux session to health-check; falls back to $SESSION_NAME global
 monitor_phase_loop() {
@@ -68,6 +70,9 @@ monitor_phase_loop() {
   local idle_timeout="$2"
   local callback="$3"
   local _session="${4:-${SESSION_NAME:-}}"
+  # Export resolved session name so callbacks can reference it regardless of
+  # which session was passed to monitor_phase_loop (analogous to _MONITOR_LOOP_EXIT).
+  export _MONITOR_SESSION="$_session"
   local poll_interval="${PHASE_POLL_INTERVAL:-10}"
   local last_mtime=0
   local idle_elapsed=0
