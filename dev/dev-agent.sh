@@ -740,10 +740,20 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     else
       cleanup_worktree
     fi
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
+    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
   crash_recovery_failed)
     cleanup_labels
+    ;;
+  done)
+    # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
+    # but ensure sentinel files are removed if callback was interrupted
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
+    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+    CLAIMED=false
     ;;
 esac
 
