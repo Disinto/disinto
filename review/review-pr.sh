@@ -878,6 +878,13 @@ log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
 case "$VERDICT" in
   APPROVE)
     echo "PHASE:review_complete" > "${PHASE_FILE}"
+    # Terminal phase: kill session, clean up all associated files
+    tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
+    rm -f "${PHASE_FILE}" "${REVIEW_OUTPUT_FILE}" \
+      "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+    cd "${REPO_ROOT}"
+    git worktree remove "${REVIEW_WORKTREE}" --force 2>/dev/null || true
+    rm -rf "${REVIEW_WORKTREE}" 2>/dev/null || true
     ;;
   REQUEST_CHANGES|DISCUSS)
     printf 'PHASE:awaiting_changes\nSHA:%s\n' "$PR_SHA" > "${PHASE_FILE}"
@@ -885,5 +892,12 @@ case "$VERDICT" in
     ;;
   *)
     echo "PHASE:review_complete" > "${PHASE_FILE}"
+    # Unknown verdict terminal phase: clean up like APPROVE
+    tmux kill-session -t "${SESSION_NAME}" 2>/dev/null || true
+    rm -f "${PHASE_FILE}" "${REVIEW_OUTPUT_FILE}" \
+      "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+    cd "${REPO_ROOT}"
+    git worktree remove "${REVIEW_WORKTREE}" --force 2>/dev/null || true
+    rm -rf "${REVIEW_WORKTREE}" 2>/dev/null || true
     ;;
 esac

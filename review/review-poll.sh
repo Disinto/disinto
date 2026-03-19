@@ -79,6 +79,20 @@ if [ -n "$REVIEW_SESSIONS" ]; then
       rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
       continue
     fi
+
+    # Safety net: clean up sessions in terminal phases (review already posted)
+    current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ "$current_phase" = "PHASE:review_complete" ]; then
+      log "cleanup: killing session ${session} (terminal phase: review_complete)"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
+        "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
+      sed -i "/\t${pr_num}$/d" /tmp/review-thread-map 2>/dev/null || true
+      cd "$REPO_ROOT"
+      git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
+      rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
+      continue
+    fi
   done <<< "$REVIEW_SESSIONS"
 fi
 
