@@ -410,11 +410,16 @@ check_project() {
           continue
         fi
 
-        # Get the PR's branch from Codeberg
+        # Get the PR's branch and state from Codeberg
         _esc_pr_json=$(codeberg_api GET "/pulls/${_esc_pr}" 2>/dev/null) || {
           flog "${proj_name}: PR #${_esc_pr}: failed to fetch PR info, keeping escalation"
           printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
         }
+        _esc_pr_state=$(printf '%s' "$_esc_pr_json" | jq -r '.state // ""' 2>/dev/null)
+        if [ "$_esc_pr_state" != "open" ]; then
+          flog "${proj_name}: PR #${_esc_pr} is ${_esc_pr_state:-unknown} — discarding stale escalation"
+          continue  # PR merged/closed externally; escalation no longer actionable
+        fi
         _esc_branch=$(printf '%s' "$_esc_pr_json" | jq -r '.head.ref // ""' 2>/dev/null)
         if [ -z "$_esc_branch" ]; then
           printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
@@ -493,7 +498,12 @@ json.dump(d, open(f, 'w'))
           # Escalation removed — do NOT write to _esc_tmp
         else
           p2 "${proj_name}: PR #${_esc_pr}: infra-only CI exhaustion but retrigger push failed"
-          printf '%s\n' "$_esc_line" >> "$_esc_tmp"
+          # Bump timestamp to now so the 30-min cooldown resets; prevents alert flood
+          # on persistent push failures (SSH key issue, Codeberg outage, etc.)
+          _esc_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          _esc_bumped=$(printf '%s' "$_esc_line" | jq -c --arg ts "$_esc_now" '.ts = $ts' 2>/dev/null \
+            || printf '%s' "$_esc_line")
+          printf '%s\n' "$_esc_bumped" >> "$_esc_tmp"
         fi
       done < "$_esc_file"
 

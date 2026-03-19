@@ -2,7 +2,8 @@
 # ci-helpers.sh — Shared CI helper functions
 #
 # Source from any script: source "$(dirname "$0")/../lib/ci-helpers.sh"
-# Requires: WOODPECKER_REPO_ID (from env.sh / project config)
+# ci_passed() requires: WOODPECKER_REPO_ID (from env.sh / project config)
+# classify_pipeline_failure() requires: woodpecker_api() (defined in env.sh)
 
 # ci_passed <state> — check if CI is passing (or no CI configured)
 #   Returns 0 if state is "success", or if no CI is configured and
@@ -39,18 +40,20 @@ classify_pipeline_failure() {
   fi
 
   all_infra=true
+  _infra_count=0
   while IFS=$'\t' read -r _sname _ecode; do
     [ -z "$_sname" ] && continue
     # git step with exit 128 (connection/rate-limit) or 137 (OOM) → infra
     if [[ "$_sname" == git* ]] && { [ "$_ecode" = "128" ] || [ "$_ecode" = "137" ]; }; then
-      : # infra step — continue checking remaining steps
+      _infra_count=$(( _infra_count + 1 ))
     else
       all_infra=false
       break
     fi
   done <<< "$failed_steps"
 
-  if [ "$all_infra" = true ]; then
+  # Require at least one confirmed infra step (guards against all-empty-name steps)
+  if [ "$all_infra" = true ] && [ "$_infra_count" -gt 0 ]; then
     echo "infra"
     return 0
   fi
