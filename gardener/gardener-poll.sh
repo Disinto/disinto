@@ -623,11 +623,25 @@ if [ -s "$ESCALATION_FILE" ]; then
 
     log "Escalation: issue #${ESC_ISSUE} PR #${ESC_PR} reason=${ESC_REASON} (${ESC_ATTEMPTS} CI attempt(s))"
 
-    # Handle idle_timeout escalations — no CI steps to inspect, just notify
-    if [[ "$ESC_REASON" == idle_timeout* ]]; then
+    # Handle idle_timeout / idle_prompt escalations — no CI steps to inspect, just notify
+    if [[ "$ESC_REASON" == idle_timeout* || "$ESC_REASON" == idle_prompt* ]]; then
       _issue_url="https://codeberg.org/${CODEBERG_REPO}/issues/${ESC_ISSUE}"
-      sub_title="chore: investigate idle timeout for issue #${ESC_ISSUE}"
-      sub_body="## Dev-agent idle timeout
+      if [[ "$ESC_REASON" == idle_prompt* ]]; then
+        sub_title="chore: investigate idle prompt for issue #${ESC_ISSUE}"
+        sub_body="## Dev-agent idle prompt
+
+The dev-agent session for issue #${ESC_ISSUE} returned to the prompt without writing a phase signal.$([ "${ESC_PR:-0}" != "0" ] && printf '\n\nPR #%s may still be open.' "$ESC_PR")
+
+### What to check
+1. Did Claude finish without signalling a phase? Check for missing phase-file writes.
+2. Was the issue spec ambiguous or missing acceptance criteria?
+3. Re-run the issue by restoring the \`backlog\` label if the spec is clear.
+
+### Context
+- Issue: [#${ESC_ISSUE}](${_issue_url})$([ "${ESC_PR:-0}" != "0" ] && printf '\n- PR: #%s' "$ESC_PR")"
+      else
+        sub_title="chore: investigate idle timeout for issue #${ESC_ISSUE}"
+        sub_body="## Dev-agent idle timeout
 
 The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase update and was killed.$([ "${ESC_PR:-0}" != "0" ] && printf '\n\nPR #%s may still be open.' "$ESC_PR")
 
@@ -638,6 +652,7 @@ The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase up
 
 ### Context
 - Issue: [#${ESC_ISSUE}](${_issue_url})$([ "${ESC_PR:-0}" != "0" ] && printf '\n- PR: #%s' "$ESC_PR")"
+      fi
 
       new_issue=$(curl -sf -X POST \
         -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -647,9 +662,9 @@ The dev-agent session for issue #${ESC_ISSUE} was idle for 2h without a phase up
           --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
 
       if [ -n "$new_issue" ]; then
-        log "Created idle-timeout sub-issue #${new_issue} for #${ESC_ISSUE}"
+        log "Created idle sub-issue #${new_issue} for #${ESC_ISSUE} (${ESC_REASON})"
         _esc_total_created=$((_esc_total_created + 1))
-        matrix_send "gardener" "⏱ Created #${new_issue}: idle timeout on #${ESC_ISSUE}" 2>/dev/null || true
+        matrix_send "gardener" "⏱ Created #${new_issue}: ${ESC_REASON} on #${ESC_ISSUE}" 2>/dev/null || true
       fi
 
       echo "$esc_entry" >> "$ESCALATION_DONE"
