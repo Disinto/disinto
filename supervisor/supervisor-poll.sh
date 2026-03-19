@@ -145,6 +145,7 @@ fi
 if [ -n "$P0_ALERTS" ]; then
   matrix_send "supervisor" "🚨 Supervisor P0 alerts:
 $(printf '%b' "$P0_ALERTS")" 2>/dev/null || true
+  P0_ALERTS=""  # clear so it is not duplicated in the final consolidated send
 fi
 
 # =============================================================================
@@ -194,6 +195,7 @@ fi
 if [ -n "$P1_ALERTS" ]; then
   matrix_send "supervisor" "⚠️ Supervisor P1 alerts:
 $(printf '%b' "$P1_ALERTS")" 2>/dev/null || true
+  P1_ALERTS=""  # clear so it is not duplicated in the final consolidated send
 fi
 
 # Emit infra metric
