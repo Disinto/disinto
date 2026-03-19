@@ -18,10 +18,14 @@ FAILED=0
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 # Extract function names defined in a bash script (top-level or indented).
+# Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  grep -Eo '[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*[(][)]' "$f" 2>/dev/null \
-    | sed 's/[[:space:]]*()//' | sort -u || true
+  awk '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)/ {
+    sub(/^[[:space:]]+/, "")
+    sub(/[[:space:]]*\(\).*/, "")
+    print
+  }' "$f" 2>/dev/null | sort -u || true
 }
 
 # Extract call-position identifiers that look like custom function calls:
