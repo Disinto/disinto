@@ -60,9 +60,9 @@ get_candidates() {
         if (match(p, /^[a-z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+/)) {
           word = substr(p, RSTART, RLENGTH)
           rest = substr(p, RSTART + RLENGTH, 1)
-          # Skip: case labels (word)), Python/jq patterns (word:),
+          # Skip: case labels (word) or word|), Python/jq patterns (word:),
           #        object method calls (word.method), assignments (word=)
-          if (rest == ")" || rest == ":" || rest == "." || rest == "=") continue
+          if (rest == ")" || rest == "|" || rest == ":" || rest == "." || rest == "=") continue
           print word
         }
       }

@@ -60,11 +60,16 @@ inject_formula() {
 }
 
 # Monitor a phase file, calling a callback on changes and handling idle timeout.
-# Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, done, failed, break).
+# Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, idle_prompt, done, failed, break).
 # Sets _MONITOR_SESSION to the resolved session name (arg 4 or $SESSION_NAME).
 #   Callbacks should reference _MONITOR_SESSION instead of $SESSION_NAME directly.
 # Args: phase_file idle_timeout_secs callback_fn [session_name]
 #   session_name — tmux session to health-check; falls back to $SESSION_NAME global
+#
+# Idle prompt detection: if Claude returns to the ❯ prompt for 3 consecutive polls
+# WITHOUT having written any phase signal, the session is killed and the callback is
+# invoked with "PHASE:failed".  This handles the case where Claude completes its work
+# but skips the phase protocol entirely.
 monitor_phase_loop() {
   local phase_file="$1"
   local idle_timeout="$2"
@@ -76,6 +81,7 @@ monitor_phase_loop() {
   local poll_interval="${PHASE_POLL_INTERVAL:-10}"
   local last_mtime=0
   local idle_elapsed=0
+  local idle_pane_count=0
 
   while true; do
     sleep "$poll_interval"
@@ -99,6 +105,7 @@ monitor_phase_loop() {
             return 1
           fi
           idle_elapsed=0
+          idle_pane_count=0
           continue
           ;;
       esac
@@ -116,6 +123,29 @@ monitor_phase_loop() {
         _MONITOR_LOOP_EXIT="idle_timeout"
         agent_kill_session "${_session}"
         return 0
+      fi
+      # Idle prompt detection: Claude finished without writing a phase signal.
+      # Only fires when current_phase is empty (no phase ever written).
+      # Note: tmux capture-pane captures the full visible pane area, not just the
+      # last line.  Prior tool output containing ❯ (e.g. a zsh subshell prompt in
+      # Claude's output) could trigger a false positive — the same risk exists in
+      # agent_wait_for_claude_ready().  Requiring 3 consecutive polls (≥2 poll
+      # intervals of sustained idle) reduces but does not eliminate this risk.
+      if [ -z "$current_phase" ] && tmux has-session -t "${_session}" 2>/dev/null && \
+         tmux capture-pane -t "${_session}" -p 2>/dev/null | grep -q '❯'; then
+        idle_pane_count=$(( idle_pane_count + 1 ))
+        if [ "$idle_pane_count" -ge 3 ]; then
+          _MONITOR_LOOP_EXIT="idle_prompt"
+          # Session is already killed before the callback is invoked.
+          # Callbacks that handle PHASE:failed must not assume the session is alive.
+          agent_kill_session "${_session}"
+          if type "${callback}" &>/dev/null; then
+            "$callback" "PHASE:failed"
+          fi
+          return 0
+        fi
+      else
+        idle_pane_count=0
       fi
       continue
     fi

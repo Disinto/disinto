@@ -714,12 +714,18 @@ monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change
 
 # Handle exit reason from monitor_phase_loop
 case "${_MONITOR_LOOP_EXIT:-}" in
-  idle_timeout)
-    notify_ctx \
-      "session idle for 2h — killed. Escalating to gardener." \
-      "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+  idle_timeout|idle_prompt)
+    if [ "${_MONITOR_LOOP_EXIT:-}" = "idle_prompt" ]; then
+      notify_ctx \
+        "session finished without phase signal — killed. Escalating to gardener." \
+        "session finished without phase signal — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+    else
+      notify_ctx \
+        "session idle for 2h — killed. Escalating to gardener." \
+        "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+    fi
     # Escalate: write to project-suffixed escalation file so gardener picks it up
-    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${_MONITOR_LOOP_EXIT:-idle_timeout}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
     # Restore labels: remove in-progress, add backlog
     cleanup_labels

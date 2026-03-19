@@ -222,7 +222,7 @@ fi
 # ── Build prompt from formula + dynamic context ────────────────────────────
 log "Building gardener prompt from formula"
 
-PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Work through the formula below — there is no time limit, run until PHASE:done.
+PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 ${CONTEXT_SECTION}
 ## Formula
@@ -303,14 +303,23 @@ gardener_phase_callback() {
   esac
 }
 
-# No idle timeout — gardener runs until PHASE:done or PHASE:failed
-monitor_phase_loop "$PHASE_FILE" 999999 "gardener_phase_callback"
+monitor_phase_loop "$PHASE_FILE" 7200 "gardener_phase_callback"
 
 FINAL_PHASE=$(read_phase)
 log "Final phase: ${FINAL_PHASE:-none}"
 
 if [ "$FINAL_PHASE" != "PHASE:done" ]; then
-  log "gardener-agent finished without PHASE:done (phase: ${FINAL_PHASE:-none})"
+  case "${_MONITOR_LOOP_EXIT:-}" in
+    idle_prompt)
+      log "gardener-agent: Claude returned to prompt without writing phase signal — no phase file written"
+      ;;
+    idle_timeout)
+      log "gardener-agent: timed out after 2h with no phase signal"
+      ;;
+    *)
+      log "gardener-agent finished without PHASE:done (phase: ${FINAL_PHASE:-none}, exit: ${_MONITOR_LOOP_EXIT:-})"
+      ;;
+  esac
   exit 0
 fi
 
