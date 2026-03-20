@@ -53,3 +53,8 @@ The supervisor-poll alert 'status unchanged for Nmin' is a false positive for co
 
 ### False Positive: 'Waiting for CI + Review' Alert
 The 'status unchanged for Nmin' alert is also a false positive when status is 'waiting for CI + review on PR #N (round R)'. This is an intentional sleep/poll loop — the agent is waiting for CI to pass and then for review-poll to post a review. CI can take 20–40 minutes; review follows. Do NOT restart the agent. Confirm by checking: (1) agent PID is alive, (2) CI commit status via `codeberg_api GET /commits/<sha>/status`, (3) review-poll log shows it will pick up the PR on next cycle.
+
+### False Positive: Shared Status File Causes Giant Age (29M+ min)
+When the status file `/tmp/dev-agent-status` doesn't exist, `stat -c %Y` fails and the supervisor falls back to epoch 0. The computed age is then `NOW_EPOCH/60 ≈ 29,567,290 min`, which is unmistakably a false positive.
+Root cause: the status file is not per-project (tracked as disinto issue #423). It can be missing if: (1) the agent has not written to it yet, (2) cleanup ran early, or (3) another project's cleanup deleted it.
+Fix: confirm the agent PID is alive and the tmux session shows active work, then touch the file: `printf '[%s] dev-agent #NNN: <phase> (<project>)\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /tmp/dev-agent-status`. This clears the alert without restarting anything.
