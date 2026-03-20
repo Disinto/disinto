@@ -21,9 +21,9 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  awk '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)/ {
-    sub(/^[[:space:]]+/, "")
-    sub(/[[:space:]]*\(\).*/, "")
+  awk '/^[ \t]*[a-zA-Z_][a-zA-Z0-9_]+[ \t]*\(\)/ {
+    sub(/^[ \t]+/, "")
+    sub(/[ \t]*\(\).*/, "")
     print
   }' "$f" 2>/dev/null | sort -u || true
 }
