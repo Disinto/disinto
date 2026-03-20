@@ -191,7 +191,7 @@ needs = ["grooming"]
 id    = "ci-escalation-recipes"
 title = "CI escalation recipes (bash — gardener-poll.sh)"
 executor = "bash"
-script   = "gardener/gardener-poll.sh"
+script   = "gardener/gardener-poll.sh --recipes-only"
 description = """
 NOT a Claude step — executed by gardener-poll.sh before/after the Claude session.
 Documented here so the formula covers the full gardener run.

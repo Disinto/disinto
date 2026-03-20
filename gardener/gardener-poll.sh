@@ -25,8 +25,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# --recipes-only: skip grooming (used by formula ci-escalation-recipes step
+# to avoid double-running grooming which the formula handles as its own step)
+RECIPES_ONLY=0
+if [ "${1:-}" = "--recipes-only" ]; then
+  RECIPES_ONLY=1
+  shift
+fi
+
 # Load shared environment (with optional project TOML override)
-# Usage: gardener-poll.sh [projects/harb.toml]
+# Usage: gardener-poll.sh [--recipes-only] [projects/harb.toml]
 export PROJECT_TOML="${1:-}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
@@ -108,8 +116,13 @@ Instructions:
 done
 
 # ── Backlog grooming (delegated to gardener-agent.sh) ────────────────────
-log "Invoking gardener-agent.sh for backlog grooming"
-bash "$SCRIPT_DIR/gardener-agent.sh" "${1:-}" || log "WARNING: gardener-agent.sh exited with error"
+# Skipped with --recipes-only (formula's grooming step handles this)
+if [ "$RECIPES_ONLY" -eq 0 ]; then
+  log "Invoking gardener-agent.sh for backlog grooming"
+  bash "$SCRIPT_DIR/gardener-agent.sh" "${1:-}" || log "WARNING: gardener-agent.sh exited with error"
+else
+  log "Skipping grooming (--recipes-only mode)"
+fi
 
 
 # ── Recipe matching engine ────────────────────────────────────────────────

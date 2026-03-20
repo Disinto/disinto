@@ -16,7 +16,8 @@ See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
+├── gardener/      gardener-run.sh — files action issue for run-gardener formula
+│                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
 ├── planner/       planner-poll.sh — files action issue for run-planner formula
 │                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
 ├── supervisor/    supervisor-poll.sh — health monitoring
@@ -111,12 +112,17 @@ spawns `review-pr.sh <pr-number>`.
 criteria, oversized issues, stale issues, and circular dependencies. Invoke
 Claude to fix or escalate to a human via Matrix.
 
-**Trigger**: `gardener-poll.sh` runs daily (or 2x/day) via cron. Accepts an
-optional project TOML argument.
+**Trigger**: `gardener-run.sh` runs 2x/day via cron. It files an `action`
+issue referencing `formulas/run-gardener.toml`; the [action-agent](#action-action)
+picks it up and executes the gardener steps in an interactive Claude tmux session.
+Accepts an optional project TOML argument (configures which project the action
+issue is filed against).
 
 **Key files**:
-- `gardener/gardener-poll.sh` — Cron wrapper: lock, escalation-reply injection for dev sessions, calls `gardener-agent.sh`, then processes dev-agent CI escalations via recipe engine
+- `gardener/gardener-run.sh` — Cron wrapper: lock, memory guard, dedup check, files action issue
+- `gardener/gardener-poll.sh` — Recipe engine: escalation-reply injection for dev sessions, processes dev-agent CI escalations via recipe engine (invoked by formula step ci-escalation-recipes)
 - `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE), handles dust bundling
+- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, blocked-review, CI escalation recipes, agents-update, commit-and-pr
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
@@ -278,6 +284,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
+| `lib/file-action-issue.sh` | `file_action_issue()` — dedup check, label lookup, and issue creation for formula-driven cron wrappers. Sets `FILED_ISSUE_NUM` on success. | gardener-run.sh, planner-poll.sh |
 | `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. Also installs a StopFailure hook (matcher `rate_limit\|server_error\|authentication_failed\|billing_error`) that writes `PHASE:failed` with an `api_error` reason to the phase file and touches the phase-changed marker, so the orchestrator discovers API errors within one poll cycle instead of waiting for idle timeout. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh, action-agent.sh |
 
 ---

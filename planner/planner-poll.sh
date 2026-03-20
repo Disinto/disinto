@@ -13,6 +13,8 @@ FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
+# shellcheck source=../lib/file-action-issue.sh
+source "$FACTORY_ROOT/lib/file-action-issue.sh"
 
 LOG_FILE="$SCRIPT_DIR/planner.log"
 LOCK_FILE="/tmp/planner-poll.lock"
@@ -40,28 +42,7 @@ fi
 
 log "--- Planner poll start ---"
 
-# ── Dedup: skip if an open run-planner action issue already exists ────────
-OPEN_ACTIONS=$(codeberg_api GET "/issues?state=open&type=issues&labels=action&limit=50" 2>/dev/null || true)
-if [ -n "$OPEN_ACTIONS" ] && [ "$OPEN_ACTIONS" != "null" ]; then
-  EXISTING=$(printf '%s' "$OPEN_ACTIONS" | \
-    jq '[.[] | select(.title | test("run-planner"))] | length' 2>/dev/null || echo 0)
-  if [ "${EXISTING:-0}" -gt 0 ]; then
-    log "poll: open run-planner action issue already exists — skipping"
-    log "--- Planner poll done ---"
-    exit 0
-  fi
-fi
-
-# ── Fetch 'action' label ID ──────────────────────────────────────────────
-ACTION_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null | \
-  jq -r '.[] | select(.name == "action") | .id' 2>/dev/null || true)
-
-if [ -z "$ACTION_LABEL_ID" ]; then
-  log "ERROR: 'action' label not found — cannot file planner issue"
-  exit 1
-fi
-
-# ── File action issue ─────────────────────────────────────────────────────
+# ── File action issue for run-planner formula ─────────────────────────────
 ISSUE_BODY="---
 formula: run-planner
 model: opus
@@ -73,21 +54,20 @@ strategic planning (resource+leverage gap analysis), and memory update.
 
 Filed automatically by \`planner-poll.sh\`."
 
-PAYLOAD=$(jq -nc \
-  --arg title "action: run-planner — periodic strategic planning" \
-  --arg body "$ISSUE_BODY" \
-  --argjson labels "[$ACTION_LABEL_ID]" \
-  '{title: $title, body: $body, labels: $labels}')
+_rc=0
+file_action_issue "run-planner" "action: run-planner — periodic strategic planning" "$ISSUE_BODY" || _rc=$?
+case "$_rc" in
+  0) ;;
+  1) log "poll: open run-planner action issue already exists — skipping"
+     log "--- Planner poll done ---"
+     exit 0 ;;
+  2) log "ERROR: 'action' label not found — cannot file planner issue"
+     exit 1 ;;
+  *) log "ERROR: failed to create action issue for run-planner"
+     exit 1 ;;
+esac
 
-RESULT=$(codeberg_api POST "/issues" -d "$PAYLOAD" 2>/dev/null || true)
-ISSUE_NUM=$(printf '%s' "$RESULT" | jq -r '.number // empty' 2>/dev/null || true)
-
-if [ -z "$ISSUE_NUM" ]; then
-  log "ERROR: failed to create action issue for run-planner"
-  exit 1
-fi
-
-log "Filed action issue #${ISSUE_NUM} for run-planner formula"
-matrix_send "planner" "Filed action #${ISSUE_NUM}: run-planner — periodic strategic planning" 2>/dev/null || true
+log "Filed action issue #${FILED_ISSUE_NUM} for run-planner formula"
+matrix_send "planner" "Filed action #${FILED_ISSUE_NUM}: run-planner — periodic strategic planning" 2>/dev/null || true
 
 log "--- Planner poll done ---"

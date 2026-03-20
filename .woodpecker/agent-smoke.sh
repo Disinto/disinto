@@ -91,7 +91,7 @@ echo "=== 2/2  Function resolution ==="
 
 # Functions provided by shared lib files (available to all agent scripts via source)
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/file-action-issue.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -159,6 +159,7 @@ check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-agent.sh  lib/agent-session.sh
 check_script gardener/gardener-poll.sh
+check_script gardener/gardener-run.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh
 check_script planner/planner-poll.sh
