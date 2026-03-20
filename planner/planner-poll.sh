@@ -64,6 +64,7 @@ fi
 # ── File action issue ─────────────────────────────────────────────────────
 ISSUE_BODY="---
 formula: run-planner
+model: opus
 ---
 
 Periodic strategic planning run. The action-agent reads \`formulas/run-planner.toml\`

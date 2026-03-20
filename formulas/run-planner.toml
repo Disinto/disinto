@@ -8,6 +8,7 @@
 name        = "run-planner"
 description = "Strategic planning: update docs, triage predictions, resource+leverage gap analysis"
 version     = 1
+model       = "opus"
 
 [context]
 files = ["VISION.md", "AGENTS.md", "RESOURCES.md"]
