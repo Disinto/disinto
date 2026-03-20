@@ -392,33 +392,15 @@ Instructions:
             printf 'PHASE:done\n' > "$PHASE_FILE"
           elif [ "$_merge_rc" -ne 2 ]; then
             # Other merge failure (conflict, etc.) — delegate to Claude for rebase + retry
-            agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved.
+            agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved, but the merge failed (likely conflicts).
 
-Merge the PR and close the issue directly — do NOT wait for the orchestrator:
-
-  # Merge the PR:
-  curl -sf -X POST \\
-    -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
-    -H 'Content-Type: application/json' \\
-    \"${API}/pulls/${PR_NUMBER}/merge\" \\
-    -d '{\"Do\":\"merge\",\"delete_branch_after_merge\":true}'
-
-  # Close the issue:
-  curl -sf -X PATCH \\
-    -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
-    -H 'Content-Type: application/json' \\
-    \"${API}/issues/${ISSUE}\" \\
-    -d '{\"state\":\"closed\"}'
-
-If merge fails due to conflicts, rebase first:
+Rebase onto ${PRIMARY_BRANCH} and push:
   git fetch origin ${PRIMARY_BRANCH} && git rebase origin/${PRIMARY_BRANCH}
   git push --force-with-lease origin ${BRANCH}
-  # Then retry the merge curl above.
+  echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 
-After a successful merge write PHASE:done:
-  echo \"PHASE:done\" > \"${PHASE_FILE}\"
-
-If merge repeatedly fails, write PHASE:needs_human with a reason."
+Do NOT merge or close the issue — the orchestrator handles that after CI passes.
+If rebase repeatedly fails, write PHASE:needs_human with a reason."
           fi
           # _merge_rc=2: PHASE:needs_human already written by do_merge()
           break

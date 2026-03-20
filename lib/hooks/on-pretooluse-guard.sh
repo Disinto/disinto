@@ -6,6 +6,7 @@
 # - git push --force / -f to primary branch
 # - rm -rf targeting paths outside the worktree
 # - Direct Codeberg API merge calls (should go through phase protocol)
+# - Direct issue close calls (should go through phase protocol)
 # - git checkout / git switch to primary branch (stay on feature branch)
 #
 # Usage (in .claude/settings.json):
@@ -65,6 +66,14 @@ fi
 # --- Guard 3: Direct Codeberg API merge calls ---
 if printf '%s' "$command_str" | grep -qE '/pulls/[0-9]+/merge'; then
   printf 'BLOCKED: Direct API merge calls must go through the phase protocol. Push your changes and write PHASE:awaiting_ci — the orchestrator handles merges.\n'
+  exit 2
+fi
+
+# --- Guard 5: Direct issue close calls ---
+# Defense in depth: Claude should never close issues directly — the orchestrator
+# closes issues after a successful merge via the phase protocol.
+if printf '%s' "$command_str" | grep -qE '/issues/[0-9]+.*state.*closed'; then
+  printf 'BLOCKED: Closing issues must go through the phase protocol. Write PHASE:done — the orchestrator closes issues after merge.\n'
   exit 2
 fi
 

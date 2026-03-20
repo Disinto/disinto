@@ -150,6 +150,52 @@ handle_ci_exhaustion() {
   return 0
 }
 
+# =============================================================================
+# HELPER: merge an approved PR directly (no Claude needed)
+#
+# Merging an approved, CI-green PR is a single API call. Spawning dev-agent
+# for this fails when the issue is already closed (Codeberg auto-closes issues
+# on PR creation when body contains "Fixes #N"), causing a respawn loop (#344).
+# =============================================================================
+try_direct_merge() {
+  local pr_num="$1" issue_num="$2"
+
+  log "PR #${pr_num} (issue #${issue_num}) approved + CI green → attempting direct merge"
+
+  local merge_resp merge_http
+  merge_resp=$(curl -sf -w '\n%{http_code}' -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    "${API}/pulls/${pr_num}/merge" \
+    -d '{"Do":"merge","delete_branch_after_merge":true}' 2>/dev/null) || true
+
+  merge_http=$(echo "$merge_resp" | tail -1)
+
+  if [ "${merge_http:-0}" = "200" ] || [ "${merge_http:-0}" = "204" ]; then
+    log "PR #${pr_num} merged successfully"
+    # Close the issue (may already be closed by Codeberg auto-close)
+    curl -sf -X PATCH \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      "${API}/issues/${issue_num}" \
+      -d '{"state":"closed"}' >/dev/null 2>&1 || true
+    # Remove in-progress label
+    curl -sf -X DELETE \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
+    # Clean up CI fix tracker
+    ci_fix_reset "$pr_num"
+    # Clean up phase/session artifacts
+    rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
+          "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
+    matrix_send "dev" "✅ PR #${pr_num} (issue #${issue_num}) merged directly by dev-poll" 2>/dev/null || true
+    return 0
+  fi
+
+  log "PR #${pr_num} direct merge failed (HTTP ${merge_http:-?}) — falling back to dev-agent"
+  return 1
+}
+
 # shellcheck disable=SC2034
 REPO="${CODEBERG_REPO}"
 
@@ -284,7 +330,11 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      log "PR #${HAS_PR} approved + CI green → spawning dev-agent to merge"
+      if try_direct_merge "$HAS_PR" "$ISSUE_NUM"; then
+        exit 0
+      fi
+      # Direct merge failed (conflicts?) — fall back to dev-agent
+      log "falling back to dev-agent for PR #${HAS_PR} merge"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
@@ -363,9 +413,13 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
 
-  # Spawn agent to merge if approved + CI green
+  # Merge directly if approved + CI green (no Claude needed — single API call)
   if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) approved + CI green → spawning dev-agent to merge"
+    if try_direct_merge "$PR_NUM" "$STUCK_ISSUE"; then
+      exit 0
+    fi
+    # Direct merge failed (conflicts?) — fall back to dev-agent
+    log "falling back to dev-agent for PR #${PR_NUM} merge"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
     exit 0
@@ -453,7 +507,11 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      log "#${ISSUE_NUM} PR #${EXISTING_PR} approved + CI green → spawning dev-agent to merge"
+      if try_direct_merge "$EXISTING_PR" "$ISSUE_NUM"; then
+        exit 0
+      fi
+      # Direct merge failed (conflicts?) — fall back to dev-agent
+      log "falling back to dev-agent for PR #${EXISTING_PR} merge"
       nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
