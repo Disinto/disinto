@@ -3,8 +3,8 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages six agents (dev, review,
-gardener, supervisor, planner, vault) that pick up issues from Codeberg,
+Disinto is an autonomous code factory. It manages eight agents (dev, review,
+gardener, supervisor, planner, predictor, action, vault) that pick up issues from Codeberg,
 implement them, review PRs, plan from the vision, gate dangerous actions, and
 keep the system healthy — all via cron and `claude -p`.
 
@@ -14,7 +14,7 @@ See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 
 ```
 disinto/
-├── dev/           dev-poll.sh, dev-agent.sh — issue implementation
+├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
 ├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
@@ -267,7 +267,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
-| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh |
+| `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh, action-agent.sh |
 
 ---
 
