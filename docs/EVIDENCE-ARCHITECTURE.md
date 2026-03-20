@@ -1,6 +1,6 @@
 # Evidence Architecture — Roadmap
 
-> **Status:** Design document. Describes the target architecture for evidence-driven decision making in disinto. Nothing described here exists yet unless marked ✅.
+> **Status: Planned Architecture** — The infrastructure described here is not yet implemented. See AGENTS.md for the current state. Items marked **Implemented** exist in the codebase; all others are **Planned**.
 
 Disinto is purpose-built for one loop: **build software, launch it, improve it, reach market fit.**
 
@@ -24,12 +24,12 @@ Different domains have different platforms:
 
 | Domain | Platform | What it tracks | Status |
 |--------|----------|---------------|--------|
-| Code | Codeberg | Issues, PRs, reviews | ✅ Live |
-| CI/CD | Woodpecker | Build/test results | ✅ Live |
-| Protocol | Ponder / GraphQL | On-chain state, trades, positions | ✅ Live (not yet wired to evidence) |
-| Infrastructure | DigitalOcean / system stats | CPU, RAM, disk, containers | Supervisor monitors, no evidence output yet |
-| User experience | Playwright personas | Conversion, friction, journey completion | ✅ Scripts exist (`run-usertest.sh`), no evidence output yet |
-| Funnel | Analytics (future) | Bounce rate, conversion, retention | Not started |
+| Code | Codeberg | Issues, PRs, reviews | **Implemented** — Live |
+| CI/CD | Woodpecker | Build/test results | **Implemented** — Live |
+| Protocol | Ponder / GraphQL | On-chain state, trades, positions | **Implemented** — Live (not yet wired to evidence) |
+| Infrastructure | DigitalOcean / system stats | CPU, RAM, disk, containers | **Planned** — Supervisor monitors, no evidence output yet |
+| User experience | Playwright personas | Conversion, friction, journey completion | **Implemented** — Scripts exist (`run-usertest.sh`), no evidence output yet |
+| Funnel | Analytics (future) | Bounce rate, conversion, retention | **Planned** — Not started |
 
 Agents won't need to understand each platform. **Processes act as adapters** — they will read a platform's API and write structured evidence to git.
 
@@ -52,11 +52,11 @@ Will produce evidence. Change nothing. Safe to run anytime.
 
 | Process | Measures | Platform | Status |
 |---------|----------|----------|--------|
-| `run-holdout` | Code quality against blind scenarios | Playwright + docker stack | ✅ `evaluate.sh` exists (harb #977) |
-| `run-user-test` | UX quality across 5 personas | Playwright + docker stack | ✅ `run-usertest.sh` exists (harb #978) |
-| `measure-resources` | Infra state (CPU, RAM, disk, containers) | System / DigitalOcean API | Not started |
-| `measure-protocol` | On-chain health (floor, reserves, volume) | Ponder GraphQL | Not started |
-| `measure-funnel` | User conversion and retention | Analytics API | Not started |
+| `run-holdout` | Code quality against blind scenarios | Playwright + docker stack | **Implemented** — `evaluate.sh` exists (harb #977) |
+| `run-user-test` | UX quality across 5 personas | Playwright + docker stack | **Implemented** — `run-usertest.sh` exists (harb #978) |
+| `measure-resources` | Infra state (CPU, RAM, disk, containers) | System / DigitalOcean API | **Planned** |
+| `measure-protocol` | On-chain health (floor, reserves, volume) | Ponder GraphQL | **Planned** |
+| `measure-funnel` | User conversion and retention | Analytics API | **Planned** |
 
 ### Mutation processes (create change)
 
@@ -64,8 +64,8 @@ Will produce new artifacts. Consume significant resources. Results delivered via
 
 | Process | Produces | Consumes | Status |
 |---------|----------|----------|--------|
-| `run-evolution` | Better optimizer candidates (`.push3` programs) | CPU-heavy: transpile + compile + deploy + attack per candidate | ✅ `evolve.sh` exists (harb #975) |
-| `run-red-team` | Evidence (floor held?) + new attack vectors | CPU + RAM for revm evaluation | ✅ `red-team.sh` exists (harb #976) |
+| `run-evolution` | Better optimizer candidates (`.push3` programs) | CPU-heavy: transpile + compile + deploy + attack per candidate | **Implemented** — `evolve.sh` exists (harb #975) |
+| `run-red-team` | Evidence (floor held?) + new attack vectors | CPU + RAM for revm evaluation | **Implemented** — `red-team.sh` exists (harb #976) |
 
 ### Feedback loops
 
