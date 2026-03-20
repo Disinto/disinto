@@ -909,7 +909,7 @@ Instructions:
   # P4-PROJECT: Clean stale worktrees for this project
   # ===========================================================================
   NOW_TS=$(date +%s)
-  for wt in /tmp/${PROJECT_NAME}-worktree-* /tmp/${PROJECT_NAME}-review-*; do
+  for wt in /tmp/${PROJECT_NAME}-worktree-* /tmp/${PROJECT_NAME}-review-* /tmp/${PROJECT_NAME}-sup-retry-*; do
     [ -d "$wt" ] || continue
     WT_AGE_MIN=$(( (NOW_TS - $(stat -c %Y "$wt")) / 60 ))
     if [ "$WT_AGE_MIN" -gt 120 ]; then
