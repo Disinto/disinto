@@ -321,51 +321,11 @@ check_project() {
         continue
       fi
 
-      # Get pipeline details via Woodpecker API
-      _pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${_pip_num}" 2>/dev/null || true)
-      [ -z "$_pip_json" ] && continue
+      # Classify failure type via shared helper
+      _classification=$(classify_pipeline_failure "${WOODPECKER_REPO_ID}" "$_pip_num" 2>/dev/null || echo "code")
 
-      # Extract failed steps: name, exit_code, pid
-      _failed_steps=$(echo "$_pip_json" | jq -r '
-        .workflows[]?.children[]? |
-        select(.state == "failure" or .state == "error" or .state == "killed") |
-        "\(.name)\t\(.exit_code)\t\(.pid)"' 2>/dev/null || true)
-      [ -z "$_failed_steps" ] && continue
-
-      _is_infra=false
-      _infra_reason=""
-
-      while IFS=$'\t' read -r _sname _ecode _spid; do
-        [ -z "$_sname" ] && continue
-
-        # Clone step exit 128 → Codeberg connection failure / rate limit
-        if [[ "$_sname" == *clone* ]] && [ "$_ecode" = "128" ]; then
-          _is_infra=true
-          _infra_reason="clone exit 128 (connection failure)"
-          break
-        fi
-
-        # Exit 137 → OOM / killed by signal 9
-        if [ "$_ecode" = "137" ]; then
-          _is_infra=true
-          _infra_reason="${_sname} exit 137 (OOM/signal 9)"
-          break
-        fi
-
-        # Check step logs for docker pull / connection timeout patterns
-        if [ -n "$_spid" ] && [ "$_spid" != "null" ]; then
-          _log_data=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${_pip_num}/${_spid}" \
-            --max-time 15 2>/dev/null \
-            | jq -r '.[].data // empty' 2>/dev/null | tail -200 || true)
-          if echo "$_log_data" | grep -qiE 'Failed to connect|connection timed out|docker pull.*timeout|TLS handshake timeout'; then
-            _is_infra=true
-            _infra_reason="${_sname}: log matches infra pattern (timeout/connection)"
-            break
-          fi
-        fi
-      done <<< "$_failed_steps"
-
-      if [ "$_is_infra" = true ]; then
+      if [[ "$_classification" == infra* ]]; then
+        _infra_reason="${_classification#infra }"
         _new_retries=$(( _retries + 1 ))
         if woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${_pip_num}" \
              -X POST >/dev/null 2>&1; then
@@ -463,7 +423,7 @@ check_project() {
         # Classify failure type via ci-helpers
         _esc_failure=$(classify_pipeline_failure "${WOODPECKER_REPO_ID}" "$_esc_pip" 2>/dev/null || echo "code")
 
-        if [ "$_esc_failure" != "infra" ]; then
+        if [[ "$_esc_failure" != infra* ]]; then
           flog "${proj_name}: PR #${_esc_pr} pipeline #${_esc_pip}: code failure — leaving escalation for human"
           printf '%s\n' "$_esc_line" >> "$_esc_tmp"; continue
         fi
