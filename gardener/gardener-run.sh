@@ -27,7 +27,7 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 if [ -f "$LOCK_FILE" ]; then
   LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || true)
   if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    log "poll: gardener-run running (PID $LOCK_PID)"
+    log "run: gardener-run running (PID $LOCK_PID)"
     exit 0
   fi
   rm -f "$LOCK_FILE"
@@ -38,7 +38,7 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 # ── Memory guard ──────────────────────────────────────────────────────────
 AVAIL_MB=$(free -m | awk '/Mem:/{print $7}')
 if [ "${AVAIL_MB:-0}" -lt 2000 ]; then
-  log "poll: skipping — only ${AVAIL_MB}MB available (need 2000)"
+  log "run: skipping — only ${AVAIL_MB}MB available (need 2000)"
   exit 0
 fi
 
@@ -60,7 +60,7 @@ _rc=0
 file_action_issue "run-gardener" "action: run-gardener — periodic housekeeping" "$ISSUE_BODY" || _rc=$?
 case "$_rc" in
   0) ;;
-  1) log "poll: open run-gardener action issue already exists — skipping"
+  1) log "run: open run-gardener action issue already exists — skipping"
      log "--- Gardener run done ---"
      exit 0 ;;
   2) log "ERROR: 'action' label not found — cannot file gardener issue"
