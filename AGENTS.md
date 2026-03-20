@@ -153,10 +153,13 @@ Phase 0 (preflight): pull latest code, load persistent memory from
 `planner/MEMORY.md`. Phase 1: update the AGENTS.md documentation tree to
 reflect recent code changes (fast-track PR). Phase 1.5: triage
 `prediction/unreviewed` issues filed by the [Predictor](#predictor-planner) —
-accept as action/backlog issues or dismiss as noise. Phase 2: strategic planning
+for each prediction: promote to action, promote to backlog, watch (relabel to
+prediction/backlog), or dismiss with reasoning. Promoted predictions compete
+with vision gaps for the per-cycle issue limit. Phase 2: strategic planning
 via resource+leverage gap analysis — reasons about VISION.md, RESOURCES.md,
-formula catalog, and project state to create up to 5 backlog issues prioritized
-by leverage. Phase 3: persist learnings to `planner/MEMORY.md`.
+formula catalog, and project state to create up to 5 total issues (including
+promotions) prioritized by leverage. Phase 3: persist learnings to
+`planner/MEMORY.md`.
 
 **Trigger**: `planner-poll.sh` runs weekly via cron. It files an `action`
 issue referencing `formulas/run-planner.toml`; the [action-agent](#action-action)
@@ -165,7 +168,7 @@ picks it up and executes the planning steps in an interactive Claude tmux sessio
 **Key files**:
 - `planner/planner-poll.sh` — Cron wrapper: memory guard, dedup check, files action issue
 - `formulas/run-planner.toml` — Execution spec: five steps (preflight, agents-update,
-  prediction-triage, strategic-planning, memory-update) with `needs` dependencies.
+  triage-predictions, strategic-planning, memory-update) with `needs` dependencies.
   Steps 2 and 3 are independent; step 4 depends on both. Claude executes all steps
   in a single interactive session with tool access
 - `planner/MEMORY.md` — Persistent memory across runs (gitignored, local only)

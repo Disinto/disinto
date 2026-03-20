@@ -89,10 +89,12 @@ Do NOT let an AGENTS.md failure prevent prediction triage or strategic planning.
 needs = ["preflight"]
 
 [[steps]]
-id    = "prediction-triage"
+id    = "triage-predictions"
 title = "Triage prediction/unreviewed issues"
 description = """
 Triage prediction issues filed by the predictor (goblin).
+Evidence from the preflight step informs whether each prediction is valid
+(e.g. "red-team stale since March 12" is confirmed by evidence/ timestamps).
 
 1. Fetch unreviewed predictions:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
@@ -107,21 +109,61 @@ Triage prediction issues filed by the predictor (goblin).
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&limit=50"
 
-4. For each prediction, read the title and body. Decide:
-   - ACCEPT_ACTION: maps to an available formula -> create an action issue
-     with YAML front matter referencing the formula name and vars
-   - ACCEPT_BACKLOG: warrants dev work -> create a backlog issue
-   - DISMISS: noise, already covered by an open issue, or not actionable ->
-     post an explanation comment, then close the prediction issue
+4. For each prediction, read the title and body. Choose one action:
 
-5. For each accepted prediction:
-   - Create the new issue with the 'backlog' label (or 'action' label for
-     formula-matching actions)
-   - Remove 'prediction/unreviewed' label from the original prediction
-   - Add 'prediction/backlog' label to the original prediction
-   - Note what you accepted — you will need it for strategic-planning
+   - PROMOTE_ACTION: maps to an available formula → create an action issue
+     with YAML front matter referencing the formula name and vars.
+     Close the prediction with comment "Actioned as #NNN".
 
-6. Validation: if you reference a formula, verify it exists on disk.
+   - PROMOTE_BACKLOG: warrants dev work → create a backlog issue.
+     Close the prediction with comment "Actioned as #NNN".
+
+   - WATCH: not urgent but worth tracking → post a comment explaining
+     why it is not urgent, then relabel from prediction/unreviewed to
+     prediction/backlog. Do NOT close.
+
+   - DISMISS: noise, already covered by an open issue, or not actionable →
+     post a comment with explicit reasoning, then close the prediction.
+
+   Every decision MUST include reasoning in a comment on the prediction issue.
+
+5. Executing triage decisions via API:
+
+   For PROMOTE_ACTION / PROMOTE_BACKLOG:
+   a. Create the new issue with the 'action' or 'backlog' label:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" "$CODEBERG_API/issues" \
+          -d '{"title":"...","body":"...","labels":[<label_id>]}'
+   b. Comment on the prediction with "Actioned as #NNN":
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/comments" \
+          -d '{"body":"Actioned as #NNN — <reasoning>"}'
+   c. Close the prediction:
+        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>" \
+          -d '{"state":"closed"}'
+
+   For WATCH:
+   a. Comment with reasoning why not urgent
+   b. Replace prediction/unreviewed label with prediction/backlog:
+        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/labels" \
+          -d '{"labels":[<backlog_label_id>]}'
+
+   For DISMISS:
+   a. Comment with explicit reasoning
+   b. Close the prediction issue
+
+6. Track promoted predictions — they compete with vision gaps in the
+   strategic-planning step for the per-cycle 5-issue limit.
+   Record each promotion (issue number, title, type) for hand-off.
+
+7. Validation: if you reference a formula, verify it exists on disk.
    Fall back to a freeform backlog issue for unknown formulas.
 
 Be decisive — the predictor intentionally over-signals; your job is to filter.
@@ -145,7 +187,8 @@ Read these inputs:
   - Open issues (fetched via API) — what's already planned
   - $FACTORY_ROOT/metrics/supervisor-metrics.jsonl — operational trends (may not exist)
   - Planner memory (loaded in preflight)
-  - Accepted predictions from the triage step
+  - Promoted predictions from triage-predictions (these count toward the
+    per-cycle issue limit — they compete with vision gaps for priority)
 
 Reason through these five questions:
 
@@ -169,7 +212,8 @@ Reason through these five questions:
    Things that depend on blocked resources or aren't high-leverage
    right now. Do NOT create issues for these.
 
-Then create up to 5 issues, prioritized by leverage:
+Then create up to 5 issues total (including promotions from triage-predictions),
+prioritized by leverage:
 
 For formula-matching gaps, include YAML front matter in the body:
   ---
@@ -190,7 +234,7 @@ Create each issue via the API with the 'backlog' label:
     -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
 
 Rules:
-- Max 5 new issues — highest leverage first
+- Max 5 new issues total (promoted predictions + vision gaps) — highest leverage first
 - Do NOT create issues that overlap with ANY existing open issue
 - Do NOT create issues for items you identified as "deferred"
 - Each body: what's missing, why it matters, rough approach
@@ -201,7 +245,7 @@ Rules:
 
 If there are no gaps, note that the backlog is aligned with the vision.
 """
-needs = ["agents-update", "prediction-triage"]
+needs = ["agents-update", "triage-predictions"]
 
 [[steps]]
 id    = "memory-update"
