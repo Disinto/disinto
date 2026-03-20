@@ -1,0 +1,302 @@
+# formulas/run-gardener.toml — Gardener housekeeping formula
+#
+# Defines the gardener's complete run: grooming (Claude session via
+# gardener-agent.sh) + CI escalation recipes (bash, gardener-poll.sh)
+# + AGENTS.md maintenance + final commit-and-pr.
+#
+# No memory, no journal. The gardener does mechanical housekeeping
+# based on current state — it doesn't need to remember past runs.
+#
+# Steps: preflight → grooming → blocked-review → ci-escalation-recipes
+#        → agents-update → commit-and-pr
+
+name        = "run-gardener"
+description = "Mechanical housekeeping: grooming, blocked review, CI escalation recipes, docs update"
+version     = 1
+
+[context]
+files = ["AGENTS.md", "VISION.md", "README.md"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 1: preflight
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "preflight"
+title = "Pull latest code"
+description = """
+Set up the working environment for this gardener run.
+
+1. Change to the project repository:
+     cd "$PROJECT_REPO_ROOT"
+
+2. Pull the latest code:
+     git fetch origin "$PRIMARY_BRANCH" --quiet
+     git checkout "$PRIMARY_BRANCH" --quiet
+     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+
+3. Record the current HEAD SHA for AGENTS.md watermarks:
+     HEAD_SHA=$(git rev-parse HEAD)
+     echo "$HEAD_SHA" > /tmp/gardener-head-sha
+"""
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 2: grooming — Claude-driven backlog grooming
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "grooming"
+title = "Backlog grooming — triage all open issues"
+description = """
+Groom the open issue backlog. This step is the core Claude-driven analysis
+(currently implemented in gardener-agent.sh with bash pre-checks).
+
+Pre-checks (bash, zero tokens — detect problems before invoking Claude):
+
+1. Fetch all open issues:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&type=issues&limit=50&sort=updated&direction=desc"
+
+2. Duplicate detection: compare issue titles pairwise. Normalize
+   (lowercase, strip prefixes like feat:/fix:/refactor:, collapse whitespace)
+   and flag pairs with >60% word overlap as possible duplicates.
+
+3. Missing acceptance criteria: flag issues with body < 100 chars and
+   no checkboxes (- [ ] or - [x]).
+
+4. Stale issues: flag issues with no update in 14+ days.
+
+5. Blockers starving the factory (HIGHEST PRIORITY): find issues that
+   block backlog items but are NOT themselves labeled backlog. These
+   starve the dev-agent completely. Extract deps from ## Dependencies /
+   ## Depends on / ## Blocked by sections of backlog issues and check
+   if each dependency is open + not backlog-labeled.
+
+6. Tech-debt promotion: list all tech-debt labeled issues — goal is to
+   process them all (promote to backlog or classify as dust).
+
+For each issue, choose ONE action and write to result file:
+
+ACTION (substantial — promote, close duplicate, add acceptance criteria):
+  echo "ACTION: promoted #NNN to backlog — <reason>" >> "$RESULT_FILE"
+  echo "ACTION: closed #NNN as duplicate of #OLDER" >> "$RESULT_FILE"
+
+DUST (trivial — single-line edit, rename, comment, style, whitespace):
+  echo 'DUST: {"issue": NNN, "group": "<file-or-subsystem>", "title": "...", "reason": "..."}' >> "$RESULT_FILE"
+  Group by file or subsystem (e.g. "gardener", "lib/env.sh", "dev-poll").
+  Do NOT close dust issues — the script auto-bundles groups of 3+ into
+  one backlog issue.
+
+ESCALATE (needs human decision):
+  printf 'ESCALATE\n1. #NNN "title" — reason (a) option1 (b) option2\n' >> "$RESULT_FILE"
+
+CLEAN (only if truly nothing to do):
+  echo 'CLEAN' >> "$RESULT_FILE"
+
+Dust vs ore rules:
+  Dust: comment fix, variable rename, whitespace/formatting, single-line edit, trivial cleanup with no behavior change
+  Ore:  multi-file changes, behavioral fixes, architectural improvements, security/correctness issues
+
+Sibling dependency rule (CRITICAL):
+  Issues from the same PR review or code audit are SIBLINGS — independent work items.
+  NEVER add bidirectional ## Dependencies between siblings (creates deadlocks).
+  Use ## Related for cross-references: "## Related\n- #NNN (sibling)"
+
+Processing order:
+  1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
+  2. Process tech-debt issues by score (impact/effort)
+  3. Classify remaining items as dust or escalate
+
+After processing, dust items are collected into gardener/dust.jsonl.
+When a group accumulates 3+ distinct issues, create one bundled backlog
+issue, close the source issues with cross-reference comments, and remove
+bundled items from the staging file.
+
+CRITICAL: If this step fails for any reason, log the failure and move on.
+"""
+needs = ["preflight"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 3: blocked-review — triage blocked issues
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "blocked-review"
+title = "Review issues labeled blocked"
+description = """
+Review all issues labeled 'blocked' and decide their fate.
+(See issue #352 for the blocked label convention.)
+
+1. Look up the 'blocked' label ID (Gitea needs integer IDs for label removal):
+     BLOCKED_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "blocked") | .id')
+   If the lookup fails, skip label removal and just post comments.
+
+2. Fetch all blocked issues:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&type=issues&labels=blocked&limit=50"
+
+3. For each blocked issue, read the full body and comments:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues/<number>"
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues/<number>/comments"
+
+4. Check dependencies — extract issue numbers from ## Dependencies /
+   ## Depends on / ## Blocked by sections. For each dependency:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues/<dep_number>"
+   Check if the dependency is now closed.
+
+5. For each blocked issue, choose ONE action:
+
+   UNBLOCK — all dependencies are now closed or the blocking condition resolved:
+   a. Remove the 'blocked' label (using ID from step 1):
+        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<number>/labels/$BLOCKED_LABEL_ID"
+   b. Add context comment explaining what changed:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>/comments" \
+          -d '{"body":"Unblocked: <explanation of what resolved the blocker>"}'
+
+   NEEDS HUMAN — blocking condition is ambiguous, requires architectural
+   decision, or involves external factors:
+   a. Post a diagnostic comment explaining what you found and what
+      decision is needed
+   b. Leave the 'blocked' label in place
+
+   CLOSE — issue is stale (blocked 30+ days with no progress on blocker),
+   the blocker is wontfix, or the issue is no longer relevant:
+   a. Post a comment explaining why:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>/comments" \
+          -d '{"body":"Closing: <reason — stale blocker, no longer relevant, etc.>"}'
+   b. Close the issue:
+        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>" \
+          -d '{"state":"closed"}'
+
+CRITICAL: If this step fails, log the failure and move on.
+"""
+needs = ["grooming"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 4: ci-escalation-recipes — recipe-driven CI failure handling
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "ci-escalation-recipes"
+title = "CI escalation recipes (bash — gardener-poll.sh)"
+executor = "bash"
+script   = "gardener/gardener-poll.sh"
+description = """
+NOT a Claude step — executed by gardener-poll.sh before/after the Claude session.
+Documented here so the formula covers the full gardener run.
+
+gardener-poll.sh processes CI escalation entries from
+supervisor/escalations-{project}.jsonl. Each entry is a dev-agent session
+that exhausted its CI fix attempts and was escalated to the gardener.
+
+The recipe engine (match_recipe function in gardener-poll.sh) matches each
+escalation against gardener/recipes/*.toml by priority order, then executes
+the matched recipe's playbook actions via bash functions.
+
+Recipes (see gardener/recipes/*.toml for definitions):
+- chicken-egg-ci (priority 10): non-blocking bypass + per-file fix issues
+- cascade-rebase (priority 20): rebase via Gitea API, re-approve, retry merge
+- flaky-test (priority 30): retrigger CI or quarantine
+- shellcheck-violations (priority 40): per-file ShellCheck fix issues
+- Generic fallback: one combined CI failure issue
+
+Special cases:
+- idle_timeout / idle_prompt: investigation issues (no recipe matching)
+"""
+needs = ["grooming"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 5: agents-update — AGENTS.md watermark staleness check
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "agents-update"
+title = "Check AGENTS.md watermarks, update stale files"
+description = """
+Check all AGENTS.md files for staleness and update any that are outdated.
+This keeps documentation fresh — runs 2x/day so drift stays small.
+
+1. Read the HEAD SHA from preflight:
+     HEAD_SHA=$(cat /tmp/gardener-head-sha)
+
+2. Find all AGENTS.md files:
+     find "$PROJECT_REPO_ROOT" -name "AGENTS.md" -not -path "*/.git/*"
+
+3. For each file, read the watermark from line 1:
+     <!-- last-reviewed: <sha> -->
+
+4. Check for changes since the watermark:
+     git log --oneline <watermark>..HEAD -- <directory>
+   If zero changes, the file is current — skip it.
+
+5. For stale files:
+   - Read the AGENTS.md and the source files in that directory
+   - Update the documentation to reflect code changes since the watermark
+   - Set the watermark to the HEAD SHA from the preflight step
+   - Conventions: max ~200 lines, architecture and WHY not implementation details
+
+6. Stage ONLY the AGENTS.md files you changed — do NOT commit yet.
+   All git writes happen in the commit-and-pr step at the end.
+
+7. If no AGENTS.md files need updating, skip this step entirely.
+
+CRITICAL: If this step fails for any reason, log the failure and move on.
+Do NOT let an AGENTS.md failure prevent the commit-and-pr step.
+"""
+needs = ["ci-escalation-recipes"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 6: commit-and-pr — single commit with all file changes
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "commit-and-pr"
+title = "One commit with all file changes, push, create PR"
+description = """
+Collect all file changes from this run (AGENTS.md updates) into a single commit.
+API calls (issue creation, PR comments, closures) already happened during the
+run — only file changes need the PR.
+
+1. Check for staged or unstaged changes:
+     cd "$PROJECT_REPO_ROOT"
+     git status --porcelain
+
+   If there are no file changes, skip this entire step — no commit, no PR.
+
+2. If there are changes:
+   a. Create a branch:
+        BRANCH="chore/gardener-$(date -u +%Y%m%d-%H%M)"
+        git checkout -B "$BRANCH"
+   b. Stage all modified AGENTS.md files:
+        find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
+   c. Also stage any other files the gardener modified (if any):
+        git add -u
+   d. Commit:
+        git commit -m "chore: gardener housekeeping $(date -u +%Y-%m-%d)"
+   e. Push:
+        git push -u origin "$BRANCH"
+   f. Create a PR:
+        curl -sf -X POST \
+          -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/pulls" \
+          -d '{"title":"chore: gardener housekeeping",
+               "head":"<branch>","base":"<primary-branch>",
+               "body":"Automated gardener housekeeping — AGENTS.md updates.\n\nReview-agent fast-tracks doc-only PRs."}'
+   g. Return to primary branch:
+        git checkout "$PRIMARY_BRANCH"
+
+3. If the PR creation fails (e.g. no changes after staging), log and continue.
+"""
+needs = ["agents-update"]
