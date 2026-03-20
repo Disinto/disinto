@@ -176,14 +176,23 @@ matrix_send "action" "⚡ #${ISSUE}: session started — ${ISSUE_TITLE}" \
 
 # --- Monitor session until Claude exits or idle timeout ---
 log "monitoring session: ${SESSION_NAME} (idle_timeout=${IDLE_TIMEOUT}s)"
-ELAPSED=0
+IDLE_ELAPSED=0
 POLL_INTERVAL=30
+IDLE_MARKER="/tmp/claude-idle-${SESSION_NAME}.ts"
 
 while tmux has-session -t "${SESSION_NAME}" 2>/dev/null; do
   sleep "$POLL_INTERVAL"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
 
-  if [ "$ELAPSED" -ge "$IDLE_TIMEOUT" ]; then
+  # Use the Stop hook idle marker to distinguish active vs idle:
+  # marker exists → Claude finished responding and is at the prompt (idle)
+  # marker absent → Claude is mid-turn or hasn't started yet (active)
+  if [ -f "$IDLE_MARKER" ]; then
+    IDLE_ELAPSED=$((IDLE_ELAPSED + POLL_INTERVAL))
+  else
+    IDLE_ELAPSED=0
+  fi
+
+  if [ "$IDLE_ELAPSED" -ge "$IDLE_TIMEOUT" ]; then
     log "idle timeout (${IDLE_TIMEOUT}s) — killing session for issue #${ISSUE}"
     matrix_send "action" "⚠️ #${ISSUE}: session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
       "${THREAD_ID}" 2>/dev/null || true
