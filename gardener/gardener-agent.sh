@@ -269,7 +269,7 @@ On unrecoverable error:
 
 # ── Reset phase + result files ────────────────────────────────────────────
 agent_kill_session "$SESSION_NAME"
-rm -f "$PHASE_FILE" "$RESULT_FILE"
+rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$RESULT_FILE"
 touch "$RESULT_FILE"
 
 # ── Create tmux session ───────────────────────────────────────────────────
@@ -278,6 +278,13 @@ if ! create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; th
   log "ERROR: failed to create tmux session ${SESSION_NAME}"
   exit 1
 fi
+
+# Write phase protocol to context file for compaction survival
+write_compact_context "$PHASE_FILE" "## Phase protocol (REQUIRED)
+When all work is done and verify confirms zero tech-debt:
+  echo 'PHASE:done' > '${PHASE_FILE}'
+On unrecoverable error:
+  printf 'PHASE:failed\nReason: %s\n' 'describe error' > '${PHASE_FILE}'"
 
 agent_inject_into_session "$SESSION_NAME" "$PROMPT"
 log "Prompt sent to tmux session"

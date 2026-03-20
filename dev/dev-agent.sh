@@ -588,6 +588,9 @@ printf 'PHASE:failed\nReason: refused\n' > \"${PHASE_FILE}\"
 printf 'PHASE:failed\nReason: %s\n' \"describe what failed\" > \"${PHASE_FILE}\"
 \`\`\`"
 
+# Write phase protocol to context file for compaction survival
+write_compact_context "$PHASE_FILE" "$PHASE_PROTOCOL_INSTRUCTIONS"
+
 if [ "$RECOVERY_MODE" = true ]; then
   # Build recovery context
   GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "origin/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
@@ -759,7 +762,8 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     else
       cleanup_worktree
     fi
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
+      "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
@@ -769,7 +773,8 @@ case "${_MONITOR_LOOP_EXIT:-}" in
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
+      "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     CLAIMED=false

@@ -88,7 +88,7 @@ cleanup() {
   agent_kill_session "$SESSION_NAME"
   # Best-effort docker cleanup for containers started during this action
   (cd "${PROJECT_REPO_ROOT}" 2>/dev/null && docker compose down 2>/dev/null) || true
-  rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
+  rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
 }
 trap cleanup EXIT
 
@@ -193,6 +193,9 @@ fi
 # Build phase protocol from shared function (Path B covered in Instructions section above)
 PHASE_PROTOCOL_INSTRUCTIONS="$(build_phase_protocol_prompt "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$BRANCH")"
 
+# Write phase protocol to context file for compaction survival
+write_compact_context "$PHASE_FILE" "$PHASE_PROTOCOL_INSTRUCTIONS"
+
 INITIAL_PROMPT="You are an action agent. Your job is to execute the action formula
 in the issue below.
 
@@ -272,16 +275,16 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     # Escalate to supervisor (idle_prompt already escalated via _on_phase_change callback)
     echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   idle_prompt)
     # Notification + escalation already handled by _on_phase_change(PHASE:failed) callback
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   done)
     # Belt-and-suspenders: callback handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
 esac
 
