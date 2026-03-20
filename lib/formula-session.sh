@@ -202,6 +202,11 @@ run_formula_and_monitor() {
     exit 1
   fi
 
+  # Write phase protocol to context file for compaction survival
+  if [ -n "${PROMPT_FOOTER:-}" ]; then
+    write_compact_context "$PHASE_FILE" "$PROMPT_FOOTER"
+  fi
+
   agent_inject_into_session "$SESSION_NAME" "$PROMPT"
   log "Prompt sent to tmux session"
   matrix_send "$agent_name" "${agent_name^} session started for ${CODEBERG_REPO}" 2>/dev/null || true

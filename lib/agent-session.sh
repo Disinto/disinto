@@ -218,6 +218,39 @@ create_agent_session() {
   fi
   rm -f "$exit_marker"
 
+  # Install SessionStart hook for context re-injection after compaction:
+  # when Claude Code compacts context during long sessions, the phase protocol
+  # instructions are lost. This hook fires after each compaction and outputs
+  # the content of a context file so Claude retains critical instructions.
+  # The context file is written by callers via write_compact_context().
+  if [ -n "$phase_file" ]; then
+    local compact_hook_script="${FACTORY_ROOT}/lib/hooks/on-compact-reinject.sh"
+    if [ -x "$compact_hook_script" ]; then
+      local context_file="${phase_file%.phase}.context"
+      local compact_hook_cmd="${compact_hook_script} ${context_file}"
+      if [ -f "$settings" ]; then
+        jq --arg cmd "$compact_hook_cmd" '
+          if (.hooks.SessionStart // [] | any(.[]; .hooks[]?.command == $cmd))
+          then .
+          else .hooks.SessionStart = (.hooks.SessionStart // []) + [{
+            matcher: "compact",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+          end
+        ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+      else
+        jq -n --arg cmd "$compact_hook_cmd" '{
+          hooks: {
+            SessionStart: [{
+              matcher: "compact",
+              hooks: [{type: "command", command: $cmd}]
+            }]
+          }
+        }' > "$settings"
+      fi
+    fi
+  fi
+
   # Install Stop hook for Matrix streaming: when MATRIX_THREAD_ID is set,
   # each Claude response is posted to the Matrix thread so humans can follow.
   local matrix_hook_script="${FACTORY_ROOT}/lib/hooks/on-stop-matrix.sh"
@@ -390,6 +423,16 @@ monitor_phase_loop() {
       "$callback" "$current_phase"
     fi
   done
+}
+
+# Write context to a file for re-injection after context compaction.
+# The SessionStart compact hook reads this file and outputs it to stdout.
+# Args: phase_file content
+write_compact_context() {
+  local phase_file="$1"
+  local content="$2"
+  local context_file="${phase_file%.phase}.context"
+  printf '%s\n' "$content" > "$context_file"
 }
 
 # Kill a tmux session gracefully (no-op if not found).
