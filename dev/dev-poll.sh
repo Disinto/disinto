@@ -398,7 +398,7 @@ done
 # =============================================================================
 log "scanning backlog for ready issues"
 BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${API}/issues?state=open&labels=backlog&limit=20&type=issues")
+  "${API}/issues?state=open&labels=backlog&limit=20&type=issues&sort=oldest")
 
 BACKLOG_COUNT=$(echo "$BACKLOG_JSON" | jq 'length')
 if [ "$BACKLOG_COUNT" -eq 0 ]; then
