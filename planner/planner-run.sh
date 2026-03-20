@@ -20,9 +20,10 @@ export PROJECT_TOML="$FACTORY_ROOT/projects/disinto.toml"
 source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/agent-session.sh
 source "$FACTORY_ROOT/lib/agent-session.sh"
+# shellcheck source=../lib/formula-session.sh
+source "$FACTORY_ROOT/lib/formula-session.sh"
 
 LOG_FILE="$SCRIPT_DIR/planner.log"
-LOCK_FILE="/tmp/planner-run.lock"
 SESSION_NAME="planner-${PROJECT_NAME}"
 PHASE_FILE="/tmp/planner-session-${PROJECT_NAME}.phase"
 
@@ -31,46 +32,15 @@ PHASE_POLL_INTERVAL=15
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
-# ── Lock ──────────────────────────────────────────────────────────────────
-if [ -f "$LOCK_FILE" ]; then
-  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || true)
-  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    log "run: planner running (PID $LOCK_PID)"
-    exit 0
-  fi
-  rm -f "$LOCK_FILE"
-fi
-echo $$ > "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
-
-# ── Memory guard ──────────────────────────────────────────────────────────
-AVAIL_MB=$(free -m | awk '/Mem:/{print $7}')
-if [ "${AVAIL_MB:-0}" -lt 2000 ]; then
-  log "run: skipping — only ${AVAIL_MB}MB available (need 2000)"
-  exit 0
-fi
+# ── Guards ────────────────────────────────────────────────────────────────
+acquire_cron_lock "/tmp/planner-run.lock"
+check_memory 2000
 
 log "--- Planner run start ---"
 
-# ── Load formula ─────────────────────────────────────────────────────────
-FORMULA_FILE="$FACTORY_ROOT/formulas/run-planner.toml"
-if [ ! -f "$FORMULA_FILE" ]; then
-  log "ERROR: formula not found: $FORMULA_FILE"
-  exit 1
-fi
-FORMULA_CONTENT=$(cat "$FORMULA_FILE")
-
-# ── Read context files ───────────────────────────────────────────────────
-CONTEXT_BLOCK=""
-for ctx in VISION.md AGENTS.md RESOURCES.md; do
-  ctx_path="${PROJECT_REPO_ROOT}/${ctx}"
-  if [ -f "$ctx_path" ]; then
-    CONTEXT_BLOCK="${CONTEXT_BLOCK}
-### ${ctx}
-$(cat "$ctx_path")
-"
-  fi
-done
+# ── Load formula + context ───────────────────────────────────────────────
+load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
+build_context_block VISION.md AGENTS.md RESOURCES.md
 
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
@@ -113,15 +83,9 @@ When all work is done:
 On unrecoverable error:
   printf 'PHASE:failed\nReason: %s\n' 'describe error' > '${PHASE_FILE}'"
 
-# ── Reset phase file + kill stale session ────────────────────────────────
-agent_kill_session "$SESSION_NAME"
-rm -f "$PHASE_FILE"
-
 # ── Create tmux session ─────────────────────────────────────────────────
-log "Creating tmux session: ${SESSION_NAME}"
 export CLAUDE_MODEL="opus"
-if ! create_agent_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; then
-  log "ERROR: failed to create tmux session ${SESSION_NAME}"
+if ! start_formula_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; then
   exit 1
 fi
 
@@ -131,33 +95,9 @@ matrix_send "planner" "Planner session started for ${CODEBERG_REPO}" 2>/dev/null
 
 # ── Phase monitoring loop ────────────────────────────────────────────────
 log "Monitoring phase file: ${PHASE_FILE}"
-PLANNER_CRASH_COUNT=0
+_FORMULA_CRASH_COUNT=0
 
-planner_phase_callback() {
-  local phase="$1"
-  log "phase: ${phase}"
-  case "$phase" in
-    PHASE:crashed)
-      if [ "$PLANNER_CRASH_COUNT" -gt 0 ]; then
-        log "ERROR: session crashed again after recovery — giving up"
-        return 0
-      fi
-      PLANNER_CRASH_COUNT=$((PLANNER_CRASH_COUNT + 1))
-      log "WARNING: tmux session died unexpectedly — attempting recovery"
-      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" "$PHASE_FILE" 2>/dev/null; then
-        agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROMPT"
-        log "Recovery session started"
-      else
-        log "ERROR: could not restart session after crash"
-      fi
-      ;;
-    PHASE:done|PHASE:failed|PHASE:needs_human|PHASE:merged)
-      agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
-      ;;
-  esac
-}
-
-monitor_phase_loop "$PHASE_FILE" 7200 "planner_phase_callback"
+monitor_phase_loop "$PHASE_FILE" 7200 "formula_phase_callback"
 
 FINAL_PHASE=$(read_phase "$PHASE_FILE")
 log "Final phase: ${FINAL_PHASE:-none}"
