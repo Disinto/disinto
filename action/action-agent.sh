@@ -24,6 +24,7 @@ export PROJECT_TOML="${2:-${PROJECT_TOML:-}}"
 
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
+source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=../dev/phase-handler.sh
 source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${ISSUE}"
@@ -41,6 +42,7 @@ WORKTREE="${PROJECT_REPO_ROOT}"
 PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-harb}-${ISSUE}.phase"
 IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-harb}-${ISSUE}.txt"
 PREFLIGHT_RESULT="/tmp/action-preflight-${ISSUE}.json"
+SCRATCH_FILE="/tmp/action-${ISSUE}-scratch.md"
 
 log() {
   printf '[%s] action#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
@@ -166,6 +168,10 @@ if [ -n "${_thread_id:-}" ]; then
     >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
 fi
 
+# --- Read scratch file (compaction survival) ---
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
+
 # --- Build initial prompt ---
 PRIOR_SECTION=""
 if [ -n "$PRIOR_COMMENTS" ]; then
@@ -193,7 +199,7 @@ in the issue below.
 ## Issue #${ISSUE}: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-
+${SCRATCH_CONTEXT}
 ${PRIOR_SECTION}## Instructions
 
 1. Read the action formula steps in the issue body carefully.
@@ -235,6 +241,8 @@ ${PRIOR_SECTION}## Instructions
 If the prior comments above show work already completed, resume from where it
 left off.
 
+${SCRATCH_INSTRUCTION}
+
 ${PHASE_PROTOCOL_INSTRUCTIONS}"
 
 # --- Create tmux session ---
@@ -264,16 +272,16 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     # Escalate to supervisor (idle_prompt already escalated via _on_phase_change callback)
     echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   idle_prompt)
     # Notification + escalation already handled by _on_phase_change(PHASE:failed) callback
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   done)
     # Belt-and-suspenders: callback handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
 esac
 

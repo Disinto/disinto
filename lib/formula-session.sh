@@ -126,6 +126,37 @@ formula_phase_callback() {
   esac
 }
 
+# ── Scratch file helpers (compaction survival) ────────────────────────────
+
+# build_scratch_instruction SCRATCH_FILE
+# Returns a prompt block instructing Claude to periodically flush context
+# to a scratch file so understanding survives context compaction.
+build_scratch_instruction() {
+  local scratch_file="$1"
+  cat <<_SCRATCH_EOF_
+## Context scratch file (compaction survival)
+
+Periodically (every 10-15 tool calls), write a summary of:
+- What you have discovered so far
+- Decisions made and why
+- What remains to do
+to: ${scratch_file}
+
+If this file existed at session start, its contents have already been injected into your prompt above.
+This file is ephemeral — not evidence or permanent memory, just a compaction survival mechanism.
+_SCRATCH_EOF_
+}
+
+# read_scratch_context SCRATCH_FILE
+# If the scratch file exists, returns a context block for prompt injection.
+# Returns empty string if the file does not exist.
+read_scratch_context() {
+  local scratch_file="$1"
+  if [ -f "$scratch_file" ]; then
+    printf '## Previous context (from scratch file)\n%s\n' "$(head -c 8192 "$scratch_file")"
+  fi
+}
+
 # ── Prompt + monitor helpers ──────────────────────────────────────────────
 
 # build_prompt_footer [EXTRA_API_LINES]

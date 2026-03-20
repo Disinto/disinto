@@ -37,6 +37,7 @@ SESSION_NAME="gardener-${PROJECT_NAME}"
 PHASE_FILE="/tmp/gardener-session-${PROJECT_NAME}.phase"
 RESULT_FILE="/tmp/gardener-result-${PROJECT_NAME}.txt"
 DUST_FILE="$SCRIPT_DIR/dust.jsonl"
+SCRATCH_FILE="/tmp/gardener-${PROJECT_NAME}-scratch.md"
 
 # shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
 PHASE_POLL_INTERVAL=15
@@ -221,13 +222,18 @@ If a choice is unclear, re-escalate that single item with a clarifying question.
 ${ESCALATION_REPLY}"
 fi
 
+# ── Read scratch file (compaction survival) ───────────────────────────────
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
+
 # ── Build prompt from formula + dynamic context ────────────────────────────
 log "Building gardener prompt from formula"
 
 PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 ${CONTEXT_SECTION}
-## Formula
+${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
+}## Formula
 ${FORMULA_CONTENT}
 
 ## Runtime context (bash pre-analysis)
@@ -252,6 +258,8 @@ NEVER echo or include the actual token value in output — always reference \$CO
   echo 'DUST: {\"issue\": NNN, \"group\": \"...\", \"title\": \"...\", \"reason\": \"...\"}' >> '${RESULT_FILE}'
   printf 'ESCALATE\n1. #NNN \"title\" — reason (a) option1 (b) option2\n' >> '${RESULT_FILE}'
   echo 'CLEAN' >> '${RESULT_FILE}'  # only if truly nothing to do
+
+${SCRATCH_INSTRUCTION}
 
 ## Phase protocol (REQUIRED)
 When all work is done and verify confirms zero tech-debt:
@@ -460,6 +468,11 @@ Fix all items above in a single PR. Each is a small change (rename, comment, sty
       fi
     fi
   done <<< "$DUST_GROUPS"
+fi
+
+# ── Cleanup scratch file on normal exit ──────────────────────────────────
+if [ "$FINAL_PHASE" = "PHASE:done" ]; then
+  rm -f "$SCRATCH_FILE"
 fi
 
 log "--- gardener-agent done ---"

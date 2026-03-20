@@ -33,6 +33,8 @@ PHASE_FILE="/tmp/predictor-session-${PROJECT_NAME}.phase"
 # shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
 PHASE_POLL_INTERVAL=15
 
+SCRATCH_FILE="/tmp/predictor-${PROJECT_NAME}-scratch.md"
+
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
 # ── Guards ────────────────────────────────────────────────────────────────
@@ -44,6 +46,10 @@ log "--- Predictor run start ---"
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-predictor.toml"
 build_context_block AGENTS.md RESOURCES.md
+
+# ── Read scratch file (compaction survival) ───────────────────────────────
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
 # ── Build prompt ─────────────────────────────────────────────────────────
 build_prompt_footer
@@ -58,12 +64,19 @@ about CI health, issue staleness, agent status, and system conditions.
 
 ## Project context
 ${CONTEXT_BLOCK}
-
+${SCRATCH_CONTEXT}
 ## Formula
 ${FORMULA_CONTENT}
 
+${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Run session ──────────────────────────────────────────────────────────
 export CLAUDE_MODEL="sonnet"
 run_formula_and_monitor "predictor"
+
+# ── Cleanup scratch file on normal exit ──────────────────────────────────
+# FINAL_PHASE already set by run_formula_and_monitor
+if [ "${FINAL_PHASE:-}" = "PHASE:done" ]; then
+  rm -f "$SCRATCH_FILE"
+fi

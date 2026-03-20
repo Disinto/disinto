@@ -525,7 +525,7 @@ Instructions:
           cleanup_labels
           agent_kill_session "$SESSION_NAME"
           cleanup_worktree
-          rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+          rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}"
           exit 0
         else
           log "PR #${PR_NUMBER} was closed WITHOUT merge — NOT closing issue"
@@ -580,7 +580,7 @@ Instructions:
     # Local cleanup
     agent_kill_session "$SESSION_NAME"
     cleanup_worktree
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     CLAIMED=false  # Don't unclaim again in cleanup()
@@ -679,7 +679,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       CLAIMED=false  # Don't unclaim again in cleanup()
       agent_kill_session "$SESSION_NAME"
       cleanup_worktree
-      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
         "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
       [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
       return 1
@@ -708,7 +708,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       else
         cleanup_worktree
       fi
-      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+      rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
         "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
       [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
       return 1
