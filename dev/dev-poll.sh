@@ -347,9 +347,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
     # pending/unknown. Definitive CI failure is handled by the elif below.
     elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-      log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
+      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
+      else
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
+        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+        log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+      fi
       exit 0
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
@@ -357,9 +362,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         # Fall through to backlog scan instead of exit
         :
       else
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
-        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-        log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
+        SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+          log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
+        else
+          log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
+          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
+        fi
         exit 0
       fi
 
@@ -436,17 +446,27 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   # CI to settle. Definitive CI failure (non-pending, non-unknown) is handled by
   # the elif below, so we only spawn here when CI has not definitively failed.
   if [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-    log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
+    else
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+    fi
     exit 0
   elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
     if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
     else
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+      SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
+      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
+      else
+        log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
+        nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+        log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+      fi
       exit 0
     fi
   fi
