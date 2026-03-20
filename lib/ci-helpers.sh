@@ -45,46 +45,86 @@ ci_passed() {
   return 1
 }
 
+# is_infra_step <step_name> <exit_code> [log_data]
+# Checks whether a single CI step failure matches infra heuristics.
+# Returns 0 (infra) with reason on stdout, or 1 (not infra).
+#
+# Heuristics (union of P2e and classify_pipeline_failure patterns):
+#   - Clone/git step with exit 128 → connection failure / rate limit
+#   - Any step with exit 137 → OOM / killed by signal 9
+#   - Log patterns: connection timeout, docker pull timeout, TLS handshake timeout
+is_infra_step() {
+  local sname="$1" ecode="$2" log_data="${3:-}"
+
+  # Clone/git step exit 128 → Codeberg connection failure / rate limit
+  if { [[ "$sname" == *clone* ]] || [[ "$sname" == git* ]]; } && [ "$ecode" = "128" ]; then
+    echo "${sname} exit 128 (connection failure)"
+    return 0
+  fi
+
+  # Exit 137 → OOM / killed by signal 9
+  if [ "$ecode" = "137" ]; then
+    echo "${sname} exit 137 (OOM/signal 9)"
+    return 0
+  fi
+
+  # Log-pattern matching for infra issues
+  if [ -n "$log_data" ] && \
+     printf '%s' "$log_data" | grep -qiE 'Failed to connect|connection timed out|docker pull.*timeout|TLS handshake timeout'; then
+    echo "${sname}: log matches infra pattern (timeout/connection)"
+    return 0
+  fi
+
+  return 1
+}
+
 # classify_pipeline_failure <repo_id> <pipeline_num>
-# Classifies a pipeline's failure type by inspecting all failed steps.
-# Outputs "infra" if every failed step is a git step with exit code 128 or 137.
+# Classifies a pipeline's failure type by inspecting failed steps.
+# Uses is_infra_step() for per-step classification (exit codes + log patterns).
+# Outputs "infra <reason>" if any failed step matches infra heuristics.
 # Outputs "code" otherwise (including when steps cannot be determined).
 # Returns 0 for infra, 1 for code or unclassifiable.
 classify_pipeline_failure() {
   local repo_id="$1" pip_num="$2"
-  local pip_json failed_steps all_infra _sname _ecode
+  local pip_json failed_steps _sname _ecode _spid _reason _log_data
 
   pip_json=$(woodpecker_api "/repos/${repo_id}/pipelines/${pip_num}" 2>/dev/null) || {
     echo "code"; return 1
   }
 
+  # Extract failed steps: name, exit_code, pid
   failed_steps=$(printf '%s' "$pip_json" | jq -r '
     .workflows[]?.children[]? |
     select(.state == "failure" or .state == "error" or .state == "killed") |
-    "\(.name)\t\(.exit_code)"' 2>/dev/null)
+    "\(.name)\t\(.exit_code)\t\(.pid)"' 2>/dev/null)
 
   if [ -z "$failed_steps" ]; then
     echo "code"; return 1
   fi
 
-  all_infra=true
-  _infra_count=0
-  while IFS=$'\t' read -r _sname _ecode; do
+  while IFS=$'\t' read -r _sname _ecode _spid; do
     [ -z "$_sname" ] && continue
-    # git step with exit 128 (connection/rate-limit) or 137 (OOM) → infra
-    if [[ "$_sname" == git* ]] && { [ "$_ecode" = "128" ] || [ "$_ecode" = "137" ]; }; then
-      _infra_count=$(( _infra_count + 1 ))
-    else
-      all_infra=false
-      break
+
+    # Check name+exit_code patterns (no log fetch needed)
+    if _reason=$(is_infra_step "$_sname" "$_ecode"); then
+      echo "infra ${_reason}"
+      return 0
+    fi
+
+    # Fetch step logs and check log patterns
+    if [ -n "$_spid" ] && [ "$_spid" != "null" ]; then
+      _log_data=$(woodpecker_api "/repos/${repo_id}/logs/${pip_num}/${_spid}" \
+        --max-time 15 2>/dev/null \
+        | jq -r '.[].data // empty' 2>/dev/null | tail -200 || true)
+      if [ -n "$_log_data" ]; then
+        if _reason=$(is_infra_step "$_sname" "$_ecode" "$_log_data"); then
+          echo "infra ${_reason}"
+          return 0
+        fi
+      fi
     fi
   done <<< "$failed_steps"
 
-  # Require at least one confirmed infra step (guards against all-empty-name steps)
-  if [ "$all_infra" = true ] && [ "$_infra_count" -gt 0 ]; then
-    echo "infra"
-    return 0
-  fi
   echo "code"
   return 1
 }
