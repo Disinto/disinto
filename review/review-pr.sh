@@ -50,7 +50,7 @@ TMPDIR=$(mktemp -d)
 SESSION_NAME="review-${PROJECT_NAME}-${PR_NUMBER}"
 PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.phase"
 REVIEW_OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"
-REVIEW_THREAD_MAP="/tmp/review-thread-map"
+# Thread map: use standard MATRIX_THREAD_MAP (shared with all agents)
 REVIEW_WAIT_INTERVAL=10   # seconds between phase checks
 REVIEW_WAIT_TIMEOUT=600   # 10 min max for a single review cycle
 
@@ -865,10 +865,8 @@ ${FU_DETAILS}
 fi
 
 # --- Notify Matrix (with thread mapping for human questions) ---
-EVENT_ID=$(matrix_send "review" "PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" 2>/dev/null || true)
-if [ -n "$EVENT_ID" ]; then
-  printf '%s\t%s\n' "$EVENT_ID" "$PR_NUMBER" >> "$REVIEW_THREAD_MAP" 2>/dev/null || true
-fi
+# Pass PR_NUMBER as context_tag (4th arg) so the standard thread map has it in column 4
+matrix_send "review" "PR #${PR_NUMBER} ${REVIEW_TYPE}: ${VERDICT} — ${PR_TITLE}" "" "$PR_NUMBER" >/dev/null 2>&1 || true
 
 log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
 

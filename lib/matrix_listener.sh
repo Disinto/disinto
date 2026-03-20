@@ -189,7 +189,7 @@ Consider this guidance for your current work."
         ;;
       review)
         # Route human questions to persistent review tmux session
-        REVIEW_PR_NUM=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $2}' /tmp/review-thread-map 2>/dev/null || true)
+        REVIEW_PR_NUM=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
         if [ -n "$REVIEW_PR_NUM" ]; then
           REVIEW_SESSION="review-${PROJECT_NAME}-${REVIEW_PR_NUM}"
           REVIEW_PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${REVIEW_PR_NUM}.phase"
