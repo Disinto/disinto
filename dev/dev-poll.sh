@@ -339,9 +339,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         exit 0
       fi
       # Direct merge failed (conflicts?) — fall back to dev-agent
-      log "falling back to dev-agent for PR #${HAS_PR} merge"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
+      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
+      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
+      else
+        log "falling back to dev-agent for PR #${HAS_PR} merge"
+        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+        log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
+      fi
       exit 0
 
     # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
@@ -358,18 +363,18 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       exit 0
 
     elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
+      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
+      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
+        exit 0
+      fi
       if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
         # Fall through to backlog scan instead of exit
         :
       else
-        SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
-        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-          log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
-        else
-          log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
-          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-          log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
-        fi
+        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
+        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+        log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
         exit 0
       fi
 
@@ -377,9 +382,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
     fi
   else
-    log "recovering orphaned issue #${ISSUE_NUM} (no PR found)"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-    log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+    SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
+    else
+      log "recovering orphaned issue #${ISSUE_NUM} (no PR found)"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+    fi
     exit 0
   fi
 fi
@@ -434,9 +444,14 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       exit 0
     fi
     # Direct merge failed (conflicts?) — fall back to dev-agent
-    log "falling back to dev-agent for PR #${PR_NUM} merge"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-    log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
+    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
+    else
+      log "falling back to dev-agent for PR #${PR_NUM} merge"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
+    fi
     exit 0
   fi
 
@@ -449,26 +464,25 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
       log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
-    else
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+      continue
     fi
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
   elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
+    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
+      continue
+    fi
     if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
-    else
-      SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
-      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
-      else
-        log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
-        nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-        log "started dev-agent PID $! for stuck PR #${PR_NUM}"
-      fi
-      exit 0
     fi
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM}"
+    exit 0
   fi
 done
 
