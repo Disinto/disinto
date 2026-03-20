@@ -182,6 +182,9 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         break
       fi
 
+      # Re-fetch HEAD — Claude may have pushed new commits since loop started
+      CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || echo "$CI_CURRENT_SHA")
+
       CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
         "${API}/commits/${CI_CURRENT_SHA}/status" | jq -r '.state // "unknown"')
       if [ "$CI_STATE" = "success" ] || [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
