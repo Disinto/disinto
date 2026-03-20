@@ -88,6 +88,9 @@ IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 # Matrix thread tracking — one thread per issue for conversational notifications
 THREAD_FILE="/tmp/dev-thread-${PROJECT_NAME}-${ISSUE}"
 
+# Scratch file for context compaction survival
+SCRATCH_FILE="/tmp/dev-${PROJECT_NAME}-${ISSUE}-scratch.md"
+
 # Timing
 export PHASE_POLL_INTERVAL=30    # seconds between phase checks (read by agent-session.sh)
 IDLE_TIMEOUT=7200         # 2h: kill session if phase stale this long
@@ -494,6 +497,26 @@ else
 fi
 
 # =============================================================================
+# READ SCRATCH FILE (compaction survival)
+# =============================================================================
+SCRATCH_CONTEXT=""
+if [ -f "$SCRATCH_FILE" ]; then
+  SCRATCH_CONTEXT="## Previous context (from scratch file)
+$(cat "$SCRATCH_FILE")
+"
+fi
+SCRATCH_INSTRUCTION="## Context scratch file (compaction survival)
+
+Periodically (every 10-15 tool calls), write a summary of:
+- What you have discovered so far
+- Decisions made and why
+- What remains to do
+to: ${SCRATCH_FILE}
+
+If you find this file exists when you start, read it first — it is your previous context.
+This file is ephemeral — not evidence or permanent memory, just a compaction survival mechanism."
+
+# =============================================================================
 # BUILD PROMPT
 # =============================================================================
 OPEN_ISSUES_SUMMARY=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -593,7 +616,7 @@ This is issue #${ISSUE} for the ${CODEBERG_REPO} project.
 ## Issue: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-
+${SCRATCH_CONTEXT}
 ## CRASH RECOVERY
 
 Your previous session for this issue was interrupted. Resume from where you left off.
@@ -617,6 +640,8 @@ $(if [ -n "$CI_RESULT" ]; then printf '\n### Last CI result:\n%s\n' "$CI_RESULT"
 2. Resume from the last known phase.
 3. Follow the phase protocol below.
 
+${SCRATCH_INSTRUCTION}
+
 ${PHASE_PROTOCOL_INSTRUCTIONS}"
 else
   # Normal mode: initial implementation prompt
@@ -626,7 +651,7 @@ You have been assigned issue #${ISSUE} for the ${CODEBERG_REPO} project.
 ## Issue: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-
+${SCRATCH_CONTEXT}
 ## Other open issues labeled 'backlog' (for context if you need to suggest alternatives):
 ${OPEN_ISSUES_SUMMARY}
 
@@ -677,6 +702,8 @@ printf 'PHASE:failed\nReason: refused\n' > \"${PHASE_FILE}\"
 - When in doubt, implement. Only refuse if there's a clear, specific reason.
 
 **Do NOT invent dependencies that aren't real.** If the code compiles and tests pass, that's ready.
+
+${SCRATCH_INSTRUCTION}
 
 ${PHASE_PROTOCOL_INSTRUCTIONS}"
 fi
@@ -745,7 +772,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     else
       cleanup_worktree
     fi
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
@@ -755,7 +782,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" \
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     CLAIMED=false

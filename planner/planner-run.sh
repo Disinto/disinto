@@ -31,6 +31,8 @@ PHASE_FILE="/tmp/planner-session-${PROJECT_NAME}.phase"
 # shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
 PHASE_POLL_INTERVAL=15
 
+SCRATCH_FILE="/tmp/planner-${PROJECT_NAME}-scratch.md"
+
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
 # ── Guards ────────────────────────────────────────────────────────────────
@@ -53,6 +55,10 @@ $(cat "$MEMORY_FILE")
 "
 fi
 
+# ── Read scratch file (compaction survival) ───────────────────────────────
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
+
 # ── Build prompt ─────────────────────────────────────────────────────────
 build_prompt_footer "
   Relabel:     curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'
@@ -65,12 +71,21 @@ PROMPT="You are the strategic planner for ${CODEBERG_REPO}. Work through the for
 
 ## Project context
 ${CONTEXT_BLOCK}${MEMORY_BLOCK}
-
+${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
+}
 ## Formula
 ${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
 
 ${PROMPT_FOOTER}"
 
 # ── Run session ──────────────────────────────────────────────────────────
 export CLAUDE_MODEL="opus"
 run_formula_and_monitor "planner"
+
+# ── Cleanup scratch file on normal exit ──────────────────────────────────
+FINAL_PHASE=$(read_phase "$PHASE_FILE")
+if [ "$FINAL_PHASE" = "PHASE:done" ]; then
+  rm -f "$SCRATCH_FILE"
+fi
