@@ -18,7 +18,8 @@ disinto/
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — files action issue for run-gardener formula
 │                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
-├── planner/       planner-poll.sh — files action issue for run-planner formula
+├── planner/       planner-run.sh — direct cron executor for run-planner formula
+│                  planner/journal/ — daily raw logs from each planner run
 │                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
@@ -154,36 +155,42 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 ### Planner (`planner/`)
 
-**Role**: Five-phase strategic planning, executed as an action formula.
+**Role**: Strategic planning, executed directly from cron via tmux + Claude.
 Phase 0 (preflight): pull latest code, load persistent memory from
-`planner/MEMORY.md`. Phase 1: update the AGENTS.md documentation tree to
-reflect recent code changes (fast-track PR). Phase 1.5: triage
+`planner/MEMORY.md`. Phase 1 (prediction-triage): triage
 `prediction/unreviewed` issues filed by the [Predictor](#predictor-planner) —
 for each prediction: promote to action, promote to backlog, watch (relabel to
 prediction/backlog), or dismiss with reasoning. Promoted predictions compete
-with vision gaps for the per-cycle issue limit. Phase 2: strategic planning
-via resource+leverage gap analysis — reasons about VISION.md, RESOURCES.md,
+with vision gaps for the per-cycle issue limit. Phase 2 (strategic-planning):
+resource+leverage gap analysis — reasons about VISION.md, RESOURCES.md,
 formula catalog, and project state to create up to 5 total issues (including
-promotions) prioritized by leverage. Phase 3: persist learnings to
-`planner/MEMORY.md`.
+promotions) prioritized by leverage. Phase 3 (journal-and-memory): write
+daily journal entry (committed to git) and update `planner/MEMORY.md`
+(gitignored, local only). Phase 4 (commit-and-pr): one commit with all file
+changes, push, create PR. AGENTS.md maintenance is handled by the
+[Gardener](#gardener-gardener).
 
-**Trigger**: `planner-poll.sh` runs weekly via cron. It files an `action`
-issue referencing `formulas/run-planner.toml`; the [action-agent](#action-action)
-picks it up and executes the planning steps in an interactive Claude tmux session.
+**Trigger**: `planner-run.sh` runs weekly via cron. It creates a tmux session
+with `claude --model opus`, injects `formulas/run-planner.toml` as context,
+monitors the phase file, and cleans up on completion or timeout. No action
+issues — the planner is a nervous system component, not work.
 
 **Key files**:
-- `planner/planner-poll.sh` — Cron wrapper: memory guard, dedup check, files action issue
-- `formulas/run-planner.toml` — Execution spec: five steps (preflight, agents-update,
-  triage-predictions, strategic-planning, memory-update) with `needs` dependencies.
-  Steps 2 and 3 are independent; step 4 depends on both. Claude executes all steps
-  in a single interactive session with tool access
+- `planner/planner-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
+  sources disinto project config, creates tmux session, injects formula prompt,
+  monitors phase file, handles crash recovery, cleans up
+- `formulas/run-planner.toml` — Execution spec: five steps (preflight,
+  prediction-triage, strategic-planning, journal-and-memory, commit-and-pr)
+  with `needs` dependencies. Claude executes all steps in a single interactive
+  session with tool access
 - `planner/MEMORY.md` — Persistent memory across runs (gitignored, local only)
+- `planner/journal/*.md` — Daily raw logs from each planner run (committed to git)
 
 **Future direction**: The [Predictor](#predictor-planner) already reads `evidence/` JSON and files prediction issues for the planner to triage. The next step is evidence-gated deployment (see `docs/EVIDENCE-ARCHITECTURE.md`): replacing human "ship it" decisions with automated gates across dimensions (holdout, red-team, user-test, evolution fitness, protocol metrics, funnel). Not yet implemented.
 
-**Environment variables consumed** (by the action-agent session):
+**Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
-- `PRIMARY_BRANCH`
+- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to opus by planner-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
 ### Predictor (`planner/`)
@@ -284,7 +291,8 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
-| `lib/file-action-issue.sh` | `file_action_issue()` — dedup check, label lookup, and issue creation for formula-driven cron wrappers. Sets `FILED_ISSUE_NUM` on success. | gardener-run.sh, planner-poll.sh |
+| `lib/formula-session.sh` | `acquire_cron_lock()`, `check_memory()`, `load_formula()`, `build_context_block()`, `start_formula_session()`, `formula_phase_callback()` — shared helpers for formula-driven cron agents (lock, memory guard, formula loading, tmux session, crash recovery). | planner-run.sh |
+| `lib/file-action-issue.sh` | `file_action_issue()` — dedup check, label lookup, and issue creation for formula-driven cron wrappers. Sets `FILED_ISSUE_NUM` on success. | gardener-run.sh |
 | `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. Also installs a StopFailure hook (matcher `rate_limit\|server_error\|authentication_failed\|billing_error`) that writes `PHASE:failed` with an `api_error` reason to the phase file and touches the phase-changed marker, so the orchestrator discovers API errors within one poll cycle instead of waiting for idle timeout. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh, action-agent.sh |
 
 ---

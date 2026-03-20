@@ -29,6 +29,8 @@ export PROJECT_TOML="${1:-}"
 source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/agent-session.sh
 source "$FACTORY_ROOT/lib/agent-session.sh"
+# shellcheck source=../lib/formula-session.sh
+source "$FACTORY_ROOT/lib/formula-session.sh"
 
 LOG_FILE="$SCRIPT_DIR/gardener.log"
 SESSION_NAME="gardener-${PROJECT_NAME}"
@@ -275,32 +277,15 @@ matrix_send "gardener" "🌱 Gardener session started for ${CODEBERG_REPO}" 2>/d
 
 # ── Phase monitoring loop ─────────────────────────────────────────────────
 log "Monitoring phase file: ${PHASE_FILE}"
-GARDENER_CRASH_COUNT=0
+_FORMULA_CRASH_COUNT=0
 
 gardener_phase_callback() {
-  local phase="$1"
-  log "phase: ${phase}"
-  case "$phase" in
-    PHASE:crashed)
-      if [ "$GARDENER_CRASH_COUNT" -gt 0 ]; then
-        log "ERROR: session crashed again after recovery — giving up"
-        return 0
-      fi
-      GARDENER_CRASH_COUNT=$((GARDENER_CRASH_COUNT + 1))
-      log "WARNING: tmux session died unexpectedly — attempting recovery"
-      rm -f "$RESULT_FILE"
-      touch "$RESULT_FILE"
-      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" "$PHASE_FILE" 2>/dev/null; then
-        agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROMPT"
-        log "Recovery session started"
-      else
-        log "ERROR: could not restart session after crash"
-      fi
-      ;;
-    PHASE:done|PHASE:failed|PHASE:needs_human|PHASE:merged)
-      agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
-      ;;
-  esac
+  # Gardener-specific cleanup before shared crash recovery
+  if [ "$1" = "PHASE:crashed" ]; then
+    rm -f "$RESULT_FILE"
+    touch "$RESULT_FILE"
+  fi
+  formula_phase_callback "$1"
 }
 
 monitor_phase_loop "$PHASE_FILE" 7200 "gardener_phase_callback"

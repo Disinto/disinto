@@ -1,13 +1,18 @@
 # formulas/run-planner.toml — Strategic planning formula
 #
-# Executed by the action-agent via cron-filed action issues.
-# planner-poll.sh files an action issue referencing this formula weekly;
-# action-poll.sh picks it up and spawns a tmux session where Claude
-# executes these steps autonomously.
+# Executed directly by planner-run.sh via cron — no action issues.
+# planner-run.sh creates a tmux session with Claude (opus) and injects
+# this formula as context. Claude executes all steps autonomously.
+#
+# Steps: preflight → prediction-triage → strategic-planning
+#        → journal-and-memory → commit-and-pr
+#
+# AGENTS.md maintenance is handled by the gardener (#246).
+# All git writes (journal entry) happen in one commit at the end.
 
 name        = "run-planner"
-description = "Strategic planning: update docs, triage predictions, resource+leverage gap analysis"
-version     = 1
+description = "Strategic planning: triage predictions, resource+leverage gap analysis, journal"
+version     = 2
 model       = "opus"
 
 [context]
@@ -27,7 +32,7 @@ Set up the working environment for this planning run.
      git checkout "$PRIMARY_BRANCH" --quiet
      git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
 
-3. Record the current HEAD SHA — you will need it for AGENTS.md watermarks:
+3. Record the current HEAD SHA:
      HEAD_SHA=$(git rev-parse HEAD)
      echo "$HEAD_SHA" > /tmp/planner-head-sha
 
@@ -37,59 +42,7 @@ Set up the working environment for this planning run.
 """
 
 [[steps]]
-id    = "agents-update"
-title = "Update AGENTS.md documentation tree"
-description = """
-Check all AGENTS.md files for staleness and update any that are outdated.
-
-1. Read the HEAD SHA from preflight:
-     HEAD_SHA=$(cat /tmp/planner-head-sha)
-
-2. Find all AGENTS.md files:
-     find "$PROJECT_REPO_ROOT" -name "AGENTS.md" -not -path "*/.git/*"
-
-3. For each file, read the watermark from line 1:
-     <!-- last-reviewed: <sha> -->
-
-4. Check for changes since the watermark:
-     git log --oneline <watermark>..HEAD -- <directory>
-   If zero changes, the file is current — skip it.
-
-5. For stale files:
-   - Read the AGENTS.md and the source files in that directory
-   - Update the documentation to reflect code changes since the watermark
-   - Set the watermark to the HEAD SHA from the preflight step
-   - Conventions: max ~200 lines, architecture and WHY not implementation details
-
-6. If you made changes:
-   a. Create a branch:
-        git checkout -B "chore/planner-agents-$(date -u +%Y%m%d)"
-   b. Stage only AGENTS.md files:
-        find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
-   c. Commit:
-        git commit -m "chore: planner update AGENTS.md tree"
-   d. Push:
-        git push -f origin "chore/planner-agents-$(date -u +%Y%m%d)"
-   e. Create a PR (failure here is non-fatal — log and continue):
-        curl -sf -X POST \
-          -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/pulls" \
-          -d '{"title":"chore: planner update AGENTS.md tree",
-               "head":"<branch>","base":"<primary-branch>",
-               "body":"Automated AGENTS.md update — review-agent fast-tracks doc-only PRs."}'
-   f. Return to primary branch:
-        git checkout "$PRIMARY_BRANCH"
-
-7. If no AGENTS.md files need updating, skip this step entirely.
-
-CRITICAL: If this step fails for any reason, log the failure and move on.
-Do NOT let an AGENTS.md failure prevent prediction triage or strategic planning.
-"""
-needs = ["preflight"]
-
-[[steps]]
-id    = "triage-predictions"
+id    = "prediction-triage"
 title = "Triage prediction/unreviewed issues"
 description = """
 Triage prediction issues filed by the predictor (goblin).
@@ -213,7 +166,7 @@ Read these inputs:
   - Open issues (fetched via API) — what's already planned
   - $FACTORY_ROOT/metrics/supervisor-metrics.jsonl — operational trends (may not exist)
   - Planner memory (loaded in preflight)
-  - Promoted predictions from triage-predictions (these count toward the
+  - Promoted predictions from prediction-triage (these count toward the
     per-cycle issue limit — they compete with vision gaps for priority)
 
 Reason through these five questions:
@@ -238,7 +191,7 @@ Reason through these five questions:
    Things that depend on blocked resources or aren't high-leverage
    right now. Do NOT create issues for these.
 
-Then create up to 5 issues total (including promotions from triage-predictions),
+Then create up to 5 issues total (including promotions from prediction-triage),
 prioritized by leverage:
 
 For formula-matching gaps, include YAML front matter in the body:
@@ -271,13 +224,42 @@ Rules:
 
 If there are no gaps, note that the backlog is aligned with the vision.
 """
-needs = ["agents-update", "triage-predictions"]
+needs = ["prediction-triage"]
 
 [[steps]]
-id    = "memory-update"
-title = "Persist learnings to planner/MEMORY.md"
+id    = "journal-and-memory"
+title = "Write journal entry and update planner memory"
 description = """
-Reflect on this planning run and write the updated memory file.
+Two outputs from this step:
+
+### 1. Journal entry (committed to git)
+
+Create a daily journal file at:
+  $FACTORY_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
+
+If the file already exists (multiple runs per day), append a new section
+with a timestamp header.
+
+Format:
+  # Planner run — YYYY-MM-DD HH:MM UTC
+
+  ## Predictions triaged
+  - #NNN: PROMOTE_ACTION/PROMOTE_BACKLOG/WATCH/DISMISS — reasoning
+  (or "No unreviewed predictions" if none)
+
+  ## Issues created
+  - #NNN: title — why
+  (or "No new issues — backlog aligned with vision" if none)
+
+  ## Observations
+  - Key patterns, resource state, metric trends noticed during this run
+
+  ## Deferred
+  - Items considered but deferred, and why
+
+Keep each entry concise — 30-50 lines max.
+
+### 2. Memory update (gitignored, local only)
 
 Write to: $FACTORY_ROOT/planner/MEMORY.md (replace the entire file)
 
@@ -298,3 +280,46 @@ Rules:
 Format: simple markdown with dated sections.
 """
 needs = ["strategic-planning"]
+
+[[steps]]
+id    = "commit-and-pr"
+title = "One commit with all file changes, push, create PR"
+description = """
+Collect all file changes from this run into a single commit.
+API calls (issue creation, prediction triage) already happened during the
+run — only file changes (journal entries) need the PR.
+
+1. Check for staged or unstaged changes:
+     cd "$PROJECT_REPO_ROOT"
+     git status --porcelain
+
+   If there are no file changes, skip this entire step — no commit, no PR.
+
+2. If there are changes:
+   a. Create a branch:
+        BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
+        git checkout -B "$BRANCH"
+   b. Stage journal entries:
+        git add planner/journal/ 2>/dev/null || true
+   c. Stage any other tracked files modified during the run:
+        git add -u
+   d. Check if there is anything to commit:
+        git diff --cached --quiet && echo "Nothing staged" && skip
+   e. Commit:
+        git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
+   f. Push:
+        git push -u origin "$BRANCH"
+   g. Create a PR:
+        curl -sf -X POST \
+          -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/pulls" \
+          -d '{"title":"chore: planner run journal",
+               "head":"<branch>","base":"<primary-branch>",
+               "body":"Automated planner run — journal entry from strategic planning session."}'
+   h. Return to primary branch:
+        git checkout "$PRIMARY_BRANCH"
+
+3. If the PR creation fails, log and continue — the journal is committed locally.
+"""
+needs = ["journal-and-memory"]
