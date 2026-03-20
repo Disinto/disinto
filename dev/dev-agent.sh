@@ -124,7 +124,7 @@ cleanup_worktree() {
 cleanup_labels() {
   curl -sf -X DELETE \
     -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/issues/${ISSUE}/labels/in-progress" >/dev/null 2>&1 || true
+    "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
 }
 
 CLAIMED=false
@@ -137,7 +137,7 @@ cleanup() {
     log "cleanup: unclaiming issue (no PR created)"
     curl -sf -X DELETE \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/issues/${ISSUE}/labels/in-progress" >/dev/null 2>&1 || true
+      "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
     curl -sf -X POST \
       -H "Authorization: token ${CODEBERG_TOKEN}" \
       -H "Content-Type: application/json" \
