@@ -7,6 +7,10 @@
 # Dispatch:
 #   Thread reply to [supervisor] message → /tmp/supervisor-escalation-reply
 #   Thread reply to [gardener] message   → /tmp/gardener-escalation-reply
+#   Thread reply to [dev] message        → injected into dev tmux session (or /tmp/dev-escalation-reply)
+#   Thread reply to [review] message     → injected into review tmux session
+#   Thread reply to [vault] message      → APPROVE/REJECT dispatched via vault-fire/vault-reject
+#   Thread reply to [action] message     → injected into action tmux session
 #
 # Run as systemd service (see matrix_listener.service) or manually:
 #   ./matrix_listener.sh
@@ -32,10 +36,6 @@ if [ -z "${MATRIX_TOKEN:-}" ] || [ -z "${MATRIX_ROOM_ID:-}" ]; then
   echo "MATRIX_TOKEN and MATRIX_ROOM_ID must be set in .env" >&2
   exit 1
 fi
-
-# URL-encode room ID
-# shellcheck disable=SC2034
-ROOM_ENCODED="${MATRIX_ROOM_ID//!/%21}"
 
 # Build sync filter — only our room, only messages
 FILTER=$(jq -nc --arg room "$MATRIX_ROOM_ID" '{
@@ -109,9 +109,6 @@ while true; do
   while IFS= read -r event; do
     SENDER=$(printf '%s' "$event" | jq -r '.sender')
     BODY=$(printf '%s' "$event" | jq -r '.content.body // ""')
-    # shellcheck disable=SC2034
-    EVENT_ID=$(printf '%s' "$event" | jq -r '.event_id')
-
     # Check if this is a thread reply
     THREAD_ROOT=$(printf '%s' "$event" | jq -r '.content."m.relates_to" | select(.rel_type == "m.thread") | .event_id // empty' 2>/dev/null)
 
