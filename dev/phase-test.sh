@@ -260,7 +260,18 @@ if [ -x "$STOP_FAILURE_HOOK" ]; then
   fi
   rm -f "$SF_MARKER" "$PHASE_FILE"
 
-  # 10c: missing phase_file arg → no-op (exit 0, no crash)
+  # 10c: authentication_failed stop reason
+  printf '{"stop_reason":"authentication_failed"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_second=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null)
+  if echo "$sf_second" | grep -q "api_error: authentication_failed"; then
+    ok "StopFailure hook writes api_error: authentication_failed"
+  else
+    fail "StopFailure hook authentication_failed: got '$sf_second'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10e: missing phase_file arg → no-op (exit 0, no crash)
   printf '{"stop_reason":"rate_limit"}' | "$STOP_FAILURE_HOOK" "" "$SF_MARKER"
   if [ ! -f "$PHASE_FILE" ]; then
     ok "StopFailure hook no-ops when phase_file is empty"
@@ -269,16 +280,42 @@ if [ -x "$STOP_FAILURE_HOOK" ]; then
   fi
   rm -f "$SF_MARKER"
 
-  # 10d: missing marker arg → phase file still written, no marker
+  # 10f: missing marker arg → phase file still written, no marker
   printf '{"stop_reason":"billing_error"}' \
     | "$STOP_FAILURE_HOOK" "$PHASE_FILE" ""
   sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
-  if [ "$sf_first" = "PHASE:failed" ] && [ ! -f "$SF_MARKER" ]; then
+  sf_marker_exists="no"
+  [ -f "$SF_MARKER" ] && sf_marker_exists="yes"
+  if [ "$sf_first" = "PHASE:failed" ] && [ "$sf_marker_exists" = "no" ]; then
     ok "StopFailure hook writes phase without marker when marker arg is empty"
   else
-    fail "StopFailure hook: first='$sf_first' marker_exists=$([ -f "$SF_MARKER" ] && echo yes || echo no)"
+    fail "StopFailure hook: first='$sf_first' marker_exists=$sf_marker_exists"
   fi
   rm -f "$PHASE_FILE"
+
+  # 10g: terminal phase guard — does not overwrite PHASE:done
+  echo "PHASE:done" > "$PHASE_FILE"
+  printf '{"stop_reason":"rate_limit"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:done" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:done"
+  else
+    fail "StopFailure hook overwrote PHASE:done: first='$sf_first'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10h: terminal phase guard — does not overwrite PHASE:merged
+  echo "PHASE:merged" > "$PHASE_FILE"
+  printf '{"stop_reason":"server_error"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:merged" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:merged"
+  else
+    fail "StopFailure hook overwrote PHASE:merged: first='$sf_first'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
 else
   fail "StopFailure hook script not found or not executable: $STOP_FAILURE_HOOK"
 fi

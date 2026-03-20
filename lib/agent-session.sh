@@ -130,7 +130,10 @@ create_agent_session() {
   if [ -n "$phase_file" ]; then
     local stop_failure_hook_script="${FACTORY_ROOT}/lib/hooks/on-stop-failure.sh"
     if [ -x "$stop_failure_hook_script" ]; then
-      local stop_failure_hook_cmd="${stop_failure_hook_script} ${phase_file} ${phase_marker}"
+      # phase_marker is defined in the PostToolUse block above; redeclare so
+      # this block is self-contained if that block is ever removed.
+      local sf_phase_marker="/tmp/phase-changed-${session}.marker"
+      local stop_failure_hook_cmd="${stop_failure_hook_script} ${phase_file} ${sf_phase_marker}"
       if [ -f "$settings" ]; then
         jq --arg cmd "$stop_failure_hook_cmd" '
           if (.hooks.StopFailure // [] | any(.[]; .hooks[]?.command == $cmd))

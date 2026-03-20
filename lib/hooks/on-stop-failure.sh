@@ -25,6 +25,14 @@ reason=$(printf '%s' "$input" | jq -r '
 ' 2>/dev/null)
 [ -z "$reason" ] && reason="unknown"
 
+# Guard: do not overwrite a terminal phase. If Claude wrote PHASE:done via a
+# tool call and then hit a rate limit while generating the rest of its response,
+# the PostToolUse hook already recorded the correct terminal phase.
+existing=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]')
+case "$existing" in
+  PHASE:done|PHASE:merged) exit 0 ;;
+esac
+
 # Write phase file immediately — orchestrator reads first line as phase sentinel
 printf 'PHASE:failed\nReason: api_error: %s\n' "$reason" > "$phase_file"
 
