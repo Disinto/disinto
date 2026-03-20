@@ -142,7 +142,7 @@ Periodically (every 10-15 tool calls), write a summary of:
 - What remains to do
 to: ${scratch_file}
 
-If you find this file exists when you start, read it first — it is your previous context.
+If this file existed at session start, its contents have already been injected into your prompt above.
 This file is ephemeral — not evidence or permanent memory, just a compaction survival mechanism.
 _SCRATCH_EOF_
 }
@@ -153,7 +153,7 @@ _SCRATCH_EOF_
 read_scratch_context() {
   local scratch_file="$1"
   if [ -f "$scratch_file" ]; then
-    printf '## Previous context (from scratch file)\n%s\n' "$(cat "$scratch_file")"
+    printf '## Previous context (from scratch file)\n%s\n' "$(head -c 8192 "$scratch_file")"
   fi
 }
 

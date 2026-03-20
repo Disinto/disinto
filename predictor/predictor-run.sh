@@ -64,12 +64,11 @@ about CI health, issue staleness, agent status, and system conditions.
 
 ## Project context
 ${CONTEXT_BLOCK}
-${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
-}${SCRATCH_INSTRUCTION}
-
+${SCRATCH_CONTEXT}
 ## Formula
 ${FORMULA_CONTENT}
 
+${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Run session ──────────────────────────────────────────────────────────
@@ -77,7 +76,7 @@ export CLAUDE_MODEL="sonnet"
 run_formula_and_monitor "predictor"
 
 # ── Cleanup scratch file on normal exit ──────────────────────────────────
-FINAL_PHASE=$(read_phase "$PHASE_FILE")
-if [ "$FINAL_PHASE" = "PHASE:done" ]; then
+# FINAL_PHASE already set by run_formula_and_monitor
+if [ "${FINAL_PHASE:-}" = "PHASE:done" ]; then
   rm -f "$SCRATCH_FILE"
 fi

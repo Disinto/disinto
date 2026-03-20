@@ -85,7 +85,7 @@ export CLAUDE_MODEL="opus"
 run_formula_and_monitor "planner"
 
 # ── Cleanup scratch file on normal exit ──────────────────────────────────
-FINAL_PHASE=$(read_phase "$PHASE_FILE")
-if [ "$FINAL_PHASE" = "PHASE:done" ]; then
+# FINAL_PHASE already set by run_formula_and_monitor
+if [ "${FINAL_PHASE:-}" = "PHASE:done" ]; then
   rm -f "$SCRATCH_FILE"
 fi

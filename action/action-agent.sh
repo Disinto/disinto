@@ -88,7 +88,7 @@ cleanup() {
   agent_kill_session "$SESSION_NAME"
   # Best-effort docker cleanup for containers started during this action
   (cd "${PROJECT_REPO_ROOT}" 2>/dev/null && docker compose down 2>/dev/null) || true
-  rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT" "$SCRATCH_FILE"
+  rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
 }
 trap cleanup EXIT
 
