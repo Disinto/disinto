@@ -1,0 +1,230 @@
+# formulas/run-planner.toml — Strategic planning formula
+#
+# Executed by the action-agent via cron-filed action issues.
+# planner-poll.sh files an action issue referencing this formula weekly;
+# action-poll.sh picks it up and spawns a tmux session where Claude
+# executes these steps autonomously.
+
+name        = "run-planner"
+description = "Strategic planning: update docs, triage predictions, resource+leverage gap analysis"
+version     = 1
+model       = "opus"
+
+[context]
+files = ["VISION.md", "AGENTS.md", "RESOURCES.md"]
+
+[[steps]]
+id    = "preflight"
+title = "Pull latest code and load planner memory"
+description = """
+Set up the working environment for this planning run.
+
+1. Change to the project repository:
+     cd "$PROJECT_REPO_ROOT"
+
+2. Pull the latest code:
+     git fetch origin "$PRIMARY_BRANCH" --quiet
+     git checkout "$PRIMARY_BRANCH" --quiet
+     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+
+3. Record the current HEAD SHA — you will need it for AGENTS.md watermarks:
+     HEAD_SHA=$(git rev-parse HEAD)
+     echo "$HEAD_SHA" > /tmp/planner-head-sha
+
+4. Read the planner memory file at: $FACTORY_ROOT/planner/MEMORY.md
+   If it does not exist, this is the first planning run.
+   Keep this memory context in mind for all subsequent steps.
+"""
+
+[[steps]]
+id    = "agents-update"
+title = "Update AGENTS.md documentation tree"
+description = """
+Check all AGENTS.md files for staleness and update any that are outdated.
+
+1. Read the HEAD SHA from preflight:
+     HEAD_SHA=$(cat /tmp/planner-head-sha)
+
+2. Find all AGENTS.md files:
+     find "$PROJECT_REPO_ROOT" -name "AGENTS.md" -not -path "*/.git/*"
+
+3. For each file, read the watermark from line 1:
+     <!-- last-reviewed: <sha> -->
+
+4. Check for changes since the watermark:
+     git log --oneline <watermark>..HEAD -- <directory>
+   If zero changes, the file is current — skip it.
+
+5. For stale files:
+   - Read the AGENTS.md and the source files in that directory
+   - Update the documentation to reflect code changes since the watermark
+   - Set the watermark to the HEAD SHA from the preflight step
+   - Conventions: max ~200 lines, architecture and WHY not implementation details
+
+6. If you made changes:
+   a. Create a branch:
+        git checkout -B "chore/planner-agents-$(date -u +%Y%m%d)"
+   b. Stage only AGENTS.md files:
+        find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
+   c. Commit:
+        git commit -m "chore: planner update AGENTS.md tree"
+   d. Push:
+        git push -f origin "chore/planner-agents-$(date -u +%Y%m%d)"
+   e. Create a PR (failure here is non-fatal — log and continue):
+        curl -sf -X POST \
+          -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/pulls" \
+          -d '{"title":"chore: planner update AGENTS.md tree",
+               "head":"<branch>","base":"<primary-branch>",
+               "body":"Automated AGENTS.md update — review-agent fast-tracks doc-only PRs."}'
+   f. Return to primary branch:
+        git checkout "$PRIMARY_BRANCH"
+
+7. If no AGENTS.md files need updating, skip this step entirely.
+
+CRITICAL: If this step fails for any reason, log the failure and move on.
+Do NOT let an AGENTS.md failure prevent prediction triage or strategic planning.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "prediction-triage"
+title = "Triage prediction/unreviewed issues"
+description = """
+Triage prediction issues filed by the predictor (goblin).
+
+1. Fetch unreviewed predictions:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+
+   If there are none, note that and proceed to strategic-planning.
+
+2. Read available formulas from $FACTORY_ROOT/formulas/*.toml so you know
+   what actions can be dispatched.
+
+3. Fetch all open issues to check for overlap:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&type=issues&limit=50"
+
+4. For each prediction, read the title and body. Decide:
+   - ACCEPT_ACTION: maps to an available formula -> create an action issue
+     with YAML front matter referencing the formula name and vars
+   - ACCEPT_BACKLOG: warrants dev work -> create a backlog issue
+   - DISMISS: noise, already covered by an open issue, or not actionable ->
+     post an explanation comment, then close the prediction issue
+
+5. For each accepted prediction:
+   - Create the new issue with the 'backlog' label (or 'action' label for
+     formula-matching actions)
+   - Remove 'prediction/unreviewed' label from the original prediction
+   - Add 'prediction/backlog' label to the original prediction
+   - Note what you accepted — you will need it for strategic-planning
+
+6. Validation: if you reference a formula, verify it exists on disk.
+   Fall back to a freeform backlog issue for unknown formulas.
+
+Be decisive — the predictor intentionally over-signals; your job is to filter.
+
+CRITICAL: If this step fails, log the failure and move on to strategic-planning.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "strategic-planning"
+title = "Strategic planning — resource+leverage gap analysis"
+description = """
+This is the core planning step. Reason about leverage and create
+the highest-impact issues.
+
+Read these inputs:
+  - VISION.md — where we want to be
+  - All AGENTS.md files — what exists today
+  - $FACTORY_ROOT/RESOURCES.md — what we have (may not exist)
+  - $FACTORY_ROOT/formulas/*.toml — what actions can be dispatched
+  - Open issues (fetched via API) — what's already planned
+  - $FACTORY_ROOT/metrics/supervisor-metrics.jsonl — operational trends (may not exist)
+  - Planner memory (loaded in preflight)
+  - Accepted predictions from the triage step
+
+Reason through these five questions:
+
+1. **What resources do you need that you don't have?**
+   Analytics, domains, accounts, compute, integrations — things required
+   by the vision that aren't in RESOURCES.md or aren't set up yet.
+
+2. **What resources are underutilized?**
+   Compute capacity idle most of the day. Domains with no traffic.
+   CI capacity unused at night. Accounts not being leveraged.
+
+3. **What's the highest-leverage action?**
+   The one thing that unblocks the most progress toward the vision.
+   Can you dispatch a formula for it?
+
+4. **What task gaps remain?**
+   Things in VISION.md not covered by open issues or the current
+   project state.
+
+5. **What should be deferred?**
+   Things that depend on blocked resources or aren't high-leverage
+   right now. Do NOT create issues for these.
+
+Then create up to 5 issues, prioritized by leverage:
+
+For formula-matching gaps, include YAML front matter in the body:
+  ---
+  formula: <name>
+  vars:
+    key: "value"
+  ---
+  <explanation of why this matters>
+
+For freeform gaps:
+  <problem statement + why it matters for the vision + rough approach>
+
+Create each issue via the API with the 'backlog' label:
+  curl -sf -X POST \
+    -H "Authorization: token $CODEBERG_TOKEN" \
+    -H "Content-Type: application/json" \
+    "$CODEBERG_API/issues" \
+    -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
+
+Rules:
+- Max 5 new issues — highest leverage first
+- Do NOT create issues that overlap with ANY existing open issue
+- Do NOT create issues for items you identified as "deferred"
+- Each body: what's missing, why it matters, rough approach
+- When deploying/operating, reference the resource alias from RESOURCES.md
+- Add ## Depends on section for issues that depend on other open issues
+- Only reference formulas that exist in formulas/*.toml
+- When metrics show systemic problems, create optimization issues
+
+If there are no gaps, note that the backlog is aligned with the vision.
+"""
+needs = ["agents-update", "prediction-triage"]
+
+[[steps]]
+id    = "memory-update"
+title = "Persist learnings to planner/MEMORY.md"
+description = """
+Reflect on this planning run and write the updated memory file.
+
+Write to: $FACTORY_ROOT/planner/MEMORY.md (replace the entire file)
+
+Include:
+- Date of this run
+- What was observed (resource state, metric trends, project progress)
+- What was decided (issues created, predictions triaged, what was deferred)
+- Patterns and learnings useful for future planning runs
+- Things to watch for next time
+
+Rules:
+- Keep under 100 lines total
+- Replace the file contents — prune outdated entries from previous runs
+- Focus on PATTERNS and LEARNINGS, not transient state
+- Do NOT include specific issue counts or numbers that will be stale
+- Most recent entries at top
+
+Format: simple markdown with dated sections.
+"""
+needs = ["strategic-planning"]

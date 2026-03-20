@@ -245,8 +245,12 @@ create_agent_session() {
   fi
 
   rm -f "$idle_marker"
+  local model_flag=""
+  if [ -n "${CLAUDE_MODEL:-}" ]; then
+    model_flag="--model ${CLAUDE_MODEL}"
+  fi
   tmux new-session -d -s "$session" -c "$workdir" \
-    "claude --dangerously-skip-permissions" 2>/dev/null
+    "claude --dangerously-skip-permissions ${model_flag}" 2>/dev/null
   sleep 1
   tmux has-session -t "$session" 2>/dev/null || return 1
   agent_wait_for_claude_ready "$session" 120 || return 1

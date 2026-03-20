@@ -76,6 +76,14 @@ fi
 
 log "Issue: ${ISSUE_TITLE}"
 
+# --- Extract model from YAML front matter (if present) ---
+YAML_MODEL=$(printf '%s' "$ISSUE_BODY" | \
+  sed -n '/^---$/,/^---$/p' | grep '^model:' | awk '{print $2}' | tr -d '"' || true)
+if [ -n "$YAML_MODEL" ]; then
+  export CLAUDE_MODEL="$YAML_MODEL"
+  log "model from front matter: ${YAML_MODEL}"
+fi
+
 # --- Fetch existing comments (resume context) ---
 COMMENTS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${CODEBERG_API}/issues/${ISSUE}/comments?limit=50") || true
