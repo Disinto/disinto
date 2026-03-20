@@ -1,0 +1,142 @@
+# formulas/review-pr.toml — PR review formula
+#
+# Defines the review agent's judgment: understand the change, assess quality,
+# decide verdict, write structured output. The bash orchestrator
+# (review/review-pr.sh) handles session lifecycle, metadata fetching,
+# API posting, and cleanup.
+#
+# The orchestrator injects PR context (diff, metadata, previous review)
+# alongside this formula. Claude follows the steps in a single session.
+
+name        = "review-pr"
+description = "AI-powered PR review: understand change, assess quality, decide verdict"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md"]
+
+[[steps]]
+id    = "review"
+title = "Review the PR and write structured output"
+description = """
+You have full repo access — you are in a checkout of the PR branch.
+Use this to verify claims, check existing code, and understand context
+before flagging issues. Read files rather than guessing.
+
+## 1. Understand the change
+
+Read the diff and PR description injected by the orchestrator.
+What is this PR doing and why? Identify the scope:
+- Contracts, frontend, backend, docs, infra, formulas, mixed?
+- New feature, bug fix, refactor, config change?
+
+## 2. CI relevance
+
+If CI has not passed, decide whether CI matters for this PR.
+Non-code changes (docs, formulas, TOML config, markdown-only) do NOT
+need CI — note this in your review rather than blocking. The orchestrator
+already skips the CI gate for non-code PRs, but you should also mention
+CI relevance in the review body when it applies.
+
+## 3. Review checklist
+
+Adapt based on scope. Check for:
+
+- **Bugs & logic errors**: off-by-one, nil/null dereference, missing edge cases,
+  wrong return type, incorrect conditionals
+- **Security**: command injection, unquoted bash variables, path traversal, XSS,
+  secret leakage in logs or comments
+- **Imports & dependencies**: broken imports, undefined variables, missing deps
+- **Architecture**: verify patterns match AGENTS.md and project conventions
+- **Bash specifics** (for .sh files): ShellCheck compliance, set -euo pipefail,
+  proper quoting, error handling with || true where appropriate, no echo of secrets
+- **Dead code**: unused variables, unreachable branches, leftover debug prints
+- **Claim verification**: if docs/README/AGENTS.md changed, verify claims
+  against actual code — read the files to confirm
+
+Do NOT flag:
+- Style preferences with no correctness impact
+- Missing tests unless the change is clearly untested and risky
+- Things that look wrong but actually work — verify by reading the code first
+- Files that were truncated from the diff (the orchestrator notes truncation)
+
+## 4. Re-review (if previous review is provided)
+
+If the orchestrator injected a previous review and incremental diff:
+1. For each finding in the previous review, check if it was addressed
+2. Report status: fixed / not_fixed / partial with explanation
+3. Check for new issues introduced by the fix commits
+4. Be fair — if feedback was addressed well, acknowledge it
+
+Focus on the incremental diff for finding-by-finding status, but use the
+full diff to check overall correctness.
+
+## 5. Follow-up issues (pre-existing tech debt)
+
+If you discover pre-existing issues (NOT introduced by this PR), create
+tech-debt issues via API so they are tracked separately:
+
+  # Look up tech-debt label ID (create if missing):
+  TECH_DEBT_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/labels" | jq -r '.[] | select(.name=="tech-debt") | .id')
+
+  if [ -z "$TECH_DEBT_ID" ]; then
+    TECH_DEBT_ID=$(curl -sf -X POST \
+      -H "Authorization: token $CODEBERG_TOKEN" \
+      -H "Content-Type: application/json" \
+      "$CODEBERG_API/labels" \
+      -d '{"name":"tech-debt","color":"#6B7280","description":"Pre-existing tech debt flagged by AI review"}' | jq -r '.id')
+  fi
+
+  # Check for duplicate before creating:
+  EXISTING=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?state=open&labels=tech-debt&limit=50" | \
+    jq --arg t "TITLE" '[.[] | select(.title == $t)] | length')
+
+  # Create only if no duplicate:
+  curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+    -H "Content-Type: application/json" "$CODEBERG_API/issues" \
+    -d '{"title":"...","body":"Flagged by AI reviewer in PR #NNN.\n\n## Problem\n...\n\n---\n*Auto-created from AI review*","labels":[TECH_DEBT_ID]}'
+
+Only create follow-ups for clear, actionable tech debt. Do not create
+issues for minor style nits or speculative improvements.
+
+## 6. Verdict
+
+Choose one:
+- **APPROVE**: Change is correct, complete, and follows conventions
+- **REQUEST_CHANGES**: Has real issues that must be fixed before merge
+- **DISCUSS**: Unclear intent, design question, or needs human conversation
+
+Bias toward APPROVE for small, correct changes. Use REQUEST_CHANGES only
+for actual problems (bugs, security issues, broken functionality, missing
+required behavior). Use DISCUSS sparingly.
+
+## 7. Output
+
+Write a single JSON object to the file path from REVIEW_OUTPUT_FILE.
+Use jq to ensure proper JSON escaping of the markdown content:
+
+  jq -n \
+    --arg verdict "APPROVE" \
+    --arg verdict_reason "one-line explanation" \
+    --arg review_markdown "### Section\\n- **severity** \\`location\\`: description" \
+    '{verdict: $verdict, verdict_reason: $verdict_reason, review_markdown: $review_markdown}' \
+    > "$REVIEW_OUTPUT_FILE"
+
+The review_markdown field must contain the complete, formatted review in
+markdown. Use ### headings for sections. Use this format for findings:
+  - **severity** `file:line`: description
+
+For a re-review, structure the markdown as:
+  ### Previous Findings
+  - finding summary → FIXED / NOT FIXED / PARTIAL: explanation
+  ### New Issues (if any)
+  - **severity** `location`: description
+
+After writing the JSON file, signal completion:
+  echo "PHASE:done" > "$PHASE_FILE"
+
+Then STOP and wait. The orchestrator will post your review to Codeberg.
+"""
