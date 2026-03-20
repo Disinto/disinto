@@ -16,7 +16,8 @@ See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
+├── gardener/      gardener-run.sh — files action issue for run-gardener formula
+│                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
 ├── planner/       planner-poll.sh — files action issue for run-planner formula
 │                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
 ├── supervisor/    supervisor-poll.sh — health monitoring
@@ -111,12 +112,16 @@ spawns `review-pr.sh <pr-number>`.
 criteria, oversized issues, stale issues, and circular dependencies. Invoke
 Claude to fix or escalate to a human via Matrix.
 
-**Trigger**: `gardener-poll.sh` runs daily (or 2x/day) via cron. Accepts an
-optional project TOML argument.
+**Trigger**: `gardener-run.sh` runs 2x/day via cron. It files an `action`
+issue referencing `formulas/run-gardener.toml`; the [action-agent](#action-action)
+picks it up and executes the gardener steps in an interactive Claude tmux session.
+Accepts an optional project TOML argument.
 
 **Key files**:
-- `gardener/gardener-poll.sh` — Cron wrapper: lock, escalation-reply injection for dev sessions, calls `gardener-agent.sh`, then processes dev-agent CI escalations via recipe engine
+- `gardener/gardener-run.sh` — Cron wrapper: lock, memory guard, dedup check, files action issue
+- `gardener/gardener-poll.sh` — Recipe engine: escalation-reply injection for dev sessions, processes dev-agent CI escalations via recipe engine (invoked by formula step ci-escalation-recipes)
 - `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE), handles dust bundling
+- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, blocked-review, CI escalation recipes, agents-update, commit-and-pr
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
