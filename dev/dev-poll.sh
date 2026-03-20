@@ -201,9 +201,6 @@ try_direct_merge() {
   return 1
 }
 
-# shellcheck disable=SC2034
-REPO="${CODEBERG_REPO}"
-
 API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
 LOGFILE="${FACTORY_ROOT}/dev/dev-agent-${PROJECT_NAME:-harb}.log"
