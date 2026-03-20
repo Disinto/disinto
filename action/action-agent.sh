@@ -126,14 +126,27 @@ if [ -n "$YAML_MODEL" ]; then
   log "model from front matter: ${YAML_MODEL}"
 fi
 
-# --- Fetch existing comments (resume context) ---
+# --- Resolve bot username(s) for comment filtering ---
+_bot_login=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${CODEBERG_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
+
+# Build list: token owner + any extra names from CODEBERG_BOT_USERNAMES (comma-separated)
+_bot_logins="${_bot_login}"
+if [ -n "${CODEBERG_BOT_USERNAMES:-}" ]; then
+  _bot_logins="${_bot_logins:+${_bot_logins},}${CODEBERG_BOT_USERNAMES}"
+fi
+
+# --- Fetch existing comments (resume context, excluding bot comments) ---
 COMMENTS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${CODEBERG_API}/issues/${ISSUE}/comments?limit=50") || true
 
 PRIOR_COMMENTS=""
 if [ -n "$COMMENTS_JSON" ] && [ "$COMMENTS_JSON" != "null" ] && [ "$COMMENTS_JSON" != "[]" ]; then
   PRIOR_COMMENTS=$(printf '%s' "$COMMENTS_JSON" | \
-    jq -r '.[] | "[\(.user.login) at \(.created_at[:19])]\n\(.body)\n---"' 2>/dev/null || true)
+    jq -r --arg bots "$_bot_logins" \
+      '($bots | split(",") | map(select(. != ""))) as $bl |
+       .[] | select(.user.login as $u | $bl | index($u) | not) |
+       "[\(.user.login) at \(.created_at[:19])]\n\(.body)\n---"' 2>/dev/null || true)
 fi
 
 # --- Create Matrix thread for this issue ---
