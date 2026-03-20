@@ -45,6 +45,7 @@ agent_inject_into_session() {
 
 # Create a tmux session running Claude in the given workdir.
 # Installs a Stop hook for idle detection (see monitor_phase_loop).
+# Installs a PreToolUse hook to guard destructive Bash operations.
 # Optionally installs a PostToolUse hook for phase file write detection.
 # Args: session workdir [phase_file]
 # Returns 0 if session is ready, 1 otherwise.
@@ -117,6 +118,37 @@ create_agent_session() {
         }' > "$settings"
       fi
       rm -f "$phase_marker"
+    fi
+  fi
+
+  # Install PreToolUse hook for destructive operation guard: blocks force push
+  # to primary branch, rm -rf outside worktree, direct API merge calls, and
+  # checkout/switch to primary branch.  Claude sees the denial reason on exit 2
+  # and can self-correct.
+  local guard_hook_script="${FACTORY_ROOT}/lib/hooks/on-pretooluse-guard.sh"
+  if [ -x "$guard_hook_script" ]; then
+    local abs_workdir
+    abs_workdir=$(cd "$workdir" 2>/dev/null && pwd) || abs_workdir="$workdir"
+    local guard_hook_cmd="${guard_hook_script} ${PRIMARY_BRANCH:-main} ${abs_workdir}"
+    if [ -f "$settings" ]; then
+      jq --arg cmd "$guard_hook_cmd" '
+        if (.hooks.PreToolUse // [] | any(.[]; .hooks[]?.command == $cmd))
+        then .
+        else .hooks.PreToolUse = (.hooks.PreToolUse // []) + [{
+          matcher: "Bash",
+          hooks: [{type: "command", command: $cmd}]
+        }]
+        end
+      ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+    else
+      jq -n --arg cmd "$guard_hook_cmd" '{
+        hooks: {
+          PreToolUse: [{
+            matcher: "Bash",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+        }
+      }' > "$settings"
     fi
   fi
 
