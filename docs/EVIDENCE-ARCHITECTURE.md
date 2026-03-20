@@ -42,7 +42,7 @@ Agents won't need to understand each platform. **Processes act as adapters** —
 
 The planner will read `evidence/` — not Analytics, not Ponder, not DigitalOcean. Evidence is the normalized interface between the world and decisions.
 
-> **Terminology note:** "Process" here means a self-contained measurement or mutation pipeline — distinct from disinto's existing "formulas" (TOML issue templates that guide the dev-agent through multi-step implementation work). Processes produce evidence; formulas produce code. Whether processes reuse the TOML formula format or need their own mechanism is an open design question.
+> **Terminology note — "process" vs "formula":** In this document, "process" means a self-contained measurement or mutation pipeline that reads an external platform and writes structured evidence to git. This is distinct from disinto's "formulas" (`formulas/*.toml`), which are TOML issue templates that guide agents through multi-step operational work (see `AGENTS.md` § Directory layout). Processes produce evidence; formulas orchestrate agent tasks.
 
 ## Process Types
 

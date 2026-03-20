@@ -26,9 +26,14 @@ disinto/
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config
-├── formulas/      Issue templates
+├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ```
+
+> **Terminology note:** "Formulas" in this repo are TOML issue templates in `formulas/` that
+> orchestrate multi-step agent tasks (e.g., `run-gardener.toml`, `run-planner.toml`). This is
+> distinct from "processes" described in `docs/EVIDENCE-ARCHITECTURE.md`, which are measurement
+> and mutation pipelines that read external platforms and write structured evidence to git.
 
 ## Tech stack
 
