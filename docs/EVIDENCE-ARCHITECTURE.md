@@ -1,6 +1,6 @@
 # Evidence Architecture — Roadmap
 
-> **Status: Planned Architecture** — The infrastructure described here is not yet implemented. See AGENTS.md for the current state. Items marked **Implemented** exist in the codebase; all others are **Planned**.
+> **Status: Partially Implemented** — This document describes the target evidence architecture. Items marked **Implemented** exist in the codebase; items marked **Partial** have upstream scripts but no evidence output yet; all others are **Planned**. See AGENTS.md for the current operational state.
 
 Disinto is purpose-built for one loop: **build software, launch it, improve it, reach market fit.**
 
@@ -26,9 +26,9 @@ Different domains have different platforms:
 |--------|----------|---------------|--------|
 | Code | Codeberg | Issues, PRs, reviews | **Implemented** — Live |
 | CI/CD | Woodpecker | Build/test results | **Implemented** — Live |
-| Protocol | Ponder / GraphQL | On-chain state, trades, positions | **Implemented** — Live (not yet wired to evidence) |
+| Protocol | Ponder / GraphQL | On-chain state, trades, positions | **Partial** — Live (not yet wired to evidence) |
 | Infrastructure | DigitalOcean / system stats | CPU, RAM, disk, containers | **Planned** — Supervisor monitors, no evidence output yet |
-| User experience | Playwright personas | Conversion, friction, journey completion | **Implemented** — Scripts exist (`run-usertest.sh`), no evidence output yet |
+| User experience | Playwright personas | Conversion, friction, journey completion | **Partial** — Scripts exist (`run-usertest.sh`), no evidence output yet |
 | Funnel | Analytics (future) | Bounce rate, conversion, retention | **Planned** — Not started |
 
 Agents won't need to understand each platform. **Processes act as adapters** — they will read a platform's API and write structured evidence to git.
