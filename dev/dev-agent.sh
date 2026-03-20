@@ -23,6 +23,7 @@ set -euo pipefail
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
+source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=./phase-handler.sh
 source "$(dirname "$0")/phase-handler.sh"
 
@@ -499,22 +500,8 @@ fi
 # =============================================================================
 # READ SCRATCH FILE (compaction survival)
 # =============================================================================
-SCRATCH_CONTEXT=""
-if [ -f "$SCRATCH_FILE" ]; then
-  SCRATCH_CONTEXT="## Previous context (from scratch file)
-$(cat "$SCRATCH_FILE")
-"
-fi
-SCRATCH_INSTRUCTION="## Context scratch file (compaction survival)
-
-Periodically (every 10-15 tool calls), write a summary of:
-- What you have discovered so far
-- Decisions made and why
-- What remains to do
-to: ${SCRATCH_FILE}
-
-If you find this file exists when you start, read it first — it is your previous context.
-This file is ephemeral — not evidence or permanent memory, just a compaction survival mechanism."
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
 # =============================================================================
 # BUILD PROMPT

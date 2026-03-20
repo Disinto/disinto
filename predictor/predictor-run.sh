@@ -65,11 +65,10 @@ about CI health, issue staleness, agent status, and system conditions.
 ## Project context
 ${CONTEXT_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
-}
+}${SCRATCH_INSTRUCTION}
+
 ## Formula
 ${FORMULA_CONTENT}
-
-${SCRATCH_INSTRUCTION}
 
 ${PROMPT_FOOTER}"
 
