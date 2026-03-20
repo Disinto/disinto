@@ -2,20 +2,20 @@
 # =============================================================================
 # planner-run.sh — Cron wrapper: direct planner execution via Claude + formula
 #
-# Runs weekly (or on-demand). Guards against concurrent runs and low memory.
+# Runs daily (or on-demand). Guards against concurrent runs and low memory.
 # Creates a tmux session with Claude (opus) reading formulas/run-planner.toml.
 # No action issues — the planner is a nervous system component, not work.
 #
-# The planner plans for ALL projects (harb + disinto) but is itself disinto
-# infrastructure — always sources projects/disinto.toml.
+# Usage:
+#   planner-run.sh [projects/disinto.toml]   # project config (default: disinto)
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Source disinto project config — the planner is disinto infrastructure
-export PROJECT_TOML="$FACTORY_ROOT/projects/disinto.toml"
+# Accept project config from argument; default to disinto (planner is disinto infrastructure)
+export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/agent-session.sh
