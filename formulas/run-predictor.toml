@@ -1,0 +1,194 @@
+# formulas/run-predictor.toml — Predictor formula (disinto-specific signals)
+#
+# Executed by predictor/predictor-run.sh via cron — no action issues.
+# predictor-run.sh creates a tmux session with Claude (sonnet) and injects
+# this formula as context. Claude executes all steps autonomously.
+#
+# Steps: preflight → collect-signals → analyze-and-predict
+#
+# Disinto-specific signal sources:
+#   - CI pipeline trends (Woodpecker)
+#   - Stale issues (open issues with no recent activity)
+#   - Agent health (tmux sessions, recent logs)
+#   - Resource patterns (RAM, disk, load, containers)
+
+name        = "run-predictor"
+description = "Evidence-based prediction: CI trends, stale issues, agent health, resource patterns"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md", "RESOURCES.md"]
+
+[[steps]]
+id    = "preflight"
+title = "Pull latest code and gather environment"
+description = """
+Set up the working environment for this prediction run.
+
+1. Change to the project repository:
+     cd "$PROJECT_REPO_ROOT"
+
+2. Pull the latest code:
+     git fetch origin "$PRIMARY_BRANCH" --quiet
+     git checkout "$PRIMARY_BRANCH" --quiet
+     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+"""
+
+[[steps]]
+id    = "collect-signals"
+title = "Collect disinto-specific signals"
+description = """
+Gather raw signal data for pattern analysis. Collect each signal category
+and store the results for the analysis step.
+
+### 1. CI pipeline trends (Woodpecker)
+
+Fetch recent builds from Woodpecker CI:
+  curl -sf -H "Authorization: Bearer $WOODPECKER_TOKEN" \
+    "${WOODPECKER_URL}/api/repos/${WOODPECKER_REPO_ID}/pipelines?page=1&perPage=20"
+
+Look for:
+- Build failure rate over last 20 builds
+- Repeated failures on the same step
+- Builds stuck in running/pending state
+- Time since last successful build
+
+If WOODPECKER_TOKEN or WOODPECKER_URL are not set, skip CI signals and note
+"CI signals unavailable — WOODPECKER_TOKEN not configured".
+
+### 2. Stale issues
+
+Fetch all open issues:
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?state=open&type=issues&limit=50&sort=updated&direction=asc"
+
+Identify:
+- Issues with no update in 14+ days (stale)
+- Issues with no update in 30+ days (very stale)
+- Issues labeled 'action' or 'backlog' that are stale (work not progressing)
+- Blocked issues where the blocker may have been resolved
+
+### 3. Agent health
+
+Check active tmux sessions:
+  tmux list-sessions 2>/dev/null || echo "no sessions"
+
+Check recent agent logs (last 24h of activity):
+  for log in supervisor/supervisor.log planner/planner.log planner/prediction.log \
+             gardener/gardener.log dev/dev.log review/review.log; do
+    if [ -f "$PROJECT_REPO_ROOT/$log" ]; then
+      echo "=== $log (last 20 lines) ==="
+      tail -20 "$PROJECT_REPO_ROOT/$log"
+    fi
+  done
+
+Look for:
+- Agents that haven't run recently (missing log entries in last 24h)
+- Repeated errors or failures in logs
+- Sessions stuck or crashed (tmux sessions present but no recent activity)
+- Lock files that may be stale: /tmp/*-poll.lock, /tmp/*-run.lock
+
+### 4. Resource patterns
+
+Collect current resource state:
+  free -m                          # RAM
+  df -h /                          # Disk
+  cat /proc/loadavg                # Load average
+  docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null || true  # Containers
+
+Look for:
+- Available RAM < 2000MB (agents will skip runs)
+- Disk usage > 80% (approaching danger zone)
+- Load average > 3.0 (box overloaded)
+- Containers in unhealthy or restarting state
+
+### 5. Already-open predictions (deduplication)
+
+Fetch existing open predictions to avoid duplicates:
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+
+Also check prediction/backlog (watched but not yet actioned):
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
+
+Record their titles so you can avoid duplicating them.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "analyze-and-predict"
+title = "Analyze signals and file prediction issues"
+description = """
+Analyze the collected signals for patterns and file up to 5 prediction issues.
+
+## What to look for
+
+**CI regression** — Build failure rate increasing or repeated failures:
+- Failure rate > 30% over last 20 builds → high confidence
+- Same step failing 3+ times in a row → high confidence
+- No successful build in 24+ hours → medium confidence
+
+**Stale work** — Issues not progressing:
+- Action issues stale 7+ days → the action agent may be stuck
+- Backlog issues stale 14+ days → work not being picked up
+- Blocked issues whose blockers are now closed → can be unblocked
+
+**Agent health** — Agents not running or failing:
+- Agent log with no entries in 24+ hours → agent may be down
+- Repeated errors in agent logs → systemic problem
+- Stale lock files (process not running but lock exists)
+
+**Resource pressure** — System approaching limits:
+- RAM < 2000MB → agents will start skipping runs
+- Disk > 80% → approaching critical threshold
+- Load sustained > 3.0 → box is overloaded, queued work backing up
+
+**Opportunity** — Good conditions for expensive work:
+- Box idle (RAM > 3000MB, load < 1.0, few active sessions) → good time
+  for expensive operations if any are pending
+
+## Filing predictions
+
+For each prediction, create a Codeberg issue with the `prediction/unreviewed` label.
+
+1. Look up the label ID:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/unreviewed") | .id'
+
+2. For each prediction, create an issue:
+     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues" \
+       -d '{"title":"<title>","body":"<body>","labels":[<label_id>]}'
+
+   Body format:
+     <2-4 sentence description of what was observed, why it matters,
+      what the planner should consider>
+
+     ---
+     **Signal source:** <which signal triggered this>
+     **Confidence:** <high|medium|low>
+     **Suggested action:** <concrete next step for the planner>
+
+3. Send a Matrix notification for each prediction created (optional):
+     Use matrix_send if available, or skip if MATRIX_TOKEN is not set.
+
+## Rules
+- Max 5 predictions total
+- Do NOT predict feature work — only infrastructure/health/metric observations
+- Do NOT duplicate existing open predictions (checked in collect-signals)
+- Be specific: name the metric, the value, the threshold
+- Prefer high-confidence predictions backed by concrete data
+- If no meaningful patterns found, file zero issues — that is a valid outcome
+
+## Completion
+
+When done (whether predictions were filed or not):
+  echo 'PHASE:done' > '$PHASE_FILE'
+
+On unrecoverable error:
+  printf 'PHASE:failed\nReason: %s\n' 'describe error' > '$PHASE_FILE'
+"""
+needs = ["collect-signals"]
