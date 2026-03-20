@@ -17,7 +17,7 @@ disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-poll.sh, gardener-agent.sh — backlog grooming
-├── planner/       planner-poll.sh, planner-agent.sh — vision gap analysis
+├── planner/       planner-poll.sh — files action issue for run-planner formula
 │                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
@@ -148,25 +148,33 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 ### Planner (`planner/`)
 
-**Role**: Three-phase planning. Phase 1: update the AGENTS.md documentation
-tree to reflect recent code changes. Phase 1.5: triage `prediction/unreviewed`
-issues filed by the [Predictor](#predictor-planner) — accept as action/backlog
-issues or dismiss as noise. Phase 2: gap-analyse VISION.md vs current project
-state (including accepted predictions), create up to 5 backlog issues for the
-highest-leverage gaps.
+**Role**: Five-phase strategic planning, executed as an action formula.
+Phase 0 (preflight): pull latest code, load persistent memory from
+`planner/MEMORY.md`. Phase 1: update the AGENTS.md documentation tree to
+reflect recent code changes (fast-track PR). Phase 1.5: triage
+`prediction/unreviewed` issues filed by the [Predictor](#predictor-planner) —
+accept as action/backlog issues or dismiss as noise. Phase 2: strategic planning
+via resource+leverage gap analysis — reasons about VISION.md, RESOURCES.md,
+formula catalog, and project state to create up to 5 backlog issues prioritized
+by leverage. Phase 3: persist learnings to `planner/MEMORY.md`.
 
-**Trigger**: `planner-poll.sh` runs weekly via cron.
+**Trigger**: `planner-poll.sh` runs weekly via cron. It files an `action`
+issue referencing `formulas/run-planner.toml`; the [action-agent](#action-action)
+picks it up and executes the planning steps in an interactive Claude tmux session.
 
 **Key files**:
-- `planner/planner-poll.sh` — Cron wrapper: lock, memory guard, runs planner-agent.sh
-- `planner/planner-agent.sh` — Phase 1: uses `claude -p --model sonnet --max-turns 30` (one-shot with tool access) to read/update AGENTS.md files. Phase 1.5: fetches `prediction/unreviewed` issues and uses `claude -p --model sonnet` to triage each prediction (ACCEPT_ACTION, ACCEPT_BACKLOG, or DISMISS); creates corresponding action/backlog issues and relabels predictions to `prediction/backlog` or closes them. Phase 2: uses `claude -p --model sonnet` to compare AGENTS.md tree vs VISION.md (plus accepted predictions from Phase 1.5) and create gap issues. All phases are one-shot (`claude -p`), not interactive sessions
+- `planner/planner-poll.sh` — Cron wrapper: memory guard, dedup check, files action issue
+- `formulas/run-planner.toml` — Execution spec: five steps (preflight, agents-update,
+  prediction-triage, strategic-planning, memory-update) with `needs` dependencies.
+  Steps 2 and 3 are independent; step 4 depends on both. Claude executes all steps
+  in a single interactive session with tool access
+- `planner/MEMORY.md` — Persistent memory across runs (gitignored, local only)
 
 **Future direction**: The [Predictor](#predictor-planner) already reads `evidence/` JSON and files prediction issues for the planner to triage. The next step is evidence-gated deployment (see `docs/EVIDENCE-ARCHITECTURE.md`): replacing human "ship it" decisions with automated gates across dimensions (holdout, red-team, user-test, evolution fitness, protocol metrics, funnel). Not yet implemented.
 
-**Environment variables consumed**:
+**Environment variables consumed** (by the action-agent session):
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`
-- `CLAUDE_TIMEOUT`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
 ### Predictor (`planner/`)

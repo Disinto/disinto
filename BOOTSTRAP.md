@@ -105,7 +105,7 @@ This ensures dev-agent can't merge its own PRs — it must wait for review-agent
 
 ### Required: Seed the `AGENTS.md` tree
 
-The planner-agent maintains an `AGENTS.md` tree — architecture docs with
+The planner maintains an `AGENTS.md` tree — architecture docs with
 per-file `<!-- last-reviewed: SHA -->` watermarks. You must seed this before
 the first planner run, otherwise the planner sees no watermarks and treats the
 entire repo as "new", generating a noisy first-run diff.
@@ -134,7 +134,7 @@ entire repo as "new", generating a noisy first-run diff.
 5. Commit and push. The planner will now see 0 changes on its first run and
    only update files when real commits land.
 
-See `planner/planner-agent.sh` for the full AGENTS.md conventions.
+See `formulas/run-planner.toml` (agents-update step) for the full AGENTS.md conventions.
 
 ## 3. Write Good Issues
 

@@ -133,7 +133,7 @@ disinto/
 │   └── best-practices.md # Gardener knowledge base
 ├── planner/
 │   ├── planner-poll.sh   # Cron entry: weekly vision gap analysis
-│   └── planner-agent.sh  # Updates AGENTS.md, creates backlog issues (claude -p)
+│   └── (formula-driven)  # run-planner.toml executed by action-agent
 ├── vault/
 │   ├── vault-poll.sh     # Cron entry: process pending dangerous actions
 │   ├── vault-agent.sh    # Classifies and routes actions (claude -p)

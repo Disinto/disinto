@@ -18,3 +18,6 @@ metrics/supervisor-metrics.jsonl
 .DS_Store
 dev/ci-fixes-*.json
 gardener/dust.jsonl
+
+# Planner persistent memory (local only)
+planner/MEMORY.md

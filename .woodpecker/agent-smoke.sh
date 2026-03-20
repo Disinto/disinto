@@ -161,7 +161,6 @@ check_script gardener/gardener-agent.sh
 check_script gardener/gardener-poll.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh
-check_script planner/planner-agent.sh
 check_script planner/planner-poll.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
