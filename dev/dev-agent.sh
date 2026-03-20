@@ -45,6 +45,11 @@ BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
   | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
 BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
 
+# Same for "in-progress" label
+IN_PROGRESS_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  | jq -r '.[] | select(.name == "in-progress") | .id' 2>/dev/null || true)
+IN_PROGRESS_LABEL_ID="${IN_PROGRESS_LABEL_ID:-1300818}"
+
 log() {
   printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
@@ -343,7 +348,7 @@ curl -sf -X POST \
   -H "Authorization: token ${CODEBERG_TOKEN}" \
   -H "Content-Type: application/json" \
   "${API}/issues/${ISSUE}/labels" \
-  -d '{"labels":["in-progress"]}' >/dev/null 2>&1 || true
+  -d "{\"labels\":[${IN_PROGRESS_LABEL_ID}]}" >/dev/null 2>&1 || true
 
 curl -sf -X DELETE \
   -H "Authorization: token ${CODEBERG_TOKEN}" \
