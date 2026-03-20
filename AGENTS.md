@@ -311,6 +311,10 @@ Issues flow through these states:
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |
+| `prediction/unreviewed` | Unprocessed prediction filed by predictor. | prediction-agent.sh |
+| `prediction/backlog` | Prediction triaged as WATCH — not urgent, tracked. | Planner (triage-predictions step) |
+| `prediction/actioned` | Prediction promoted or dismissed by planner. | Planner (triage-predictions step) |
+| `action` | Operational task for the action-agent to execute via formula. | Planner, humans |
 
 ### Dependency conventions
 

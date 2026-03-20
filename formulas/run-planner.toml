@@ -109,21 +109,33 @@ Evidence from the preflight step informs whether each prediction is valid
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&limit=50"
 
+3b. Resolve label IDs needed for triage (fetch via $CODEBERG_API/labels):
+    - <unreviewed_label_id>        → prediction/unreviewed
+    - <prediction_backlog_label_id> → prediction/backlog
+    - <actioned_label_id>          → prediction/actioned (create if missing,
+      color #c2e0c6, description "Prediction triaged by planner")
+    - <backlog_label_id>           → backlog
+    - <action_label_id>            → action
+    These are DISTINCT labels — do not reuse IDs across them.
+
 4. For each prediction, read the title and body. Choose one action:
 
    - PROMOTE_ACTION: maps to an available formula → create an action issue
      with YAML front matter referencing the formula name and vars.
-     Close the prediction with comment "Actioned as #NNN".
+     Relabel prediction/unreviewed → prediction/actioned, then close
+     with comment "Actioned as #NNN — <reasoning>".
 
    - PROMOTE_BACKLOG: warrants dev work → create a backlog issue.
-     Close the prediction with comment "Actioned as #NNN".
+     Relabel prediction/unreviewed → prediction/actioned, then close
+     with comment "Actioned as #NNN — <reasoning>".
 
    - WATCH: not urgent but worth tracking → post a comment explaining
      why it is not urgent, then relabel from prediction/unreviewed to
      prediction/backlog. Do NOT close.
 
    - DISMISS: noise, already covered by an open issue, or not actionable →
-     post a comment with explicit reasoning, then close the prediction.
+     relabel prediction/unreviewed → prediction/actioned, post a comment
+     with explicit reasoning, then close the prediction.
 
    Every decision MUST include reasoning in a comment on the prediction issue.
 
@@ -134,12 +146,19 @@ Evidence from the preflight step informs whether each prediction is valid
         curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" "$CODEBERG_API/issues" \
           -d '{"title":"...","body":"...","labels":[<label_id>]}'
-   b. Comment on the prediction with "Actioned as #NNN":
+   b. Comment on the prediction with "Actioned as #NNN — <reasoning>":
         curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
           "$CODEBERG_API/issues/<pred_num>/comments" \
           -d '{"body":"Actioned as #NNN — <reasoning>"}'
-   c. Close the prediction:
+   c. Relabel: remove prediction/unreviewed, add prediction/actioned:
+        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/labels" \
+          -d '{"labels":[<actioned_label_id>]}'
+   d. Close the prediction:
         curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
           "$CODEBERG_API/issues/<pred_num>" \
@@ -153,11 +172,18 @@ Evidence from the preflight step informs whether each prediction is valid
         curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
           "$CODEBERG_API/issues/<pred_num>/labels" \
-          -d '{"labels":[<backlog_label_id>]}'
+          -d '{"labels":[<prediction_backlog_label_id>]}'
 
    For DISMISS:
    a. Comment with explicit reasoning
-   b. Close the prediction issue
+   b. Relabel: remove prediction/unreviewed, add prediction/actioned:
+        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/labels" \
+          -d '{"labels":[<actioned_label_id>]}'
+   c. Close the prediction issue
 
 6. Track promoted predictions — they compete with vision gaps in the
    strategic-planning step for the per-cycle 5-issue limit.
