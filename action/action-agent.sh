@@ -6,10 +6,13 @@
 # Lifecycle:
 #   1. Fetch issue body (action formula) + existing comments
 #   2. Create tmux session: action-{issue_num} with interactive claude
-#   3. Inject initial prompt: formula + comments + instructions
-#   4. Claude executes formula steps, posts progress comments, closes issue
+#   3. Inject initial prompt: formula + comments + phase protocol instructions
+#   4. Monitor phase file via monitor_phase_loop (shared with dev-agent)
+#   Path A (git output): Claude pushes → handler creates PR → CI poll → review
+#     injection → merge → cleanup (same loop as dev-agent via phase-handler.sh)
+#   Path B (no git output): Claude posts results → PHASE:done → cleanup
 #   5. For human input: Claude asks via Matrix; reply injected via matrix_listener
-#   6. Monitor session until Claude exits or idle timeout reached
+#   6. Cleanup on terminal phase: kill tmux, docker compose down, remove temp files
 #
 # Session:  action-{issue_num} (tmux)
 # Log:      action/action-poll-{project}.log
@@ -21,15 +24,51 @@ export PROJECT_TOML="${2:-${PROJECT_TOML:-}}"
 
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
+# shellcheck source=../dev/phase-handler.sh
+source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-harb}.log"
 THREAD_FILE="/tmp/action-thread-${ISSUE}"
 IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
 
+# --- Phase handler globals (agent-specific; defaults in phase-handler.sh) ---
+# shellcheck disable=SC2034  # used by phase-handler.sh
+API="${CODEBERG_API}"
+BRANCH="action/issue-${ISSUE}"
+# shellcheck disable=SC2034  # used by phase-handler.sh
+WORKTREE="${PROJECT_REPO_ROOT}"
+PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-harb}-${ISSUE}.phase"
+IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-harb}-${ISSUE}.txt"
+PREFLIGHT_RESULT="/tmp/action-preflight-${ISSUE}.json"
+
 log() {
-  printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
+  printf '[%s] action#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
+
+notify() {
+  local thread_id=""
+  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  matrix_send "action" "⚡ #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
+}
+
+notify_ctx() {
+  local plain="$1" html="$2" thread_id=""
+  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+  if [ -n "$thread_id" ]; then
+    matrix_send_ctx "action" "⚡ #${ISSUE}: ${plain}" "⚡ #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
+  else
+    matrix_send "action" "⚡ #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
+  fi
+}
+
+status() {
+  log "$*"
+}
+
+# --- Action-specific stubs for phase-handler.sh ---
+cleanup_worktree() { :; }  # action agent uses PROJECT_REPO_ROOT directly — no separate git worktree to remove
+cleanup_labels() { :; }    # action agent doesn't use in-progress labels
 
 # --- Concurrency lock (per issue) ---
 if [ -f "$LOCKFILE" ]; then
@@ -45,6 +84,9 @@ echo $$ > "$LOCKFILE"
 cleanup() {
   rm -f "$LOCKFILE"
   agent_kill_session "$SESSION_NAME"
+  # Best-effort docker cleanup for containers started during this action
+  (cd "${PROJECT_REPO_ROOT}" 2>/dev/null && docker compose down 2>/dev/null) || true
+  rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
 }
 trap cleanup EXIT
 
@@ -129,8 +171,11 @@ if [ -n "$THREAD_ID" ]; then
    are routed back to this session."
 fi
 
+# Build phase protocol from shared function (Path B covered in Instructions section above)
+PHASE_PROTOCOL_INSTRUCTIONS="$(build_phase_protocol_prompt "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$BRANCH")"
+
 INITIAL_PROMPT="You are an action agent. Your job is to execute the action formula
-in the issue below and then close the issue.
+in the issue below.
 
 ## Issue #${ISSUE}: ${ISSUE_TITLE}
 
@@ -153,24 +198,35 @@ ${PRIOR_SECTION}## Instructions
    what you need, then wait. A human will reply and the reply will be injected
    into this session automatically.${THREAD_HINT}
 
-5. When all steps are complete, close issue #${ISSUE} with a summary:
-   curl -sf -X PATCH \\
-     -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
-     -H 'Content-Type: application/json' \\
-     \"${CODEBERG_API}/issues/${ISSUE}\" \\
-     -d '{\"state\": \"closed\"}'
+### Path A: If this action produces code changes (e.g. config updates, baselines):
+   - Work in the project repo: cd ${PROJECT_REPO_ROOT}
+   - Create and switch to branch: git checkout -b ${BRANCH}
+   - Make your changes, commit, and push: git push origin ${BRANCH}
+   - Follow the phase protocol below — the orchestrator handles PR creation,
+     CI monitoring, and review injection.
 
-6. Environment variables available in your bash sessions:
+### Path B: If this action produces no code changes (investigation, report):
+   - Post results as a comment on issue #${ISSUE}.
+   - Close the issue:
+     curl -sf -X PATCH \\
+       -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
+       -H 'Content-Type: application/json' \\
+       \"${CODEBERG_API}/issues/${ISSUE}\" \\
+       -d '{\"state\": \"closed\"}'
+   - Signal completion: echo \"PHASE:done\" > \"${PHASE_FILE}\"
+
+5. Environment variables available in your bash sessions:
    CODEBERG_TOKEN, CODEBERG_API, CODEBERG_REPO, CODEBERG_WEB, PROJECT_NAME
    (all sourced from ${FACTORY_ROOT}/.env)
 
-**Important**: You do NOT need to create PRs or write a phase file. Just execute
-the formula steps, post comments, and close the issue when done. If the prior
-comments above show work already completed, resume from where it left off."
+If the prior comments above show work already completed, resume from where it
+left off.
+
+${PHASE_PROTOCOL_INSTRUCTIONS}"
 
 # --- Create tmux session ---
 log "creating tmux session: ${SESSION_NAME}"
-if ! create_agent_session "${SESSION_NAME}" "${FACTORY_ROOT}"; then
+if ! create_agent_session "${SESSION_NAME}" "${FACTORY_ROOT}" "${PHASE_FILE}"; then
   log "ERROR: failed to create tmux session"
   exit 1
 fi
@@ -182,31 +238,30 @@ log "initial prompt injected into session"
 matrix_send "action" "⚡ #${ISSUE}: session started — ${ISSUE_TITLE}" \
   "${THREAD_ID}" 2>/dev/null || true
 
-# --- Monitor session until Claude exits or idle timeout ---
-log "monitoring session: ${SESSION_NAME} (idle_timeout=${IDLE_TIMEOUT}s)"
-IDLE_ELAPSED=0
-POLL_INTERVAL=30
-IDLE_MARKER="/tmp/claude-idle-${SESSION_NAME}.ts"
+# --- Monitor phase loop (shared with dev-agent) ---
+status "monitoring phase: ${PHASE_FILE} (action agent)"
+monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change "$SESSION_NAME"
 
-while tmux has-session -t "${SESSION_NAME}" 2>/dev/null; do
-  sleep "$POLL_INTERVAL"
-
-  # Use the Stop hook idle marker to distinguish active vs idle:
-  # marker exists → Claude finished responding and is at the prompt (idle)
-  # marker absent → Claude is mid-turn or hasn't started yet (active)
-  if [ -f "$IDLE_MARKER" ]; then
-    IDLE_ELAPSED=$((IDLE_ELAPSED + POLL_INTERVAL))
-  else
-    IDLE_ELAPSED=0
-  fi
-
-  if [ "$IDLE_ELAPSED" -ge "$IDLE_TIMEOUT" ]; then
-    log "idle timeout (${IDLE_TIMEOUT}s) — killing session for issue #${ISSUE}"
-    matrix_send "action" "⚠️ #${ISSUE}: session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
-      "${THREAD_ID}" 2>/dev/null || true
-    agent_kill_session "${SESSION_NAME}"
-    break
-  fi
-done
+# Handle exit reason from monitor_phase_loop
+case "${_MONITOR_LOOP_EXIT:-}" in
+  idle_timeout)
+    notify_ctx \
+      "session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
+      "session idle for $((IDLE_TIMEOUT / 3600))h — killed"
+    # Escalate to supervisor (idle_prompt already escalated via _on_phase_change callback)
+    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    ;;
+  idle_prompt)
+    # Notification + escalation already handled by _on_phase_change(PHASE:failed) callback
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    ;;
+  done)
+    # Belt-and-suspenders: callback handles primary cleanup,
+    # but ensure sentinel files are removed if callback was interrupted
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE"
+    ;;
+esac
 
 log "action-agent finished for issue #${ISSUE}"

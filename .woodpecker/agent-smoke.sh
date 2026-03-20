@@ -170,7 +170,7 @@ check_script vault/vault-fire.sh
 check_script vault/vault-poll.sh
 check_script vault/vault-reject.sh
 check_script action/action-poll.sh
-check_script action/action-agent.sh
+check_script action/action-agent.sh    dev/phase-handler.sh
 
 echo "function resolution check done"
 

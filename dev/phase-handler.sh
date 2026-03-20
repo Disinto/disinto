@@ -1,23 +1,96 @@
 #!/usr/bin/env bash
 # dev/phase-handler.sh — Phase callback functions for dev-agent.sh
 #
-# Source this file from dev-agent.sh after lib/agent-session.sh is loaded.
-# Defines: post_refusal_comment(), _on_phase_change()
+# Source this file from agent orchestrators after lib/agent-session.sh is loaded.
+# Defines: post_refusal_comment(), _on_phase_change(), build_phase_protocol_prompt()
 #
-# Required globals from dev-agent.sh:
+# Required globals (set by calling agent before or after sourcing):
 #   ISSUE, CODEBERG_TOKEN, API, CODEBERG_WEB, PROJECT_NAME, FACTORY_ROOT
-#   PR_NUMBER, BRANCH, PHASE_FILE, WORKTREE, IMPL_SUMMARY_FILE, THREAD_FILE
+#   BRANCH, PHASE_FILE, WORKTREE, IMPL_SUMMARY_FILE, THREAD_FILE
 #   PRIMARY_BRANCH, SESSION_NAME, LOGFILE, ISSUE_TITLE
-#   CI_POLL_TIMEOUT, MAX_CI_FIXES, MAX_REVIEW_ROUNDS, REVIEW_POLL_TIMEOUT
-#   CI_RETRY_COUNT, CI_FIX_COUNT, REVIEW_ROUND, CLAIMED
 #   WOODPECKER_REPO_ID, WOODPECKER_TOKEN, WOODPECKER_SERVER
 #
-# Calls back to dev-agent.sh-defined helpers:
-#   cleanup_worktree(), cleanup_labels()
+# Globals with defaults (agents can override after sourcing):
+#   PR_NUMBER, CI_POLL_TIMEOUT, MAX_CI_FIXES, MAX_REVIEW_ROUNDS,
+#   REVIEW_POLL_TIMEOUT, CI_RETRY_COUNT, CI_FIX_COUNT, REVIEW_ROUND,
+#   CLAIMED, PHASE_POLL_INTERVAL
+#
+# Calls back to agent-defined helpers:
+#   cleanup_worktree(), cleanup_labels(), notify(), notify_ctx(), status(), log()
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2154  # globals are set in dev-agent.sh before calling
 # shellcheck disable=SC2034  # CLAIMED is read by cleanup() in dev-agent.sh
+
+# --- Default globals (agents can override after sourcing) ---
+: "${CI_POLL_TIMEOUT:=1800}"
+: "${REVIEW_POLL_TIMEOUT:=10800}"
+: "${MAX_CI_FIXES:=3}"
+: "${MAX_REVIEW_ROUNDS:=5}"
+: "${CI_RETRY_COUNT:=0}"
+: "${CI_FIX_COUNT:=0}"
+: "${REVIEW_ROUND:=0}"
+: "${PR_NUMBER:=}"
+: "${CLAIMED:=false}"
+: "${PHASE_POLL_INTERVAL:=30}"
+
+# --- Build phase protocol prompt (shared across agents) ---
+# Generates the phase-signaling instructions for Claude prompts.
+# Args: phase_file summary_file branch
+# Output: The protocol text (stdout)
+build_phase_protocol_prompt() {
+  local _pf="$1" _sf="$2" _br="$3"
+  cat <<_PHASE_PROTOCOL_EOF_
+## Phase-Signaling Protocol (REQUIRED)
+
+You are running in a persistent tmux session managed by an orchestrator.
+Communicate progress by writing to the phase file. The orchestrator watches
+this file and injects events (CI results, review feedback) back into this session.
+
+### Key files
+\`\`\`
+PHASE_FILE="${_pf}"
+SUMMARY_FILE="${_sf}"
+\`\`\`
+
+### Phase transitions — write these exactly:
+
+**After committing and pushing your branch:**
+\`\`\`bash
+git push origin ${_br}
+# Write a short summary of what you implemented:
+printf '%s' "<your summary>" > "\${SUMMARY_FILE}"
+# Signal the orchestrator to create the PR and watch for CI:
+echo "PHASE:awaiting_ci" > "${_pf}"
+\`\`\`
+Then STOP and wait. The orchestrator will inject CI results.
+
+**When you receive a "CI passed" injection:**
+\`\`\`bash
+echo "PHASE:awaiting_review" > "${_pf}"
+\`\`\`
+Then STOP and wait. The orchestrator will inject review feedback.
+
+**When you receive a "CI failed:" injection:**
+Fix the CI issue, commit, push, then:
+\`\`\`bash
+echo "PHASE:awaiting_ci" > "${_pf}"
+\`\`\`
+Then STOP and wait.
+
+**When you receive a "Review: REQUEST_CHANGES" injection:**
+Address ALL review feedback, commit, push, then:
+\`\`\`bash
+echo "PHASE:awaiting_ci" > "${_pf}"
+\`\`\`
+(CI runs again after each push — always write awaiting_ci, not awaiting_review)
+
+**On unrecoverable failure:**
+\`\`\`bash
+printf 'PHASE:failed\nReason: %s\n' "describe what failed" > "${_pf}"
+\`\`\`
+_PHASE_PROTOCOL_EOF_
+}
 
 # --- Merge helper ---
 # do_merge — attempt to merge PR via Codeberg API.
@@ -489,12 +562,17 @@ Instructions:
   # ── PHASE: done ─────────────────────────────────────────────────────────────
   # PR merged and issue closed (by orchestrator or Claude). Just clean up local state.
   elif [ "$phase" = "PHASE:done" ]; then
-    status "phase done — PR #${PR_NUMBER:-?} merged, cleaning up"
-
-    # Notify Matrix (issue already closed and labels removed via API)
-    notify_ctx \
-      "✅ PR #${PR_NUMBER:-?} merged! Issue #${ISSUE} done." \
-      "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER:-?}'>#${PR_NUMBER:-?}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+    if [ -n "${PR_NUMBER:-}" ]; then
+      status "phase done — PR #${PR_NUMBER} merged, cleaning up"
+      notify_ctx \
+        "✅ PR #${PR_NUMBER} merged! Issue #${ISSUE} done." \
+        "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+    else
+      status "phase done — issue #${ISSUE} complete, cleaning up"
+      notify_ctx \
+        "✅ Issue #${ISSUE} done." \
+        "✅ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+    fi
 
     # Belt-and-suspenders: ensure in-progress label removed (idempotent)
     cleanup_labels
