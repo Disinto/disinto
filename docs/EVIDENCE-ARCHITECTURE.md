@@ -46,17 +46,17 @@ The planner will read `evidence/` — not Analytics, not Ponder, not DigitalOcea
 
 ## Process Types
 
-### Sense processes (read-only)
+### Sense processes
 
-Will produce evidence. Change nothing. Safe to run anytime.
+Produce evidence without modifying the project under test. Some sense processes are pure reads (API calls, system stats); others — `run-holdout` and `run-user-test` — spawn a Docker stack (containers, volumes, networks) that requires the Docker daemon and leaves ephemeral state on the host until explicitly torn down. These are **not** safe to treat as no-op: they consume resources and mutate host-level Docker state.
 
-| Process | Measures | Platform | Status |
-|---------|----------|----------|--------|
-| `run-holdout` | Code quality against blind scenarios | Playwright + docker stack | **Implemented** — `evaluate.sh` exists (harb #977) |
-| `run-user-test` | UX quality across 5 personas | Playwright + docker stack | **Implemented** — `run-usertest.sh` exists (harb #978) |
-| `measure-resources` | Infra state (CPU, RAM, disk, containers) | System / DigitalOcean API | **Planned** |
-| `measure-protocol` | On-chain health (floor, reserves, volume) | Ponder GraphQL | **Planned** |
-| `measure-funnel` | User conversion and retention | Analytics API | **Planned** |
+| Process | Measures | Platform | Resource profile | Status |
+|---------|----------|----------|-----------------|--------|
+| `run-holdout` | Code quality against blind scenarios | Playwright + docker stack | Spawns Docker stack (containers + volumes + networks); requires Docker daemon; leaves ephemeral state until torn down | **Implemented** — `evaluate.sh` exists (harb #977) |
+| `run-user-test` | UX quality across 5 personas | Playwright + docker stack | Spawns Docker stack (containers + volumes + networks); requires Docker daemon; leaves ephemeral state until torn down | **Implemented** — `run-usertest.sh` exists (harb #978) |
+| `measure-resources` | Infra state (CPU, RAM, disk, containers) | System / DigitalOcean API | Read-only API calls. Safe to run anytime | **Planned** |
+| `measure-protocol` | On-chain health (floor, reserves, volume) | Ponder GraphQL | Read-only API calls. Safe to run anytime | **Planned** |
+| `measure-funnel` | User conversion and retention | Analytics API | Read-only API calls. Safe to run anytime | **Planned** |
 
 ### Mutation processes (create change)
 
@@ -122,7 +122,7 @@ When all dimensions pass their thresholds, deployment becomes the obvious next a
 
 The planner will optimize resource allocation across all processes. When the box is idle, it will find the highest-value use of compute based on evidence staleness and current gaps.
 
-Sense processes are cheap — run them freely to keep evidence fresh.
+Pure-read sense processes (API queries, system stats) are cheap — run them freely to keep evidence fresh. Docker-based sense processes (`run-holdout`, `run-user-test`) are heavier: they spin up full stacks and should be scheduled when the box has capacity.
 Mutation processes are expensive — run them when evidence justifies the cost.
 
 The planner will read evidence recency and decide:
