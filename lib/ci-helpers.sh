@@ -24,9 +24,9 @@ diff_has_code_files() {
 # Returns 0 if PR has code files (CI required), 1 if non-code only (CI not required).
 ci_required_for_pr() {
   local pr_num="$1"
-  local files
-  files=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${CODEBERG_API}/pulls/${pr_num}/files" | jq -r '.[].filename' 2>/dev/null) || return 0
+  local files all_json
+  all_json=$(codeberg_api_all "/pulls/${pr_num}/files") || return 0
+  files=$(printf '%s' "$all_json" | jq -r '.[].filename' 2>/dev/null) || return 0
   if [ -z "$files" ]; then
     return 0  # empty file list — require CI as safety default
   fi
