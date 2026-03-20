@@ -275,12 +275,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "PR #${HAS_PR} has no code files — treating CI as passed"
     fi
 
-    # Check formal reviews
-    HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/pulls/${HAS_PR}/reviews" | \
+    # Check formal reviews (single fetch to avoid race window)
+    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/pulls/${HAS_PR}/reviews") || true
+    HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
-    HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/pulls/${HAS_PR}/reviews" | \
+    HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
@@ -355,11 +355,12 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     log "PR #${PR_NUM} has no code files — treating CI as passed"
   fi
 
-  HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/pulls/${PR_NUM}/reviews" | \
+  # Single fetch to avoid race window between review checks
+  REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${PR_NUM}/reviews") || true
+  HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
     jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
-  HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${API}/pulls/${PR_NUM}/reviews" | \
+  HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
 
   # Spawn agent to merge if approved + CI green
@@ -443,11 +444,12 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       log "PR #${EXISTING_PR} has no code files — treating CI as passed"
     fi
 
-    HAS_APPROVE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/pulls/${EXISTING_PR}/reviews" | \
+    # Single fetch to avoid race window between review checks
+    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/pulls/${EXISTING_PR}/reviews") || true
+    HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
-    HAS_CHANGES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/pulls/${EXISTING_PR}/reviews" | \
+    HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "REQUEST_CHANGES")] | length') || true
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
