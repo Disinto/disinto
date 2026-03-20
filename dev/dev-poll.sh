@@ -20,6 +20,11 @@ export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 
+# Gitea labels API requires []int64 — look up the "underspecified" label ID once
+UNDERSPECIFIED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
+UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
+
 # Track CI fix attempts per PR to avoid infinite respawn loops
 CI_FIX_TRACKER="${FACTORY_ROOT}/dev/ci-fixes-${PROJECT_NAME:-harb}.json"
 CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
@@ -606,7 +611,7 @@ if [ -f "$PREFLIGHT_RESULT" ]; then
       curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${READY_ISSUE}/labels" \
-        -d '{"labels":["underspecified"]}' >/dev/null 2>&1 || true
+        -d "{\"labels\":[${UNDERSPECIFIED_LABEL_ID}]}" >/dev/null 2>&1 || true
       ;;
     already_done)
       log "#${READY_ISSUE} already done"

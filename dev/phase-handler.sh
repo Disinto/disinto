@@ -512,6 +512,9 @@ Instructions:
     BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
       | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
     BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
+    UNDERSPECIFIED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+      | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
+    UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
 
     # Check if this is a refusal (Claude wrote refusal JSON to IMPL_SUMMARY_FILE)
     REFUSAL_JSON=""
@@ -561,7 +564,7 @@ A maintainer should split this issue or add more detail to the spec."
             -H "Authorization: token ${CODEBERG_TOKEN}" \
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}/labels" \
-            -d '{"labels":["underspecified"]}' >/dev/null 2>&1 || true
+            -d "{\"labels\":[${UNDERSPECIFIED_LABEL_ID}]}" >/dev/null 2>&1 || true
           curl -sf -X DELETE \
             -H "Authorization: token ${CODEBERG_TOKEN}" \
             "${API}/issues/${ISSUE}/labels/backlog" >/dev/null 2>&1 || true
