@@ -259,7 +259,7 @@ Format:
 
 Keep each entry concise — 30-50 lines max.
 
-### 2. Memory update (gitignored, local only)
+### 2. Memory update (committed to git)
 
 Write to: $FACTORY_ROOT/planner/MEMORY.md (replace the entire file)
 
@@ -287,7 +287,7 @@ title = "One commit with all file changes, push, create PR"
 description = """
 Collect all file changes from this run into a single commit.
 API calls (issue creation, prediction triage) already happened during the
-run — only file changes (journal entries) need the PR.
+run — only file changes (journal entries, MEMORY.md) need the PR.
 
 1. Check for staged or unstaged changes:
      cd "$PROJECT_REPO_ROOT"
@@ -299,8 +299,9 @@ run — only file changes (journal entries) need the PR.
    a. Create a branch:
         BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
         git checkout -B "$BRANCH"
-   b. Stage journal entries:
+   b. Stage journal entries and planner memory:
         git add planner/journal/ 2>/dev/null || true
+        git add planner/MEMORY.md 2>/dev/null || true
    c. Stage any other tracked files modified during the run:
         git add -u
    d. Check if there is anything to commit:
