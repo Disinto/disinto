@@ -21,9 +21,9 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  awk '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)/ {
-    sub(/^[[:space:]]+/, "")
-    sub(/[[:space:]]*\(\).*/, "")
+  awk '/^[ \t]*[a-zA-Z_][a-zA-Z0-9_]+[ \t]*\(\)/ {
+    sub(/^[ \t]+/, "")
+    sub(/[ \t]*\(\).*/, "")
     print
   }' "$f" 2>/dev/null | sort -u || true
 }
@@ -157,7 +157,7 @@ check_script dev/dev-agent.sh          dev/phase-handler.sh
 check_script dev/phase-handler.sh      dev/dev-agent.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
-check_script gardener/gardener-agent.sh
+check_script gardener/gardener-agent.sh  lib/agent-session.sh
 check_script gardener/gardener-poll.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh
