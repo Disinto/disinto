@@ -166,7 +166,7 @@ resource+leverage gap analysis — reasons about VISION.md, RESOURCES.md,
 formula catalog, and project state to create up to 5 total issues (including
 promotions) prioritized by leverage. Phase 3 (journal-and-memory): write
 daily journal entry (committed to git) and update `planner/MEMORY.md`
-(gitignored, local only). Phase 4 (commit-and-pr): one commit with all file
+(committed to git). Phase 4 (commit-and-pr): one commit with all file
 changes, push, create PR. AGENTS.md maintenance is handled by the
 [Gardener](#gardener-gardener).
 
@@ -183,7 +183,7 @@ issues — the planner is a nervous system component, not work.
   prediction-triage, strategic-planning, journal-and-memory, commit-and-pr)
   with `needs` dependencies. Claude executes all steps in a single interactive
   session with tool access
-- `planner/MEMORY.md` — Persistent memory across runs (gitignored, local only)
+- `planner/MEMORY.md` — Persistent memory across runs (committed to git)
 - `planner/journal/*.md` — Daily raw logs from each planner run (committed to git)
 
 **Future direction**: The [Predictor](#predictor-planner) already reads `evidence/` JSON and files prediction issues for the planner to triage. The next step is evidence-gated deployment (see `docs/EVIDENCE-ARCHITECTURE.md`): replacing human "ship it" decisions with automated gates across dimensions (holdout, red-team, user-test, evolution fitness, protocol metrics, funnel). Not yet implemented.
