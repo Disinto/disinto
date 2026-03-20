@@ -301,8 +301,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   # Formula guard: formula-labeled issues should not be worked on by dev-agent.
   # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
   ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
-  if echo "$ORPHAN_LABELS" | grep -qw 'formula'; then
-    log "issue #${ISSUE_NUM} has 'formula' label — removing in-progress, skipping"
+  SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|action|prediction/backlog|prediction/unreviewed)$' | head -1) || true
+  if [ -n "$SKIP_LABEL" ]; then
+    log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
     curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
       "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
     exit 0
@@ -510,8 +511,9 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   # Formula guard: formula-labeled issues must not be picked up by dev-agent.
   # A formula issue that accidentally acquires the backlog label should be skipped.
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
-  if echo "$ISSUE_LABELS" | grep -qw 'formula'; then
-    log "issue #${ISSUE_NUM} has 'formula' label — skipping in backlog scan"
+  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|action|prediction/backlog|prediction/unreviewed)$' | head -1) || true
+  if [ -n "$SKIP_LABEL" ]; then
+    log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — skipping in backlog scan"
     continue
   fi
 
