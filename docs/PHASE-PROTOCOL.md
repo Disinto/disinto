@@ -92,6 +92,36 @@ PHASE:failed          → write escalation to supervisor/escalations-{project}.j
                          restore backlog label on issue
 ```
 
+### `idle_prompt` exit reason
+
+`monitor_phase_loop` (in `lib/agent-session.sh`) can exit with
+`_MONITOR_LOOP_EXIT=idle_prompt`. This happens when Claude returns to the
+interactive prompt (`❯`) for **3 consecutive polls** without writing any phase
+signal to the phase file.
+
+**Trigger conditions:**
+- The phase file is empty (no phase has ever been written), **and**
+- The Stop-hook idle marker (`/tmp/claude-idle-{session}.ts`) is present
+  (meaning Claude finished a response), **and**
+- This state persists across 3 consecutive poll cycles.
+
+**Side-effects:**
+1. The tmux session is **killed before** the callback is invoked — callbacks
+   that handle `PHASE:failed` must not assume the session is alive.
+2. The callback is invoked with `PHASE:failed` even though the phase file is
+   empty. This is the only situation where `PHASE:failed` is passed to the
+   callback without the phase file actually containing that value.
+
+**Agent requirements:**
+- **Callback (`_on_phase_change` / `formula_phase_callback`):** Must handle
+  `PHASE:failed` defensively — the session is already dead, so any tmux
+  send-keys or session-dependent logic must be skipped or guarded.
+- **Post-loop exit handler (`case $_MONITOR_LOOP_EXIT`):** Must include an
+  `idle_prompt)` branch. Typical actions: log the event, clean up temp files,
+  and (for agents that use escalation) write an escalation entry or notify via
+  Matrix. See `dev/dev-agent.sh`, `action/action-agent.sh`, and
+  `gardener/gardener-agent.sh` for reference implementations.
+
 ## Crash Recovery
 
 If the tmux session dies (Claude crash, OOM, kernel OOM-kill, compaction):
