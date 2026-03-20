@@ -10,6 +10,8 @@
 #   load_formula        FORMULA_FILE       — sets FORMULA_CONTENT
 #   build_context_block FILE [FILE ...]    — sets CONTEXT_BLOCK
 #   start_formula_session SESSION WORKDIR PHASE_FILE — create tmux + claude
+#   build_prompt_footer    [EXTRA_API]      — sets PROMPT_FOOTER (API ref + env + phase)
+#   run_formula_and_monitor AGENT [TIMEOUT] — session start, inject, monitor, log
 #   formula_phase_callback PHASE           — standard crash-recovery callback
 #
 # Requires: lib/agent-session.sh sourced first (for create_agent_session,
@@ -122,4 +124,79 @@ formula_phase_callback() {
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
   esac
+}
+
+# ── Prompt + monitor helpers ──────────────────────────────────────────────
+
+# build_prompt_footer [EXTRA_API_LINES]
+# Assembles the common Codeberg API reference + environment + phase protocol
+# block for formula prompts.  Sets PROMPT_FOOTER.
+# Pass additional API endpoint lines (pre-formatted, newline-prefixed) via $1.
+# Requires globals: CODEBERG_API, FACTORY_ROOT, PROJECT_REPO_ROOT,
+#                   PRIMARY_BRANCH, PHASE_FILE.
+build_prompt_footer() {
+  local extra_api="${1:-}"
+  # shellcheck disable=SC2034  # consumed by the calling script's PROMPT
+  PROMPT_FOOTER="## Codeberg API reference
+Base URL: ${CODEBERG_API}
+Auth header: -H \"Authorization: token \$CODEBERG_TOKEN\"
+  Read issue:  curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/issues/{number}' | jq '.body'
+  Create issue: curl -sf -X POST -H \"Authorization: token \$CODEBERG_TOKEN\" -H 'Content-Type: application/json' '${CODEBERG_API}/issues' -d '{\"title\":\"...\",\"body\":\"...\",\"labels\":[LABEL_ID]}'${extra_api}
+  List labels: curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/labels'
+NEVER echo or include the actual token value in output — always reference \$CODEBERG_TOKEN.
+
+## Environment
+FACTORY_ROOT=${FACTORY_ROOT}
+PROJECT_REPO_ROOT=${PROJECT_REPO_ROOT}
+PRIMARY_BRANCH=${PRIMARY_BRANCH}
+PHASE_FILE=${PHASE_FILE}
+
+## Phase protocol (REQUIRED)
+When all work is done:
+  echo 'PHASE:done' > '${PHASE_FILE}'
+On unrecoverable error:
+  printf 'PHASE:failed\nReason: %s\n' 'describe error' > '${PHASE_FILE}'"
+}
+
+# run_formula_and_monitor AGENT_NAME [TIMEOUT]
+# Starts the formula session, injects PROMPT, monitors phase, and logs result.
+# Requires globals: SESSION_NAME, PHASE_FILE, PROJECT_REPO_ROOT, PROMPT,
+#                   CODEBERG_REPO, CLAUDE_MODEL (exported).
+# shellcheck disable=SC2154  # SESSION_NAME, PHASE_FILE, PROJECT_REPO_ROOT, PROMPT set by caller
+run_formula_and_monitor() {
+  local agent_name="$1"
+  local timeout="${2:-7200}"
+
+  if ! start_formula_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; then
+    exit 1
+  fi
+
+  agent_inject_into_session "$SESSION_NAME" "$PROMPT"
+  log "Prompt sent to tmux session"
+  matrix_send "$agent_name" "${agent_name^} session started for ${CODEBERG_REPO}" 2>/dev/null || true
+
+  log "Monitoring phase file: ${PHASE_FILE}"
+  _FORMULA_CRASH_COUNT=0
+
+  monitor_phase_loop "$PHASE_FILE" "$timeout" "formula_phase_callback"
+
+  FINAL_PHASE=$(read_phase "$PHASE_FILE")
+  log "Final phase: ${FINAL_PHASE:-none}"
+
+  if [ "$FINAL_PHASE" != "PHASE:done" ]; then
+    case "${_MONITOR_LOOP_EXIT:-}" in
+      idle_prompt)
+        log "${agent_name}: Claude returned to prompt without writing phase signal"
+        ;;
+      idle_timeout)
+        log "${agent_name}: timed out with no phase signal"
+        ;;
+      *)
+        log "${agent_name} finished without PHASE:done (phase: ${FINAL_PHASE:-none}, exit: ${_MONITOR_LOOP_EXIT:-})"
+        ;;
+    esac
+  fi
+
+  matrix_send "$agent_name" "${agent_name^} session finished (${FINAL_PHASE:-no phase})" 2>/dev/null || true
+  log "--- ${agent_name^} run done ---"
 }
