@@ -18,9 +18,10 @@ disinto/
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — files action issue for run-gardener formula
 │                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
+├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
 │                  planner/journal/ — daily raw logs from each planner run
-│                  prediction-poll.sh, prediction-agent.sh — evidence-based predictions
+│                  prediction-poll.sh, prediction-agent.sh — legacy predictor (superseded by predictor/)
 ├── supervisor/    supervisor-poll.sh — health monitoring
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
@@ -191,43 +192,54 @@ issues — the planner is a nervous system component, not work.
 - `planner/MEMORY.md` — Persistent memory across runs (committed to git)
 - `planner/journal/*.md` — Daily raw logs from each planner run (committed to git)
 
-**Future direction**: The [Predictor](#predictor-planner) already reads `evidence/` JSON and files prediction issues for the planner to triage. The next step is evidence-gated deployment (see `docs/EVIDENCE-ARCHITECTURE.md`): replacing human "ship it" decisions with automated gates across dimensions (holdout, red-team, user-test, evolution fitness, protocol metrics, funnel). Not yet implemented.
+**Future direction**: The [Predictor](#predictor-predictor) files prediction issues daily for the planner to triage. The next step is evidence-gated deployment (see `docs/EVIDENCE-ARCHITECTURE.md`): replacing human "ship it" decisions with automated gates across dimensions (holdout, red-team, user-test, evolution fitness, protocol metrics, funnel). Not yet implemented.
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to opus by planner-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
-### Predictor (`planner/`)
+### Predictor (`predictor/`)
 
-**Role**: Evidence-based pattern detection (the "goblin"). Reads structured
-JSON from the project's `evidence/` directory (red-team, evolution, user-test,
-holdout, resources, protocol) plus secondary Codeberg signals (recent issues
-and merged PRs) and system resource snapshots. Asks Claude to identify
-staleness, regressions, opportunities, and risks, then files up to 5
+**Role**: Infrastructure pattern detection (the "goblin"). Runs a 3-step
+formula (preflight → collect-signals → analyze-and-predict) via interactive
+tmux Claude session (sonnet). Collects disinto-specific signals: CI pipeline
+trends (Woodpecker), stale issues, agent health (tmux sessions + logs), and
+resource patterns (RAM, disk, load, containers). Files up to 5
 `prediction/unreviewed` issues for the [Planner](#planner-planner) to triage.
-The predictor MUST NOT emit feature work — only observations about evidence
-state, metric trends, and system conditions.
+The predictor MUST NOT emit feature work — only observations about CI health,
+issue staleness, agent status, and system conditions.
 
-**Trigger**: `prediction-poll.sh` runs hourly via cron. It iterates over all
-`projects/*.toml` files and runs `prediction-agent.sh` for each project.
-Guarded by a global lock (`/tmp/prediction-poll.lock`) and a memory check
-(skips if available RAM < 2000 MB).
+**Trigger**: `predictor-run.sh` runs daily at 06:00 UTC via cron (1h before
+the planner at 07:00). Guarded by PID lock (`/tmp/predictor-run.lock`) and
+memory check (skips if available RAM < 2000 MB).
 
 **Key files**:
-- `planner/prediction-poll.sh` — Cron wrapper: lock, memory guard, iterates projects, calls prediction-agent.sh per project
-- `planner/prediction-agent.sh` — Scans `evidence/` subdirectories for latest + previous JSON, fetches recent Codeberg activity, collects system resource snapshot, builds prompt, invokes `claude -p --model sonnet` (one-shot), parses JSON output lines, creates `prediction/unreviewed` issues on Codeberg, notifies Matrix
+- `predictor/predictor-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
+  sources disinto project config, builds prompt with formula + Codeberg API
+  reference, creates tmux session (sonnet), monitors phase file, handles crash
+  recovery via `run_formula_and_monitor`
+- `formulas/run-predictor.toml` — Execution spec: three steps (preflight,
+  collect-signals, analyze-and-predict) with `needs` dependencies. Claude
+  collects signals and files prediction issues in a single interactive session
+
+**Supersedes**: The legacy predictor (`planner/prediction-poll.sh` +
+`planner/prediction-agent.sh`) used `claude -p` one-shot, read `evidence/`
+JSON, and ran hourly. This formula-based predictor replaces it with direct
+CI/issues/logs signal collection and interactive Claude sessions, matching the
+planner's tmux+formula pattern.
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
-- `CLAUDE_TIMEOUT` — Max seconds for the Claude invocation (default 7200)
+- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
+- `WOODPECKER_TOKEN`, `WOODPECKER_SERVER` — CI pipeline trend queries (optional; skipped if unset)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 
-**Lifecycle**: prediction-poll.sh (hourly cron) → lock + memory guard →
-for each project TOML: prediction-agent.sh → scan `evidence/` →
-`claude -p --model sonnet` → parse JSON predictions → create
-`prediction/unreviewed` issues → Matrix notification. The planner's Phase 1.5
-later triages these predictions into action/backlog issues or dismisses them.
+**Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →
+load formula + context → create tmux session → Claude collects signals
+(CI trends, stale issues, agent health, resources) → dedup against existing
+open predictions → file `prediction/unreviewed` issues → `PHASE:done`.
+The planner's Phase 1 later triages these predictions.
 
 ### Action (`action/`)
 
@@ -296,7 +308,7 @@ sourced as needed.
 | `lib/load-project.sh` | Parses a `projects/*.toml` file into env vars (`PROJECT_NAME`, `CODEBERG_REPO`, `WOODPECKER_REPO_ID`, monitoring toggles, Matrix config, etc.). | env.sh (when `PROJECT_TOML` is set), supervisor-poll (per-project iteration) |
 | `lib/parse-deps.sh` | Extracts dependency issue numbers from an issue body (stdin → stdout, one number per line). Matches `## Dependencies` / `## Depends on` / `## Blocked by` sections and inline `depends on #N` patterns. Not sourced — executed via `bash lib/parse-deps.sh`. | dev-poll, supervisor-poll |
 | `lib/matrix_listener.sh` | Long-poll Matrix sync daemon. Dispatches thread replies to the correct agent via well-known files (`/tmp/{agent}-escalation-reply`). Handles supervisor, gardener, dev, review, vault, and action reply routing. Run as systemd service. | Standalone daemon |
-| `lib/formula-session.sh` | `acquire_cron_lock()`, `check_memory()`, `load_formula()`, `build_context_block()`, `start_formula_session()`, `formula_phase_callback()` — shared helpers for formula-driven cron agents (lock, memory guard, formula loading, tmux session, crash recovery). | planner-run.sh |
+| `lib/formula-session.sh` | `acquire_cron_lock()`, `check_memory()`, `load_formula()`, `build_context_block()`, `start_formula_session()`, `formula_phase_callback()`, `build_prompt_footer()`, `run_formula_and_monitor()` — shared helpers for formula-driven cron agents (lock, memory guard, formula loading, prompt assembly, tmux session, monitor loop, crash recovery). | planner-run.sh, predictor-run.sh |
 | `lib/file-action-issue.sh` | `file_action_issue()` — dedup check, label lookup, and issue creation for formula-driven cron wrappers. Sets `FILED_ISSUE_NUM` on success. | gardener-run.sh |
 | `lib/agent-session.sh` | Shared tmux + Claude session helpers: `create_agent_session()`, `inject_formula()`, `agent_wait_for_claude_ready()`, `agent_inject_into_session()`, `agent_kill_session()`, `monitor_phase_loop()`, `read_phase()`. `create_agent_session(session, workdir, [phase_file])` optionally installs a PostToolUse hook (matcher `Bash\|Write`) that detects phase file writes in real-time — when Claude writes to the phase file, the hook writes a marker so `monitor_phase_loop` reacts on the next poll instead of waiting for mtime changes. Also installs a StopFailure hook (matcher `rate_limit\|server_error\|authentication_failed\|billing_error`) that writes `PHASE:failed` with an `api_error` reason to the phase file and touches the phase-changed marker, so the orchestrator discovers API errors within one poll cycle instead of waiting for idle timeout. When `MATRIX_THREAD_ID` is exported, also installs a Stop hook (`on-stop-matrix.sh`) that streams each Claude response to the Matrix thread. `monitor_phase_loop` sets `_MONITOR_LOOP_EXIT` to one of: `done`, `idle_timeout`, `idle_prompt` (Claude returned to `❯` for 3 consecutive polls without writing any phase — callback invoked with `PHASE:failed`, session already dead), `crashed`, or a `PHASE:*` string. Agents must handle `idle_prompt` in both their callback and their post-loop exit handler. | dev-agent.sh, gardener-agent.sh, action-agent.sh |
 
@@ -331,7 +343,7 @@ Issues flow through these states:
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |
-| `prediction/unreviewed` | Unprocessed prediction filed by predictor. | prediction-agent.sh |
+| `prediction/unreviewed` | Unprocessed prediction filed by predictor. | predictor-run.sh |
 | `prediction/backlog` | Prediction triaged as WATCH — not urgent, tracked. | Planner (triage-predictions step) |
 | `prediction/actioned` | Prediction promoted or dismissed by planner. | Planner (triage-predictions step) |
 | `action` | Operational task for the action-agent to execute via formula. | Planner, humans |

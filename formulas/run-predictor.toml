@@ -46,7 +46,7 @@ and store the results for the analysis step.
 
 Fetch recent builds from Woodpecker CI:
   curl -sf -H "Authorization: Bearer $WOODPECKER_TOKEN" \
-    "${WOODPECKER_URL}/api/repos/${WOODPECKER_REPO_ID}/pipelines?page=1&perPage=20"
+    "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines?page=1&perPage=20"
 
 Look for:
 - Build failure rate over last 20 builds
@@ -54,7 +54,7 @@ Look for:
 - Builds stuck in running/pending state
 - Time since last successful build
 
-If WOODPECKER_TOKEN or WOODPECKER_URL are not set, skip CI signals and note
+If WOODPECKER_TOKEN or WOODPECKER_SERVER are not set, skip CI signals and note
 "CI signals unavailable — WOODPECKER_TOKEN not configured".
 
 ### 2. Stale issues
@@ -183,12 +183,5 @@ For each prediction, create a Codeberg issue with the `prediction/unreviewed` la
 - Prefer high-confidence predictions backed by concrete data
 - If no meaningful patterns found, file zero issues — that is a valid outcome
 
-## Completion
-
-When done (whether predictions were filed or not):
-  echo 'PHASE:done' > '$PHASE_FILE'
-
-On unrecoverable error:
-  printf 'PHASE:failed\nReason: %s\n' 'describe error' > '$PHASE_FILE'
 """
 needs = ["collect-signals"]
