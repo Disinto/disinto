@@ -527,7 +527,7 @@ json.dump(d, open(f, 'w'))
 
   # Dev-agent health (only if monitoring enabled)
   if [ "${CHECK_DEV_AGENT:-true}" = "true" ]; then
-    DEV_LOCK="/tmp/dev-agent.lock"
+    DEV_LOCK="/tmp/dev-agent-${PROJECT_NAME}.lock"
     if [ -f "$DEV_LOCK" ]; then
       DEV_PID=$(cat "$DEV_LOCK" 2>/dev/null)
       if ! kill -0 "$DEV_PID" 2>/dev/null; then
