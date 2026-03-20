@@ -152,6 +152,36 @@ create_agent_session() {
     fi
   fi
 
+  # Install SessionEnd hook for guaranteed cleanup: when the Claude session
+  # exits (clean or crash), write a termination marker so monitor_phase_loop
+  # detects the exit faster than tmux has-session polling alone.
+  local exit_marker="/tmp/claude-exited-${session}.ts"
+  local session_end_hook_script="${FACTORY_ROOT}/lib/hooks/on-session-end.sh"
+  if [ -x "$session_end_hook_script" ]; then
+    local session_end_hook_cmd="${session_end_hook_script} ${exit_marker}"
+    if [ -f "$settings" ]; then
+      jq --arg cmd "$session_end_hook_cmd" '
+        if (.hooks.SessionEnd // [] | any(.[]; .hooks[]?.command == $cmd))
+        then .
+        else .hooks.SessionEnd = (.hooks.SessionEnd // []) + [{
+          matcher: "",
+          hooks: [{type: "command", command: $cmd}]
+        }]
+        end
+      ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+    else
+      jq -n --arg cmd "$session_end_hook_cmd" '{
+        hooks: {
+          SessionEnd: [{
+            matcher: "",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+        }
+      }' > "$settings"
+    fi
+  fi
+  rm -f "$exit_marker"
+
   # Install Stop hook for Matrix streaming: when MATRIX_THREAD_ID is set,
   # each Claude response is posted to the Matrix thread so humans can follow.
   local matrix_hook_script="${FACTORY_ROOT}/lib/hooks/on-stop-matrix.sh"
@@ -220,8 +250,10 @@ monitor_phase_loop() {
     sleep "$poll_interval"
     idle_elapsed=$(( idle_elapsed + poll_interval ))
 
-    # Session health check
-    if ! tmux has-session -t "${_session}" 2>/dev/null; then
+    # Session health check: SessionEnd hook marker provides fast detection,
+    # tmux has-session is the fallback for unclean exits (e.g. tmux crash).
+    local exit_marker="/tmp/claude-exited-${_session}.ts"
+    if [ -f "$exit_marker" ] || ! tmux has-session -t "${_session}" 2>/dev/null; then
       local current_phase
       current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
       case "$current_phase" in
@@ -326,6 +358,7 @@ agent_kill_session() {
   [ -n "$session" ] && tmux kill-session -t "$session" 2>/dev/null || true
   rm -f "/tmp/claude-idle-${session}.ts"
   rm -f "/tmp/phase-changed-${session}.marker"
+  rm -f "/tmp/claude-exited-${session}.ts"
 }
 
 # Read the current phase from a phase file, stripped of whitespace.
