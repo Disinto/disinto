@@ -47,6 +47,7 @@ agent_inject_into_session() {
 # Installs a Stop hook for idle detection (see monitor_phase_loop).
 # Installs a PreToolUse hook to guard destructive Bash operations.
 # Optionally installs a PostToolUse hook for phase file write detection.
+# Optionally installs a StopFailure hook for immediate phase file update on API error.
 # Args: session workdir [phase_file]
 # Returns 0 if session is ready, 1 otherwise.
 create_agent_session() {
@@ -118,6 +119,41 @@ create_agent_session() {
         }' > "$settings"
       fi
       rm -f "$phase_marker"
+    fi
+  fi
+
+  # Install StopFailure hook for immediate phase file update on API error:
+  # when Claude hits a rate limit, server error, billing error, or auth failure,
+  # the hook writes PHASE:failed to the phase file and touches the phase-changed
+  # marker so monitor_phase_loop picks it up within one poll cycle instead of
+  # waiting for idle timeout (up to 2 hours).
+  if [ -n "$phase_file" ]; then
+    local stop_failure_hook_script="${FACTORY_ROOT}/lib/hooks/on-stop-failure.sh"
+    if [ -x "$stop_failure_hook_script" ]; then
+      # phase_marker is defined in the PostToolUse block above; redeclare so
+      # this block is self-contained if that block is ever removed.
+      local sf_phase_marker="/tmp/phase-changed-${session}.marker"
+      local stop_failure_hook_cmd="${stop_failure_hook_script} ${phase_file} ${sf_phase_marker}"
+      if [ -f "$settings" ]; then
+        jq --arg cmd "$stop_failure_hook_cmd" '
+          if (.hooks.StopFailure // [] | any(.[]; .hooks[]?.command == $cmd))
+          then .
+          else .hooks.StopFailure = (.hooks.StopFailure // []) + [{
+            matcher: "rate_limit|server_error|authentication_failed|billing_error",
+            hooks: [{type: "command", command: $cmd}]
+          }]
+          end
+        ' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+      else
+        jq -n --arg cmd "$stop_failure_hook_cmd" '{
+          hooks: {
+            StopFailure: [{
+              matcher: "rate_limit|server_error|authentication_failed|billing_error",
+              hooks: [{type: "command", command: $cmd}]
+            }]
+          }
+        }' > "$settings"
+      fi
     fi
   fi
 

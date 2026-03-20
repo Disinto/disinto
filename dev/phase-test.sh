@@ -226,7 +226,101 @@ else
   fail "PostToolUse hook script not found or not executable: $HOOK_SCRIPT"
 fi
 
-# ── Test 10: phase-changed marker resets mtime guard ─────────────────────
+# ── Test 10: StopFailure hook writes phase file and marker on API error ───
+STOP_FAILURE_HOOK="$(dirname "$0")/../lib/hooks/on-stop-failure.sh"
+SF_MARKER="/tmp/phase-changed-test-sf.marker"
+rm -f "$SF_MARKER" "$PHASE_FILE"
+
+if [ -x "$STOP_FAILURE_HOOK" ]; then
+  # 10a: rate_limit stop reason → PHASE:failed with api_error reason
+  printf '{"stop_reason":"rate_limit"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  sf_second=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:failed" ] && echo "$sf_second" | grep -q "api_error: rate_limit"; then
+    ok "StopFailure hook writes PHASE:failed with api_error: rate_limit"
+  else
+    fail "StopFailure hook phase file: first='$sf_first' second='$sf_second'"
+  fi
+  if [ -f "$SF_MARKER" ]; then
+    ok "StopFailure hook writes phase-changed marker"
+  else
+    fail "StopFailure hook did not write phase-changed marker"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10b: server_error stop reason
+  printf '{"stop_reason":"server_error"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_second=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null)
+  if echo "$sf_second" | grep -q "api_error: server_error"; then
+    ok "StopFailure hook writes api_error: server_error"
+  else
+    fail "StopFailure hook server_error: got '$sf_second'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10c: authentication_failed stop reason
+  printf '{"stop_reason":"authentication_failed"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_second=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null)
+  if echo "$sf_second" | grep -q "api_error: authentication_failed"; then
+    ok "StopFailure hook writes api_error: authentication_failed"
+  else
+    fail "StopFailure hook authentication_failed: got '$sf_second'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10e: missing phase_file arg → no-op (exit 0, no crash)
+  printf '{"stop_reason":"rate_limit"}' | "$STOP_FAILURE_HOOK" "" "$SF_MARKER"
+  if [ ! -f "$PHASE_FILE" ]; then
+    ok "StopFailure hook no-ops when phase_file is empty"
+  else
+    fail "StopFailure hook should not write when phase_file is empty"
+  fi
+  rm -f "$SF_MARKER"
+
+  # 10f: missing marker arg → phase file still written, no marker
+  printf '{"stop_reason":"billing_error"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" ""
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  sf_marker_exists="no"
+  [ -f "$SF_MARKER" ] && sf_marker_exists="yes"
+  if [ "$sf_first" = "PHASE:failed" ] && [ "$sf_marker_exists" = "no" ]; then
+    ok "StopFailure hook writes phase without marker when marker arg is empty"
+  else
+    fail "StopFailure hook: first='$sf_first' marker_exists=$sf_marker_exists"
+  fi
+  rm -f "$PHASE_FILE"
+
+  # 10g: terminal phase guard — does not overwrite PHASE:done
+  echo "PHASE:done" > "$PHASE_FILE"
+  printf '{"stop_reason":"rate_limit"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:done" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:done"
+  else
+    fail "StopFailure hook overwrote PHASE:done: first='$sf_first'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10h: terminal phase guard — does not overwrite PHASE:merged
+  echo "PHASE:merged" > "$PHASE_FILE"
+  printf '{"stop_reason":"server_error"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:merged" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:merged"
+  else
+    fail "StopFailure hook overwrote PHASE:merged: first='$sf_first'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
+else
+  fail "StopFailure hook script not found or not executable: $STOP_FAILURE_HOOK"
+fi
+
+# ── Test 11: phase-changed marker resets mtime guard ─────────────────────
 # Simulates monitor_phase_loop behavior: when marker exists, last_mtime
 # is reset to 0 so the phase is processed even if mtime hasn't changed.
 echo "PHASE:awaiting_ci" > "$PHASE_FILE"
@@ -241,7 +335,7 @@ else
 fi
 
 # Now simulate marker present — reset last_mtime to 0
-MARKER_FILE="/tmp/phase-changed-test-session.marker"
+MARKER_FILE="/tmp/phase-changed-test-mtime.marker"
 date +%s > "$MARKER_FILE"
 if [ -f "$MARKER_FILE" ]; then
   rm -f "$MARKER_FILE"
