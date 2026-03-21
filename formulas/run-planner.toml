@@ -128,7 +128,11 @@ Evidence from the preflight step informs whether each prediction is valid
           -d '{"labels":[<prediction_backlog_label_id>]}'
 
    For DISMISS:
-   a. Comment with explicit reasoning
+   a. Comment with explicit reasoning:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/comments" \
+          -d '{"body":"Dismissed — <reasoning>"}'
    b. Relabel: remove prediction/unreviewed, add prediction/actioned:
         curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
           "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
@@ -136,7 +140,11 @@ Evidence from the preflight step informs whether each prediction is valid
           -H "Content-Type: application/json" \
           "$CODEBERG_API/issues/<pred_num>/labels" \
           -d '{"labels":[<actioned_label_id>]}'
-   c. Close the prediction issue
+   c. Close the prediction:
+        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>" \
+          -d '{"state":"closed"}'
 
 6. Track promoted predictions — they compete with vision gaps in the
    strategic-planning step for the per-cycle 5-issue limit.
