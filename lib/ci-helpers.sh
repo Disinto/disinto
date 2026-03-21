@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ci-helpers.sh — Shared CI helper functions
 #
 # Source from any script: source "$(dirname "$0")/../lib/ci-helpers.sh"
