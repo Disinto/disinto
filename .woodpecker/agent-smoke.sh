@@ -97,6 +97,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
 #   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
+#   lib/secret-scan.sh      — sourced by file-action-issue.sh, phase-handler.sh (scan_for_secrets, redact_secrets)
 #   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
 #
 # Excluded — not sourced inline by agents:
@@ -108,7 +109,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/file-action-issue.sh lib/formula-session.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -174,7 +175,8 @@ check_script() {
 check_script lib/env.sh
 check_script lib/agent-session.sh
 check_script lib/ci-helpers.sh
-check_script lib/file-action-issue.sh
+check_script lib/secret-scan.sh
+check_script lib/file-action-issue.sh   lib/secret-scan.sh
 check_script lib/formula-session.sh     lib/agent-session.sh
 check_script lib/load-project.sh
 
@@ -187,7 +189,7 @@ check_script lib/parse-deps.sh
 # Agent scripts — list cross-sourced files where function scope flows across files.
 # dev-agent.sh sources phase-handler.sh; phase-handler.sh calls helpers defined in dev-agent.sh.
 check_script dev/dev-agent.sh          dev/phase-handler.sh
-check_script dev/phase-handler.sh      dev/dev-agent.sh
+check_script dev/phase-handler.sh      dev/dev-agent.sh lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-agent.sh  lib/agent-session.sh

@@ -2,15 +2,25 @@
 # file-action-issue.sh — File an action issue for a formula run
 #
 # Usage: source this file, then call file_action_issue.
-# Requires: codeberg_api() from lib/env.sh, jq
+# Requires: codeberg_api() from lib/env.sh, jq, lib/secret-scan.sh
 #
 # file_action_issue <formula_name> <title> <body>
 #   Sets FILED_ISSUE_NUM on success.
-#   Returns: 0=created, 1=duplicate exists, 2=label not found, 3=API error
+#   Returns: 0=created, 1=duplicate exists, 2=label not found, 3=API error, 4=secrets detected
+
+# Load secret scanner
+# shellcheck source=secret-scan.sh
+source "$(dirname "${BASH_SOURCE[0]}")/secret-scan.sh"
 
 file_action_issue() {
   local formula_name="$1" title="$2" body="$3"
   FILED_ISSUE_NUM=""
+
+  # Secret scan: reject issue bodies containing embedded secrets
+  if ! scan_for_secrets "$body"; then
+    echo "file-action-issue: BLOCKED — issue body for '${formula_name}' contains potential secrets. Use env var references instead." >&2
+    return 4
+  fi
 
   # Dedup: skip if an open action issue for this formula already exists
   local open_actions

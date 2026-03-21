@@ -288,6 +288,13 @@ ${PRIOR_SECTION}## Instructions
    CODEBERG_TOKEN, CODEBERG_API, CODEBERG_REPO, CODEBERG_WEB, PROJECT_NAME
    (all sourced from ${FACTORY_ROOT}/.env)
 
+### CRITICAL: Never embed secrets in issue bodies, comments, or PR descriptions
+   - NEVER put API keys, tokens, passwords, or private keys in issue text or comments.
+   - Always reference secrets via env var names (e.g. \\\$BASE_RPC_URL, \\\$CODEBERG_TOKEN).
+   - If a formula step needs a secret, read it from .env or the environment at runtime.
+   - Before posting any comment, verify it contains no credentials, hex keys > 32 chars,
+     or URLs with embedded API keys.
+
 If the prior comments above show work already completed, resume from where it
 left off.
 
