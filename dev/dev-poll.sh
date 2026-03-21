@@ -369,7 +369,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       fi
       exit 0
 
-    elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
+    elif ci_failed "$CI_STATE"; then
       SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
       if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
@@ -477,7 +477,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
-  elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
+  elif ci_failed "$CI_STATE"; then
     SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
       log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
@@ -568,7 +568,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       READY_ISSUE="$ISSUE_NUM"
       break
 
-    elif ! ci_passed "$CI_STATE" && [ "$CI_STATE" != "" ] && [ "$CI_STATE" != "pending" ] && [ "$CI_STATE" != "unknown" ]; then
+    elif ci_failed "$CI_STATE"; then
       if handle_ci_exhaustion "$EXISTING_PR" "$ISSUE_NUM" "check_only"; then
         # Don't add to WAITING_PRS — escalated PRs should not block new work
         continue

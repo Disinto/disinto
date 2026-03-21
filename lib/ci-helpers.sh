@@ -66,6 +66,20 @@ ci_passed() {
   return 1
 }
 
+# ci_failed <state> — check if CI has definitively failed
+#   Returns 0 if state indicates a real failure (not success, not pending,
+#   not unknown, not empty).
+ci_failed() {
+  local state="$1"
+  if [ -z "$state" ] || [ "$state" = "pending" ] || [ "$state" = "unknown" ]; then
+    return 1
+  fi
+  if ci_passed "$state"; then
+    return 1
+  fi
+  return 0
+}
+
 # is_infra_step <step_name> <exit_code> [log_data]
 # Checks whether a single CI step failure matches infra heuristics.
 # Returns 0 (infra) with reason on stdout, or 1 (not infra).
