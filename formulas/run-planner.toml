@@ -119,7 +119,11 @@ Evidence from the preflight step informs whether each prediction is valid
           -d '{"state":"closed"}'
 
    For WATCH:
-   a. Comment with reasoning why not urgent
+   a. Comment with reasoning why not urgent:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<pred_num>/comments" \
+          -d '{"body":"Watching — <reasoning>"}'
    b. Replace prediction/unreviewed label with prediction/backlog:
         curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
           "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
