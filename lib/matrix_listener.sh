@@ -20,8 +20,21 @@ set -euo pipefail
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 
+# Pidfile guard — prevent duplicate listener processes
+PIDFILE="/tmp/matrix-listener.pid"
+if [ -f "$PIDFILE" ]; then
+  OLD_PID=$(cat "$PIDFILE")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "Listener already running (PID $OLD_PID)" >&2
+    exit 0
+  fi
+fi
+echo $$ > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT
+
 SINCE_FILE="/tmp/matrix-listener-since"
 THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
+ACKED_FILE="/tmp/matrix-listener-acked"
 LOGFILE="${FACTORY_ROOT}/supervisor/matrix-listener.log"
 SYNC_TIMEOUT=30000  # 30s long-poll
 BACKOFF=5
@@ -142,11 +155,13 @@ while true; do
         ;;
       dev)
         # Route reply into the dev tmux session using context_tag (issue number)
+        # Thread map columns: 1=thread_id, 2=agent, 3=timestamp, 4=issue, 5=project
         DEV_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        DEV_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
         DEV_INJECTED=false
         if [ -n "$DEV_ISSUE" ]; then
-          DEV_SESSION="dev-${PROJECT_NAME}-${DEV_ISSUE}"
-          DEV_PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${DEV_ISSUE}.phase"
+          DEV_SESSION="dev-${DEV_PROJECT}-${DEV_ISSUE}"
+          DEV_PHASE_FILE="/tmp/dev-session-${DEV_PROJECT}-${DEV_ISSUE}.phase"
           if tmux has-session -t "$DEV_SESSION" 2>/dev/null; then
             DEV_CUR_PHASE=$(head -1 "$DEV_PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
             if [ "$DEV_CUR_PHASE" = "PHASE:needs_human" ] || [ "$DEV_CUR_PHASE" = "PHASE:awaiting_review" ]; then
@@ -165,18 +180,22 @@ Consider this guidance for your current work."
               rm -f "$DEV_INJECT_TMP"
               DEV_INJECTED=true
               log "human guidance from ${SENDER} injected into ${DEV_SESSION}"
-              matrix_send "dev" "✓ guidance forwarded to dev session for issue #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              # Reply on first successful injection only — no reply on subsequent ones
+              if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then
+                matrix_send "dev" "✓ Guidance forwarded to dev session for #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+                printf '%s\n' "$THREAD_ROOT" >> "$ACKED_FILE"
+              fi
             else
-              log "dev session ${DEV_SESSION} is busy (phase: ${DEV_CUR_PHASE:-active}), queuing"
-              matrix_send "dev" "✓ received — session is busy, will be available when dev pauses" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              log "WARN: dev session '${DEV_SESSION}' busy (phase: ${DEV_CUR_PHASE:-active}), queuing message for issue #${DEV_ISSUE}"
+              matrix_send "dev" "❌ Could not inject: dev session for #${DEV_ISSUE} is busy (phase: ${DEV_CUR_PHASE:-active}), message queued" "$THREAD_ROOT" >/dev/null 2>&1 || true
             fi
           else
-            log "dev session ${DEV_SESSION} not found for issue #${DEV_ISSUE}"
-            matrix_send "dev" "dev session not active for issue #${DEV_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            log "WARN: tmux session '${DEV_SESSION}' not found for issue #${DEV_ISSUE} (project: ${DEV_PROJECT:-UNSET})"
+            matrix_send "dev" "❌ Could not inject: tmux session '${DEV_SESSION}' not found (project: ${DEV_PROJECT:-UNSET})" "$THREAD_ROOT" >/dev/null 2>&1 || true
           fi
         else
           log "dev thread ${THREAD_ROOT:0:20} has no issue mapping"
-          matrix_send "dev" "✓ received, will act on next poll" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          matrix_send "dev" "❌ Could not inject: no issue mapping for this thread" "$THREAD_ROOT" >/dev/null 2>&1 || true
         fi
         # Only write to flat file when direct injection didn't happen,
         # to avoid supervisor/gardener poll re-injecting the same message.
@@ -186,16 +205,18 @@ Consider this guidance for your current work."
         ;;
       review)
         # Route human questions to persistent review tmux session
+        # Thread map columns: 1=thread_id, 2=agent, 3=timestamp, 4=pr_num, 5=project
         REVIEW_PR_NUM=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        REVIEW_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
         if [ -n "$REVIEW_PR_NUM" ]; then
-          REVIEW_SESSION="review-${PROJECT_NAME}-${REVIEW_PR_NUM}"
-          REVIEW_PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${REVIEW_PR_NUM}.phase"
+          REVIEW_SESSION="review-${REVIEW_PROJECT}-${REVIEW_PR_NUM}"
+          REVIEW_PHASE_FILE="/tmp/review-session-${REVIEW_PROJECT}-${REVIEW_PR_NUM}.phase"
           if tmux has-session -t "$REVIEW_SESSION" 2>/dev/null; then
             # Skip injection if Claude is mid-review (phase file absent = actively writing)
             REVIEW_CUR_PHASE=$(head -1 "$REVIEW_PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
             if [ -z "$REVIEW_CUR_PHASE" ]; then
-              log "review session ${REVIEW_SESSION} is mid-review, deferring question"
-              matrix_send "review" "reviewer is busy — question queued, try again shortly" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              log "WARN: review session '${REVIEW_SESSION}' is mid-review, deferring question for PR #${REVIEW_PR_NUM}"
+              matrix_send "review" "❌ Could not inject: reviewer is mid-review for PR #${REVIEW_PR_NUM}, try again shortly" "$THREAD_ROOT" >/dev/null 2>&1 || true
             else
               REVIEW_INJECT_MSG="Human question from ${SENDER} in Matrix:
 
@@ -211,15 +232,19 @@ Please answer this question about your review. Explain your reasoning."
               tmux delete-buffer -b "review-q-${REVIEW_PR_NUM}" 2>/dev/null || true
               rm -f "$REVIEW_INJECT_TMP"
               log "review question from ${SENDER} injected into ${REVIEW_SESSION}"
-              matrix_send "review" "✓ question forwarded to reviewer session" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              # Reply on first successful injection only
+              if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then
+                matrix_send "review" "✓ Question forwarded to reviewer session for PR #${REVIEW_PR_NUM}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+                printf '%s\n' "$THREAD_ROOT" >> "$ACKED_FILE"
+              fi
             fi
           else
-            log "review session ${REVIEW_SESSION} not found for PR #${REVIEW_PR_NUM}"
-            matrix_send "review" "review session not active for PR #${REVIEW_PR_NUM}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            log "WARN: tmux session '${REVIEW_SESSION}' not found for PR #${REVIEW_PR_NUM} (project: ${REVIEW_PROJECT:-UNSET})"
+            matrix_send "review" "❌ Could not inject: tmux session '${REVIEW_SESSION}' not found (project: ${REVIEW_PROJECT:-UNSET})" "$THREAD_ROOT" >/dev/null 2>&1 || true
           fi
         else
           log "review thread ${THREAD_ROOT:0:20} has no PR mapping"
-          matrix_send "review" "review session not available" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          matrix_send "review" "❌ Could not inject: no PR mapping for this thread" "$THREAD_ROOT" >/dev/null 2>&1 || true
         fi
         ;;
       action)
@@ -242,14 +267,18 @@ Continue with the action formula based on this response."
             tmux delete-buffer -b "action-q-${ACTION_ISSUE}" 2>/dev/null || true
             rm -f "$ACTION_INJECT_TMP"
             log "human reply from ${SENDER} injected into ${ACTION_SESSION}"
-            matrix_send "action" "✓ reply forwarded to action session for issue #${ACTION_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            # Reply on first successful injection only
+            if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then
+              matrix_send "action" "✓ Reply forwarded to action session for issue #${ACTION_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              printf '%s\n' "$THREAD_ROOT" >> "$ACKED_FILE"
+            fi
           else
-            log "action session ${ACTION_SESSION} not found for issue #${ACTION_ISSUE}"
-            matrix_send "action" "action session not active for issue #${ACTION_ISSUE}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            log "WARN: tmux session '${ACTION_SESSION}' not found for issue #${ACTION_ISSUE}"
+            matrix_send "action" "❌ Could not inject: tmux session '${ACTION_SESSION}' not found" "$THREAD_ROOT" >/dev/null 2>&1 || true
           fi
         else
           log "action thread ${THREAD_ROOT:0:20} has no issue mapping"
-          matrix_send "action" "✓ received, no active session found" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          matrix_send "action" "❌ Could not inject: no issue mapping for this thread" "$THREAD_ROOT" >/dev/null 2>&1 || true
         fi
         ;;
       vault)

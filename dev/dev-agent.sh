@@ -736,7 +736,7 @@ if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
   if [ -n "${_thread_id:-}" ]; then
     printf '%s' "$_thread_id" > "$THREAD_FILE"
     # Register thread root in map for listener dispatch
-    printf '%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
+    printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
   fi
 fi
 notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}"
