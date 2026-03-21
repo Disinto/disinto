@@ -24,7 +24,7 @@ disinto/
 │                  preflight.sh — pre-flight data collection for supervisor formula
 │                  supervisor/journal/ — daily health logs from each run
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
-├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating
+├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
 ├── projects/      *.toml — per-project config
@@ -78,7 +78,7 @@ bash dev/phase-test.sh
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
 | Action | `action/` | Operational task execution | [action/AGENTS.md](action/AGENTS.md) |
-| Vault | `vault/` | Safety gate for dangerous actions | [vault/AGENTS.md](vault/AGENTS.md) |
+| Vault | `vault/` | Action gating + resource procurement | [vault/AGENTS.md](vault/AGENTS.md) |
 
 See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
 
