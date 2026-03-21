@@ -1,17 +1,16 @@
 # formulas/run-gardener.toml — Gardener housekeeping formula
 #
 # Defines the gardener's complete run: grooming (Claude session via
-# gardener-agent.sh) + CI escalation recipes (bash, gardener-poll.sh)
-# + AGENTS.md maintenance + final commit-and-pr.
+# gardener-agent.sh) + blocked-review + AGENTS.md maintenance + final
+# commit-and-pr.
 #
 # No memory, no journal. The gardener does mechanical housekeeping
 # based on current state — it doesn't need to remember past runs.
 #
-# Steps: preflight → grooming → blocked-review → ci-escalation-recipes
-#        → agents-update → commit-and-pr
+# Steps: preflight → grooming → blocked-review → agents-update → commit-and-pr
 
 name        = "run-gardener"
-description = "Mechanical housekeeping: grooming, blocked review, CI escalation recipes, docs update"
+description = "Mechanical housekeeping: grooming, blocked review, docs update"
 version     = 1
 
 [context]
@@ -184,40 +183,7 @@ CRITICAL: If this step fails, log the failure and move on.
 needs = ["grooming"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 4: ci-escalation-recipes — recipe-driven CI failure handling
-# ─────────────────────────────────────────────────────────────────────
-
-[[steps]]
-id    = "ci-escalation-recipes"
-title = "CI escalation recipes (bash — gardener-poll.sh)"
-executor = "bash"
-script   = "gardener/gardener-poll.sh --recipes-only"
-description = """
-NOT a Claude step — executed by gardener-poll.sh before/after the Claude session.
-Documented here so the formula covers the full gardener run.
-
-gardener-poll.sh processes CI escalation entries from
-supervisor/escalations-{project}.jsonl. Each entry is a dev-agent session
-that exhausted its CI fix attempts and was escalated to the gardener.
-
-The recipe engine (match_recipe function in gardener-poll.sh) matches each
-escalation against gardener/recipes/*.toml by priority order, then executes
-the matched recipe's playbook actions via bash functions.
-
-Recipes (see gardener/recipes/*.toml for definitions):
-- chicken-egg-ci (priority 10): non-blocking bypass + per-file fix issues
-- cascade-rebase (priority 20): rebase via Gitea API, re-approve, retry merge
-- flaky-test (priority 30): retrigger CI or quarantine
-- shellcheck-violations (priority 40): per-file ShellCheck fix issues
-- Generic fallback: one combined CI failure issue
-
-Special cases:
-- idle_timeout / idle_prompt: investigation issues (no recipe matching)
-"""
-needs = ["grooming"]
-
-# ─────────────────────────────────────────────────────────────────────
-# Step 5: agents-update — AGENTS.md watermark staleness check
+# Step 4: agents-update — AGENTS.md watermark staleness check
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
@@ -254,7 +220,7 @@ This keeps documentation fresh — runs 2x/day so drift stays small.
 CRITICAL: If this step fails for any reason, log the failure and move on.
 Do NOT let an AGENTS.md failure prevent the commit-and-pr step.
 """
-needs = ["ci-escalation-recipes"]
+needs = ["blocked-review"]
 
 # ─────────────────────────────────────────────────────────────────────
 # Step 6: commit-and-pr — single commit with all file changes

@@ -17,7 +17,7 @@ disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — files action issue for run-gardener formula
-│                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
+│                  gardener-poll.sh, gardener-agent.sh — grooming
 ├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
 │                  planner/journal/ — daily raw logs from each planner run
@@ -130,9 +130,9 @@ issue is filed against).
 
 **Key files**:
 - `gardener/gardener-run.sh` — Cron wrapper: lock, memory guard, dedup check, files action issue
-- `gardener/gardener-poll.sh` — Recipe engine: escalation-reply injection for dev sessions, processes dev-agent CI escalations via recipe engine (invoked by formula step ci-escalation-recipes)
+- `gardener/gardener-poll.sh` — Escalation-reply injection for dev sessions, invokes gardener-agent.sh for grooming
 - `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE), handles dust bundling
-- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, blocked-review, CI escalation recipes, agents-update, commit-and-pr
+- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, blocked-review, agents-update, commit-and-pr
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
@@ -159,8 +159,8 @@ runs directly from cron like the planner and predictor.
   `run_formula_and_monitor`
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active tmux sessions + phase files, lock files, agent log
-  tails, CI pipeline status, open PRs, issue counts, stale worktrees, pending
-  escalations, Matrix escalation replies
+  tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
+  issues, Matrix escalation replies
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
@@ -373,7 +373,7 @@ Issues flow through these states:
 |---|---|---|
 | `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. | Planner, gardener, humans |
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. | dev-agent.sh (claims issue) |
-| `blocked` | Issue has unmet dependencies (other open issues). | gardener, supervisor (detected) |
+| `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, action-agent.sh, dev-poll.sh (on failure) |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |

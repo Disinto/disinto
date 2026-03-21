@@ -51,7 +51,7 @@ model: opus
 ---
 
 Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
-and executes the steps: preflight, grooming, blocked-review, CI escalation recipes,
+and executes the steps: preflight, grooming, blocked-review,
 AGENTS.md update, and commit-and-pr.
 
 Filed automatically by \`gardener-run.sh\`."

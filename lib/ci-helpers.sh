@@ -5,6 +5,27 @@
 # ci_passed() requires: WOODPECKER_REPO_ID (from env.sh / project config)
 # classify_pipeline_failure() requires: woodpecker_api() (defined in env.sh)
 
+# ensure_blocked_label_id — look up (or create) the "blocked" label, print its ID.
+# Caches the result in _BLOCKED_LABEL_ID to avoid repeated API calls.
+# Requires: CODEBERG_TOKEN, CODEBERG_API (from env.sh), codeberg_api()
+ensure_blocked_label_id() {
+  if [ -n "${_BLOCKED_LABEL_ID:-}" ]; then
+    printf '%s' "$_BLOCKED_LABEL_ID"
+    return 0
+  fi
+  _BLOCKED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
+  if [ -z "$_BLOCKED_LABEL_ID" ]; then
+    _BLOCKED_LABEL_ID=$(curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/labels" \
+      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null || true)
+  fi
+  printf '%s' "$_BLOCKED_LABEL_ID"
+}
+
 # diff_has_code_files — check if file list (stdin, one per line) contains code files
 # Non-code paths: docs/*, formulas/*, evidence/*, *.md
 # Returns 0 if any code file found, 1 if all files are non-code.
