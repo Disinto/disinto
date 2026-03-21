@@ -65,3 +65,9 @@ When push CI passes but PR CI fails (e.g., a duplicate-detection step only runs 
 Symptom: PR CI=failure but dev-agent phase=awaiting_review, status shows 'waiting for CI + review'.
 
 Fix: inject the CI failure info into the Claude session with agent_inject_into_session, pointing to the duplicate blocks and telling Claude to fix + push + write PHASE:awaiting_ci. The phase-handler's awaiting_review loop checks for phase file mtime changes every 5 min and will re-enter the main loop automatically.
+
+### Push CI vs PR CI mismatch — agent picks wrong pipeline number
+When the phase-handler injects 'CI failed' with a push pipeline number (e.g. #622), the agent checks that push pipeline, finds it passed, and concludes 'CI OK' — setting PHASE:awaiting_review despite the PR pipeline (#623) being the one that actually failed.
+Root cause: the injected event does not always carry the correct pipeline number.
+Symptom: agent in awaiting_review with PR CI=failure and push CI=success.
+Fix: inject with explicit pipeline #623 (the pull_request event pipeline), point to the failing step and the specific duplicate blocks to fix. Use: woodpecker_api /repos/4/pipelines?event=pull_request (or look for event=pull_request in recent pipelines list) to find the correct pipeline number before injecting.
