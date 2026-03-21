@@ -24,7 +24,7 @@ file_action_issue() {
 
   # Dedup: skip if an open action issue for this formula already exists
   local open_actions
-  open_actions=$(codeberg_api GET "/issues?state=open&type=issues&labels=action&limit=50" 2>/dev/null || true)
+  open_actions=$(codeberg_api_all "/issues?state=open&type=issues&labels=action" 2>/dev/null || true)
   if [ -n "$open_actions" ] && [ "$open_actions" != "null" ]; then
     local existing
     existing=$(printf '%s' "$open_actions" | \
