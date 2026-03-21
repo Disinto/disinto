@@ -5,14 +5,18 @@
 #
 # Lifecycle:
 #   1. Fetch issue body (action formula) + existing comments
-#   2. Create tmux session: action-{issue_num} with interactive claude
-#   3. Inject initial prompt: formula + comments + phase protocol instructions
-#   4. Monitor phase file via monitor_phase_loop (shared with dev-agent)
+#   2. Create isolated git worktree: /tmp/action-{issue}-{timestamp}
+#   3. Create tmux session: action-{issue_num} with interactive claude in worktree
+#   4. Inject initial prompt: formula + comments + phase protocol instructions
+#   5. Monitor phase file via monitor_phase_loop (shared with dev-agent)
 #   Path A (git output): Claude pushes → handler creates PR → CI poll → review
 #     injection → merge → cleanup (same loop as dev-agent via phase-handler.sh)
 #   Path B (no git output): Claude posts results → PHASE:done → cleanup
-#   5. For human input: Claude asks via Matrix; reply injected via matrix_listener
-#   6. Cleanup on terminal phase: kill tmux, docker compose down, remove temp files
+#   6. For human input: Claude asks via Matrix; reply injected via matrix_listener
+#   7. Cleanup on terminal phase: kill children, destroy worktree, remove temp files
+#
+# Key principle: The runtime creates and destroys. The formula preserves.
+# The formula must push results before signaling done — the worktree is nuked after.
 #
 # Session:  action-{issue_num} (tmux)
 # Log:      action/action-poll-{project}.log
@@ -41,7 +45,7 @@ SESSION_START_EPOCH=$(date +%s)
 API="${CODEBERG_API}"
 BRANCH="action/issue-${ISSUE}"
 # shellcheck disable=SC2034  # used by phase-handler.sh
-WORKTREE="${PROJECT_REPO_ROOT}"
+WORKTREE="/tmp/action-${ISSUE}-$(date +%s)"
 PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-harb}-${ISSUE}.phase"
 IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-harb}-${ISSUE}.txt"
 PREFLIGHT_RESULT="/tmp/action-preflight-${ISSUE}.json"
@@ -71,8 +75,17 @@ status() {
   log "$*"
 }
 
-# --- Action-specific stubs for phase-handler.sh ---
-cleanup_worktree() { :; }  # action agent uses PROJECT_REPO_ROOT directly — no separate git worktree to remove
+# --- Action-specific helpers for phase-handler.sh ---
+cleanup_worktree() {
+  cd "${PROJECT_REPO_ROOT}" 2>/dev/null || true
+  git worktree remove "$WORKTREE" --force 2>/dev/null || true
+  rm -rf "$WORKTREE"
+  # Clear Claude Code session history for this worktree to prevent hallucinated "already done"
+  local claude_project_dir
+  claude_project_dir="$HOME/.claude/projects/$(echo "$WORKTREE" | sed 's|/|-|g; s|^-||')"
+  rm -rf "$claude_project_dir" 2>/dev/null || true
+  log "destroyed worktree: ${WORKTREE}"
+}
 cleanup_labels() { :; }    # action agent doesn't use in-progress labels
 
 # --- Concurrency lock (per issue) ---
@@ -94,8 +107,19 @@ cleanup() {
   fi
   rm -f "$LOCKFILE"
   agent_kill_session "$SESSION_NAME"
+  # Kill any remaining child processes spawned during the run
+  local children
+  children=$(jobs -p 2>/dev/null) || true
+  if [ -n "$children" ]; then
+    # shellcheck disable=SC2086  # intentional word splitting
+    kill $children 2>/dev/null || true
+    # shellcheck disable=SC2086
+    wait $children 2>/dev/null || true
+  fi
   # Best-effort docker cleanup for containers started during this action
-  (cd "${PROJECT_REPO_ROOT}" 2>/dev/null && docker compose down 2>/dev/null) || true
+  (cd "${WORKTREE}" 2>/dev/null && docker compose down 2>/dev/null) || true
+  # Destroy the worktree — the runtime owns the lifecycle
+  cleanup_worktree
   rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
 }
 trap cleanup EXIT
@@ -176,6 +200,17 @@ if [ -n "${_thread_id:-}" ]; then
     >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
 fi
 
+# --- Create isolated worktree ---
+log "creating worktree: ${WORKTREE}"
+cd "${PROJECT_REPO_ROOT}"
+git fetch origin "${PRIMARY_BRANCH}" 2>/dev/null || true
+if ! git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" 2>&1; then
+  log "ERROR: worktree creation failed"
+  notify "failed to create worktree for #${ISSUE}"
+  exit 1
+fi
+log "worktree ready: ${WORKTREE}"
+
 # --- Read scratch file (compaction survival) ---
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
@@ -229,14 +264,18 @@ ${PRIOR_SECTION}## Instructions
    into this session automatically.${THREAD_HINT}
 
 ### Path A: If this action produces code changes (e.g. config updates, baselines):
-   - Work in the project repo: cd ${PROJECT_REPO_ROOT}
+   - You are already in an isolated worktree at: ${WORKTREE}
    - Create and switch to branch: git checkout -b ${BRANCH}
    - Make your changes, commit, and push: git push origin ${BRANCH}
+   - **IMPORTANT:** The worktree is destroyed after completion. Push all
+     results before signaling done — unpushed work will be lost.
    - Follow the phase protocol below — the orchestrator handles PR creation,
      CI monitoring, and review injection.
 
 ### Path B: If this action produces no code changes (investigation, report):
    - Post results as a comment on issue #${ISSUE}.
+   - **IMPORTANT:** The worktree is destroyed after completion. Copy any
+     files you need to persistent paths before signaling done.
    - Close the issue:
      curl -sf -X PATCH \\
        -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
@@ -258,7 +297,7 @@ ${PHASE_PROTOCOL_INSTRUCTIONS}"
 
 # --- Create tmux session ---
 log "creating tmux session: ${SESSION_NAME}"
-if ! create_agent_session "${SESSION_NAME}" "${FACTORY_ROOT}" "${PHASE_FILE}"; then
+if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}" "${PHASE_FILE}"; then
   log "ERROR: failed to create tmux session"
   exit 1
 fi
