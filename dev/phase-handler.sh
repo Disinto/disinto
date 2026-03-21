@@ -249,8 +249,8 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       sleep 30
       CI_POLL_ELAPSED=$(( CI_POLL_ELAPSED + 30 ))
 
-      # Check session still alive during CI wait
-      if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+      # Check session still alive during CI wait (exit_marker + tmux fallback)
+      if [ -f "/tmp/claude-exited-${SESSION_NAME}.ts" ] || ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
         log "session died during CI wait"
         break
       fi
@@ -392,8 +392,8 @@ Instructions:
       sleep 300  # 5 min between review checks
       REVIEW_POLL_ELAPSED=$(( REVIEW_POLL_ELAPSED + 300 ))
 
-      # Check session still alive
-      if ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
+      # Check session still alive (exit_marker + tmux fallback)
+      if [ -f "/tmp/claude-exited-${SESSION_NAME}.ts" ] || ! tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
         log "session died during review wait"
         REVIEW_FOUND=false
         break
