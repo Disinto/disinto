@@ -710,6 +710,27 @@ ${PHASE_PROTOCOL_INSTRUCTIONS}"
 fi
 
 # =============================================================================
+# CREATE MATRIX THREAD (before tmux so MATRIX_THREAD_ID is available for Stop hook)
+# =============================================================================
+if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
+  ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
+  _thread_id=$(matrix_send_ctx "dev" \
+    "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
+    "🔧 <a href='${ISSUE_URL}'>Issue #${ISSUE}</a>: ${ISSUE_TITLE}") || true
+  if [ -n "${_thread_id:-}" ]; then
+    printf '%s' "$_thread_id" > "$THREAD_FILE"
+    # Register thread root in map for listener dispatch
+    printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
+  fi
+fi
+
+# Export for on-stop-matrix.sh hook (streams Claude output to thread)
+_thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
+if [ -n "${_thread_id:-}" ]; then
+  export MATRIX_THREAD_ID="$_thread_id"
+fi
+
+# =============================================================================
 # CREATE TMUX SESSION
 # =============================================================================
 status "creating tmux session: ${SESSION_NAME}"
@@ -727,18 +748,6 @@ log "initial prompt sent to tmux session"
 
 # Signal to dev-poll.sh that we're running (session is up)
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
-# Create Matrix thread for this issue (or reuse existing one)
-if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
-  ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
-  _thread_id=$(matrix_send_ctx "dev" \
-    "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
-    "🔧 <a href='${ISSUE_URL}'>Issue #${ISSUE}</a>: ${ISSUE_TITLE}") || true
-  if [ -n "${_thread_id:-}" ]; then
-    printf '%s' "$_thread_id" > "$THREAD_FILE"
-    # Register thread root in map for listener dispatch
-    printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
-  fi
-fi
 notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}"
 
 
