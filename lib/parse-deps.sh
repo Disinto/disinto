@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # parse-deps.sh — Extract dependency issue numbers from an issue body
 #
 # Usage:

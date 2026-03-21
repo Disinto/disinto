@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # supervisor-poll.sh — Supervisor agent: bash checks + claude -p for fixes
 #
 # Two-layer architecture:
