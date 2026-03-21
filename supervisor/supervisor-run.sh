@@ -97,11 +97,10 @@ Act on this reply in the decide-actions step.
 ${CONTEXT_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
-## Formula
+## Supervisor formula (run every 20min — lightweight health check)
 ${FORMULA_CONTENT}
 
 ${SCRATCH_INSTRUCTION}
-
 ${PROMPT_FOOTER}"
 
 # ── Run session ──────────────────────────────────────────────────────────
