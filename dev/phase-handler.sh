@@ -22,6 +22,10 @@
 # shellcheck disable=SC2154  # globals are set in dev-agent.sh before calling
 # shellcheck disable=SC2034  # CLAIMED is read by cleanup() in dev-agent.sh
 
+# Load secret scanner for redacting tmux output before posting to issues
+# shellcheck source=../lib/secret-scan.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/secret-scan.sh"
+
 # --- Default globals (agents can override after sourcing) ---
 : "${CI_POLL_TIMEOUT:=1800}"
 : "${REVIEW_POLL_TIMEOUT:=10800}"
@@ -49,6 +53,11 @@ post_blocked_diagnostic() {
   local tmux_output=""
   if [ -n "$session" ] && tmux has-session -t "$session" 2>/dev/null; then
     tmux_output=$(tmux capture-pane -p -t "$session" -S -50 2>/dev/null || true)
+  fi
+
+  # Redact any secrets from tmux output before posting to issue
+  if [ -n "$tmux_output" ]; then
+    tmux_output=$(redact_secrets "$tmux_output")
   fi
 
   # Build diagnostic comment body
