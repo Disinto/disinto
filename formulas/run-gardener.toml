@@ -7,7 +7,7 @@
 # No memory, no journal. The gardener does mechanical housekeeping
 # based on current state — it doesn't need to remember past runs.
 #
-# Steps: preflight → grooming → blocked-review → agents-update → commit-and-pr
+# Steps: preflight → grooming → dust-bundling → blocked-review → agents-update → commit-and-pr
 
 name        = "run-gardener"
 description = "Mechanical housekeeping: grooming, blocked review, docs update"
@@ -83,8 +83,8 @@ ACTION (substantial — promote, close duplicate, add acceptance criteria):
 DUST (trivial — single-line edit, rename, comment, style, whitespace):
   echo 'DUST: {"issue": NNN, "group": "<file-or-subsystem>", "title": "...", "reason": "..."}' >> "$RESULT_FILE"
   Group by file or subsystem (e.g. "gardener", "lib/env.sh", "dev-poll").
-  Do NOT close dust issues — the script auto-bundles groups of 3+ into
-  one backlog issue.
+  Do NOT close dust issues — the dust-bundling step auto-bundles groups
+  of 3+ into one backlog issue.
 
 ESCALATE (needs human decision):
   printf 'ESCALATE\n1. #NNN "title" — reason (a) option1 (b) option2\n' >> "$RESULT_FILE"
@@ -106,17 +106,70 @@ Processing order:
   2. Process tech-debt issues by score (impact/effort)
   3. Classify remaining items as dust or escalate
 
-After processing, dust items are collected into gardener/dust.jsonl.
-When a group accumulates 3+ distinct issues, create one bundled backlog
-issue, close the source issues with cross-reference comments, and remove
-bundled items from the staging file.
+Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
+dedup, TTL expiry, and bundling into backlog issues.
 
 CRITICAL: If this step fails for any reason, log the failure and move on.
 """
 needs = ["preflight"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 3: blocked-review — triage blocked issues
+# Step 3: dust-bundling — accumulate, expire, and bundle dust items
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "dust-bundling"
+title = "Accumulate dust, expire stale entries, and bundle groups"
+description = """
+Process DUST items emitted during grooming. This step maintains the
+persistent dust accumulator at $PROJECT_REPO_ROOT/gardener/dust.jsonl.
+
+IMPORTANT: Use $PROJECT_REPO_ROOT/gardener/dust.jsonl (the main repo
+checkout), NOT the worktree copy — the worktree is destroyed after the
+session, so changes there would be lost.
+
+1. Collect DUST JSON lines emitted during grooming (from the result file
+   or your notes). Each has: {"issue": NNN, "group": "...", "title": "...", "reason": "..."}
+
+2. Deduplicate: read existing dust.jsonl and skip any issue numbers that
+   are already staged:
+     DUST_FILE="$PROJECT_REPO_ROOT/gardener/dust.jsonl"
+     touch "$DUST_FILE"
+     EXISTING=$(jq -r '.issue' "$DUST_FILE" 2>/dev/null | sort -nu || true)
+   For each new dust item, check if its issue number is in EXISTING.
+   Add new entries with a timestamp:
+     echo '{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"YYYY-MM-DDTHH:MM:SSZ"}' >> "$DUST_FILE"
+
+3. Expire stale entries (30-day TTL):
+     CUTOFF=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+     jq -c --arg c "$CUTOFF" 'select(.ts >= $c)' "$DUST_FILE" > "${DUST_FILE}.tmp" && mv "${DUST_FILE}.tmp" "$DUST_FILE"
+
+4. Bundle groups with 3+ distinct issues:
+   a. Count distinct issues per group:
+        jq -r '[.group, (.issue | tostring)] | join("\\t")' "$DUST_FILE" | sort -u | cut -f1 | sort | uniq -c | sort -rn
+   b. For each group with count >= 3:
+      - Collect issue details and distinct issue numbers for the group
+      - Look up the backlog label ID:
+          BACKLOG_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+            "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "backlog") | .id')
+      - Create a bundled backlog issue:
+          curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+            -H "Content-Type: application/json" "$CODEBERG_API/issues" \
+            -d '{"title":"fix: bundled dust cleanup — GROUP","body":"...","labels":[LABEL_ID]}'
+      - Close each source issue with a cross-reference comment:
+          curl ... "$CODEBERG_API/issues/NNN/comments" -d '{"body":"Bundled into #NEW"}'
+          curl ... "$CODEBERG_API/issues/NNN" -d '{"state":"closed"}'
+      - Remove bundled items from dust.jsonl:
+          jq -c --arg g "GROUP" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" && mv "${DUST_FILE}.tmp" "$DUST_FILE"
+
+5. If no DUST items were emitted and no groups are ripe, skip this step.
+
+CRITICAL: If this step fails, log the failure and move on to blocked-review.
+"""
+needs = ["grooming"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 4: blocked-review — triage blocked issues
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
@@ -180,10 +233,10 @@ Review all issues labeled 'blocked' and decide their fate.
 
 CRITICAL: If this step fails, log the failure and move on.
 """
-needs = ["grooming"]
+needs = ["dust-bundling"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 4: agents-update — AGENTS.md watermark staleness check
+# Step 5: agents-update — AGENTS.md watermark staleness check
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]

@@ -77,7 +77,7 @@ PROMOTE (substantial work — multi-file, behavioral, architectural, security):
 DUST (trivial — single-line edit, rename, comment, style, whitespace):
   Write: echo 'DUST: {"issue": NNN, "group": "<file-or-subsystem>", "title": "...", "reason": "..."}' >> "$RESULT_FILE"
   Group by file or subsystem: e.g. "gardener", "lib/env.sh", "dev-poll"
-  Do NOT close the issue — the script auto-bundles groups of 3+ into a backlog issue.
+  Do NOT close dust issues — the dust-bundling formula step auto-bundles groups of 3+ into a backlog issue.
 
 DUPLICATE (>80% overlap after reading both bodies — confirm before closing):
   Post comment: curl -X POST ... /issues/NNN/comments -d '{"body":"Duplicate of #OLDER"}'
@@ -111,7 +111,8 @@ For tier-2 items (trivial, cosmetic, score < 1.0):
   - Close duplicates with cross-reference comment
 
 These do not need promotion — just classification so they leave the tech-debt queue.
-The script handles the bundling; emit correct DUST lines for each item.
+The dust-bundling formula step handles accumulation, dedup, TTL, and bundling;
+emit correct DUST lines for each item.
 """
 needs = ["process-scored"]
 

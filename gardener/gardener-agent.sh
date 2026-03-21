@@ -36,7 +36,6 @@ LOG_FILE="$SCRIPT_DIR/gardener.log"
 SESSION_NAME="gardener-${PROJECT_NAME}"
 PHASE_FILE="/tmp/gardener-session-${PROJECT_NAME}.phase"
 RESULT_FILE="/tmp/gardener-result-${PROJECT_NAME}.txt"
-DUST_FILE="$SCRIPT_DIR/dust.jsonl"
 SCRATCH_FILE="/tmp/gardener-${PROJECT_NAME}-scratch.md"
 
 # shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
@@ -192,23 +191,11 @@ done
 # ── Build issue context ────────────────────────────────────────────────────
 ISSUE_SUMMARY=$(echo "$ISSUES_JSON" | jq -r '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"')
 
-STAGED_DUST=""
-if [ -s "$DUST_FILE" ]; then
-  STAGED_DUST=$(jq -r '"#\(.issue) (\(.group))"' "$DUST_FILE" 2>/dev/null | sort -u || true)
-fi
-
 # ── Build optional prompt sections ────────────────────────────────────────
 CONTEXT_SECTION=""
 if [ -n "$CONTEXT_BLOCK" ]; then
   CONTEXT_SECTION="## Project context
 ${CONTEXT_BLOCK}"
-fi
-
-STAGED_DUST_SECTION=""
-if [ -n "$STAGED_DUST" ]; then
-  STAGED_DUST_SECTION="
-### Already staged as dust — do NOT re-emit DUST for these
-${STAGED_DUST}"
 fi
 
 ESCALATION_SECTION=""
@@ -241,7 +228,7 @@ ${FORMULA_CONTENT}
 ${ISSUE_SUMMARY}
 
 ### Problems detected
-$(echo -e "$PROBLEMS")${STAGED_DUST_SECTION}${ESCALATION_SECTION}
+$(echo -e "$PROBLEMS")${ESCALATION_SECTION}
 ## Codeberg API reference
 Base URL: ${CODEBERG_API}
 Auth header: -H \"Authorization: token \$CODEBERG_TOKEN\"
@@ -357,124 +344,11 @@ if [ -n "$ACTIONS" ]; then
   done
 fi
 
-# ── Collect dust items ────────────────────────────────────────────────────
-# DUST_FILE already set above (before prompt construction)
-DUST_LINES=$(echo "$CLAUDE_OUTPUT" | grep "^DUST: " | sed 's/^DUST: //' || true)
+# ── Log dust items (bundling handled by run-gardener formula step) ────
+DUST_LINES=$(echo "$CLAUDE_OUTPUT" | grep "^DUST: " || true)
 if [ -n "$DUST_LINES" ]; then
-  # Build set of issue numbers already in dust.jsonl for dedup
-  EXISTING_DUST_ISSUES=""
-  if [ -s "$DUST_FILE" ]; then
-    EXISTING_DUST_ISSUES=$(jq -r '.issue' "$DUST_FILE" 2>/dev/null | sort -nu || true)
-  fi
-
-  DUST_COUNT=0
-  while IFS= read -r dust_json; do
-    [ -z "$dust_json" ] && continue
-    # Validate JSON
-    if ! echo "$dust_json" | jq -e '.issue and .group' >/dev/null 2>&1; then
-      log "WARNING: invalid dust JSON: $dust_json"
-      continue
-    fi
-    # Deduplicate: skip if this issue is already staged
-    dust_issue_num=$(echo "$dust_json" | jq -r '.issue')
-    if echo "$EXISTING_DUST_ISSUES" | grep -qx "$dust_issue_num" 2>/dev/null; then
-      log "Skipping duplicate dust entry for issue #${dust_issue_num}"
-      continue
-    fi
-    EXISTING_DUST_ISSUES="${EXISTING_DUST_ISSUES}
-${dust_issue_num}"
-    echo "$dust_json" | jq -c '. + {"ts": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$DUST_FILE"
-    DUST_COUNT=$((DUST_COUNT + 1))
-  done <<< "$DUST_LINES"
-  log "Collected $DUST_COUNT dust item(s) (duplicates skipped)"
-fi
-
-# ── Expire stale dust entries (30-day TTL) ───────────────────────────────
-if [ -s "$DUST_FILE" ]; then
-  CUTOFF=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
-  if [ -n "$CUTOFF" ]; then
-    BEFORE_COUNT=$(wc -l < "$DUST_FILE")
-    if jq -c --arg c "$CUTOFF" 'select(.ts >= $c)' "$DUST_FILE" > "${DUST_FILE}.ttl" 2>/dev/null; then
-      mv "${DUST_FILE}.ttl" "$DUST_FILE"
-      AFTER_COUNT=$(wc -l < "$DUST_FILE")
-      EXPIRED=$((BEFORE_COUNT - AFTER_COUNT))
-      [ "$EXPIRED" -gt 0 ] && log "Expired $EXPIRED stale dust entries (>30 days old)"
-    else
-      rm -f "${DUST_FILE}.ttl"
-      log "WARNING: TTL cleanup failed — dust.jsonl left unchanged"
-    fi
-  fi
-fi
-
-# ── Bundle dust groups with 3+ distinct issues ──────────────────────────
-if [ -s "$DUST_FILE" ]; then
-  # Count distinct issues per group (not raw entries)
-  DUST_GROUPS=$(jq -r '[.group, (.issue | tostring)] | join("\t")' "$DUST_FILE" 2>/dev/null \
-    | sort -u | cut -f1 | sort | uniq -c | sort -rn || true)
-  while read -r count group; do
-    [ -z "$group" ] && continue
-    [ "$count" -lt 3 ] && continue
-
-    log "Bundling dust group '$group' ($count distinct issues)"
-
-    # Collect deduplicated issue references and details for this group
-    BUNDLE_ISSUES=$(jq -r --arg g "$group" 'select(.group == $g) | "#\(.issue) \(.title // "untitled") — \(.reason // "dust")"' "$DUST_FILE" | sort -u)
-    BUNDLE_ISSUE_NUMS=$(jq -r --arg g "$group" 'select(.group == $g) | .issue' "$DUST_FILE" | sort -nu)
-    DISTINCT_COUNT=$(echo "$BUNDLE_ISSUE_NUMS" | grep -c '.' || true)
-
-    bundle_title="fix: bundled dust cleanup — ${group}"
-    bundle_body="## Bundled dust cleanup — \`${group}\`
-
-Gardener bundled ${DISTINCT_COUNT} trivial tech-debt items into one issue to save factory cycles.
-
-### Items
-$(echo "$BUNDLE_ISSUES" | sed 's/^/- /')
-
-### Instructions
-Fix all items above in a single PR. Each is a small change (rename, comment, style fix, single-line edit).
-
-### Affected files
-- Files in \`${group}\` subsystem
-
-### Acceptance criteria
-- [ ] All listed items resolved
-- [ ] ShellCheck passes"
-
-    new_bundle=$(curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${CODEBERG_API}/issues" \
-      -d "$(jq -nc --arg t "$bundle_title" --arg b "$bundle_body" \
-        --argjson lid "$BACKLOG_LABEL_ID" '{"title":$t,"body":$b,"labels":[$lid]}')" 2>/dev/null | jq -r '.number // ""') || true
-
-    if [ -n "$new_bundle" ]; then
-      log "Created bundle issue #${new_bundle} for dust group '$group' ($DISTINCT_COUNT items)"
-      matrix_send "gardener" "📦 Bundled ${DISTINCT_COUNT} dust items (${group}) → #${new_bundle}" 2>/dev/null || true
-
-      # Close source issues with cross-reference
-      for src_issue in $BUNDLE_ISSUE_NUMS; do
-        curl -sf -X POST \
-          -H "Authorization: token ${CODEBERG_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${CODEBERG_API}/issues/${src_issue}/comments" \
-          -d "$(jq -nc --arg b "Bundled into #${new_bundle} (dust cleanup)" '{"body":$b}')" 2>/dev/null || true
-        curl -sf -X PATCH \
-          -H "Authorization: token ${CODEBERG_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${CODEBERG_API}/issues/${src_issue}" \
-          -d '{"state":"closed"}' 2>/dev/null || true
-        log "Closed source issue #${src_issue} → bundled into #${new_bundle}"
-      done
-
-      # Remove bundled items from dust.jsonl — only if jq succeeds
-      if jq -c --arg g "$group" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" 2>/dev/null; then
-        mv "${DUST_FILE}.tmp" "$DUST_FILE"
-      else
-        rm -f "${DUST_FILE}.tmp"
-        log "WARNING: failed to prune bundled group '$group' from dust.jsonl"
-      fi
-    fi
-  done <<< "$DUST_GROUPS"
+  DUST_COUNT=$(echo "$DUST_LINES" | grep -c '.' || true)
+  log "Dust items reported: $DUST_COUNT (bundling handled by run-gardener formula)"
 fi
 
 # ── Cleanup scratch file on normal exit ──────────────────────────────────

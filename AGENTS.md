@@ -133,8 +133,8 @@ issue is filed against).
 **Key files**:
 - `gardener/gardener-run.sh` — Cron wrapper: lock, memory guard, dedup check, files action issue
 - `gardener/gardener-poll.sh` — Escalation-reply injection for dev sessions, invokes gardener-agent.sh for grooming
-- `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE), handles dust bundling
-- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, blocked-review, agents-update, commit-and-pr
+- `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE)
+- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling, blocked-review, agents-update, commit-and-pr
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
