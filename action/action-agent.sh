@@ -32,6 +32,8 @@ LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-harb}.log"
 THREAD_FILE="/tmp/action-thread-${ISSUE}"
 IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
+MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}" # 8h default wall-clock cap
+SESSION_START_EPOCH=$(date +%s)
 
 # --- Phase handler globals (agent-specific; defaults in phase-handler.sh) ---
 # shellcheck disable=SC2034  # used by phase-handler.sh
@@ -84,6 +86,11 @@ fi
 echo $$ > "$LOCKFILE"
 
 cleanup() {
+  # Kill lifetime watchdog if running
+  if [ -n "${LIFETIME_WATCHDOG_PID:-}" ] && kill -0 "$LIFETIME_WATCHDOG_PID" 2>/dev/null; then
+    kill "$LIFETIME_WATCHDOG_PID" 2>/dev/null || true
+    wait "$LIFETIME_WATCHDOG_PID" 2>/dev/null || true
+  fi
   rm -f "$LOCKFILE"
   agent_kill_session "$SESSION_NAME"
   # Best-effort docker cleanup for containers started during this action
@@ -262,6 +269,31 @@ log "initial prompt injected into session"
 matrix_send "action" "⚡ #${ISSUE}: session started — ${ISSUE_TITLE}" \
   "${THREAD_ID}" 2>/dev/null || true
 
+# --- Wall-clock lifetime watchdog (background) ---
+# Caps total session time independently of idle timeout.  When the cap is
+# hit the watchdog kills the tmux session, posts a summary comment on the
+# issue, and writes PHASE:failed so monitor_phase_loop exits.
+_lifetime_watchdog() {
+  local remaining=$(( MAX_LIFETIME - ($(date +%s) - SESSION_START_EPOCH) ))
+  [ "$remaining" -le 0 ] && remaining=1
+  sleep "$remaining"
+  local hours=$(( MAX_LIFETIME / 3600 ))
+  log "MAX_LIFETIME (${hours}h) reached — killing session"
+  agent_kill_session "$SESSION_NAME"
+  # Post summary comment on issue
+  local body="Action session killed: wall-clock lifetime cap (${hours}h) reached."
+  curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    "${CODEBERG_API}/issues/${ISSUE}/comments" \
+    -d "{\"body\": \"${body}\"}" >/dev/null 2>&1 || true
+  printf 'PHASE:failed\nReason: max_lifetime (%sh) reached\n' "$hours" > "$PHASE_FILE"
+  # Touch phase-changed marker so monitor_phase_loop picks up immediately
+  touch "/tmp/phase-changed-${SESSION_NAME}.marker"
+}
+_lifetime_watchdog &
+LIFETIME_WATCHDOG_PID=$!
+
 # --- Monitor phase loop (shared with dev-agent) ---
 status "monitoring phase: ${PHASE_FILE} (action agent)"
 monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change "$SESSION_NAME"
@@ -279,6 +311,17 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     ;;
   idle_prompt)
     # Notification + escalation already handled by _on_phase_change(PHASE:failed) callback
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    ;;
+  PHASE:failed)
+    # Check if this was a max_lifetime kill (phase file contains the reason)
+    if grep -q 'max_lifetime' "$PHASE_FILE" 2>/dev/null; then
+      notify_ctx \
+        "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached" \
+        "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached"
+      echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"max_lifetime\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+    fi
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   done)
