@@ -302,3 +302,19 @@ Meanwhile:
 | Approved PRs never merge (HTTP 405) | `review_bot` not in merge/approvals whitelist | Add as write collaborator; set both `approvals_whitelist_username` and `merge_whitelist_usernames` in branch protection |
 | Dev-agent churns through issues without waiting for open PRs to land | No single-threaded enforcement | `WAITING_PRS` check in dev-poll holds new work — verify TOML `name` is consistent across invocations |
 | Label ping-pong (issue reopened then immediately re-closed) | `already_done` handler doesn't close issue | Review dev-agent log; `already_done` status should auto-close the issue |
+
+## Action Runner — disinto (harb-staging)
+
+Added 2026-03-19. Polls disinto repo for `action`-labeled issues.
+
+```
+*/5 * * * * cd /home/debian/dark-factory && bash action/action-poll.sh projects/disinto.toml >> /tmp/action-disinto-cron.log 2>&1
+```
+
+Runs locally on harb-staging — same box where Caddy/site live. For formulas that need local resources (publish-site, etc).
+
+### Fix applied: action-agent.sh needs +x
+The script wasn't executable after git clone. Run:
+```bash
+chmod +x action/action-agent.sh action/action-poll.sh
+```

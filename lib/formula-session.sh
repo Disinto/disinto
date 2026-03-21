@@ -84,16 +84,45 @@ $(cat "$ctx_path")
 # ── Session management ───────────────────────────────────────────────────
 
 # start_formula_session SESSION WORKDIR PHASE_FILE
-# Kills stale session, resets phase file, creates new tmux + claude session.
+# Kills stale session, resets phase file, creates a per-agent git worktree
+# for session isolation, and creates a new tmux + claude session in it.
+# Sets _FORMULA_SESSION_WORKDIR to the worktree path (or original workdir
+# on fallback). Callers must clean up via remove_formula_worktree after
+# the session ends.
 # Returns 0 on success, 1 on failure.
 start_formula_session() {
   local session="$1" workdir="$2" phase_file="$3"
   agent_kill_session "$session"
   rm -f "$phase_file"
+
+  # Create per-agent git worktree for session isolation.
+  # Each agent gets its own CWD so Claude Code treats them as separate
+  # projects — no resume collisions between sequential formula runs.
+  _FORMULA_SESSION_WORKDIR="/tmp/disinto-${session}"
+  # Clean up any stale worktree from a previous run
+  git -C "$workdir" worktree remove "$_FORMULA_SESSION_WORKDIR" --force 2>/dev/null || true
+  if git -C "$workdir" worktree add "$_FORMULA_SESSION_WORKDIR" HEAD --detach 2>/dev/null; then
+    log "Created worktree: ${_FORMULA_SESSION_WORKDIR}"
+  else
+    log "WARNING: worktree creation failed — falling back to ${workdir}"
+    _FORMULA_SESSION_WORKDIR="$workdir"
+  fi
+
   log "Creating tmux session: ${session}"
-  if ! create_agent_session "$session" "$workdir" "$phase_file"; then
+  if ! create_agent_session "$session" "$_FORMULA_SESSION_WORKDIR" "$phase_file"; then
     log "ERROR: failed to create tmux session ${session}"
     return 1
+  fi
+}
+
+# remove_formula_worktree
+# Removes the worktree created by start_formula_session if it differs from
+# PROJECT_REPO_ROOT. Safe to call multiple times. No-op if no worktree was created.
+remove_formula_worktree() {
+  if [ -n "${_FORMULA_SESSION_WORKDIR:-}" ] \
+     && [ "$_FORMULA_SESSION_WORKDIR" != "${PROJECT_REPO_ROOT:-}" ]; then
+    git -C "$PROJECT_REPO_ROOT" worktree remove "$_FORMULA_SESSION_WORKDIR" --force 2>/dev/null || true
+    log "Removed worktree: ${_FORMULA_SESSION_WORKDIR}"
   fi
 }
 
@@ -113,7 +142,7 @@ formula_phase_callback() {
       fi
       _FORMULA_CRASH_COUNT=$(( ${_FORMULA_CRASH_COUNT:-0} + 1 ))
       log "WARNING: tmux session died unexpectedly — attempting recovery"
-      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROJECT_REPO_ROOT" "$PHASE_FILE" 2>/dev/null; then
+      if create_agent_session "${_MONITOR_SESSION:-$SESSION_NAME}" "${_FORMULA_SESSION_WORKDIR:-$PROJECT_REPO_ROOT}" "$PHASE_FILE" 2>/dev/null; then
         agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" "$PROMPT"
         log "Recovery session started"
       else
@@ -234,5 +263,9 @@ run_formula_and_monitor() {
   fi
 
   matrix_send "$agent_name" "${agent_name^} session finished (${FINAL_PHASE:-no phase})" 2>/dev/null || true
+
+  # Clean up per-agent worktree — "the runtime creates and destroys"
+  remove_formula_worktree
+
   log "--- ${agent_name^} run done ---"
 }
