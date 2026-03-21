@@ -232,6 +232,6 @@ IMPORTANT: Do NOT commit or push the journal — it is a local working file.
 The journal directory is committed to git periodically by other agents.
 
 After writing the journal, write the phase signal:
-  echo 'PHASE:done' > '$PHASE_FILE'
+  echo 'PHASE:done' > "$PHASE_FILE"
 """
 needs = ["report"]

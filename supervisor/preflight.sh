@@ -139,9 +139,9 @@ echo ""
 # ── Backlog + In-Progress ─────────────────────────────────────────────────
 
 echo "## Issue Status (${PROJECT_NAME})"
-_backlog_count=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
-_in_progress_count=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
-_blocked_count=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=1" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_backlog_count=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_in_progress_count=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_blocked_count=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
 echo "Backlog: ${_backlog_count}, In-progress: ${_in_progress_count}, Blocked: ${_blocked_count}"
 echo ""
 
@@ -181,7 +181,7 @@ echo "## Escalation Replies (from Matrix)"
 if [ -s /tmp/supervisor-escalation-reply ]; then
   cat /tmp/supervisor-escalation-reply
   echo ""
-  echo "(This reply will be consumed after this run)"
+  echo "(Reply already consumed by supervisor-run.sh before this session)"
 else
   echo "  None"
 fi
