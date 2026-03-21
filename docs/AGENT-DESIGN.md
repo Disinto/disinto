@@ -108,7 +108,7 @@ When reviewing PRs or designing new agents, ask:
 
 | Agent | Lines | Judgment in bash | Target |
 |-------|-------|------------------|--------|
-| dev-agent | 1380 (agent 732 + phase-handler 648) | Heavy — deps, CI retry, review parsing, merge strategy, recovery mode | Thin orchestrator + formula |
+| dev-agent | 2246 (agent 791 + phase-handler 786 + dev-poll 669) | Heavy — deps, CI retry, review parsing, merge strategy, recovery mode; dev-poll adds dependency resolution, CI retry tracking, approved-PR merging, orphaned session recovery | Thin orchestrator + formula |
 | review-agent | 870 | Heavy — diff analysis, review decision, approve/request-changes logic | Needs assessment |
 | supervisor | 877 | Heavy — multi-project health checks, CI stall detection, container monitoring | Partially justified (monitoring is deterministic, but escalation decisions are judgment) |
 | gardener | 1242 (agent 471 + poll 771) | Medium — backlog triage, duplicate detection, tech-debt scoring | Poll is heavy orchestration; agent is prompt-driven |
