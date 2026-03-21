@@ -26,6 +26,10 @@
 # shellcheck source=../lib/secret-scan.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/secret-scan.sh"
 
+# Load shared CI helpers (is_infra_step, classify_pipeline_failure, etc.)
+# shellcheck source=../lib/ci-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/ci-helpers.sh"
+
 # --- Default globals (agents can override after sourcing) ---
 : "${CI_POLL_TIMEOUT:=1800}"
 : "${REVIEW_POLL_TIMEOUT:=10800}"
@@ -371,8 +375,9 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
 
       log "CI failed: step=${FAILED_STEP:-unknown} exit=${FAILED_EXIT:-?}"
 
-      case "${FAILED_STEP}" in git*) IS_INFRA=true ;; esac
-      case "${FAILED_EXIT}" in 128|137) IS_INFRA=true ;; esac
+      if [ -n "$FAILED_STEP" ] && is_infra_step "$FAILED_STEP" "${FAILED_EXIT:-0}" >/dev/null 2>&1; then
+        IS_INFRA=true
+      fi
 
       if [ "$IS_INFRA" = true ] && [ "${CI_RETRY_COUNT:-0}" -lt 1 ]; then
         CI_RETRY_COUNT=$(( CI_RETRY_COUNT + 1 ))
