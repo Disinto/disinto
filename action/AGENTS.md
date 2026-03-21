@@ -1,4 +1,4 @@
-<!-- last-reviewed: 038581e555403586f4595f8a5f77d7dbb311779b -->
+<!-- last-reviewed: 80a64cd3e4d2836bfab3c46230a780e3e233125d -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,
@@ -12,13 +12,13 @@ issues labeled `action` that have no active tmux session, then spawns
 
 **Key files**:
 - `action/action-poll.sh` — Cron scheduler: finds open action issues with no active tmux session, spawns action-agent.sh
-- `action/action-agent.sh` — Orchestrator: fetches issue body + prior comments, creates tmux session (`action-{issue_num}`) with interactive `claude`, injects formula prompt with phase protocol, enters `monitor_phase_loop` (shared via `dev/phase-handler.sh`) for CI/review lifecycle or direct completion
+- `action/action-agent.sh` — Orchestrator: fetches issue body + prior comments, creates tmux session (`action-{project}-{issue_num}`) with interactive `claude`, injects formula prompt with phase protocol, enters `monitor_phase_loop` (shared via `dev/phase-handler.sh`) for CI/review lifecycle or direct completion
 
 **Session lifecycle**:
 1. `action-poll.sh` finds open `action` issues with no active tmux session.
 2. Spawns `action-agent.sh <issue_num>`.
 3. Agent creates Matrix thread, exports `MATRIX_THREAD_ID` so Claude's output streams to the thread via a Stop hook (`on-stop-matrix.sh`).
-4. Agent creates tmux session `action-{issue_num}`, injects prompt (formula + prior comments + phase protocol).
+4. Agent creates tmux session `action-{project}-{issue_num}`, injects prompt (formula + prior comments + phase protocol).
 5. Agent enters `monitor_phase_loop` (shared with dev-agent via `dev/phase-handler.sh`).
 6. **Path A (git output):** Claude pushes branch → `PHASE:awaiting_ci` → handler creates PR, polls CI → injects failures → Claude fixes → push → re-poll → CI passes → `PHASE:awaiting_review` → handler polls reviews → injects REQUEST_CHANGES → Claude fixes → approved → merge → cleanup.
 7. **Path B (no git output):** Claude posts results as comment, closes issue → `PHASE:done` → handler cleans up (kill session, docker compose down, remove temp files).

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 038581e555403586f4595f8a5f77d7dbb311779b -->
+<!-- last-reviewed: 80a64cd3e4d2836bfab3c46230a780e3e233125d -->
 # Predictor Agent
 
 **Role**: Infrastructure pattern detection (the "goblin"). Runs a 3-step
