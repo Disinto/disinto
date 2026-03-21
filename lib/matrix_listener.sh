@@ -250,8 +250,9 @@ Please answer this question about your review. Explain your reasoning."
       action)
         # Route reply into the action tmux session using context_tag (issue number)
         ACTION_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        ACTION_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
         if [ -n "$ACTION_ISSUE" ]; then
-          ACTION_SESSION="action-${ACTION_ISSUE}"
+          ACTION_SESSION="action-${ACTION_PROJECT}-${ACTION_ISSUE}"
           if tmux has-session -t "$ACTION_SESSION" 2>/dev/null; then
             ACTION_INJECT_MSG="Human reply from ${SENDER} in Matrix:
 

@@ -6,7 +6,7 @@
 # Lifecycle:
 #   1. Fetch issue body (action formula) + existing comments
 #   2. Create isolated git worktree: /tmp/action-{issue}-{timestamp}
-#   3. Create tmux session: action-{issue_num} with interactive claude in worktree
+#   3. Create tmux session: action-{project}-{issue_num} with interactive claude in worktree
 #   4. Inject initial prompt: formula + comments + phase protocol instructions
 #   5. Monitor phase file via monitor_phase_loop (shared with dev-agent)
 #   Path A (git output): Claude pushes → handler creates PR → CI poll → review
@@ -18,7 +18,7 @@
 # Key principle: The runtime creates and destroys. The formula preserves.
 # The formula must push results before signaling done — the worktree is nuked after.
 #
-# Session:  action-{issue_num} (tmux)
+# Session:  action-{project}-{issue_num} (tmux)
 # Log:      action/action-poll-{project}.log
 
 set -euo pipefail
@@ -32,7 +32,7 @@ source "$(dirname "$0")/../lib/agent-session.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=../dev/phase-handler.sh
 source "$(dirname "$0")/../dev/phase-handler.sh"
-SESSION_NAME="action-${ISSUE}"
+SESSION_NAME="action-${PROJECT_NAME}-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
 THREAD_FILE="/tmp/action-thread-${ISSUE}"
