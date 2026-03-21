@@ -1,0 +1,237 @@
+# formulas/run-supervisor.toml — Supervisor formula (health monitoring + remediation)
+#
+# Executed by supervisor/supervisor-run.sh via cron (every 20 minutes).
+# supervisor-run.sh creates a tmux session with Claude (sonnet) and injects
+# this formula with pre-collected metrics as context.
+#
+# Steps: preflight → health-assessment → decide-actions → report → journal
+#
+# Key differences from planner/gardener:
+#   - Runs every 20min — lightweight health check
+#   - Primarily READS state, rarely WRITES (no PRs, just Matrix + journal)
+#   - Reactive to escalations — processes pending escalation events
+#   - Conversation memory via Matrix thread and journal
+
+name        = "run-supervisor"
+description = "Factory health monitoring: assess metrics, fix issues, report via Matrix, write journal"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md"]
+
+[[steps]]
+id    = "preflight"
+title = "Review pre-collected metrics"
+description = """
+The pre-flight metrics have already been collected by supervisor/preflight.sh
+and injected into your prompt above. Review them now.
+
+1. Read the injected metrics data carefully (System Resources, Docker,
+   Active Sessions, Phase Files, Lock Files, Agent Logs, CI Pipelines,
+   Open PRs, Issue Status, Stale Worktrees, Pending Escalations,
+   Escalation Replies).
+
+2. If there are escalation replies from Matrix (human messages), note them —
+   you will act on them in the decide-actions step.
+
+3. Read the supervisor journal for recent history:
+     JOURNAL_FILE="$FACTORY_ROOT/supervisor/journal/$(date -u +%Y-%m-%d).md"
+     if [ -f "$JOURNAL_FILE" ]; then cat "$JOURNAL_FILE"; fi
+
+4. Note any values that cross these thresholds:
+   - RAM available < 500MB or swap > 3GB → P0 (memory crisis)
+   - Disk > 80% → P1 (disk pressure)
+   - Agent sessions dead, CI stuck/pending, git in bad state → P2 (factory stopped)
+   - PRs stale, unreviewed, or with merge conflicts → P3 (factory degraded)
+   - Stale worktrees, old lock files → P4 (housekeeping)
+"""
+
+[[steps]]
+id    = "health-assessment"
+title = "Evaluate health of each subsystem"
+description = """
+Categorize every finding from the metrics into priority levels.
+
+### P0 — Memory crisis
+- RAM available < 500MB
+- Swap used > 3GB AND RAM available < 2000MB
+
+### P1 — Disk pressure
+- Disk usage > 80%
+
+### P2 — Factory stopped / stalled
+- CI pipelines stuck running > 20min or pending > 30min
+- Dev-agent lock file present but process dead
+- Dev-agent status unchanged for > 30min
+- Git repo on wrong branch or in broken rebase state
+- Pipeline stalled: backlog issues exist but no agent ran for > 20min
+- Dev-agent blocked: last N polls all report "no ready issues"
+- Dev sessions in PHASE:needs_human for > 24h
+
+### P3 — Factory degraded
+- PRs with CI pass but merge conflict (needs rebase)
+- PRs with CI failure stale > 30min
+- PRs with CI pass but no review for > 60min
+- Circular dependency deadlocks in backlog
+- Stale dependencies (blocked by issues open > 30 days)
+
+### P4 — Housekeeping
+- Stale worktrees > 2h old with no active process
+- Lock files for dead processes
+- Stale claude processes (> 3h old)
+
+List each finding with its priority level. If everything looks healthy,
+note "All systems healthy" and proceed.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "decide-actions"
+title = "Fix what you can, escalate what you cannot"
+description = """
+For each finding from the health assessment, decide and execute an action.
+
+### Auto-fixable (execute these directly)
+
+**P0 Memory crisis:**
+  # Kill stale one-shot claude processes (>3h old)
+  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
+  # Drop filesystem caches
+  sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+
+**P1 Disk pressure:**
+  # Docker cleanup
+  sudo docker system prune -f >/dev/null 2>&1 || true
+  # Truncate logs > 10MB
+  for f in "$FACTORY_ROOT"/{dev,review,supervisor,gardener,planner,predictor}/*.log; do
+    [ -f "$f" ] && [ "$(du -k "$f" | cut -f1)" -gt 10240 ] && truncate -s 0 "$f"
+  done
+
+**P2 Dead lock files:**
+  rm -f /path/to/stale.lock
+
+**P2 Stale rebase:**
+  cd "$PROJECT_REPO_ROOT"
+  git rebase --abort 2>/dev/null
+  git checkout "$PRIMARY_BRANCH" 2>/dev/null
+
+**P2 Wrong branch:**
+  cd "$PROJECT_REPO_ROOT"
+  git checkout "$PRIMARY_BRANCH" 2>/dev/null
+
+**P4 Stale worktrees:**
+  git -C "$PROJECT_REPO_ROOT" worktree remove --force /tmp/stale-worktree 2>/dev/null
+  git -C "$PROJECT_REPO_ROOT" worktree prune 2>/dev/null
+
+**P4 Stale claude processes:**
+  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
+
+### Escalation replies (from Matrix)
+
+If there are escalation replies from a human, act on them:
+- "ignore X" → note in journal, do not alert on X this run
+- "kill that agent" → identify and kill the referenced session
+- "what's stuck?" → include detailed status in the Matrix report
+- Other instructions → follow them, use best judgment
+
+### Cannot auto-fix → escalate
+
+For P0-P2 issues that persist after auto-fix attempts, or issues requiring
+human judgment, prepare an escalation message for the report step.
+
+Read the relevant best-practices file before taking action:
+  cat "$FACTORY_ROOT/supervisor/best-practices/memory.md"    # P0
+  cat "$FACTORY_ROOT/supervisor/best-practices/disk.md"      # P1
+  cat "$FACTORY_ROOT/supervisor/best-practices/ci.md"        # P2 CI
+  cat "$FACTORY_ROOT/supervisor/best-practices/dev-agent.md" # P2 agent
+  cat "$FACTORY_ROOT/supervisor/best-practices/git.md"       # P2 git
+
+Track what you fixed and what needs escalation for the report step.
+"""
+needs = ["health-assessment"]
+
+[[steps]]
+id    = "report"
+title = "Post health summary to Matrix"
+description = """
+Post a status summary to Matrix. Use the matrix_send function:
+  source "$FACTORY_ROOT/lib/env.sh"
+  matrix_send "supervisor" "<message>"
+
+### When everything is healthy
+Post a brief "all clear" only if the PREVIOUS run had alerts (check journal).
+Do NOT post "all clear" every 20 minutes — that would be noise.
+
+### When there are findings
+Post a summary grouped by priority:
+  matrix_send "supervisor" "Supervisor health check:
+
+  Fixed:
+  - <what was auto-fixed>
+
+  Alerts:
+  - [P2] <description>
+  - [P3] <description>
+
+  Status: RAM=<X>MB Disk=<Y>% Load=<Z>"
+
+### When escalation is needed (P0-P2 unresolved)
+Escalate with a clear call to action:
+  matrix_send "supervisor" "ESCALATE: <what's wrong and why you can't fix it>
+
+  Suggested action: <what the human should do>"
+
+### Responding to escalation replies
+If you acted on a human's reply, confirm what you did:
+  matrix_send "supervisor" "Acted on your reply: <summary of action taken>"
+
+Keep messages concise. Do not post identical messages to what was posted
+in the previous run (check journal for prior messages).
+"""
+needs = ["decide-actions"]
+
+[[steps]]
+id    = "journal"
+title = "Write health journal entry"
+description = """
+Append a timestamped entry to the supervisor journal.
+
+File path:
+  $FACTORY_ROOT/supervisor/journal/$(date -u +%Y-%m-%d).md
+
+If the file already exists (multiple runs per day), append a new section.
+If it does not exist, create it.
+
+Format:
+  ## Supervisor run — HH:MM UTC
+
+  ### Health status
+  - RAM: <X>MB available, Swap: <X>MB
+  - Disk: <X>%
+  - Load: <X>
+  - Docker: <N> containers
+
+  ### Findings
+  - [P<N>] <finding> — <action taken or "escalated">
+  (or "No issues found — all systems healthy")
+
+  ### Actions taken
+  - <what was fixed>
+  (or "No actions needed")
+
+  ### Escalation replies processed
+  - <human said X, did Y>
+  (or "None")
+
+Keep each entry concise — 15-25 lines max. This journal provides
+run-to-run context so future supervisor runs can detect trends
+(e.g., "disk has been >75% for 3 consecutive runs").
+
+IMPORTANT: Do NOT commit or push the journal — it is a local working file.
+The journal directory is committed to git periodically by other agents.
+
+After writing the journal, write the phase signal:
+  echo 'PHASE:done' > "$PHASE_FILE"
+"""
+needs = ["report"]
