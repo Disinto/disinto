@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# vault-fire.sh — Execute an approved vault action by ID
+# vault-fire.sh — Execute an approved vault item by ID
 #
-# Two-phase: pending/ → approved/ → fired/
-# If action is in pending/, moves to approved/ first.
-# If action is already in approved/, fires directly (crash recovery).
+# Handles two pipelines:
+#   A. Action gating (*.json): pending/ → approved/ → fired/
+#   B. Procurement (*.md): approved/ → fired/ (writes RESOURCES.md entry)
 #
-# Usage: bash vault-fire.sh <action-id>
+# If item is in pending/, moves to approved/ first.
+# If item is already in approved/, fires directly (crash recovery).
+#
+# Usage: bash vault-fire.sh <item-id>
 
 set -euo pipefail
 
@@ -15,27 +18,38 @@ source "${SCRIPT_DIR}/../lib/env.sh"
 VAULT_DIR="${FACTORY_ROOT}/vault"
 LOCKS_DIR="${VAULT_DIR}/.locks"
 LOGFILE="${VAULT_DIR}/vault.log"
+RESOURCES_FILE="${PROJECT_REPO_ROOT:-${FACTORY_ROOT}}/RESOURCES.md"
 
 log() {
   printf '[%s] vault-fire: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
-ACTION_ID="${1:?Usage: vault-fire.sh <action-id>}"
+ACTION_ID="${1:?Usage: vault-fire.sh <item-id>}"
 
-# Locate the action file
+# =============================================================================
+# Detect pipeline: procurement (.md) or action gating (.json)
+# =============================================================================
+IS_PROCUREMENT=false
 ACTION_FILE=""
-if [ -f "${VAULT_DIR}/approved/${ACTION_ID}.json" ]; then
+
+if [ -f "${VAULT_DIR}/approved/${ACTION_ID}.md" ]; then
+  IS_PROCUREMENT=true
+  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.md"
+elif [ -f "${VAULT_DIR}/pending/${ACTION_ID}.md" ]; then
+  IS_PROCUREMENT=true
+  mv "${VAULT_DIR}/pending/${ACTION_ID}.md" "${VAULT_DIR}/approved/${ACTION_ID}.md"
+  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.md"
+  log "$ACTION_ID: pending → approved (procurement)"
+elif [ -f "${VAULT_DIR}/approved/${ACTION_ID}.json" ]; then
   ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.json"
 elif [ -f "${VAULT_DIR}/pending/${ACTION_ID}.json" ]; then
-  # Phase 1: move pending → approved
   mv "${VAULT_DIR}/pending/${ACTION_ID}.json" "${VAULT_DIR}/approved/${ACTION_ID}.json"
   ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.json"
-  # Update status in the file
   TMP=$(mktemp)
   jq '.status = "approved"' "$ACTION_FILE" > "$TMP" && mv "$TMP" "$ACTION_FILE"
   log "$ACTION_ID: pending → approved"
 else
-  log "ERROR: action $ACTION_ID not found in pending/ or approved/"
+  log "ERROR: item $ACTION_ID not found in pending/ or approved/"
   exit 1
 fi
 
@@ -52,7 +66,41 @@ fi
 echo $$ > "$LOCKFILE"
 trap 'rm -f "$LOCKFILE"' EXIT
 
-# Read action metadata
+# =============================================================================
+# Pipeline A: Procurement — extract RESOURCES.md entry and append
+# =============================================================================
+if [ "$IS_PROCUREMENT" = true ]; then
+  log "$ACTION_ID: firing procurement request"
+
+  # Extract the proposed RESOURCES.md entry from the markdown file.
+  # The entry is between "## Proposed RESOURCES.md Entry" and the next "## " heading or EOF.
+  ENTRY=""
+  ENTRY=$(sed -n '/^## Proposed RESOURCES\.md Entry/,/^## /{/^## Proposed RESOURCES\.md Entry/d;/^## /d;p}' "$ACTION_FILE" 2>/dev/null || true)
+
+  # Strip leading/trailing blank lines and markdown code fences
+  ENTRY=$(echo "$ENTRY" | sed '/^```/d' | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
+
+  if [ -z "$ENTRY" ]; then
+    log "ERROR: $ACTION_ID has no '## Proposed RESOURCES.md Entry' section"
+    matrix_send "vault" "❌ Procurement $ACTION_ID has no RESOURCES.md entry — cannot fire" 2>/dev/null || true
+    exit 1
+  fi
+
+  # Append entry to RESOURCES.md
+  printf '\n%s\n' "$ENTRY" >> "$RESOURCES_FILE"
+  log "$ACTION_ID: wrote RESOURCES.md entry"
+
+  # Move to fired/
+  mv "$ACTION_FILE" "${VAULT_DIR}/fired/${ACTION_ID}.md"
+  rm -f "${LOCKS_DIR}/${ACTION_ID}.notified"
+  log "$ACTION_ID: approved → fired (procurement)"
+  matrix_send "vault" "✅ Procurement fulfilled: ${ACTION_ID} — RESOURCES.md updated" 2>/dev/null || true
+  exit 0
+fi
+
+# =============================================================================
+# Pipeline B: Action gating — dispatch to handler
+# =============================================================================
 ACTION_TYPE=$(jq -r '.type // ""' < "$ACTION_FILE")
 ACTION_SOURCE=$(jq -r '.source // ""' < "$ACTION_FILE")
 PAYLOAD=$(jq -c '.payload // {}' < "$ACTION_FILE")
@@ -64,9 +112,6 @@ fi
 
 log "$ACTION_ID: firing type=$ACTION_TYPE source=$ACTION_SOURCE"
 
-# =============================================================================
-# Dispatch to handler
-# =============================================================================
 FIRE_EXIT=0
 
 case "$ACTION_TYPE" in

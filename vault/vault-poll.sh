@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# vault-poll.sh — Vault gate agent: process pending actions, retry approved, timeout escalations
+# vault-poll.sh — Vault: process pending actions + procurement requests
 #
-# Runs every 30min via cron. Processes actions through the vault pipeline:
-#   1. Retry any approved/ actions that weren't fired (crash recovery)
+# Runs every 30min via cron. Two pipelines:
+#   A. Action gating (*.json): auto-approve/escalate/reject via vault-agent.sh
+#   B. Procurement (*.md): notify human, fire approved requests via vault-fire.sh
+#
+# Phases:
+#   1. Retry any approved/ items that weren't fired (crash recovery)
 #   2. Auto-reject escalations with no reply for 48h
-#   3. Invoke vault-agent.sh for new pending/ actions
+#   3. Invoke vault-agent.sh for new pending JSON actions
+#   4. Notify human about new pending procurement requests (.md)
 #
 # Cron: */30 * * * * /path/to/disinto/vault/vault-poll.sh
 #
@@ -67,9 +72,9 @@ unlock_action() {
 }
 
 # =============================================================================
-# PHASE 1: Retry approved actions (crash recovery)
+# PHASE 1: Retry approved items (crash recovery — JSON actions + MD procurement)
 # =============================================================================
-status "phase 1: retrying approved actions"
+status "phase 1: retrying approved items"
 
 for action_file in "${VAULT_DIR}/approved/"*.json; do
   [ -f "$action_file" ] || continue
@@ -90,6 +95,27 @@ for action_file in "${VAULT_DIR}/approved/"*.json; do
   fi
 
   unlock_action "$ACTION_ID"
+done
+
+# Retry approved procurement requests (.md)
+for req_file in "${VAULT_DIR}/approved/"*.md; do
+  [ -f "$req_file" ] || continue
+  REQ_ID=$(basename "$req_file" .md)
+
+  if ! lock_action "$REQ_ID"; then
+    log "skip procurement $REQ_ID — locked by another process"
+    continue
+  fi
+
+  log "retrying approved procurement: $REQ_ID"
+  if bash "${VAULT_DIR}/vault-fire.sh" "$REQ_ID" >> "$LOGFILE" 2>&1; then
+    log "fired procurement $REQ_ID (retry)"
+  else
+    log "ERROR: fire failed for procurement $REQ_ID (retry)"
+    matrix_send "vault" "❌ Vault fire failed on retry: ${REQ_ID} (procurement)" 2>/dev/null || true
+  fi
+
+  unlock_action "$REQ_ID"
 done
 
 # =============================================================================
@@ -122,7 +148,7 @@ for action_file in "${VAULT_DIR}/pending/"*.json; do
 done
 
 # =============================================================================
-# PHASE 3: Process new pending actions
+# PHASE 3: Process new pending actions (JSON — action gating)
 # =============================================================================
 status "phase 3: processing pending actions"
 
@@ -152,17 +178,62 @@ for action_file in "${VAULT_DIR}/pending/"*.json; do
   unlock_action "$ACTION_ID"
 done
 
-if [ "$PENDING_COUNT" -eq 0 ]; then
-  status "all clear — no pending actions"
-  exit 0
+if [ "$PENDING_COUNT" -gt 0 ]; then
+  log "found $PENDING_COUNT pending action(s), invoking vault-agent"
+  status "invoking vault-agent for $PENDING_COUNT action(s)"
+
+  bash "${VAULT_DIR}/vault-agent.sh" >> "$LOGFILE" 2>&1 || {
+    log "ERROR: vault-agent failed"
+    matrix_send "vault" "❌ vault-agent.sh failed — check vault.log" 2>/dev/null || true
+  }
 fi
 
-log "found $PENDING_COUNT pending action(s), invoking vault-agent"
-status "invoking vault-agent for $PENDING_COUNT action(s)"
+# =============================================================================
+# PHASE 4: Notify human about new pending procurement requests (.md)
+# =============================================================================
+status "phase 4: processing pending procurement requests"
 
-bash "${VAULT_DIR}/vault-agent.sh" >> "$LOGFILE" 2>&1 || {
-  log "ERROR: vault-agent failed"
-  matrix_send "vault" "❌ vault-agent.sh failed — check vault.log" 2>/dev/null || true
-}
+PROCURE_COUNT=0
 
-status "poll complete"
+for req_file in "${VAULT_DIR}/pending/"*.md; do
+  [ -f "$req_file" ] || continue
+  REQ_ID=$(basename "$req_file" .md)
+
+  # Check if already notified (marker file)
+  if [ -f "${VAULT_DIR}/.locks/${REQ_ID}.notified" ]; then
+    continue
+  fi
+
+  if ! lock_action "$REQ_ID"; then
+    log "skip procurement $REQ_ID — locked"
+    continue
+  fi
+
+  PROCURE_COUNT=$((PROCURE_COUNT + 1))
+
+  # Extract title from first heading
+  REQ_TITLE=$(grep -m1 '^# ' "$req_file" | sed 's/^# //' || echo "$REQ_ID")
+
+  log "new procurement request: $REQ_ID — $REQ_TITLE"
+
+  # Notify human via Matrix
+  matrix_send "vault" "🔑 PROCUREMENT REQUEST — ${REQ_TITLE}
+
+ID: ${REQ_ID}
+Action: review vault/pending/${REQ_ID}.md
+To approve: fulfill the request, add secrets to .env, move file to vault/approved/
+
+$(head -20 "$req_file")" 2>/dev/null || true
+
+  # Mark as notified so we don't re-send
+  mkdir -p "${VAULT_DIR}/.locks"
+  touch "${VAULT_DIR}/.locks/${REQ_ID}.notified"
+
+  unlock_action "$REQ_ID"
+done
+
+if [ "$PENDING_COUNT" -eq 0 ] && [ "$PROCURE_COUNT" -eq 0 ]; then
+  status "all clear — no pending items"
+else
+  status "poll complete — ${PENDING_COUNT} action(s), ${PROCURE_COUNT} procurement request(s)"
+fi
