@@ -73,9 +73,10 @@ if [ "$IS_PROCUREMENT" = true ]; then
   log "$ACTION_ID: firing procurement request"
 
   # Extract the proposed RESOURCES.md entry from the markdown file.
-  # The entry is between "## Proposed RESOURCES.md Entry" and the next "## " heading or EOF.
+  # Everything after the "## Proposed RESOURCES.md Entry" heading to EOF.
+  # Uses awk because the entry itself contains ## headings (## <resource-id>).
   ENTRY=""
-  ENTRY=$(sed -n '/^## Proposed RESOURCES\.md Entry/,/^## /{/^## Proposed RESOURCES\.md Entry/d;/^## /d;p}' "$ACTION_FILE" 2>/dev/null || true)
+  ENTRY=$(awk '/^## Proposed RESOURCES\.md Entry/{found=1; next} found{print}' "$ACTION_FILE" 2>/dev/null || true)
 
   # Strip leading/trailing blank lines and markdown code fences
   ENTRY=$(echo "$ENTRY" | sed '/^```/d' | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
