@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Disinto — Factory Dashboard</title>
+  <meta name="description" content="Live metrics from the Disinto autonomous code factory. PRs merged, issues closed, CI pass rate, vault decisions.">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="canonical" href="https://disinto.ai/dashboard">
+  <meta property="og:title" content="Disinto — Factory Dashboard">
+  <meta property="og:description" content="Live metrics from the autonomous code factory.">
+  <meta property="og:url" content="https://disinto.ai/dashboard">
+  <meta property="og:type" content="website">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --fg: #e0e0e0;
+      --dim: #707070;
+      --accent: #c8a46e;
+      --accent-dim: #8a7044;
+      --surface: #141414;
+      --border: #222;
+      --green: #4a7;
+      --red: #a54;
+      --yellow: #a93;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 300;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+    }
+
+    .header .subtitle {
+      color: var(--dim);
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+    }
+
+    .header .back {
+      display: inline-block;
+      margin-top: 0.75rem;
+      color: var(--accent-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+    }
+
+    .header .back:hover { color: var(--accent); }
+
+    /* Timestamp */
+    .updated {
+      text-align: center;
+      font-size: 0.7rem;
+      color: var(--dim);
+      margin-bottom: 2rem;
+    }
+
+    .updated .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+
+    /* Section headers */
+    .section-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent-dim);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Stat grid */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 2rem;
+    }
+
+    .stat {
+      background: var(--surface);
+      padding: 1.2rem;
+      text-align: center;
+    }
+
+    .stat .value {
+      font-size: 1.8rem;
+      font-weight: 300;
+      color: var(--accent);
+    }
+
+    .stat .label {
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 0.25rem;
+    }
+
+    /* Project cards */
+    .projects {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 2rem;
+    }
+
+    .project {
+      background: var(--surface);
+      padding: 1.2rem 1.5rem;
+    }
+
+    .project .name {
+      font-size: 0.85rem;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    .project .name a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .project .name a:hover { text-decoration: underline; }
+
+    .project .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    .project .metric {
+      text-align: center;
+    }
+
+    .project .metric .val {
+      font-size: 1.2rem;
+      font-weight: 300;
+      color: var(--fg);
+    }
+
+    .project .metric .lbl {
+      font-size: 0.6rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Vault section */
+    .vault-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 2rem;
+    }
+
+    .vault-item {
+      background: var(--surface);
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .vault-item .val {
+      font-size: 1.4rem;
+      font-weight: 300;
+    }
+
+    .vault-item .val.approved { color: var(--green); }
+    .vault-item .val.escalated { color: var(--yellow); }
+    .vault-item .val.rejected { color: var(--red); }
+    .vault-item .val.pending { color: var(--dim); }
+
+    .vault-item .lbl {
+      font-size: 0.6rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.2rem;
+    }
+
+    /* CI bar */
+    .ci-section {
+      margin-bottom: 2rem;
+    }
+
+    .ci-bar-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.2rem 1.5rem;
+    }
+
+    .ci-rate {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .ci-rate .val {
+      font-size: 1.8rem;
+      font-weight: 300;
+      color: var(--green);
+    }
+
+    .ci-rate .lbl {
+      font-size: 0.7rem;
+      color: var(--dim);
+    }
+
+    .ci-bar {
+      height: 6px;
+      background: var(--red);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+
+    .ci-bar .fill {
+      height: 100%;
+      background: var(--green);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    .ci-detail {
+      font-size: 0.65rem;
+      color: var(--dim);
+    }
+
+    /* Agents */
+    .agents {
+      margin-bottom: 2rem;
+    }
+
+    .agent-list {
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .agent-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6rem 1.2rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+    }
+
+    .agent-row:last-child { border-bottom: none; }
+
+    .agent-row .agent-name {
+      color: var(--fg);
+    }
+
+    .agent-row .agent-status {
+      color: var(--dim);
+    }
+
+    .agent-row .agent-status.active {
+      color: var(--green);
+    }
+
+    /* Loading / error states */
+    .loading, .error {
+      text-align: center;
+      padding: 3rem;
+      color: var(--dim);
+      font-size: 0.85rem;
+    }
+
+    .error { color: var(--red); }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--dim);
+    }
+
+    .footer a {
+      color: var(--accent-dim);
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: var(--accent); }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      .header h1 { font-size: 1.5rem; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .vault-grid { grid-template-columns: repeat(2, 1fr); }
+      .project .metrics { grid-template-columns: 1fr; gap: 0.5rem; }
+      .container { padding: 2rem 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <h1>Factory Dashboard</h1>
+      <div class="subtitle">live metrics from the disinto code factory</div>
+      <a class="back" href="/">&larr; disinto.ai</a>
+    </div>
+
+    <div class="updated" id="updated">
+      <span class="dot"></span>
+      Loading metrics...
+    </div>
+
+    <div id="content">
+      <div class="loading">Fetching factory data...</div>
+    </div>
+
+    <div class="footer">
+      <div>Data refreshed every 6 hours by the metrics collector.</div>
+      <div style="margin-top:0.5rem">
+        <a href="https://codeberg.org/johba/disinto">source</a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    (function () {
+      var content = document.getElementById('content');
+      var updated = document.getElementById('updated');
+
+      function el(tag, cls, html) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (html !== undefined) e.innerHTML = html;
+        return e;
+      }
+
+      function timeAgo(iso) {
+        var diff = (Date.now() - new Date(iso).getTime()) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+      }
+
+      function render(data) {
+        content.innerHTML = '';
+
+        // Updated timestamp
+        updated.innerHTML = '<span class="dot"></span> Updated ' + timeAgo(data.generated_at);
+
+        // Aggregate stats across projects
+        var totalPRsWeek = 0, totalPRsMonth = 0;
+        var totalIssuesWeek = 0, totalIssuesMonth = 0;
+        (data.projects || []).forEach(function (p) {
+          totalPRsWeek += (p.prs_merged || {}).week || 0;
+          totalPRsMonth += (p.prs_merged || {}).month || 0;
+          totalIssuesWeek += (p.issues_closed || {}).week || 0;
+          totalIssuesMonth += (p.issues_closed || {}).month || 0;
+        });
+
+        // Top stats
+        var statsDiv = el('div', 'stats');
+        var topMetrics = [
+          { value: totalPRsWeek, label: 'PRs merged (week)' },
+          { value: totalPRsMonth, label: 'PRs merged (month)' },
+          { value: totalIssuesWeek, label: 'Issues closed (week)' },
+          { value: totalIssuesMonth, label: 'Issues closed (month)' }
+        ];
+        topMetrics.forEach(function (m) {
+          var stat = el('div', 'stat');
+          stat.appendChild(el('div', 'value', String(m.value)));
+          stat.appendChild(el('div', 'label', m.label));
+          statsDiv.appendChild(stat);
+        });
+        content.appendChild(statsDiv);
+
+        // Projects
+        if (data.projects && data.projects.length > 0) {
+          content.appendChild(el('div', 'section-title', 'Projects'));
+          var projectsDiv = el('div', 'projects');
+          data.projects.forEach(function (p) {
+            var card = el('div', 'project');
+            var nameDiv = el('div', 'name');
+            var nameLink = document.createElement('a');
+            nameLink.href = 'https://codeberg.org/' + p.repo;
+            nameLink.textContent = p.name;
+            nameDiv.appendChild(nameLink);
+            card.appendChild(nameDiv);
+
+            var metricsDiv = el('div', 'metrics');
+            var pm = [
+              { val: ((p.prs_merged || {}).total || 0), lbl: 'PRs merged' },
+              { val: ((p.issues_closed || {}).total || 0), lbl: 'Issues closed' },
+              { val: ((p.backlog || {}).queued || 0), lbl: 'Backlog' }
+            ];
+            pm.forEach(function (m) {
+              var metric = el('div', 'metric');
+              metric.appendChild(el('div', 'val', String(m.val)));
+              metric.appendChild(el('div', 'lbl', m.lbl));
+              metricsDiv.appendChild(metric);
+            });
+            card.appendChild(metricsDiv);
+            projectsDiv.appendChild(card);
+          });
+          content.appendChild(projectsDiv);
+        }
+
+        // Vault
+        if (data.vault) {
+          content.appendChild(el('div', 'section-title', 'Vault Decisions'));
+          var vaultDiv = el('div', 'vault-grid');
+          var vaultItems = [
+            { val: data.vault.approved || 0, cls: 'approved', lbl: 'Auto-approved' },
+            { val: data.vault.escalated || 0, cls: 'escalated', lbl: 'Escalated' },
+            { val: data.vault.rejected || 0, cls: 'rejected', lbl: 'Rejected' },
+            { val: data.vault.pending || 0, cls: 'pending', lbl: 'Pending' }
+          ];
+          vaultItems.forEach(function (v) {
+            var item = el('div', 'vault-item');
+            item.appendChild(el('div', 'val ' + v.cls, String(v.val)));
+            item.appendChild(el('div', 'lbl', v.lbl));
+            vaultDiv.appendChild(item);
+          });
+          content.appendChild(vaultDiv);
+        }
+
+        // CI
+        if (data.ci) {
+          content.appendChild(el('div', 'section-title', 'CI Pipeline (30 days)'));
+          var ciSection = el('div', 'ci-section');
+          var ciBar = el('div', 'ci-bar-container');
+
+          var rate = data.ci.pass_rate || 0;
+          var rateDiv = el('div', 'ci-rate');
+          var rateColor = rate >= 80 ? 'var(--green)' : rate >= 50 ? 'var(--yellow)' : 'var(--red)';
+          rateDiv.innerHTML = '<span class="val" style="color:' + rateColor + '">' + rate + '%</span>' +
+            '<span class="lbl">pass rate</span>';
+          ciBar.appendChild(rateDiv);
+
+          var bar = el('div', 'ci-bar');
+          bar.innerHTML = '<div class="fill" style="width:' + rate + '%"></div>';
+          ciBar.appendChild(bar);
+
+          ciBar.appendChild(el('div', 'ci-detail',
+            (data.ci.passed || 0) + ' passed / ' +
+            (data.ci.failed || 0) + ' failed / ' +
+            (data.ci.total || 0) + ' total'));
+
+          ciSection.appendChild(ciBar);
+          content.appendChild(ciSection);
+        }
+
+        // Agents
+        if (data.agents && data.agents.agents && data.agents.agents.length > 0) {
+          content.appendChild(el('div', 'section-title', 'Agent Activity'));
+          var agentsDiv = el('div', 'agents');
+          var agentList = el('div', 'agent-list');
+
+          data.agents.agents.forEach(function (a) {
+            var row = el('div', 'agent-row');
+            row.appendChild(el('span', 'agent-name', a.name));
+            var statusCls = a.idle_minutes < 60 ? 'agent-status active' : 'agent-status';
+            var statusText = a.idle_minutes < 60 ? 'active (' + a.idle_minutes + 'm)' : timeAgo(a.last_active);
+            row.appendChild(el('span', statusCls, statusText));
+            agentList.appendChild(row);
+          });
+
+          agentsDiv.appendChild(agentList);
+          content.appendChild(agentsDiv);
+        }
+      }
+
+      fetch('data/metrics.json')
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(render)
+        .catch(function (err) {
+          content.innerHTML = '<div class="error">Could not load metrics.<br>' +
+            '<span style="font-size:0.7rem;color:var(--dim)">The collector runs every 6 hours. ' +
+            'Data may not be available yet.</span></div>';
+          updated.innerHTML = '<span class="dot" style="background:var(--red)"></span> Offline';
+        });
+    })();
+  </script>
+</body>
+</html>
