@@ -127,7 +127,7 @@ matrix_send() {
     printf '%s' "$event_id"
     # Register thread root for listener dispatch (escalations only)
     if [ -z "$thread_id" ]; then
-      printf '%s\t%s\t%s\t%s\n' "$event_id" "$prefix" "$(date +%s)" "${ctx_tag}" >> "$MATRIX_THREAD_MAP" 2>/dev/null || true
+      printf '%s\t%s\t%s\t%s\t%s\n' "$event_id" "$prefix" "$(date +%s)" "${ctx_tag}" "${PROJECT_NAME:-}" >> "$MATRIX_THREAD_MAP" 2>/dev/null || true
     fi
   fi
 }

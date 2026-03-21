@@ -172,7 +172,7 @@ if [ -n "${_thread_id:-}" ]; then
   # Export for on-stop-matrix.sh hook (streams Claude output to thread)
   export MATRIX_THREAD_ID="$_thread_id"
   # Register thread root in map for listener dispatch (column 4 = issue number)
-  printf '%s\t%s\t%s\t%s\n' "$_thread_id" "action" "$(date +%s)" "${ISSUE}" \
+  printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "action" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" \
     >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
 fi
 
