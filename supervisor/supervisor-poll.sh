@@ -331,7 +331,7 @@ check_project() {
         rm -f "$DEV_LOCK"
         fixed "${proj_name}: Removed stale dev-agent lock (PID ${DEV_PID} dead)"
       else
-        DEV_STATUS_AGE=$(stat -c %Y /tmp/dev-agent-status 2>/dev/null || echo 0)
+        DEV_STATUS_AGE=$(stat -c %Y "/tmp/dev-agent-status-${PROJECT_NAME:-default}" 2>/dev/null || echo 0)
         NOW_EPOCH=$(date +%s)
         STATUS_AGE_MIN=$(( (NOW_EPOCH - DEV_STATUS_AGE) / 60 ))
         if [ "$STATUS_AGE_MIN" -gt 30 ]; then
