@@ -15,7 +15,8 @@ git) and update `planner/MEMORY.md` (committed to git). Phase 4 (commit-and-pr):
 one commit with all file changes, push, create PR. AGENTS.md maintenance is
 handled by the Gardener.
 
-**Trigger**: `planner-run.sh` runs weekly via cron. It creates a tmux session
+**Trigger**: `planner-run.sh` runs daily via cron (accepts an optional project
+TOML argument, defaults to `projects/disinto.toml`). It creates a tmux session
 with `claude --model opus`, injects `formulas/run-planner.toml` as context,
 monitors the phase file, and cleans up on completion or timeout. No action
 issues — the planner is a nervous system component, not work.

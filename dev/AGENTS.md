@@ -11,6 +11,7 @@ backlog issues (all deps closed) or orphaned in-progress issues and spawns
 **Key files**:
 - `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
+- `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
