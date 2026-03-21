@@ -23,6 +23,7 @@ ISSUE="${1:?Usage: action-agent.sh <issue-number> [project.toml]}"
 export PROJECT_TOML="${2:-${PROJECT_TOML:-}}"
 
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=../dev/phase-handler.sh

@@ -34,25 +34,6 @@
 : "${CLAIMED:=false}"
 : "${PHASE_POLL_INTERVAL:=30}"
 
-# --- Look up (or create) the "blocked" label ID ---
-ensure_blocked_label_id() {
-  if [ -n "${_BLOCKED_LABEL_ID:-}" ]; then
-    printf '%s' "$_BLOCKED_LABEL_ID"
-    return 0
-  fi
-  _BLOCKED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
-    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
-  if [ -z "$_BLOCKED_LABEL_ID" ]; then
-    _BLOCKED_LABEL_ID=$(curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${CODEBERG_API}/labels" \
-      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
-      | jq -r '.id // empty' 2>/dev/null || true)
-  fi
-  printf '%s' "$_BLOCKED_LABEL_ID"
-}
-
 # --- Post diagnostic comment + label issue as blocked ---
 # Replaces the old escalation JSONL write path.
 # Captures tmux pane output, posts a structured comment on the issue, removes

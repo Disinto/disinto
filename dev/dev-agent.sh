@@ -22,6 +22,7 @@ set -euo pipefail
 
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=./phase-handler.sh

@@ -89,16 +89,7 @@ is_blocked() {
 _post_ci_blocked_comment() {
   local issue_num="$1" pr_num="$2" attempts="$3"
   local blocked_id
-  blocked_id=$(codeberg_api GET "/labels" 2>/dev/null \
-    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
-  if [ -z "$blocked_id" ]; then
-    blocked_id=$(curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${CODEBERG_API}/labels" \
-      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
-      | jq -r '.id // empty' 2>/dev/null || true)
-  fi
+  blocked_id=$(ensure_blocked_label_id)
   [ -z "$blocked_id" ] && return 0
 
   local comment
