@@ -420,7 +420,10 @@
           data.projects.forEach(function (p) {
             var card = el('div', 'project');
             var nameDiv = el('div', 'name');
-            nameDiv.innerHTML = '<a href="https://codeberg.org/' + p.repo + '">' + p.name + '</a>';
+            var nameLink = document.createElement('a');
+            nameLink.href = 'https://codeberg.org/' + p.repo;
+            nameLink.textContent = p.name;
+            nameDiv.appendChild(nameLink);
             card.appendChild(nameDiv);
 
             var metricsDiv = el('div', 'metrics');

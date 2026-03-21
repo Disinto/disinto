@@ -66,14 +66,6 @@ collect_project_metrics() {
       jq --arg since "$MONTH_AGO" '[.[] | select(.merged and .merged_at >= $since)] | length' 2>/dev/null || echo 0)
   fi
 
-  # Use the X-Total-Count header for total merged count
-  local total_header
-  total_header=$(curl -sf -I -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${api_base}/pulls?state=closed&limit=1" 2>/dev/null | grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}' || echo "")
-  if [ -n "$total_header" ]; then
-    prs_merged_total="$total_header"
-  fi
-
   # Issues closed
   local issues_closed_week=0 issues_closed_month=0
   local closed_issues
@@ -96,10 +88,7 @@ collect_project_metrics() {
 
   # Open issues by label
   local backlog_count in_progress_count blocked_count
-  backlog_count=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${api_base}/issues?state=open&labels=backlog&type=issues&limit=1" -o /dev/null \
-    -w '' 2>/dev/null; \
-    curl -sf -I -H "Authorization: token ${CODEBERG_TOKEN}" \
+  backlog_count=$(curl -sf -I -H "Authorization: token ${CODEBERG_TOKEN}" \
     "${api_base}/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | \
     grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}' || echo "0")
   in_progress_count=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
