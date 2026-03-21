@@ -375,10 +375,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         log "issue #${ISSUE_NUM} already has active session ${SESSION_NAME} — skipping"
         exit 0
       fi
-      if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
+      if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM" "check_only"; then
         # Fall through to backlog scan instead of exit
         :
       else
+        # Increment at actual launch time (not on guard-hit paths)
+        if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
+          exit 0  # exhausted between check and launch
+        fi
         log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
         nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
         log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
@@ -483,8 +487,12 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       log "issue #${STUCK_ISSUE} already has active session ${SESSION_NAME} — skipping"
       continue
     fi
-    if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
+    if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE" "check_only"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
+    fi
+    # Increment at actual launch time (not on guard-hit paths)
+    if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE"; then
+      continue  # exhausted between check and launch
     fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
