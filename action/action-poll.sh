@@ -14,7 +14,7 @@ set -euo pipefail
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 
-LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-harb}.log"
+LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 log() {
