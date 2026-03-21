@@ -79,9 +79,10 @@ while IFS='=' read -r _key _val; do
   export "$_key=$_val"
 done <<< "$_PROJECT_VARS"
 
-# Derive CODEBERG_API if repo changed
+# Derive CODEBERG_API and CODEBERG_WEB if repo changed
 if [ -n "$CODEBERG_REPO" ]; then
   export CODEBERG_API="https://codeberg.org/api/v1/repos/${CODEBERG_REPO}"
+  export CODEBERG_WEB="https://codeberg.org/${CODEBERG_REPO}"
 fi
 
 # Derive PROJECT_REPO_ROOT if not explicitly set
