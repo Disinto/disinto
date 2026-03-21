@@ -51,9 +51,40 @@ BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
 # ── Check for escalation replies from Matrix ──────────────────────────────
 ESCALATION_REPLY=""
 if [ -s /tmp/gardener-escalation-reply ]; then
-  ESCALATION_REPLY=$(cat /tmp/gardener-escalation-reply)
+  _raw_reply=$(cat /tmp/gardener-escalation-reply)
   rm -f /tmp/gardener-escalation-reply
-  log "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
+  log "Got escalation reply: $(echo "$_raw_reply" | head -1)"
+
+  # Filter stale escalation entries referencing already-closed issues (#289).
+  # Escalation records can persist after the underlying issue resolves; acting
+  # on them wastes cycles (e.g. creating investigation issues for merged PRs).
+  while IFS= read -r _reply_line; do
+    [ -z "$_reply_line" ] && continue
+    _esc_nums=$(echo "$_reply_line" | grep -oP '#\K\d+' | sort -u || true)
+    if [ -n "$_esc_nums" ]; then
+      _any_open=false
+      for _esc_n in $_esc_nums; do
+        _esc_st=$(codeberg_api GET "/issues/${_esc_n}" 2>/dev/null \
+          | jq -r '.state // "open"' 2>/dev/null || echo "open")
+        if [ "$_esc_st" != "closed" ]; then
+          _any_open=true
+          break
+        fi
+      done
+      if [ "$_any_open" = false ]; then
+        log "Discarding stale escalation (all referenced issues closed): $(echo "$_reply_line" | head -c 120)"
+        continue
+      fi
+    fi
+    ESCALATION_REPLY="${ESCALATION_REPLY}${_reply_line}
+"
+  done <<< "$_raw_reply"
+
+  if [ -n "$ESCALATION_REPLY" ]; then
+    log "Escalation reply after filtering: $(echo "$ESCALATION_REPLY" | grep -c '.' || echo 0) line(s)"
+  else
+    log "All escalation entries were stale — discarded"
+  fi
 fi
 export ESCALATION_REPLY
 
