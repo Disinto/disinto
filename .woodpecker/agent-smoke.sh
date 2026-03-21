@@ -96,7 +96,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/agent-session.sh    — sourced by orchestrators (create_agent_session, monitor_phase_loop, etc.)
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
-#   lib/file-action-issue.sh— sourced by gardener-run.sh (file_action_issue)
+#   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
 #   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
 #
 # Excluded — not sourced inline by agents:
@@ -171,6 +171,7 @@ check_script() {
 # Inline-sourced lib files — check that their own function calls resolve.
 # These are already in LIB_FUNS (their definitions are available to agents),
 # but this verifies calls *within* each lib file are also resolvable.
+check_script lib/env.sh
 check_script lib/agent-session.sh
 check_script lib/ci-helpers.sh
 check_script lib/file-action-issue.sh
