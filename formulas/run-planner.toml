@@ -17,6 +17,7 @@ model       = "opus"
 
 [context]
 files = ["VISION.md", "AGENTS.md", "RESOURCES.md"]
+# Recent planner/journal/*.md files are loaded by planner-run.sh (last 5 entries)
 
 [[steps]]
 id    = "preflight"
@@ -236,11 +237,11 @@ needs = ["prediction-triage"]
 
 [[steps]]
 id    = "journal-and-memory"
-title = "Write journal entry and update planner memory"
+title = "Write journal entry and periodically update planner memory"
 description = """
-Two outputs from this step:
+Two outputs from this step — journal is ALWAYS written, memory is PERIODIC.
 
-### 1. Journal entry (committed to git)
+### 1. Journal entry (always — committed to git)
 
 Create a daily journal file at:
   $FACTORY_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
@@ -267,22 +268,38 @@ Format:
 
 Keep each entry concise — 30-50 lines max.
 
-### 2. Memory update (committed to git)
+### 2. Memory update (periodic — every 5th run, committed to git)
 
-Write to: $FACTORY_ROOT/planner/MEMORY.md (replace the entire file)
+Decide whether to update memory:
+1. Count the total number of run entries across ALL journal files in
+   planner/journal/*.md. Each "# Planner run —" header counts as one run.
+2. Check the run count noted in MEMORY.md (look for the
+   "<!-- summarized-through-run: N -->" marker at the top).
+   If the marker is missing, treat it as 0.
+3. If (current_run_count - last_summarized_count) >= 5, OR if MEMORY.md
+   does not exist, perform the memory update below.
+4. Otherwise, skip the memory update — MEMORY.md remains read-only context.
+
+When updating memory, write to: $FACTORY_ROOT/planner/MEMORY.md
+(replace the entire file)
+
+Start the file with the run counter marker:
+  <!-- summarized-through-run: N -->
+where N is the current total run count.
 
 Include:
-- Date of this run
+- Date of this summarization
+- Distilled patterns and learnings from recent journal entries
 - What was observed (resource state, metric trends, project progress)
-- What was decided (issues created, predictions triaged, what was deferred)
-- Patterns and learnings useful for future planning runs
+- Strategic direction and watch list for future runs
 - Things to watch for next time
 
 Rules:
 - Keep under 100 lines total
-- Replace the file contents — prune outdated entries from previous runs
+- Replace the file contents — distill from journal, prune stale entries
 - Focus on PATTERNS and LEARNINGS, not transient state
 - Do NOT include specific issue counts or numbers that will be stale
+- Read the recent journal files provided in context for source material
 - Most recent entries at top
 
 Format: simple markdown with dated sections.
