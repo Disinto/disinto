@@ -93,8 +93,9 @@ backlog issues (all deps closed) or orphaned in-progress issues and spawns
 - `CLAUDE_TIMEOUT` — Max seconds for a Claude session (default 7200)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 
-**Lifecycle**: dev-poll.sh → dev-agent.sh → tmux `dev-{project}-{issue}` →
-phase file drives CI/review loop → merge → close issue.
+**Lifecycle**: dev-poll.sh → dev-agent.sh → create Matrix thread + export
+`MATRIX_THREAD_ID` (streams Claude output to thread via Stop hook) → tmux
+`dev-{project}-{issue}` → phase file drives CI/review loop → merge → close issue.
 
 ### Review (`review/`)
 
