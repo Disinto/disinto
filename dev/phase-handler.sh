@@ -725,13 +725,10 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
     echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"crashed\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
 
-    # Restore backlog label so issue can be retried
+    # Restore backlog label, clean up worktree + temp files
     restore_to_backlog
-    if [ -n "${PR_NUMBER:-}" ]; then
-      log "keeping worktree (PR #${PR_NUMBER} still open)"
-    else
-      cleanup_worktree
-    fi
+    [ -z "${PR_NUMBER:-}" ] && cleanup_worktree
+    [ -n "${PR_NUMBER:-}" ] && log "keeping worktree (PR #${PR_NUMBER} still open)"
     rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
