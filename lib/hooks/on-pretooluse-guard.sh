@@ -8,17 +8,35 @@
 # - Direct Codeberg API merge calls (should go through phase protocol)
 # - Direct issue close calls (should go through phase protocol)
 # - git checkout / git switch to primary branch (stay on feature branch)
+# - FACTORY_ROOT access from worktrees (formula agents exempted)
+# - System commands (kill, docker, tmux) outside supervisor sessions
 #
 # Usage (in .claude/settings.json):
-#   {"type":"command","command":"this-script <primary_branch> <worktree_path>"}
+#   {"type":"command","command":"this-script <primary_branch> <worktree_path> [session_name]"}
 #
-# Args: $1 = primary branch (default: main), $2 = worktree absolute path
+# Args: $1 = primary branch (default: main), $2 = worktree absolute path,
+#       $3 = session name (optional — used to detect formula agents)
 #
 # Exit 0: allow (tool proceeds)
 # Exit 2: deny (reason on stdout — Claude sees it and can self-correct)
 
 primary_branch="${1:-main}"
 worktree_path="${2:-}"
+session_name="${3:-}"
+
+# Detect formula sessions by session name prefix.
+# Formula agents (supervisor, gardener, planner, predictor) need read access
+# to FACTORY_ROOT for env.sh, AGENTS.md, formulas/, lib/.
+# Supervisor additionally needs write access for system commands.
+is_formula=false
+is_supervisor=false
+case "$session_name" in
+  supervisor-*) is_formula=true; is_supervisor=true ;;
+  gardener-*|planner-*|predictor-*) is_formula=true ;;
+esac
+
+# Resolve FACTORY_ROOT (parent of lib/hooks/ where this script lives)
+factory_root="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)"
 
 input=$(cat)
 
@@ -54,6 +72,13 @@ if [ -n "$worktree_path" ] \
         "${worktree_path}"/*|"${worktree_path}") ;;  # Inside worktree — allow
         /tmp/*|/tmp) ;;   # Temp files — allow (agents use /tmp for scratch)
         /dev/*) ;;        # Device paths — allow
+        "${factory_root}"/*|"${factory_root}")
+          # Formula agents may clean up inside FACTORY_ROOT; others are blocked
+          if ! "$is_formula"; then
+            printf 'BLOCKED: rm -rf targets %s which is outside the worktree (%s). Only delete files within your worktree.\n' "$p" "$worktree_path"
+            exit 2
+          fi
+          ;;
         *)
           printf 'BLOCKED: rm -rf targets %s which is outside the worktree (%s). Only delete files within your worktree.\n' "$p" "$worktree_path"
           exit 2
@@ -85,6 +110,34 @@ if printf '%s' "$command_str" | grep -qE "\bgit\s+(checkout|switch)\s+(-[^ ]+\s+
    && ! printf '%s' "$command_str" | grep -qE '(\s--\s|\s-[bBcC]\s)'; then
   printf 'BLOCKED: Switching to %s is not allowed. Stay on your feature branch.\n' "$primary_branch"
   exit 2
+fi
+
+# --- Guard 6: FACTORY_ROOT access from worktrees ---
+# Formula agents (supervisor, gardener, planner, predictor) run in worktrees
+# but need to read FACTORY_ROOT for env.sh, AGENTS.md, formulas/, lib/.
+# Dev/review/action agents must stay inside their worktree.
+# Only matches commands that actually access the filesystem (cd, source, cat,
+# ls, etc.) — not strings that merely mention the path (e.g. in commit messages).
+if [ -n "$worktree_path" ] && [ -n "$factory_root" ] \
+   && [ "$worktree_path" != "$factory_root" ]; then
+  escaped_fr=$(printf '%s' "$factory_root" | sed 's/[.[\*^$()+?{|\/]/\\&/g')
+  if printf '%s' "$command_str" | grep -qE "(^|\s|&&|\|\||;)(cd|source|\.|\bcat\b|\bls\b|\bread\b|\bhead\b|\btail\b|\bcp\b|\bmv\b)\s+[\"']?${escaped_fr}"; then
+    if ! "$is_formula"; then
+      printf 'BLOCKED: Accessing %s is not allowed from worktree sessions. Use files within your worktree (%s) instead.\n' "$factory_root" "$worktree_path"
+      exit 2
+    fi
+  fi
+fi
+
+# --- Guard 7: system commands restricted to supervisor ---
+# Only the supervisor session may run system management commands (kill, docker,
+# tmux send-keys/kill-session).  Other agents — including other formula agents —
+# must not manage host processes.
+if ! "$is_supervisor"; then
+  if printf '%s' "$command_str" | grep -qE '\b(kill\s+-[0-9A-Z]|\bkill\s+[0-9]|docker\s+(prune|rm|stop|kill)|tmux\s+(kill-session|send-keys))\b'; then
+    printf 'BLOCKED: System management commands (kill, docker, tmux) are only allowed in supervisor sessions.\n'
+    exit 2
+  fi
 fi
 
 exit 0

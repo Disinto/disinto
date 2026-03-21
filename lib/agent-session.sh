@@ -165,7 +165,7 @@ create_agent_session() {
   if [ -x "$guard_hook_script" ]; then
     local abs_workdir
     abs_workdir=$(cd "$workdir" 2>/dev/null && pwd) || abs_workdir="$workdir"
-    local guard_hook_cmd="${guard_hook_script} ${PRIMARY_BRANCH:-main} ${abs_workdir}"
+    local guard_hook_cmd="${guard_hook_script} ${PRIMARY_BRANCH:-main} ${abs_workdir} ${session}"
     if [ -f "$settings" ]; then
       jq --arg cmd "$guard_hook_cmd" '
         if (.hooks.PreToolUse // [] | any(.[]; .hooks[]?.command == $cmd))
