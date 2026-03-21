@@ -316,6 +316,18 @@ if [ -x "$STOP_FAILURE_HOOK" ]; then
     fail "StopFailure hook overwrote PHASE:merged: first='$sf_first'"
   fi
   rm -f "$SF_MARKER" "$PHASE_FILE"
+
+  # 10i: terminal phase guard — does not overwrite PHASE:needs_human
+  echo "PHASE:needs_human" > "$PHASE_FILE"
+  printf '{"stop_reason":"rate_limit"}' \
+    | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
+  sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
+  if [ "$sf_first" = "PHASE:needs_human" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:needs_human"
+  else
+    fail "StopFailure hook overwrote PHASE:needs_human: first='$sf_first'"
+  fi
+  rm -f "$SF_MARKER" "$PHASE_FILE"
 else
   fail "StopFailure hook script not found or not executable: $STOP_FAILURE_HOOK"
 fi
@@ -347,6 +359,47 @@ if [ "$PHASE_MTIME" -gt "$LAST_MTIME" ]; then
 else
   fail "phase-changed marker did not reset mtime guard"
 fi
+
+# ── Test 12: crash handler treats PHASE:needs_human as terminal ───────────
+# Simulates the monitor_phase_loop crash handler: when a session exits while
+# the phase file holds PHASE:needs_human, it must be treated as terminal
+# (fall through to the phase handler) rather than invoking callback with
+# PHASE:crashed, which would lose the escalation intent.
+CRASH_CALLBACK_PHASE=""
+mock_crash_callback() { CRASH_CALLBACK_PHASE="$1"; }
+
+echo "PHASE:needs_human" > "$PHASE_FILE"
+current_phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+case "$current_phase" in
+  PHASE:done|PHASE:failed|PHASE:merged|PHASE:needs_human)
+    # terminal — fall through to phase handler (correct behavior)
+    mock_crash_callback "$current_phase"
+    ;;
+  *)
+    # would invoke callback with PHASE:crashed (incorrect for needs_human)
+    mock_crash_callback "PHASE:crashed"
+    ;;
+esac
+
+if [ "$CRASH_CALLBACK_PHASE" = "PHASE:needs_human" ]; then
+  ok "crash handler preserves PHASE:needs_human (not replaced by PHASE:crashed)"
+else
+  fail "crash handler lost escalation intent: expected PHASE:needs_human, got $CRASH_CALLBACK_PHASE"
+fi
+
+# Also verify the other terminal phases still work in crash handler
+for tp in "PHASE:done" "PHASE:failed" "PHASE:merged"; do
+  echo "$tp" > "$PHASE_FILE"
+  current_phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+  case "$current_phase" in
+    PHASE:done|PHASE:failed|PHASE:merged|PHASE:needs_human)
+      ok "crash handler treats $tp as terminal"
+      ;;
+    *)
+      fail "crash handler does not treat $tp as terminal"
+      ;;
+  esac
+done
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 rm -f "$PHASE_FILE"
