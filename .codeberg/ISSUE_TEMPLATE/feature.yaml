@@ -1,0 +1,51 @@
+name: Feature
+about: New functionality or enhancement
+labels:
+  - backlog
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: Why is this needed? What's the current limitation?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should it work? Be specific about behavior, not just "add X."
+    validations:
+      required: true
+  - type: textarea
+    id: affected-files
+    attributes:
+      label: Affected files
+      description: Which files need to change? Include test files if applicable.
+      placeholder: |
+        - lib/agent-session.sh
+        - formulas/run-gardener.toml
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkboxes. Max 5 — if you need more, split the issue.
+      placeholder: |
+        - [ ] Feature works as described
+        - [ ] Tests added / updated
+        - [ ] CI green
+    validations:
+      required: true
+  - type: textarea
+    id: deps
+    attributes:
+      label: Dependencies
+      description: Issues that must be merged first. Leave empty if none.
+      placeholder: "- #NNN (reason)"
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to docs, prior art, design decisions, related issues.

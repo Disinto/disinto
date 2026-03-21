@@ -1,0 +1,50 @@
+name: Refactor / Tech Debt
+about: Code improvement without changing behavior
+labels:
+  - backlog
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs cleaning up
+      description: Current state and why it's a problem.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Approach
+      description: How to fix it. Specifics matter — the dev-agent will follow this literally.
+    validations:
+      required: true
+  - type: textarea
+    id: affected-files
+    attributes:
+      label: Affected files
+      description: Every file that will change. Include test files.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Refactored code works identically (no behavior change)
+        - [ ] Existing tests still pass
+        - [ ] CI green
+    validations:
+      required: true
+  - type: textarea
+    id: deps
+    attributes:
+      label: Dependencies
+      description: Issues that must be merged first. Leave empty if none.
+      placeholder: "- #NNN (reason)"
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks
+      description: What could break? Which e2e tests cover this area?
+      placeholder: |
+        - Phase handler changes could break dev/action/review lifecycle
+        - ShellCheck may flag new patterns

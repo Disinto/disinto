@@ -1,0 +1,49 @@
+name: Bug Report
+about: Something is broken or behaving incorrectly
+labels:
+  - bug
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What's broken
+      description: What happens vs what should happen. Include error messages, logs, or screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+      placeholder: |
+        1. Run `dev-poll.sh disinto.toml`
+        2. See error: "..."
+    validations:
+      required: true
+  - type: textarea
+    id: affected-files
+    attributes:
+      label: Affected files
+      description: Which source files need to change? Include test files that cover this area.
+      placeholder: |
+        - dev/dev-agent.sh
+        - lib/agent-session.sh
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know it's fixed?
+      placeholder: |
+        - [ ] Bug no longer reproduces with steps above
+        - [ ] Regression test added
+        - [ ] CI green
+    validations:
+      required: true
+  - type: textarea
+    id: deps
+    attributes:
+      label: Dependencies
+      description: Issues that must be merged first. Leave empty if none.
+      placeholder: "- #NNN (reason)"
