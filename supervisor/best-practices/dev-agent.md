@@ -58,3 +58,10 @@ The 'status unchanged for Nmin' alert is also a false positive when status is 'w
 When the status file `/tmp/dev-agent-status` doesn't exist, `stat -c %Y` fails and the supervisor falls back to epoch 0. The computed age is then `NOW_EPOCH/60 ≈ 29,567,290 min`, which is unmistakably a false positive.
 Root cause: the status file is not per-project (tracked as disinto issue #423). It can be missing if: (1) the agent has not written to it yet, (2) cleanup ran early, or (3) another project's cleanup deleted it.
 Fix: confirm the agent PID is alive and the tmux session shows active work, then touch the file: `printf '[%s] dev-agent #NNN: <phase> (<project>)\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /tmp/dev-agent-status`. This clears the alert without restarting anything.
+
+### PR CI vs Push CI mismatch causes silent stall in awaiting_review
+When push CI passes but PR CI fails (e.g., a duplicate-detection step only runs on pull_request events), the phase-handler transitions to PHASE:awaiting_review without detecting the PR CI failure. The agent then sleeps in the review-poll loop indefinitely.
+
+Symptom: PR CI=failure but dev-agent phase=awaiting_review, status shows 'waiting for CI + review'.
+
+Fix: inject the CI failure info into the Claude session with agent_inject_into_session, pointing to the duplicate blocks and telling Claude to fix + push + write PHASE:awaiting_ci. The phase-handler's awaiting_review loop checks for phase file mtime changes every 5 min and will re-enter the main loop automatically.
