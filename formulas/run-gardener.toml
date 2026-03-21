@@ -101,10 +101,35 @@ Sibling dependency rule (CRITICAL):
   NEVER add bidirectional ## Dependencies between siblings (creates deadlocks).
   Use ## Related for cross-references: "## Related\n- #NNN (sibling)"
 
+7. Architecture decision alignment check (AD check):
+   For each open issue labeled 'backlog', check whether the issue
+   contradicts any architecture decision listed in the
+   ## Architecture Decisions section of AGENTS.md.
+   Read AGENTS.md and extract the AD table. For each backlog issue,
+   compare the issue title and body against each AD. If an issue
+   clearly violates an AD:
+   a. Post a comment explaining the violation:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>/comments" \
+          -d '{"body":"Closing: violates AD-NNN (<decision summary>). See AGENTS.md § Architecture Decisions."}'
+   b. Close the issue:
+        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>" \
+          -d '{"state":"closed"}'
+   c. Log to the result file:
+        echo "ACTION: closed #NNN — violates AD-NNN" >> "$RESULT_FILE"
+
+   Only close for clear, unambiguous violations. If the issue is
+   borderline or could be interpreted as compatible, leave it open
+   and ESCALATE instead.
+
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
-  2. Process tech-debt issues by score (impact/effort)
-  3. Classify remaining items as dust or escalate
+  2. AD alignment check — close backlog issues that violate architecture decisions
+  3. Process tech-debt issues by score (impact/effort)
+  4. Classify remaining items as dust or escalate
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.
