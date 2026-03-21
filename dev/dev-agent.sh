@@ -367,7 +367,7 @@ curl -sf -X POST \
 
 curl -sf -X DELETE \
   -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${API}/issues/${ISSUE}/labels/backlog" >/dev/null 2>&1 || true
+  "${API}/issues/${ISSUE}/labels/${BACKLOG_LABEL_ID}" >/dev/null 2>&1 || true
 
 CLAIMED=true
 
