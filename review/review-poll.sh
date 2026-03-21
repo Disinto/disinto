@@ -156,7 +156,7 @@ curl -sf -X PATCH \\
 echo \"PHASE:done\" > \"${phase_file}\"
 
 If merge fails due to conflicts, rebase first then retry.
-If merge repeatedly fails, write PHASE:needs_human."
+If merge repeatedly fails, write PHASE:escalate with a reason."
   elif [ "${verdict}" = "REQUEST_CHANGES" ] || [ "${verdict}" = "DISCUSS" ]; then
     inject_msg="Review: ${verdict} on PR #${pr_num}:
 

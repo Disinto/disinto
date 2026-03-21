@@ -43,7 +43,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/ci-helpers.sh"
 : "${PHASE_POLL_INTERVAL:=30}"
 
 # --- Post diagnostic comment + label issue as blocked ---
-# Replaces the old escalation JSONL write path.
 # Captures tmux pane output, posts a structured comment on the issue, removes
 # in-progress label, and adds the "blocked" label.
 #
@@ -160,6 +159,12 @@ echo "PHASE:awaiting_ci" > "${_pf}"
 \`\`\`
 (CI runs again after each push — always write awaiting_ci, not awaiting_review)
 
+**When you need human help (CI exhausted, merge blocked, stuck on a decision):**
+\`\`\`bash
+printf 'PHASE:escalate\nReason: %s\n' "describe what you need" > "${_pf}"
+\`\`\`
+Then STOP and wait. A human will reply via Matrix and the response will be injected.
+
 **On unrecoverable failure:**
 \`\`\`bash
 printf 'PHASE:failed\nReason: %s\n' "describe what failed" > "${_pf}"
@@ -173,7 +178,7 @@ _PHASE_PROTOCOL_EOF_
 # Returns:
 #   0 = merged successfully
 #   1 = other failure (conflict, network error, etc.)
-#   2 = not enough approvals (HTTP 405) — PHASE:needs_human already written
+#   2 = not enough approvals (HTTP 405) — PHASE:escalate already written
 do_merge() {
   local pr_num="$1"
   local merge_response merge_http_code merge_body
@@ -193,7 +198,7 @@ do_merge() {
   # HTTP 405 — merge requirements not met (approvals, branch protection); structural, not transient
   if [ "$merge_http_code" = "405" ]; then
     log "do_merge: PR #${pr_num} blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}"
-    printf 'PHASE:needs_human\nReason: %s\n' \
+    printf 'PHASE:escalate\nReason: %s\n' \
       "PR #${pr_num} merge blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}" \
       > "$PHASE_FILE"
     return 2
@@ -345,7 +350,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
     if ! $CI_DONE; then
       log "TIMEOUT: CI didn't complete in ${CI_POLL_TIMEOUT}s"
       notify "CI timeout on PR #${PR_NUMBER}"
-      agent_inject_into_session "$SESSION_NAME" "CI TIMEOUT: CI did not complete within 30 minutes for PR #${PR_NUMBER} (SHA: ${CI_CURRENT_SHA:0:7}). This may be an infrastructure issue. Write PHASE:needs_human if you cannot proceed."
+      agent_inject_into_session "$SESSION_NAME" "CI TIMEOUT: CI did not complete within 30 minutes for PR #${PR_NUMBER} (SHA: ${CI_CURRENT_SHA:0:7}). This may be an infrastructure issue. Write PHASE:escalate if you cannot proceed."
       return 0
     fi
 
@@ -395,13 +400,12 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       CI_FIX_COUNT=$(( CI_FIX_COUNT + 1 ))
       _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
       if [ "$CI_FIX_COUNT" -gt "$MAX_CI_FIXES" ]; then
-        log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — marking blocked"
-        post_blocked_diagnostic "ci_exhausted after ${CI_FIX_COUNT} attempts (step: ${FAILED_STEP:-unknown})"
+        log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
         notify_ctx \
-          "CI exhausted after ${CI_FIX_COUNT} attempts — issue marked blocked" \
-          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — issue marked blocked"
-        printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
-        # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:failed
+          "CI exhausted after ${CI_FIX_COUNT} attempts — escalating for human help" \
+          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalating for human help"
+        printf 'PHASE:escalate\nReason: ci_exhausted after %d attempts (step: %s)\n' "$CI_FIX_COUNT" "${FAILED_STEP:-unknown}" > "$PHASE_FILE"
+        # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:escalate
         return 0
       fi
 
@@ -551,9 +555,9 @@ Rebase onto ${PRIMARY_BRANCH} and push:
   echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 
 Do NOT merge or close the issue — the orchestrator handles that after CI passes.
-If rebase repeatedly fails, write PHASE:needs_human with a reason."
+If rebase repeatedly fails, write PHASE:escalate with a reason."
           fi
-          # _merge_rc=2: PHASE:needs_human already written by do_merge()
+          # _merge_rc=2: PHASE:escalate already written by do_merge()
           break
 
         elif [ "$VERDICT" = "REQUEST_CHANGES" ] || [ "$VERDICT" = "DISCUSS" ]; then
@@ -618,21 +622,21 @@ Instructions:
     if ! $REVIEW_FOUND && [ "$REVIEW_POLL_ELAPSED" -ge "$REVIEW_POLL_TIMEOUT" ]; then
       log "TIMEOUT: no review after 3h"
       notify "no review received for PR #${PR_NUMBER} after 3h"
-      agent_inject_into_session "$SESSION_NAME" "TIMEOUT: No review received after 3 hours for PR #${PR_NUMBER}. Write PHASE:needs_human to escalate to a human reviewer."
+      agent_inject_into_session "$SESSION_NAME" "TIMEOUT: No review received after 3 hours for PR #${PR_NUMBER}. Write PHASE:escalate to escalate to a human reviewer."
     fi
 
-  # ── PHASE: needs_human ──────────────────────────────────────────────────────
-  elif [ "$phase" = "PHASE:needs_human" ]; then
-    status "needs human input on issue #${ISSUE}"
-    HUMAN_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
+  # ── PHASE: escalate ──────────────────────────────────────────────────────
+  elif [ "$phase" = "PHASE:escalate" ]; then
+    status "escalated — waiting for human input on issue #${ISSUE}"
+    ESCALATE_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
     _issue_url="${CODEBERG_WEB}/issues/${ISSUE}"
     _pr_link=""
     [ -n "${PR_NUMBER:-}" ] && _pr_link=" | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>"
     notify_ctx \
-      "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}" \
-      "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}<br>Reply in this thread to send guidance to the dev agent."
-    log "phase: needs_human — notified via Matrix, waiting for external injection"
-    # Don't inject anything — supervisor-run.sh (#81) injects human replies
+      "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}" \
+      "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}<br>Reply in this thread to send guidance to the agent."
+    log "phase: escalate — notified via Matrix, session stays alive waiting for reply"
+    # Session stays alive — matrix_listener injects human reply directly
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
   # PR merged and issue closed (by orchestrator or Claude). Just clean up local state.

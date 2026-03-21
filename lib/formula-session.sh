@@ -168,7 +168,7 @@ formula_phase_callback() {
         log "ERROR: could not restart session after crash"
       fi
       ;;
-    PHASE:done|PHASE:failed|PHASE:needs_human|PHASE:merged)
+    PHASE:done|PHASE:failed|PHASE:escalate|PHASE:merged)
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
   esac

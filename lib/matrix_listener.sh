@@ -164,7 +164,7 @@ while true; do
           DEV_PHASE_FILE="/tmp/dev-session-${DEV_PROJECT}-${DEV_ISSUE}.phase"
           if tmux has-session -t "$DEV_SESSION" 2>/dev/null; then
             DEV_CUR_PHASE=$(head -1 "$DEV_PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
-            if [ "$DEV_CUR_PHASE" = "PHASE:needs_human" ] || [ "$DEV_CUR_PHASE" = "PHASE:awaiting_review" ]; then
+            if [ "$DEV_CUR_PHASE" = "PHASE:escalate" ] || [ "$DEV_CUR_PHASE" = "PHASE:awaiting_review" ]; then
               DEV_INJECT_MSG="Human guidance from ${SENDER} in Matrix:
 
 ${BODY}
@@ -283,26 +283,56 @@ Continue with the action formula based on this response."
         fi
         ;;
       vault)
-        # Parse APPROVE <id> or REJECT <id> from reply
-        VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
-        if [ -n "$VAULT_CMD" ]; then
-          VAULT_ACTION=$(echo "$VAULT_CMD" | awk '{print $1}')
-          VAULT_ID=$(echo "$BODY" | awk '{print $2}')  # preserve original case for ID
-          log "vault dispatch: $VAULT_ACTION $VAULT_ID"
-          VAULT_DIR="${FACTORY_ROOT}/vault"
-          if [ "$VAULT_ACTION" = "APPROVE" ]; then
-            if bash "${VAULT_DIR}/vault-fire.sh" "$VAULT_ID" >> "${VAULT_DIR}/vault.log" 2>&1; then
-              matrix_send "vault" "✓ approved and fired: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+        # Route reply to vault tmux session if one exists (unified escalation path)
+        VAULT_ISSUE=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $4}' "$THREAD_MAP" 2>/dev/null || true)
+        VAULT_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
+        VAULT_INJECTED=false
+        if [ -n "$VAULT_ISSUE" ]; then
+          VAULT_SESSION="vault-${VAULT_PROJECT:-default}-${VAULT_ISSUE}"
+          if tmux has-session -t "$VAULT_SESSION" 2>/dev/null; then
+            VAULT_INJECT_MSG="Human reply from ${SENDER} in Matrix:
+
+${BODY}
+
+Interpret this response and decide how to proceed."
+            VAULT_INJECT_TMP=$(mktemp /tmp/vault-q-inject-XXXXXX)
+            printf '%s' "$VAULT_INJECT_MSG" > "$VAULT_INJECT_TMP"
+            tmux load-buffer -b "vault-q-${VAULT_ISSUE}" "$VAULT_INJECT_TMP" || true
+            tmux paste-buffer -t "$VAULT_SESSION" -b "vault-q-${VAULT_ISSUE}" || true
+            sleep 0.5
+            tmux send-keys -t "$VAULT_SESSION" "" Enter || true
+            tmux delete-buffer -b "vault-q-${VAULT_ISSUE}" 2>/dev/null || true
+            rm -f "$VAULT_INJECT_TMP"
+            VAULT_INJECTED=true
+            log "human reply from ${SENDER} injected into ${VAULT_SESSION}"
+            if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then
+              matrix_send "vault" "✓ Reply forwarded to vault session" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              printf '%s\n' "$THREAD_ROOT" >> "$ACKED_FILE"
+            fi
+          fi
+        fi
+        # Fallback: parse APPROVE/REJECT for non-session vault actions
+        if [ "$VAULT_INJECTED" = false ]; then
+          VAULT_CMD=$(echo "$BODY" | tr '[:lower:]' '[:upper:]' | grep -oP '^\s*(APPROVE|REJECT)\s+\S+' | head -1 || true)
+          if [ -n "$VAULT_CMD" ]; then
+            VAULT_ACTION=$(echo "$VAULT_CMD" | awk '{print $1}')
+            VAULT_ID=$(echo "$BODY" | awk '{print $2}')  # preserve original case for ID
+            log "vault dispatch: $VAULT_ACTION $VAULT_ID"
+            VAULT_DIR="${FACTORY_ROOT}/vault"
+            if [ "$VAULT_ACTION" = "APPROVE" ]; then
+              if bash "${VAULT_DIR}/vault-fire.sh" "$VAULT_ID" >> "${VAULT_DIR}/vault.log" 2>&1; then
+                matrix_send "vault" "✓ approved and fired: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              else
+                matrix_send "vault" "✓ approved but fire failed — will retry: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              fi
             else
-              matrix_send "vault" "✓ approved but fire failed — will retry: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+              bash "${VAULT_DIR}/vault-reject.sh" "$VAULT_ID" "rejected by ${SENDER}" >> "${VAULT_DIR}/vault.log" 2>&1 || true
+              matrix_send "vault" "✓ rejected: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
             fi
           else
-            bash "${VAULT_DIR}/vault-reject.sh" "$VAULT_ID" "rejected by ${SENDER}" >> "${VAULT_DIR}/vault.log" 2>&1 || true
-            matrix_send "vault" "✓ rejected: ${VAULT_ID}" "$THREAD_ROOT" >/dev/null 2>&1 || true
+            log "vault: free-text reply (no session, no APPROVE/REJECT): ${BODY:0:100}"
+            matrix_send "vault" "⚠️ No active vault session. Reply with APPROVE <id> or REJECT <id>, or wait for a vault session to start." "$THREAD_ROOT" >/dev/null 2>&1 || true
           fi
-        else
-          log "vault: unrecognized reply format: ${BODY:0:100}"
-          matrix_send "vault" "⚠️ Reply with APPROVE <id> or REJECT <id>" "$THREAD_ROOT" >/dev/null 2>&1 || true
         fi
         ;;
       *)

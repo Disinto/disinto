@@ -28,8 +28,8 @@ Status: BLOCKED — prerequisite of prerequisite unresolved
 Status: BLOCKED — prerequisite chain unresolved
 
 ## Objective: Unified escalation path (#510)
-- [ ] Supervisor escalates prolonged needs_human (#465)
-Status: BLOCKED — 1 prerequisite unresolved
+- [x] PHASE:escalate replaces PHASE:needs_human (supersedes #465)
+Status: IN PROGRESS
 
 ## Objective: Vault as procurement gate + RESOURCES.md inventory (#504)
 - [x] RESOURCES.md exists

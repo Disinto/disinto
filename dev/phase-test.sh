@@ -51,7 +51,7 @@ check_phase() {
 
 check_phase "PHASE:awaiting_ci"
 check_phase "PHASE:awaiting_review"
-check_phase "PHASE:needs_human"
+check_phase "PHASE:escalate"
 check_phase "PHASE:done"
 check_phase "PHASE:failed"
 
@@ -109,14 +109,14 @@ fi
 is_valid_phase() {
   local p="$1"
   case "$p" in
-    PHASE:awaiting_ci|PHASE:awaiting_review|PHASE:needs_human|PHASE:done|PHASE:failed)
+    PHASE:awaiting_ci|PHASE:awaiting_review|PHASE:escalate|PHASE:done|PHASE:failed)
       return 0 ;;
     *)
       return 1 ;;
   esac
 }
 
-for p in "PHASE:awaiting_ci" "PHASE:awaiting_review" "PHASE:needs_human" \
+for p in "PHASE:awaiting_ci" "PHASE:awaiting_review" "PHASE:escalate" \
          "PHASE:done" "PHASE:failed"; do
   if is_valid_phase "$p"; then
     ok "is_valid_phase: $p"
@@ -131,14 +131,14 @@ else
   fail "is_valid_phase should reject PHASE:unknown"
 fi
 
-# ── Test 8: needs_human mtime guard — no duplicate notify on second poll ─────
+# ── Test 8: escalate mtime guard — no duplicate notify on second poll ─────
 # Simulates the LAST_PHASE_MTIME guard from dev-agent.sh: after the orchestrator
-# handles PHASE:needs_human once, subsequent poll cycles must not re-trigger
+# handles PHASE:escalate once, subsequent poll cycles must not re-trigger
 # notify() if the phase file was not rewritten.
 NOTIFY_COUNT=0
 mock_notify() { NOTIFY_COUNT=$((NOTIFY_COUNT + 1)); }
 
-echo "PHASE:needs_human" > "$PHASE_FILE"
+echo "PHASE:escalate" > "$PHASE_FILE"
 LAST_PHASE_MTIME=0
 
 # --- First poll cycle: phase file is newer than LAST_PHASE_MTIME ---
@@ -162,9 +162,9 @@ if [ -n "$CURRENT_PHASE" ] && [ "$PHASE_MTIME" -gt "$LAST_PHASE_MTIME" ]; then
 fi
 
 if [ "$NOTIFY_COUNT" -eq 1 ]; then
-  ok "needs_human mtime guard: notify called once, blocked on second poll"
+  ok "escalate mtime guard: notify called once, blocked on second poll"
 else
-  fail "needs_human mtime guard: expected 1 notify call, got $NOTIFY_COUNT"
+  fail "escalate mtime guard: expected 1 notify call, got $NOTIFY_COUNT"
 fi
 
 # ── Test 9: PostToolUse hook detects writes, ignores reads ────────────────
@@ -317,15 +317,15 @@ if [ -x "$STOP_FAILURE_HOOK" ]; then
   fi
   rm -f "$SF_MARKER" "$PHASE_FILE"
 
-  # 10i: terminal phase guard — does not overwrite PHASE:needs_human
-  echo "PHASE:needs_human" > "$PHASE_FILE"
+  # 10i: terminal phase guard — does not overwrite PHASE:escalate
+  echo "PHASE:escalate" > "$PHASE_FILE"
   printf '{"stop_reason":"rate_limit"}' \
     | "$STOP_FAILURE_HOOK" "$PHASE_FILE" "$SF_MARKER"
   sf_first=$(head -1 "$PHASE_FILE" 2>/dev/null)
-  if [ "$sf_first" = "PHASE:needs_human" ] && [ ! -f "$SF_MARKER" ]; then
-    ok "StopFailure hook does not overwrite terminal PHASE:needs_human"
+  if [ "$sf_first" = "PHASE:escalate" ] && [ ! -f "$SF_MARKER" ]; then
+    ok "StopFailure hook does not overwrite terminal PHASE:escalate"
   else
-    fail "StopFailure hook overwrote PHASE:needs_human: first='$sf_first'"
+    fail "StopFailure hook overwrote PHASE:escalate: first='$sf_first'"
   fi
   rm -f "$SF_MARKER" "$PHASE_FILE"
 else
@@ -360,31 +360,31 @@ else
   fail "phase-changed marker did not reset mtime guard"
 fi
 
-# ── Test 12: crash handler treats PHASE:needs_human as terminal ───────────
+# ── Test 12: crash handler treats PHASE:escalate as terminal ───────────
 # Simulates the monitor_phase_loop crash handler: when a session exits while
-# the phase file holds PHASE:needs_human, it must be treated as terminal
+# the phase file holds PHASE:escalate, it must be treated as terminal
 # (fall through to the phase handler) rather than invoking callback with
 # PHASE:crashed, which would lose the escalation intent.
 CRASH_CALLBACK_PHASE=""
 mock_crash_callback() { CRASH_CALLBACK_PHASE="$1"; }
 
-echo "PHASE:needs_human" > "$PHASE_FILE"
+echo "PHASE:escalate" > "$PHASE_FILE"
 current_phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
 case "$current_phase" in
-  PHASE:done|PHASE:failed|PHASE:merged|PHASE:needs_human)
+  PHASE:done|PHASE:failed|PHASE:merged|PHASE:escalate)
     # terminal — fall through to phase handler (correct behavior)
     mock_crash_callback "$current_phase"
     ;;
   *)
-    # would invoke callback with PHASE:crashed (incorrect for needs_human)
+    # would invoke callback with PHASE:crashed (incorrect for escalate)
     mock_crash_callback "PHASE:crashed"
     ;;
 esac
 
-if [ "$CRASH_CALLBACK_PHASE" = "PHASE:needs_human" ]; then
-  ok "crash handler preserves PHASE:needs_human (not replaced by PHASE:crashed)"
+if [ "$CRASH_CALLBACK_PHASE" = "PHASE:escalate" ]; then
+  ok "crash handler preserves PHASE:escalate (not replaced by PHASE:crashed)"
 else
-  fail "crash handler lost escalation intent: expected PHASE:needs_human, got $CRASH_CALLBACK_PHASE"
+  fail "crash handler lost escalation intent: expected PHASE:escalate, got $CRASH_CALLBACK_PHASE"
 fi
 
 # Also verify the other terminal phases still work in crash handler
@@ -392,7 +392,7 @@ for tp in "PHASE:done" "PHASE:failed" "PHASE:merged"; do
   echo "$tp" > "$PHASE_FILE"
   current_phase=$(head -1 "$PHASE_FILE" 2>/dev/null | tr -d '[:space:]' || true)
   case "$current_phase" in
-    PHASE:done|PHASE:failed|PHASE:merged|PHASE:needs_human)
+    PHASE:done|PHASE:failed|PHASE:merged|PHASE:escalate)
       ok "crash handler treats $tp as terminal"
       ;;
     *)

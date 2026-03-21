@@ -144,7 +144,7 @@ at each phase boundary by writing to a phase file (e.g.
 `/tmp/dev-session-{project}-{issue}.phase`).
 
 Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`.
-Also: `PHASE:needs_human`, `PHASE:failed`.
+Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
 
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec
 including the orchestrator reaction matrix, sequence diagram, and crash recovery.
