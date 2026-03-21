@@ -1,10 +1,13 @@
 # site/
 
-Static landing page for disinto.ai.
+Static site for disinto.ai.
 
 ## Files
 
 - `index.html` — landing page
+- `dashboard.html` — live factory metrics dashboard
+- `docs/quickstart.html` — quickstart guide (from zero to first automated PR)
+- `docs/architecture.html` — architecture overview (agent loop, phase protocol, vault)
 - `og-image.jpg` — Open Graph image used for social sharing previews (`og:image` / `twitter:image`)
 - `al76.jpg` / `al76.webp` — hero image (Robot AL-76)
 - `favicon.ico`, `favicon-192.png`, `apple-touch-icon.png` — favicons
