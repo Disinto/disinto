@@ -726,14 +726,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
 
     # Restore backlog label so issue can be retried
-    cleanup_labels
-    curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${ISSUE}/labels" \
-      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
-
-    CLAIMED=false  # Don't unclaim again in cleanup()
+    restore_to_backlog
     if [ -n "${PR_NUMBER:-}" ]; then
       log "keeping worktree (PR #${PR_NUMBER} still open)"
     else
