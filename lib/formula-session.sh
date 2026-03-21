@@ -2,7 +2,7 @@
 # formula-session.sh — Shared helpers for formula-driven cron agents
 #
 # Provides reusable functions for the common cron-wrapper + tmux-session
-# pattern used by planner-run.sh and gardener-agent.sh.
+# pattern used by planner-run.sh, predictor-run.sh, gardener-run.sh, and supervisor-run.sh.
 #
 # Functions:
 #   acquire_cron_lock   LOCK_FILE          — PID lock with stale cleanup
@@ -79,6 +79,25 @@ $(cat "$ctx_path")
 "
     fi
   done
+}
+
+# ── Escalation reply consumption ─────────────────────────────────────────
+
+# consume_escalation_reply AGENT_NAME
+# Atomically consumes /tmp/{agent}-escalation-reply if it exists.
+# Sets ESCALATION_REPLY to the file contents (empty string if no reply).
+consume_escalation_reply() {
+  local agent="$1"
+  local reply_file="/tmp/${agent}-escalation-reply"
+  ESCALATION_REPLY=""
+  if [ -s "$reply_file" ]; then
+    local tmp_file="${reply_file}.consumed.$$"
+    if mv "$reply_file" "$tmp_file" 2>/dev/null; then
+      ESCALATION_REPLY=$(cat "$tmp_file")
+      rm -f "$tmp_file"
+      log "Consumed escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
+    fi
+  fi
 }
 
 # ── Session management ───────────────────────────────────────────────────

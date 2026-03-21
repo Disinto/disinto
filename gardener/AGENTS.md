@@ -5,19 +5,25 @@
 criteria, oversized issues, stale issues, and circular dependencies. Invoke
 Claude to fix or escalate to a human via Matrix.
 
-**Trigger**: `gardener-run.sh` runs 2x/day via cron. It files an `action`
-issue referencing `formulas/run-gardener.toml`; the action-agent picks it up
-and executes the gardener steps in an interactive Claude tmux session. Accepts
-an optional project TOML argument (configures which project the action issue is
-filed against).
+**Trigger**: `gardener-run.sh` runs 4x/day via cron. It creates a tmux
+session with `claude --model sonnet`, injects `formulas/run-gardener.toml`
+with escalation replies as context, monitors the phase file, and cleans up
+on completion or timeout (2h max session). No action issues — the gardener
+runs directly from cron like the planner, predictor, and supervisor.
 
 **Key files**:
-- `gardener/gardener-run.sh` — Cron wrapper: lock, memory guard, dedup check, files action issue
-- `gardener/gardener-poll.sh` — Escalation-reply injection for dev sessions, invokes gardener-agent.sh for grooming
-- `gardener/gardener-agent.sh` — Orchestrator: bash pre-analysis, creates tmux session (`gardener-{project}`) with interactive `claude`, monitors phase file, parses result file (ACTION:/DUST:/ESCALATE)
+- `gardener/gardener-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
+  consumes escalation replies, sources disinto project config, creates tmux session,
+  injects formula prompt, monitors phase file, handles crash recovery via
+  `run_formula_and_monitor`
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling, blocked-review, agents-update, commit-and-pr
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
-- `CLAUDE_TIMEOUT`
+- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
+
+**Lifecycle**: gardener-run.sh (cron 0,6,12,18) → lock + memory guard →
+consume escalation replies → load formula + context → create tmux session →
+Claude grooms backlog, bundles dust, reviews blocked issues, updates AGENTS.md,
+commits and creates PR → `PHASE:done`.

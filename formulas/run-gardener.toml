@@ -1,7 +1,7 @@
 # formulas/run-gardener.toml — Gardener housekeeping formula
 #
 # Defines the gardener's complete run: grooming (Claude session via
-# gardener-agent.sh) + blocked-review + AGENTS.md maintenance + final
+# gardener-run.sh) + blocked-review + AGENTS.md maintenance + final
 # commit-and-pr.
 #
 # No memory, no journal. The gardener does mechanical housekeeping
@@ -48,7 +48,7 @@ id    = "grooming"
 title = "Backlog grooming — triage all open issues"
 description = """
 Groom the open issue backlog. This step is the core Claude-driven analysis
-(currently implemented in gardener-agent.sh with bash pre-checks).
+(Claude performs pre-checks inline before deeper analysis).
 
 Pre-checks (bash, zero tokens — detect problems before invoking Claude):
 
