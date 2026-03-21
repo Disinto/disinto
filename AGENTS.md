@@ -408,6 +408,25 @@ prevents merge conflicts between concurrent changes.
 
 ---
 
+## Architecture Decisions
+
+Humans write these. Agents read and enforce them.
+
+| ID | Decision | Rationale |
+|---|---|---|
+| AD-001 | Nervous system runs from cron, not action issues. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
+| AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
+| AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
+| AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
+| AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Secrets go in `.env` or TOML project files, referenced as `$VAR_NAME`. |
+
+**Who enforces what:**
+- **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.
+- **Planner** plans within the architecture; does not create issues that violate ADs.
+- **Dev-agent** reads AGENTS.md before implementing; refuses work that violates ADs.
+
+---
+
 ## Phase-Signaling Protocol (for persistent tmux sessions)
 
 When running as a **persistent tmux session** (issue #80+), Claude must signal
