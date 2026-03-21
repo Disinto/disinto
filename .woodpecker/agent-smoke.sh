@@ -89,7 +89,24 @@ echo "syntax check done"
 
 echo "=== 2/2  Function resolution ==="
 
-# Functions provided by shared lib files (available to all agent scripts via source)
+# Functions provided by shared lib files (available to all agent scripts via source).
+#
+# Included — these are inline-sourced by agent scripts:
+#   lib/env.sh              — sourced by every agent (log, codeberg_api, etc.)
+#   lib/agent-session.sh    — sourced by orchestrators (create_agent_session, monitor_phase_loop, etc.)
+#   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
+#   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
+#   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
+#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
+#
+# Excluded — not sourced inline by agents:
+#   lib/ci-debug.sh         — standalone CLI tool, run directly (not sourced)
+#   lib/matrix_listener.sh  — standalone systemd daemon (not sourced)
+#   lib/parse-deps.sh       — executed via `bash lib/parse-deps.sh` (not sourced)
+#   lib/hooks/*.sh          — Claude Code hook scripts, executed by the harness (not sourced)
+#
+# If a new lib file is added and sourced by agents, add it to LIB_FUNS below
+# and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
   for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/file-action-issue.sh lib/formula-session.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
@@ -151,6 +168,22 @@ check_script() {
   done <<< "$candidates"
 }
 
+# Inline-sourced lib files — check that their own function calls resolve.
+# These are already in LIB_FUNS (their definitions are available to agents),
+# but this verifies calls *within* each lib file are also resolvable.
+check_script lib/env.sh
+check_script lib/agent-session.sh
+check_script lib/ci-helpers.sh
+check_script lib/file-action-issue.sh
+check_script lib/formula-session.sh     lib/agent-session.sh
+check_script lib/load-project.sh
+
+# Standalone lib scripts (not sourced by agents; run directly or as services).
+# Still checked for function resolution against LIB_FUNS + own definitions.
+check_script lib/ci-debug.sh
+check_script lib/matrix_listener.sh
+check_script lib/parse-deps.sh
+
 # Agent scripts — list cross-sourced files where function scope flows across files.
 # dev-agent.sh sources phase-handler.sh; phase-handler.sh calls helpers defined in dev-agent.sh.
 check_script dev/dev-agent.sh          dev/phase-handler.sh
@@ -163,6 +196,8 @@ check_script gardener/gardener-run.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh
 check_script planner/planner-run.sh
+check_script planner/prediction-agent.sh
+check_script planner/prediction-poll.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
 check_script vault/vault-agent.sh
