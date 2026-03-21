@@ -1,3 +1,4 @@
+<!-- summarized-through-run: 1 -->
 # Planner Memory
 
 ## 2026-03-21 — Second planner run

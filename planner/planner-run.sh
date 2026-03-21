@@ -55,6 +55,25 @@ $(cat "$MEMORY_FILE")
 "
 fi
 
+# ── Read recent journal files ──────────────────────────────────────────
+JOURNAL_BLOCK=""
+JOURNAL_DIR="$FACTORY_ROOT/planner/journal"
+if [ -d "$JOURNAL_DIR" ]; then
+  # Load last 5 journal files (most recent first) for run history context
+  JOURNAL_FILES=$(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -5)
+  if [ -n "$JOURNAL_FILES" ]; then
+    JOURNAL_BLOCK="
+### Recent journal entries (planner/journal/)
+"
+    while IFS= read -r jf; do
+      JOURNAL_BLOCK="${JOURNAL_BLOCK}
+#### $(basename "$jf")
+$(cat "$jf")
+"
+    done <<< "$JOURNAL_FILES"
+  fi
+fi
+
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
@@ -70,7 +89,7 @@ build_prompt_footer "
 PROMPT="You are the strategic planner for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 ## Project context
-${CONTEXT_BLOCK}${MEMORY_BLOCK}
+${CONTEXT_BLOCK}${MEMORY_BLOCK}${JOURNAL_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Formula
