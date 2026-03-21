@@ -17,7 +17,7 @@ file_action_issue() {
   FILED_ISSUE_NUM=""
 
   # Secret scan: reject issue bodies containing embedded secrets
-  if ! scan_for_secrets "$body" 2>/dev/null; then
+  if ! scan_for_secrets "$body"; then
     echo "file-action-issue: BLOCKED — issue body for '${formula_name}' contains potential secrets. Use env var references instead." >&2
     return 4
   fi

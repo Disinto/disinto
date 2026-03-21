@@ -79,6 +79,12 @@ scan_for_secrets() {
 redact_secrets() {
   local text="${1:-$(cat)}"
 
+  # Replace AWS AKIA keys
+  text=$(printf '%s' "$text" | sed -E 's/AKIA[0-9A-Z]{16}/[REDACTED]/g')
+
+  # Replace Ethereum private keys (0x + 64 hex chars)
+  text=$(printf '%s' "$text" | sed -E 's/0x[0-9a-fA-F]{64}/[REDACTED]/g')
+
   # Replace long hex strings (32+ chars) not preceded by $ (env var refs)
   text=$(printf '%s' "$text" | sed -E 's/([^$]|^)([0-9a-fA-F]{32,})/\1[REDACTED]/g')
 
