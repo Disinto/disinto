@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quickstart — Disinto</title>
+  <meta name="description" content="Get from zero to your first automated PR in under 10 minutes. Prerequisites, disinto init walkthrough, and the full issue-to-merge lifecycle.">
+  <link rel="icon" href="../favicon.ico" sizes="32x32">
+  <link rel="icon" href="../favicon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="canonical" href="https://disinto.ai/docs/quickstart">
+  <meta property="og:title" content="Quickstart — Disinto">
+  <meta property="og:description" content="Get from zero to your first automated PR in under 10 minutes.">
+  <meta property="og:url" content="https://disinto.ai/docs/quickstart">
+  <meta property="og:type" content="article">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --fg: #e0e0e0;
+      --dim: #707070;
+      --accent: #c8a46e;
+      --accent-dim: #8a7044;
+      --surface: #141414;
+      --border: #222;
+      --green: #4a7;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 300;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+    }
+
+    .header .subtitle {
+      color: var(--dim);
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+    }
+
+    .header .back {
+      display: inline-block;
+      margin-top: 0.75rem;
+      color: var(--accent-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+    }
+
+    .header .back:hover { color: var(--accent); }
+
+    /* Navigation between docs */
+    .doc-nav {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+      font-size: 0.75rem;
+    }
+
+    .doc-nav a {
+      color: var(--accent-dim);
+      text-decoration: none;
+      padding: 0.3rem 0.8rem;
+      border: 1px solid var(--border);
+    }
+
+    .doc-nav a:hover { border-color: var(--accent-dim); }
+
+    .doc-nav a.active {
+      color: var(--accent);
+      border-color: var(--accent-dim);
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 2.5rem;
+    }
+
+    .section h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent-dim);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section p {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    .section p strong {
+      color: var(--fg);
+    }
+
+    .section ul, .section ol {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      padding-left: 1.5rem;
+    }
+
+    .section li {
+      margin-bottom: 0.5rem;
+    }
+
+    .section li strong {
+      color: var(--fg);
+    }
+
+    .section a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .section a:hover {
+      text-decoration: underline;
+    }
+
+    /* Code blocks */
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.2rem 1.5rem;
+      margin-bottom: 1rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: var(--fg);
+    }
+
+    code {
+      font-family: inherit;
+      font-size: 0.85rem;
+      color: var(--accent);
+    }
+
+    pre code {
+      color: var(--fg);
+      font-size: inherit;
+    }
+
+    .comment { color: var(--dim); }
+    .output { color: var(--green); }
+
+    /* Step numbers */
+    .step-num {
+      display: inline-block;
+      width: 1.6rem;
+      height: 1.6rem;
+      line-height: 1.6rem;
+      text-align: center;
+      background: var(--accent-dim);
+      color: var(--bg);
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-right: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 1rem;
+      color: var(--fg);
+      font-size: 0.9rem;
+    }
+
+    /* Prerequisites box */
+    .prereqs {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .prereqs .label {
+      font-size: 0.7rem;
+      color: var(--accent-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 0.75rem;
+    }
+
+    .prereqs ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .prereqs li {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 0.4rem;
+      padding-left: 1.2rem;
+      position: relative;
+    }
+
+    .prereqs li::before {
+      content: "\2610";
+      position: absolute;
+      left: 0;
+      color: var(--accent-dim);
+    }
+
+    .prereqs li strong {
+      color: var(--fg);
+    }
+
+    /* Expected output */
+    .expected {
+      background: var(--surface);
+      border-left: 3px solid var(--green);
+      padding: 1rem 1.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.8rem;
+      color: var(--dim);
+    }
+
+    .expected .label {
+      font-size: 0.65rem;
+      color: var(--green);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 0.5rem;
+    }
+
+    .expected code {
+      color: var(--fg);
+      font-size: 0.8rem;
+    }
+
+    /* Lifecycle diagram */
+    .lifecycle {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--dim);
+      text-align: center;
+      overflow-x: auto;
+    }
+
+    .lifecycle .step {
+      color: var(--accent);
+    }
+
+    .lifecycle .arrow {
+      color: var(--border);
+      margin: 0 0.3rem;
+    }
+
+    .lifecycle .agent {
+      color: var(--dim);
+      font-size: 0.65rem;
+      display: block;
+      margin-top: 0.3rem;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--dim);
+    }
+
+    .footer a {
+      color: var(--accent-dim);
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: var(--accent); }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      .header h1 { font-size: 1.5rem; }
+      .container { padding: 2rem 1rem; }
+      pre { padding: 1rem; font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <h1>Quickstart</h1>
+      <div class="subtitle">from zero to your first automated PR</div>
+      <a class="back" href="/">&larr; disinto.ai</a>
+    </div>
+
+    <div class="doc-nav">
+      <a href="/docs/quickstart" class="active">Quickstart</a>
+      <a href="/docs/architecture">Architecture</a>
+      <a href="/dashboard">Dashboard</a>
+    </div>
+
+    <div class="prereqs">
+      <div class="label">Prerequisites</div>
+      <ul>
+        <li><strong>A VPS or server</strong> &mdash; 8 GB RAM minimum (Ubuntu/Debian recommended)</li>
+        <li><strong>A Codeberg account</strong> &mdash; with a repo and at least one issue</li>
+        <li><strong>A second Codeberg account</strong> &mdash; for the review bot (branch protection requires a different reviewer)</li>
+        <li><strong>Woodpecker CI</strong> &mdash; running and connected to your repo</li>
+        <li><strong>An Anthropic API key</strong> &mdash; with the <code>claude</code> CLI installed and authenticated</li>
+        <li><strong>tmux</strong> &mdash; for persistent dev sessions</li>
+      </ul>
+    </div>
+
+    <!-- Step 1: Clone disinto -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">1</span>
+        Clone the factory
+      </div>
+      <p>Clone disinto onto your server. This is the factory &mdash; the code that runs your agents.</p>
+<pre><code>git clone https://codeberg.org/johba/disinto.git ~/disinto
+cd ~/disinto
+cp .env.example .env</code></pre>
+      <p>Edit <code>.env</code> with your tokens:</p>
+<pre><code><span class="comment"># Required</span>
+CODEBERG_TOKEN=your_codeberg_token
+REVIEW_BOT_TOKEN=your_review_bot_token
+
+<span class="comment"># Woodpecker CI</span>
+WOODPECKER_TOKEN=your_woodpecker_token
+WOODPECKER_SERVER=http://localhost:8000
+
+<span class="comment"># Timeouts</span>
+CLAUDE_TIMEOUT=7200</code></pre>
+    </div>
+
+    <!-- Step 2: Initialize your project -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">2</span>
+        Initialize your project
+      </div>
+      <p><code>disinto init</code> sets up everything: clones the repo, creates the project config, adds Codeberg labels, and installs cron jobs.</p>
+<pre><code>bin/disinto init https://codeberg.org/you/your-project</code></pre>
+      <div class="expected">
+        <div class="label">Expected output</div>
+<code>=== disinto init ===
+Project: you/your-project
+Name:    your-project
+Cloning: https://codeberg.org/you/your-project.git -> /home/you/your-project
+Branch:  main
+Created: /home/you/disinto/projects/your-project.toml
+Creating labels on you/your-project...
+  + backlog
+  + in-progress
+  + blocked
+  + tech-debt
+  + underspecified
+  + vision
+  + action
+Created: /home/you/your-project/VISION.md
+Cron entries installed
+Done. Project your-project is ready.</code>
+      </div>
+      <p>Optional flags:</p>
+      <ul>
+        <li><code>--branch main</code> &mdash; set the primary branch (auto-detected by default)</li>
+        <li><code>--ci-id 3</code> &mdash; Woodpecker CI repo ID (0 = no CI)</li>
+        <li><code>--repo-root /path/to/clone</code> &mdash; custom clone location</li>
+        <li><code>--yes</code> &mdash; skip confirmation prompts</li>
+      </ul>
+    </div>
+
+    <!-- Step 3: Prepare the repo -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">3</span>
+        Prepare your repo
+      </div>
+      <p>Your project needs three things before agents can work on it:</p>
+      <ol>
+        <li><strong>A CI pipeline</strong> &mdash; at least one <code>.woodpecker/*.yml</code> file. Agents wait for CI before reviewing or merging.</li>
+        <li><strong>A CLAUDE.md</strong> &mdash; project context that agents read before every task. Describe your tech stack, how to build/test, coding conventions, and directory layout.</li>
+        <li><strong>Branch protection</strong> &mdash; on Codeberg, require PR reviews and add the review bot as a write collaborator.</li>
+      </ol>
+<pre><code><span class="comment"># Create CLAUDE.md in your project</span>
+cat > ~/your-project/CLAUDE.md &lt;&lt;'EOF'
+# Your Project
+
+## Tech stack
+- Node.js, React, PostgreSQL
+
+## How to build and test
+npm install && npm test
+
+## Conventions
+- Use TypeScript, ESLint, Prettier
+- Tests in __tests__/ directories
+EOF
+
+cd ~/your-project
+git add CLAUDE.md && git commit -m "Add CLAUDE.md for agent context"
+git push</code></pre>
+    </div>
+
+    <!-- Step 4: File your first issue -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">4</span>
+        File your first issue
+      </div>
+      <p>Create an issue on Codeberg with the <code>backlog</code> label. Be specific &mdash; the dev-agent works best with clear acceptance criteria.</p>
+<pre><code><span class="comment"># Title: Add health check endpoint</span>
+<span class="comment"># Label: backlog</span>
+<span class="comment"># Body:</span>
+
+## Problem
+The app has no health check endpoint for monitoring.
+
+## Approach
+Add a GET /health route that returns { "status": "ok" }.
+
+## Acceptance criteria
+- [ ] GET /health returns 200 with JSON body
+- [ ] Response includes uptime in seconds
+- [ ] Test covers the new endpoint</code></pre>
+      <p>That's it. The factory takes over from here.</p>
+    </div>
+
+    <!-- Step 5: Watch the lifecycle -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">5</span>
+        Watch the lifecycle
+      </div>
+      <p>Within minutes, the agents start working. Here's what happens:</p>
+      <div class="lifecycle">
+        <span class="step">issue filed</span>
+        <span class="arrow">&rarr;</span>
+        <span class="step">dev-agent picks it up</span>
+        <span class="arrow">&rarr;</span>
+        <span class="step">PR opened</span>
+        <span class="arrow">&rarr;</span>
+        <span class="step">CI runs</span>
+        <span class="arrow">&rarr;</span>
+        <span class="step">review-agent reviews</span>
+        <span class="arrow">&rarr;</span>
+        <span class="step">merged</span>
+      </div>
+      <p>Monitor progress with:</p>
+<pre><code><span class="comment"># Check factory status</span>
+bin/disinto status
+
+<span class="comment"># Watch the dev-agent log</span>
+tail -f /tmp/dev-agent.log
+
+<span class="comment"># Watch the review log</span>
+tail -f /tmp/review.log</code></pre>
+      <div class="expected">
+        <div class="label">Expected timeline</div>
+<code>~2 min   dev-poll finds the issue, claims it
+~5 min   dev-agent opens a PR with the implementation
+~2 min   CI runs (Woodpecker)
+~2 min   review-agent approves or requests changes
+~1 min   PR merges, issue closes automatically</code>
+      </div>
+      <p>If the review-agent requests changes, the dev-agent addresses them automatically. The loop repeats until the PR is approved and merged.</p>
+    </div>
+
+    <!-- Step 6: Verify -->
+    <div class="section">
+      <div class="step-header">
+        <span class="step-num">6</span>
+        Verify everything works
+      </div>
+<pre><code><span class="comment"># Factory status &mdash; shows active sessions, backlog depth, open PRs</span>
+bin/disinto status
+
+<span class="comment"># Check your repo &mdash; the PR should be merged</span>
+cd ~/your-project
+git pull
+git log --oneline -5</code></pre>
+      <p>You should see a merge commit with the dev-agent's implementation. The issue is closed, the branch is deleted.</p>
+    </div>
+
+    <!-- What's next -->
+    <div class="section">
+      <h2>What's next</h2>
+      <p>Now that the factory is running:</p>
+      <ul>
+        <li><strong>Write VISION.md</strong> &mdash; describe where the project is headed. The planner reads it weekly and creates issues to close gaps.</li>
+        <li><strong>File more issues</strong> &mdash; the dev-agent processes them one at a time, in order. Use <code>## Dependencies</code> sections to control sequencing.</li>
+        <li><strong>Watch the dashboard</strong> &mdash; <a href="/dashboard">disinto.ai/dashboard</a> shows live factory metrics.</li>
+        <li><strong>Read the architecture</strong> &mdash; <a href="/docs/architecture">understand how the agents work together</a>.</li>
+      </ul>
+    </div>
+
+    <div class="footer">
+      <a href="/">&larr; disinto.ai</a> &middot;
+      <a href="/docs/architecture">Architecture</a> &middot;
+      <a href="https://codeberg.org/johba/disinto">Source</a>
+    </div>
+
+  </div>
+</body>
+</html>

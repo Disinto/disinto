@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture — Disinto</title>
+  <meta name="description" content="How Disinto works: agent loop, phase protocol, vault safety gates, and the planner-predictor feedback cycle.">
+  <link rel="icon" href="../favicon.ico" sizes="32x32">
+  <link rel="icon" href="../favicon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="canonical" href="https://disinto.ai/docs/architecture">
+  <meta property="og:title" content="Architecture — Disinto">
+  <meta property="og:description" content="How Disinto works: agent loop, phase protocol, vault safety gates, and the planner-predictor feedback cycle.">
+  <meta property="og:url" content="https://disinto.ai/docs/architecture">
+  <meta property="og:type" content="article">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --fg: #e0e0e0;
+      --dim: #707070;
+      --accent: #c8a46e;
+      --accent-dim: #8a7044;
+      --surface: #141414;
+      --border: #222;
+      --green: #4a7;
+      --red: #a54;
+      --yellow: #a93;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 300;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+    }
+
+    .header .subtitle {
+      color: var(--dim);
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+    }
+
+    .header .back {
+      display: inline-block;
+      margin-top: 0.75rem;
+      color: var(--accent-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+    }
+
+    .header .back:hover { color: var(--accent); }
+
+    /* Navigation between docs */
+    .doc-nav {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+      font-size: 0.75rem;
+    }
+
+    .doc-nav a {
+      color: var(--accent-dim);
+      text-decoration: none;
+      padding: 0.3rem 0.8rem;
+      border: 1px solid var(--border);
+    }
+
+    .doc-nav a:hover { border-color: var(--accent-dim); }
+
+    .doc-nav a.active {
+      color: var(--accent);
+      border-color: var(--accent-dim);
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 2.5rem;
+    }
+
+    .section h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent-dim);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section p {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    .section p strong {
+      color: var(--fg);
+    }
+
+    .section a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .section a:hover {
+      text-decoration: underline;
+    }
+
+    /* Diagram */
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.75rem;
+      color: var(--dim);
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+
+    .diagram pre {
+      background: none;
+      border: none;
+      padding: 0;
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--dim);
+    }
+
+    .diagram .agent-name { color: var(--accent); }
+    .diagram .phase { color: var(--green); }
+    .diagram .arrow { color: var(--accent-dim); }
+
+    /* Agent cards */
+    .agents-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 1.5rem;
+    }
+
+    .agent-card {
+      background: var(--surface);
+      padding: 1.2rem;
+    }
+
+    .agent-card .name {
+      font-size: 0.8rem;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+    }
+
+    .agent-card .role {
+      font-size: 0.75rem;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+
+    .agent-card .role strong {
+      color: var(--fg);
+    }
+
+    .agent-card .trigger {
+      font-size: 0.65rem;
+      color: var(--accent-dim);
+      margin-top: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    /* Phase table */
+    .phase-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: 0.8rem;
+    }
+
+    .phase-table th {
+      text-align: left;
+      color: var(--accent-dim);
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .phase-table td {
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--dim);
+    }
+
+    .phase-table td:first-child {
+      color: var(--green);
+      font-size: 0.75rem;
+      white-space: nowrap;
+    }
+
+    .phase-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Concept boxes */
+    .concept {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .concept .label {
+      font-size: 0.7rem;
+      color: var(--accent-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 0.75rem;
+    }
+
+    .concept p {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .concept p:last-child {
+      margin-bottom: 0;
+    }
+
+    .concept p strong {
+      color: var(--fg);
+    }
+
+    /* Principle blocks */
+    .principles {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 1.5rem;
+    }
+
+    .principle {
+      background: var(--surface);
+      padding: 1rem 1.2rem;
+      display: flex;
+      gap: 1rem;
+    }
+
+    .principle .id {
+      color: var(--accent-dim);
+      font-size: 0.7rem;
+      white-space: nowrap;
+      padding-top: 0.1rem;
+    }
+
+    .principle .text {
+      font-size: 0.8rem;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+
+    .principle .text strong {
+      color: var(--fg);
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--dim);
+    }
+
+    .footer a {
+      color: var(--accent-dim);
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: var(--accent); }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      .header h1 { font-size: 1.5rem; }
+      .container { padding: 2rem 1rem; }
+      .agents-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <h1>Architecture</h1>
+      <div class="subtitle">how the factory works</div>
+      <a class="back" href="/">&larr; disinto.ai</a>
+    </div>
+
+    <div class="doc-nav">
+      <a href="/docs/quickstart">Quickstart</a>
+      <a href="/docs/architecture" class="active">Architecture</a>
+      <a href="/dashboard">Dashboard</a>
+    </div>
+
+    <!-- The Loop -->
+    <div class="section">
+      <h2>The agent loop</h2>
+      <p>Disinto runs a continuous loop: <strong>vision defines direction</strong>, agents derive work and execute it, results feed back into the next cycle.</p>
+      <div class="diagram">
+<pre>
+  <span class="agent-name">planner</span> reads VISION.md
+     <span class="arrow">|</span>
+     <span class="arrow">v</span>
+  creates backlog issues
+     <span class="arrow">|</span>
+     <span class="arrow">v</span>
+  <span class="agent-name">dev-agent</span> picks issue <span class="arrow">--></span> implements in worktree <span class="arrow">--></span> opens PR
+     <span class="arrow">|</span>
+     <span class="arrow">v</span>
+  Woodpecker CI runs tests
+     <span class="arrow">|</span>
+     <span class="arrow">v</span>
+  <span class="agent-name">review-agent</span> reviews PR <span class="arrow">--></span> approves or requests changes
+     <span class="arrow">|</span>                               <span class="arrow">|</span>
+     <span class="arrow">v</span> (approved)                     <span class="arrow">v</span> (changes requested)
+  PR merges                       dev-agent addresses feedback
+     <span class="arrow">|</span>                               <span class="arrow">|</span>
+     <span class="arrow">v</span>                               <span class="arrow">+--></span> CI re-runs <span class="arrow">--></span> review again
+  <span class="agent-name">planner</span> sees progress, plans next cycle
+</pre>
+      </div>
+      <p>Each project processes <strong>one issue at a time</strong>. No concurrent PRs, no merge conflicts, no context switching. The pipeline is deliberately sequential.</p>
+    </div>
+
+    <!-- Eight Agents -->
+    <div class="section">
+      <h2>Eight agents</h2>
+      <p>Each agent has a single responsibility. They communicate through git, the Codeberg API, and the filesystem.</p>
+      <div class="agents-grid">
+        <div class="agent-card">
+          <div class="name">dev-agent</div>
+          <div class="role">Picks up backlog issues, <strong>implements code</strong> in isolated git worktrees, opens PRs. Runs as a persistent tmux session.</div>
+          <div class="trigger">Cron: every 5 min</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">review-agent</div>
+          <div class="role"><strong>Reviews PRs</strong> against project conventions. Approves clean PRs, requests specific changes on others.</div>
+          <div class="trigger">Cron: every 5 min</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">planner</div>
+          <div class="role">Reads VISION.md and repo state. <strong>Creates issues</strong> for gaps between where the project is and where it should be.</div>
+          <div class="trigger">Cron: weekly</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">gardener</div>
+          <div class="role"><strong>Grooms the backlog.</strong> Closes duplicates, promotes tech-debt issues, ensures issues are well-structured.</div>
+          <div class="trigger">Cron: every 6 hours</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">supervisor</div>
+          <div class="role"><strong>Monitors factory health.</strong> Kills stale sessions, manages disk/memory, escalates persistent failures.</div>
+          <div class="trigger">Cron: every 10 min</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">predictor</div>
+          <div class="role">Detects <strong>infrastructure patterns</strong> &mdash; recurring failures, resource trends, emerging issues. Files predictions for triage.</div>
+          <div class="trigger">Cron: daily</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">action-agent</div>
+          <div class="role">Executes <strong>operational tasks</strong> defined as formulas &mdash; site deployments, data migrations, any multi-step procedure.</div>
+          <div class="trigger">Cron: every 5 min</div>
+        </div>
+        <div class="agent-card">
+          <div class="name">vault</div>
+          <div class="role"><strong>Safety gate.</strong> Reviews dangerous actions before they execute. Auto-approves safe operations, escalates risky ones to a human.</div>
+          <div class="trigger">Event-driven</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase Protocol -->
+    <div class="section">
+      <h2>Phase protocol</h2>
+      <p>When the dev-agent runs in a persistent tmux session, it signals progress by writing to a <strong>phase file</strong>. The orchestrator watches this file and injects events (CI results, review feedback) back into the session.</p>
+      <table class="phase-table">
+        <tr>
+          <th>Phase</th>
+          <th>Meaning</th>
+          <th>Next event</th>
+        </tr>
+        <tr>
+          <td>awaiting_ci</td>
+          <td>PR pushed, waiting for CI</td>
+          <td>Orchestrator injects CI result</td>
+        </tr>
+        <tr>
+          <td>awaiting_review</td>
+          <td>CI passed, waiting for review</td>
+          <td>Review-agent injects feedback</td>
+        </tr>
+        <tr>
+          <td>needs_human</td>
+          <td>Blocked on a human decision</td>
+          <td>Matrix notification sent</td>
+        </tr>
+        <tr>
+          <td>done</td>
+          <td>PR merged, work complete</td>
+          <td>Session cleaned up</td>
+        </tr>
+        <tr>
+          <td>failed</td>
+          <td>Unrecoverable error</td>
+          <td>Escalated to supervisor</td>
+        </tr>
+      </table>
+      <p>Phase files live at <code>/tmp/dev-session-{project}-{issue}.phase</code>. The protocol is intentionally simple &mdash; a plain text file, one line, no daemons.</p>
+    </div>
+
+    <!-- Vault -->
+    <div class="section">
+      <h2>Vault &mdash; quality gate</h2>
+      <div class="concept">
+        <div class="label">How it works</div>
+        <p>The vault sits between agents and dangerous actions. Before an agent can execute a risky operation (force push, deploy, delete), the vault reviews the request.</p>
+        <p><strong>Auto-approve</strong> &mdash; safe, well-understood operations pass through instantly. <strong>Escalate</strong> &mdash; risky or novel operations get sent to a human via Matrix. <strong>Reject</strong> &mdash; clearly unsafe actions are blocked.</p>
+        <p>You define the boundaries. The vault enforces them. This is what lets you sleep while the factory runs.</p>
+      </div>
+    </div>
+
+    <!-- Planner + Predictor -->
+    <div class="section">
+      <h2>Planner + predictor feedback cycle</h2>
+      <div class="concept">
+        <div class="label">Closing the loop</div>
+        <p>The <strong>planner</strong> runs weekly. It compares the current state of the codebase against VISION.md and creates issues for anything missing. It also triages predictions filed by the predictor.</p>
+        <p>The <strong>predictor</strong> runs daily. It analyzes CI logs, git history, and resource metrics to detect patterns &mdash; recurring test failures, disk usage trends, code churn hotspots. Predictions are filed as issues for the planner to triage.</p>
+        <p>Together, they create a feedback cycle: <strong>the predictor observes, the planner directs, and the dev-agent executes.</strong></p>
+      </div>
+    </div>
+
+    <!-- Infrastructure -->
+    <div class="section">
+      <h2>Infrastructure</h2>
+      <p>Disinto is deliberately minimal. No Kubernetes, no message queues, no microservices.</p>
+      <div class="concept">
+        <div class="label">Tech stack</div>
+        <p><strong>Bash scripts</strong> &mdash; every agent is a shell script. No compiled binaries, no runtimes to install.</p>
+        <p><strong>Claude CLI</strong> &mdash; AI is invoked via <code>claude -p</code> (one-shot) or <code>claude</code> (persistent tmux sessions).</p>
+        <p><strong>Cron</strong> &mdash; agents are triggered by cron jobs, not a daemon. Pull-based, not push-based.</p>
+        <p><strong>Codeberg + Woodpecker</strong> &mdash; git hosting and CI. All state lives in git and the issue tracker. No external databases.</p>
+        <p><strong>Single VPS</strong> &mdash; runs on an 8 GB server. Flat cost, no scaling surprises.</p>
+      </div>
+    </div>
+
+    <!-- Design Principles -->
+    <div class="section">
+      <h2>Design principles</h2>
+      <div class="principles">
+        <div class="principle">
+          <div class="id">AD-001</div>
+          <div class="text"><strong>Nervous system runs from cron, not action issues.</strong> Planner, predictor, gardener, supervisor run directly. They create work, they don't become work.</div>
+        </div>
+        <div class="principle">
+          <div class="id">AD-002</div>
+          <div class="text"><strong>Single-threaded pipeline per project.</strong> One dev issue at a time. No new work while a PR awaits CI or review.</div>
+        </div>
+        <div class="principle">
+          <div class="id">AD-003</div>
+          <div class="text"><strong>The runtime creates and destroys, the formula preserves.</strong> Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done.</div>
+        </div>
+        <div class="principle">
+          <div class="id">AD-004</div>
+          <div class="text"><strong>Event-driven > polling > fixed delays.</strong> Never hardcoded sleep. Use phase files, webhooks, or poll loops with backoff.</div>
+        </div>
+        <div class="principle">
+          <div class="id">AD-005</div>
+          <div class="text"><strong>Secrets via env var indirection, never in issue bodies.</strong> Issue bodies become code. Secrets go in <code>.env</code> or TOML project files.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Directory Layout -->
+    <div class="section">
+      <h2>Directory layout</h2>
+      <div class="diagram">
+<pre>
+disinto/
+├── <span class="agent-name">dev/</span>           dev-poll.sh, dev-agent.sh, phase-handler.sh
+├── <span class="agent-name">review/</span>        review-poll.sh, review-pr.sh
+├── <span class="agent-name">gardener/</span>      gardener-run.sh (cron executor)
+├── <span class="agent-name">predictor/</span>     predictor-run.sh (daily cron executor)
+├── <span class="agent-name">planner/</span>       planner-run.sh (weekly cron executor)
+├── <span class="agent-name">supervisor/</span>    supervisor-run.sh (health monitoring)
+├── <span class="agent-name">vault/</span>         vault-poll.sh, vault-agent.sh, vault-fire.sh
+├── <span class="agent-name">action/</span>        action-poll.sh, action-agent.sh
+├── <span class="agent-name">lib/</span>           env.sh, agent-session.sh, ci-helpers.sh
+├── <span class="agent-name">projects/</span>      *.toml per-project config
+├── <span class="agent-name">formulas/</span>      TOML specs for multi-step agent tasks
+├── <span class="agent-name">bin/</span>           disinto CLI entry point
+└── <span class="agent-name">docs/</span>          internal protocol docs
+</pre>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="/">&larr; disinto.ai</a> &middot;
+      <a href="/docs/quickstart">Quickstart</a> &middot;
+      <a href="https://codeberg.org/johba/disinto">Source</a>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://disinto.ai/</loc></url>
+  <url><loc>https://disinto.ai/dashboard</loc></url>
+  <url><loc>https://disinto.ai/docs/quickstart</loc></url>
+  <url><loc>https://disinto.ai/docs/architecture</loc></url>
 </urlset>
