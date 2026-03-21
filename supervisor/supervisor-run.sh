@@ -97,7 +97,8 @@ Act on this reply in the decide-actions step.
 ${CONTEXT_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
-## Supervisor formula (run every 20min — lightweight health check)
+Priority order: P0 memory > P1 disk > P2 stopped > P3 degraded > P4 housekeeping
+
 ${FORMULA_CONTENT}
 
 ${SCRATCH_INSTRUCTION}
