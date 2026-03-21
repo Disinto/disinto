@@ -93,6 +93,7 @@ ${tmux_output}
       -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
   fi
   CLAIMED=false
+  _BLOCKED_POSTED=true
 }
 
 # --- Build phase protocol prompt (shared across agents) ---

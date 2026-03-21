@@ -4,7 +4,6 @@
 #
 # Cron: daily (or 2x/day). Handles lock management, escalation reply
 # injection, and delegates backlog grooming to gardener-agent.sh.
-# Then processes dev-agent CI escalations via the recipe engine.
 #
 # Grooming (delegated to gardener-agent.sh):
 #   - Duplicate titles / overlapping scope
@@ -12,13 +11,6 @@
 #   - Stale issues (no activity > 14 days)
 #   - Blockers starving the factory
 #   - Tech-debt promotion / dust bundling
-#
-# CI escalation (recipe-driven, handled here):
-#   - ShellCheck per-file sub-issues
-#   - Generic CI failure issues
-#   - Chicken-egg CI handling
-#   - Cascade rebase + retry merge
-#   - Flaky test quarantine
 # =============================================================================
 set -euo pipefail
 

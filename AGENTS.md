@@ -17,7 +17,7 @@ disinto/
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — files action issue for run-gardener formula
-│                  gardener-poll.sh, gardener-agent.sh — recipe engine + grooming
+│                  gardener-poll.sh, gardener-agent.sh — grooming
 ├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
 │                  planner/journal/ — daily raw logs from each planner run

@@ -772,7 +772,10 @@ case "${_MONITOR_LOOP_EXIT:-}" in
   crashed)
     # Belt-and-suspenders: _on_phase_change(PHASE:crashed) handles primary
     # cleanup (diagnostic comment, blocked label, worktree, files).
-    post_blocked_diagnostic "crashed"
+    # Only post if the callback didn't already (guard prevents double comment).
+    if [ "${_BLOCKED_POSTED:-}" != "true" ]; then
+      post_blocked_diagnostic "crashed"
+    fi
     ;;
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
