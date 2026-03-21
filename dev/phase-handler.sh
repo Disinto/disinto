@@ -34,6 +34,86 @@
 : "${CLAIMED:=false}"
 : "${PHASE_POLL_INTERVAL:=30}"
 
+# --- Look up (or create) the "blocked" label ID ---
+ensure_blocked_label_id() {
+  if [ -n "${_BLOCKED_LABEL_ID:-}" ]; then
+    printf '%s' "$_BLOCKED_LABEL_ID"
+    return 0
+  fi
+  _BLOCKED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
+  if [ -z "$_BLOCKED_LABEL_ID" ]; then
+    _BLOCKED_LABEL_ID=$(curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/labels" \
+      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null || true)
+  fi
+  printf '%s' "$_BLOCKED_LABEL_ID"
+}
+
+# --- Post diagnostic comment + label issue as blocked ---
+# Replaces the old escalation JSONL write path.
+# Captures tmux pane output, posts a structured comment on the issue, removes
+# in-progress label, and adds the "blocked" label.
+#
+# Args: reason [session_name]
+# Uses globals: ISSUE, SESSION_NAME, PR_NUMBER, CODEBERG_TOKEN, API
+post_blocked_diagnostic() {
+  local reason="$1"
+  local session="${2:-${SESSION_NAME:-}}"
+
+  # Capture last 50 lines from tmux pane (before kill)
+  local tmux_output=""
+  if [ -n "$session" ] && tmux has-session -t "$session" 2>/dev/null; then
+    tmux_output=$(tmux capture-pane -p -t "$session" -S -50 2>/dev/null || true)
+  fi
+
+  # Build diagnostic comment body
+  local comment
+  comment="### Session failure diagnostic
+
+| Field | Value |
+|---|---|
+| Exit reason | \`${reason}\` |
+| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |"
+  [ -n "${PR_NUMBER:-}" ] && [ "${PR_NUMBER:-0}" != "0" ] && \
+    comment="${comment}
+| PR | #${PR_NUMBER} |"
+
+  if [ -n "$tmux_output" ]; then
+    comment="${comment}
+
+<details><summary>Last 50 lines from tmux pane</summary>
+
+\`\`\`
+${tmux_output}
+\`\`\`
+</details>"
+  fi
+
+  # Post comment to issue
+  curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${API}/issues/${ISSUE}/comments" \
+    -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
+
+  # Remove in-progress, add blocked
+  cleanup_labels
+  local blocked_id
+  blocked_id=$(ensure_blocked_label_id)
+  if [ -n "$blocked_id" ]; then
+    curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${ISSUE}/labels" \
+      -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
+  fi
+  CLAIMED=false
+}
+
 # --- Build phase protocol prompt (shared across agents) ---
 # Generates the phase-signaling instructions for Claude prompts.
 # Args: phase_file summary_file branch
@@ -319,12 +399,11 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       CI_FIX_COUNT=$(( CI_FIX_COUNT + 1 ))
       _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
       if [ "$CI_FIX_COUNT" -gt "$MAX_CI_FIXES" ]; then
-        log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
-        echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER},\"reason\":\"ci_exhausted\",\"step\":\"${FAILED_STEP:-unknown}\",\"attempts\":${CI_FIX_COUNT},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-          >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+        log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — marking blocked"
+        post_blocked_diagnostic "ci_exhausted after ${CI_FIX_COUNT} attempts (step: ${FAILED_STEP:-unknown})"
         notify_ctx \
-          "CI exhausted after ${CI_FIX_COUNT} attempts — escalated to supervisor" \
-          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalated to supervisor"
+          "CI exhausted after ${CI_FIX_COUNT} attempts — issue marked blocked" \
+          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — issue marked blocked"
         printf 'PHASE:failed\nReason: ci_exhausted after %d attempts\n' "$CI_FIX_COUNT" > "$PHASE_FILE"
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:failed
         return 0
@@ -685,23 +764,13 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       return 1
 
     else
-      # Genuine unrecoverable failure — escalate to supervisor
+      # Genuine unrecoverable failure — label blocked with diagnostic
       log "session failed: ${FAILURE_REASON}"
       notify_ctx \
         "❌ Issue #${ISSUE} session failed: ${FAILURE_REASON}" \
         "❌ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> session failed: ${FAILURE_REASON}${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
-      echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${FAILURE_REASON}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+      post_blocked_diagnostic "$FAILURE_REASON"
 
-      # Restore backlog label
-      cleanup_labels
-      curl -sf -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/issues/${ISSUE}/labels" \
-        -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
-
-      CLAIMED=false  # Don't unclaim again in cleanup()
       agent_kill_session "$SESSION_NAME"
       if [ -n "${PR_NUMBER:-}" ]; then
         log "keeping worktree (PR #${PR_NUMBER} still open)"
@@ -715,18 +784,14 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
     fi
 
   # ── PHASE: crashed ──────────────────────────────────────────────────────────
-  # Session died unexpectedly (OOM kill, tmux crash, etc.). Escalate to
-  # supervisor and restore issue to backlog so it can be retried.
+  # Session died unexpectedly (OOM kill, tmux crash, etc.). Label blocked with
+  # diagnostic comment so humans can triage directly on the issue.
   elif [ "$phase" = "PHASE:crashed" ]; then
     log "session crashed for issue #${ISSUE}"
     notify_ctx \
-      "session crashed unexpectedly — escalating" \
-      "session crashed unexpectedly — escalating${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
-    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"crashed\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-
-    # Restore backlog label, clean up worktree + temp files
-    restore_to_backlog
+      "session crashed unexpectedly — marking blocked" \
+      "session crashed unexpectedly — marking blocked${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+    post_blocked_diagnostic "crashed"
     [ -z "${PR_NUMBER:-}" ] && cleanup_worktree
     [ -n "${PR_NUMBER:-}" ] && log "keeping worktree (PR #${PR_NUMBER} still open)"
     rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \

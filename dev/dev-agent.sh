@@ -749,18 +749,15 @@ case "${_MONITOR_LOOP_EXIT:-}" in
   idle_timeout|idle_prompt)
     if [ "${_MONITOR_LOOP_EXIT:-}" = "idle_prompt" ]; then
       notify_ctx \
-        "session finished without phase signal — killed. Escalating to gardener." \
-        "session finished without phase signal — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+        "session finished without phase signal — killed. Marking blocked." \
+        "session finished without phase signal — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     else
       notify_ctx \
-        "session idle for 2h — killed. Escalating to gardener." \
-        "session idle for 2h — killed. Escalating to gardener.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+        "session idle for 2h — killed. Marking blocked." \
+        "session idle for 2h — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     fi
-    # Escalate: write to project-suffixed escalation file so gardener picks it up
-    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${_MONITOR_LOOP_EXIT:-idle_timeout}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-    # Restore labels: remove in-progress, add backlog
-    restore_to_backlog
+    # Post diagnostic comment + label issue blocked (replaces escalation JSONL)
+    post_blocked_diagnostic "${_MONITOR_LOOP_EXIT:-idle_timeout}"
     if [ -n "${PR_NUMBER:-}" ]; then
       log "keeping worktree (PR #${PR_NUMBER} still open)"
     else
@@ -773,8 +770,8 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     ;;
   crashed)
     # Belt-and-suspenders: _on_phase_change(PHASE:crashed) handles primary
-    # cleanup (escalation, notification, labels, worktree, files).
-    restore_to_backlog
+    # cleanup (diagnostic comment, blocked label, worktree, files).
+    post_blocked_diagnostic "crashed"
     ;;
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,

@@ -77,40 +77,59 @@ else:
 " 2>/dev/null || echo "exhausted:99"
 }
 
-# Check whether an issue/PR has been escalated (unprocessed or processed)
-is_escalated() {
-  local issue="$1" pr="$2"
-  python3 -c "
-import json, sys
-try:
-  issue, pr = int('${issue}'), int('${pr}')
-except (ValueError, TypeError):
-  sys.exit(1)
-for path in ['${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl',
-             '${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.done.jsonl']:
-  try:
-    with open(path) as fh:
-      for line in fh:
-        line = line.strip()
-        if not line:
-          continue
-        d = json.loads(line)
-        if d.get('issue') == issue and d.get('pr') == pr:
-          sys.exit(0)
-  except OSError:
-    pass
-sys.exit(1)
-" 2>/dev/null && return 0 || return 1
+# Check whether an issue already has the "blocked" label
+is_blocked() {
+  local issue="$1"
+  codeberg_api GET "/issues/${issue}/labels" 2>/dev/null \
+    | jq -e '.[] | select(.name == "blocked")' >/dev/null 2>&1
+}
+
+# Post a CI-exhaustion diagnostic comment and label issue as blocked.
+# Args: issue_num pr_num attempts
+_post_ci_blocked_comment() {
+  local issue_num="$1" pr_num="$2" attempts="$3"
+  local blocked_id
+  blocked_id=$(codeberg_api GET "/labels" 2>/dev/null \
+    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
+  if [ -z "$blocked_id" ]; then
+    blocked_id=$(curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/labels" \
+      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null || true)
+  fi
+  [ -z "$blocked_id" ] && return 0
+
+  local comment
+  comment="### Session failure diagnostic
+
+| Field | Value |
+|---|---|
+| Exit reason | \`ci_exhausted_poll (${attempts} attempts)\` |
+| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |
+| PR | #${pr_num} |"
+
+  curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues/${issue_num}/comments" \
+    -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
+  curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${CODEBERG_API}/issues/${issue_num}/labels" \
+    -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
 }
 
 # =============================================================================
-# HELPER: handle CI-exhaustion check/escalate (DRY for 3 call sites)
+# HELPER: handle CI-exhaustion check/block (DRY for 3 call sites)
 # Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
 #
 # Pass "check_only" as third arg for the backlog scan path: ok-counts are
 # returned without incrementing (deferred to launch time so a WAITING_PRS
 # exit cannot waste a fix attempt). The 3→4 sentinel bump is always atomic
-# regardless of mode, preventing duplicate escalation writes from concurrent
+# regardless of mode, preventing duplicate blocked labels from concurrent
 # pollers.
 # =============================================================================
 handle_ci_exhaustion() {
@@ -118,18 +137,18 @@ handle_ci_exhaustion() {
   local check_only="${3:-}"
   local result
 
-  # Fast path: already in the escalation file — skip without touching counter.
-  if is_escalated "$issue_num" "$pr_num"; then
+  # Fast path: already blocked — skip without touching counter.
+  if is_blocked "$issue_num"; then
     CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
-    log "PR #${pr_num} (issue #${issue_num}) already escalated (${CI_FIX_ATTEMPTS} attempts) — skipping"
+    log "PR #${pr_num} (issue #${issue_num}) already blocked (${CI_FIX_ATTEMPTS} attempts) — skipping"
     return 0
   fi
 
   # Single flock-protected call: read + threshold-check + conditional bump.
   # In check_only mode, ok-counts are returned without incrementing (deferred
   # to launch time). In both modes, the 3→4 sentinel bump is atomic, so only
-  # one concurrent poller can ever receive exhausted_first_time:3 and write
-  # the escalation entry.
+  # one concurrent poller can ever receive exhausted_first_time:3 and label
+  # the issue blocked.
   result=$(ci_fix_check_and_increment "$pr_num" "$check_only")
   case "$result" in
     ok:*)
@@ -138,18 +157,17 @@ handle_ci_exhaustion() {
       ;;
     exhausted_first_time:*)
       CI_FIX_ATTEMPTS="${result#exhausted_first_time:}"
-      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
-      echo "{\"issue\":${issue_num},\"pr\":${pr_num},\"project\":\"${PROJECT_NAME}\",\"reason\":\"ci_exhausted_poll\",\"attempts\":${CI_FIX_ATTEMPTS},\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
-      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — escalated" 2>/dev/null || true
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — marking blocked"
+      _post_ci_blocked_comment "$issue_num" "$pr_num" "$CI_FIX_ATTEMPTS"
+      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — marked blocked" 2>/dev/null || true
       ;;
     exhausted:*)
       CI_FIX_ATTEMPTS="${result#exhausted:}"
-      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — already blocked, skipping"
       ;;
     *)
       CI_FIX_ATTEMPTS=99
-      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — escalated to gardener, skipping"
+      log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — already blocked, skipping"
       ;;
   esac
   return 0

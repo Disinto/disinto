@@ -158,21 +158,16 @@ done
 [ "$_found_wt" = false ] && echo "  None"
 echo ""
 
-# ── Pending Escalations ──────────────────────────────────────────────────
+# ── Blocked Issues ────────────────────────────────────────────────────────
 
-echo "## Pending Escalations"
-_found_esc=false
-for _esc_file in "${FACTORY_ROOT}/supervisor/escalations-"*.jsonl; do
-  [ -f "$_esc_file" ] || continue
-  [[ "$_esc_file" == *.done.jsonl ]] && continue
-  _esc_count=$(wc -l < "$_esc_file" 2>/dev/null || echo 0)
-  [ "${_esc_count:-0}" -gt 0 ] || continue
-  _found_esc=true
-  echo "### $(basename "$_esc_file") (${_esc_count} entries)"
-  cat "$_esc_file"
-  echo ""
-done
-[ "$_found_esc" = false ] && echo "  None"
+echo "## Blocked Issues"
+_blocked_issues=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null || echo "[]")
+_blocked_n=$(echo "$_blocked_issues" | jq 'length' 2>/dev/null || echo 0)
+if [ "${_blocked_n:-0}" -gt 0 ]; then
+  echo "$_blocked_issues" | jq -r '.[] | "  #\(.number): \(.title)"' 2>/dev/null || echo "  (query failed)"
+else
+  echo "  None"
+fi
 echo ""
 
 # ── Escalation Replies from Matrix ────────────────────────────────────────

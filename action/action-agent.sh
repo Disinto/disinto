@@ -304,13 +304,12 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     notify_ctx \
       "session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
       "session idle for $((IDLE_TIMEOUT / 3600))h — killed"
-    # Escalate to supervisor (idle_prompt already escalated via _on_phase_change callback)
-    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"idle_timeout\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+    # Post diagnostic comment + label blocked (replaces escalation JSONL)
+    post_blocked_diagnostic "idle_timeout"
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   idle_prompt)
-    # Notification + escalation already handled by _on_phase_change(PHASE:failed) callback
+    # Notification + blocked label already handled by _on_phase_change(PHASE:failed) callback
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
   PHASE:failed)
@@ -319,8 +318,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
       notify_ctx \
         "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached" \
         "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached"
-      echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"max_lifetime\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-        >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+      post_blocked_diagnostic "max_lifetime"
     fi
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;
