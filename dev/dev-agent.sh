@@ -767,8 +767,24 @@ case "${_MONITOR_LOOP_EXIT:-}" in
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
-  crash_recovery_failed)
+  crashed)
+    # Belt-and-suspenders: _on_phase_change(PHASE:crashed) handles primary
+    # cleanup, but ensure labels and files are cleaned up if callback was
+    # interrupted (e.g. set -e propagation).
     cleanup_labels
+    curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${ISSUE}/labels" \
+      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
+    CLAIMED=false
+    if [ -z "${PR_NUMBER:-}" ]; then
+      cleanup_worktree
+    fi
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
+      "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
+      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
+    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,

@@ -714,6 +714,35 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       return 1
     fi
 
+  # ── PHASE: crashed ──────────────────────────────────────────────────────────
+  # Session died unexpectedly (OOM kill, tmux crash, etc.). Escalate to
+  # supervisor and restore issue to backlog so it can be retried.
+  elif [ "$phase" = "PHASE:crashed" ]; then
+    log "session crashed for issue #${ISSUE}"
+    notify_ctx \
+      "session crashed unexpectedly — escalating" \
+      "session crashed unexpectedly — escalating${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+    echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"crashed\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
+
+    # Restore backlog label so issue can be retried
+    cleanup_labels
+    curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${ISSUE}/labels" \
+      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
+
+    CLAIMED=false  # Don't unclaim again in cleanup()
+    if [ -n "${PR_NUMBER:-}" ]; then
+      log "keeping worktree (PR #${PR_NUMBER} still open)"
+    else
+      cleanup_worktree
+    fi
+    rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
+      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
+    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+
   else
     log "WARNING: unknown phase value: ${phase}"
   fi
