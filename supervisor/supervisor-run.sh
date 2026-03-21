@@ -57,16 +57,7 @@ else
 fi
 
 # ── Consume escalation replies ────────────────────────────────────────────
-# Move the file atomically so matrix_listener can write a new one
-ESCALATION_REPLY=""
-if [ -s /tmp/supervisor-escalation-reply ]; then
-  _reply_tmp="/tmp/supervisor-escalation-reply.consumed.$$"
-  if mv /tmp/supervisor-escalation-reply "$_reply_tmp" 2>/dev/null; then
-    ESCALATION_REPLY=$(cat "$_reply_tmp")
-    rm -f "$_reply_tmp"
-    log "Consumed escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
-  fi
-fi
+consume_escalation_reply "supervisor"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-supervisor.toml"

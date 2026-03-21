@@ -192,8 +192,6 @@ check_script dev/dev-agent.sh          dev/phase-handler.sh
 check_script dev/phase-handler.sh      dev/dev-agent.sh lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
-check_script gardener/gardener-agent.sh  lib/agent-session.sh
-check_script gardener/gardener-poll.sh
 check_script gardener/gardener-run.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh

@@ -627,7 +627,7 @@ Instructions:
       "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}" \
       "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} needs human input.${HUMAN_REASON:+ Reason: ${HUMAN_REASON}}<br>Reply in this thread to send guidance to the dev agent."
     log "phase: needs_human — notified via Matrix, waiting for external injection"
-    # Don't inject anything — supervisor-poll.sh (#81) injects human replies, gardener-poll.sh as backup
+    # Don't inject anything — supervisor-run.sh (#81) injects human replies
 
   # ── PHASE: done ─────────────────────────────────────────────────────────────
   # PR merged and issue closed (by orchestrator or Claude). Just clean up local state.
