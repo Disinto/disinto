@@ -40,7 +40,7 @@ REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 API="${CODEBERG_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
-STATUSFILE="/tmp/dev-agent-status"
+STATUSFILE="/tmp/dev-agent-status-${PROJECT_NAME:-default}"
 
 # Gitea labels API requires []int64 — look up the "backlog" label ID once
 BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
