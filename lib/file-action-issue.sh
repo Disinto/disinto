@@ -4,6 +4,9 @@
 # Usage: source this file, then call file_action_issue.
 # Requires: codeberg_api() from lib/env.sh, jq, lib/secret-scan.sh
 #
+# build_formula_issue_body <formula_name> <model> <description> <source_script>
+#   Outputs a standard issue body with TOML frontmatter to stdout.
+#
 # file_action_issue <formula_name> <title> <body>
 #   Sets FILED_ISSUE_NUM on success.
 #   Returns: 0=created, 1=duplicate exists, 2=label not found, 3=API error, 4=secrets detected
@@ -11,6 +14,15 @@
 # Load secret scanner
 # shellcheck source=secret-scan.sh
 source "$(dirname "${BASH_SOURCE[0]}")/secret-scan.sh"
+
+# build_formula_issue_body <formula_name> <model> <description> <source_script>
+#   Builds a standard issue body with TOML frontmatter for formula-driven action issues.
+#   Outputs the body to stdout.
+build_formula_issue_body() {
+  local formula_name="$1" model="$2" description="$3" source_script="$4"
+  printf -- '---\nformula: %s\nmodel: %s\n---\n\n%s\n\nFiled automatically by `%s`.' \
+    "$formula_name" "$model" "$description" "$source_script"
+}
 
 file_action_issue() {
   local formula_name="$1" title="$2" body="$3"

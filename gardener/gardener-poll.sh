@@ -134,16 +134,11 @@ Format: '1a 2c 3b' means question 1→option (a), 2→option (c), 3→option (b)
 ${ESCALATION_REPLY}"
 fi
 
-ISSUE_BODY="---
-formula: run-gardener
-model: opus
----
-
-Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
+_DESCRIPTION="Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
 and executes the steps: preflight, grooming, blocked-review,
-AGENTS.md update, and commit-and-pr.${ESCALATION_CONTEXT}
+AGENTS.md update, and commit-and-pr.${ESCALATION_CONTEXT}"
 
-Filed automatically by \`gardener-poll.sh\`."
+ISSUE_BODY=$(build_formula_issue_body "run-gardener" "opus" "$_DESCRIPTION" "gardener-poll.sh")
 
 _rc=0
 file_action_issue "run-gardener" "action: run-gardener — periodic housekeeping" "$ISSUE_BODY" || _rc=$?

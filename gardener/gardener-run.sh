@@ -45,16 +45,11 @@ fi
 log "--- Gardener run start ---"
 
 # ── File action issue for run-gardener formula ────────────────────────────
-ISSUE_BODY="---
-formula: run-gardener
-model: opus
----
-
-Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
+_DESCRIPTION="Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
 and executes the steps: preflight, grooming, blocked-review,
-AGENTS.md update, and commit-and-pr.
+AGENTS.md update, and commit-and-pr."
 
-Filed automatically by \`gardener-run.sh\`."
+ISSUE_BODY=$(build_formula_issue_body "run-gardener" "opus" "$_DESCRIPTION" "gardener-run.sh")
 
 _rc=0
 file_action_issue "run-gardener" "action: run-gardener — periodic housekeeping" "$ISSUE_BODY" || _rc=$?
