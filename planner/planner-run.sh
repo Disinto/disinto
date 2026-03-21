@@ -43,7 +43,7 @@ log "--- Planner run start ---"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
-build_context_block VISION.md AGENTS.md RESOURCES.md
+build_context_block VISION.md AGENTS.md RESOURCES.md planner/prerequisite-tree.md
 
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""

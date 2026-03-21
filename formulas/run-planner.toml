@@ -1,22 +1,27 @@
-# formulas/run-planner.toml — Strategic planning formula
+# formulas/run-planner.toml — Strategic planning formula (v3: Prerequisite Tree)
 #
 # Executed directly by planner-run.sh via cron — no action issues.
 # planner-run.sh creates a tmux session with Claude (opus) and injects
 # this formula as context. Claude executes all steps autonomously.
 #
-# Steps: preflight → prediction-triage → strategic-planning
-#        → journal-and-memory → commit-and-pr
+# Steps: preflight → prediction-triage → update-prerequisite-tree
+#        → file-at-constraints → journal-and-memory → commit-and-pr
+#
+# Core change from v2: replaces gap-analysis-and-spray with a constraint-
+# focused executive using a Prerequisite Tree (Theory of Constraints).
+# Issues are only filed at the top 3 unresolved constraints — everything
+# beyond the bottleneck exists in the tree but NOT as issues.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
-# All git writes (journal entry) happen in one commit at the end.
+# All git writes (tree, journal, memory) happen in one commit at the end.
 
 name        = "run-planner"
-description = "Strategic planning: triage predictions, resource+leverage gap analysis, journal"
-version     = 2
+description = "Planner v3: prerequisite tree + resource-aware constraint executive"
+version     = 3
 model       = "opus"
 
 [context]
-files = ["VISION.md", "AGENTS.md", "RESOURCES.md"]
+files = ["VISION.md", "AGENTS.md", "RESOURCES.md", "planner/prerequisite-tree.md"]
 # Recent planner/journal/*.md files are loaded by planner-run.sh (last 5 entries)
 
 [[steps]]
@@ -40,6 +45,10 @@ Set up the working environment for this planning run.
 4. Read the planner memory file at: $FACTORY_ROOT/planner/MEMORY.md
    If it does not exist, this is the first planning run.
    Keep this memory context in mind for all subsequent steps.
+
+5. Read the prerequisite tree at: $FACTORY_ROOT/planner/prerequisite-tree.md
+   If it does not exist, create an initial tree from VISION.md in the
+   update-prerequisite-tree step.
 """
 
 [[steps]]
@@ -54,7 +63,7 @@ Evidence from the preflight step informs whether each prediction is valid
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
 
-   If there are none, note that and proceed to strategic-planning.
+   If there are none, note that and proceed to update-prerequisite-tree.
 
 2. Read available formulas from $FACTORY_ROOT/formulas/*.toml so you know
    what actions can be dispatched.
@@ -151,101 +160,161 @@ Evidence from the preflight step informs whether each prediction is valid
           "$CODEBERG_API/issues/<pred_num>" \
           -d '{"state":"closed"}'
 
-6. Track promoted predictions — they compete with vision gaps in the
-   strategic-planning step for the per-cycle 5-issue limit.
-   Record each promotion (issue number, title, type) for hand-off.
+6. Track promoted predictions — they are added to the prerequisite tree
+   in the next step if they represent real prerequisites.
 
 7. Validation: if you reference a formula, verify it exists on disk.
    Fall back to a freeform backlog issue for unknown formulas.
 
 Be decisive — the predictor intentionally over-signals; your job is to filter.
 
-CRITICAL: If this step fails, log the failure and move on to strategic-planning.
+CRITICAL: If this step fails, log the failure and move on to update-prerequisite-tree.
 """
 needs = ["preflight"]
 
 [[steps]]
-id    = "strategic-planning"
-title = "Strategic planning — resource+leverage gap analysis"
+id    = "update-prerequisite-tree"
+title = "Scan repo state and update the prerequisite tree"
 description = """
-This is the core planning step. Reason about leverage and create
-the highest-impact issues.
+This is the constraint discovery step. Read the current state, then update
+the prerequisite tree to reflect reality.
 
 Read these inputs:
-  - VISION.md — where we want to be
-  - All AGENTS.md files — what exists today
-  - $FACTORY_ROOT/RESOURCES.md — what we have (may not exist)
+  - VISION.md — where we want to be (objectives come from milestones)
+  - planner/prerequisite-tree.md — current tree (loaded in preflight)
+  - RESOURCES.md — available agents, boxes, assets, formulas
   - $FACTORY_ROOT/formulas/*.toml — what actions can be dispatched
-  - Open issues (fetched via API) — what's already planned
-  - $FACTORY_ROOT/metrics/supervisor-metrics.jsonl — operational trends (may not exist)
+  - Open issues (fetched via API, or reuse from prediction-triage)
+  - Closed issues (fetch recently closed to detect resolved prerequisites):
+      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+        "$CODEBERG_API/issues?state=closed&type=issues&limit=50&sort=updated&direction=desc"
   - Planner memory (loaded in preflight)
-  - Promoted predictions from prediction-triage (these count toward the
-    per-cycle issue limit — they compete with vision gaps for priority)
+  - Promoted predictions from prediction-triage (add as prerequisites if relevant)
 
-Reason through these five questions:
+Update the tree by applying these operations:
 
-1. **What resources do you need that you don't have?**
-   Analytics, domains, accounts, compute, integrations — things required
-   by the vision that aren't in RESOURCES.md or aren't set up yet.
+1. **Mark resolved prerequisites**: For each prerequisite in the tree,
+   check if the corresponding issue is closed or the capability is now
+   present in the repo. Mark resolved items with [x].
 
-2. **What resources are underutilized?**
-   Compute capacity idle most of the day. Domains with no traffic.
-   CI capacity unused at night. Accounts not being leveraged.
+2. **Update objective status**: Recalculate each objective's status:
+   - All prerequisites resolved → Status: READY (or DONE if the objective
+     itself is closed/implemented)
+   - Some unresolved → Status: BLOCKED — N prerequisites unresolved
+   - Depends on blocked objectives → Status: BLOCKED — prerequisite chain
 
-3. **What's the highest-leverage action?**
-   The one thing that unblocks the most progress toward the vision.
-   Can you dispatch a formula for it?
+3. **Discover new prerequisites**: As you scan repo state, you may find
+   new prerequisites not yet in the tree. Add them. The tree grows
+   organically — this is expected and desirable.
 
-4. **What task gaps remain?**
-   Things in VISION.md not covered by open issues or the current
-   project state.
+4. **Add new objectives**: If VISION.md has objectives not yet in the
+   tree, add them with their prerequisite chains.
 
-5. **What should be deferred?**
-   Things that depend on blocked resources or aren't high-leverage
-   right now. Do NOT create issues for these.
+5. **Propose new capabilities**: If you identify a capability the factory
+   needs (e.g., "marketing formula, runs weekly"), add it to the tree as
+   a proposed prerequisite. Anything with recurring cost should note:
+   "→ vault approval required" so the planner files it to vault next run.
 
-Then create up to 5 issues total (including promotions from prediction-triage),
-prioritized by leverage:
+6. **Check vault decisions**: Read any open vault issues to see if
+   previously proposed capabilities have been approved or rejected.
+   Update the tree accordingly.
 
-For formula-matching gaps, include YAML front matter in the body:
-  ---
-  formula: <name>
-  vars:
-    key: "value"
-  ---
-  <explanation of why this matters>
+Write the updated tree to: $FACTORY_ROOT/planner/prerequisite-tree.md
+Use this format:
 
-For freeform gaps:
-  <problem statement + why it matters for the vision + rough approach>
+  # Prerequisite Tree
+  <!-- Last updated: YYYY-MM-DD -->
 
-Create each issue via the API with the 'backlog' label:
-  curl -sf -X POST \
-    -H "Authorization: token $CODEBERG_TOKEN" \
-    -H "Content-Type: application/json" \
-    "$CODEBERG_API/issues" \
-    -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
+  ## Objective: <name> (#issue or description)
+  - [x] Resolved prerequisite (reference)
+  - [ ] Unresolved prerequisite (#issue or description)
+  Status: READY | BLOCKED — <reason> | DONE
 
-Rules:
-- Max 5 new issues total (promoted predictions + vision gaps) — highest leverage first
-- Do NOT create issues that overlap with ANY existing open issue
-- Do NOT create issues for items you identified as "deferred"
-- Each body: what's missing, why it matters, rough approach
-- When deploying/operating, reference the resource alias from RESOURCES.md
-- Add ## Depends on section for issues that depend on other open issues
-- Only reference formulas that exist in formulas/*.toml
-- When metrics show systemic problems, create optimization issues
+Keep the tree focused — only include objectives from VISION.md milestones
+and their genuine prerequisites. Do not inflate the tree with nice-to-haves.
 
-If there are no gaps, note that the backlog is aligned with the vision.
+IMPORTANT: Do NOT write the tree to disk yet — hold it in memory for the
+next step. The tree will be written along with the journal in commit-and-pr.
 """
 needs = ["prediction-triage"]
 
 [[steps]]
-id    = "journal-and-memory"
-title = "Write journal entry and periodically update planner memory"
+id    = "file-at-constraints"
+title = "Identify top 3 constraints and file issues"
 description = """
-Two outputs from this step — journal is ALWAYS written, memory is PERIODIC.
+This is the constraint-focused filing step. The key principle from Theory
+of Constraints: only work on the bottleneck. Everything else is waste.
 
-### 1. Journal entry (always — committed to git)
+From the updated prerequisite tree, identify the top 3 constraints:
+
+A **constraint** is an unresolved prerequisite that blocks the most
+downstream objectives. To find them:
+
+1. For each unresolved prerequisite ([ ] item), count how many objectives
+   it transitively blocks. A prerequisite that blocks objective A, which
+   in turn blocks objectives B and C, has a blocking score of 3.
+
+2. Rank all unresolved prerequisites by blocking score (descending).
+
+3. Select the top 3. These are the constraints.
+
+Filing gate — for each constraint:
+
+1. Check if an issue already exists for this constraint (match by issue
+   number reference in the tree, or search open issues by title).
+
+2. If no issue exists, create one:
+     curl -sf -X POST \
+       -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues" \
+       -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
+
+   Issue body should include:
+   - What this prerequisite is
+   - Which objectives it blocks (with issue numbers)
+   - Why it's a constraint (blocking score)
+   - Rough approach if known
+   - ## Depends on section if it depends on other open issues
+
+3. If an issue already exists and is open, skip it — no duplicate filing.
+
+4. If an issue already exists but is in backlog without proper context,
+   consider adding a comment noting its constraint status.
+
+Rules:
+- **Maximum 3 issues filed per run** — only at constraints
+- **No issues filed past the bottleneck** — items beyond the top 3
+  constraints exist in the tree but NOT as issues
+- **Existing premature issues left as-is** — do not close issues filed
+  by previous planner versions, even if they're past the bottleneck
+- Do NOT create issues that overlap with ANY existing open issue
+- Only reference formulas that exist in formulas/*.toml
+- When deploying/operating, reference the resource alias from RESOURCES.md
+- Promoted predictions from triage may become constraints if they block
+  downstream objectives — rank them the same way
+
+If all top 3 constraints already have open issues, note that the backlog
+is aligned with the constraint focus. No new issues needed.
+"""
+needs = ["update-prerequisite-tree"]
+
+[[steps]]
+id    = "journal-and-memory"
+title = "Write prerequisite tree, journal entry, and periodic memory update"
+description = """
+Three outputs from this step — tree and journal are ALWAYS written,
+memory is PERIODIC.
+
+### 1. Prerequisite tree (always — committed to git)
+
+Write the updated prerequisite tree to:
+  $FACTORY_ROOT/planner/prerequisite-tree.md
+
+This is the tree you built in the update-prerequisite-tree step.
+Include the "Last updated" comment at the top.
+
+### 2. Journal entry (always — committed to git)
 
 Create a daily journal file at:
   $FACTORY_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
@@ -260,19 +329,30 @@ Format:
   - #NNN: PROMOTE_ACTION/PROMOTE_BACKLOG/WATCH/DISMISS — reasoning
   (or "No unreviewed predictions" if none)
 
+  ## Prerequisite tree updates
+  - Resolved: <list of newly resolved prerequisites>
+  - Discovered: <list of newly added prerequisites>
+  - Proposed: <list of new capabilities proposed>
+  (or "No tree changes" if none)
+
+  ## Top 3 constraints
+  1. <prerequisite> — blocks N objectives — issue #NNN (existing|filed|already open)
+  2. <prerequisite> — blocks N objectives — issue #NNN
+  3. <prerequisite> — blocks N objectives — issue #NNN
+
   ## Issues created
-  - #NNN: title — why
-  (or "No new issues — backlog aligned with vision" if none)
+  - #NNN: title — why (constraint for objectives X, Y)
+  (or "No new issues — constraints already have open issues" if none)
 
   ## Observations
   - Key patterns, resource state, metric trends noticed during this run
 
-  ## Deferred
-  - Items considered but deferred, and why
+  ## Deferred (in tree, not filed)
+  - Items in the tree beyond the top 3 constraints, and why they're not filed yet
 
 Keep each entry concise — 30-50 lines max.
 
-### 2. Memory update (periodic — every 5th run, committed to git)
+### 3. Memory update (periodic — every 5th run, committed to git)
 
 Decide whether to update memory:
 1. Count the total number of run entries across ALL journal files in
@@ -293,10 +373,10 @@ where N is the current total run count.
 
 Include:
 - Date of this summarization
+- Current constraint focus (top 3 from this run)
 - Distilled patterns and learnings from recent journal entries
 - What was observed (resource state, metric trends, project progress)
 - Strategic direction and watch list for future runs
-- Things to watch for next time
 
 Rules:
 - Keep under 100 lines total
@@ -308,7 +388,7 @@ Rules:
 
 Format: simple markdown with dated sections.
 """
-needs = ["strategic-planning"]
+needs = ["file-at-constraints"]
 
 [[steps]]
 id    = "commit-and-pr"
@@ -316,7 +396,7 @@ title = "One commit with all file changes, push, create PR"
 description = """
 Collect all file changes from this run into a single commit.
 API calls (issue creation, prediction triage) already happened during the
-run — only file changes (journal entries, MEMORY.md) need the PR.
+run — only file changes (tree, journal, MEMORY.md) need the PR.
 
 1. Check for staged or unstaged changes:
      cd "$PROJECT_REPO_ROOT"
@@ -328,7 +408,8 @@ run — only file changes (journal entries, MEMORY.md) need the PR.
    a. Create a branch:
         BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
         git checkout -B "$BRANCH"
-   b. Stage journal entries and planner memory:
+   b. Stage prerequisite tree, journal entries, and planner memory:
+        git add planner/prerequisite-tree.md 2>/dev/null || true
         git add planner/journal/ 2>/dev/null || true
         git add planner/MEMORY.md 2>/dev/null || true
    c. Stage any other tracked files modified during the run:
@@ -344,9 +425,9 @@ run — only file changes (journal entries, MEMORY.md) need the PR.
           -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
           "$CODEBERG_API/pulls" \
-          -d '{"title":"chore: planner run journal",
+          -d '{"title":"chore: planner run — prerequisite tree update",
                "head":"<branch>","base":"<primary-branch>",
-               "body":"Automated planner run — journal entry from strategic planning session."}'
+               "body":"Automated planner run — prerequisite tree update and journal entry."}'
    h. Return to primary branch:
         git checkout "$PRIMARY_BRANCH"
 
