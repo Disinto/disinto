@@ -131,6 +131,16 @@ cleanup_labels() {
     "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
 }
 
+restore_to_backlog() {
+  cleanup_labels
+  curl -sf -X POST \
+    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${API}/issues/${ISSUE}/labels" \
+    -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
+  CLAIMED=false  # Don't unclaim again in cleanup()
+}
+
 CLAIMED=false
 cleanup() {
   rm -f "$LOCKFILE" "$STATUSFILE"
@@ -750,13 +760,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     echo "{\"issue\":${ISSUE},\"pr\":${PR_NUMBER:-0},\"reason\":\"${_MONITOR_LOOP_EXIT:-idle_timeout}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       >> "${FACTORY_ROOT}/supervisor/escalations-${PROJECT_NAME}.jsonl"
     # Restore labels: remove in-progress, add backlog
-    cleanup_labels
-    curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${ISSUE}/labels" \
-      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
-    CLAIMED=false  # Don't unclaim again in cleanup()
+    restore_to_backlog
     if [ -n "${PR_NUMBER:-}" ]; then
       log "keeping worktree (PR #${PR_NUMBER} still open)"
     else
@@ -767,8 +771,10 @@ case "${_MONITOR_LOOP_EXIT:-}" in
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
-  crash_recovery_failed)
-    cleanup_labels
+  crashed)
+    # Belt-and-suspenders: _on_phase_change(PHASE:crashed) handles primary
+    # cleanup (escalation, notification, labels, worktree, files).
+    restore_to_backlog
     ;;
   done)
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
