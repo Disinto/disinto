@@ -565,16 +565,16 @@ check_project() {
     '{ts:$ts,type:"dev",project:$proj,issues_in_backlog:$backlog,issues_blocked:$blocked,pr_open:$prs}' 2>/dev/null)" 2>/dev/null || true
 
   # ===========================================================================
-  # P2d: NEEDS_HUMAN — inject human replies into blocked dev sessions
+  # P2d: ESCALATE — inject human replies into escalated dev sessions
   # ===========================================================================
-  status "P2: ${proj_name}: checking needs_human sessions"
+  status "P2: ${proj_name}: checking escalate sessions"
 
   HUMAN_REPLY_FILE="/tmp/dev-escalation-reply"
 
   for _nh_phase_file in /tmp/dev-session-"${proj_name}"-*.phase; do
     [ -f "$_nh_phase_file" ] || continue
     _nh_phase=$(head -1 "$_nh_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
-    [ "$_nh_phase" = "PHASE:needs_human" ] || continue
+    [ "$_nh_phase" = "PHASE:escalate" ] || continue
 
     _nh_issue=$(basename "$_nh_phase_file" .phase)
     _nh_issue="${_nh_issue#dev-session-${proj_name}-}"
@@ -583,7 +583,7 @@ check_project() {
 
     # Check tmux session is alive
     if ! tmux has-session -t "$_nh_session" 2>/dev/null; then
-      flog "${proj_name}: #${_nh_issue} phase=needs_human but tmux session gone"
+      flog "${proj_name}: #${_nh_issue} phase=escalate but tmux session gone"
       continue
     fi
 
@@ -621,14 +621,14 @@ Instructions:
       _nh_age=$(( _nh_now - _nh_mtime ))
 
       if [ "$_nh_age" -gt 86400 ]; then
-        p2 "${proj_name}: Dev session #${_nh_issue} stuck in needs_human for >24h"
+        p2 "${proj_name}: Dev session #${_nh_issue} stuck in escalate for >24h"
       elif [ "$_nh_age" -gt 21600 ]; then
         _nh_renotify="/tmp/dev-renotify-${proj_name}-${_nh_issue}"
         if [ ! -f "$_nh_renotify" ]; then
           _nh_age_h=$(( _nh_age / 3600 ))
           matrix_send "dev" "⏰ Reminder: Issue #${_nh_issue} still needs human input (waiting ${_nh_age_h}h)" 2>/dev/null || true
           touch "$_nh_renotify"
-          flog "${proj_name}: #${_nh_issue} re-notified (needs_human for ${_nh_age_h}h)"
+          flog "${proj_name}: #${_nh_issue} re-notified (escalate for ${_nh_age_h}h)"
         fi
       fi
     fi
@@ -661,7 +661,7 @@ Instructions:
       _phase_file="/tmp/dev-session-${proj_name}-${_sess_issue}.phase"
       _curr_phase=$(head -1 "$_phase_file" 2>/dev/null | tr -d '[:space:]' || true)
       case "${_curr_phase:-}" in
-        PHASE:needs_human|PHASE:awaiting_ci|PHASE:awaiting_review)
+        PHASE:escalate|PHASE:awaiting_ci|PHASE:awaiting_review)
           continue  # session has legitimate pending work
           ;;
       esac

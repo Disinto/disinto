@@ -351,7 +351,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     notify_ctx \
       "session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
       "session idle for $((IDLE_TIMEOUT / 3600))h — killed"
-    # Post diagnostic comment + label blocked (replaces escalation JSONL)
+    # Post diagnostic comment + label blocked
     post_blocked_diagnostic "idle_timeout"
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
     ;;

@@ -67,7 +67,7 @@ Categorize every finding from the metrics into priority levels.
 - Git repo on wrong branch or in broken rebase state
 - Pipeline stalled: backlog issues exist but no agent ran for > 20min
 - Dev-agent blocked: last N polls all report "no ready issues"
-- Dev sessions in PHASE:needs_human for > 24h
+- Dev/action sessions in PHASE:escalate for > 24h (escalation timeout)
 
 ### P3 — Factory degraded
 - PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed

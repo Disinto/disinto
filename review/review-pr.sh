@@ -124,7 +124,7 @@ review_cb() {
       [ "$_REVIEW_CRASH" -gt 0 ] && return 0; _REVIEW_CRASH=$((_REVIEW_CRASH + 1))
       create_agent_session "${_MONITOR_SESSION}" "$WORKTREE" "$PHASE_FILE" 2>/dev/null && \
         agent_inject_into_session "${_MONITOR_SESSION}" "$PROMPT" ;;
-    PHASE:done|PHASE:failed|PHASE:needs_human) agent_kill_session "${_MONITOR_SESSION}" ;;
+    PHASE:done|PHASE:failed|PHASE:escalate) agent_kill_session "${_MONITOR_SESSION}" ;;
   esac
 }
 monitor_phase_loop "$PHASE_FILE" 600 "review_cb" "$SESSION"

@@ -599,7 +599,13 @@ curl -sf -X PATCH \\
 echo \"PHASE:done\" > \"${PHASE_FILE}\"
 \`\`\`
 If merge fails due to conflicts, rebase first then retry the merge.
-If merge repeatedly fails, write PHASE:needs_human.
+If merge repeatedly fails, write PHASE:escalate with a reason.
+
+**When you need human help (CI exhausted, merge blocked, stuck on a decision):**
+\`\`\`bash
+printf 'PHASE:escalate\nReason: %s\n' \"describe what you need\" > \"${PHASE_FILE}\"
+\`\`\`
+Then STOP and wait. A human will reply via Matrix and the response will be injected.
 
 **If refusing (too large, unmet dep, already done):**
 \`\`\`bash
@@ -779,7 +785,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
         "session idle for 2h — killed. Marking blocked." \
         "session idle for 2h — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     fi
-    # Post diagnostic comment + label issue blocked (replaces escalation JSONL)
+    # Post diagnostic comment + label issue blocked
     post_blocked_diagnostic "${_MONITOR_LOOP_EXIT:-idle_timeout}"
     if [ -n "${PR_NUMBER:-}" ]; then
       log "keeping worktree (PR #${PR_NUMBER} still open)"

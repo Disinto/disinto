@@ -30,7 +30,7 @@ Claude writes exactly one of these lines to the phase file when a phase ends:
 |----------|---------|---------------------|
 | `PHASE:awaiting_ci` | PR pushed, waiting for CI to run | Poll CI; inject result when done |
 | `PHASE:awaiting_review` | CI passed, PR open, waiting for review | Wait for `review-poll` to inject feedback |
-| `PHASE:needs_human` | Blocked on human decision | Send Matrix notification; wait for reply |
+| `PHASE:escalate` | Needs human input (any reason) | Send Matrix notification; session stays alive; 24h timeout → blocked |
 | `PHASE:done` | Work complete, PR merged | Verify merge, kill tmux session, clean up |
 | `PHASE:failed` | Unrecoverable failure | Escalate to gardener/supervisor |
 
@@ -46,7 +46,7 @@ echo "PHASE:awaiting_ci" > "$PHASE_FILE"
 echo "PHASE:awaiting_review" > "$PHASE_FILE"
 
 # Signal needs human
-echo "PHASE:needs_human" > "$PHASE_FILE"
+echo "PHASE:escalate" > "$PHASE_FILE"
 
 # Signal done
 echo "PHASE:done" > "$PHASE_FILE"
@@ -77,17 +77,16 @@ PHASE:awaiting_review → wait for review-poll.sh to post review comment
                          on APPROVE         → inject "approved" into session
                          on timeout (3h)    → inject "no review, escalating"
 
-PHASE:needs_human     → send Matrix notification with issue/PR link
-                         on reply   → supervisor-poll.sh injects reply into tmux session
-                                      (gardener-poll.sh as backup if supervisor missed it)
-                                      reply file: /tmp/dev-escalation-reply (written by matrix_listener.sh)
-                         on timeout → re-notify at 6h, escalate at 24h (supervisor-poll.sh)
+PHASE:escalate        → send Matrix notification with context (issue/PR link, reason)
+                         session stays alive waiting for human reply
+                         on reply   → matrix_listener.sh injects reply into tmux session
+                         on timeout → 24h: label issue blocked, kill session
 
 PHASE:done            → verify PR merged on Codeberg
                          if merged   → kill tmux session, clean labels, close issue
                          if not      → inject "PR not merged yet" into session
 
-PHASE:failed          → write escalation to supervisor/escalations-{project}.jsonl
+PHASE:failed          → label issue blocked, post diagnostic comment
                          kill tmux session
                          restore backlog label on issue
 ```
@@ -171,7 +170,6 @@ file and git history.
 | `/tmp/dev-session-{proj}-{issue}.phase` | Claude (in session) | Current phase |
 | `/tmp/ci-result-{proj}-{issue}.txt` | Orchestrator | Last CI output for injection |
 | `/tmp/dev-{proj}-{issue}.log` | Orchestrator | Session transcript (aspirational — path TBD when tmux session manager is implemented in #80) |
-| `/tmp/dev-escalation-reply` | matrix_listener.sh | Human reply to `needs_human` escalation (consumed by supervisor-poll.sh) |
 | `/tmp/dev-renotify-{proj}-{issue}` | supervisor-poll.sh | Marker to prevent duplicate 6h re-notifications |
 | `WORKTREE` (git worktree) | dev-agent.sh | Code checkpoint |
 

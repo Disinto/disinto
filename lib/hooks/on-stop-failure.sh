@@ -30,7 +30,7 @@ reason=$(printf '%s' "$input" | jq -r '
 # the PostToolUse hook already recorded the correct terminal phase.
 existing=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]')
 case "$existing" in
-  PHASE:done|PHASE:merged|PHASE:needs_human) exit 0 ;;
+  PHASE:done|PHASE:merged|PHASE:escalate) exit 0 ;;
 esac
 
 # Write phase file immediately — orchestrator reads first line as phase sentinel
