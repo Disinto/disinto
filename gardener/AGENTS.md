@@ -1,8 +1,10 @@
-<!-- last-reviewed: 038581e555403586f4595f8a5f77d7dbb311779b -->
+<!-- last-reviewed: 80a64cd3e4d2836bfab3c46230a780e3e233125d -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
-criteria, oversized issues, stale issues, and circular dependencies. Invoke
+criteria, oversized issues, stale issues, and circular dependencies. Enforces
+the quality gate: strips the `backlog` label from issues that lack acceptance
+criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix or escalate to a human via Matrix.
 
 **Trigger**: `gardener-run.sh` runs 4x/day via cron. It creates a tmux
