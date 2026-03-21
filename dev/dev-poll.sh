@@ -26,7 +26,7 @@ UNDERSPECIFIED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
 UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
 
 # Track CI fix attempts per PR to avoid infinite respawn loops
-CI_FIX_TRACKER="${FACTORY_ROOT}/dev/ci-fixes-${PROJECT_NAME:-harb}.json"
+CI_FIX_TRACKER="${FACTORY_ROOT}/dev/ci-fixes-${PROJECT_NAME:-default}.json"
 CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
 ci_fix_count() {
   local pr="$1"
@@ -211,8 +211,8 @@ try_direct_merge() {
 }
 
 API="${CODEBERG_API}"
-LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
-LOGFILE="${FACTORY_ROOT}/dev/dev-agent-${PROJECT_NAME:-harb}.log"
+LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
+LOGFILE="${FACTORY_ROOT}/dev/dev-agent-${PROJECT_NAME:-default}.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

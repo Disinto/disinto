@@ -39,7 +39,7 @@ REPO="${CODEBERG_REPO}"
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 API="${CODEBERG_API}"
-LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-harb}.lock"
+LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
 STATUSFILE="/tmp/dev-agent-status"
 
 # Gitea labels API requires []int64 — look up the "backlog" label ID once

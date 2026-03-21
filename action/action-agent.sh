@@ -34,7 +34,7 @@ source "$(dirname "$0")/../lib/formula-session.sh"
 source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
-LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-harb}.log"
+LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
 THREAD_FILE="/tmp/action-thread-${ISSUE}"
 IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
 MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}" # 8h default wall-clock cap
@@ -46,8 +46,8 @@ API="${CODEBERG_API}"
 BRANCH="action/issue-${ISSUE}"
 # shellcheck disable=SC2034  # used by phase-handler.sh
 WORKTREE="/tmp/action-${ISSUE}-$(date +%s)"
-PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-harb}-${ISSUE}.phase"
-IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-harb}-${ISSUE}.txt"
+PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-default}-${ISSUE}.phase"
+IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-default}-${ISSUE}.txt"
 PREFLIGHT_RESULT="/tmp/action-preflight-${ISSUE}.json"
 SCRATCH_FILE="/tmp/action-${ISSUE}-scratch.md"
 
