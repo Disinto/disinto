@@ -59,20 +59,27 @@ A thin bash orchestrator handles session lifecycle. Everything that requires jud
 │  - lock files                           │
 │  - environment setup                    │
 └────────────────┬────────────────────────┘
-                 │ inject formula
+                 │ inject formula / invoke claude -p
                  ▼
-┌─────────────────────────────────────────┐
-│ Claude in tmux (fat formula, judgment)  │
-│                                         │
-│  - fetch issue + comments               │
-│  - understand task                      │
-│  - assess dependencies                  │
-│  - implement                            │
-│  - create PR                            │
-│  - handle review feedback               │
-│  - handle CI failures                   │
-│  - rebase, merge, or escalate           │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      Judgment layer                             │
+│                                                                 │
+│  ┌─────────────────────────────┐ ┌───────────────────────────┐  │
+│  │ Claude in tmux (interactive)│ │ claude -p (one-shot)      │  │
+│  │                             │ │                           │  │
+│  │  Multi-turn sessions with   │ │  Single prompt+response.  │  │
+│  │  phase protocol, CI/review  │ │  No persistent session.   │  │
+│  │  feedback loops, tool use.  │ │  Suited for classify-and- │  │
+│  │                             │ │  route decisions that     │  │
+│  │  Used by: dev, review,      │ │  don't need interaction.  │  │
+│  │  gardener, action, planner, │ │                           │  │
+│  │  predictor, supervisor      │ │  Used by: vault           │  │
+│  └─────────────────────────────┘ └───────────────────────────┘  │
+│                                                                 │
+│  Both patterns keep judgment out of bash. Choose based on       │
+│  whether the agent needs multi-turn interaction (tmux) or       │
+│  a single classify/decide pass (claude -p).                     │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Benefits
@@ -106,5 +113,5 @@ When reviewing PRs or designing new agents, ask:
 | supervisor | 877 | Heavy — multi-project health checks, CI stall detection, container monitoring | Partially justified (monitoring is deterministic, but escalation decisions are judgment) |
 | gardener | 1242 (agent 471 + poll 771) | Medium — backlog triage, duplicate detection, tech-debt scoring | Poll is heavy orchestration; agent is prompt-driven |
 | vault | 442 (4 scripts) | Medium — approval flow, human gate decisions | Intentionally bash-heavy (security gate should be deterministic) |
-| planner | 382 | Medium — AGENTS.md update, gap analysis | Migrating to tmux+formula (#232) |
+| planner | 382 | Medium — AGENTS.md update, gap analysis | Tmux+formula (done, #232) |
 | action-agent | 192 | Light — formula execution | Close to target |
