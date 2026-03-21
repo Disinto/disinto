@@ -3,14 +3,8 @@
 # gardener-poll.sh — Cron wrapper for the gardener agent
 #
 # Cron: daily (or 2x/day). Handles lock management, escalation reply
-# injection, and delegates backlog grooming to gardener-agent.sh.
-#
-# Grooming (delegated to gardener-agent.sh):
-#   - Duplicate titles / overlapping scope
-#   - Missing acceptance criteria
-#   - Stale issues (no activity > 14 days)
-#   - Blockers starving the factory
-#   - Tech-debt promotion / dust bundling
+# injection for dev sessions, and files an action issue for backlog
+# grooming via formulas/run-gardener.toml (picked up by action-agent).
 # =============================================================================
 set -euo pipefail
 
@@ -41,12 +35,6 @@ echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
 
 log "--- Gardener poll start ---"
-
-# Gitea labels API requires []int64 — look up the "backlog" label ID once
-# Falls back to the known Codeberg repo ID if the API call fails
-BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
-  | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
-BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
 
 # ── Check for escalation replies from Matrix ──────────────────────────────
 ESCALATION_REPLY=""
@@ -86,7 +74,7 @@ if [ -s /tmp/gardener-escalation-reply ]; then
     log "All escalation entries were stale — discarded"
   fi
 fi
-export ESCALATION_REPLY
+# ESCALATION_REPLY is used below when constructing the action issue body
 
 # ── Inject human replies into needs_human dev sessions (backup to supervisor) ─
 HUMAN_REPLY_FILE="/tmp/dev-escalation-reply"
@@ -130,9 +118,43 @@ Instructions:
   break  # only one reply to deliver
 done
 
-# ── Backlog grooming (delegated to gardener-agent.sh) ────────────────────
-log "Invoking gardener-agent.sh for backlog grooming"
-bash "$SCRIPT_DIR/gardener-agent.sh" "${1:-}" || log "WARNING: gardener-agent.sh exited with error"
+# ── Backlog grooming (file action issue for run-gardener formula) ─────────
+# shellcheck source=../lib/file-action-issue.sh
+source "$FACTORY_ROOT/lib/file-action-issue.sh"
 
+ESCALATION_CONTEXT=""
+if [ -n "${ESCALATION_REPLY:-}" ]; then
+  ESCALATION_CONTEXT="
+
+## Pending escalation replies
+
+Human responses to previous gardener escalations. Process these FIRST.
+Format: '1a 2c 3b' means question 1→option (a), 2→option (c), 3→option (b).
+
+${ESCALATION_REPLY}"
+fi
+
+ISSUE_BODY="---
+formula: run-gardener
+model: opus
+---
+
+Periodic gardener housekeeping run. The action-agent reads \`formulas/run-gardener.toml\`
+and executes the steps: preflight, grooming, blocked-review,
+AGENTS.md update, and commit-and-pr.${ESCALATION_CONTEXT}
+
+Filed automatically by \`gardener-poll.sh\`."
+
+_rc=0
+file_action_issue "run-gardener" "action: run-gardener — periodic housekeeping" "$ISSUE_BODY" || _rc=$?
+case "$_rc" in
+  0) log "Filed action issue #${FILED_ISSUE_NUM} for run-gardener formula"
+     matrix_send "gardener" "Filed action #${FILED_ISSUE_NUM}: run-gardener — periodic housekeeping" 2>/dev/null || true
+     ;;
+  1) log "Open run-gardener action issue already exists — skipping" ;;
+  2) log "ERROR: 'action' label not found — cannot file gardener issue" ;;
+  4) log "ERROR: issue body contains potential secrets — skipping" ;;
+  *) log "WARNING: failed to create action issue for run-gardener (rc=$_rc)" ;;
+esac
 
 log "--- Gardener poll done ---"
