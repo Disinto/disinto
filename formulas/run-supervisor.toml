@@ -43,7 +43,7 @@ and injected into your prompt above. Review them now.
    - RAM available < 500MB or swap > 3GB → P0 (memory crisis)
    - Disk > 80% → P1 (disk pressure)
    - Agent sessions dead, CI stuck/pending, git in bad state → P2 (factory stopped)
-   - PRs stale, unreviewed, or with merge conflicts → P3 (factory degraded)
+   - PRs stale >20min (CI done, no push since) → P3 (factory degraded)
    - Stale worktrees, old lock files → P4 (housekeeping)
 """
 
@@ -70,9 +70,8 @@ Categorize every finding from the metrics into priority levels.
 - Dev sessions in PHASE:needs_human for > 24h
 
 ### P3 — Factory degraded
-- PRs with CI pass but merge conflict (needs rebase)
-- PRs with CI failure stale > 30min
-- PRs with CI pass but no review for > 60min
+- PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed
+  (Do NOT flag PRs that are actively being worked on — only truly inactive ones)
 - Circular dependency deadlocks in backlog
 - Stale dependencies (blocked by issues open > 30 days)
 
@@ -126,6 +125,18 @@ For each finding from the health assessment, decide and execute an action.
 
 **P4 Stale claude processes:**
   pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
+
+**P3 Stale PRs (CI done >20min, no push since):**
+  Do NOT read dev-poll.sh, push branches, attempt merges, or investigate pipeline code.
+  Instead, nudge the dev-agent via tmux injection if a session is alive:
+    # Find the dev session for this issue
+    SESSION=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "dev-.*-${ISSUE_NUM}" | head -1)
+    if [ -n "$SESSION" ]; then
+      # Inject a nudge into the dev-agent session
+      tmux send-keys -t "$SESSION" "# [supervisor] PR stale >20min — CI finished, please push or update" Enter
+    fi
+  If no active tmux session exists, note it in the journal for the next dev-poll cycle.
+  Do NOT escalate stale PRs to Matrix unless they remain stale for >3 consecutive runs.
 
 ### Escalation replies (from Matrix)
 
