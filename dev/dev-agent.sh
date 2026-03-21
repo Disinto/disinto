@@ -207,10 +207,23 @@ ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 ISSUE_BODY_ORIGINAL="$ISSUE_BODY"
 
+# --- Resolve bot username(s) for comment filtering ---
+_bot_login=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
+
+# Build list: token owner + any extra names from CODEBERG_BOT_USERNAMES (comma-separated)
+_bot_logins="${_bot_login}"
+if [ -n "${CODEBERG_BOT_USERNAMES:-}" ]; then
+  _bot_logins="${_bot_logins:+${_bot_logins},}${CODEBERG_BOT_USERNAMES}"
+fi
+
 # Append human comments to issue body (filter out bot accounts)
 ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API}/issues/${ISSUE}/comments" | \
-  jq -r '.[] | select(.user.login != "Disinto_bot" and .user.login != "disinto-factory") | "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
+  jq -r --arg bots "$_bot_logins" \
+    '($bots | split(",") | map(select(. != ""))) as $bl |
+     .[] | select(.user.login as $u | $bl | index($u) | not) |
+     "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
 if [ -n "$ISSUE_COMMENTS" ]; then
   ISSUE_BODY="${ISSUE_BODY}
 
