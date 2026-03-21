@@ -3,7 +3,7 @@
 #
 # An issue is ready for action if:
 #   - It is open and labeled 'action'
-#   - No tmux session named action-{issue_num} is already active
+#   - No tmux session named action-{project}-{issue_num} is already active
 #
 # Usage:
 #   cron every 10min
@@ -52,7 +52,7 @@ log "found ${COUNT} open action issue(s)"
 # poll picks up remaining issues.
 for i in $(seq 0 $((COUNT - 1))); do
   ISSUE_NUM=$(printf '%s' "$ACTION_ISSUES" | jq -r ".[$i].number")
-  SESSION="action-${ISSUE_NUM}"
+  SESSION="action-${PROJECT_NAME}-${ISSUE_NUM}"
 
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     log "issue #${ISSUE_NUM}: session ${SESSION} already active, skipping"
