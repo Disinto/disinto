@@ -330,7 +330,7 @@ monitor_phase_loop() {
       local current_phase
       current_phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
       case "$current_phase" in
-        PHASE:done|PHASE:failed|PHASE:merged)
+        PHASE:done|PHASE:failed|PHASE:merged|PHASE:needs_human)
           ;; # terminal — fall through to phase handler
         *)
           # Call callback with "crashed" — let agent-specific code handle recovery
