@@ -59,6 +59,17 @@ create_agent_session() {
   mkdir -p "${workdir}/.claude"
   local settings="${workdir}/.claude/settings.json"
 
+  # Ensure bypass-permissions prompt is skipped in non-interactive sessions.
+  # Project-level settings override global ~/.claude/settings.json, so we must
+  # inject the flag here. Without it, Claude shows an interactive confirmation
+  # dialog that blocks all tmux-based agent sessions.
+  if [ -f "$settings" ]; then
+    jq '. + {skipDangerousModePermissionPrompt: true, permissions: {defaultMode: "bypassPermissions"}}' \
+      "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+  else
+    printf '{"skipDangerousModePermissionPrompt":true,"permissions":{"defaultMode":"bypassPermissions"}}\n' > "$settings"
+  fi
+
   # Install Stop hook for idle detection: when Claude finishes a response,
   # the hook writes a timestamp to a marker file. monitor_phase_loop checks
   # this marker instead of fragile tmux pane scraping.
