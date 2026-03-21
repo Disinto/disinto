@@ -71,3 +71,23 @@ When the phase-handler injects 'CI failed' with a push pipeline number (e.g. #62
 Root cause: the injected event does not always carry the correct pipeline number.
 Symptom: agent in awaiting_review with PR CI=failure and push CI=success.
 Fix: inject with explicit pipeline #623 (the pull_request event pipeline), point to the failing step and the specific duplicate blocks to fix. Use: woodpecker_api /repos/4/pipelines?event=pull_request (or look for event=pull_request in recent pipelines list) to find the correct pipeline number before injecting.
+
+### Race Condition: Review Posted Before PHASE:awaiting_review Transitions
+**Symptom:** Dev-agent status unchanged at 'waiting for review on PR #N', no `review-injected-disinto-N` sentinel, but a formal review already exists on Codeberg and `/tmp/disinto-review-output-N.json` was written before the phase file updated.
+
+**Root cause:** review-pr.sh runs while the dev-agent is still in PHASE:awaiting_ci. inject_review_into_dev_session returns early (phase check fails). On subsequent review-poll cycles, the PR is skipped (formal review already exists for SHA), so inject is never called again.
+
+**Fix:** Manually inject the review:
+```bash
+source /home/debian/dark-factory/lib/env.sh
+PROJECT_TOML=/home/debian/dark-factory/projects/disinto.toml
+source /home/debian/dark-factory/lib/load-project.sh "$PROJECT_TOML"
+PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-<ISSUE>.phase"
+PR_NUM=<N>; PR_BRANCH="fix/issue-<ISSUE>"; PR_SHA=$(cat /tmp/dev-session-${PROJECT_NAME}-<ISSUE>.phase | grep SHA | cut -d: -f2 || git -C $PROJECT_REPO_ROOT rev-parse origin/$PR_BRANCH)
+REVIEW_TEXT=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" "${CODEBERG_API}/issues/${PR_NUM}/comments?limit=50" | jq -r --arg sha "$PR_SHA" '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty | .body')
+INJECT_MSG="Review: REQUEST_CHANGES on PR #${PR_NUM}:\n\n${REVIEW_TEXT}\n\nInstructions:\n1. Address each piece of feedback carefully.\n2. Run lint and tests when done.\n3. Commit your changes and push: git push origin ${PR_BRANCH}\n4. Write: echo PHASE:awaiting_ci > "${PHASE_FILE}"\n5. Stop and wait for the next CI result."
+INJECT_TMP=$(mktemp); printf '%s' "$INJECT_MSG" > "$INJECT_TMP"
+tmux load-buffer -b inject "$INJECT_TMP" && tmux paste-buffer -t "dev-${PROJECT_NAME}-<ISSUE>" -b inject && sleep 0.5 && tmux send-keys -t "dev-${PROJECT_NAME}-<ISSUE>" '' Enter
+touch "/tmp/review-injected-${PROJECT_NAME}-${PR_NUM}"
+```
+Then update /tmp/dev-agent-status to reflect current work.
