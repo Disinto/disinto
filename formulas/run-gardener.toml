@@ -125,11 +125,40 @@ Sibling dependency rule (CRITICAL):
    borderline or could be interpreted as compatible, leave it open
    and ESCALATE instead.
 
+8. Quality gate — backlog label enforcement:
+   For each open issue labeled 'backlog', verify it has the required
+   sections for dev-agent pickup:
+   a. Acceptance criteria — body must contain at least one checkbox
+      (``- [ ]`` or ``- [x]``)
+   b. Affected files — body must contain an "Affected files" or
+      "## Affected files" section with at least one file path
+
+   If either section is missing:
+   a. Look up the 'backlog' label ID:
+        BACKLOG_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "backlog") | .id')
+   b. Post a comment listing what's missing:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<number>/comments" \
+          -d '{"body":"This issue is missing required sections. Please use the issue templates at `.codeberg/ISSUE_TEMPLATE/` — needs: <missing items>."}'
+      Where <missing items> is a comma-separated list of what's absent
+      (e.g. "acceptance criteria, affected files" or just "affected files").
+   c. Remove the 'backlog' label:
+        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<number>/labels/$BACKLOG_LABEL_ID"
+   d. Log to the result file:
+        echo "ACTION: stripped backlog from #NNN — missing: <missing items>" >> "$RESULT_FILE"
+
+   Well-structured issues (both sections present) are left untouched —
+   they are ready for dev-agent pickup.
+
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
   2. AD alignment check — close backlog issues that violate architecture decisions
-  3. Process tech-debt issues by score (impact/effort)
-  4. Classify remaining items as dust or escalate
+  3. Quality gate — strip backlog from issues missing acceptance criteria or affected files
+  4. Process tech-debt issues by score (impact/effort)
+  5. Classify remaining items as dust or escalate
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.
