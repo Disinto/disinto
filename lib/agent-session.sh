@@ -399,6 +399,7 @@ monitor_phase_loop() {
     # shellcheck disable=SC2034  # read by phase-handler.sh callback
     LAST_PHASE_MTIME="$phase_mtime"
     idle_elapsed=0
+    idle_pane_count=0
 
     # Terminal phases
     case "$current_phase" in
