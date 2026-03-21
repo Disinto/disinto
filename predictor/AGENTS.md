@@ -23,12 +23,6 @@ memory check (skips if available RAM < 2000 MB).
   collect-signals, analyze-and-predict) with `needs` dependencies. Claude
   collects signals and files prediction issues in a single interactive session
 
-**Supersedes**: The legacy predictor (`planner/prediction-poll.sh` +
-`planner/prediction-agent.sh`) used `claude -p` one-shot, read `evidence/`
-JSON, and ran hourly. This formula-based predictor replaces it with direct
-CI/issues/logs signal collection and interactive Claude sessions, matching the
-planner's tmux+formula pattern.
-
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)

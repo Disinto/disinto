@@ -20,7 +20,6 @@ disinto/
 ├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
 │                  planner/journal/ — daily raw logs from each planner run
-│                  prediction-poll.sh, prediction-agent.sh — legacy predictor (superseded by predictor/)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 │                  supervisor/journal/ — daily health logs from each run
