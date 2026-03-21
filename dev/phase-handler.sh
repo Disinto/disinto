@@ -657,7 +657,10 @@ Instructions:
 
   # ── PHASE: failed ───────────────────────────────────────────────────────────
   elif [ "$phase" = "PHASE:failed" ]; then
-    FAILURE_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "unspecified")
+    if [[ -f "$PHASE_FILE" ]]; then
+      FAILURE_REASON=$(sed -n '2p' "$PHASE_FILE" | sed 's/^Reason: //')
+    fi
+    FAILURE_REASON="${FAILURE_REASON:-unspecified}"
     log "phase: failed — reason: ${FAILURE_REASON}"
     # Gitea labels API requires []int64 — look up the "backlog" label ID once
     BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
