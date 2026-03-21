@@ -45,7 +45,7 @@ A solo founder sets the vision and defines quality gates. Disinto derives the ba
 - Core agent loop working: dev → CI → review → merge
 - Supervisor health monitoring
 - Planner gap analysis against this vision
-- Single-project support with per-project config
+- Multi-project support with per-project config (harb, disinto, versi)
 
 ### Adoption
 - One-command bootstrap for new projects (`disinto init`)
@@ -54,7 +54,7 @@ A solo founder sets the vision and defines quality gates. Disinto derives the ba
 - Landing page that communicates the value proposition clearly
 
 ### Scale
-- Multi-project support (multiple repos, one factory)
+- ~~Multi-project support (multiple repos, one factory)~~ — done (Foundation)
 - Plugin system for custom agents
 - Community-contributed formulas for common project types (Next.js, Solidity, Python)
 - Hosted option for founders who don't want to run their own VPS
