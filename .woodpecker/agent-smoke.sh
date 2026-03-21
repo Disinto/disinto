@@ -196,8 +196,6 @@ check_script gardener/gardener-run.sh
 check_script review/review-pr.sh
 check_script review/review-poll.sh
 check_script planner/planner-run.sh
-check_script planner/prediction-agent.sh
-check_script planner/prediction-poll.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
 check_script vault/vault-agent.sh
