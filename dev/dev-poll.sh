@@ -7,7 +7,8 @@
 #
 # Priority:
 #   1. Orphaned "in-progress" issues (agent died or PR needs attention)
-#   2. Ready "backlog" issues (all deps merged)
+#   2. Ready "priority" + "backlog" issues (FIFO within tier)
+#   3. Ready "backlog" issues without "priority" (FIFO within tier)
 #
 # Usage:
 #   cron every 10min
@@ -590,10 +591,29 @@ done
 
 # =============================================================================
 # PRIORITY 2: find ready backlog issues (pull system)
+#
+# Two-tier pickup: priority+backlog issues first (FIFO), then plain backlog
+# issues (FIFO). The "priority" label is added alongside "backlog", not instead.
 # =============================================================================
 log "scanning backlog for ready issues"
-BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+
+# Ensure the priority label exists on this repo
+ensure_priority_label >/dev/null 2>&1 || true
+
+# Tier 1: issues with both "priority" and "backlog" labels
+PRIORITY_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API}/issues?state=open&labels=priority,backlog&limit=20&type=issues&sort=oldest") || true
+PRIORITY_BACKLOG_JSON="${PRIORITY_BACKLOG_JSON:-[]}"
+
+# Tier 2: all "backlog" issues (includes priority ones — deduplicated below)
+ALL_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
   "${API}/issues?state=open&labels=backlog&limit=20&type=issues&sort=oldest")
+
+# Combine: priority issues first, then remaining backlog issues (deduped)
+BACKLOG_JSON=$(jq -n \
+  --argjson pri "$PRIORITY_BACKLOG_JSON" \
+  --argjson all "$ALL_BACKLOG_JSON" \
+  '($pri | map(.number)) as $pnums | $pri + [$all[] | select(.number as $n | $pnums | map(. == $n) | any | not)]')
 
 BACKLOG_COUNT=$(echo "$BACKLOG_JSON" | jq 'length')
 if [ "$BACKLOG_COUNT" -eq 0 ]; then
@@ -601,7 +621,8 @@ if [ "$BACKLOG_COUNT" -eq 0 ]; then
   exit 0
 fi
 
-log "found ${BACKLOG_COUNT} backlog issues"
+PRIORITY_COUNT=$(echo "$PRIORITY_BACKLOG_JSON" | jq 'length')
+log "found ${BACKLOG_COUNT} backlog issues (${PRIORITY_COUNT} priority)"
 
 # Check each for readiness
 READY_ISSUE=""

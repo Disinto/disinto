@@ -93,6 +93,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | Label | Meaning | Set by |
 |---|---|---|
 | `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. | Planner, gardener, humans |
+| `priority` | Queue tier above plain backlog. Issues with both `priority` and `backlog` are picked before plain `backlog` issues. FIFO within each tier. | Planner, humans |
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. | dev-agent.sh (claims issue) |
 | `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, action-agent.sh, dev-poll.sh (on failure) |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |

@@ -27,6 +27,27 @@ ensure_blocked_label_id() {
   printf '%s' "$_BLOCKED_LABEL_ID"
 }
 
+# ensure_priority_label — look up (or create) the "priority" label, print its ID.
+# Caches the result in _PRIORITY_LABEL_ID to avoid repeated API calls.
+# Requires: CODEBERG_TOKEN, CODEBERG_API (from env.sh), codeberg_api()
+ensure_priority_label() {
+  if [ -n "${_PRIORITY_LABEL_ID:-}" ]; then
+    printf '%s' "$_PRIORITY_LABEL_ID"
+    return 0
+  fi
+  _PRIORITY_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+    | jq -r '.[] | select(.name == "priority") | .id' 2>/dev/null || true)
+  if [ -z "$_PRIORITY_LABEL_ID" ]; then
+    _PRIORITY_LABEL_ID=$(curl -sf -X POST \
+      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${CODEBERG_API}/labels" \
+      -d '{"name":"priority","color":"#f59e0b"}' 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null || true)
+  fi
+  printf '%s' "$_PRIORITY_LABEL_ID"
+}
+
 # diff_has_code_files — check if file list (stdin, one per line) contains code files
 # Non-code paths: docs/*, formulas/*, evidence/*, *.md
 # Returns 0 if any code file found, 1 if all files are non-code.
