@@ -52,7 +52,48 @@ WOODPECKER_DB_NAME=woodpecker
 CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 ```
 
-## 2. Prepare the Target Repo
+## 2. Claude Code Global Settings
+
+Configure `~/.claude/settings.json` with **only** permissions and `skipDangerousModePermissionPrompt`. Do not add hooks to the global settings — `agent-session.sh` injects per-worktree hooks automatically.
+
+Match the configuration from harb-staging exactly. The file should contain only permission grants and the dangerous-mode flag:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "..."
+    ]
+  },
+  "skipDangerousModePermissionPrompt": true
+}
+```
+
+### Seed `~/.claude.json`
+
+Run `claude --dangerously-skip-permissions` once interactively to create `~/.claude.json`. This file must exist before cron-driven agents can run.
+
+```bash
+claude --dangerously-skip-permissions
+# Exit after it initializes successfully
+```
+
+## 3. File Ownership
+
+Everything under `/home/debian` must be owned by `debian:debian`. Root-owned files cause permission errors when agents run as the `debian` user.
+
+```bash
+chown -R debian:debian /home/debian/harb /home/debian/dark-factory
+```
+
+Verify no root-owned files exist in agent temp directories:
+
+```bash
+# These should return nothing
+find /tmp/dev-* /tmp/harb-* /tmp/review-* -not -user debian 2>/dev/null
+```
+
+## 4. Prepare the Target Repo
 
 ### Required: CI pipeline
 
@@ -136,7 +177,7 @@ entire repo as "new", generating a noisy first-run diff.
 
 See `formulas/run-planner.toml` (agents-update step) for the full AGENTS.md conventions.
 
-## 3. Write Good Issues
+## 5. Write Good Issues
 
 Dev-agent works best with issues that have:
 
@@ -151,7 +192,7 @@ Dev-agent works best with issues that have:
 
 Dev-agent checks that all referenced issues are closed (= merged) before starting work. If any are open, the issue is skipped and checked again next cycle.
 
-## 4. Install Cron
+## 6. Install Cron
 
 ```bash
 crontab -e
@@ -210,7 +251,7 @@ FACTORY_ROOT=/home/you/disinto
 
 The staggered offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
 
-## 5. Verify
+## 7. Verify
 
 ```bash
 # Should complete with "all clear" (no problems to fix)
@@ -231,7 +272,7 @@ tail -30 dev/dev-agent.log
 tail -30 review/review.log
 ```
 
-## 6. Optional: Matrix Notifications
+## 8. Optional: Matrix Notifications
 
 If you want real-time notifications and human-in-the-loop escalation:
 
@@ -292,6 +333,7 @@ Meanwhile:
 | Claude not found | `which claude` — must be in PATH. Check `lib/env.sh` adds `~/.local/bin`. |
 | Merge fails | Branch protection misconfigured? Review bot needs write access to the repo. |
 | Memory issues | Supervisor auto-heals at <500 MB free. Check `supervisor/supervisor.log` for P0 alerts. |
+| Works on one box but not another | Diff configs first (`~/.claude/settings.json`, `.env`, crontab, branch protection). Write code never — config mismatches are the #1 cause of cross-box failures. |
 
 ### Multi-project common blockers
 
