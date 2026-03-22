@@ -11,7 +11,7 @@
 #   build_context_block FILE [FILE ...]    — sets CONTEXT_BLOCK
 #   start_formula_session SESSION WORKDIR PHASE_FILE — create tmux + claude
 #   build_prompt_footer    [EXTRA_API]      — sets PROMPT_FOOTER (API ref + env + phase)
-#   run_formula_and_monitor AGENT [TIMEOUT] — session start, inject, monitor, log
+#   run_formula_and_monitor AGENT [TIMEOUT] [CALLBACK] — session start, inject, monitor, log
 #   formula_phase_callback PHASE           — standard crash-recovery callback
 #
 # Requires: lib/agent-session.sh sourced first (for create_agent_session,
@@ -245,6 +245,7 @@ On unrecoverable error:
 run_formula_and_monitor() {
   local agent_name="$1"
   local timeout="${2:-7200}"
+  local callback="${3:-formula_phase_callback}"
 
   if ! start_formula_session "$SESSION_NAME" "$PROJECT_REPO_ROOT" "$PHASE_FILE"; then
     exit 1
@@ -262,7 +263,7 @@ run_formula_and_monitor() {
   log "Monitoring phase file: ${PHASE_FILE}"
   _FORMULA_CRASH_COUNT=0
 
-  monitor_phase_loop "$PHASE_FILE" "$timeout" "formula_phase_callback"
+  monitor_phase_loop "$PHASE_FILE" "$timeout" "$callback"
 
   FINAL_PHASE=$(read_phase "$PHASE_FILE")
   log "Final phase: ${FINAL_PHASE:-none}"
