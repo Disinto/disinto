@@ -63,7 +63,8 @@ Evidence from the preflight step informs whether each prediction is valid
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
 
-   If there are none, note that and proceed to update-prerequisite-tree.
+   If there are none, note that and skip to step 3b (label resolution
+   is still required — the file-at-constraints step needs label IDs).
 
 2. Read available formulas from $FACTORY_ROOT/formulas/*.toml so you know
    what actions can be dispatched.
@@ -72,7 +73,9 @@ Evidence from the preflight step informs whether each prediction is valid
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&limit=50"
 
-3b. Resolve label IDs needed for triage (fetch via $CODEBERG_API/labels):
+3b. Resolve label IDs needed for triage AND filing (fetch via $CODEBERG_API/labels).
+    ALWAYS execute this step, even if there are no predictions to triage —
+    the file-at-constraints step depends on these IDs:
     - <unreviewed_label_id>        → prediction/unreviewed
     - <prediction_backlog_label_id> → prediction/backlog
     - <actioned_label_id>          → prediction/actioned (create if missing,
@@ -105,10 +108,24 @@ Evidence from the preflight step informs whether each prediction is valid
 5. Executing triage decisions via API:
 
    For PROMOTE_ACTION / PROMOTE_BACKLOG:
-   a. Create the new issue with the 'action' or 'backlog' label:
+   a. Create the new issue with the 'action' or 'backlog' label.
+      IMPORTANT — the issue body MUST include these sections so the
+      gardener quality gate does not strip the backlog label:
+        - "## Acceptance criteria" with at least one checkbox (- [ ] ...)
+        - "## Affected files" with at least one file path
+      Example body structure:
+        ## Problem\n<what the prediction identified>\n\n## Proposed solution\n<approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion 1>\n- [ ] CI green
+      Create the issue:
         curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" "$CODEBERG_API/issues" \
           -d '{"title":"...","body":"...","labels":[<label_id>]}'
+      Extract the issue number from the response (jq -r '.number').
+   a2. Verify the label was applied (Codeberg may silently drop labels
+       on creation). Re-apply via a separate POST if missing:
+        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Content-Type: application/json" \
+          "$CODEBERG_API/issues/<new_issue_num>/labels" \
+          -d '{"labels":[<label_id>]}'
    b. Comment on the prediction with "Actioned as #NNN — <reasoning>":
         curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
@@ -274,19 +291,27 @@ Filing gate — for each constraint:
 1. Check if an issue already exists for this constraint (match by issue
    number reference in the tree, or search open issues by title).
 
-2. If no issue exists, create one:
+2. If no issue exists, create one.
+   IMPORTANT — the issue body MUST include these sections so the
+   gardener quality gate does not strip the backlog label:
+     - "## Affected files" with at least one file path
+     - "## Acceptance criteria" with at least one checkbox (- [ ] ...)
+   Use this body structure:
+     ## Problem\n<what this prerequisite is and which objectives it blocks>\n\n## Proposed solution\n<rough approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion derived from the constraint>\n- [ ] CI green\n\n## Dependencies\n- #NNN (if depends on other open issues)
+   Create the issue:
      curl -sf -X POST \
        -H "Authorization: token $CODEBERG_TOKEN" \
        -H "Content-Type: application/json" \
        "$CODEBERG_API/issues" \
        -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
+   Extract the issue number from the response (jq -r '.number').
 
-   Issue body should include:
-   - What this prerequisite is
-   - Which objectives it blocks (with issue numbers)
-   - Why it's a constraint (blocking score)
-   - Rough approach if known
-   - ## Depends on section if it depends on other open issues
+2b. Verify the label was applied (Codeberg may silently drop labels
+    on creation). Always re-apply via a separate POST to be safe:
+      curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        -H "Content-Type: application/json" \
+        "$CODEBERG_API/issues/<new_issue_num>/labels" \
+        -d '{"labels":[<backlog_label_id>]}'
 
 3. If an issue already exists and is open, skip it — no duplicate filing.
 
