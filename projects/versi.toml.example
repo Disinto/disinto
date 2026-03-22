@@ -1,0 +1,21 @@
+# projects/versi.toml.example — Template for johba/versi
+#
+# Copy to projects/versi.toml and fill in box-specific values,
+# or run: disinto init https://codeberg.org/johba/versi
+
+name            = "versi"
+repo            = "johba/versi"
+repo_root       = "/home/YOU/versi"
+primary_branch  = "main"
+
+[ci]
+woodpecker_repo_id = 0
+stale_minutes      = 60
+
+[services]
+containers = []
+
+[monitoring]
+check_prs            = true
+check_dev_agent      = true
+check_pipeline_stall = true

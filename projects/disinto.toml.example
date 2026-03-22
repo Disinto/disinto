@@ -1,0 +1,26 @@
+# projects/disinto.toml.example — Template for disinto self-management
+#
+# Copy to projects/disinto.toml and fill in box-specific values,
+# or run: disinto init https://codeberg.org/johba/disinto
+
+name            = "disinto"
+repo            = "johba/disinto"
+repo_root       = "/home/YOU/dark-factory"
+primary_branch  = "main"
+
+[ci]
+woodpecker_repo_id = 0
+stale_minutes      = 60
+
+[services]
+containers = []
+
+[matrix]
+room_id   = "!your_room_id:matrix.example.org"
+bot_user  = "@disinto-factory:matrix.example.org"
+token_env = "DISINTO_MATRIX_TOKEN"
+
+[monitoring]
+check_prs            = true
+check_dev_agent      = true
+check_pipeline_stall = false

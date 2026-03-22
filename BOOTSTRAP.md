@@ -52,7 +52,27 @@ WOODPECKER_DB_NAME=woodpecker
 CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 ```
 
-## 2. Claude Code Global Settings
+## 2. Configure Project TOML
+
+Each project needs a `projects/<name>.toml` file with box-specific settings
+(absolute paths, Woodpecker CI IDs, Matrix credentials). These files are
+**gitignored** — they are local installation config, not shared code.
+
+To create one:
+
+```bash
+# Automatic — generates TOML, clones repo, sets up cron:
+disinto init https://codeberg.org/org/repo
+
+# Manual — copy a template and fill in your values:
+cp projects/myproject.toml.example projects/myproject.toml
+vim projects/myproject.toml
+```
+
+The repo ships `projects/*.toml.example` templates showing the expected
+structure. See any `.toml.example` file for the full field reference.
+
+## 3. Claude Code Global Settings
 
 Configure `~/.claude/settings.json` with **only** permissions and `skipDangerousModePermissionPrompt`. Do not add hooks to the global settings — `agent-session.sh` injects per-worktree hooks automatically.
 
@@ -78,7 +98,7 @@ claude --dangerously-skip-permissions
 # Exit after it initializes successfully
 ```
 
-## 3. File Ownership
+## 4. File Ownership
 
 Everything under `/home/debian` must be owned by `debian:debian`. Root-owned files cause permission errors when agents run as the `debian` user.
 
@@ -93,7 +113,7 @@ Verify no root-owned files exist in agent temp directories:
 find /tmp/dev-* /tmp/harb-* /tmp/review-* -not -user debian 2>/dev/null
 ```
 
-## 4. Prepare the Target Repo
+## 5. Prepare the Target Repo
 
 ### Required: CI pipeline
 
@@ -177,7 +197,7 @@ entire repo as "new", generating a noisy first-run diff.
 
 See `formulas/run-planner.toml` (agents-update step) for the full AGENTS.md conventions.
 
-## 5. Write Good Issues
+## 6. Write Good Issues
 
 Dev-agent works best with issues that have:
 
@@ -192,7 +212,7 @@ Dev-agent works best with issues that have:
 
 Dev-agent checks that all referenced issues are closed (= merged) before starting work. If any are open, the issue is skipped and checked again next cycle.
 
-## 6. Install Cron
+## 7. Install Cron
 
 ```bash
 crontab -e
@@ -251,7 +271,7 @@ FACTORY_ROOT=/home/you/disinto
 
 The staggered offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
 
-## 7. Verify
+## 8. Verify
 
 ```bash
 # Should complete with "all clear" (no problems to fix)
@@ -272,7 +292,7 @@ tail -30 dev/dev-agent.log
 tail -30 review/review.log
 ```
 
-## 8. Optional: Matrix Notifications
+## 9. Optional: Matrix Notifications
 
 If you want real-time notifications and human-in-the-loop escalation:
 

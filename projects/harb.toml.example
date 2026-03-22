@@ -1,0 +1,26 @@
+# projects/harb.toml.example — Template for johba/harb
+#
+# Copy to projects/harb.toml and fill in box-specific values,
+# or run: disinto init https://codeberg.org/johba/harb
+
+name            = "harb"
+repo            = "johba/harb"
+repo_root       = "/home/YOU/harb"
+primary_branch  = "master"
+
+[ci]
+woodpecker_repo_id = 0
+stale_minutes      = 60
+
+[services]
+containers = ["ponder"]
+
+[matrix]
+room_id   = "!your_room_id:matrix.example.org"
+bot_user  = "@harb-factory:matrix.example.org"
+token_env = "MATRIX_TOKEN"
+
+[monitoring]
+check_prs            = true
+check_dev_agent      = true
+check_pipeline_stall = true
