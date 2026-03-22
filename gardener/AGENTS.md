@@ -17,8 +17,11 @@ runs directly from cron like the planner, predictor, and supervisor.
 - `gardener/gardener-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
   consumes escalation replies, sources disinto project config, creates tmux session,
   injects formula prompt, monitors phase file, handles crash recovery via
-  `run_formula_and_monitor`
+  `run_formula_and_monitor`, executes pending-actions manifest after PR merge
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling, blocked-review, agents-update, commit-and-pr
+- `gardener/pending-actions.json` — Manifest of deferred repo actions (label changes,
+  closures, comments, issue creation). Written during grooming steps, committed to the
+  PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
@@ -27,5 +30,7 @@ runs directly from cron like the planner, predictor, and supervisor.
 
 **Lifecycle**: gardener-run.sh (cron 0,6,12,18) → lock + memory guard →
 consume escalation replies → load formula + context → create tmux session →
-Claude grooms backlog, bundles dust, reviews blocked issues, updates AGENTS.md,
-commits and creates PR → `PHASE:done`.
+Claude grooms backlog (writes proposed actions to manifest), bundles dust,
+reviews blocked issues, updates AGENTS.md, commits manifest + docs to PR →
+review-agent reviews all proposed actions → after merge, gardener-run.sh
+executes manifest actions via API → `PHASE:done`.
