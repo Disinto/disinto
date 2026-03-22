@@ -84,6 +84,8 @@ Evidence from the preflight step informs whether each prediction is valid
       color #c2e0c6, description "Prediction triaged by planner")
     - <backlog_label_id>           → backlog
     - <action_label_id>            → action
+    - <priority_label_id>          → priority (create if missing,
+      color #d4c5f9, description "Queue priority — picked before plain backlog")
     These are DISTINCT labels — do not reuse IDs across them.
 
 4. For each prediction, read the title and body. Choose one action:
@@ -336,6 +338,33 @@ Filing gate — for each constraint:
 4. If an issue already exists but is in backlog without proper context,
    consider adding a comment noting its constraint status.
 
+### Priority label management
+
+After identifying the top 3 constraints and their issues (existing or newly
+filed), synchronize the `priority` label so only the current bottleneck
+issues are prioritized. The `backlog` label is NEVER removed — `priority`
+is purely additive.
+
+5. **Add `priority` to top-3 constraint issues:**
+   For each of the top 3 constraint issues (whether just filed or already
+   existing), check if it already has the `priority` label. If not, add it:
+     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues/<issue_number>/labels" \
+       -d '{"labels":[<priority_label_id>]}'
+
+6. **Remove `priority` from issues no longer in top 3:**
+   Fetch all open issues that currently have the `priority` label:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&labels=priority&type=issues&limit=50"
+   For each issue in this list that is NOT one of the current top 3
+   constraint issues, remove the `priority` label (demote back to plain
+   `backlog`):
+     curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues/<issue_number>/labels/<priority_label_id>"
+   This keeps the priority set current — only the active bottleneck issues
+   get priority, not stale constraints from previous runs.
+
 Rules:
 - **Maximum 3 issues filed per run** — only at constraints
 - **No issues filed past the bottleneck** — items beyond the top 3
@@ -441,6 +470,11 @@ Format:
   ## Issues created
   - #NNN: title — why (constraint for objectives X, Y)
   (or "No new issues — constraints already have open issues" if none)
+
+  ## Priority label changes
+  - Added priority: #NNN, #NNN (top 3 constraints)
+  - Removed priority: #NNN (no longer in top 3)
+  (or "No priority changes" if the set is unchanged)
 
   ## Observations
   - Key patterns, resource state, metric trends noticed during this run
