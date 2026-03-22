@@ -5,7 +5,8 @@
 # this formula as context. Claude executes all steps autonomously.
 #
 # Steps: preflight → prediction-triage → update-prerequisite-tree
-#        → file-at-constraints → journal-and-memory → commit-and-pr
+#        → file-at-constraints → dispatch-idle-formulas
+#        → journal-and-memory → commit-and-pr
 #
 # Core change from v2: replaces gap-analysis-and-spray with a constraint-
 # focused executive using a Prerequisite Tree (Theory of Constraints).
@@ -252,8 +253,8 @@ Update the tree by applying these operations:
 8. **Check resource utilization**: Read RESOURCES.md for available compute and
    formulas. If evidence-generating formulas exist but haven't run recently
    (check evidence/ timestamps or recent action issues), note this as an
-   underutilized resource. The file-at-constraints step should consider
-   dispatching idle formulas as action issues.
+   underutilized resource. The dispatch-idle-formulas step will use this
+   information to dispatch idle formulas as action issues.
 
 Write the updated tree to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
 Use this format:
@@ -401,6 +402,64 @@ No new items needed.
 needs = ["update-prerequisite-tree"]
 
 [[steps]]
+id    = "dispatch-idle-formulas"
+title = "Dispatch idle formulas independently of constraint budget"
+description = """
+Data collection should be continuous, not gated by the constraint budget.
+Action issues consume compute time (abundant when idle), not dev-agent time.
+What you don't measure, you can't manage — keep the measurement pipeline running.
+
+These dispatches do NOT count toward the 3-issue constraint budget from
+file-at-constraints. They use different resources (compute, not dev-agent time)
+and produce data that informs future planning.
+
+1. Read available formulas:
+   - Factory formulas: $FACTORY_ROOT/formulas/*.toml
+   - Project formulas: $PROJECT_REPO_ROOT/formulas/*.toml
+
+2. Fetch recently closed action issues to determine last run times:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=closed&type=issues&labels=action&limit=50&sort=updated&direction=desc"
+
+3. For each formula, determine if it is idle (needs dispatch):
+   a. Check if an open action issue already references this formula —
+      if so, skip (already dispatched).
+   b. Check the most recent closed action issue referencing this formula.
+      If it closed within the last 7 days, skip (recently run).
+   c. Check evidence/ directory timestamps in the project repo for
+      outputs associated with this formula. If fresh, skip.
+   d. If none of the above, the formula is idle.
+
+4. For each idle formula, file an action issue to dispatch it:
+     curl -sf -X POST \
+       -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues" \
+       -d '{"title":"action: run <formula-name>","body":"...","labels":[<action_label_id>]}'
+
+   Issue body format:
+     ## Formula\n<formula-name> from <factory|project> formulas\n\n## Why\nIdle formula dispatch — data is stale or missing. Continuous measurement\nkeeps the planning and prediction pipeline informed.\n\n## Affected files\n- formulas/<formula-name>.toml\n- evidence/ (output destination)\n\n## Acceptance criteria\n- [ ] Formula executed successfully\n- [ ] Evidence or output produced
+
+   Verify the action label was applied (re-apply if needed):
+     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues/<new_issue_num>/labels" \
+       -d '{"labels":[<action_label_id>]}'
+
+5. Skip formulas that are nervous-system formulas (run-planner, run-gardener,
+   run-supervisor, run-predictor, review-pr) — these run from cron directly
+   per AD-001 and must not be dispatched as action issues.
+
+Rules:
+- No limit on the number of action issues filed here — this is separate
+  from the 3-issue constraint budget
+- Only dispatch formulas that actually exist on disk
+- Do not dispatch if an open action issue already references the formula
+- Respect AD-001: nervous-system formulas run from cron, not action issues
+"""
+needs = ["file-at-constraints"]
+
+[[steps]]
 id    = "journal-and-memory"
 title = "Write prerequisite tree, journal entry, and periodic memory update"
 description = """
@@ -444,6 +503,10 @@ Format:
   ## Issues created
   - #NNN: title — why (constraint for objectives X, Y)
   (or "No new issues — constraints already have open issues" if none)
+
+  ## Idle formulas dispatched
+  - <formula-name>: dispatched as #NNN — data was stale/missing since <date>
+  (or "No idle formulas" or "All formulas recently run")
 
   ## Observations
   - Key patterns, resource state, metric trends noticed during this run
@@ -489,7 +552,7 @@ Rules:
 
 Format: simple markdown with dated sections.
 """
-needs = ["file-at-constraints"]
+needs = ["dispatch-idle-formulas"]
 
 [[steps]]
 id    = "commit-and-pr"
