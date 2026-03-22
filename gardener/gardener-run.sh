@@ -464,6 +464,7 @@ _gardener_on_phase_change() {
       reason=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || true)
       log "escalated: ${reason}"
       matrix_send "gardener" "Gardener escalated: ${reason}" 2>/dev/null || true
+      agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
     PHASE:crashed)
       if [ "${_GARDENER_CRASH_COUNT:-0}" -gt 0 ]; then
