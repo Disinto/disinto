@@ -30,6 +30,7 @@ Init options:
   --branch <name>      Primary branch (default: auto-detect)
   --repo-root <path>   Local clone path (default: ~/name)
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
+  --token <token>      Codeberg API token (saved to ~/.netrc)
   --yes                Skip confirmation prompts
 EOF
   exit 1
@@ -55,6 +56,109 @@ parse_repo_slug() {
 # Build a clone-able URL from a slug.
 clone_url_from_slug() {
   printf 'https://codeberg.org/%s.git' "$1"
+}
+
+# Write (or update) Codeberg credentials in ~/.netrc.
+write_netrc() {
+  local login="$1" token="$2"
+  local netrc="${HOME}/.netrc"
+
+  # Remove existing codeberg.org entry if present
+  if [ -f "$netrc" ]; then
+    local tmp
+    tmp=$(mktemp)
+    awk '
+      /^machine codeberg\.org/ { skip=1; next }
+      /^machine / { skip=0 }
+      !skip
+    ' "$netrc" > "$tmp"
+    mv "$tmp" "$netrc"
+  fi
+
+  # Append new entry
+  printf 'machine codeberg.org\nlogin %s\npassword %s\n' "$login" "$token" >> "$netrc"
+  chmod 600 "$netrc"
+}
+
+# Interactively set up Codeberg auth if missing.
+# Args: [token_from_flag]
+setup_codeberg_auth() {
+  local token_flag="${1:-}"
+
+  # --token flag takes priority: verify and save
+  if [ -n "$token_flag" ]; then
+    local login
+    login=$(curl -sf --max-time 10 \
+      -H "Authorization: token ${token_flag}" \
+      "https://codeberg.org/api/v1/user" | jq -r '.login') || {
+      echo "Error: provided token failed verification" >&2
+      exit 1
+    }
+    write_netrc "$login" "$token_flag"
+    echo "Saving to ~/.netrc... done."
+    echo "Verified: logged in as ${login} ✓"
+    export CODEBERG_TOKEN="$token_flag"
+    return
+  fi
+
+  # Existing auth — skip
+  if [ -n "${CODEBERG_TOKEN:-}" ]; then
+    return
+  fi
+  if grep -q 'codeberg\.org' ~/.netrc 2>/dev/null; then
+    CODEBERG_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
+    export CODEBERG_TOKEN
+    return
+  fi
+
+  # Non-interactive — fail with guidance
+  if [ ! -t 0 ]; then
+    echo "Error: no Codeberg auth found" >&2
+    echo "  Set CODEBERG_TOKEN, configure ~/.netrc, or use --token <token>" >&2
+    exit 1
+  fi
+
+  # Interactive guided flow
+  echo ""
+  echo "No Codeberg authentication found."
+  echo ""
+  echo "1. Open https://codeberg.org/user/settings/applications"
+  echo "2. Create a token with these scopes:"
+  echo "   - write:issue  (create issues, add labels, post comments, close issues)"
+  echo "   - write:repository  (push branches, create PRs, merge PRs)"
+  echo "3. Paste the token below."
+  echo ""
+
+  while true; do
+    read -rsp "Codeberg token: " token_input
+    echo ""
+
+    if [ -z "$token_input" ]; then
+      echo "Token cannot be empty. Try again." >&2
+      continue
+    fi
+
+    local login
+    login=$(curl -sf --max-time 10 \
+      -H "Authorization: token ${token_input}" \
+      "https://codeberg.org/api/v1/user" 2>/dev/null | jq -r '.login' 2>/dev/null) || login=""
+
+    if [ -z "$login" ]; then
+      echo "Token verification failed. Check your token and try again." >&2
+      read -rp "Retry? [Y/n] " retry
+      if [[ "$retry" =~ ^[Nn] ]]; then
+        echo "Aborted." >&2
+        exit 1
+      fi
+      continue
+    fi
+
+    write_netrc "$login" "$token_input"
+    echo "Saving to ~/.netrc... done."
+    echo "Verified: logged in as ${login} ✓"
+    export CODEBERG_TOKEN="$token_input"
+    return
+  done
 }
 
 # Preflight check — verify all factory requirements before proceeding.
@@ -103,19 +207,9 @@ preflight_check() {
     fi
   fi
 
-  # ── Codeberg auth ──
-  local has_codeberg_auth=true
-  if [ -z "${CODEBERG_TOKEN:-}" ]; then
-    if ! grep -q codeberg.org ~/.netrc 2>/dev/null; then
-      echo "Error: no Codeberg auth (set CODEBERG_TOKEN or configure ~/.netrc)" >&2
-      echo "  Set CODEBERG_TOKEN in ${FACTORY_ROOT}/.env or export it" >&2
-      errors=$((errors + 1))
-      has_codeberg_auth=false
-    fi
-  fi
-
-  # Verify Codeberg API access actually works
-  if [ "$has_codeberg_auth" = true ] && command -v curl &>/dev/null; then
+  # ── Codeberg auth (setup_codeberg_auth handles interactive setup;
+  #    this verifies the API actually works) ──
+  if [ -n "${CODEBERG_TOKEN:-}" ] && command -v curl &>/dev/null; then
     local curl_args=(-sf --max-time 10)
     if [ -n "${CODEBERG_TOKEN:-}" ]; then
       curl_args+=(-H "Authorization: token ${CODEBERG_TOKEN}")
@@ -321,12 +415,13 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false token_flag=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)    branch="$2"; shift 2 ;;
       --repo-root) repo_root="$2"; shift 2 ;;
       --ci-id)     ci_id="$2"; shift 2 ;;
+      --token)     token_flag="$2"; shift 2 ;;
       --yes)       auto_yes=true; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
@@ -396,6 +491,9 @@ p.write_text(text)
       fi
     fi
   fi
+
+  # Set up Codeberg auth (interactive if needed, before preflight)
+  setup_codeberg_auth "$token_flag"
 
   # Preflight: verify factory requirements
   preflight_check
