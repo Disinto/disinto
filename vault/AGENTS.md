@@ -1,4 +1,4 @@
-<!-- last-reviewed: 80a64cd3e4d2836bfab3c46230a780e3e233125d -->
+<!-- last-reviewed: ac51497489abc5412bc47f451facc30b0455cbd2 -->
 # Vault Agent
 
 **Role**: Dual-purpose gate — action safety classification and resource procurement.
@@ -6,7 +6,8 @@
 **Pipeline A — Action Gating (*.json)**: Actions enter a pending queue and are
 classified by Claude via `vault-agent.sh`, which can auto-approve (call
 `vault-fire.sh` directly), auto-reject (call `vault-reject.sh`), or escalate
-to a human via Matrix for APPROVE/REJECT.
+to a human by writing `PHASE:escalate` to a phase file and sending a Matrix
+message — using the same unified escalation path as dev/action agents.
 
 **Pipeline B — Procurement (*.md)**: The planner files resource requests as
 markdown files in `vault/pending/`. `vault-poll.sh` notifies the human via
