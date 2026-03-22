@@ -47,7 +47,7 @@ build_context_block VISION.md AGENTS.md RESOURCES.md planner/prerequisite-tree.m
 
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
-MEMORY_FILE="$FACTORY_ROOT/planner/MEMORY.md"
+MEMORY_FILE="$PROJECT_REPO_ROOT/planner/MEMORY.md"
 if [ -f "$MEMORY_FILE" ]; then
   MEMORY_BLOCK="
 ### planner/MEMORY.md (persistent memory from prior runs)
@@ -57,7 +57,7 @@ fi
 
 # ── Read recent journal files ──────────────────────────────────────────
 JOURNAL_BLOCK=""
-JOURNAL_DIR="$FACTORY_ROOT/planner/journal"
+JOURNAL_DIR="$PROJECT_REPO_ROOT/planner/journal"
 if [ -d "$JOURNAL_DIR" ]; then
   # Load last 5 journal files (most recent first) for run history context
   JOURNAL_FILES=$(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -5)

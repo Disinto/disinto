@@ -42,11 +42,11 @@ Set up the working environment for this planning run.
      HEAD_SHA=$(git rev-parse HEAD)
      echo "$HEAD_SHA" > /tmp/planner-head-sha
 
-4. Read the planner memory file at: $FACTORY_ROOT/planner/MEMORY.md
+4. Read the planner memory file at: $PROJECT_REPO_ROOT/planner/MEMORY.md
    If it does not exist, this is the first planning run.
    Keep this memory context in mind for all subsequent steps.
 
-5. Read the prerequisite tree at: $FACTORY_ROOT/planner/prerequisite-tree.md
+5. Read the prerequisite tree at: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
    If it does not exist, create an initial tree from VISION.md in the
    update-prerequisite-tree step.
 """
@@ -234,11 +234,11 @@ Update the tree by applying these operations:
    the vault — see the file-at-constraints step for how to file requests.
 
 6. **Check vault state**: Scan vault directories for procurement status:
-   - `$FACTORY_ROOT/vault/pending/*.md` — requests awaiting human action.
+   - `$PROJECT_REPO_ROOT/vault/pending/*.md` — requests awaiting human action.
      Any prerequisite that depends on a pending procurement request should
      be marked: `[ ] <name> ⏳ blocked-on-vault (vault/pending/<id>.md)`
-   - `$FACTORY_ROOT/vault/approved/*.md` — fulfilled, being processed.
-   - `$FACTORY_ROOT/vault/fired/*.md` — completed. Check if the resource
+   - `$PROJECT_REPO_ROOT/vault/approved/*.md` — fulfilled, being processed.
+   - `$PROJECT_REPO_ROOT/vault/fired/*.md` — completed. Check if the resource
      now appears in RESOURCES.md and mark the prerequisite resolved.
    - Do NOT file issues for objectives blocked on pending vault items.
 
@@ -246,7 +246,7 @@ Update the tree by applying these operations:
    were not present last run. If a new resource appears, mark the
    corresponding prerequisite as resolved.
 
-Write the updated tree to: $FACTORY_ROOT/planner/prerequisite-tree.md
+Write the updated tree to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
 Use this format:
 
   # Prerequisite Tree
@@ -343,7 +343,7 @@ an issue:
    for this resource (match by filename).
 
 2. If no request exists, create a markdown file at:
-     $FACTORY_ROOT/vault/pending/<resource-id>.md
+     $PROJECT_REPO_ROOT/vault/pending/<resource-id>.md
 
    Format:
    ```
@@ -389,7 +389,7 @@ memory is PERIODIC.
 ### 1. Prerequisite tree (always — committed to git)
 
 Write the updated prerequisite tree to:
-  $FACTORY_ROOT/planner/prerequisite-tree.md
+  $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
 
 This is the tree you built in the update-prerequisite-tree step.
 Include the "Last updated" comment at the top.
@@ -397,7 +397,7 @@ Include the "Last updated" comment at the top.
 ### 2. Journal entry (always — committed to git)
 
 Create a daily journal file at:
-  $FACTORY_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
+  $PROJECT_REPO_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
 
 If the file already exists (multiple runs per day), append a new section
 with a timestamp header.
@@ -444,7 +444,7 @@ Decide whether to update memory:
    does not exist, perform the memory update below.
 4. Otherwise, skip the memory update — MEMORY.md remains read-only context.
 
-When updating memory, write to: $FACTORY_ROOT/planner/MEMORY.md
+When updating memory, write to: $PROJECT_REPO_ROOT/planner/MEMORY.md
 (replace the entire file)
 
 Start the file with the run counter marker:
