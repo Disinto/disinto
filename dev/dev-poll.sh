@@ -278,8 +278,10 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
 done
 
 if [ "$PL_MERGED_ANY" = true ]; then
+  log "pre-lock: merged PR(s) successfully — exiting"
   exit 0
 fi
+log "pre-lock: no PRs merged, checking agent lock"
 
 # --- Check if dev-agent already running ---
 if [ -f "$LOCKFILE" ]; then
