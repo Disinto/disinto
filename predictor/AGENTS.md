@@ -1,14 +1,22 @@
 <!-- last-reviewed: ac51497489abc5412bc47f451facc30b0455cbd2 -->
 # Predictor Agent
 
-**Role**: Infrastructure pattern detection (the "goblin"). Runs a 3-step
+**Role**: Risk oracle and opportunity spotter (the "goblin"). Runs a 3-step
 formula (preflight → collect-signals → analyze-and-predict) via interactive
-tmux Claude session (sonnet). Collects disinto-specific signals: CI pipeline
-trends (Woodpecker), stale issues, agent health (tmux sessions + logs), and
-resource patterns (RAM, disk, load, containers). Files up to 5
-`prediction/unreviewed` issues for the Planner to triage. The predictor MUST
-NOT emit feature work — only observations about CI health, issue staleness,
-agent status, and system conditions.
+tmux Claude session (sonnet). Collects three categories of signals:
+
+1. **Health signals** — CI pipeline trends (Woodpecker), stale issues, agent
+   health (tmux sessions + logs), resource patterns (RAM, disk, load, containers)
+2. **Outcome signals** — output freshness (formula journals/artifacts), capacity
+   utilization (idle agents vs dispatchable backlog), throughput (closed issues,
+   merged PRs, churn detection)
+3. **External signals** — dependency security advisories, upstream breaking
+   changes, deprecation notices, ecosystem shifts (via targeted web search)
+
+Files up to 5 `prediction/unreviewed` issues for the Planner to triage.
+Predictions cover both "things going wrong" and "opportunities being missed".
+The predictor MUST NOT emit feature work — only observations about health,
+outcomes, and external risks/opportunities.
 
 **Trigger**: `predictor-run.sh` runs daily at 06:00 UTC via cron (1h before
 the planner at 07:00). Guarded by PID lock (`/tmp/predictor-run.lock`) and
@@ -31,6 +39,8 @@ memory check (skips if available RAM < 2000 MB).
 
 **Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →
 load formula + context → create tmux session → Claude collects signals
-(CI trends, stale issues, agent health, resources) → dedup against existing
-open predictions → file `prediction/unreviewed` issues → `PHASE:done`.
+(health: CI trends, stale issues, agent health, resources; outcomes: output
+freshness, capacity utilization, throughput; external: dependency advisories,
+ecosystem changes via web search) → dedup against existing open predictions →
+file `prediction/unreviewed` issues → `PHASE:done`.
 The planner's Phase 1 later triages these predictions.
