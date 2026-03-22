@@ -195,8 +195,16 @@ do_merge() {
     return 0
   fi
 
-  # HTTP 405 — merge requirements not met (approvals, branch protection); structural, not transient
+  # HTTP 405 — could be "merge requirements not met" OR "already merged" (race with dev-poll).
+  # Before escalating, check whether the PR was already merged by another agent.
   if [ "$merge_http_code" = "405" ]; then
+    local pr_state
+    pr_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      "${API}/pulls/${pr_num}" | jq -r '.merged // false') || pr_state="false"
+    if [ "$pr_state" = "true" ]; then
+      log "do_merge: PR #${pr_num} already merged (detected after HTTP 405) — treating as success"
+      return 0
+    fi
     log "do_merge: PR #${pr_num} blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}"
     printf 'PHASE:escalate\nReason: %s\n' \
       "PR #${pr_num} merge blocked — merge requirements not met (HTTP 405): ${merge_body:0:200}" \
