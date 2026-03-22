@@ -84,19 +84,20 @@ write_netrc() {
 # Args: [token_from_flag]
 setup_codeberg_auth() {
   local token_flag="${1:-}"
+  local repo_slug="${2:-}"
 
   # --token flag takes priority: verify and save
   if [ -n "$token_flag" ]; then
-    local login
-    login=$(curl -sf --max-time 10 \
+    local verify_url="https://codeberg.org/api/v1/repos/${repo_slug}"
+    if ! curl -sf --max-time 10 \
       -H "Authorization: token ${token_flag}" \
-      "https://codeberg.org/api/v1/user" | jq -r '.login') || {
+      "$verify_url" >/dev/null 2>&1; then
       echo "Error: provided token failed verification" >&2
       exit 1
-    }
-    write_netrc "$login" "$token_flag"
+    fi
+    write_netrc "token" "$token_flag"
     echo "Saving to ~/.netrc... done."
-    echo "Verified: logged in as ${login} ✓"
+    echo "Verified: token accepted ✓"
     export CODEBERG_TOKEN="$token_flag"
     return
   fi
@@ -138,12 +139,10 @@ setup_codeberg_auth() {
       continue
     fi
 
-    local login
-    login=$(curl -sf --max-time 10 \
+    local verify_url="https://codeberg.org/api/v1/repos/${repo_slug}"
+    if ! curl -sf --max-time 10 \
       -H "Authorization: token ${token_input}" \
-      "https://codeberg.org/api/v1/user" 2>/dev/null | jq -r '.login' 2>/dev/null) || login=""
-
-    if [ -z "$login" ]; then
+      "$verify_url" >/dev/null 2>&1; then
       echo "Token verification failed. Check your token and try again." >&2
       read -rp "Retry? [Y/n] " retry
       if [[ "$retry" =~ ^[Nn] ]]; then
@@ -153,9 +152,9 @@ setup_codeberg_auth() {
       continue
     fi
 
-    write_netrc "$login" "$token_input"
+    write_netrc "token" "$token_input"
     echo "Saving to ~/.netrc... done."
-    echo "Verified: logged in as ${login} ✓"
+    echo "Verified: token accepted ✓"
     export CODEBERG_TOKEN="$token_input"
     return
   done
@@ -163,6 +162,7 @@ setup_codeberg_auth() {
 
 # Preflight check — verify all factory requirements before proceeding.
 preflight_check() {
+  local repo_slug="${1:-}"
   local errors=0
 
   # ── Required commands ──
@@ -216,7 +216,7 @@ preflight_check() {
     else
       curl_args+=(--netrc)
     fi
-    if ! curl "${curl_args[@]}" "https://codeberg.org/api/v1/user" >/dev/null 2>&1; then
+    if ! curl "${curl_args[@]}" "https://codeberg.org/api/v1/repos/${repo_slug}" >/dev/null 2>&1; then
       echo "Error: Codeberg API auth failed" >&2
       echo "  Verify your CODEBERG_TOKEN or ~/.netrc credentials" >&2
       errors=$((errors + 1))
@@ -493,10 +493,10 @@ p.write_text(text)
   fi
 
   # Set up Codeberg auth (interactive if needed, before preflight)
-  setup_codeberg_auth "$token_flag"
+  setup_codeberg_auth "$token_flag" "$codeberg_repo"
 
   # Preflight: verify factory requirements
-  preflight_check
+  preflight_check "$codeberg_repo"
 
   # Determine repo root (for new projects)
   repo_root="${repo_root:-/home/${USER}/${project_name}}"
