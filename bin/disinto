@@ -57,18 +57,98 @@ clone_url_from_slug() {
   printf 'https://codeberg.org/%s.git' "$1"
 }
 
-# Validate that required tokens and tools are available.
-validate_env() {
+# Preflight check — verify all factory requirements before proceeding.
+preflight_check() {
   local errors=0
+
+  # ── Required commands ──
+  local -A hints=(
+    [claude]="Install: https://docs.anthropic.com/en/docs/claude-code/overview"
+    [tmux]="Install: apt install tmux  /  brew install tmux"
+    [git]="Install: apt install git  /  brew install git"
+    [jq]="Install: apt install jq  /  brew install jq"
+    [python3]="Install: apt install python3  /  brew install python3"
+    [curl]="Install: apt install curl  /  brew install curl"
+  )
+
+  local cmd
+  for cmd in claude tmux git jq python3 curl; do
+    if ! command -v "$cmd" &>/dev/null; then
+      echo "Error: ${cmd} not found" >&2
+      echo "  ${hints[$cmd]}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+
+  # ── Claude Code authentication ──
+  if command -v claude &>/dev/null && command -v jq &>/dev/null; then
+    local auth_json auth_stderr auth_rc=0
+    auth_stderr=$(claude auth status 2>&1 >/dev/null) || auth_rc=$?
+    auth_json=$(claude auth status 2>/dev/null) || auth_json=""
+    # Only skip check if subcommand is unrecognized (old claude version)
+    if printf '%s' "$auth_stderr" | grep -qi "unknown command"; then
+      : # claude version doesn't support auth status — skip
+    elif [ -z "$auth_json" ] || [ "$auth_rc" -ne 0 ]; then
+      echo "Error: Claude Code is not authenticated (auth check failed)" >&2
+      echo "  Run: claude auth login" >&2
+      errors=$((errors + 1))
+    else
+      local logged_in
+      logged_in=$(printf '%s' "$auth_json" | jq -r '.loggedIn // false' 2>/dev/null) || logged_in="false"
+      if [ "$logged_in" != "true" ]; then
+        echo "Error: Claude Code is not authenticated" >&2
+        echo "  Run: claude auth login" >&2
+        errors=$((errors + 1))
+      fi
+    fi
+  fi
+
+  # ── Codeberg auth ──
+  local has_codeberg_auth=true
   if [ -z "${CODEBERG_TOKEN:-}" ]; then
-    echo "Error: CODEBERG_TOKEN is not set" >&2
-    echo "  Set it in ${FACTORY_ROOT}/.env or export it" >&2
-    errors=1
+    if ! grep -q codeberg.org ~/.netrc 2>/dev/null; then
+      echo "Error: no Codeberg auth (set CODEBERG_TOKEN or configure ~/.netrc)" >&2
+      echo "  Set CODEBERG_TOKEN in ${FACTORY_ROOT}/.env or export it" >&2
+      errors=$((errors + 1))
+      has_codeberg_auth=false
+    fi
   fi
-  if ! command -v claude &>/dev/null; then
-    echo "Warning: claude CLI not found in PATH" >&2
+
+  # Verify Codeberg API access actually works
+  if [ "$has_codeberg_auth" = true ] && command -v curl &>/dev/null; then
+    local curl_args=(-sf --max-time 10)
+    if [ -n "${CODEBERG_TOKEN:-}" ]; then
+      curl_args+=(-H "Authorization: token ${CODEBERG_TOKEN}")
+    else
+      curl_args+=(--netrc)
+    fi
+    if ! curl "${curl_args[@]}" "https://codeberg.org/api/v1/user" >/dev/null 2>&1; then
+      echo "Error: Codeberg API auth failed" >&2
+      echo "  Verify your CODEBERG_TOKEN or ~/.netrc credentials" >&2
+      errors=$((errors + 1))
+    fi
   fi
+
+  # ── Codeberg SSH access ──
+  if command -v ssh &>/dev/null; then
+    local ssh_output
+    ssh_output=$(ssh -T -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+      git@codeberg.org 2>&1) || true
+    if ! printf '%s' "$ssh_output" | grep -qi "successfully authenticated"; then
+      echo "Error: Codeberg SSH access failed (agents push via SSH)" >&2
+      echo "  Add your SSH key: https://codeberg.org/user/settings/keys" >&2
+      errors=$((errors + 1))
+    fi
+  fi
+
+  # ── Optional tools (warn only) ──
+  if ! command -v docker &>/dev/null; then
+    echo "Warning: docker not found (some projects may need it)" >&2
+  fi
+
   if [ "$errors" -gt 0 ]; then
+    echo "" >&2
+    echo "${errors} preflight error(s) — fix the above before running disinto init" >&2
     exit 1
   fi
 }
@@ -317,8 +397,8 @@ p.write_text(text)
     fi
   fi
 
-  # Validate tokens
-  validate_env
+  # Preflight: verify factory requirements
+  preflight_check
 
   # Determine repo root (for new projects)
   repo_root="${repo_root:-/home/${USER}/${project_name}}"
