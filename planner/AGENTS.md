@@ -15,11 +15,11 @@ prerequisites, discover new ones, update the tree. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
 the most downstream objectives — file issues at these constraints as either
 `backlog` (code changes, dev-agent) or `action` (run existing formula,
-action-agent). Phase 4 (dispatch-idle-formulas): dispatch formulas that have not
-run in 7+ days as action issues — runs independently of the constraint budget.
-Phase 5 (journal-and-memory): write updated prerequisite tree + daily journal
+action-agent). Action issues count toward the 3-issue constraint budget — they
+are strategic investments, not maintenance.
+Phase 4 (journal-and-memory): write updated prerequisite tree + daily journal
 entry (committed to git) and update `planner/MEMORY.md` (committed to git).
-Phase 6 (commit-and-pr): one commit with all file changes, push, create PR.
+Phase 5 (commit-and-pr): one commit with all file changes, push, create PR.
 AGENTS.md maintenance is handled by the Gardener.
 
 **Artifacts use `$PROJECT_REPO_ROOT`**: All planner artifacts (journal,
