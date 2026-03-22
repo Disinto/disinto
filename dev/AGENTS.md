@@ -1,12 +1,15 @@
-<!-- last-reviewed: ac51497489abc5412bc47f451facc30b0455cbd2 -->
+<!-- last-reviewed: 251d160e213b19a4fcc0cd8f8e3be9ea3283887f -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
 CI failures and review feedback.
 
-**Trigger**: `dev-poll.sh` runs every 10 min via cron. It scans for ready
-backlog issues (all deps closed) or orphaned in-progress issues and spawns
-`dev-agent.sh <issue-number>`.
+**Trigger**: `dev-poll.sh` runs every 10 min via cron. It performs a direct-merge
+scan first (approved + CI green PRs — including chore/gardener PRs without issue
+numbers), then checks the agent lock and scans for ready backlog issues (all deps
+closed) or orphaned in-progress issues to spawn `dev-agent.sh <issue-number>`.
+The direct-merge scan runs before the lock check so approved PRs get merged even
+while a dev-agent session is active on another issue.
 
 **Key files**:
 - `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts

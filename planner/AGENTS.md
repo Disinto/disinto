@@ -1,22 +1,31 @@
-<!-- last-reviewed: ac51497489abc5412bc47f451facc30b0455cbd2 -->
+<!-- last-reviewed: 251d160e213b19a4fcc0cd8f8e3be9ea3283887f -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
 executed directly from cron via tmux + Claude.
 Phase 0 (preflight): pull latest code, load persistent memory and prerequisite
-tree from `planner/MEMORY.md` and `planner/prerequisite-tree.md`. Phase 1
+tree from `planner/MEMORY.md` and `planner/prerequisite-tree.md`. Also reads
+all available formulas: factory formulas (`$FACTORY_ROOT/formulas/*.toml`) and
+project-specific formulas (`$PROJECT_REPO_ROOT/formulas/*.toml`). Phase 1
 (prediction-triage): triage `prediction/unreviewed` issues filed by the
 Predictor — for each prediction: promote to action, promote to backlog, watch
 (relabel to prediction/backlog), or dismiss with reasoning. Phase 2
 (update-prerequisite-tree): scan repo state + open/closed issues, mark resolved
 prerequisites, discover new ones, update the tree. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
-the most downstream objectives — file issues ONLY at these constraints. No
-issues filed past the bottleneck. Phase 4 (journal-and-memory): write updated
-prerequisite tree + daily journal entry (committed to git) and update
-`planner/MEMORY.md` (committed to git). Phase 5 (commit-and-pr): one commit
-with all file changes, push, create PR. AGENTS.md maintenance is handled by
-the Gardener.
+the most downstream objectives — file issues at these constraints as either
+`backlog` (code changes, dev-agent) or `action` (run existing formula,
+action-agent). Phase 4 (dispatch-idle-formulas): dispatch formulas that have not
+run in 7+ days as action issues — runs independently of the constraint budget.
+Phase 5 (journal-and-memory): write updated prerequisite tree + daily journal
+entry (committed to git) and update `planner/MEMORY.md` (committed to git).
+Phase 6 (commit-and-pr): one commit with all file changes, push, create PR.
+AGENTS.md maintenance is handled by the Gardener.
+
+**Artifacts use `$PROJECT_REPO_ROOT`**: All planner artifacts (journal,
+prerequisite tree, memory, vault state) live under `$PROJECT_REPO_ROOT/planner/`
+and `$PROJECT_REPO_ROOT/vault/`, not `$FACTORY_ROOT`. Each project manages its
+own planner state independently.
 
 **Trigger**: `planner-run.sh` runs daily via cron (accepts an optional project
 TOML argument, defaults to `projects/disinto.toml`). It creates a tmux session
