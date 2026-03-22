@@ -220,6 +220,69 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
+# =============================================================================
+# PRE-LOCK: merge approved + CI-green PRs (no Claude session needed)
+#
+# Merging is a single API call — it doesn't need the dev-agent lock.
+# This ensures approved PRs get merged even while a dev-agent is running.
+# (See #531: direct merges should not be blocked by agent lock)
+# =============================================================================
+log "pre-lock: scanning for mergeable PRs"
+PL_PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  "${API}/pulls?state=open&limit=20")
+
+PL_MERGED_ANY=false
+for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
+  PL_PR_NUM=$(echo "$PL_PRS" | jq -r ".[$i].number")
+  PL_PR_SHA=$(echo "$PL_PRS" | jq -r ".[$i].head.sha")
+  PL_PR_BRANCH=$(echo "$PL_PRS" | jq -r ".[$i].head.ref")
+  PL_PR_TITLE=$(echo "$PL_PRS" | jq -r ".[$i].title")
+  PL_PR_BODY=$(echo "$PL_PRS" | jq -r ".[$i].body // \"\"")
+
+  # Extract issue number from branch name, PR title, or PR body
+  PL_ISSUE=$(echo "$PL_PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
+  if [ -z "$PL_ISSUE" ]; then
+    PL_ISSUE=$(echo "$PL_PR_TITLE" | grep -oP '#\K\d+' | tail -1 || true)
+  fi
+  if [ -z "$PL_ISSUE" ]; then
+    PL_ISSUE=$(echo "$PL_PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
+  fi
+  if [ -z "$PL_ISSUE" ]; then
+    continue
+  fi
+
+  PL_CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/commits/${PL_PR_SHA}/status" | jq -r '.state // "unknown"') || true
+
+  # Non-code PRs may have no CI — treat as passed
+  if ! ci_passed "$PL_CI_STATE" && ! ci_required_for_pr "$PL_PR_NUM"; then
+    PL_CI_STATE="success"
+  fi
+
+  if ! ci_passed "$PL_CI_STATE"; then
+    continue
+  fi
+
+  # Check for approval (non-stale)
+  PL_REVIEWS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    "${API}/pulls/${PL_PR_NUM}/reviews") || true
+  PL_HAS_APPROVE=$(echo "$PL_REVIEWS" | \
+    jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
+
+  if [ "${PL_HAS_APPROVE:-0}" -gt 0 ]; then
+    if try_direct_merge "$PL_PR_NUM" "$PL_ISSUE"; then
+      PL_MERGED_ANY=true
+    fi
+    # Direct merge failed — will fall through to post-lock dev-agent fallback
+  fi
+done
+
+if [ "$PL_MERGED_ANY" = true ]; then
+  log "pre-lock: merged PR(s) successfully — exiting"
+  exit 0
+fi
+log "pre-lock: no PRs merged, checking agent lock"
+
 # --- Check if dev-agent already running ---
 if [ -f "$LOCKFILE" ]; then
   LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null || echo "")
