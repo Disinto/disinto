@@ -6,15 +6,23 @@
 #
 # Steps: preflight → collect-signals → analyze-and-predict
 #
-# Disinto-specific signal sources:
-#   - CI pipeline trends (Woodpecker)
-#   - Stale issues (open issues with no recent activity)
-#   - Agent health (tmux sessions, recent logs)
-#   - Resource patterns (RAM, disk, load, containers)
+# Signal sources (three categories):
+#   Health signals:
+#     - CI pipeline trends (Woodpecker)
+#     - Stale issues (open issues with no recent activity)
+#     - Agent health (tmux sessions, recent logs)
+#     - Resource patterns (RAM, disk, load, containers)
+#   Outcome signals:
+#     - Output freshness (formula evidence/artifacts)
+#     - Capacity utilization (idle agents vs dispatchable work)
+#     - Throughput (recently closed issues, merged PRs)
+#   External signals:
+#     - Dependency security advisories
+#     - Upstream breaking changes and deprecations
 
 name        = "run-predictor"
-description = "Evidence-based prediction: CI trends, stale issues, agent health, resource patterns"
-version     = 1
+description = "Evidence-based prediction: health, outcome measurement, external environment signals"
+version     = 2
 model       = "sonnet"
 
 [context]
@@ -114,6 +122,59 @@ Also check prediction/backlog (watched but not yet actioned):
     "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
 
 Record their titles so you can avoid duplicating them.
+
+### 6. Outcome measurement
+
+Check whether the factory is producing results, not just running:
+
+- Read RESOURCES.md for available formulas and capabilities
+- Read $PROJECT_REPO_ROOT/formulas/*.toml for dispatchable work
+- Check evidence/output directories for freshness:
+    find "$PROJECT_REPO_ROOT" -maxdepth 3 -name "*.log" -o -name "journal" -type d | \
+      while read -r f; do
+        echo "=== $f ==="
+        find "$f" -maxdepth 1 -type f -printf '%T+ %p\n' 2>/dev/null | sort -r | head -5
+      done
+- Check recently closed issues — is work completing or just cycling?
+    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+      "$CODEBERG_API/issues?state=closed&type=issues&limit=20&sort=updated&direction=desc"
+- Check recently merged PRs — what's the throughput?
+    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+      "$CODEBERG_API/pulls?state=closed&sort=updated&direction=desc&limit=20" | \
+      jq '[.[] | select(.merged)]'
+- Compare available capacity vs actual utilization:
+    tmux list-sessions 2>/dev/null | wc -l  # active sessions
+    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+      "$CODEBERG_API/issues?state=open&type=issues&labels=backlog&limit=50" | jq 'length'
+
+Look for:
+- Formulas that haven't produced output recently (stale journals/logs)
+- Idle compute when dispatchable work exists (backlog items but no active sessions)
+- High churn (issues opened and closed rapidly without merged PRs)
+- Low throughput relative to available agents
+
+### 7. External environment scan
+
+Look outside the box for signals that could affect the project:
+
+- Identify key dependencies from the project (package.json, go.mod, Cargo.toml,
+  requirements.txt, or similar — whatever exists in $PROJECT_REPO_ROOT)
+- Identify key tools (Claude CLI version, Woodpecker CI, Caddy, Docker, etc.)
+- For each major dependency or tool, use web search to check for:
+    - Security advisories or CVEs
+    - Breaking changes in recent releases
+    - Deprecation notices
+    - Major version bumps that could require migration
+
+Use WebSearch to gather these signals. Be targeted — search for specific
+dependencies and tools used by the project, not general news.
+Limit to 5 web searches maximum to keep the run fast.
+
+Look for:
+- CVEs or security advisories mentioning project dependencies
+- Major version releases of key tools (could break CI, require migration)
+- Deprecation notices for APIs or services in use
+- Ecosystem shifts that could obsolete current approaches
 """
 needs = ["preflight"]
 
@@ -149,6 +210,28 @@ Analyze the collected signals for patterns and file up to 5 prediction issues.
 - Box idle (RAM > 3000MB, load < 1.0, few active sessions) → good time
   for expensive operations if any are pending
 
+**Low throughput** — Factory running but not producing:
+- No issues closed in 7+ days despite available backlog → pipeline may be stuck
+- PRs merged but no issues closed → work not tracked properly
+- Agent sessions active but no PRs created → agents may be spinning
+- Formulas with no recent journal entries → agent may not be running
+
+**Idle capacity** — Dispatchable work not being picked up:
+- Backlog items available but no in-progress issues → dev-poll may be stuck
+- Multiple agents idle (few tmux sessions) with work queued → scheduling problem
+- High churn: issues opened and closed quickly without PRs → busy but not productive
+
+**External risk** — Threats or opportunities from outside:
+- CVE or security advisory for a project dependency → patch urgently
+- Major version release of a key tool → may require migration planning
+- Deprecation notice for an API or service in use → plan transition
+- Breaking change upstream that could affect CI or builds → investigate
+
+**External opportunity** — Beneficial changes in the ecosystem:
+- New tool release that could accelerate work → consider adoption
+- Upstream improvement that simplifies current workarounds → refactor opportunity
+- Security patch available for a known vulnerability → apply proactively
+
 ## Filing predictions
 
 For each prediction, create a Codeberg issue with the `prediction/unreviewed` label.
@@ -177,10 +260,12 @@ For each prediction, create a Codeberg issue with the `prediction/unreviewed` la
 
 ## Rules
 - Max 5 predictions total
-- Do NOT predict feature work — only infrastructure/health/metric observations
+- Do NOT predict feature work — only health observations, outcome measurements,
+  and external risk/opportunity signals
 - Do NOT duplicate existing open predictions (checked in collect-signals)
 - Be specific: name the metric, the value, the threshold
 - Prefer high-confidence predictions backed by concrete data
+- External signals must name the specific dependency/tool and the advisory/change
 - If no meaningful patterns found, file zero issues — that is a valid outcome
 
 """
