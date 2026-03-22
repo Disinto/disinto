@@ -82,9 +82,17 @@ preflight_check() {
 
   # ── Claude Code authentication ──
   if command -v claude &>/dev/null && command -v jq &>/dev/null; then
-    local auth_json
+    local auth_json auth_stderr auth_rc=0
+    auth_stderr=$(claude auth status 2>&1 >/dev/null) || auth_rc=$?
     auth_json=$(claude auth status 2>/dev/null) || auth_json=""
-    if [ -n "$auth_json" ]; then
+    # Only skip check if subcommand is unrecognized (old claude version)
+    if printf '%s' "$auth_stderr" | grep -qi "unknown command"; then
+      : # claude version doesn't support auth status — skip
+    elif [ -z "$auth_json" ] || [ "$auth_rc" -ne 0 ]; then
+      echo "Error: Claude Code is not authenticated (auth check failed)" >&2
+      echo "  Run: claude auth login" >&2
+      errors=$((errors + 1))
+    else
       local logged_in
       logged_in=$(printf '%s' "$auth_json" | jq -r '.loggedIn // false' 2>/dev/null) || logged_in="false"
       if [ "$logged_in" != "true" ]; then
@@ -111,6 +119,8 @@ preflight_check() {
     local curl_args=(-sf --max-time 10)
     if [ -n "${CODEBERG_TOKEN:-}" ]; then
       curl_args+=(-H "Authorization: token ${CODEBERG_TOKEN}")
+    else
+      curl_args+=(--netrc)
     fi
     if ! curl "${curl_args[@]}" "https://codeberg.org/api/v1/user" >/dev/null 2>&1; then
       echo "Error: Codeberg API auth failed" >&2
