@@ -187,22 +187,26 @@ try_direct_merge() {
 
   if [ "${merge_http:-0}" = "200" ] || [ "${merge_http:-0}" = "204" ]; then
     log "PR #${pr_num} merged successfully"
-    # Close the issue (may already be closed by Codeberg auto-close)
-    curl -sf -X PATCH \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      -H 'Content-Type: application/json' \
-      "${API}/issues/${issue_num}" \
-      -d '{"state":"closed"}' >/dev/null 2>&1 || true
-    # Remove in-progress label
-    curl -sf -X DELETE \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
+    if [ "$issue_num" -gt 0 ]; then
+      # Close the issue (may already be closed by Codeberg auto-close)
+      curl -sf -X PATCH \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        "${API}/issues/${issue_num}" \
+        -d '{"state":"closed"}' >/dev/null 2>&1 || true
+      # Remove in-progress label
+      curl -sf -X DELETE \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
+      # Clean up phase/session artifacts
+      rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
+            "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
+      matrix_send "dev" "✅ PR #${pr_num} (issue #${issue_num}) merged directly by dev-poll" 2>/dev/null || true
+    else
+      matrix_send "dev" "✅ PR #${pr_num} merged directly by dev-poll (chore)" 2>/dev/null || true
+    fi
     # Clean up CI fix tracker
     ci_fix_reset "$pr_num"
-    # Clean up phase/session artifacts
-    rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
-          "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
-    matrix_send "dev" "✅ PR #${pr_num} (issue #${issue_num}) merged directly by dev-poll" 2>/dev/null || true
     return 0
   fi
 
@@ -248,7 +252,12 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     PL_ISSUE=$(echo "$PL_PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
   fi
   if [ -z "$PL_ISSUE" ]; then
-    continue
+    # Allow chore PRs from gardener/planner/predictor to merge without issue number
+    if [[ "$PL_PR_BRANCH" =~ ^chore/(gardener|planner|predictor)- ]]; then
+      PL_ISSUE=0
+    else
+      continue
+    fi
   fi
 
   PL_CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -491,8 +500,13 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     STUCK_ISSUE=$(echo "$PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
   fi
   if [ -z "$STUCK_ISSUE" ]; then
-    log "PR #${PR_NUM} has no issue ref — cannot spawn dev-agent, skipping"
-    continue
+    # Allow chore PRs from gardener/planner/predictor to merge without issue number
+    if [[ "$PR_BRANCH" =~ ^chore/(gardener|planner|predictor)- ]]; then
+      STUCK_ISSUE=0
+    else
+      log "PR #${PR_NUM} has no issue ref — cannot spawn dev-agent, skipping"
+      continue
+    fi
   fi
 
   CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
@@ -517,6 +531,11 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     if try_direct_merge "$PR_NUM" "$STUCK_ISSUE"; then
       exit 0
     fi
+    # Direct merge failed — dev-agent fallback requires a real issue number
+    if [ "$STUCK_ISSUE" -eq 0 ]; then
+      log "PR #${PR_NUM} direct merge failed — no issue ref for dev-agent, skipping"
+      continue
+    fi
     # Direct merge failed (conflicts?) — fall back to dev-agent
     SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -527,6 +546,11 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
     fi
     exit 0
+  fi
+
+  # Chore PRs without issue ref can only be direct-merged — skip dev-agent paths
+  if [ "$STUCK_ISSUE" -eq 0 ]; then
+    continue
   fi
 
   # Stuck: REQUEST_CHANGES or CI failure → spawn agent
