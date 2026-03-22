@@ -66,8 +66,10 @@ Evidence from the preflight step informs whether each prediction is valid
    If there are none, note that and skip to step 3b (label resolution
    is still required — the file-at-constraints step needs label IDs).
 
-2. Read available formulas from $FACTORY_ROOT/formulas/*.toml so you know
-   what actions can be dispatched.
+2. Read available formulas:
+   - Factory formulas: $FACTORY_ROOT/formulas/*.toml
+   - Project formulas: $PROJECT_REPO_ROOT/formulas/*.toml
+   Project formulas are dispatched via action issues on the project repo.
 
 3. Fetch all open issues to check for overlap:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
@@ -200,7 +202,8 @@ Read these inputs:
   - VISION.md — where we want to be (objectives come from milestones)
   - planner/prerequisite-tree.md — current tree (loaded in preflight)
   - RESOURCES.md — available agents, boxes, assets, formulas
-  - $FACTORY_ROOT/formulas/*.toml — what actions can be dispatched
+  - $FACTORY_ROOT/formulas/*.toml — factory formulas
+  - $PROJECT_REPO_ROOT/formulas/*.toml — project-specific formulas
   - Open issues (fetched via API, or reuse from prediction-triage)
   - Closed issues (fetch recently closed to detect resolved prerequisites):
       curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
@@ -246,6 +249,12 @@ Update the tree by applying these operations:
    were not present last run. If a new resource appears, mark the
    corresponding prerequisite as resolved.
 
+8. **Check resource utilization**: Read RESOURCES.md for available compute and
+   formulas. If evidence-generating formulas exist but haven't run recently
+   (check evidence/ timestamps or recent action issues), note this as an
+   underutilized resource. The file-at-constraints step should consider
+   dispatching idle formulas as action issues.
+
 Write the updated tree to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
 Use this format:
 
@@ -285,6 +294,18 @@ downstream objectives. To find them:
 2. Rank all unresolved prerequisites by blocking score (descending).
 
 3. Select the top 3. These are the constraints.
+
+When filing issues at constraints, choose the right agent type:
+
+- **backlog issue** (label: backlog): requires code changes — dev-agent picks it up,
+  writes code, creates PR, goes through CI + review.
+- **action issue** (label: action): runs an existing formula — action-agent picks it up,
+  executes the formula, reports results. Use for evidence generation (red-team,
+  evolution, holdout), metrics collection (resources, protocol), or any task that
+  has an existing formula.
+
+Prefer action dispatch when a formula already exists for the task. Keep compute
+resources invested — idle VPS time is wasted capacity.
 
 Filing gate — for each constraint:
 
