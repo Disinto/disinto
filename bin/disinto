@@ -263,15 +263,52 @@ disinto_init() {
   echo "Name:    ${project_name}"
 
   # Check for existing config
+  local toml_exists=false
   if [ -f "$toml_path" ]; then
-    echo "Error: ${toml_path} already exists" >&2
-    exit 1
+    toml_exists=true
+    echo "Config:  ${toml_path} (already exists, reusing)"
+
+    # Read repo_root and branch from existing TOML
+    local existing_root existing_branch
+    existing_root=$(python3 -c "
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+print(cfg.get('repo_root', ''))
+" "$toml_path" 2>/dev/null) || existing_root=""
+    existing_branch=$(python3 -c "
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+print(cfg.get('primary_branch', ''))
+" "$toml_path" 2>/dev/null) || existing_branch=""
+
+    # Use existing values as defaults
+    if [ -n "$existing_branch" ] && [ -z "$branch" ]; then
+      branch="$existing_branch"
+    fi
+
+    # Handle repo_root: flag overrides TOML, prompt if they differ
+    if [ -z "$repo_root" ]; then
+      repo_root="${existing_root:-/home/${USER}/${project_name}}"
+    elif [ -n "$existing_root" ] && [ "$repo_root" != "$existing_root" ]; then
+      echo "Note: --repo-root (${repo_root}) differs from TOML (${existing_root})"
+      if [ "$auto_yes" = false ] && [ -t 0 ]; then
+        read -rp "Update repo_root in TOML to ${repo_root}? [y/N] " confirm
+        if [[ "$confirm" =~ ^[Yy] ]]; then
+          sed -i "s|^repo_root.*=.*|repo_root       = \"${repo_root}\"|" "$toml_path"
+          echo "Updated: repo_root in ${toml_path}"
+        else
+          repo_root="$existing_root"
+        fi
+      fi
+    fi
   fi
 
   # Validate tokens
   validate_env
 
-  # Determine repo root
+  # Determine repo root (for new projects)
   repo_root="${repo_root:-/home/${USER}/${project_name}}"
 
   # Clone or validate
@@ -283,15 +320,17 @@ disinto_init() {
   fi
   echo "Branch:  ${branch}"
 
-  # Prompt for CI ID if interactive and not already set via flag
-  if [ "$ci_id" = "0" ] && [ "$auto_yes" = false ] && [ -t 0 ]; then
-    read -rp "Woodpecker CI repo ID (0 to skip CI): " user_ci_id
-    ci_id="${user_ci_id:-0}"
-  fi
+  # Generate project TOML (skip if already exists)
+  if [ "$toml_exists" = false ]; then
+    # Prompt for CI ID if interactive and not already set via flag
+    if [ "$ci_id" = "0" ] && [ "$auto_yes" = false ] && [ -t 0 ]; then
+      read -rp "Woodpecker CI repo ID (0 to skip CI): " user_ci_id
+      ci_id="${user_ci_id:-0}"
+    fi
 
-  # Generate project TOML
-  generate_toml "$toml_path" "$project_name" "$codeberg_repo" "$repo_root" "$branch" "$ci_id"
-  echo "Created: ${toml_path}"
+    generate_toml "$toml_path" "$project_name" "$codeberg_repo" "$repo_root" "$branch" "$ci_id"
+    echo "Created: ${toml_path}"
+  fi
 
   # Create labels on remote
   create_labels "$codeberg_repo"
