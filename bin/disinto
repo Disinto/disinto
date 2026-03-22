@@ -293,14 +293,26 @@ print(cfg.get('primary_branch', ''))
       repo_root="${existing_root:-/home/${USER}/${project_name}}"
     elif [ -n "$existing_root" ] && [ "$repo_root" != "$existing_root" ]; then
       echo "Note: --repo-root (${repo_root}) differs from TOML (${existing_root})"
-      if [ "$auto_yes" = false ] && [ -t 0 ]; then
+      local update_toml=false
+      if [ "$auto_yes" = true ]; then
+        update_toml=true
+      elif [ -t 0 ]; then
         read -rp "Update repo_root in TOML to ${repo_root}? [y/N] " confirm
         if [[ "$confirm" =~ ^[Yy] ]]; then
-          sed -i "s|^repo_root.*=.*|repo_root       = \"${repo_root}\"|" "$toml_path"
-          echo "Updated: repo_root in ${toml_path}"
+          update_toml=true
         else
           repo_root="$existing_root"
         fi
+      fi
+      if [ "$update_toml" = true ]; then
+        python3 -c "
+import sys, re, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+text = re.sub(r'^repo_root\s*=\s*.*$', 'repo_root       = \"' + sys.argv[2] + '\"', text, flags=re.MULTILINE)
+p.write_text(text)
+" "$toml_path" "$repo_root"
+        echo "Updated: repo_root in ${toml_path}"
       fi
     fi
   fi
