@@ -4,7 +4,7 @@
 # predictor-run.sh creates a tmux session with Claude (sonnet) and injects
 # this formula as context. Claude executes all steps autonomously.
 #
-# Steps: preflight → collect-signals → analyze-and-predict
+# Steps: preflight → collect-signals → re-evaluate-backlog → analyze-and-predict
 #
 # Signal sources (three categories):
 #   Health signals:
@@ -179,10 +179,122 @@ Look for:
 needs = ["preflight"]
 
 [[steps]]
+id    = "re-evaluate-backlog"
+title = "Re-evaluate open prediction/backlog watches"
+description = """
+Re-check prediction/backlog issues to detect changed conditions or stale watches.
+The collect-signals step already fetched prediction/backlog issues (step 5).
+Now actively re-evaluate each one instead of just using them for dedup.
+
+For each open prediction/backlog issue:
+
+### 1. Read context
+
+Fetch the issue body and all comments:
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues/<issue_number>"
+  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+    "$CODEBERG_API/issues/<issue_number>/comments"
+
+Pay attention to:
+- The original prediction body (signal source, confidence, suggested action)
+- The planner's triage comment (the "Watching — ..." comment with reasoning)
+- Any subsequent comments with updated context
+- The issue's created_at and updated_at timestamps
+
+### 2. Extract conditions
+
+From the planner's triage comment and original prediction body, identify the
+specific assumptions that made this a "watch, don't act" decision. Examples:
+- "static site config, no FastCGI" (Caddy CVE watch)
+- "RAM stable above 3GB" (resource pressure watch)
+- "no reverse proxy configured" (security exposure watch)
+- "dependency not in use yet" (CVE watch for unused feature)
+
+### 3. Re-check conditions
+
+Verify each assumption still holds by checking current system state:
+- Config files: read relevant configs in $PROJECT_REPO_ROOT
+- Versions: check installed versions of referenced tools/dependencies
+- Infrastructure: re-run relevant resource/health checks from collect-signals
+- Code changes: check git log for changes to affected files since the issue was created:
+    git log --oneline --since="<issue_created_at>" -- <affected_files>
+
+### 4. Decide
+
+For each prediction/backlog issue, choose one action:
+
+**CONDITIONS_CHANGED** — one or more assumptions no longer hold:
+  a. Resolve the prediction/backlog and prediction/unreviewed label IDs:
+       curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+         "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/unreviewed") | .id'
+       curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+         "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/actioned") | .id'
+  b. File a NEW prediction/unreviewed issue with updated context:
+       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues" \
+         -d '{"title":"<original title> — CONDITIONS CHANGED",
+              "body":"Re-evaluation of #<old_number>: conditions have changed.\\n\\n<what changed and why risk level is different now>\\n\\nOriginal prediction: #<old_number>\\n\\n---\\n**Signal source:** re-evaluation of prediction/backlog #<old_number>\\n**Confidence:** <high|medium|low>\\n**Suggested action:** <concrete next step>",
+              "labels":[<unreviewed_label_id>]}'
+  c. Comment on the OLD issue explaining what changed:
+       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<old_number>/comments" \
+         -d '{"body":"Superseded by #<new_number> — conditions changed: <summary>"}'
+  d. Relabel old issue: remove prediction/backlog, add prediction/actioned:
+       curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+         "$CODEBERG_API/issues/<old_number>/labels/<backlog_label_id>"
+       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<old_number>/labels" \
+         -d '{"labels":[<actioned_label_id>]}'
+  e. Close the old issue:
+       curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<old_number>" \
+         -d '{"state":"closed"}'
+
+**STALE** — 30+ days since last update AND conditions unchanged:
+  a. Comment explaining the closure:
+       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<issue_number>/comments" \
+         -d '{"body":"Closing stale watch — conditions stable for 30+ days. Will re-file if conditions change."}'
+  b. Relabel: remove prediction/backlog, add prediction/actioned:
+       curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
+         "$CODEBERG_API/issues/<issue_number>/labels/<backlog_label_id>"
+       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<issue_number>/labels" \
+         -d '{"labels":[<actioned_label_id>]}'
+  c. Close the issue:
+       curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$CODEBERG_API/issues/<issue_number>" \
+         -d '{"state":"closed"}'
+
+**UNCHANGED_RECENT** — conditions unchanged AND last update < 30 days ago:
+  Skip — no action needed. This is the current behavior.
+
+## Rules
+- Process ALL open prediction/backlog issues (already fetched in collect-signals step 5)
+- New predictions filed here count toward the 5-prediction cap in analyze-and-predict
+- Track how many new predictions were filed so analyze-and-predict can adjust its cap
+- Be conservative: only mark CONDITIONS_CHANGED when you have concrete evidence
+- Use the updated_at timestamp from the issue API to determine staleness
+"""
+needs = ["collect-signals"]
+
+[[steps]]
 id    = "analyze-and-predict"
 title = "Analyze signals and file prediction issues"
 description = """
-Analyze the collected signals for patterns and file up to 5 prediction issues.
+Analyze the collected signals for patterns and file prediction issues.
+
+The re-evaluate-backlog step may have already filed new predictions from changed
+conditions. Subtract those from the 5-prediction cap: if re-evaluation filed N
+predictions, you may file at most (5 - N) new predictions in this step.
 
 ## What to look for
 
@@ -259,14 +371,15 @@ For each prediction, create a Codeberg issue with the `prediction/unreviewed` la
      Use matrix_send if available, or skip if MATRIX_TOKEN is not set.
 
 ## Rules
-- Max 5 predictions total
+- Max 5 predictions total (including any filed during re-evaluate-backlog)
 - Do NOT predict feature work — only health observations, outcome measurements,
   and external risk/opportunity signals
 - Do NOT duplicate existing open predictions (checked in collect-signals)
+- Do NOT duplicate predictions just filed by re-evaluate-backlog for changed conditions
 - Be specific: name the metric, the value, the threshold
 - Prefer high-confidence predictions backed by concrete data
 - External signals must name the specific dependency/tool and the advisory/change
 - If no meaningful patterns found, file zero issues — that is a valid outcome
 
 """
-needs = ["collect-signals"]
+needs = ["re-evaluate-backlog"]
