@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-idle-stop.sh — Stop hook for dark-factory agent sessions.
 #
 # Called by Claude Code when it finishes a response. Writes a timestamp

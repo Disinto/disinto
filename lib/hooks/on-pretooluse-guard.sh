@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-pretooluse-guard.sh — PreToolUse hook: guard destructive operations.
 #
 # Called by Claude Code before executing a Bash command in agent sessions.
