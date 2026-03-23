@@ -213,6 +213,36 @@ Read these inputs:
   - Planner memory (loaded in preflight)
   - Promoted predictions from prediction-triage (add as prerequisites if relevant)
 
+### Comment scanning for bounce/stuck detection
+
+For each issue referenced in the prerequisite tree (by #number), fetch its
+recent comments to detect signals that the issue is stuck or bouncing:
+
+    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+      "$CODEBERG_API/issues/<number>/comments?limit=10"
+
+Scan each comment body for these signals:
+
+  - **BOUNCED**: body contains "too large for single session", "too_large",
+    "underspecified", or "needs splitting" (case-insensitive). This means
+    the dev-agent refused the issue — it needs breakdown before retry.
+  - **ESCALATED**: body contains "escalating for human decision", "needs
+    human decision", or "escalate" from a non-human author. The issue
+    needs steering input.
+  - **UNBLOCKED**: body contains "dependency .* is now closed" or
+    "unblocked". The issue may be ready to work.
+  - **LABEL_CHURN**: the issue has been relabeled between backlog and
+    underspecified (or blocked) 3+ times. Check via label change events
+    or multiple bounce comments. This indicates a ping-pong loop.
+
+Track detected signals in a list: `stuck_issues[]` where each entry is:
+  { issue: <number>, signal: BOUNCED|ESCALATED|LABEL_CHURN, count: <N>,
+    reason: "<summary from comments>" }
+
+These signals feed into the file-at-constraints step to prevent the
+planner from re-promoting stuck issues and to dispatch formula-based
+breakdown instead.
+
 Update the tree by applying these operations:
 
 1. **Mark resolved prerequisites**: For each prerequisite in the tree,
@@ -306,7 +336,51 @@ Action issues count toward the 3-issue constraint budget — they are
 strategic investments, not maintenance. The planner decides what data
 matters based on current constraints, not what formulas exist.
 
-Filing gate — for each constraint:
+### Stuck issue handling — dispatch to groom-backlog formula
+
+Before filing, cross-reference the top 3 constraints against the
+`stuck_issues[]` list from the update-prerequisite-tree step.
+
+If a constraint issue was detected as BOUNCED or LABEL_CHURN:
+  - Do NOT re-promote it to backlog or add the priority label — this
+    would restart the ping-pong loop.
+  - Instead, dispatch the groom-backlog formula to break it down.
+    Create an action issue that invokes groom-backlog with the stuck
+    issue as target:
+
+      Title: "chore: break down #<number> — bounced <count>x, needs splitting"
+      Body:
+        ---
+        formula: groom-backlog
+        vars:
+          target_issue: <number>
+          mode: breakdown
+          reason: "<reason from stuck_issues entry>"
+        ---
+
+        ## Problem
+        Issue #<number> has bounced <count> time(s) between backlog and
+        underspecified. The dev-agent reports it is too large for a single
+        session. It needs to be broken into dev-agent-sized subtasks.
+
+        ## Affected files
+        - formulas/groom-backlog.toml
+
+        ## Acceptance criteria
+        - [ ] #<number> is split into implementable sub-issues
+        - [ ] Sub-issues have acceptance criteria and affected files
+        - [ ] Original issue updated with links to sub-issues
+
+    Label this action issue with the `action` label (not `backlog`).
+    This counts toward the 3-issue-per-run limit.
+
+If a constraint issue was detected as ESCALATED:
+  - Do NOT file new work. Add a comment to the issue noting the
+    escalation was seen, and mark the prerequisite in the tree as:
+      `[ ] <name> ⚠ escalated — awaiting human decision`
+  - Do NOT count this against the 3-issue limit.
+
+Filing gate — for each constraint (that is NOT stuck):
 
 1. Check if an issue already exists for this constraint (match by issue
    number reference in the tree, or search open issues by title).
@@ -466,6 +540,12 @@ Format:
   1. <prerequisite> — blocks N objectives — issue #NNN (existing|filed|already open)
   2. <prerequisite> — blocks N objectives — issue #NNN
   3. <prerequisite> — blocks N objectives — issue #NNN
+
+  ## Stuck issues detected
+  - #NNN: BOUNCED (Nx) — dispatched groom-backlog as #MMM
+  - #NNN: ESCALATED — awaiting human decision
+  - #NNN: LABEL_CHURN (Nx) — dispatched groom-backlog as #MMM
+  (or "No stuck issues detected" if none)
 
   ## Issues created
   - #NNN: title — why (constraint for objectives X, Y)

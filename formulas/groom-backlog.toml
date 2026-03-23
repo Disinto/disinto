@@ -1,16 +1,67 @@
 # formulas/groom-backlog.toml — Groom the backlog: triage all tech-debt with verify loop
 
 name        = "groom-backlog"
-description = "Triage and process all tech-debt issues — blockers first, then by impact score, verify to zero"
-version     = 1
+description = "Triage tech-debt issues OR break down bounced issues dispatched by the planner"
+version     = 2
 
 [context]
 files = ["README.md", "AGENTS.md", "VISION.md"]
 
 [[steps]]
+id    = "check-mode"
+title = "Determine operating mode: grooming vs breakdown"
+description = """
+Check the YAML front matter of the dispatching action issue (if any) for
+a `mode` field. Two modes are supported:
+
+1. **breakdown** mode (dispatched by planner for bounced/stuck issues):
+   The front matter will contain:
+     formula: groom-backlog
+     vars:
+       target_issue: <number>
+       mode: breakdown
+       reason: "<why the issue bounced>"
+
+   In this mode, skip the normal tech-debt grooming pipeline. Instead:
+   a. Fetch the target issue:
+        curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<target_issue>"
+   b. Fetch ALL comments on the target issue to understand scope and
+      prior bounce reasons:
+        curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+          "$CODEBERG_API/issues/<target_issue>/comments?limit=50"
+   c. Read the affected files listed in the issue body to understand
+      the actual code scope.
+   d. Break the issue into 2-5 sub-issues, each sized for a single
+      dev-agent session. Each sub-issue MUST include:
+        - ## Problem (scoped piece of the parent issue)
+        - ## Affected files (specific files for this sub-task)
+        - ## Acceptance criteria (at least one checkbox)
+        - ## Dependencies (reference parent or sibling sub-issues if ordered)
+   e. Create the sub-issues via API with the `backlog` label.
+   f. Update the parent issue body to include a "## Sub-issues" section
+      linking to all created sub-issues.
+   g. Remove the `underspecified` label from the parent issue (if present).
+   h. If the parent issue is a meta-issue that is fully covered by
+      sub-issues, add a comment noting it is now tracked via sub-issues.
+   i. Signal completion:
+        echo "ACTION: broke down #<target_issue> into <N> sub-issues" >> "$RESULT_FILE"
+        echo 'PHASE:done' > "$PHASE_FILE"
+
+   After creating sub-issues in breakdown mode, the formula is DONE —
+   do not proceed to the normal tech-debt grooming steps.
+
+2. **grooming** mode (default — no mode field, or mode: grooming):
+   Proceed to the inventory step as normal.
+"""
+
+[[steps]]
 id    = "inventory"
 title = "Fetch, score, and classify all tech-debt issues"
+needs = ["check-mode"]
 description = """
+This step only runs in grooming mode. Skip if in breakdown mode.
+
 Fetch all open tech-debt issues:
   curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
     "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
