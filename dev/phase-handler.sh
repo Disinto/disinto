@@ -346,8 +346,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       # Re-fetch HEAD — Claude may have pushed new commits since loop started
       CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || echo "$CI_CURRENT_SHA")
 
-      CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/commits/${CI_CURRENT_SHA}/status" | jq -r '.state // "unknown"')
+      CI_STATE=$(ci_commit_status "$CI_CURRENT_SHA")
       if [ "$CI_STATE" = "success" ] || [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
         CI_DONE=true
         [ "$CI_STATE" = "success" ] && CI_FIX_COUNT=0
@@ -370,9 +369,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
   echo \"PHASE:awaiting_review\" > \"${PHASE_FILE}\""
     else
       # Fetch CI error details
-      PIPELINE_NUM=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/commits/${CI_CURRENT_SHA}/status" | \
-        jq -r '.statuses[0].target_url // ""' | grep -oP 'pipeline/\K[0-9]+' | head -1 || true)
+      PIPELINE_NUM=$(ci_pipeline_number "$CI_CURRENT_SHA")
 
       FAILED_STEP=""
       FAILED_EXIT=""

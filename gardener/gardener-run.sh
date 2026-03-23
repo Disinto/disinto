@@ -429,8 +429,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
     head_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
 
-    ci_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/commits/${head_sha}/status" | jq -r '.state // "unknown"') || ci_state="unknown"
+    ci_state=$(ci_commit_status "$head_sha") || ci_state="unknown"
 
     case "$ci_state" in
       success|failure|error) ci_done=true; break ;;
@@ -463,9 +462,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
 
     # Get error details
     local pipeline_num ci_error_log
-    pipeline_num=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/commits/${head_sha}/status" | \
-      jq -r '.statuses[0].target_url // ""' | grep -oP 'pipeline/\K[0-9]+' | head -1 || true)
+    pipeline_num=$(ci_pipeline_number "$head_sha")
 
     ci_error_log=""
     if [ -n "$pipeline_num" ]; then

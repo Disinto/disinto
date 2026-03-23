@@ -50,8 +50,7 @@ if [ "$PR_STATE" != "open" ]; then
   cd "${PROJECT_REPO_ROOT}"; git worktree remove "$WORKTREE" --force 2>/dev/null || true
   rm -rf "$WORKTREE" "$PHASE_FILE" "$OUTPUT_FILE" 2>/dev/null || true; exit 0
 fi
-CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
+CI_STATE=$(ci_commit_status "$PR_SHA")
 CI_NOTE=""; if ! ci_passed "$CI_STATE"; then
   ci_required_for_pr "$PR_NUMBER" && { log "SKIP: CI=${CI_STATE}"; exit 0; }
   CI_NOTE=" (not required — non-code PR)"; fi

@@ -261,8 +261,7 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     fi
   fi
 
-  PL_CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/commits/${PL_PR_SHA}/status" | jq -r '.state // "unknown"') || true
+  PL_CI_STATE=$(ci_commit_status "$PL_PR_SHA") || true
 
   # Non-code PRs may have no CI — treat as passed
   if ! ci_passed "$PL_CI_STATE" && ! ci_required_for_pr "$PL_PR_NUM"; then
@@ -397,8 +396,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   if [ -n "$HAS_PR" ]; then
     PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${HAS_PR}" | jq -r '.head.sha') || true
-    CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+    CI_STATE=$(ci_commit_status "$PR_SHA") || true
 
     # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
     if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$HAS_PR"; then
@@ -510,8 +508,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     fi
   fi
 
-  CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+  CI_STATE=$(ci_commit_status "$PR_SHA") || true
 
   # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
   if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$PR_NUM"; then
@@ -652,8 +649,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   if [ -n "$EXISTING_PR" ]; then
     PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}" | jq -r '.head.sha') || true
-    CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
+    CI_STATE=$(ci_commit_status "$PR_SHA") || true
 
     # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
     if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$EXISTING_PR"; then
