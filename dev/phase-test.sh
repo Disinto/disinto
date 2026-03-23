@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+# Source canonical read_phase() from shared library
+source "$(dirname "$0")/../lib/agent-session.sh"
+
 PROJECT="testproject"
 ISSUE="999"
 PHASE_FILE="/tmp/dev-session-${PROJECT}-${ISSUE}.phase"
@@ -81,13 +84,7 @@ else
   fail "PHASE:failed format: first='$first_line' second='$second_line'"
 fi
 
-# ── Test 5: orchestrator read function ────────────────────────────────────────
-read_phase() {
-  local pfile="$1"
-  # Allow cat to fail (missing file) — pipeline exits 0 via || true
-  { cat "$pfile" 2>/dev/null || true; } | head -1 | tr -d '[:space:]'
-}
-
+# ── Test 5: orchestrator read function (canonical read_phase from lib/agent-session.sh)
 echo "PHASE:awaiting_ci" > "$PHASE_FILE"
 phase=$(read_phase "$PHASE_FILE")
 if [ "$phase" = "PHASE:awaiting_ci" ]; then
