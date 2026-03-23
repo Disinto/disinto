@@ -1,4 +1,4 @@
-<!-- last-reviewed: 9ec0c0221032979bd4440b9fd67f2072f1de01be
+<!-- last-reviewed: 9ec0c0221032979bd4440b9fd67f2072f1de01be -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,

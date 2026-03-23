@@ -1,4 +1,4 @@
-<!-- last-reviewed: 9ec0c0221032979bd4440b9fd67f2072f1de01be
+<!-- last-reviewed: 9ec0c0221032979bd4440b9fd67f2072f1de01be -->
 # Predictor Agent
 
 **Role**: Risk oracle and opportunity spotter (the "goblin"). Runs a 3-step
