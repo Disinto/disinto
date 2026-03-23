@@ -22,6 +22,9 @@ source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 # shellcheck source=../lib/mirrors.sh
 source "$(dirname "$0")/../lib/mirrors.sh"
+# shellcheck source=../lib/guard.sh
+source "$(dirname "$0")/../lib/guard.sh"
+check_active dev
 
 # Gitea labels API requires []int64 — look up the "underspecified" label ID once
 UNDERSPECIFIED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \

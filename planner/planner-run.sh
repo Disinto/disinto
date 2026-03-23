@@ -22,6 +22,8 @@ source "$FACTORY_ROOT/lib/env.sh"
 source "$FACTORY_ROOT/lib/agent-session.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
+# shellcheck source=../lib/guard.sh
+source "$FACTORY_ROOT/lib/guard.sh"
 
 LOG_FILE="$SCRIPT_DIR/planner.log"
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
@@ -36,6 +38,7 @@ SCRATCH_FILE="/tmp/planner-${PROJECT_NAME}-scratch.md"
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
 # ── Guards ────────────────────────────────────────────────────────────────
+check_active planner
 acquire_cron_lock "/tmp/planner-run.lock"
 check_memory 2000
 
