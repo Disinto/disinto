@@ -1,5 +1,5 @@
 # Prerequisite Tree
-<!-- Last updated: 2026-03-22 -->
+<!-- Last updated: 2026-03-23 -->
 
 ## Objective: One-command bootstrap — `disinto init` (#393)
 - [x] Core agent loop stable (Foundation)
@@ -20,13 +20,17 @@ Status: DONE — #395 closed
 
 ## Objective: Example project demonstrating full lifecycle (#466)
 - [x] disinto init working (#393)
-Status: READY — prerequisite resolved, issue in backlog
+Status: READY — issue in backlog with priority
 
 ## Objective: Landing page communicating value proposition (#534)
 - [x] disinto init working (#393)
 - [x] Documentation site live (#394)
-- [ ] Planner-created issues retain labels reliably (#535)
-Status: READY — prerequisites resolved, issue filed
+- [x] Planner-created issues retain labels reliably (#535)
+Status: DONE — #534 closed
+
+## Objective: Autonomous PR merge pipeline (#568)
+- [ ] PreToolUse guard allows merge API calls from phase-handler (#568)
+Status: BLOCKED — every PR merge escalates; backlog+priority labeled
 
 ## Objective: Unified escalation path (#510)
 - [x] PHASE:escalate replaces PHASE:needs_human (supersedes #465)
