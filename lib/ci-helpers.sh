@@ -4,6 +4,7 @@ set -euo pipefail
 #
 # Source from any script: source "$(dirname "$0")/../lib/ci-helpers.sh"
 # ci_passed() requires: WOODPECKER_REPO_ID (from env.sh / project config)
+# ci_commit_status() / ci_pipeline_number() require: woodpecker_api(), forge_api() (from env.sh)
 # classify_pipeline_failure() requires: woodpecker_api() (defined in env.sh)
 
 # ensure_blocked_label_id — look up (or create) the "blocked" label, print its ID.
@@ -100,6 +101,55 @@ ci_failed() {
     return 1
   fi
   return 0
+}
+
+# ci_commit_status <sha> — get CI state for a commit
+# Queries Woodpecker API directly, falls back to forge commit status API.
+ci_commit_status() {
+  local sha="$1"
+  local state=""
+
+  # Primary: ask Woodpecker directly
+  if [ -n "${WOODPECKER_REPO_ID:-}" ] && [ "${WOODPECKER_REPO_ID}" != "0" ]; then
+    state=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines" \
+      | jq -r --arg sha "$sha" \
+        '[.[] | select(.commit == $sha)] | sort_by(.number) | last | .status // empty' \
+      2>/dev/null) || true
+    # Map Woodpecker status to Gitea/Forgejo status names
+    case "$state" in
+      success)  echo "success"; return ;;
+      failure|error|killed) echo "failure"; return ;;
+      running|pending|blocked) echo "pending"; return ;;
+    esac
+  fi
+
+  # Fallback: forge commit status API (works with any Gitea/Forgejo)
+  forge_api GET "/commits/${sha}/status" 2>/dev/null \
+    | jq -r '.state // "unknown"'
+}
+
+# ci_pipeline_number <sha> — get Woodpecker pipeline number for a commit
+# Queries Woodpecker API directly, falls back to forge status target_url parsing.
+ci_pipeline_number() {
+  local sha="$1"
+
+  # Primary: ask Woodpecker directly
+  if [ -n "${WOODPECKER_REPO_ID:-}" ] && [ "${WOODPECKER_REPO_ID}" != "0" ]; then
+    local num
+    num=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines" \
+      | jq -r --arg sha "$sha" \
+        '[.[] | select(.commit == $sha)] | sort_by(.number) | last | .number // empty' \
+      2>/dev/null) || true
+    if [ -n "$num" ]; then
+      echo "$num"
+      return
+    fi
+  fi
+
+  # Fallback: extract from forge status target_url
+  forge_api GET "/commits/${sha}/status" 2>/dev/null \
+    | jq -r '.statuses[0].target_url // ""' \
+    | grep -oP 'pipeline/\K[0-9]+' | head -1 || true
 }
 
 # is_infra_step <step_name> <exit_code> [log_data]

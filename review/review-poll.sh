@@ -196,8 +196,7 @@ if [ -n "${REVIEW_SESSIONS:-}" ]; then
     pr_branch=$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')
     if [ -z "$current_sha" ] || [ "$current_sha" = "$reviewed_sha" ]; then continue; fi
 
-    ci_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API_BASE}/commits/${current_sha}/status" | jq -r '.state // "unknown"')
+    ci_state=$(ci_commit_status "$current_sha")
 
     if ! ci_passed "$ci_state"; then
       if ci_required_for_pr "$pr_num"; then
@@ -227,8 +226,7 @@ while IFS= read -r line; do
   PR_SHA=$(echo "$line" | awk '{print $2}')
   PR_BRANCH=$(echo "$line" | awk '{print $3}')
 
-  CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
+  CI_STATE=$(ci_commit_status "$PR_SHA")
 
   # Skip if CI is running/failed. Allow "success", no CI configured, or non-code PRs
   if ! ci_passed "$CI_STATE"; then

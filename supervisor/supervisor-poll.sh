@@ -415,7 +415,7 @@ check_project() {
       PR_SHA=$(echo "$PR_JSON" | jq -r '.head.sha // ""')
       [ -z "$PR_SHA" ] && continue
 
-      CI_STATE=$(forge_api GET "/commits/${PR_SHA}/status" 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null || true)
+      CI_STATE=$(ci_commit_status "$PR_SHA" 2>/dev/null || true)
 
       MERGEABLE=$(echo "$PR_JSON" | jq -r '.mergeable // true')
       if [ "$MERGEABLE" = "false" ] && ci_passed "$CI_STATE"; then

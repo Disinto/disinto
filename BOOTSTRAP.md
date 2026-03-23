@@ -139,6 +139,51 @@ Verify no root-owned files exist in agent temp directories:
 find /tmp/dev-* /tmp/harb-* /tmp/review-* -not -user debian 2>/dev/null
 ```
 
+## 4b. Woodpecker CI + Forgejo Integration
+
+`disinto init` automatically configures Woodpecker to use the local Forgejo instance as its forge backend if `WOODPECKER_SERVER` is set in `.env`. This includes:
+
+1. Creating an OAuth2 application on Forgejo for Woodpecker
+2. Writing `WOODPECKER_FORGEJO_*` env vars to `.env`
+3. Activating the repo in Woodpecker
+
+### Manual setup (if Woodpecker runs outside of `disinto init`)
+
+If you manage Woodpecker separately, configure these env vars in its server config:
+
+```bash
+WOODPECKER_FORGEJO=true
+WOODPECKER_FORGEJO_URL=http://localhost:3000
+WOODPECKER_FORGEJO_CLIENT=<oauth2-client-id>
+WOODPECKER_FORGEJO_SECRET=<oauth2-client-secret>
+```
+
+To create the OAuth2 app on Forgejo:
+
+```bash
+# Create OAuth2 application (redirect URI = Woodpecker authorize endpoint)
+curl -X POST \
+  -H "Authorization: token ${FORGE_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "http://localhost:3000/api/v1/user/applications/oauth2" \
+  -d '{"name":"woodpecker-ci","redirect_uris":["http://localhost:8000/authorize"],"confidential_client":true}'
+```
+
+The response contains `client_id` and `client_secret` for `WOODPECKER_FORGEJO_CLIENT` / `WOODPECKER_FORGEJO_SECRET`.
+
+To activate the repo in Woodpecker:
+
+```bash
+woodpecker-cli repo add <org>/<repo>
+# Or via API:
+curl -X POST \
+  -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
+  "http://localhost:8000/api/repos" \
+  -d '{"forge_remote_id":"<org>/<repo>"}'
+```
+
+Woodpecker will now trigger pipelines on pushes to Forgejo and push commit status back. Disinto queries Woodpecker directly for CI status (with a forge API fallback), so pipeline results are visible even if Woodpecker's status push to Forgejo is delayed.
+
 ## 5. Prepare the Target Repo
 
 ### Required: CI pipeline
