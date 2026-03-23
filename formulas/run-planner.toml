@@ -9,7 +9,7 @@
 #
 # Core change from v2: replaces gap-analysis-and-spray with a constraint-
 # focused executive using a Prerequisite Tree (Theory of Constraints).
-# Issues are only filed at the top 3 unresolved constraints — everything
+# Issues are only filed at the top 5 unresolved constraints — everything
 # beyond the bottleneck exists in the tree but NOT as issues.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
@@ -303,12 +303,12 @@ needs = ["prediction-triage"]
 
 [[steps]]
 id    = "file-at-constraints"
-title = "Identify top 3 constraints and file issues"
+title = "Identify top 5 constraints and file issues"
 description = """
 This is the constraint-focused filing step. The key principle from Theory
 of Constraints: only work on the bottleneck. Everything else is waste.
 
-From the updated prerequisite tree, identify the top 3 constraints:
+From the updated prerequisite tree, identify the top 5 constraints:
 
 A **constraint** is an unresolved prerequisite that blocks the most
 downstream objectives. To find them:
@@ -319,7 +319,7 @@ downstream objectives. To find them:
 
 2. Rank all unresolved prerequisites by blocking score (descending).
 
-3. Select the top 3. These are the constraints.
+3. Select the top 5. These are the constraints.
 
 When filing issues at constraints, choose the right agent type:
 
@@ -332,13 +332,13 @@ Prefer action dispatch when:
 - Evidence is required before a constraint can be marked done
 - A decision is blocked on data that a formula can provide
 
-Action issues count toward the 3-issue constraint budget — they are
+Action issues count toward the 5-issue constraint budget — they are
 strategic investments, not maintenance. The planner decides what data
 matters based on current constraints, not what formulas exist.
 
 ### Stuck issue handling — dispatch to groom-backlog formula
 
-Before filing, cross-reference the top 3 constraints against the
+Before filing, cross-reference the top 5 constraints against the
 `stuck_issues[]` list from the update-prerequisite-tree step.
 
 If a constraint issue was detected as BOUNCED or LABEL_CHURN:
@@ -372,13 +372,13 @@ If a constraint issue was detected as BOUNCED or LABEL_CHURN:
         - [ ] Original issue updated with links to sub-issues
 
     Label this action issue with the `action` label (not `backlog`).
-    This counts toward the 3-issue-per-run limit.
+    This counts toward the 5-issue-per-run limit.
 
 If a constraint issue was detected as ESCALATED:
   - Do NOT file new work. Add a comment to the issue noting the
     escalation was seen, and mark the prerequisite in the tree as:
       `[ ] <name> ⚠ escalated — awaiting human decision`
-  - Do NOT count this against the 3-issue limit.
+  - Do NOT count this against the 5-issue limit.
 
 Filing gate — for each constraint (that is NOT stuck):
 
@@ -414,24 +414,24 @@ Filing gate — for each constraint (that is NOT stuck):
 
 ### Priority label management
 
-After identifying the top 3 constraints and their issues (existing or newly
+After identifying the top 5 constraints and their issues (existing or newly
 filed), synchronize the `priority` label so only the current bottleneck
 issues are prioritized. The `backlog` label is NEVER removed — `priority`
 is purely additive.
 
-5. **Add `priority` to top-3 constraint issues:**
-   For each of the top 3 constraint issues (whether just filed or already
+5. **Add `priority` to top-5 constraint issues:**
+   For each of the top 5 constraint issues (whether just filed or already
    existing), check if it already has the `priority` label. If not, add it:
      curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
        -H "Content-Type: application/json" \
        "$CODEBERG_API/issues/<issue_number>/labels" \
        -d '{"labels":[<priority_label_id>]}'
 
-6. **Remove `priority` from issues no longer in top 3:**
+6. **Remove `priority` from issues no longer in top 5:**
    Fetch all open issues that currently have the `priority` label:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&labels=priority&type=issues&limit=50"
-   For each issue in this list that is NOT one of the current top 3
+   For each issue in this list that is NOT one of the current top 5
    constraint issues, remove the `priority` label (demote back to plain
    `backlog`):
      curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
@@ -440,8 +440,8 @@ is purely additive.
    get priority, not stale constraints from previous runs.
 
 Rules:
-- **Maximum 3 issues filed per run** — only at constraints
-- **No issues filed past the bottleneck** — items beyond the top 3
+- **Maximum 5 issues filed per run** — only at constraints
+- **No issues filed past the bottleneck** — items beyond the top 5
   constraints exist in the tree but NOT as issues
 - **Existing premature issues left as-is** — do not close issues filed
   by previous planner versions, even if they're past the bottleneck
@@ -491,10 +491,10 @@ an issue:
 
 4. vault-poll.sh will notify the human automatically.
 
-Procurement requests count toward the 3-item-per-run limit (issues +
+Procurement requests count toward the 5-item-per-run limit (issues +
 procurement requests combined).
 
-If all top 3 constraints already have open issues or pending vault
+If all top 5 constraints already have open issues or pending vault
 requests, note that the backlog is aligned with the constraint focus.
 No new items needed.
 """
@@ -536,7 +536,7 @@ Format:
   - Proposed: <list of new capabilities proposed>
   (or "No tree changes" if none)
 
-  ## Top 3 constraints
+  ## Top 5 constraints
   1. <prerequisite> — blocks N objectives — issue #NNN (existing|filed|already open)
   2. <prerequisite> — blocks N objectives — issue #NNN
   3. <prerequisite> — blocks N objectives — issue #NNN
@@ -552,15 +552,15 @@ Format:
   (or "No new issues — constraints already have open issues" if none)
 
   ## Priority label changes
-  - Added priority: #NNN, #NNN (top 3 constraints)
-  - Removed priority: #NNN (no longer in top 3)
+  - Added priority: #NNN, #NNN (top 5 constraints)
+  - Removed priority: #NNN (no longer in top 5)
   (or "No priority changes" if the set is unchanged)
 
   ## Observations
   - Key patterns, resource state, metric trends noticed during this run
 
   ## Deferred (in tree, not filed)
-  - Items in the tree beyond the top 3 constraints, and why they're not filed yet
+  - Items in the tree beyond the top 5 constraints, and why they're not filed yet
 
 Keep each entry concise — 30-50 lines max.
 
@@ -585,7 +585,7 @@ where N is the current total run count.
 
 Include:
 - Date of this summarization
-- Current constraint focus (top 3 from this run)
+- Current constraint focus (top 5 from this run)
 - Distilled patterns and learnings from recent journal entries
 - What was observed (resource state, metric trends, project progress)
 - Strategic direction and watch list for future runs
