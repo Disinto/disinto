@@ -25,8 +25,9 @@ BODY=$(cat)
 
   # Also check inline deps on same line as keyword (skip fenced code blocks)
   echo "$BODY" | awk '
+    BEGIN { IGNORECASE=1 }
     /^```/ { incode = !incode; next }
     incode { next }
-    /blocked by|depends on/i { print }
+    /blocked by|depends on/ { print }
   ' | grep -oP '#\K[0-9]+' || true
 } | sort -un
