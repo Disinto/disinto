@@ -1,10 +1,11 @@
 # projects/versi.toml.example — Template for johba/versi
 #
 # Copy to projects/versi.toml and fill in box-specific values,
-# or run: disinto init https://codeberg.org/johba/versi
+# or run: disinto init johba/versi
 
 name            = "versi"
 repo            = "johba/versi"
+forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/versi"
 primary_branch  = "main"
 

@@ -105,7 +105,7 @@ If no file changes in commit-and-pr:
   echo 'PHASE:done' > '${PHASE_FILE}'"
 
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-PROMPT="You are the issue gardener for ${CODEBERG_REPO}. Work through the formula below. Follow the phase protocol: if the commit-and-pr step creates a PR, write PHASE:awaiting_ci and wait for orchestrator CI/review/merge handling. If no file changes, write PHASE:done. The orchestrator will time you out if you return to the prompt without signalling.
+PROMPT="You are the issue gardener for ${FORGE_REPO}. Work through the formula below. Follow the phase protocol: if the commit-and-pr step creates a PR, write PHASE:awaiting_ci and wait for orchestrator CI/review/merge handling. If no file changes, write PHASE:done. The orchestrator will time you out if you return to the prompt without signalling.
 
 You have full shell access and --dangerously-skip-permissions.
 Fix what you can. Escalate what you cannot. Do NOT ask permission — act first, report after.
@@ -162,13 +162,13 @@ _gardener_execute_manifest() {
       add_label)
         local label label_id
         label=$(jq -r ".[$i].label" "$manifest_file")
-        label_id=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${CODEBERG_API}/labels" | jq -r --arg n "$label" \
+        label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${FORGE_API}/labels" | jq -r --arg n "$label" \
           '.[] | select(.name == $n) | .id') || true
         if [ -n "$label_id" ]; then
-          if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+          if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
                -H 'Content-Type: application/json' \
-               "${CODEBERG_API}/issues/${issue}/labels" \
+               "${FORGE_API}/issues/${issue}/labels" \
                -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1; then
             log "manifest: add_label '${label}' to #${issue}"
           else
@@ -182,12 +182,12 @@ _gardener_execute_manifest() {
       remove_label)
         local label label_id
         label=$(jq -r ".[$i].label" "$manifest_file")
-        label_id=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${CODEBERG_API}/labels" | jq -r --arg n "$label" \
+        label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${FORGE_API}/labels" | jq -r --arg n "$label" \
           '.[] | select(.name == $n) | .id') || true
         if [ -n "$label_id" ]; then
-          if curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
-               "${CODEBERG_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1; then
+          if curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+               "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1; then
             log "manifest: remove_label '${label}' from #${issue}"
           else
             log "manifest: FAILED remove_label '${label}' from #${issue}"
@@ -200,9 +200,9 @@ _gardener_execute_manifest() {
       close)
         local reason
         reason=$(jq -r ".[$i].reason // empty" "$manifest_file")
-        if curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
-             "${CODEBERG_API}/issues/${issue}" \
+             "${FORGE_API}/issues/${issue}" \
              -d '{"state":"closed"}' >/dev/null 2>&1; then
           log "manifest: closed #${issue} (${reason})"
         else
@@ -214,9 +214,9 @@ _gardener_execute_manifest() {
         local body escaped_body
         body=$(jq -r ".[$i].body" "$manifest_file")
         escaped_body=$(printf '%s' "$body" | jq -Rs '.')
-        if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+        if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
-             "${CODEBERG_API}/issues/${issue}/comments" \
+             "${FORGE_API}/issues/${issue}/comments" \
              -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
           log "manifest: commented on #${issue}"
         else
@@ -235,8 +235,8 @@ _gardener_execute_manifest() {
         label_ids="[]"
         if [ -n "$labels" ]; then
           local all_labels ids_json=""
-          all_labels=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-            "${CODEBERG_API}/labels") || true
+          all_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+            "${FORGE_API}/labels") || true
           while IFS= read -r lname; do
             local lid
             lid=$(echo "$all_labels" | jq -r --arg n "$lname" \
@@ -245,9 +245,9 @@ _gardener_execute_manifest() {
           done <<< "$labels"
           [ -n "$ids_json" ] && label_ids="[${ids_json}]"
         fi
-        if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+        if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
-             "${CODEBERG_API}/issues" \
+             "${FORGE_API}/issues" \
              -d "{\"title\":${escaped_title},\"body\":${escaped_body},\"labels\":${label_ids}}" >/dev/null 2>&1; then
           log "manifest: created issue '${title}'"
         else
@@ -259,9 +259,9 @@ _gardener_execute_manifest() {
         local body escaped_body
         body=$(jq -r ".[$i].body" "$manifest_file")
         escaped_body=$(printf '%s' "$body" | jq -Rs '.')
-        if curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
-             "${CODEBERG_API}/issues/${issue}" \
+             "${FORGE_API}/issues/${issue}" \
              -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
           log "manifest: edited body of #${issue}"
         else
@@ -284,9 +284,9 @@ _gardener_execute_manifest() {
 _gardener_merge() {
   local merge_response merge_http_code
   merge_response=$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H 'Content-Type: application/json' \
-    "${CODEBERG_API}/pulls/${_GARDENER_PR}/merge" \
+    "${FORGE_API}/pulls/${_GARDENER_PR}/merge" \
     -d '{"Do":"merge","delete_branch_after_merge":true}') || true
   merge_http_code=$(echo "$merge_response" | tail -1)
 
@@ -300,8 +300,8 @@ _gardener_merge() {
   # Already merged (race)?
   if [ "$merge_http_code" = "405" ]; then
     local pr_merged
-    pr_merged=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/pulls/${_GARDENER_PR}" | jq -r '.merged // false') || true
+    pr_merged=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.merged // false') || true
     if [ "$pr_merged" = "true" ]; then
       log "gardener PR #${_GARDENER_PR} already merged"
       _gardener_execute_manifest
@@ -329,9 +329,9 @@ _gardener_timeout_cleanup() {
   log "gardener merge-through timed out (${_GARDENER_MERGE_TIMEOUT}s) — closing PR"
   if [ -n "$_GARDENER_PR" ]; then
     curl -sf -X PATCH \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H 'Content-Type: application/json' \
-      "${CODEBERG_API}/pulls/${_GARDENER_PR}" \
+      "${FORGE_API}/pulls/${_GARDENER_PR}" \
       -d '{"state":"closed"}' >/dev/null 2>&1 || true
   fi
   printf 'PHASE:failed\nReason: merge-through timeout (%ss)\n' \
@@ -360,8 +360,8 @@ _gardener_handle_ci() {
     fi
     # Fallback: search for open gardener PRs
     if [ -z "$_GARDENER_PR" ]; then
-      _GARDENER_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-        "${CODEBERG_API}/pulls?state=open&limit=10" | \
+      _GARDENER_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${FORGE_API}/pulls?state=open&limit=10" | \
         jq -r '[.[] | select(.head.ref | startswith("chore/gardener-"))] | .[0].number // empty') || true
     fi
     if [ -z "$_GARDENER_PR" ]; then
@@ -395,8 +395,8 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
 
   # Get HEAD SHA from PR
   local head_sha
-  head_sha=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-    "${CODEBERG_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
+  head_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
 
   if [ -z "$head_sha" ]; then
     log "WARNING: could not get HEAD SHA for PR #${_GARDENER_PR}"
@@ -426,11 +426,11 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
     fi
 
     # Re-fetch HEAD in case Claude pushed new commits
-    head_sha=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
+    head_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
 
-    ci_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/commits/${head_sha}/status" | jq -r '.state // "unknown"') || ci_state="unknown"
+    ci_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/commits/${head_sha}/status" | jq -r '.state // "unknown"') || ci_state="unknown"
 
     case "$ci_state" in
       success|failure|error) ci_done=true; break ;;
@@ -463,8 +463,8 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
 
     # Get error details
     local pipeline_num ci_error_log
-    pipeline_num=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/commits/${head_sha}/status" | \
+    pipeline_num=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/commits/${head_sha}/status" | \
       jq -r '.statuses[0].target_url // ""' | grep -oP 'pipeline/\K[0-9]+' | head -1 || true)
 
     ci_error_log=""
@@ -518,10 +518,10 @@ _gardener_handle_review() {
 
     # Check for review on current HEAD
     local review_sha review_comment
-    review_sha=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
+    review_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.head.sha // empty') || true
 
-    review_comment=$(codeberg_api_all "/issues/${_GARDENER_PR}/comments" 2>/dev/null | \
+    review_comment=$(forge_api_all "/issues/${_GARDENER_PR}/comments" 2>/dev/null | \
       jq -r --arg sha "${review_sha:-none}" \
       '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
 
@@ -536,10 +536,10 @@ _gardener_handle_review() {
 
       verdict=$(echo "$review_text" | grep -oP '\*\*(APPROVE|REQUEST_CHANGES|DISCUSS)\*\*' | head -1 | tr -d '*' || true)
 
-      # Check formal Codeberg reviews as fallback
+      # Check formal forge reviews as fallback
       if [ -z "$verdict" ]; then
-        verdict=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-          "${CODEBERG_API}/pulls/${_GARDENER_PR}/reviews" | \
+        verdict=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${FORGE_API}/pulls/${_GARDENER_PR}/reviews" | \
           jq -r '[.[] | select(.stale == false)] | last | .state // empty' || true)
         [ "$verdict" = "APPROVED" ] && verdict="APPROVE"
         [[ "$verdict" != "REQUEST_CHANGES" && "$verdict" != "APPROVE" ]] && verdict=""
@@ -576,8 +576,8 @@ Then stop and wait."
 
     # Check if PR was merged or closed externally
     local pr_json pr_state pr_merged
-    pr_json=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-      "${CODEBERG_API}/pulls/${_GARDENER_PR}") || true
+    pr_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/pulls/${_GARDENER_PR}") || true
     pr_state=$(echo "$pr_json" | jq -r '.state // "unknown"')
     pr_merged=$(echo "$pr_json" | jq -r '.merged // false')
 

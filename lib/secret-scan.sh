@@ -33,8 +33,9 @@ _SAFE_PATTERNS=(
   # Git SHAs in typical git contexts (commit refs, not standalone secrets)
   'commit [0-9a-f]{40}'
   'Merge [0-9a-f]{40}'
-  # Codeberg/GitHub URLs with short hex (PR refs, commit links)
+  # Forge/GitHub URLs with short hex (PR refs, commit links)
   'codeberg\.org/[^[:space:]]+'
+  'localhost:3000/[^[:space:]]+'
   # ShellCheck directive codes
   'SC[0-9]{4}'
 )

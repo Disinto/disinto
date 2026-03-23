@@ -1,7 +1,7 @@
-# Codeberg Best Practices
+# Forge Best Practices
 
 ## Rate Limiting
-Codeberg rate-limits SSH and HTTPS clones. Symptoms:
+The forge (Forgejo/Gitea) may rate-limit SSH and HTTPS clones. Symptoms:
 - Woodpecker `git` step fails with exit code 128
 - Multiple pipelines fail in quick succession with the same error
 - Retriggers make it WORSE by adding more clone attempts
@@ -26,10 +26,10 @@ cd <worktree> && git commit --allow-empty -m "ci: retrigger" --no-verify && git 
 - One pipeline at a time is ideal on this VPS (resource + rate limit reasons).
 - If >3 pipelines are pending/running, do NOT create more work.
 
-## OAuth Tokens
-- OAuth tokens expire ~2h. If Codeberg is down during refresh, re-login required.
-- API token is in `~/.netrc` — read via `awk` in env.sh.
-- Review bot has a separate token ($REVIEW_BOT_TOKEN) for formal reviews.
+## API Tokens
+- API token is in `.env` as `FORGE_TOKEN` — loaded via env.sh.
+- Review bot has a separate token (`$FORGE_REVIEW_TOKEN`) for formal reviews.
+- With local Forgejo, tokens don't expire. For remote forges, check provider docs.
 
 ## Lessons Learned
 - Retrigger storm on 2026-03-12: supervisor + dev-agent both retriggered during rate limit, caused 5+ failed pipelines. Added cooldown awareness.

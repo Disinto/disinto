@@ -82,7 +82,7 @@ PHASE:escalate        → send Matrix notification with context (issue/PR link, 
                          on reply   → matrix_listener.sh injects reply into tmux session
                          on timeout → 24h: label issue blocked, kill session
 
-PHASE:done            → verify PR merged on Codeberg
+PHASE:done            → verify PR merged on forge
                          if merged   → kill tmux session, clean labels, close issue
                          if not      → inject "PR not merged yet" into session
 

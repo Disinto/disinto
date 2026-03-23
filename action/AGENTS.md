@@ -25,7 +25,7 @@ issues labeled `action` that have no active tmux session, then spawns
 8. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
 
 **Environment variables consumed**:
-- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `CODEBERG_WEB`
+- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `FORGE_WEB`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
 - `ACTION_IDLE_TIMEOUT` — Max seconds before killing idle session (default 14400 = 4h)
 - `ACTION_MAX_LIFETIME` — Max total session wall-clock seconds (default 28800 = 8h); caps session independently of idle timeout

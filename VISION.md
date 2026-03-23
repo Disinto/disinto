@@ -34,7 +34,7 @@ A solo founder sets the vision and defines quality gates. Disinto derives the ba
 ## Growth goals
 
 - **Attract developers** — the project should be easy to understand, easy to fork, easy to contribute to.
-- **Stars and forks** — measure traction through Codeberg/GitHub engagement.
+- **Stars and forks** — measure traction through forge/GitHub engagement.
 - **Contributors** — lower the barrier to entry. Good docs, clear architecture, working examples.
 - **Reference deployments** — showcase real projects built and operated by Disinto.
 - **Vault as differentiator** — the quality gate model (vision + vault) is what sets Disinto apart from generic CI/CD. Make it visible and easy to understand.

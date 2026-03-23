@@ -5,9 +5,11 @@
 #   source lib/load-project.sh projects/harb.toml
 #
 # Exports:
-#   PROJECT_NAME, CODEBERG_REPO, CODEBERG_API, PROJECT_REPO_ROOT,
-#   PRIMARY_BRANCH, WOODPECKER_REPO_ID, PROJECT_CONTAINERS,
-#   CHECK_PRS, CHECK_DEV_AGENT, CHECK_PIPELINE_STALL, CI_STALE_MINUTES
+#   PROJECT_NAME, FORGE_REPO, FORGE_API, FORGE_WEB, FORGE_URL,
+#   PROJECT_REPO_ROOT, PRIMARY_BRANCH, WOODPECKER_REPO_ID,
+#   PROJECT_CONTAINERS, CHECK_PRS, CHECK_DEV_AGENT,
+#   CHECK_PIPELINE_STALL, CI_STALE_MINUTES
+#   (plus backwards-compat aliases: CODEBERG_REPO, CODEBERG_API, CODEBERG_WEB)
 #
 # If no argument given, does nothing (allows poll scripts to work with
 # plain .env fallback for backwards compatibility).
@@ -35,7 +37,8 @@ def emit(key, val):
 
 # Top-level
 emit('PROJECT_NAME', cfg.get('name', ''))
-emit('CODEBERG_REPO', cfg.get('repo', ''))
+emit('FORGE_REPO', cfg.get('repo', ''))
+emit('FORGE_URL', cfg.get('forge_url', ''))
 
 if 'repo_root' in cfg:
     emit('PROJECT_REPO_ROOT', cfg['repo_root'])
@@ -79,11 +82,17 @@ while IFS='=' read -r _key _val; do
   export "$_key=$_val"
 done <<< "$_PROJECT_VARS"
 
-# Derive CODEBERG_API and CODEBERG_WEB if repo changed
-if [ -n "$CODEBERG_REPO" ]; then
-  export CODEBERG_API="https://codeberg.org/api/v1/repos/${CODEBERG_REPO}"
-  export CODEBERG_WEB="https://codeberg.org/${CODEBERG_REPO}"
+# Derive FORGE_API and FORGE_WEB from forge_url + repo
+# FORGE_URL: TOML forge_url > existing FORGE_URL > default
+export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
+if [ -n "$FORGE_REPO" ]; then
+  export FORGE_API="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+  export FORGE_WEB="${FORGE_URL}/${FORGE_REPO}"
 fi
+# Backwards-compat aliases
+export CODEBERG_REPO="${FORGE_REPO}"
+export CODEBERG_API="${FORGE_API:-}"
+export CODEBERG_WEB="${FORGE_WEB:-}"
 
 # Derive PROJECT_REPO_ROOT if not explicitly set
 if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then

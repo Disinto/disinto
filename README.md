@@ -14,7 +14,7 @@
 
 <br>
 
-Point it at a Codeberg repo with a Woodpecker CI pipeline and it will pick up issues, implement them, review PRs, and keep the system healthy — all on its own.
+Point it at a git repo with a Woodpecker CI pipeline and it will pick up issues, implement them, review PRs, and keep the system healthy — all on its own.
 
 ## Architecture
 
@@ -49,9 +49,8 @@ all agents ──→ matrix_send()     ← status updates, escalations, merge no
 **Required:**
 
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) — `claude` in PATH, authenticated
-- [Codeberg](https://codeberg.org/) account with an API token — disinto reads issues, opens PRs, posts comments, and merges via the Codeberg API
-- A second Codeberg account for the review bot — reviews posted under a separate identity so the dev-agent doesn't review its own PRs (`REVIEW_BOT_TOKEN`)
-- [Woodpecker CI](https://woodpecker-ci.org/) — local instance connected to your Codeberg repo; disinto monitors pipelines, retries failures, and queries the Woodpecker Postgres DB directly
+- [Docker](https://docker.com/) — for provisioning a local Forgejo instance (or a running Forgejo/Gitea instance)
+- [Woodpecker CI](https://woodpecker-ci.org/) — local instance connected to your forge; disinto monitors pipelines, retries failures, and queries the Woodpecker Postgres DB directly
 - PostgreSQL client (`psql`) — for Woodpecker DB queries (pipeline status, build counts)
 - `jq`, `curl`, `git`
 
@@ -65,24 +64,20 @@ all agents ──→ matrix_send()     ← status updates, escalations, merge no
 
 ```bash
 # 1. Clone
-git clone ssh://git@codeberg.org/johba/disinto.git
+git clone https://github.com/johba/disinto.git
 cd disinto
 
-# 2. Configure
-cp .env.example .env
+# 2. Bootstrap a project (provisions local Forgejo, creates tokens, clones repo)
+disinto init https://github.com/yourorg/yourproject
 ```
 
-Edit `.env` with your values:
+Or configure manually — edit `.env` with your values:
 
 ```bash
-# Target repo
-CODEBERG_REPO=yourorg/yourproject              # Codeberg org/repo slug
-CODEBERG_API=https://codeberg.org/api/v1/repos/yourorg/yourproject
-PROJECT_REPO_ROOT=/path/to/your/project        # local clone of the target repo
-
-# Auth tokens
-CODEBERG_TOKEN=...          # main account — or put it in ~/.netrc
-REVIEW_BOT_TOKEN=...        # separate Codeberg account for code reviews
+# Forge (auto-populated by disinto init)
+FORGE_URL=http://localhost:3000        # local Forgejo instance
+FORGE_TOKEN=...             # dev-bot token
+FORGE_REVIEW_TOKEN=...      # review-bot token
 
 # Woodpecker CI
 WOODPECKER_SERVER=http://localhost:8000
@@ -148,7 +143,7 @@ disinto/
         ├── memory.md
         ├── disk.md
         ├── ci.md
-        ├── codeberg.md
+        ├── forge.md
         ├── dev-agent.md
         ├── review-agent.md
         └── git.md

@@ -8,19 +8,19 @@ set -euo pipefail
 
 # ensure_blocked_label_id — look up (or create) the "blocked" label, print its ID.
 # Caches the result in _BLOCKED_LABEL_ID to avoid repeated API calls.
-# Requires: CODEBERG_TOKEN, CODEBERG_API (from env.sh), codeberg_api()
+# Requires: FORGE_TOKEN, FORGE_API (from env.sh), forge_api()
 ensure_blocked_label_id() {
   if [ -n "${_BLOCKED_LABEL_ID:-}" ]; then
     printf '%s' "$_BLOCKED_LABEL_ID"
     return 0
   fi
-  _BLOCKED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  _BLOCKED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
     | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
   if [ -z "$_BLOCKED_LABEL_ID" ]; then
     _BLOCKED_LABEL_ID=$(curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
-      "${CODEBERG_API}/labels" \
+      "${FORGE_API}/labels" \
       -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
       | jq -r '.id // empty' 2>/dev/null || true)
   fi
@@ -29,19 +29,19 @@ ensure_blocked_label_id() {
 
 # ensure_priority_label — look up (or create) the "priority" label, print its ID.
 # Caches the result in _PRIORITY_LABEL_ID to avoid repeated API calls.
-# Requires: CODEBERG_TOKEN, CODEBERG_API (from env.sh), codeberg_api()
+# Requires: FORGE_TOKEN, FORGE_API (from env.sh), forge_api()
 ensure_priority_label() {
   if [ -n "${_PRIORITY_LABEL_ID:-}" ]; then
     printf '%s' "$_PRIORITY_LABEL_ID"
     return 0
   fi
-  _PRIORITY_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+  _PRIORITY_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
     | jq -r '.[] | select(.name == "priority") | .id' 2>/dev/null || true)
   if [ -z "$_PRIORITY_LABEL_ID" ]; then
     _PRIORITY_LABEL_ID=$(curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
-      "${CODEBERG_API}/labels" \
+      "${FORGE_API}/labels" \
       -d '{"name":"priority","color":"#f59e0b"}' 2>/dev/null \
       | jq -r '.id // empty' 2>/dev/null || true)
   fi
@@ -68,7 +68,7 @@ diff_has_code_files() {
 ci_required_for_pr() {
   local pr_num="$1"
   local files all_json
-  all_json=$(codeberg_api_all "/pulls/${pr_num}/files") || return 0
+  all_json=$(forge_api_all "/pulls/${pr_num}/files") || return 0
   files=$(printf '%s' "$all_json" | jq -r '.[].filename' 2>/dev/null) || return 0
   if [ -z "$files" ]; then
     return 0  # empty file list — require CI as safety default
@@ -113,7 +113,7 @@ ci_failed() {
 is_infra_step() {
   local sname="$1" ecode="$2" log_data="${3:-}"
 
-  # Clone/git step exit 128 → Codeberg connection failure / rate limit
+  # Clone/git step exit 128 → forge connection failure / rate limit
   if { [[ "$sname" == *clone* ]] || [[ "$sname" == git* ]]; } && [ "$ecode" = "128" ]; then
     echo "${sname} exit 128 (connection failure)"
     return 0

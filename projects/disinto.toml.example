@@ -1,10 +1,11 @@
 # projects/disinto.toml.example — Template for disinto self-management
 #
 # Copy to projects/disinto.toml and fill in box-specific values,
-# or run: disinto init https://codeberg.org/johba/disinto
+# or run: disinto init johba/disinto
 
 name            = "disinto"
 repo            = "johba/disinto"
+forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/dark-factory"
 primary_branch  = "main"
 

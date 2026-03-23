@@ -15,7 +15,7 @@ source "$(dirname "$0")/../lib/ci-helpers.sh"
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-API_BASE="${CODEBERG_API}"
+API_BASE="${FORGE_API}"
 LOGFILE="$SCRIPT_DIR/review.log"
 MAX_REVIEWS=3
 REVIEW_IDLE_TIMEOUT=14400  # 4h: kill review session if idle
@@ -44,7 +44,7 @@ if [ -n "$REVIEW_SESSIONS" ]; then
     phase_file="/tmp/review-session-${PROJECT_NAME}-${pr_num}.phase"
 
     # Check if PR is still open
-    pr_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    pr_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API_BASE}/pulls/${pr_num}" | jq -r '.state // "unknown"' 2>/dev/null) || true
 
     if [ "$pr_state" != "open" ]; then
@@ -92,7 +92,7 @@ if [ -n "$REVIEW_SESSIONS" ]; then
   done <<< "$REVIEW_SESSIONS"
 fi
 
-PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API_BASE}/pulls?state=open&limit=20" | \
   jq -r --arg branch "${PRIMARY_BRANCH}" '.[] | select(.base.ref == $branch) | select(.draft != true) | select(.title | test("^\\[?WIP[\\]:]"; "i") | not) | "\(.number) \(.head.sha) \(.head.ref)"')
 
@@ -124,7 +124,7 @@ inject_review_into_dev_session() {
   [ "${current_phase}" = "PHASE:awaiting_review" ] || return 0
 
   local review_comment
-  review_comment=$(codeberg_api_all "/issues/${pr_num}/comments" | \
+  review_comment=$(forge_api_all "/issues/${pr_num}/comments" | \
     jq -r --arg sha "${pr_sha}" \
     '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
   if [ -z "${review_comment}" ] || [ "${review_comment}" = "null" ]; then
@@ -185,7 +185,7 @@ if [ -n "${REVIEW_SESSIONS:-}" ]; then
     reviewed_sha=$(sed -n 's/^SHA://p' "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
     [ -n "$reviewed_sha" ] || continue
 
-    pr_json=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    pr_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API_BASE}/pulls/${pr_num}" 2>/dev/null || true)
     [ -n "$pr_json" ] || continue
 
@@ -196,7 +196,7 @@ if [ -n "${REVIEW_SESSIONS:-}" ]; then
     pr_branch=$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')
     if [ -z "$current_sha" ] || [ "$current_sha" = "$reviewed_sha" ]; then continue; fi
 
-    ci_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    ci_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API_BASE}/commits/${current_sha}/status" | jq -r '.state // "unknown"')
 
     if ! ci_passed "$ci_state"; then
@@ -210,7 +210,7 @@ if [ -n "${REVIEW_SESSIONS:-}" ]; then
 
     if "${SCRIPT_DIR}/review-pr.sh" "$pr_num" 2>&1; then
       REVIEWED=$((REVIEWED + 1))
-      FRESH_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      FRESH_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API_BASE}/pulls/${pr_num}" | jq -r '.head.sha // ""') || true
       inject_review_into_dev_session "$pr_num" "${FRESH_SHA:-$current_sha}" "$pr_branch"
     else
@@ -227,7 +227,7 @@ while IFS= read -r line; do
   PR_SHA=$(echo "$line" | awk '{print $2}')
   PR_BRANCH=$(echo "$line" | awk '{print $3}')
 
-  CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API_BASE}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 
   # Skip if CI is running/failed. Allow "success", no CI configured, or non-code PRs
@@ -240,8 +240,8 @@ while IFS= read -r line; do
     log "  #${PR_NUM} CI=${CI_STATE} but no code files — proceeding"
   fi
 
-  # Check formal Codeberg reviews (not comment markers)
-  HAS_REVIEW=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  # Check formal forge reviews (not comment markers)
+  HAS_REVIEW=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API_BASE}/pulls/${PR_NUM}/reviews" | \
     jq -r --arg sha "$PR_SHA" \
     '[.[] | select(.commit_id == $sha) | select(.state != "COMMENT")] | length')
@@ -259,7 +259,7 @@ while IFS= read -r line; do
     # Re-fetch current SHA: review-pr.sh fetches the PR independently and tags its
     # comment with whatever SHA it saw.  If a commit arrived while review-pr.sh was
     # running those two SHA captures diverge and we would miss the comment.
-    FRESH_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    FRESH_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API_BASE}/pulls/${PR_NUM}" | jq -r '.head.sha // ""') || true
     inject_review_into_dev_session "$PR_NUM" "${FRESH_SHA:-$PR_SHA}" "$PR_BRANCH"
   else

@@ -13,7 +13,7 @@ set -euo pipefail
 source "$(dirname "$0")/../lib/env.sh"
 
 # WOODPECKER_TOKEN loaded from .env via env.sh
-REPO="${CODEBERG_REPO}"
+REPO="${FORGE_REPO}"
 API="${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}"
 
 api() {

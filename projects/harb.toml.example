@@ -1,10 +1,11 @@
 # projects/harb.toml.example — Template for johba/harb
 #
 # Copy to projects/harb.toml and fill in box-specific values,
-# or run: disinto init https://codeberg.org/johba/harb
+# or run: disinto init johba/harb
 
 name            = "harb"
 repo            = "johba/harb"
+forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/harb"
 primary_branch  = "master"
 

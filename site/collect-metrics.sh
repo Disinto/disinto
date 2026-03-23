@@ -2,7 +2,7 @@
 # =============================================================================
 # collect-metrics.sh — Collect factory metrics and write JSON for the dashboard
 #
-# Queries Codeberg API for PR/issue stats across all managed projects,
+# Queries forge API for PR/issue stats across all managed projects,
 # counts vault decisions, and checks CI pass rates. Writes a JSON snapshot
 # to the live site directory so the dashboard can fetch it.
 #
@@ -47,12 +47,15 @@ collect_project_metrics() {
 
   repo=$(grep '^repo ' "$project_toml" | head -1 | sed 's/.*= *"//;s/"//')
   repo_name=$(grep '^name ' "$project_toml" | head -1 | sed 's/.*= *"//;s/"//')
-  local api_base="https://codeberg.org/api/v1/repos/${repo}"
+  local forge_url
+  forge_url=$(grep '^forge_url ' "$project_toml" | head -1 | sed 's/.*= *"//;s/"//') 2>/dev/null || true
+  forge_url="${forge_url:-${FORGE_URL:-http://localhost:3000}}"
+  local api_base="${forge_url}/api/v1/repos/${repo}"
 
   # PRs merged (all time via state=closed + merged marker)
   local prs_merged_week=0 prs_merged_month=0 prs_merged_total=0
   local closed_prs
-  closed_prs=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  closed_prs=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/pulls?state=closed&sort=updated&limit=50" 2>/dev/null || echo "[]")
 
   prs_merged_total=$(printf '%s' "$closed_prs" | jq '[.[] | select(.merged)] | length' 2>/dev/null || echo 0)
@@ -69,7 +72,7 @@ collect_project_metrics() {
   # Issues closed
   local issues_closed_week=0 issues_closed_month=0
   local closed_issues
-  closed_issues=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  closed_issues=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/issues?state=closed&sort=updated&type=issues&limit=50" 2>/dev/null || echo "[]")
 
   if [ -n "$WEEK_AGO" ]; then
@@ -82,19 +85,19 @@ collect_project_metrics() {
   fi
 
   local total_closed_header
-  total_closed_header=$(curl -sf -I -H "Authorization: token ${CODEBERG_TOKEN}" \
+  total_closed_header=$(curl -sf -I -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/issues?state=closed&type=issues&limit=1" 2>/dev/null | grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}' || echo "0")
   local issues_closed_total="${total_closed_header:-0}"
 
   # Open issues by label
   local backlog_count in_progress_count blocked_count
-  backlog_count=$(curl -sf -I -H "Authorization: token ${CODEBERG_TOKEN}" \
+  backlog_count=$(curl -sf -I -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | \
     grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}' || echo "0")
-  in_progress_count=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  in_progress_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/issues?state=open&labels=in-progress&type=issues&limit=50" 2>/dev/null | \
     jq 'length' 2>/dev/null || echo 0)
-  blocked_count=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  blocked_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${api_base}/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | \
     jq 'length' 2>/dev/null || echo 0)
 

@@ -4,7 +4,7 @@
 ## What this repo is
 
 Disinto is an autonomous code factory. It manages eight agents (dev, review,
-gardener, supervisor, planner, predictor, action, vault) that pick up issues from Codeberg,
+gardener, supervisor, planner, predictor, action, vault) that pick up issues from forge,
 implement them, review PRs, plan from the vision, gate dangerous actions, and
 keep the system healthy — all via cron and `claude -p`.
 
@@ -42,7 +42,7 @@ disinto/
 - **Shell**: bash (all agents are bash scripts)
 - **AI**: `claude -p` (one-shot) or `claude` (interactive/tmux sessions)
 - **CI**: Woodpecker CI (queried via REST API + Postgres)
-- **VCS**: Codeberg (git + Gitea REST API)
+- **VCS**: Forgejo (git + Gitea-compatible REST API)
 - **Notifications**: Matrix (optional)
 
 ## Coding conventions

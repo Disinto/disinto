@@ -328,8 +328,8 @@
       <div class="label">Prerequisites</div>
       <ul>
         <li><strong>A VPS or server</strong> &mdash; 8 GB RAM minimum (Ubuntu/Debian recommended)</li>
-        <li><strong>A Codeberg account</strong> &mdash; with a repo and at least one issue</li>
-        <li><strong>A second Codeberg account</strong> &mdash; for the review bot (branch protection requires a different reviewer)</li>
+        <li><strong>A forge instance</strong> &mdash; with a repo and at least one issue</li>
+        <li><strong>A second forge instance</strong> &mdash; for the review bot (branch protection requires a different reviewer)</li>
         <li><strong>Woodpecker CI</strong> &mdash; running and connected to your repo</li>
         <li><strong>An Anthropic API key</strong> &mdash; with the <code>claude</code> CLI installed and authenticated</li>
         <li><strong>tmux</strong> &mdash; for persistent dev sessions</li>
@@ -343,13 +343,13 @@
         Clone the factory
       </div>
       <p>Clone disinto onto your server. This is the factory &mdash; the code that runs your agents.</p>
-<pre><code>git clone https://codeberg.org/johba/disinto.git ~/disinto
+<pre><code>git clone http://localhost:3000/johba/disinto.git ~/disinto
 cd ~/disinto
 cp .env.example .env</code></pre>
       <p>Edit <code>.env</code> with your tokens:</p>
 <pre><code><span class="comment"># Required</span>
-CODEBERG_TOKEN=your_codeberg_token
-REVIEW_BOT_TOKEN=your_review_bot_token
+FORGE_TOKEN=your_codeberg_token
+FORGE_REVIEW_TOKEN=your_review_bot_token
 
 <span class="comment"># Woodpecker CI</span>
 WOODPECKER_TOKEN=your_woodpecker_token
@@ -365,14 +365,14 @@ CLAUDE_TIMEOUT=7200</code></pre>
         <span class="step-num">2</span>
         Initialize your project
       </div>
-      <p><code>disinto init</code> sets up everything: clones the repo, creates the project config, adds Codeberg labels, and installs cron jobs.</p>
-<pre><code>bin/disinto init https://codeberg.org/you/your-project</code></pre>
+      <p><code>disinto init</code> provisions a local Forgejo instance, clones the repo, creates the project config, adds labels, and installs cron jobs.</p>
+<pre><code>bin/disinto init http://localhost:3000/you/your-project</code></pre>
       <div class="expected">
         <div class="label">Expected output</div>
 <code>=== disinto init ===
 Project: you/your-project
 Name:    your-project
-Cloning: https://codeberg.org/you/your-project.git -> /home/you/your-project
+Cloning: http://localhost:3000/you/your-project.git -> /home/you/your-project
 Branch:  main
 Created: /home/you/disinto/projects/your-project.toml
 Creating labels on you/your-project...
@@ -406,7 +406,7 @@ Done. Project your-project is ready.</code>
       <ol>
         <li><strong>A CI pipeline</strong> &mdash; at least one <code>.woodpecker/*.yml</code> file. Agents wait for CI before reviewing or merging.</li>
         <li><strong>A CLAUDE.md</strong> &mdash; project context that agents read before every task. Describe your tech stack, how to build/test, coding conventions, and directory layout.</li>
-        <li><strong>Branch protection</strong> &mdash; on Codeberg, require PR reviews and add the review bot as a write collaborator.</li>
+        <li><strong>Branch protection</strong> &mdash; on Forgejo, require PR reviews and add the review bot as a write collaborator.</li>
       </ol>
 <pre><code><span class="comment"># Create CLAUDE.md in your project</span>
 cat > ~/your-project/CLAUDE.md &lt;&lt;'EOF'
@@ -434,7 +434,7 @@ git push</code></pre>
         <span class="step-num">4</span>
         File your first issue
       </div>
-      <p>Create an issue on Codeberg with the <code>backlog</code> label. Be specific &mdash; the dev-agent works best with clear acceptance criteria.</p>
+      <p>Create an issue on the forge with the <code>backlog</code> label. Be specific &mdash; the dev-agent works best with clear acceptance criteria.</p>
 <pre><code><span class="comment"># Title: Add health check endpoint</span>
 <span class="comment"># Label: backlog</span>
 <span class="comment"># Body:</span>
@@ -523,7 +523,7 @@ git log --oneline -5</code></pre>
     <div class="footer">
       <a href="/">&larr; disinto.ai</a> &middot;
       <a href="/docs/architecture">Architecture</a> &middot;
-      <a href="https://codeberg.org/johba/disinto">Source</a>
+      <a href="http://localhost:3000/johba/disinto">Source</a>
     </div>
 
   </div>

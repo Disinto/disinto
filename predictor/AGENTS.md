@@ -28,7 +28,7 @@ memory check (skips if available RAM < 2000 MB).
 
 **Key files**:
 - `predictor/predictor-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
-  sources disinto project config, builds prompt with formula + Codeberg API
+  sources disinto project config, builds prompt with formula + forge API
   reference, creates tmux session (sonnet), monitors phase file, handles crash
   recovery via `run_formula_and_monitor`
 - `formulas/run-predictor.toml` — Execution spec: two steps (preflight,
@@ -37,7 +37,7 @@ memory check (skips if available RAM < 2000 MB).
   interactive session
 
 **Environment variables consumed**:
-- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 

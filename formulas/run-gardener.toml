@@ -56,8 +56,8 @@ Groom the open issue backlog. This step is the core Claude-driven analysis
 Pre-checks (bash, zero tokens — detect problems before invoking Claude):
 
 1. Fetch all open issues:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&limit=50&sort=updated&direction=desc"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&limit=50&sort=updated&direction=desc"
 
 2. Duplicate detection: compare issue titles pairwise. Normalize
    (lowercase, strip prefixes like feat:/fix:/refactor:, collapse whitespace)
@@ -162,7 +162,7 @@ Sibling dependency rule (CRITICAL):
 
    If either section is missing:
    a. Write a comment action to the manifest:
-        echo '{"action":"comment","issue":NNN,"body":"This issue is missing required sections. Please use the issue templates at `.codeberg/ISSUE_TEMPLATE/` — needs: <missing items>."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+        echo '{"action":"comment","issue":NNN,"body":"This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: <missing items>."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
       Where <missing items> is a comma-separated list of what's absent
       (e.g. "acceptance criteria, affected files" or just "affected files").
    b. Write a remove_label action to the manifest:
@@ -249,19 +249,19 @@ Review all issues labeled 'blocked' and decide their fate.
 (See issue #352 for the blocked label convention.)
 
 1. Fetch all blocked issues:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&labels=blocked&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=blocked&limit=50"
 
 2. For each blocked issue, read the full body and comments:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues/<number>"
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues/<number>/comments"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues/<number>"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues/<number>/comments"
 
 3. Check dependencies — extract issue numbers from ## Dependencies /
    ## Depends on / ## Blocked by sections. For each dependency:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues/<dep_number>"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues/<dep_number>"
    Check if the dependency is now closed.
 
 4. For each blocked issue, choose ONE action:
@@ -459,9 +459,9 @@ executes them after the PR merges.
         git push -u origin "$BRANCH"
    g. Create a PR:
         PR_RESPONSE=$(curl -sf -X POST \
-          -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/pulls" \
+          "$FORGE_API/pulls" \
           -d '{"title":"chore: gardener housekeeping",
                "head":"'"$BRANCH"'","base":"'"$PRIMARY_BRANCH"'",
                "body":"Automated gardener housekeeping — AGENTS.md updates + pending actions manifest.\\n\\nReview `gardener/pending-actions.json` for proposed grooming actions (label changes, closures, comments). These execute after merge."}')

@@ -71,7 +71,7 @@ SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 build_prompt_footer
 
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-PROMPT="You are the supervisor agent for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
+PROMPT="You are the supervisor agent for ${FORGE_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 You have full shell access and --dangerously-skip-permissions.
 Fix what you can. Escalate what you cannot. Do NOT ask permission — act first, report after.

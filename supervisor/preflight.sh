@@ -132,16 +132,16 @@ echo ""
 # ── Open PRs ──────────────────────────────────────────────────────────────
 
 echo "## Open PRs (${PROJECT_NAME})"
-_open_prs=$(codeberg_api GET "/pulls?state=open&limit=10" 2>/dev/null || echo "[]")
+_open_prs=$(forge_api GET "/pulls?state=open&limit=10" 2>/dev/null || echo "[]")
 echo "$_open_prs" | jq -r '.[] | "#\(.number) [\(.head.ref)] \(.title) — updated \(.updated_at)"' 2>/dev/null || echo "No open PRs or query failed"
 echo ""
 
 # ── Backlog + In-Progress ─────────────────────────────────────────────────
 
 echo "## Issue Status (${PROJECT_NAME})"
-_backlog_count=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
-_in_progress_count=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
-_blocked_count=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_backlog_count=$(forge_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_in_progress_count=$(forge_api GET "/issues?state=open&labels=in-progress&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+_blocked_count=$(forge_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
 echo "Backlog: ${_backlog_count}, In-progress: ${_in_progress_count}, Blocked: ${_blocked_count}"
 echo ""
 
@@ -161,7 +161,7 @@ echo ""
 # ── Blocked Issues ────────────────────────────────────────────────────────
 
 echo "## Blocked Issues"
-_blocked_issues=$(codeberg_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null || echo "[]")
+_blocked_issues=$(forge_api GET "/issues?state=open&labels=blocked&type=issues&limit=50" 2>/dev/null || echo "[]")
 _blocked_n=$(echo "$_blocked_issues" | jq 'length' 2>/dev/null || echo 0)
 if [ "${_blocked_n:-0}" -gt 0 ]; then
   echo "$_blocked_issues" | jq -r '.[] | "  #\(.number): \(.title)"' 2>/dev/null || echo "  (query failed)"

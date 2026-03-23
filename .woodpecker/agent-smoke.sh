@@ -92,7 +92,7 @@ echo "=== 2/2  Function resolution ==="
 # Functions provided by shared lib files (available to all agent scripts via source).
 #
 # Included — these are inline-sourced by agent scripts:
-#   lib/env.sh              — sourced by every agent (log, codeberg_api, etc.)
+#   lib/env.sh              — sourced by every agent (log, forge_api, etc.)
 #   lib/agent-session.sh    — sourced by orchestrators (create_agent_session, monitor_phase_loop, etc.)
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set

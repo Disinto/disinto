@@ -42,7 +42,7 @@ SESSION_START_EPOCH=$(date +%s)
 
 # --- Phase handler globals (agent-specific; defaults in phase-handler.sh) ---
 # shellcheck disable=SC2034  # used by phase-handler.sh
-API="${CODEBERG_API}"
+API="${FORGE_API}"
 BRANCH="action/issue-${ISSUE}"
 # shellcheck disable=SC2034  # used by phase-handler.sh
 WORKTREE="/tmp/action-${ISSUE}-$(date +%s)"
@@ -133,8 +133,8 @@ fi
 
 # --- Fetch issue ---
 log "fetching issue #${ISSUE}"
-ISSUE_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${CODEBERG_API}/issues/${ISSUE}") || true
+ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues/${ISSUE}") || true
 
 if [ -z "$ISSUE_JSON" ] || ! printf '%s' "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; then
   log "ERROR: failed to fetch issue #${ISSUE}"
@@ -161,18 +161,18 @@ if [ -n "$YAML_MODEL" ]; then
 fi
 
 # --- Resolve bot username(s) for comment filtering ---
-_bot_login=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${CODEBERG_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
+_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
 
-# Build list: token owner + any extra names from CODEBERG_BOT_USERNAMES (comma-separated)
+# Build list: token owner + any extra names from FORGE_BOT_USERNAMES (comma-separated)
 _bot_logins="${_bot_login}"
-if [ -n "${CODEBERG_BOT_USERNAMES:-}" ]; then
-  _bot_logins="${_bot_logins:+${_bot_logins},}${CODEBERG_BOT_USERNAMES}"
+if [ -n "${FORGE_BOT_USERNAMES:-}" ]; then
+  _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
 fi
 
 # --- Fetch existing comments (resume context, excluding bot comments) ---
-COMMENTS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${CODEBERG_API}/issues/${ISSUE}/comments?limit=50") || true
+COMMENTS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues/${ISSUE}/comments?limit=50") || true
 
 PRIOR_COMMENTS=""
 if [ -n "$COMMENTS_JSON" ] && [ "$COMMENTS_JSON" != "null" ] && [ "$COMMENTS_JSON" != "[]" ]; then
@@ -184,7 +184,7 @@ if [ -n "$COMMENTS_JSON" ] && [ "$COMMENTS_JSON" != "null" ] && [ "$COMMENTS_JSO
 fi
 
 # --- Create Matrix thread for this issue ---
-ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
+ISSUE_URL="${FORGE_WEB}/issues/${ISSUE}"
 _thread_id=$(matrix_send_ctx "action" \
   "⚡ Action #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
   "⚡ <a href='${ISSUE_URL}'>Action #${ISSUE}</a>: ${ISSUE_TITLE}") || true
@@ -254,9 +254,9 @@ ${PRIOR_SECTION}## Instructions
 
 3. Post progress as comments on issue #${ISSUE} after significant steps:
    curl -sf -X POST \\
-     -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
+     -H \"Authorization: token \${FORGE_TOKEN}\" \\
      -H 'Content-Type: application/json' \\
-     \"${CODEBERG_API}/issues/${ISSUE}/comments\" \\
+     \"${FORGE_API}/issues/${ISSUE}/comments\" \\
      -d \"{\\\"body\\\": \\\"your comment here\\\"}\"
 
 4. If a step requires human input or approval, send a Matrix message explaining
@@ -278,19 +278,19 @@ ${PRIOR_SECTION}## Instructions
      files you need to persistent paths before signaling done.
    - Close the issue:
      curl -sf -X PATCH \\
-       -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
+       -H \"Authorization: token \${FORGE_TOKEN}\" \\
        -H 'Content-Type: application/json' \\
-       \"${CODEBERG_API}/issues/${ISSUE}\" \\
+       \"${FORGE_API}/issues/${ISSUE}\" \\
        -d '{\"state\": \"closed\"}'
    - Signal completion: echo \"PHASE:done\" > \"${PHASE_FILE}\"
 
 5. Environment variables available in your bash sessions:
-   CODEBERG_TOKEN, CODEBERG_API, CODEBERG_REPO, CODEBERG_WEB, PROJECT_NAME
+   FORGE_TOKEN, FORGE_API, FORGE_REPO, FORGE_WEB, PROJECT_NAME
    (all sourced from ${FACTORY_ROOT}/.env)
 
 ### CRITICAL: Never embed secrets in issue bodies, comments, or PR descriptions
    - NEVER put API keys, tokens, passwords, or private keys in issue text or comments.
-   - Always reference secrets via env var names (e.g. \\\$BASE_RPC_URL, \\\$CODEBERG_TOKEN).
+   - Always reference secrets via env var names (e.g. \\\$BASE_RPC_URL, \\\${FORGE_TOKEN}).
    - If a formula step needs a secret, read it from .env or the environment at runtime.
    - Before posting any comment, verify it contains no credentials, hex keys > 32 chars,
      or URLs with embedded API keys.
@@ -330,9 +330,9 @@ _lifetime_watchdog() {
   # Post summary comment on issue
   local body="Action session killed: wall-clock lifetime cap (${hours}h) reached."
   curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H 'Content-Type: application/json' \
-    "${CODEBERG_API}/issues/${ISSUE}/comments" \
+    "${FORGE_API}/issues/${ISSUE}/comments" \
     -d "{\"body\": \"${body}\"}" >/dev/null 2>&1 || true
   printf 'PHASE:failed\nReason: max_lifetime (%sh) reached\n' "$hours" > "$PHASE_FILE"
   # Touch phase-changed marker so monitor_phase_loop picks up immediately

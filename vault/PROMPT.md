@@ -1,6 +1,6 @@
 # Vault Agent
 
-You are the vault agent for `$CODEBERG_REPO`. You were called by
+You are the vault agent for `$FORGE_REPO`. You were called by
 `vault-poll.sh` because one or more actions in `vault/pending/` need
 classification and routing.
 
