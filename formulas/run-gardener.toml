@@ -37,6 +37,9 @@ Set up the working environment for this gardener run.
 3. Record the current HEAD SHA for AGENTS.md watermarks:
      HEAD_SHA=$(git rev-parse HEAD)
      echo "$HEAD_SHA" > /tmp/gardener-head-sha
+
+4. Initialize the pending-actions manifest (JSONL, converted to JSON at commit time):
+     printf '' > "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
 """
 
 # ─────────────────────────────────────────────────────────────────────
@@ -108,16 +111,10 @@ Sibling dependency rule (CRITICAL):
    Read AGENTS.md and extract the AD table. For each backlog issue,
    compare the issue title and body against each AD. If an issue
    clearly violates an AD:
-   a. Post a comment explaining the violation:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>/comments" \
-          -d '{"body":"Closing: violates AD-NNN (<decision summary>). See AGENTS.md § Architecture Decisions."}'
-   b. Close the issue:
-        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>" \
-          -d '{"state":"closed"}'
+   a. Write a comment action to the manifest:
+        echo '{"action":"comment","issue":NNN,"body":"Closing: violates AD-NNN (<decision summary>). See AGENTS.md § Architecture Decisions."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+   b. Write a close action to the manifest:
+        echo '{"action":"close","issue":NNN,"reason":"violates AD-NNN"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
    c. Log to the result file:
         echo "ACTION: closed #NNN — violates AD-NNN" >> "$RESULT_FILE"
 
@@ -134,20 +131,13 @@ Sibling dependency rule (CRITICAL):
       "## Affected files" section with at least one file path
 
    If either section is missing:
-   a. Look up the 'backlog' label ID:
-        BACKLOG_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "backlog") | .id')
-   b. Post a comment listing what's missing:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>/comments" \
-          -d '{"body":"This issue is missing required sections. Please use the issue templates at `.codeberg/ISSUE_TEMPLATE/` — needs: <missing items>."}'
+   a. Write a comment action to the manifest:
+        echo '{"action":"comment","issue":NNN,"body":"This issue is missing required sections. Please use the issue templates at `.codeberg/ISSUE_TEMPLATE/` — needs: <missing items>."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
       Where <missing items> is a comma-separated list of what's absent
       (e.g. "acceptance criteria, affected files" or just "affected files").
-   c. Remove the 'backlog' label:
-        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<number>/labels/$BACKLOG_LABEL_ID"
-   d. Log to the result file:
+   b. Write a remove_label action to the manifest:
+        echo '{"action":"remove_label","issue":NNN,"label":"backlog"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+   c. Log to the result file:
         echo "ACTION: stripped backlog from #NNN — missing: <missing items>" >> "$RESULT_FILE"
 
    Well-structured issues (both sections present) are left untouched —
@@ -203,16 +193,11 @@ session, so changes there would be lost.
         jq -r '[.group, (.issue | tostring)] | join("\\t")' "$DUST_FILE" | sort -u | cut -f1 | sort | uniq -c | sort -rn
    b. For each group with count >= 3:
       - Collect issue details and distinct issue numbers for the group
-      - Look up the backlog label ID:
-          BACKLOG_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-            "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "backlog") | .id')
-      - Create a bundled backlog issue:
-          curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-            -H "Content-Type: application/json" "$CODEBERG_API/issues" \
-            -d '{"title":"fix: bundled dust cleanup — GROUP","body":"...","labels":[LABEL_ID]}'
-      - Close each source issue with a cross-reference comment:
-          curl ... "$CODEBERG_API/issues/NNN/comments" -d '{"body":"Bundled into #NEW"}'
-          curl ... "$CODEBERG_API/issues/NNN" -d '{"state":"closed"}'
+      - Write a create_issue action to the manifest:
+          echo '{"action":"create_issue","title":"fix: bundled dust cleanup — GROUP","body":"...","labels":["backlog"]}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+      - Write comment + close actions for each source issue:
+          echo '{"action":"comment","issue":NNN,"body":"Bundled into dust cleanup issue for GROUP"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+          echo '{"action":"close","issue":NNN,"reason":"bundled into dust cleanup for GROUP"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
       - Remove bundled items from dust.jsonl:
           jq -c --arg g "GROUP" 'select(.group != $g)' "$DUST_FILE" > "${DUST_FILE}.tmp" && mv "${DUST_FILE}.tmp" "$DUST_FILE"
 
@@ -233,57 +218,42 @@ description = """
 Review all issues labeled 'blocked' and decide their fate.
 (See issue #352 for the blocked label convention.)
 
-1. Look up the 'blocked' label ID (Gitea needs integer IDs for label removal):
-     BLOCKED_LABEL_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/labels" | jq -r '.[] | select(.name == "blocked") | .id')
-   If the lookup fails, skip label removal and just post comments.
-
-2. Fetch all blocked issues:
+1. Fetch all blocked issues:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues?state=open&type=issues&labels=blocked&limit=50"
 
-3. For each blocked issue, read the full body and comments:
+2. For each blocked issue, read the full body and comments:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues/<number>"
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues/<number>/comments"
 
-4. Check dependencies — extract issue numbers from ## Dependencies /
+3. Check dependencies — extract issue numbers from ## Dependencies /
    ## Depends on / ## Blocked by sections. For each dependency:
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
        "$CODEBERG_API/issues/<dep_number>"
    Check if the dependency is now closed.
 
-5. For each blocked issue, choose ONE action:
+4. For each blocked issue, choose ONE action:
 
    UNBLOCK — all dependencies are now closed or the blocking condition resolved:
-   a. Remove the 'blocked' label (using ID from step 1):
-        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<number>/labels/$BLOCKED_LABEL_ID"
-   b. Add context comment explaining what changed:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>/comments" \
-          -d '{"body":"Unblocked: <explanation of what resolved the blocker>"}'
+   a. Write a remove_label action to the manifest:
+        echo '{"action":"remove_label","issue":NNN,"label":"blocked"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+   b. Write a comment action to the manifest:
+        echo '{"action":"comment","issue":NNN,"body":"Unblocked: <explanation of what resolved the blocker>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
 
    NEEDS HUMAN — blocking condition is ambiguous, requires architectural
    decision, or involves external factors:
-   a. Post a diagnostic comment explaining what you found and what
-      decision is needed
+   a. Write a comment action to the manifest:
+        echo '{"action":"comment","issue":NNN,"body":"<diagnostic: what you found and what decision is needed>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
    b. Leave the 'blocked' label in place
 
    CLOSE — issue is stale (blocked 30+ days with no progress on blocker),
    the blocker is wontfix, or the issue is no longer relevant:
-   a. Post a comment explaining why:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>/comments" \
-          -d '{"body":"Closing: <reason — stale blocker, no longer relevant, etc.>"}'
-   b. Close the issue:
-        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<number>" \
-          -d '{"state":"closed"}'
+   a. Write a comment action to the manifest:
+        echo '{"action":"comment","issue":NNN,"body":"Closing: <reason — stale blocker, no longer relevant, etc.>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+   b. Write a close action to the manifest:
+        echo '{"action":"close","issue":NNN,"reason":"<stale blocker / no longer relevant / etc.>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
 
 CRITICAL: If this step fails, log the failure and move on.
 """
@@ -421,49 +391,63 @@ needs = ["blocked-review"]
 id    = "commit-and-pr"
 title = "One commit with all file changes, push, create PR, monitor to merge"
 description = """
-Collect all file changes from this run (AGENTS.md updates) into a single commit.
-API calls (issue creation, PR comments, closures) already happened during the
-run — only file changes need the PR.
+Collect all file changes from this run (AGENTS.md updates + pending-actions
+manifest) into a single commit. All repo mutation API calls (comments, closures,
+label changes, issue creation) are deferred to the manifest — the orchestrator
+executes them after the PR merges.
 
-1. Check for staged or unstaged changes:
+1. Convert the JSONL manifest to a JSON array:
      cd "$PROJECT_REPO_ROOT"
+     JSONL_FILE="$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+     JSON_FILE="$PROJECT_REPO_ROOT/gardener/pending-actions.json"
+     if [ -s "$JSONL_FILE" ]; then
+       jq -s '.' "$JSONL_FILE" > "$JSON_FILE"
+     else
+       echo '[]' > "$JSON_FILE"
+     fi
+     rm -f "$JSONL_FILE"
+
+2. Check for staged or unstaged changes:
      git status --porcelain
 
-   If there are no file changes, skip to step 3 — no commit, no PR needed.
+   If there are no file changes (no AGENTS.md updates AND manifest is empty []),
+   skip to step 4 — no commit, no PR needed.
 
-2. If there are changes:
+3. If there are changes:
    a. Create a branch:
         BRANCH="chore/gardener-$(date -u +%Y%m%d-%H%M)"
         git checkout -B "$BRANCH"
    b. Stage all modified AGENTS.md files:
         find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
-   c. Also stage any other files the gardener modified (if any):
+   c. Stage the pending-actions manifest:
+        git add gardener/pending-actions.json
+   d. Also stage any other files the gardener modified (if any):
         git add -u
-   d. Commit:
+   e. Commit:
         git commit -m "chore: gardener housekeeping $(date -u +%Y-%m-%d)"
-   e. Push:
+   f. Push:
         git push -u origin "$BRANCH"
-   f. Create a PR:
+   g. Create a PR:
         PR_RESPONSE=$(curl -sf -X POST \
           -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/json" \
           "$CODEBERG_API/pulls" \
           -d '{"title":"chore: gardener housekeeping",
                "head":"'"$BRANCH"'","base":"'"$PRIMARY_BRANCH"'",
-               "body":"Automated gardener housekeeping — AGENTS.md updates.\\n\\nReview-agent fast-tracks doc-only PRs."}')
+               "body":"Automated gardener housekeeping — AGENTS.md updates + pending actions manifest.\\n\\nReview `gardener/pending-actions.json` for proposed grooming actions (label changes, closures, comments). These execute after merge."}')
         PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
-   g. Save PR number for orchestrator tracking:
+   h. Save PR number for orchestrator tracking:
         echo "$PR_NUMBER" > /tmp/gardener-pr-${PROJECT_NAME}.txt
-   h. Signal the orchestrator to monitor CI:
+   i. Signal the orchestrator to monitor CI:
         echo "PHASE:awaiting_ci" > "$PHASE_FILE"
-   i. STOP and WAIT. Do NOT return to the primary branch.
+   j. STOP and WAIT. Do NOT return to the primary branch.
       The orchestrator polls CI, injects results and review feedback.
       When you receive injected CI or review feedback, follow its
       instructions, then write PHASE:awaiting_ci and wait again.
 
-3. If no file changes existed (step 1 found nothing):
+4. If no file changes existed (step 2 found nothing):
      echo "PHASE:done" > "$PHASE_FILE"
 
-4. If PR creation fails, log the error and write PHASE:failed.
+5. If PR creation fails, log the error and write PHASE:failed.
 """
 needs = ["agents-update"]

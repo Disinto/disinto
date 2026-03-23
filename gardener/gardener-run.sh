@@ -66,13 +66,24 @@ build_context_block AGENTS.md
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
-# ── Build prompt (gardener needs extra API endpoints for issue management) ─
+# ── Build prompt (manifest format reference for deferred actions) ─────────
 GARDENER_API_EXTRA="
-  Relabel:     curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PUT -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'
-  Comment:     curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X POST -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}/comments' -d '{\"body\":\"...\"}'
-  Close:       curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"state\":\"closed\"}'
-  Edit body:   curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" -X PATCH -H 'Content-Type: application/json' '${CODEBERG_API}/issues/{number}' -d '{\"body\":\"new body\"}'
-"
+
+## Pending-actions manifest (REQUIRED)
+All repo mutations (comments, closures, label changes, issue creation) MUST be
+written to the JSONL manifest instead of calling APIs directly. Append one JSON
+object per line to: \$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl
+
+Supported actions:
+  {\"action\":\"add_label\",    \"issue\":NNN, \"label\":\"priority\"}
+  {\"action\":\"remove_label\", \"issue\":NNN, \"label\":\"backlog\"}
+  {\"action\":\"close\",        \"issue\":NNN, \"reason\":\"already implemented\"}
+  {\"action\":\"comment\",      \"issue\":NNN, \"body\":\"Relates to issue 1031\"}
+  {\"action\":\"create_issue\", \"title\":\"...\", \"body\":\"...\", \"labels\":[\"backlog\"]}
+  {\"action\":\"edit_body\",    \"issue\":NNN, \"body\":\"new body\"}
+
+The commit-and-pr step converts JSONL to JSON array. The orchestrator executes
+actions after the PR merges. Do NOT call mutation APIs directly during the run."
 build_prompt_footer "$GARDENER_API_EXTRA"
 
 # Extend phase protocol with merge-through instructions for compaction survival
@@ -121,6 +132,154 @@ ${PROMPT_FOOTER}"
 # Handles CI polling, review injection, merge, and cleanup after PR creation.
 # Lighter than dev/phase-handler.sh — tailored for gardener doc-only PRs.
 
+# ── Post-merge manifest execution ─────────────────────────────────────
+# Reads gardener/pending-actions.json and executes each action via API.
+# Failed actions are logged but do not block completion.
+# shellcheck disable=SC2317  # called indirectly via _gardener_merge
+_gardener_execute_manifest() {
+  local manifest_file="$PROJECT_REPO_ROOT/gardener/pending-actions.json"
+  if [ ! -f "$manifest_file" ]; then
+    log "manifest: no pending-actions.json — skipping"
+    return 0
+  fi
+
+  local count
+  count=$(jq 'length' "$manifest_file" 2>/dev/null || echo 0)
+  if [ "$count" -eq 0 ]; then
+    log "manifest: empty — skipping"
+    return 0
+  fi
+
+  log "manifest: executing ${count} actions"
+
+  local i=0
+  while [ "$i" -lt "$count" ]; do
+    local action issue
+    action=$(jq -r ".[$i].action" "$manifest_file")
+    issue=$(jq -r ".[$i].issue // empty" "$manifest_file")
+
+    case "$action" in
+      add_label)
+        local label label_id
+        label=$(jq -r ".[$i].label" "$manifest_file")
+        label_id=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+          "${CODEBERG_API}/labels" | jq -r --arg n "$label" \
+          '.[] | select(.name == $n) | .id') || true
+        if [ -n "$label_id" ]; then
+          if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+               -H 'Content-Type: application/json' \
+               "${CODEBERG_API}/issues/${issue}/labels" \
+               -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1; then
+            log "manifest: add_label '${label}' to #${issue}"
+          else
+            log "manifest: FAILED add_label '${label}' to #${issue}"
+          fi
+        else
+          log "manifest: FAILED add_label — label '${label}' not found"
+        fi
+        ;;
+
+      remove_label)
+        local label label_id
+        label=$(jq -r ".[$i].label" "$manifest_file")
+        label_id=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+          "${CODEBERG_API}/labels" | jq -r --arg n "$label" \
+          '.[] | select(.name == $n) | .id') || true
+        if [ -n "$label_id" ]; then
+          if curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
+               "${CODEBERG_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1; then
+            log "manifest: remove_label '${label}' from #${issue}"
+          else
+            log "manifest: FAILED remove_label '${label}' from #${issue}"
+          fi
+        else
+          log "manifest: FAILED remove_label — label '${label}' not found"
+        fi
+        ;;
+
+      close)
+        local reason
+        reason=$(jq -r ".[$i].reason // empty" "$manifest_file")
+        if curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+             -H 'Content-Type: application/json' \
+             "${CODEBERG_API}/issues/${issue}" \
+             -d '{"state":"closed"}' >/dev/null 2>&1; then
+          log "manifest: closed #${issue} (${reason})"
+        else
+          log "manifest: FAILED close #${issue}"
+        fi
+        ;;
+
+      comment)
+        local body escaped_body
+        body=$(jq -r ".[$i].body" "$manifest_file")
+        escaped_body=$(printf '%s' "$body" | jq -Rs '.')
+        if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+             -H 'Content-Type: application/json' \
+             "${CODEBERG_API}/issues/${issue}/comments" \
+             -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
+          log "manifest: commented on #${issue}"
+        else
+          log "manifest: FAILED comment on #${issue}"
+        fi
+        ;;
+
+      create_issue)
+        local title body labels escaped_title escaped_body label_ids
+        title=$(jq -r ".[$i].title" "$manifest_file")
+        body=$(jq -r ".[$i].body" "$manifest_file")
+        labels=$(jq -r ".[$i].labels // [] | .[]" "$manifest_file")
+        escaped_title=$(printf '%s' "$title" | jq -Rs '.')
+        escaped_body=$(printf '%s' "$body" | jq -Rs '.')
+        # Resolve label names to IDs
+        label_ids="[]"
+        if [ -n "$labels" ]; then
+          local all_labels ids_json=""
+          all_labels=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+            "${CODEBERG_API}/labels") || true
+          while IFS= read -r lname; do
+            local lid
+            lid=$(echo "$all_labels" | jq -r --arg n "$lname" \
+              '.[] | select(.name == $n) | .id') || true
+            [ -n "$lid" ] && ids_json="${ids_json:+${ids_json},}${lid}"
+          done <<< "$labels"
+          [ -n "$ids_json" ] && label_ids="[${ids_json}]"
+        fi
+        if curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+             -H 'Content-Type: application/json' \
+             "${CODEBERG_API}/issues" \
+             -d "{\"title\":${escaped_title},\"body\":${escaped_body},\"labels\":${label_ids}}" >/dev/null 2>&1; then
+          log "manifest: created issue '${title}'"
+        else
+          log "manifest: FAILED create_issue '${title}'"
+        fi
+        ;;
+
+      edit_body)
+        local body escaped_body
+        body=$(jq -r ".[$i].body" "$manifest_file")
+        escaped_body=$(printf '%s' "$body" | jq -Rs '.')
+        if curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+             -H 'Content-Type: application/json' \
+             "${CODEBERG_API}/issues/${issue}" \
+             -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
+          log "manifest: edited body of #${issue}"
+        else
+          log "manifest: FAILED edit_body #${issue}"
+        fi
+        ;;
+
+      *)
+        log "manifest: unknown action '${action}' — skipping"
+        ;;
+    esac
+
+    i=$((i + 1))
+  done
+
+  log "manifest: execution complete (${count} actions processed)"
+}
+
 # shellcheck disable=SC2317  # called indirectly by monitor_phase_loop
 _gardener_merge() {
   local merge_response merge_http_code
@@ -133,6 +292,7 @@ _gardener_merge() {
 
   if [ "$merge_http_code" = "200" ] || [ "$merge_http_code" = "204" ]; then
     log "gardener PR #${_GARDENER_PR} merged"
+    _gardener_execute_manifest
     printf 'PHASE:done\n' > "$PHASE_FILE"
     return 0
   fi
@@ -144,6 +304,7 @@ _gardener_merge() {
       "${CODEBERG_API}/pulls/${_GARDENER_PR}" | jq -r '.merged // false') || true
     if [ "$pr_merged" = "true" ]; then
       log "gardener PR #${_GARDENER_PR} already merged"
+      _gardener_execute_manifest
       printf 'PHASE:done\n' > "$PHASE_FILE"
       return 0
     fi
@@ -422,6 +583,7 @@ Then stop and wait."
 
     if [ "$pr_merged" = "true" ]; then
       log "gardener PR #${_GARDENER_PR} merged externally"
+      _gardener_execute_manifest
       printf 'PHASE:done\n' > "$PHASE_FILE"
       return 0
     fi
