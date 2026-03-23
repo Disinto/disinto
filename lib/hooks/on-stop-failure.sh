@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-stop-failure.sh — StopFailure hook for immediate phase file update on API error.
 #
 # Called by Claude Code when a turn ends due to an API error (rate limit,

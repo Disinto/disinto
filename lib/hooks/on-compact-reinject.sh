@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-compact-reinject.sh — SessionStart (compact) hook for dark-factory agent sessions.
 #
 # Called by Claude Code after context compaction. Reads a context file and

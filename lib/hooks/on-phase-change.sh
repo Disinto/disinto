@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-phase-change.sh — PostToolUse hook for phase file write detection.
 #
 # Called by Claude Code after every Bash|Write tool execution.

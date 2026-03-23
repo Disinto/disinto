@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-stop-matrix.sh — Stop hook: post Claude response to Matrix thread.
 #
 # Called by Claude Code after each assistant turn. Reads the response from

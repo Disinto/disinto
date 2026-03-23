@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # on-session-end.sh — SessionEnd hook for dark-factory agent sessions.
 #
 # Called by Claude Code when a session terminates (clean exit, logout,
