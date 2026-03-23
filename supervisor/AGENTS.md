@@ -1,4 +1,4 @@
-<!-- last-reviewed: eb7e24cb1df028c6061f47ddfdf9b4ebec33e1cf -->
+<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -28,7 +28,7 @@ runs directly from cron like the planner and predictor.
   committed periodically)
 - `supervisor/PROMPT.md` — Best-practices reference for remediation actions
 - `supervisor/best-practices/*.md` — Domain-specific remediation guides (memory,
-  disk, CI, git, dev-agent, review-agent, codeberg)
+  disk, CI, git, dev-agent, review-agent, forge)
 - `supervisor/supervisor-poll.sh` — Legacy bash orchestrator (superseded by
   supervisor-run.sh + formula)
 
