@@ -7,8 +7,12 @@ set -euo pipefail
 # Resolve script root (parent of lib/)
 FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Load .env if present
-if [ -f "$FACTORY_ROOT/.env" ]; then
+# Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env
+if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
+  set -a
+  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" || true
+  set +a
+elif [ -f "$FACTORY_ROOT/.env" ]; then
   set -a
   # shellcheck source=/dev/null
   source "$FACTORY_ROOT/.env"
@@ -24,12 +28,9 @@ if [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
   source "${FACTORY_ROOT}/lib/load-project.sh" "$PROJECT_TOML"
 fi
 
-# Forge token: new FORGE_TOKEN > legacy CODEBERG_TOKEN > ~/.netrc
+# Forge token: new FORGE_TOKEN > legacy CODEBERG_TOKEN
 if [ -z "${FORGE_TOKEN:-}" ]; then
   FORGE_TOKEN="${CODEBERG_TOKEN:-}"
-fi
-if [ -z "${FORGE_TOKEN:-}" ]; then
-  FORGE_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
 fi
 export FORGE_TOKEN
 export CODEBERG_TOKEN="${FORGE_TOKEN}"  # backwards compat

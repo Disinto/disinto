@@ -5,6 +5,7 @@
 # Commands:
 #   disinto init <repo-url> [options]   Bootstrap a new project
 #   disinto status                      Show factory status
+#   disinto secrets <edit|show|migrate> Manage encrypted secrets
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -25,6 +26,7 @@ disinto — autonomous code factory CLI
 Usage:
   disinto init <repo-url> [options]    Bootstrap a new project
   disinto status                       Show factory status
+  disinto secrets <edit|show|migrate>  Manage encrypted secrets (.env.enc)
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -62,26 +64,73 @@ clone_url_from_slug() {
   printf '%s/%s.git' "$forge_url" "$slug"
 }
 
-# Write (or update) credentials in ~/.netrc for a given host.
-write_netrc() {
-  local host="$1" login="$2" token="$3"
-  local netrc="${HOME}/.netrc"
+# Ensure an age key exists; generate one if missing.
+# Exports AGE_PUBLIC_KEY on success.
+ensure_age_key() {
+  local key_dir="${HOME}/.config/sops/age"
+  local key_file="${key_dir}/keys.txt"
 
-  # Remove existing entry for this host if present
-  if [ -f "$netrc" ]; then
-    local tmp
-    tmp=$(mktemp)
-    awk -v h="$host" '
-      $0 ~ "^machine " h { skip=1; next }
-      /^machine / { skip=0 }
-      !skip
-    ' "$netrc" > "$tmp"
-    mv "$tmp" "$netrc"
+  if [ -f "$key_file" ]; then
+    AGE_PUBLIC_KEY="$(age-keygen -y "$key_file" 2>/dev/null)"
+    export AGE_PUBLIC_KEY
+    return 0
   fi
 
-  # Append new entry
-  printf 'machine %s\nlogin %s\npassword %s\n' "$host" "$login" "$token" >> "$netrc"
-  chmod 600 "$netrc"
+  if ! command -v age-keygen &>/dev/null; then
+    return 1
+  fi
+
+  mkdir -p "$key_dir"
+  age-keygen -o "$key_file" 2>/dev/null
+  chmod 600 "$key_file"
+  AGE_PUBLIC_KEY="$(age-keygen -y "$key_file" 2>/dev/null)"
+  export AGE_PUBLIC_KEY
+  echo "Generated age key: ${key_file}"
+}
+
+# Write .sops.yaml pinning the age recipient for .env.enc files.
+write_sops_yaml() {
+  local pub_key="$1"
+  cat > "${FACTORY_ROOT}/.sops.yaml" <<EOF
+creation_rules:
+  - path_regex: \.env\.enc$
+    age: "${pub_key}"
+EOF
+}
+
+# Encrypt a dotenv file to .env.enc using SOPS + age.
+# Usage: encrypt_env_file <input> <output>
+encrypt_env_file() {
+  local input="$1" output="$2"
+  sops -e --input-type dotenv --output-type dotenv "$input" > "$output"
+}
+
+# Store secrets into .env.enc (encrypted) if SOPS + age available, else .env (plaintext).
+# Reads existing .env, updates/adds vars, writes back.
+write_secrets_encrypted() {
+  local env_file="${FACTORY_ROOT}/.env"
+  local enc_file="${FACTORY_ROOT}/.env.enc"
+
+  if command -v sops &>/dev/null && command -v age-keygen &>/dev/null; then
+    if ensure_age_key; then
+      # Write .sops.yaml if missing
+      if [ ! -f "${FACTORY_ROOT}/.sops.yaml" ]; then
+        write_sops_yaml "$AGE_PUBLIC_KEY"
+      fi
+
+      # Encrypt the plaintext .env to .env.enc
+      if [ -f "$env_file" ]; then
+        encrypt_env_file "$env_file" "$enc_file"
+        rm -f "$env_file"
+        echo "Secrets encrypted to .env.enc (plaintext .env removed)"
+        return 0
+      fi
+    fi
+  fi
+
+  # Fallback: keep plaintext .env
+  echo "Warning: sops/age not available — secrets stored in plaintext .env" >&2
+  return 0
 }
 
 FORGEJO_DATA_DIR="${HOME}/.disinto/forgejo"
@@ -384,6 +433,14 @@ preflight_check() {
   # ── Optional tools (warn only) ──
   if ! command -v docker &>/dev/null; then
     echo "Warning: docker not found (needed for Forgejo provisioning)" >&2
+  fi
+  if ! command -v sops &>/dev/null; then
+    echo "Warning: sops not found (secrets will be stored in plaintext .env)" >&2
+    echo "  Install: https://github.com/getsops/sops/releases" >&2
+  fi
+  if ! command -v age-keygen &>/dev/null; then
+    echo "Warning: age not found (needed for secret encryption with SOPS)" >&2
+    echo "  Install: apt install age  /  brew install age" >&2
   fi
 
   if [ "$errors" -gt 0 ]; then
@@ -836,6 +893,9 @@ p.write_text(text)
   # Install cron jobs
   install_cron "$project_name" "$toml_path" "$auto_yes"
 
+  # Encrypt secrets if SOPS + age are available
+  write_secrets_encrypted
+
   echo ""
   echo "Done. Project ${project_name} is ready."
   echo "  Config:  ${toml_path}"
@@ -919,11 +979,64 @@ with open(sys.argv[1], 'rb') as f:
   fi
 }
 
+# ── secrets command ────────────────────────────────────────────────────────────
+
+disinto_secrets() {
+  local subcmd="${1:-}"
+  local enc_file="${FACTORY_ROOT}/.env.enc"
+  local env_file="${FACTORY_ROOT}/.env"
+
+  case "$subcmd" in
+    edit)
+      if [ ! -f "$enc_file" ]; then
+        echo "Error: ${enc_file} not found. Run 'disinto secrets migrate' first." >&2
+        exit 1
+      fi
+      sops "$enc_file"
+      ;;
+    show)
+      if [ ! -f "$enc_file" ]; then
+        echo "Error: ${enc_file} not found." >&2
+        exit 1
+      fi
+      sops -d "$enc_file"
+      ;;
+    migrate)
+      if [ ! -f "$env_file" ]; then
+        echo "Error: ${env_file} not found — nothing to migrate." >&2
+        exit 1
+      fi
+      if ! command -v sops &>/dev/null || ! command -v age-keygen &>/dev/null; then
+        echo "Error: sops and age are required for migration." >&2
+        echo "  Install sops: https://github.com/getsops/sops/releases" >&2
+        echo "  Install age:  apt install age  /  brew install age" >&2
+        exit 1
+      fi
+      if ! ensure_age_key; then
+        echo "Error: failed to generate age key" >&2
+        exit 1
+      fi
+      if [ ! -f "${FACTORY_ROOT}/.sops.yaml" ]; then
+        write_sops_yaml "$AGE_PUBLIC_KEY"
+        echo "Created: .sops.yaml"
+      fi
+      encrypt_env_file "$env_file" "$enc_file"
+      rm -f "$env_file"
+      echo "Migrated: .env -> .env.enc (plaintext removed)"
+      ;;
+    *)
+      echo "Usage: disinto secrets <edit|show|migrate>" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
-  init)   shift; disinto_init "$@" ;;
-  status) shift; disinto_status "$@" ;;
+  init)    shift; disinto_init "$@" ;;
+  status)  shift; disinto_status "$@" ;;
+  secrets) shift; disinto_secrets "$@" ;;
   -h|--help) usage ;;
   *)         usage ;;
 esac
