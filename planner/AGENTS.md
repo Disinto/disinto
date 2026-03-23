@@ -1,4 +1,4 @@
-<!-- last-reviewed: eb7e24cb1df028c6061f47ddfdf9b4ebec33e1cf -->
+<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
