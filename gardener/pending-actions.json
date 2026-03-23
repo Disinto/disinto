@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "action": "edit_body",
+    "issue": 598,
+    "body": "## Problem\n\nThe gardener promotes tech-debt issues to backlog by swapping labels, but does not enrich the issue body. The quality gate (#483) then strips the backlog label because required sections are missing. Circular loop — issue bounces between tech-debt and backlog.\n\nExample: #435 — \"monitor_phase_loop docstring lists 'break' as possible value but never set.\" Body is a bare review finding with no `## Acceptance criteria` or `## Affected files`. The gardener promotes it, quality gate strips it, repeat.\n\n## Fix\n\nWhen the gardener promotes an issue to backlog (from tech-debt or any other label), it must also enrich the issue body to meet the quality gate requirements.\n\nDuring the grooming step, for each issue being promoted:\n\n1. **Infer affected files** from the issue body. The information is usually there — #435 mentions `lib/agent-session.sh:266` explicitly. Use AGENTS.md knowledge to fill gaps.\n\n2. **Write acceptance criteria** based on the problem description.\n\n3. Append both sections to the issue body via the `edit_body` manifest action before adding the backlog label.\n\n## Affected files\n\n- `formulas/run-gardener.toml` — grooming step: add body enrichment logic before writing add_label backlog to manifest\n\n## Acceptance criteria\n\n- [ ] Gardener enriches issue body (appends `## Affected files` + `## Acceptance criteria`) when promoting to backlog\n- [ ] Promoted issues pass the quality gate on the same gardener run (backlog label not stripped)\n- [ ] Affected files are inferred from existing issue body text when possible"
+  },
+  {
+    "action": "add_label",
+    "issue": 598,
+    "label": "backlog"
+  }
+]
