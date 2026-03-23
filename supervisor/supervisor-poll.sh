@@ -325,14 +325,14 @@ check_project() {
 
   # Dev-agent health (only if monitoring enabled)
   if [ "${CHECK_DEV_AGENT:-true}" = "true" ]; then
-    DEV_LOCK="/tmp/dev-agent-${PROJECT_NAME}.lock"
+    DEV_LOCK="/tmp/dev-agent-${proj_name}.lock"
     if [ -f "$DEV_LOCK" ]; then
       DEV_PID=$(cat "$DEV_LOCK" 2>/dev/null)
       if ! kill -0 "$DEV_PID" 2>/dev/null; then
         rm -f "$DEV_LOCK"
         fixed "${proj_name}: Removed stale dev-agent lock (PID ${DEV_PID} dead)"
       else
-        DEV_STATUS_AGE=$(stat -c %Y "/tmp/dev-agent-status-${PROJECT_NAME:-default}" 2>/dev/null || echo 0)
+        DEV_STATUS_AGE=$(stat -c %Y "/tmp/dev-agent-status-${proj_name}" 2>/dev/null || echo 0)
         NOW_EPOCH=$(date +%s)
         STATUS_AGE_MIN=$(( (NOW_EPOCH - DEV_STATUS_AGE) / 60 ))
         if [ "$STATUS_AGE_MIN" -gt 30 ]; then
@@ -746,7 +746,7 @@ Instructions:
   # P4-PROJECT: Clean stale worktrees for this project
   # ===========================================================================
   NOW_TS=$(date +%s)
-  for wt in /tmp/${PROJECT_NAME}-worktree-* /tmp/${PROJECT_NAME}-review-* /tmp/${PROJECT_NAME}-sup-retry-*; do
+  for wt in /tmp/${proj_name}-worktree-* /tmp/${proj_name}-review-* /tmp/${proj_name}-sup-retry-*; do
     [ -d "$wt" ] || continue
     WT_AGE_MIN=$(( (NOW_TS - $(stat -c %Y "$wt")) / 60 ))
     if [ "$WT_AGE_MIN" -gt 120 ]; then
