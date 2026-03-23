@@ -83,6 +83,36 @@ ACTION (substantial — promote, close duplicate, add acceptance criteria):
   echo "ACTION: promoted #NNN to backlog — <reason>" >> "$RESULT_FILE"
   echo "ACTION: closed #NNN as duplicate of #OLDER" >> "$RESULT_FILE"
 
+Body enrichment on promotion (CRITICAL — prevents quality-gate bounce):
+  When promoting ANY issue to backlog, you MUST enrich the issue body so
+  it passes the quality gate (step 8) on the next gardener run. Before
+  writing the add_label manifest action:
+
+  a. Check whether the body already contains ``## Acceptance criteria``
+     (with at least one ``- [ ]`` checkbox) and ``## Affected files``
+     (with at least one file path). If both are present, skip to (d).
+
+  b. If ``## Affected files`` is missing, infer from the body — look for
+     file paths (e.g. ``lib/agent-session.sh:266``), function names,
+     script names, or directory references. Use the AGENTS.md directory
+     layout to resolve ambiguous mentions (e.g. "gardener" →
+     ``gardener/gardener-run.sh``, "dev-poll" → ``dev/dev-poll.sh``).
+     Format as a bulleted list under a ``## Affected files`` heading.
+
+  c. If ``## Acceptance criteria`` is missing, derive ``- [ ]`` checkboxes
+     from the problem description — each a verifiable condition the fix
+     must satisfy.
+
+  d. Construct the full new body = original body text + appended missing
+     sections. Write an edit_body action BEFORE the add_label action:
+       echo '{"action":"edit_body","issue":NNN,"body":"<full new body>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+  e. Write the add_label action:
+       echo '{"action":"add_label","issue":NNN,"label":"backlog"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+  This ensures promoted issues already have the required sections when
+  the next gardener run's quality gate inspects them.
+
 DUST (trivial — single-line edit, rename, comment, style, whitespace):
   echo 'DUST: {"issue": NNN, "group": "<file-or-subsystem>", "title": "...", "reason": "..."}' >> "$RESULT_FILE"
   Group by file or subsystem (e.g. "gardener", "lib/env.sh", "dev-poll").
