@@ -11,6 +11,9 @@ set -euo pipefail
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
+# shellcheck source=../lib/guard.sh
+source "$(dirname "$0")/../lib/guard.sh"
+check_active reviewer
 
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

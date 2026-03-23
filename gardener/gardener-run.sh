@@ -28,6 +28,8 @@ source "$FACTORY_ROOT/lib/formula-session.sh"
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
 # shellcheck source=../lib/mirrors.sh
 source "$FACTORY_ROOT/lib/mirrors.sh"
+# shellcheck source=../lib/guard.sh
+source "$FACTORY_ROOT/lib/guard.sh"
 
 LOG_FILE="$SCRIPT_DIR/gardener.log"
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
@@ -52,6 +54,7 @@ _GARDENER_CRASH_COUNT=0
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
 # ── Guards ────────────────────────────────────────────────────────────────
+check_active gardener
 acquire_cron_lock "/tmp/gardener-run.lock"
 check_memory 2000
 
