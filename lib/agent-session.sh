@@ -296,7 +296,7 @@ inject_formula() {
 }
 
 # Monitor a phase file, calling a callback on changes and handling idle timeout.
-# Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, idle_prompt, done, failed, break).
+# Sets _MONITOR_LOOP_EXIT to the exit reason (idle_timeout, idle_prompt, done, crashed, PHASE:failed, PHASE:escalate).
 # Sets _MONITOR_SESSION to the resolved session name (arg 4 or $SESSION_NAME).
 #   Callbacks should reference _MONITOR_SESSION instead of $SESSION_NAME directly.
 # Args: phase_file idle_timeout_secs callback_fn [session_name]
