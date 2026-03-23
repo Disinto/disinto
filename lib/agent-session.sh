@@ -66,6 +66,11 @@ create_agent_session() {
   local hook_script="${FACTORY_ROOT}/lib/hooks/on-idle-stop.sh"
   if [ -x "$hook_script" ]; then
     local hook_cmd="${hook_script} ${idle_marker}"
+    # When a phase file is available, pass it and the session name so the
+    # hook can nudge Claude if it returns to the prompt without signalling.
+    if [ -n "$phase_file" ]; then
+      hook_cmd="${hook_script} ${idle_marker} ${phase_file} ${session}"
+    fi
     if [ -f "$settings" ]; then
       # Append our Stop hook to existing project settings
       jq --arg cmd "$hook_cmd" '
@@ -443,6 +448,7 @@ agent_kill_session() {
   rm -f "/tmp/claude-idle-${session}.ts"
   rm -f "/tmp/phase-changed-${session}.marker"
   rm -f "/tmp/claude-exited-${session}.ts"
+  rm -f "/tmp/claude-nudge-${session}.count"
 }
 
 # Read the current phase from a phase file, stripped of whitespace.
