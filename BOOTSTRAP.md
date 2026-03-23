@@ -31,7 +31,39 @@ This will:
 
 No external accounts or tokens needed.
 
-## 1. Configure `.env`
+## 1. Secret Management (SOPS + age)
+
+Disinto encrypts secrets at rest using [SOPS](https://github.com/getsops/sops) with [age](https://age-encryption.org/) encryption. When `sops` and `age` are installed, `disinto init` automatically:
+
+1. Generates an age key at `~/.config/sops/age/keys.txt` (if none exists)
+2. Creates `.sops.yaml` pinning the age public key
+3. Encrypts all secrets into `.env.enc` (safe to commit)
+4. Removes the plaintext `.env`
+
+**Install the tools:**
+
+```bash
+# age (key generation)
+apt install age          # Debian/Ubuntu
+brew install age         # macOS
+
+# sops (encryption/decryption)
+# Download from https://github.com/getsops/sops/releases
+```
+
+**The age private key** at `~/.config/sops/age/keys.txt` is the single file that must be protected. Back it up securely — without it, `.env.enc` cannot be decrypted. LUKS disk encryption on the VPS protects this key at rest.
+
+**Managing secrets after setup:**
+
+```bash
+disinto secrets edit     # Opens .env.enc in $EDITOR, re-encrypts on save
+disinto secrets show     # Prints decrypted secrets (for debugging)
+disinto secrets migrate  # Converts existing plaintext .env -> .env.enc
+```
+
+**Fallback:** If `sops`/`age` are not installed, `disinto init` writes secrets to a plaintext `.env` file with a warning. All agents load secrets transparently — `lib/env.sh` checks for `.env.enc` first, then falls back to `.env`.
+
+## 2. Configure `.env`
 
 ```bash
 cp .env.example .env
@@ -70,7 +102,7 @@ CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 
 If you have an existing deployment using `CODEBERG_TOKEN` / `REVIEW_BOT_TOKEN` in `.env`, those still work — `env.sh` falls back to the old names automatically. No migration needed.
 
-## 2. Configure Project TOML
+## 3. Configure Project TOML
 
 Each project needs a `projects/<name>.toml` file with box-specific settings
 (absolute paths, Woodpecker CI IDs, Matrix credentials, forge URL). These files are
@@ -98,7 +130,7 @@ forge_url       = "http://localhost:3000"
 The repo ships `projects/*.toml.example` templates showing the expected
 structure. See any `.toml.example` file for the full field reference.
 
-## 3. Claude Code Global Settings
+## 4. Claude Code Global Settings
 
 Configure `~/.claude/settings.json` with **only** permissions and `skipDangerousModePermissionPrompt`. Do not add hooks to the global settings — `agent-session.sh` injects per-worktree hooks automatically.
 
@@ -124,7 +156,7 @@ claude --dangerously-skip-permissions
 # Exit after it initializes successfully
 ```
 
-## 4. File Ownership
+## 5. File Ownership
 
 Everything under `/home/debian` must be owned by `debian:debian`. Root-owned files cause permission errors when agents run as the `debian` user.
 
@@ -139,7 +171,7 @@ Verify no root-owned files exist in agent temp directories:
 find /tmp/dev-* /tmp/harb-* /tmp/review-* -not -user debian 2>/dev/null
 ```
 
-## 4b. Woodpecker CI + Forgejo Integration
+## 5b. Woodpecker CI + Forgejo Integration
 
 `disinto init` automatically configures Woodpecker to use the local Forgejo instance as its forge backend if `WOODPECKER_SERVER` is set in `.env`. This includes:
 
@@ -184,7 +216,7 @@ curl -X POST \
 
 Woodpecker will now trigger pipelines on pushes to Forgejo and push commit status back. Disinto queries Woodpecker directly for CI status (with a forge API fallback), so pipeline results are visible even if Woodpecker's status push to Forgejo is delayed.
 
-## 5. Prepare the Target Repo
+## 6. Prepare the Target Repo
 
 ### Required: CI pipeline
 
@@ -268,7 +300,7 @@ entire repo as "new", generating a noisy first-run diff.
 
 See `formulas/run-planner.toml` (agents-update step) for the full AGENTS.md conventions.
 
-## 6. Write Good Issues
+## 7. Write Good Issues
 
 Dev-agent works best with issues that have:
 
@@ -283,7 +315,7 @@ Dev-agent works best with issues that have:
 
 Dev-agent checks that all referenced issues are closed (= merged) before starting work. If any are open, the issue is skipped and checked again next cycle.
 
-## 7. Install Cron
+## 8. Install Cron
 
 ```bash
 crontab -e
@@ -342,7 +374,7 @@ FACTORY_ROOT=/home/you/disinto
 
 The staggered offsets prevent agents from competing for resources. Each project gets its own lock file (`/tmp/dev-agent-{name}.lock`) derived from the `name` field in its TOML, so concurrent runs across projects are safe.
 
-## 8. Verify
+## 9. Verify
 
 ```bash
 # Should complete with "all clear" (no problems to fix)
@@ -363,7 +395,7 @@ tail -30 dev/dev-agent.log
 tail -30 review/review.log
 ```
 
-## 9. Optional: Matrix Notifications
+## 10. Optional: Matrix Notifications
 
 If you want real-time notifications and human-in-the-loop escalation:
 
