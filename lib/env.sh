@@ -10,7 +10,8 @@ FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env
 if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   set -a
-  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" || true
+  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" \
+    || echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
   set +a
 elif [ -f "$FACTORY_ROOT/.env" ]; then
   set -a

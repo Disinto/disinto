@@ -72,6 +72,7 @@ ensure_age_key() {
 
   if [ -f "$key_file" ]; then
     AGE_PUBLIC_KEY="$(age-keygen -y "$key_file" 2>/dev/null)"
+    [ -n "$AGE_PUBLIC_KEY" ] || return 1
     export AGE_PUBLIC_KEY
     return 0
   fi
@@ -84,6 +85,7 @@ ensure_age_key() {
   age-keygen -o "$key_file" 2>/dev/null
   chmod 600 "$key_file"
   AGE_PUBLIC_KEY="$(age-keygen -y "$key_file" 2>/dev/null)"
+  [ -n "$AGE_PUBLIC_KEY" ] || return 1
   export AGE_PUBLIC_KEY
   echo "Generated age key: ${key_file}"
 }
@@ -106,7 +108,6 @@ encrypt_env_file() {
 }
 
 # Store secrets into .env.enc (encrypted) if SOPS + age available, else .env (plaintext).
-# Reads existing .env, updates/adds vars, writes back.
 write_secrets_encrypted() {
   local env_file="${FACTORY_ROOT}/.env"
   local enc_file="${FACTORY_ROOT}/.env.enc"
