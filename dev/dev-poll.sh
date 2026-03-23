@@ -20,6 +20,8 @@ set -euo pipefail
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
+# shellcheck source=../lib/mirrors.sh
+source "$(dirname "$0")/../lib/mirrors.sh"
 
 # Gitea labels API requires []int64 — look up the "underspecified" label ID once
 UNDERSPECIFIED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
@@ -206,6 +208,11 @@ try_direct_merge() {
     else
       matrix_send "dev" "✅ PR #${pr_num} merged directly by dev-poll (chore)" 2>/dev/null || true
     fi
+    # Pull merged primary branch and push to mirrors
+    git -C "${PROJECT_REPO_ROOT:-}" fetch origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
+    git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH:-}" 2>/dev/null || true
+    git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
+    mirror_push
     # Clean up CI fix tracker
     ci_fix_reset "$pr_num"
     return 0

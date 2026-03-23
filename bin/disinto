@@ -505,6 +505,10 @@ containers = []
 check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = false
+
+# [mirrors]
+# github   = "git@github.com:user/repo.git"
+# codeberg = "git@codeberg.org:user/repo.git"
 EOF
 }
 
@@ -893,6 +897,24 @@ p.write_text(text)
 
   # Install cron jobs
   install_cron "$project_name" "$toml_path" "$auto_yes"
+
+  # Set up mirror remotes if [mirrors] configured in TOML
+  source "${FACTORY_ROOT}/lib/load-project.sh" "$toml_path"
+  if [ -n "${MIRROR_NAMES:-}" ]; then
+    echo "Mirrors: setting up remotes"
+    local mname murl
+    for mname in $MIRROR_NAMES; do
+      murl=$(eval "echo \"\$MIRROR_$(echo "$mname" | tr '[:lower:]' '[:upper:]')\"") || true
+      [ -z "$murl" ] && continue
+      git -C "$repo_root" remote add "$mname" "$murl" 2>/dev/null \
+        || git -C "$repo_root" remote set-url "$mname" "$murl" 2>/dev/null || true
+      echo "  + ${mname} -> ${murl}"
+    done
+    # Initial sync: push current primary branch to mirrors
+    source "${FACTORY_ROOT}/lib/mirrors.sh"
+    export PROJECT_REPO_ROOT="$repo_root"
+    mirror_push
+  fi
 
   # Encrypt secrets if SOPS + age are available
   write_secrets_encrypted
