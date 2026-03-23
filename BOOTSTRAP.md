@@ -1,17 +1,35 @@
 # Bootstrapping a New Project
 
-How to point disinto at a new target project and get all four agents running.
+How to point disinto at a new target project and get all agents running.
 
 ## Prerequisites
 
 Before starting, ensure you have:
 
-- [ ] A **Codeberg repo** with at least one issue labeled `backlog`
+- [ ] A **git repo** (GitHub, Codeberg, or any URL) with at least one issue labeled `backlog`
 - [ ] A **Woodpecker CI** pipeline (`.woodpecker/` dir with at least one `.yml`)
-- [ ] A **second Codeberg account** for the review bot (branch protection requires reviews from a different user)
+- [ ] **Docker** installed (for local Forgejo provisioning) — or a running Forgejo instance
 - [ ] A **local clone** of the target repo on the same machine as disinto
 - [ ] `claude` CLI installed and authenticated (`claude --version`)
 - [ ] `tmux` installed (`tmux -V`) — required for persistent dev sessions (issue #80+)
+
+## Quick Start
+
+The fastest path is `disinto init`, which provisions a local Forgejo instance, creates bot users and tokens, clones the repo, and sets up cron — all in one command:
+
+```bash
+disinto init https://github.com/org/repo
+```
+
+This will:
+1. Start a local Forgejo instance via Docker (at `http://localhost:3000`)
+2. Create admin + bot users (dev-bot, review-bot) with API tokens
+3. Create the repo on Forgejo and push your code
+4. Generate a `projects/<name>.toml` config
+5. Create standard labels (backlog, in-progress, blocked, etc.)
+6. Install cron entries for the agents
+
+No external accounts or tokens needed.
 
 ## 1. Configure `.env`
 
@@ -22,19 +40,15 @@ cp .env.example .env
 Fill in:
 
 ```bash
-# ── Target project ──────────────────────────────────────────
-CODEBERG_REPO=org/project              # Codeberg slug
-PROJECT_REPO_ROOT=/home/you/project    # absolute path to local clone
-PRIMARY_BRANCH=main                    # main or master
-
-# ── Auth ────────────────────────────────────────────────────
-# CODEBERG_TOKEN=                      # or use ~/.netrc (machine codeberg.org)
-REVIEW_BOT_TOKEN=tok_xxxxxxxx         # the second account's API token
+# ── Forge (auto-populated by disinto init) ─────────────────
+FORGE_URL=http://localhost:3000        # local Forgejo instance
+FORGE_TOKEN=                           # dev-bot token (auto-generated)
+FORGE_REVIEW_TOKEN=                    # review-bot token (auto-generated)
 
 # ── Woodpecker CI ───────────────────────────────────────────
 WOODPECKER_TOKEN=tok_xxxxxxxx
 WOODPECKER_SERVER=http://localhost:8000
-WOODPECKER_REPO_ID=2                  # numeric — find via Woodpecker UI or API
+# WOODPECKER_REPO_ID — now per-project, set in projects/*.toml [ci] section
 
 # Woodpecker Postgres (for direct pipeline queries)
 WOODPECKER_DB_PASSWORD=secret
@@ -52,21 +66,33 @@ WOODPECKER_DB_NAME=woodpecker
 CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 ```
 
+### Backwards compatibility
+
+If you have an existing deployment using `CODEBERG_TOKEN` / `REVIEW_BOT_TOKEN` in `.env`, those still work — `env.sh` falls back to the old names automatically. No migration needed.
+
 ## 2. Configure Project TOML
 
 Each project needs a `projects/<name>.toml` file with box-specific settings
-(absolute paths, Woodpecker CI IDs, Matrix credentials). These files are
+(absolute paths, Woodpecker CI IDs, Matrix credentials, forge URL). These files are
 **gitignored** — they are local installation config, not shared code.
 
 To create one:
 
 ```bash
 # Automatic — generates TOML, clones repo, sets up cron:
-disinto init https://codeberg.org/org/repo
+disinto init https://github.com/org/repo
 
 # Manual — copy a template and fill in your values:
 cp projects/myproject.toml.example projects/myproject.toml
 vim projects/myproject.toml
+```
+
+The `forge_url` field in the TOML tells all agents where to find the forge API:
+
+```toml
+name            = "myproject"
+repo            = "org/myproject"
+forge_url       = "http://localhost:3000"
 ```
 
 The repo ships `projects/*.toml.example` templates showing the expected
@@ -133,7 +159,7 @@ The dev-agent reads this file via `claude -p` before implementing any issue. The
 
 ### Required: Issue labels
 
-Create two labels on the Codeberg repo:
+`disinto init` creates these automatically. If setting up manually, create these labels on the forge repo:
 
 | Label | Purpose |
 |-------|---------|
@@ -150,7 +176,7 @@ Optional but recommended:
 
 ### Required: Branch protection
 
-On Codeberg, set up branch protection for your primary branch:
+On Forgejo, set up branch protection for your primary branch:
 
 - **Require pull request reviews**: enabled
 - **Required approvals**: 1 (from the review bot account)
@@ -159,8 +185,8 @@ On Codeberg, set up branch protection for your primary branch:
 This ensures dev-agent can't merge its own PRs — it must wait for review-agent (running as the bot account) to approve.
 
 > **Common pitfall:** Approvals alone are not enough. You must also:
-> 1. Add `review_bot` as a **write** collaborator on the repo (Settings → Collaborators)
-> 2. Set both `approvals_whitelist_username` **and** `merge_whitelist_usernames` to include `review_bot` in the branch protection rule
+> 1. Add `review-bot` as a **write** collaborator on the repo (Settings → Collaborators)
+> 2. Set both `approvals_whitelist_username` **and** `merge_whitelist_usernames` to include `review-bot` in the branch protection rule
 >
 > Without write access, the bot's approval is counted but the merge API returns HTTP 405.
 
@@ -361,7 +387,7 @@ Meanwhile:
 |---------|-------|-----|
 | Dev-agent for project B never starts | Shared lock file path | Each TOML `name` field must be unique — lock is `/tmp/dev-agent-{name}.lock` |
 | Review-poll skips all PRs | CI gate with no CI configured | Set `woodpecker_repo_id = 0` in the TOML `[ci]` section to bypass the CI check |
-| Approved PRs never merge (HTTP 405) | `review_bot` not in merge/approvals whitelist | Add as write collaborator; set both `approvals_whitelist_username` and `merge_whitelist_usernames` in branch protection |
+| Approved PRs never merge (HTTP 405) | `review-bot` not in merge/approvals whitelist | Add as write collaborator; set both `approvals_whitelist_username` and `merge_whitelist_usernames` in branch protection |
 | Dev-agent churns through issues without waiting for open PRs to land | No single-threaded enforcement | `WAITING_PRS` check in dev-poll holds new work — verify TOML `name` is consistent across invocations |
 | Label ping-pong (issue reopened then immediately re-closed) | `already_done` handler doesn't close issue | Review dev-agent log; `already_done` status should auto-close the issue |
 

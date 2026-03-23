@@ -5,7 +5,7 @@
 # Blocks:
 # - git push --force / -f to primary branch
 # - rm -rf targeting paths outside the worktree
-# - Direct Codeberg API merge calls (should go through phase protocol)
+# - Direct forge API merge calls (should go through phase protocol)
 # - Direct issue close calls (should go through phase protocol)
 # - git checkout / git switch to primary branch (stay on feature branch)
 # - FACTORY_ROOT access from worktrees (formula agents exempted)
@@ -88,7 +88,7 @@ if [ -n "$worktree_path" ] \
   fi
 fi
 
-# --- Guard 3: Direct Codeberg API merge calls ---
+# --- Guard 3: Direct forge API merge calls ---
 if printf '%s' "$command_str" | grep -qE '/pulls/[0-9]+/merge'; then
   printf 'BLOCKED: Direct API merge calls must go through the phase protocol. Push your changes and write PHASE:awaiting_ci — the orchestrator handles merges.\n'
   exit 2

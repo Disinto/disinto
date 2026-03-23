@@ -28,7 +28,7 @@ runs directly from cron like the planner, predictor, and supervisor.
   PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
 
 **Environment variables consumed**:
-- `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 

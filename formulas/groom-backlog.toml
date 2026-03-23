@@ -24,12 +24,12 @@ a `mode` field. Two modes are supported:
 
    In this mode, skip the normal tech-debt grooming pipeline. Instead:
    a. Fetch the target issue:
-        curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<target_issue>"
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues/<target_issue>"
    b. Fetch ALL comments on the target issue to understand scope and
       prior bounce reasons:
-        curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<target_issue>/comments?limit=50"
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues/<target_issue>/comments?limit=50"
    c. Read the affected files listed in the issue body to understand
       the actual code scope.
    d. Break the issue into 2-5 sub-issues, each sized for a single
@@ -63,8 +63,8 @@ description = """
 This step only runs in grooming mode. Skip if in breakdown mode.
 
 Fetch all open tech-debt issues:
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/issues?type=issues&state=open&limit=50" | \
     jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))]'
 
 For each issue compute a triage score:
@@ -94,14 +94,14 @@ These are issues that block backlog items but are not themselves labeled backlog
 The dev-agent is completely starved until they are promoted or resolved.
 
 For each tier-0 issue:
-  - Read the full body: curl -sf -H "Authorization: token $CODEBERG_TOKEN" "$CODEBERG_API/issues/{number}"
+  - Read the full body: curl -sf -H "Authorization: token $FORGE_TOKEN" "$FORGE_API/issues/{number}"
   - If resolvable: promote to backlog — add acceptance criteria, affected files, relabel
   - If needs human decision: add to ESCALATE block
   - If invalid / wontfix: close with explanation comment
 
 After completing all tier-0, re-fetch to check for new blockers:
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/issues?type=issues&state=open&limit=50" | \
     jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))]'
 
 If new tier-0 blockers appeared, process those too.
@@ -172,8 +172,8 @@ id    = "verify"
 title = "Verify completion and loop until zero tech-debt"
 description = """
 Re-fetch ALL open tech-debt issues and count them:
-  REMAINING=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?type=issues&state=open&limit=50" | \
+  REMAINING=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/issues?type=issues&state=open&limit=50" | \
     jq '[.[] | select(.labels | map(.name) | any(. == "tech-debt"))] | length')
   echo "Remaining tech-debt: $REMAINING"
 

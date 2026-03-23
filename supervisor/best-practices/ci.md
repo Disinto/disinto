@@ -26,13 +26,13 @@
 - Modifying pipeline configs in `.woodpecker/` directory
 
 ## Known Issues
-- Codeberg rate-limits SSH clones. `git` step fails with exit 128. Retrigger usually works.
+- forge rate-limits SSH clones. `git` step fails with exit 128. Retrigger usually works.
 - `log_entries` table grows fast (was 5.6GB once). Truncate periodically.
 - Example (harb): Running CI + harb stack = 14+ containers on 8GB. Memory pressure is real.
 - CI images take hours to rebuild. Never run `docker system prune -a`.
 
 ## Lessons Learned
-- Exit code 128 on git step = Codeberg rate limit, not a code problem. Retrigger.
+- Exit code 128 on git step = forge rate limit, not a code problem. Retrigger.
 - Exit code 137 = OOM kill. Check memory, kill stale processes, retrigger.
 - `node-quality` step fails on eslint/typescript errors — these need code fixes, not CI fixes.
 

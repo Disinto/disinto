@@ -60,8 +60,8 @@ Evidence from the preflight step informs whether each prediction is valid
 (e.g. "red-team stale since March 12" is confirmed by evidence/ timestamps).
 
 1. Fetch unreviewed predictions:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
 
    If there are none, note that and skip to step 3b (label resolution
    is still required — the file-at-constraints step needs label IDs).
@@ -72,10 +72,10 @@ Evidence from the preflight step informs whether each prediction is valid
    Project formulas are dispatched via action issues on the project repo.
 
 3. Fetch all open issues to check for overlap:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&limit=50"
 
-3b. Resolve label IDs needed for triage AND filing (fetch via $CODEBERG_API/labels).
+3b. Resolve label IDs needed for triage AND filing (fetch via $FORGE_API/labels).
     ALWAYS execute this step, even if there are no predictions to triage —
     the file-at-constraints step depends on these IDs:
     - <unreviewed_label_id>        → prediction/unreviewed
@@ -120,65 +120,65 @@ Evidence from the preflight step informs whether each prediction is valid
       Example body structure:
         ## Problem\n<what the prediction identified>\n\n## Proposed solution\n<approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion 1>\n- [ ] CI green
       Create the issue:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/json" "$CODEBERG_API/issues" \
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
+          -H "Content-Type: application/json" "$FORGE_API/issues" \
           -d '{"title":"...","body":"...","labels":[<label_id>]}'
       Extract the issue number from the response (jq -r '.number').
-   a2. Verify the label was applied (Codeberg may silently drop labels
+   a2. Verify the label was applied (the forge may silently drop labels
        on creation). Re-apply via a separate POST if missing:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<new_issue_num>/labels" \
+          "$FORGE_API/issues/<new_issue_num>/labels" \
           -d '{"labels":[<label_id>]}'
    b. Comment on the prediction with "Actioned as #NNN — <reasoning>":
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/comments" \
+          "$FORGE_API/issues/<pred_num>/comments" \
           -d '{"body":"Actioned as #NNN — <reasoning>"}'
    c. Relabel: remove prediction/unreviewed, add prediction/actioned:
-        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/labels" \
+          "$FORGE_API/issues/<pred_num>/labels" \
           -d '{"labels":[<actioned_label_id>]}'
    d. Close the prediction:
-        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X PATCH -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>" \
+          "$FORGE_API/issues/<pred_num>" \
           -d '{"state":"closed"}'
 
    For WATCH:
    a. Comment with reasoning why not urgent:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/comments" \
+          "$FORGE_API/issues/<pred_num>/comments" \
           -d '{"body":"Watching — <reasoning>"}'
    b. Replace prediction/unreviewed label with prediction/backlog:
-        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/labels" \
+          "$FORGE_API/issues/<pred_num>/labels" \
           -d '{"labels":[<prediction_backlog_label_id>]}'
 
    For DISMISS:
    a. Comment with explicit reasoning:
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/comments" \
+          "$FORGE_API/issues/<pred_num>/comments" \
           -d '{"body":"Dismissed — <reasoning>"}'
    b. Relabel: remove prediction/unreviewed, add prediction/actioned:
-        curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-          "$CODEBERG_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
+        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>/labels" \
+          "$FORGE_API/issues/<pred_num>/labels" \
           -d '{"labels":[<actioned_label_id>]}'
    c. Close the prediction:
-        curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
+        curl -sf -X PATCH -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/issues/<pred_num>" \
+          "$FORGE_API/issues/<pred_num>" \
           -d '{"state":"closed"}'
 
 6. Track promoted predictions — they are added to the prerequisite tree
@@ -208,8 +208,8 @@ Read these inputs:
   - $PROJECT_REPO_ROOT/formulas/*.toml — project-specific formulas
   - Open issues (fetched via API, or reuse from prediction-triage)
   - Closed issues (fetch recently closed to detect resolved prerequisites):
-      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-        "$CODEBERG_API/issues?state=closed&type=issues&limit=50&sort=updated&direction=desc"
+      curl -sf -H "Authorization: token $FORGE_TOKEN" \
+        "$FORGE_API/issues?state=closed&type=issues&limit=50&sort=updated&direction=desc"
   - Planner memory (loaded in preflight)
   - Promoted predictions from prediction-triage (add as prerequisites if relevant)
 
@@ -218,8 +218,8 @@ Read these inputs:
 For each issue referenced in the prerequisite tree (by #number), fetch its
 recent comments to detect signals that the issue is stuck or bouncing:
 
-    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-      "$CODEBERG_API/issues/<number>/comments?limit=10"
+    curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "$FORGE_API/issues/<number>/comments?limit=10"
 
 Scan each comment body for these signals:
 
@@ -394,17 +394,17 @@ Filing gate — for each constraint (that is NOT stuck):
      ## Problem\n<what this prerequisite is and which objectives it blocks>\n\n## Proposed solution\n<rough approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion derived from the constraint>\n- [ ] CI green\n\n## Dependencies\n- #NNN (if depends on other open issues)
    Create the issue:
      curl -sf -X POST \
-       -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Authorization: token $FORGE_TOKEN" \
        -H "Content-Type: application/json" \
-       "$CODEBERG_API/issues" \
+       "$FORGE_API/issues" \
        -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
    Extract the issue number from the response (jq -r '.number').
 
-2b. Verify the label was applied (Codeberg may silently drop labels
+2b. Verify the label was applied (the forge may silently drop labels
     on creation). Always re-apply via a separate POST to be safe:
-      curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+      curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
         -H "Content-Type: application/json" \
-        "$CODEBERG_API/issues/<new_issue_num>/labels" \
+        "$FORGE_API/issues/<new_issue_num>/labels" \
         -d '{"labels":[<backlog_label_id>]}'
 
 3. If an issue already exists and is open, skip it — no duplicate filing.
@@ -422,20 +422,20 @@ is purely additive.
 5. **Add `priority` to top-5 constraint issues:**
    For each of the top 5 constraint issues (whether just filed or already
    existing), check if it already has the `priority` label. If not, add it:
-     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
        -H "Content-Type: application/json" \
-       "$CODEBERG_API/issues/<issue_number>/labels" \
+       "$FORGE_API/issues/<issue_number>/labels" \
        -d '{"labels":[<priority_label_id>]}'
 
 6. **Remove `priority` from issues no longer in top 5:**
    Fetch all open issues that currently have the `priority` label:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&labels=priority&type=issues&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&labels=priority&type=issues&limit=50"
    For each issue in this list that is NOT one of the current top 5
    constraint issues, remove the `priority` label (demote back to plain
    `backlog`):
-     curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues/<issue_number>/labels/<priority_label_id>"
+     curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues/<issue_number>/labels/<priority_label_id>"
    This keeps the priority set current — only the active bottleneck issues
    get priority, not stale constraints from previous runs.
 
@@ -634,9 +634,9 @@ run — only file changes (tree, journal, MEMORY.md) need the PR.
         git push -u origin "$BRANCH"
    g. Create a PR:
         curl -sf -X POST \
-          -H "Authorization: token $CODEBERG_TOKEN" \
+          -H "Authorization: token $FORGE_TOKEN" \
           -H "Content-Type: application/json" \
-          "$CODEBERG_API/pulls" \
+          "$FORGE_API/pulls" \
           -d '{"title":"chore: planner run — prerequisite tree update",
                "head":"<branch>","base":"<primary-branch>",
                "body":"Automated planner run — prerequisite tree update and journal entry."}'

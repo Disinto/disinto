@@ -31,7 +31,7 @@
 
 | Service | Purpose | Limits |
 |---------|---------|--------|
-| Codeberg | source hosting + CI triggers | 10 GB storage, 1000 min/mo CI |
+| Forge (Forgejo) | source hosting + CI triggers | 10 GB storage, 1000 min/mo CI |
 | Anthropic | Claude API | $X/mo budget, rate limit: 100k TPM |
 | Cloudflare | DNS + CDN | free tier |
 

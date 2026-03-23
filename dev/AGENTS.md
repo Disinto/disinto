@@ -19,8 +19,8 @@ while a dev-agent session is active on another issue.
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
-- `CODEBERG_TOKEN` — Dev-agent token (push, PR creation, merge) — use the dedicated bot account
-- `CODEBERG_REPO`, `CODEBERG_API` — Target repository
+- `FORGE_TOKEN` — Dev-agent token (push, PR creation, merge) — use the dedicated bot account
+- `FORGE_REPO`, `FORGE_API` — Target repository
 - `PROJECT_NAME`, `PROJECT_REPO_ROOT` — Local checkout path
 - `PRIMARY_BRANCH` — Branch to merge into (e.g. `main`, `master`)
 - `WOODPECKER_REPO_ID` — CI pipeline lookups

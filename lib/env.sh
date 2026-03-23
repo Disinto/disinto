@@ -24,17 +24,33 @@ if [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
   source "${FACTORY_ROOT}/lib/load-project.sh" "$PROJECT_TOML"
 fi
 
-# Codeberg token: env var > ~/.netrc
-if [ -z "${CODEBERG_TOKEN:-}" ]; then
-  CODEBERG_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
+# Forge token: new FORGE_TOKEN > legacy CODEBERG_TOKEN > ~/.netrc
+if [ -z "${FORGE_TOKEN:-}" ]; then
+  FORGE_TOKEN="${CODEBERG_TOKEN:-}"
 fi
-export CODEBERG_TOKEN
+if [ -z "${FORGE_TOKEN:-}" ]; then
+  FORGE_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
+fi
+export FORGE_TOKEN
+export CODEBERG_TOKEN="${FORGE_TOKEN}"  # backwards compat
 
-# Project config
-export CODEBERG_REPO="${CODEBERG_REPO:-}"
-export CODEBERG_API="${CODEBERG_API:-https://codeberg.org/api/v1/repos/${CODEBERG_REPO}}"
-export CODEBERG_WEB="https://codeberg.org/${CODEBERG_REPO}"
-export PROJECT_NAME="${PROJECT_NAME:-${CODEBERG_REPO##*/}}"
+# Review bot token: FORGE_REVIEW_TOKEN > legacy REVIEW_BOT_TOKEN
+export FORGE_REVIEW_TOKEN="${FORGE_REVIEW_TOKEN:-${REVIEW_BOT_TOKEN:-}}"
+export REVIEW_BOT_TOKEN="${FORGE_REVIEW_TOKEN}"  # backwards compat
+
+# Bot usernames filter: FORGE_BOT_USERNAMES > legacy CODEBERG_BOT_USERNAMES
+export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-${CODEBERG_BOT_USERNAMES:-}}"
+export CODEBERG_BOT_USERNAMES="${FORGE_BOT_USERNAMES}"  # backwards compat
+
+# Project config (FORGE_* preferred, CODEBERG_* fallback)
+export FORGE_REPO="${FORGE_REPO:-${CODEBERG_REPO:-}}"
+export CODEBERG_REPO="${FORGE_REPO}"  # backwards compat
+export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
+export FORGE_API="${FORGE_API:-${FORGE_URL}/api/v1/repos/${FORGE_REPO}}"
+export FORGE_WEB="${FORGE_WEB:-${FORGE_URL}/${FORGE_REPO}}"
+export CODEBERG_API="${FORGE_API}"  # backwards compat
+export CODEBERG_WEB="${FORGE_WEB}"  # backwards compat
+export PROJECT_NAME="${PROJECT_NAME:-${FORGE_REPO##*/}}"
 export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}}"
 export PRIMARY_BRANCH="${PRIMARY_BRANCH:-master}"
 export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-}"
@@ -46,23 +62,25 @@ log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
 }
 
-# Codeberg API helper — usage: codeberg_api GET /issues?state=open
-codeberg_api() {
+# Forge API helper — usage: forge_api GET /issues?state=open
+forge_api() {
   local method="$1" path="$2"
   shift 2
   curl -sf -X "$method" \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${CODEBERG_API}${path}" "$@"
+    "${FORGE_API}${path}" "$@"
 }
+# Backwards-compat alias
+codeberg_api() { forge_api "$@"; }
 
-# Paginate a Codeberg API GET endpoint and return all items as a merged JSON array.
-# Usage: codeberg_api_all /path             (no existing query params)
-#        codeberg_api_all /path?a=b         (with existing params — appends &limit=50&page=N)
-#        codeberg_api_all /path TOKEN       (optional second arg: token; defaults to $CODEBERG_TOKEN)
-codeberg_api_all() {
+# Paginate a Forge API GET endpoint and return all items as a merged JSON array.
+# Usage: forge_api_all /path             (no existing query params)
+#        forge_api_all /path?a=b         (with existing params — appends &limit=50&page=N)
+#        forge_api_all /path TOKEN       (optional second arg: token; defaults to $FORGE_TOKEN)
+forge_api_all() {
   local path_prefix="$1"
-  local CODEBERG_TOKEN="${2:-${CODEBERG_TOKEN}}"
+  local FORGE_TOKEN="${2:-${FORGE_TOKEN}}"
   local sep page page_items count all_items="[]"
   case "$path_prefix" in
     *"?"*) sep="&" ;;
@@ -70,7 +88,7 @@ codeberg_api_all() {
   esac
   page=1
   while true; do
-    page_items=$(codeberg_api GET "${path_prefix}${sep}limit=50&page=${page}")
+    page_items=$(forge_api GET "${path_prefix}${sep}limit=50&page=${page}")
     count=$(printf '%s' "$page_items" | jq 'length')
     [ "$count" -eq 0 ] && break
     all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
@@ -79,6 +97,8 @@ codeberg_api_all() {
   done
   printf '%s' "$all_items"
 }
+# Backwards-compat alias
+codeberg_api_all() { forge_api_all "$@"; }
 
 # Woodpecker API helper
 woodpecker_api() {

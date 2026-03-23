@@ -3,7 +3,7 @@
 ## Architecture
 - `review-poll.sh` (cron */10) → finds open PRs with CI pass + no review → spawns `review-pr.sh`
 - `review-pr.sh` uses `claude -p` to review the diff, posts structured comment
-- Uses `review_bot` Codeberg account for formal reviews (separate from main account)
+- Uses `review_bot` forge account for formal reviews (separate from main account)
 - Skips WIP/draft PRs (`[WIP]` in title or draft flag)
 
 ## Safe Fixes
@@ -27,4 +27,4 @@
 - Review bot must output JSON — prevents self-narration collapse
 - DISCUSS verdict should be treated same as REQUEST_CHANGES by dev-agent
 - Error comments must NOT include `<!-- reviewed: SHA -->` — would falsely mark as reviewed
-- Review bot uses Codeberg formal reviews API — branch protection requires different user than PR author
+- Review bot uses forge formal reviews API — branch protection requires different user than PR author

@@ -24,7 +24,7 @@ Different domains have different platforms:
 
 | Domain | Platform | What it tracks | Status |
 |--------|----------|---------------|--------|
-| Code | Codeberg | Issues, PRs, reviews | **Implemented** — Live |
+| Code | forge | Issues, PRs, reviews | **Implemented** — Live |
 | CI/CD | Woodpecker | Build/test results | **Implemented** — Live |
 | Protocol | Ponder / GraphQL | On-chain state, trades, positions | **Partial** — Live (not yet wired to evidence) |
 | Infrastructure | DigitalOcean / system stats | CPU, RAM, disk, containers | **Planned** — Supervisor monitors, no evidence output yet |

@@ -7,8 +7,8 @@
 #   disinto status                      Show factory status
 #
 # Usage:
-#   disinto init https://codeberg.org/user/repo
-#   disinto init https://codeberg.org/user/repo --branch main --ci-id 3
+#   disinto init https://github.com/user/repo
+#   disinto init user/repo --branch main --ci-id 3
 #   disinto status
 # =============================================================================
 set -euo pipefail
@@ -30,45 +30,49 @@ Init options:
   --branch <name>      Primary branch (default: auto-detect)
   --repo-root <path>   Local clone path (default: ~/name)
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
-  --token <token>      Codeberg API token (saved to ~/.netrc)
+  --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --yes                Skip confirmation prompts
 EOF
   exit 1
 }
 
 # Extract org/repo slug from various URL formats.
-# Accepts: https://codeberg.org/user/repo, codeberg.org/user/repo,
-#          user/repo, https://codeberg.org/user/repo.git
+# Accepts: https://github.com/user/repo, https://codeberg.org/user/repo,
+#          http://localhost:3000/user/repo, user/repo, *.git
 parse_repo_slug() {
   local url="$1"
   url="${url#https://}"
   url="${url#http://}"
-  url="${url#codeberg.org/}"
+  # Strip any hostname (anything before the first / that contains a dot or colon)
+  if [[ "$url" =~ ^[a-zA-Z0-9._:-]+/[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+ ]]; then
+    url="${url#*/}"  # strip host part
+  fi
   url="${url%.git}"
   url="${url%/}"
   if [[ ! "$url" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
-    echo "Error: invalid repo URL — expected https://codeberg.org/org/repo or org/repo" >&2
+    echo "Error: invalid repo URL — expected https://host/org/repo or org/repo" >&2
     exit 1
   fi
   printf '%s' "$url"
 }
 
-# Build a clone-able URL from a slug.
+# Build a clone-able URL from a slug and forge URL.
 clone_url_from_slug() {
-  printf 'https://codeberg.org/%s.git' "$1"
+  local slug="$1" forge_url="${2:-${FORGE_URL:-http://localhost:3000}}"
+  printf '%s/%s.git' "$forge_url" "$slug"
 }
 
-# Write (or update) Codeberg credentials in ~/.netrc.
+# Write (or update) credentials in ~/.netrc for a given host.
 write_netrc() {
-  local login="$1" token="$2"
+  local host="$1" login="$2" token="$3"
   local netrc="${HOME}/.netrc"
 
-  # Remove existing codeberg.org entry if present
+  # Remove existing entry for this host if present
   if [ -f "$netrc" ]; then
     local tmp
     tmp=$(mktemp)
-    awk '
-      /^machine codeberg\.org/ { skip=1; next }
+    awk -v h="$host" '
+      $0 ~ "^machine " h { skip=1; next }
       /^machine / { skip=0 }
       !skip
     ' "$netrc" > "$tmp"
@@ -76,93 +80,252 @@ write_netrc() {
   fi
 
   # Append new entry
-  printf 'machine codeberg.org\nlogin %s\npassword %s\n' "$login" "$token" >> "$netrc"
+  printf 'machine %s\nlogin %s\npassword %s\n' "$host" "$login" "$token" >> "$netrc"
   chmod 600 "$netrc"
 }
 
-# Interactively set up Codeberg auth if missing.
-# Args: [token_from_flag]
-setup_codeberg_auth() {
-  local token_flag="${1:-}"
-  local repo_slug="${2:-}"
+FORGEJO_DATA_DIR="${HOME}/.disinto/forgejo"
 
-  # --token flag takes priority: verify and save
-  if [ -n "$token_flag" ]; then
-    local verify_url="https://codeberg.org/api/v1/repos/${repo_slug}"
-    if ! curl -sf --max-time 10 \
-      -H "Authorization: token ${token_flag}" \
-      "$verify_url" >/dev/null 2>&1; then
-      echo "Error: provided token failed verification" >&2
+# Provision or connect to a local Forgejo instance.
+# Creates admin + bot users, generates API tokens, stores in .env.
+setup_forge() {
+  local forge_url="$1"
+  local repo_slug="$2"
+
+  echo ""
+  echo "── Forge setup ────────────────────────────────────────"
+
+  # Check if Forgejo is already running
+  if curl -sf --max-time 5 "${forge_url}/api/v1/version" >/dev/null 2>&1; then
+    echo "Forgejo:  ${forge_url} (already running)"
+  else
+    echo "Forgejo not reachable at ${forge_url}"
+    echo "Starting Forgejo via Docker..."
+
+    if ! command -v docker &>/dev/null; then
+      echo "Error: docker not found — needed to provision Forgejo" >&2
+      echo "  Install Docker or start Forgejo manually at ${forge_url}" >&2
       exit 1
     fi
-    write_netrc "token" "$token_flag"
-    echo "Saving to ~/.netrc... done."
-    echo "Verified: token accepted ✓"
-    export CODEBERG_TOKEN="$token_flag"
-    return
-  fi
 
-  # Existing auth — skip
-  if [ -n "${CODEBERG_TOKEN:-}" ]; then
-    return
-  fi
-  if grep -q 'codeberg\.org' ~/.netrc 2>/dev/null; then
-    CODEBERG_TOKEN="$(awk '/codeberg.org/{getline;getline;print $2}' ~/.netrc 2>/dev/null || true)"
-    export CODEBERG_TOKEN
-    return
-  fi
+    # Create data directory
+    mkdir -p "${FORGEJO_DATA_DIR}"
 
-  # Non-interactive — fail with guidance
-  if [ ! -t 0 ]; then
-    echo "Error: no Codeberg auth found" >&2
-    echo "  Set CODEBERG_TOKEN, configure ~/.netrc, or use --token <token>" >&2
-    exit 1
-  fi
+    # Extract port from forge_url
+    local forge_port
+    forge_port=$(printf '%s' "$forge_url" | sed -E 's|.*:([0-9]+)/?$|\1|')
+    forge_port="${forge_port:-3000}"
 
-  # Interactive guided flow
-  echo ""
-  echo "No Codeberg authentication found."
-  echo ""
-  echo "1. Open https://codeberg.org/user/settings/applications"
-  echo "2. Create a token with these scopes:"
-  echo "   - write:issue  (create issues, add labels, post comments, close issues)"
-  echo "   - write:repository  (push branches, create PRs, merge PRs)"
-  echo "3. Paste the token below."
-  echo ""
-
-  while true; do
-    read -rsp "Codeberg token: " token_input
-    echo ""
-
-    if [ -z "$token_input" ]; then
-      echo "Token cannot be empty. Try again." >&2
-      continue
+    # Start Forgejo container
+    if docker ps -a --format '{{.Names}}' | grep -q '^disinto-forgejo$'; then
+      docker start disinto-forgejo >/dev/null 2>&1 || true
+    else
+      docker run -d \
+        --name disinto-forgejo \
+        --restart unless-stopped \
+        -p "${forge_port}:3000" \
+        -p 2222:22 \
+        -v "${FORGEJO_DATA_DIR}:/data" \
+        -e "FORGEJO__database__DB_TYPE=sqlite3" \
+        -e "FORGEJO__server__ROOT_URL=${forge_url}/" \
+        -e "FORGEJO__server__HTTP_PORT=3000" \
+        -e "FORGEJO__service__DISABLE_REGISTRATION=true" \
+        forgejo/forgejo:latest
     fi
 
-    local verify_url="https://codeberg.org/api/v1/repos/${repo_slug}"
-    if ! curl -sf --max-time 10 \
-      -H "Authorization: token ${token_input}" \
-      "$verify_url" >/dev/null 2>&1; then
-      echo "Token verification failed. Check your token and try again." >&2
-      read -rp "Retry? [Y/n] " retry
-      if [[ "$retry" =~ ^[Nn] ]]; then
-        echo "Aborted." >&2
+    # Wait for Forgejo to become healthy
+    echo -n "Waiting for Forgejo to start"
+    local retries=0
+    while ! curl -sf --max-time 3 "${forge_url}/api/v1/version" >/dev/null 2>&1; do
+      retries=$((retries + 1))
+      if [ "$retries" -gt 60 ]; then
+        echo ""
+        echo "Error: Forgejo did not become ready within 60s" >&2
         exit 1
       fi
-      continue
+      echo -n "."
+      sleep 1
+    done
+    echo " ready"
+  fi
+
+  # Create admin user if it doesn't exist
+  local admin_user="disinto-admin"
+  local admin_pass
+  admin_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+
+  if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
+    echo "Creating admin user: ${admin_user}"
+    docker exec disinto-forgejo forgejo admin user create \
+      --admin \
+      --username "${admin_user}" \
+      --password "${admin_pass}" \
+      --email "admin@disinto.local" \
+      --must-change-password=false 2>/dev/null || true
+  fi
+
+  # Get or create admin token
+  local admin_token
+  admin_token=$(curl -sf -X POST \
+    -u "${admin_user}:${admin_pass}" \
+    -H "Content-Type: application/json" \
+    "${forge_url}/api/v1/users/${admin_user}/tokens" \
+    -d '{"name":"disinto-admin-token","scopes":["all"]}' 2>/dev/null \
+    | jq -r '.sha1 // empty') || admin_token=""
+
+  if [ -z "$admin_token" ]; then
+    # Token might already exist — try listing
+    admin_token=$(curl -sf \
+      -u "${admin_user}:${admin_pass}" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+      | jq -r '.[0].sha1 // empty') || admin_token=""
+  fi
+
+  # Create bot users and tokens
+  local dev_token="" review_token=""
+  for bot_user in dev-bot review-bot; do
+    local bot_pass
+    bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+
+    if ! curl -sf --max-time 5 \
+      -H "Authorization: token ${admin_token}" \
+      "${forge_url}/api/v1/users/${bot_user}" >/dev/null 2>&1; then
+      echo "Creating bot user: ${bot_user}"
+      docker exec disinto-forgejo forgejo admin user create \
+        --username "${bot_user}" \
+        --password "${bot_pass}" \
+        --email "${bot_user}@disinto.local" \
+        --must-change-password=false 2>/dev/null || true
     fi
 
-    write_netrc "token" "$token_input"
-    echo "Saving to ~/.netrc... done."
-    echo "Verified: token accepted ✓"
-    export CODEBERG_TOKEN="$token_input"
-    return
+    # Generate token via API (using admin credentials for the bot)
+    local token
+    token=$(curl -sf -X POST \
+      -H "Authorization: token ${admin_token}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${bot_user}/tokens" \
+      -d "{\"name\":\"disinto-${bot_user}-token\",\"scopes\":[\"all\"]}" 2>/dev/null \
+      | jq -r '.sha1 // empty') || token=""
+
+    if [ -z "$token" ]; then
+      # Token name collision — create with timestamp suffix
+      token=$(curl -sf -X POST \
+        -H "Authorization: token ${admin_token}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/users/${bot_user}/tokens" \
+        -d "{\"name\":\"disinto-${bot_user}-$(date +%s)\",\"scopes\":[\"all\"]}" 2>/dev/null \
+        | jq -r '.sha1 // empty') || token=""
+    fi
+
+    if [ "$bot_user" = "dev-bot" ]; then
+      dev_token="$token"
+    else
+      review_token="$token"
+    fi
   done
+
+  # Store tokens in .env
+  local env_file="${FACTORY_ROOT}/.env"
+  if [ -n "$dev_token" ]; then
+    if grep -q '^FORGE_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^FORGE_TOKEN=.*|FORGE_TOKEN=${dev_token}|" "$env_file"
+    elif grep -q '^CODEBERG_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^CODEBERG_TOKEN=.*|FORGE_TOKEN=${dev_token}|" "$env_file"
+    else
+      printf '\nFORGE_TOKEN=%s\n' "$dev_token" >> "$env_file"
+    fi
+    export FORGE_TOKEN="$dev_token"
+    export CODEBERG_TOKEN="$dev_token"
+    echo "  dev-bot token saved"
+  fi
+
+  if [ -n "$review_token" ]; then
+    if grep -q '^FORGE_REVIEW_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^FORGE_REVIEW_TOKEN=.*|FORGE_REVIEW_TOKEN=${review_token}|" "$env_file"
+    elif grep -q '^REVIEW_BOT_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^REVIEW_BOT_TOKEN=.*|FORGE_REVIEW_TOKEN=${review_token}|" "$env_file"
+    else
+      printf 'FORGE_REVIEW_TOKEN=%s\n' "$review_token" >> "$env_file"
+    fi
+    export FORGE_REVIEW_TOKEN="$review_token"
+    export REVIEW_BOT_TOKEN="$review_token"
+    echo "  review-bot token saved"
+  fi
+
+  # Store FORGE_URL in .env if not already present
+  if ! grep -q '^FORGE_URL=' "$env_file" 2>/dev/null; then
+    printf 'FORGE_URL=%s\n' "$forge_url" >> "$env_file"
+  fi
+
+  # Create the repo on Forgejo if it doesn't exist
+  local org_name="${repo_slug%%/*}"
+  local repo_name="${repo_slug##*/}"
+
+  # Check if repo already exists
+  if ! curl -sf --max-time 5 \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${forge_url}/api/v1/repos/${repo_slug}" >/dev/null 2>&1; then
+
+    # Try creating org first (ignore if exists)
+    curl -sf -X POST \
+      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/orgs" \
+      -d "{\"username\":\"${org_name}\",\"visibility\":\"public\"}" >/dev/null 2>&1 || true
+
+    # Create repo under org
+    if ! curl -sf -X POST \
+      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/orgs/${org_name}/repos" \
+      -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1; then
+      # Fallback: create under the dev-bot user
+      curl -sf -X POST \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/user/repos" \
+        -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1 || true
+    fi
+
+    # Add bot users as collaborators
+    for bot_user in dev-bot review-bot; do
+      curl -sf -X PUT \
+        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/repos/${repo_slug}/collaborators/${bot_user}" \
+        -d '{"permission":"write"}' >/dev/null 2>&1 || true
+    done
+
+    echo "Repo:    ${repo_slug} created on Forgejo"
+  else
+    echo "Repo:    ${repo_slug} (already exists on Forgejo)"
+  fi
+
+  echo "Forge:   ${forge_url} (ready)"
+}
+
+# Push local clone to the Forgejo remote.
+push_to_forge() {
+  local repo_root="$1" forge_url="$2" repo_slug="$3"
+  local remote_url="${forge_url}/${repo_slug}.git"
+
+  if git -C "$repo_root" remote get-url forgejo >/dev/null 2>&1; then
+    echo "Remote:  forgejo (already configured)"
+  else
+    git -C "$repo_root" remote add forgejo "$remote_url" 2>/dev/null || \
+      git -C "$repo_root" remote set-url forgejo "$remote_url"
+    echo "Remote:  forgejo -> ${remote_url}"
+  fi
+
+  # Push all branches
+  git -C "$repo_root" push forgejo --all 2>/dev/null || true
+  git -C "$repo_root" push forgejo --tags 2>/dev/null || true
 }
 
 # Preflight check — verify all factory requirements before proceeding.
 preflight_check() {
   local repo_slug="${1:-}"
+  local forge_url="${2:-${FORGE_URL:-http://localhost:3000}}"
   local errors=0
 
   # ── Required commands ──
@@ -207,37 +370,20 @@ preflight_check() {
     fi
   fi
 
-  # ── Codeberg auth (setup_codeberg_auth handles interactive setup;
-  #    this verifies the API actually works) ──
-  if [ -n "${CODEBERG_TOKEN:-}" ] && command -v curl &>/dev/null; then
-    local curl_args=(-sf --max-time 10)
-    if [ -n "${CODEBERG_TOKEN:-}" ]; then
-      curl_args+=(-H "Authorization: token ${CODEBERG_TOKEN}")
-    else
-      curl_args+=(--netrc)
-    fi
-    if ! curl "${curl_args[@]}" "https://codeberg.org/api/v1/repos/${repo_slug}" >/dev/null 2>&1; then
-      echo "Error: Codeberg API auth failed" >&2
-      echo "  Verify your CODEBERG_TOKEN or ~/.netrc credentials" >&2
-      errors=$((errors + 1))
-    fi
-  fi
-
-  # ── Codeberg SSH access ──
-  if command -v ssh &>/dev/null; then
-    local ssh_output
-    ssh_output=$(ssh -T -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-      git@codeberg.org 2>&1) || true
-    if ! printf '%s' "$ssh_output" | grep -qi "successfully authenticated"; then
-      echo "Error: Codeberg SSH access failed (agents push via SSH)" >&2
-      echo "  Add your SSH key: https://codeberg.org/user/settings/keys" >&2
+  # ── Forge API check (verify the forge is reachable and token works) ──
+  if [ -n "${FORGE_TOKEN:-}" ] && command -v curl &>/dev/null; then
+    if ! curl -sf --max-time 10 \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${forge_url}/api/v1/repos/${repo_slug}" >/dev/null 2>&1; then
+      echo "Error: Forge API auth failed at ${forge_url}" >&2
+      echo "  Verify your FORGE_TOKEN and that Forgejo is running" >&2
       errors=$((errors + 1))
     fi
   fi
 
   # ── Optional tools (warn only) ──
   if ! command -v docker &>/dev/null; then
-    echo "Warning: docker not found (some projects may need it)" >&2
+    echo "Warning: docker not found (needed for Forgejo provisioning)" >&2
   fi
 
   if [ "$errors" -gt 0 ]; then
@@ -249,13 +395,13 @@ preflight_check() {
 
 # Clone the repo if the target directory doesn't exist; validate if it does.
 clone_or_validate() {
-  local slug="$1" target="$2"
+  local slug="$1" target="$2" forge_url="${3:-${FORGE_URL:-http://localhost:3000}}"
   if [ -d "${target}/.git" ]; then
     echo "Repo:    ${target} (existing clone)"
     return
   fi
   local url
-  url=$(clone_url_from_slug "$slug")
+  url=$(clone_url_from_slug "$slug" "$forge_url")
   echo "Cloning: ${url} -> ${target}"
   git clone "$url" "$target"
 }
@@ -278,7 +424,7 @@ detect_branch() {
 
 # Generate projects/<name>.toml config file.
 generate_toml() {
-  local path="$1" name="$2" repo="$3" root="$4" branch="$5" ci_id="$6"
+  local path="$1" name="$2" repo="$3" root="$4" branch="$5" ci_id="$6" forge_url="$7"
   cat > "$path" <<EOF
 # projects/${name}.toml — Project config for ${repo}
 #
@@ -286,6 +432,7 @@ generate_toml() {
 
 name            = "${name}"
 repo            = "${repo}"
+forge_url       = "${forge_url}"
 repo_root       = "${root}"
 primary_branch  = "${branch}"
 
@@ -303,10 +450,11 @@ check_pipeline_stall = false
 EOF
 }
 
-# Create standard labels on the Codeberg repo.
+# Create standard labels on the forge repo.
 create_labels() {
   local repo="$1"
-  local api="https://codeberg.org/api/v1/repos/${repo}"
+  local forge_url="${2:-${FORGE_URL:-http://localhost:3000}}"
+  local api="${forge_url}/api/v1/repos/${repo}"
 
   local -A labels=(
     ["backlog"]="#0075ca"
@@ -323,7 +471,7 @@ create_labels() {
   for name in backlog in-progress blocked tech-debt underspecified vision action; do
     color="${labels[$name]}"
     if curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
       "${api}/labels" \
       -d "{\"name\":\"${name}\",\"color\":\"${color}\"}" >/dev/null 2>&1; then
@@ -415,27 +563,31 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false token_flag=""
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)    branch="$2"; shift 2 ;;
       --repo-root) repo_root="$2"; shift 2 ;;
       --ci-id)     ci_id="$2"; shift 2 ;;
-      --token)     token_flag="$2"; shift 2 ;;
+      --forge-url) forge_url_flag="$2"; shift 2 ;;
       --yes)       auto_yes=true; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
 
   # Extract org/repo slug
-  local codeberg_repo
-  codeberg_repo=$(parse_repo_slug "$repo_url")
-  local project_name="${codeberg_repo##*/}"
+  local forge_repo
+  forge_repo=$(parse_repo_slug "$repo_url")
+  local project_name="${forge_repo##*/}"
   local toml_path="${FACTORY_ROOT}/projects/${project_name}.toml"
 
+  # Determine forge URL (flag > env > default)
+  local forge_url="${forge_url_flag:-${FORGE_URL:-http://localhost:3000}}"
+
   echo "=== disinto init ==="
-  echo "Project: ${codeberg_repo}"
+  echo "Project: ${forge_repo}"
   echo "Name:    ${project_name}"
+  echo "Forge:   ${forge_url}"
 
   # Check for existing config
   local toml_exists=false
@@ -492,17 +644,27 @@ p.write_text(text)
     fi
   fi
 
-  # Set up Codeberg auth (interactive if needed, before preflight)
-  setup_codeberg_auth "$token_flag" "$codeberg_repo"
+  # Set up local Forgejo instance (provision if needed, create users/tokens/repo)
+  setup_forge "$forge_url" "$forge_repo"
 
   # Preflight: verify factory requirements
-  preflight_check "$codeberg_repo"
+  preflight_check "$forge_repo" "$forge_url"
 
   # Determine repo root (for new projects)
   repo_root="${repo_root:-/home/${USER}/${project_name}}"
 
-  # Clone or validate
-  clone_or_validate "$codeberg_repo" "$repo_root"
+  # Clone or validate (try origin first for initial clone from upstream)
+  if [ ! -d "${repo_root}/.git" ]; then
+    # For initial setup, clone from the provided URL directly
+    echo "Cloning: ${repo_url} -> ${repo_root}"
+    git clone "$repo_url" "$repo_root" 2>/dev/null || \
+      clone_or_validate "$forge_repo" "$repo_root" "$forge_url"
+  else
+    echo "Repo:    ${repo_root} (existing clone)"
+  fi
+
+  # Push to local Forgejo
+  push_to_forge "$repo_root" "$forge_url" "$forge_repo"
 
   # Detect primary branch
   if [ -z "$branch" ]; then
@@ -518,12 +680,12 @@ p.write_text(text)
       ci_id="${user_ci_id:-0}"
     fi
 
-    generate_toml "$toml_path" "$project_name" "$codeberg_repo" "$repo_root" "$branch" "$ci_id"
+    generate_toml "$toml_path" "$project_name" "$forge_repo" "$repo_root" "$branch" "$ci_id" "$forge_url"
     echo "Created: ${toml_path}"
   fi
 
   # Create labels on remote
-  create_labels "$codeberg_repo"
+  create_labels "$forge_repo" "$forge_url"
 
   # Generate VISION.md template
   generate_vision "$repo_root" "$project_name"
@@ -535,6 +697,7 @@ p.write_text(text)
   echo "Done. Project ${project_name} is ready."
   echo "  Config:  ${toml_path}"
   echo "  Clone:   ${repo_root}"
+  echo "  Forge:   ${forge_url}/${forge_repo}"
   echo "  Run 'disinto status' to verify."
 }
 
@@ -548,8 +711,8 @@ disinto_status() {
     [ -f "$toml" ] || continue
     found=true
 
-    # Parse name and repo from TOML
-    local pname prepo
+    # Parse name, repo, forge_url from TOML
+    local pname prepo pforge_url
     pname=$(python3 -c "
 import sys, tomllib
 with open(sys.argv[1], 'rb') as f:
@@ -560,6 +723,12 @@ import sys, tomllib
 with open(sys.argv[1], 'rb') as f:
     print(tomllib.load(f)['repo'])
 " "$toml" 2>/dev/null) || continue
+    pforge_url=$(python3 -c "
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    print(tomllib.load(f).get('forge_url', ''))
+" "$toml" 2>/dev/null) || pforge_url=""
+    pforge_url="${pforge_url:-${FORGE_URL:-http://localhost:3000}}"
 
     echo "== ${pname} (${prepo}) =="
 
@@ -578,24 +747,24 @@ with open(sys.argv[1], 'rb') as f:
     fi
 
     # Backlog depth via API
-    if [ -n "${CODEBERG_TOKEN:-}" ]; then
-      local api="https://codeberg.org/api/v1/repos/${prepo}"
+    if [ -n "${FORGE_TOKEN:-}" ]; then
+      local api="${pforge_url}/api/v1/repos/${prepo}"
       local backlog_count pr_count
 
       backlog_count=$(curl -sf -I \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         "${api}/issues?state=open&labels=backlog&limit=1" 2>/dev/null \
         | grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}') || backlog_count="?"
       echo "  Backlog: ${backlog_count:-0} issues"
 
       pr_count=$(curl -sf -I \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         "${api}/pulls?state=open&limit=1" 2>/dev/null \
         | grep -i 'x-total-count' | tr -d '\r' | awk '{print $2}') || pr_count="?"
       echo "  Open PRs: ${pr_count:-0}"
     else
-      echo "  Backlog: (no CODEBERG_TOKEN)"
-      echo "  Open PRs: (no CODEBERG_TOKEN)"
+      echo "  Backlog: (no FORGE_TOKEN)"
+      echo "  Open PRs: (no FORGE_TOKEN)"
     fi
 
     echo ""

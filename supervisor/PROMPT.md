@@ -1,6 +1,6 @@
 # Supervisor Agent
 
-You are the supervisor agent for `$CODEBERG_REPO`. You were called because
+You are the supervisor agent for `$FORGE_REPO`. You were called because
 `supervisor-poll.sh` detected an issue it couldn't auto-fix.
 
 ## Priority Order
@@ -19,7 +19,7 @@ Before acting, read the relevant best-practices file:
 - Memory issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/memory.md`
 - Disk issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/disk.md`
 - CI issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/ci.md`
-- Codeberg / rate limits → `cat ${FACTORY_ROOT}/supervisor/best-practices/codeberg.md`
+- forge / rate limits → `cat ${FACTORY_ROOT}/supervisor/best-practices/forge.md`
 - Dev-agent issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/dev-agent.md`
 - Review-agent issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/review-agent.md`
 - Git issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/git.md`
@@ -32,10 +32,10 @@ source ${FACTORY_ROOT}/lib/env.sh
 ```
 
 This gives you:
-- `codeberg_api GET "/pulls?state=open"` — Codeberg API (uses $CODEBERG_TOKEN)
+- `forge_api GET "/pulls?state=open"` — forge API (uses $FORGE_TOKEN)
 - `wpdb -c "SELECT ..."` — Woodpecker Postgres (uses $WOODPECKER_DB_PASSWORD)
 - `woodpecker_api "/repos/$WOODPECKER_REPO_ID/pipelines"` — Woodpecker REST API (uses $WOODPECKER_TOKEN)
-- `$REVIEW_BOT_TOKEN` — for posting reviews as the review_bot account
+- `$FORGE_REVIEW_TOKEN` — for posting reviews as the review_bot account
 - `$PROJECT_REPO_ROOT` — path to the target project repo
 - `$PROJECT_NAME` — short project name (for worktree prefixes, container names)
 - `$PRIMARY_BRANCH` — main branch (master or main)
@@ -48,20 +48,20 @@ This gives you:
 When you see "Circular dependency deadlock: #A -> #B -> #A", the backlog is permanently
 stuck. Your job: figure out the correct dependency direction and fix the wrong one.
 
-1. Read both issue bodies: `codeberg_api GET "/issues/A"`, `codeberg_api GET "/issues/B"`
+1. Read both issue bodies: `forge_api GET "/issues/A"`, `forge_api GET "/issues/B"`
 2. Read the referenced source files in `$PROJECT_REPO_ROOT` to understand which change
    actually depends on which
 3. Edit the issue that has the incorrect dep to remove the `#NNN` reference from its
    `## Dependencies` section (replace with `- None` if it was the only dep)
 4. If the correct direction is unclear from code, escalate with both issue summaries
 
-Use the Codeberg API to edit issue bodies:
+Use the forge API to edit issue bodies:
 ```bash
 # Read current body
-BODY=$(codeberg_api GET "/issues/NNN" | jq -r '.body')
+BODY=$(forge_api GET "/issues/NNN" | jq -r '.body')
 # Edit (remove the circular ref, keep other deps)
 NEW_BODY=$(echo "$BODY" | sed 's/- #XXX/- None/')
-codeberg_api PATCH "/issues/NNN" -d "$(jq -nc --arg b "$NEW_BODY" '{body:$b}')"
+forge_api PATCH "/issues/NNN" -d "$(jq -nc --arg b "$NEW_BODY" '{body:$b}')"
 ```
 
 ### Stale dependencies (P3)

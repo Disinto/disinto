@@ -55,7 +55,7 @@ SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 build_prompt_footer
 
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-PROMPT="You are the prediction agent (goblin) for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
+PROMPT="You are the prediction agent (goblin) for ${FORGE_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 Your role: abstract adversary. Find the project's biggest weakness, challenge
 planner claims, and generate evidence. Explore when uncertain (file a prediction),

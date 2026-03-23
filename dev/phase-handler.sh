@@ -5,7 +5,7 @@
 # Defines: post_refusal_comment(), _on_phase_change(), build_phase_protocol_prompt()
 #
 # Required globals (set by calling agent before or after sourcing):
-#   ISSUE, CODEBERG_TOKEN, API, CODEBERG_WEB, PROJECT_NAME, FACTORY_ROOT
+#   ISSUE, FORGE_TOKEN, API, FORGE_WEB, PROJECT_NAME, FACTORY_ROOT
 #   BRANCH, PHASE_FILE, WORKTREE, IMPL_SUMMARY_FILE, THREAD_FILE
 #   PRIMARY_BRANCH, SESSION_NAME, LOGFILE, ISSUE_TITLE
 #   WOODPECKER_REPO_ID, WOODPECKER_TOKEN, WOODPECKER_SERVER
@@ -47,7 +47,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/ci-helpers.sh"
 # in-progress label, and adds the "blocked" label.
 #
 # Args: reason [session_name]
-# Uses globals: ISSUE, SESSION_NAME, PR_NUMBER, CODEBERG_TOKEN, API
+# Uses globals: ISSUE, SESSION_NAME, PR_NUMBER, FORGE_TOKEN, API
 post_blocked_diagnostic() {
   local reason="$1"
   local session="${2:-${SESSION_NAME:-}}"
@@ -88,7 +88,7 @@ ${tmux_output}
 
   # Post comment to issue
   curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${API}/issues/${ISSUE}/comments" \
     -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
@@ -99,7 +99,7 @@ ${tmux_output}
   blocked_id=$(ensure_blocked_label_id)
   if [ -n "$blocked_id" ]; then
     curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
       "${API}/issues/${ISSUE}/labels" \
       -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
@@ -173,7 +173,7 @@ _PHASE_PROTOCOL_EOF_
 }
 
 # --- Merge helper ---
-# do_merge — attempt to merge PR via Codeberg API.
+# do_merge — attempt to merge PR via forge API.
 # Args: pr_num
 # Returns:
 #   0 = merged successfully
@@ -183,7 +183,7 @@ do_merge() {
   local pr_num="$1"
   local merge_response merge_http_code merge_body
   merge_response=$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H 'Content-Type: application/json' \
     "${API}/pulls/${pr_num}/merge" \
     -d '{"Do":"merge","delete_branch_after_merge":true}') || true
@@ -199,7 +199,7 @@ do_merge() {
   # Before escalating, check whether the PR was already merged by another agent.
   if [ "$merge_http_code" = "405" ]; then
     local pr_state
-    pr_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    pr_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${pr_num}" | jq -r '.merged // false') || pr_state="false"
     if [ "$pr_state" = "true" ]; then
       log "do_merge: PR #${pr_num} already merged (detected after HTTP 405) — treating as success"
@@ -220,7 +220,7 @@ do_merge() {
 post_refusal_comment() {
   local emoji="$1" title="$2" body="$3"
   local last_has_title
-  last_has_title=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  last_has_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${ISSUE}/comments?limit=5" | \
     jq -r --arg t "Dev-agent: ${title}" '[.[] | .body // ""] | any(contains($t)) | tostring') || true
   if [ "$last_has_title" = "true" ]; then
@@ -237,7 +237,7 @@ ${body}
   printf '%s' "$comment" > "/tmp/refusal-comment.txt"
   jq -Rs '{body: .}' < "/tmp/refusal-comment.txt" > "/tmp/refusal-comment.json"
   curl -sf -o /dev/null -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${API}/issues/${ISSUE}/comments" \
     --data-binary @"/tmp/refusal-comment.json" 2>/dev/null || \
@@ -278,7 +278,7 @@ _on_phase_change() {
         '{title: $title, body: $body, head: $head, base: $base}' > "/tmp/pr-request-${ISSUE}.json"
 
       PR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/pulls" \
         --data-binary @"/tmp/pr-request-${ISSUE}.json")
@@ -290,13 +290,13 @@ _on_phase_change() {
       if [ "$PR_HTTP_CODE" = "201" ] || [ "$PR_HTTP_CODE" = "200" ]; then
         PR_NUMBER=$(echo "$PR_RESPONSE_BODY" | jq -r '.number')
         log "created PR #${PR_NUMBER}"
-        PR_URL="${CODEBERG_WEB}/pulls/${PR_NUMBER}"
+        PR_URL="${FORGE_WEB}/pulls/${PR_NUMBER}"
         notify_ctx \
           "PR #${PR_NUMBER} created: ${ISSUE_TITLE}" \
           "PR <a href='${PR_URL}'>#${PR_NUMBER}</a> created: ${ISSUE_TITLE}"
       elif [ "$PR_HTTP_CODE" = "409" ]; then
         # PR already exists (race condition) — find it
-        FOUND_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${API}/pulls?state=open&limit=20" | \
           jq -r --arg branch "$BRANCH" \
           '.[] | select(.head.ref == $branch) | .number' | head -1) || true
@@ -305,7 +305,7 @@ _on_phase_change() {
           log "PR already exists: #${PR_NUMBER}"
         else
           log "ERROR: PR creation got 409 but no existing PR found"
-          agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP 409, no existing PR found). Check the Codeberg API. Retry by writing PHASE:awaiting_ci again after verifying the branch was pushed."
+          agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP 409, no existing PR found). Check the forge API. Retry by writing PHASE:awaiting_ci again after verifying the branch was pushed."
           return 0
         fi
       else
@@ -327,7 +327,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
     # Poll CI until done or timeout
     status "waiting for CI on PR #${PR_NUMBER}"
     CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || \
-      curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha')
 
     CI_DONE=false
@@ -346,7 +346,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       # Re-fetch HEAD — Claude may have pushed new commits since loop started
       CI_CURRENT_SHA=$(git -C "${WORKTREE}" rev-parse HEAD 2>/dev/null || echo "$CI_CURRENT_SHA")
 
-      CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/commits/${CI_CURRENT_SHA}/status" | jq -r '.state // "unknown"')
       if [ "$CI_STATE" = "success" ] || [ "$CI_STATE" = "failure" ] || [ "$CI_STATE" = "error" ]; then
         CI_DONE=true
@@ -370,7 +370,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
   echo \"PHASE:awaiting_review\" > \"${PHASE_FILE}\""
     else
       # Fetch CI error details
-      PIPELINE_NUM=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      PIPELINE_NUM=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/commits/${CI_CURRENT_SHA}/status" | \
         jq -r '.statuses[0].target_url // ""' | grep -oP 'pipeline/\K[0-9]+' | head -1 || true)
 
@@ -411,7 +411,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
         notify_ctx \
           "CI exhausted after ${CI_FIX_COUNT} attempts — escalating for human help" \
-          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalating for human help"
+          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${FORGE_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalating for human help"
         printf 'PHASE:escalate\nReason: ci_exhausted after %d attempts (step: %s)\n' "$CI_FIX_COUNT" "${FAILED_STEP:-unknown}" > "$PHASE_FILE"
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:escalate
         return 0
@@ -431,7 +431,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       _ci_snippet=$(printf '%s' "${CI_ERROR_LOG:-}" | tail -5 | head -c 500 | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
       notify_ctx \
         "CI failed on PR #${PR_NUMBER}: step=${FAILED_STEP:-unknown} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES})" \
-        "CI failed on PR <a href='${PR_URL:-${CODEBERG_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline #${PIPELINE_NUM:-?}</a><br>Step: <code>${FAILED_STEP:-unknown}</code> (exit ${FAILED_EXIT:-?})<br>Attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}<br><pre>${_ci_snippet:-no logs}</pre>"
+        "CI failed on PR <a href='${PR_URL:-${FORGE_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline #${PIPELINE_NUM:-?}</a><br>Step: <code>${FAILED_STEP:-unknown}</code> (exit ${FAILED_EXIT:-?})<br>Attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}<br><pre>${_ci_snippet:-no logs}</pre>"
 
       agent_inject_into_session "$SESSION_NAME" "CI failed on PR #${PR_NUMBER} (attempt ${CI_FIX_COUNT}/${MAX_CI_FIXES}).
 
@@ -460,7 +460,7 @@ Instructions:
 
     if [ -z "${PR_NUMBER:-}" ]; then
       log "WARNING: awaiting_review but PR_NUMBER unknown — searching for PR"
-      FOUND_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls?state=open&limit=20" | \
         jq -r --arg branch "$BRANCH" \
         '.[] | select(.head.ref == $branch) | .number' | head -1) || true
@@ -498,9 +498,9 @@ Instructions:
         break
       fi
 
-      REVIEW_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      REVIEW_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls/${PR_NUMBER}" | jq -r '.head.sha') || true
-      REVIEW_COMMENT=$(codeberg_api_all "/issues/${PR_NUMBER}/comments" | \
+      REVIEW_COMMENT=$(forge_api_all "/issues/${PR_NUMBER}/comments" | \
         jq -r --arg sha "$REVIEW_SHA" \
         '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
 
@@ -516,9 +516,9 @@ Instructions:
         VERDICT=$(echo "$REVIEW_TEXT" | grep -oP '\*\*(APPROVE|REQUEST_CHANGES|DISCUSS)\*\*' | head -1 | tr -d '*' || true)
         log "review verdict: ${VERDICT:-unknown}"
 
-        # Also check formal Codeberg reviews
+        # Also check formal forge reviews
         if [ -z "$VERDICT" ]; then
-          VERDICT=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+          VERDICT=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
             "${API}/pulls/${PR_NUMBER}/reviews" | \
             jq -r '[.[] | select(.stale == false)] | last | .state // empty' || true)
           if [ "$VERDICT" = "APPROVED" ]; then
@@ -548,7 +548,7 @@ Instructions:
           if [ "$_merge_rc" -eq 0 ]; then
             # Merge succeeded — close issue and signal done
             curl -sf -X PATCH \
-              -H "Authorization: token ${CODEBERG_TOKEN}" \
+              -H "Authorization: token ${FORGE_TOKEN}" \
               -H 'Content-Type: application/json' \
               "${API}/issues/${ISSUE}" \
               -d '{"state":"closed"}' >/dev/null 2>&1 || true
@@ -596,7 +596,7 @@ Instructions:
       fi
 
       # Check if PR was merged or closed externally
-      PR_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+      PR_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls/${PR_NUMBER}") || true
       PR_STATE=$(echo "$PR_JSON" | jq -r '.state // "unknown"')
       PR_MERGED=$(echo "$PR_JSON" | jq -r '.merged // false')
@@ -605,8 +605,8 @@ Instructions:
           log "PR #${PR_NUMBER} was merged externally"
           notify_ctx \
             "✅ PR #${PR_NUMBER} merged externally! Issue #${ISSUE} done." \
-            "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged externally! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
-          curl -sf -X PATCH -H "Authorization: token ${CODEBERG_TOKEN}" \
+            "✅ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged externally! <a href='${FORGE_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+          curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
           cleanup_labels
@@ -637,9 +637,9 @@ Instructions:
   elif [ "$phase" = "PHASE:escalate" ]; then
     status "escalated — waiting for human input on issue #${ISSUE}"
     ESCALATE_REASON=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
-    _issue_url="${CODEBERG_WEB}/issues/${ISSUE}"
+    _issue_url="${FORGE_WEB}/issues/${ISSUE}"
     _pr_link=""
-    [ -n "${PR_NUMBER:-}" ] && _pr_link=" | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>"
+    [ -n "${PR_NUMBER:-}" ] && _pr_link=" | PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>"
     notify_ctx \
       "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}" \
       "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}<br>Reply in this thread to send guidance to the agent."
@@ -653,12 +653,12 @@ Instructions:
       status "phase done — PR #${PR_NUMBER} merged, cleaning up"
       notify_ctx \
         "✅ PR #${PR_NUMBER} merged! Issue #${ISSUE} done." \
-        "✅ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged! <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+        "✅ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a> merged! <a href='${FORGE_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
     else
       status "phase done — issue #${ISSUE} complete, cleaning up"
       notify_ctx \
         "✅ Issue #${ISSUE} done." \
-        "✅ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
+        "✅ <a href='${FORGE_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> done."
     fi
 
     # Belt-and-suspenders: ensure in-progress label removed (idempotent)
@@ -680,10 +680,10 @@ Instructions:
     FAILURE_REASON="${FAILURE_REASON:-unspecified}"
     log "phase: failed — reason: ${FAILURE_REASON}"
     # Gitea labels API requires []int64 — look up the "backlog" label ID once
-    BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+    BACKLOG_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
       | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
     BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
-    UNDERSPECIFIED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+    UNDERSPECIFIED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
       | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
     UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
 
@@ -703,7 +703,7 @@ Instructions:
       # Unclaim issue (restore backlog label, remove in-progress)
       cleanup_labels
       curl -sf -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${ISSUE}/labels" \
         -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
@@ -732,12 +732,12 @@ ${REASON}
 ### Next steps
 A maintainer should split this issue or add more detail to the spec."
           curl -sf -X POST \
-            -H "Authorization: token ${CODEBERG_TOKEN}" \
+            -H "Authorization: token ${FORGE_TOKEN}" \
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}/labels" \
             -d "{\"labels\":[${UNDERSPECIFIED_LABEL_ID}]}" >/dev/null 2>&1 || true
           curl -sf -X DELETE \
-            -H "Authorization: token ${CODEBERG_TOKEN}" \
+            -H "Authorization: token ${FORGE_TOKEN}" \
             "${API}/issues/${ISSUE}/labels/${BACKLOG_LABEL_ID}" >/dev/null 2>&1 || true
           notify "refused #${ISSUE}: too large — ${REASON}"
           ;;
@@ -749,7 +749,7 @@ ${REASON}
 
 Closing as already implemented."
           curl -sf -X PATCH \
-            -H "Authorization: token ${CODEBERG_TOKEN}" \
+            -H "Authorization: token ${FORGE_TOKEN}" \
             -H "Content-Type: application/json" \
             "${API}/issues/${ISSUE}" \
             -d '{"state":"closed"}' >/dev/null 2>&1 || true
@@ -779,7 +779,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       log "session failed: ${FAILURE_REASON}"
       notify_ctx \
         "❌ Issue #${ISSUE} session failed: ${FAILURE_REASON}" \
-        "❌ <a href='${CODEBERG_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> session failed: ${FAILURE_REASON}${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+        "❌ <a href='${FORGE_WEB}/issues/${ISSUE}'>Issue #${ISSUE}</a> session failed: ${FAILURE_REASON}${PR_NUMBER:+ | PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
       post_blocked_diagnostic "$FAILURE_REASON"
 
       agent_kill_session "$SESSION_NAME"
@@ -801,7 +801,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
     log "session crashed for issue #${ISSUE}"
     notify_ctx \
       "session crashed unexpectedly — marking blocked" \
-      "session crashed unexpectedly — marking blocked${PR_NUMBER:+ | PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+      "session crashed unexpectedly — marking blocked${PR_NUMBER:+ | PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     post_blocked_diagnostic "crashed"
     [ -z "${PR_NUMBER:-}" ] && cleanup_worktree
     [ -n "${PR_NUMBER:-}" ] && log "keeping worktree (PR #${PR_NUMBER} still open)"

@@ -28,13 +28,13 @@ emit_metric() {
   printf '%s\n' "$1" >> "$METRICS_FILE"
 }
 
-# Count all matching items from a paginated Codeberg API endpoint.
+# Count all matching items from a paginated forge API endpoint.
 # Usage: codeberg_count_paginated "/issues?state=open&labels=backlog&type=issues"
 # Returns total count across all pages (max 20 pages = 1000 items).
 codeberg_count_paginated() {
   local endpoint="$1" total=0 page=1 count
   while true; do
-    count=$(codeberg_api GET "${endpoint}&limit=50&page=${page}" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+    count=$(forge_api GET "${endpoint}&limit=50&page=${page}" 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
     total=$((total + ${count:-0}))
     [ "${count:-0}" -lt 50 ] && break
     page=$((page + 1))
@@ -244,7 +244,7 @@ mkdir -p "$_RETRY_DIR"
 # Function: run all per-project checks for the currently loaded project config
 check_project() {
   local proj_name="${PROJECT_NAME:-unknown}"
-  flog "── checking project: ${proj_name} (${CODEBERG_REPO}) ──"
+  flog "── checking project: ${proj_name} (${FORGE_REPO}) ──"
 
   # ===========================================================================
   # P2: FACTORY STOPPED — CI, dev-agent, git
@@ -366,8 +366,8 @@ check_project() {
   if [ "${CHECK_PIPELINE_STALL:-true}" = "true" ]; then
     status "P2: ${proj_name}: checking pipeline stall"
 
-    BACKLOG_COUNT=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
-    IN_PROGRESS=$(codeberg_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
+    BACKLOG_COUNT=$(forge_api GET "/issues?state=open&labels=backlog&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
+    IN_PROGRESS=$(forge_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
 
     if [ "${BACKLOG_COUNT:-0}" -gt 0 ] && [ "${IN_PROGRESS:-0}" -eq 0 ]; then
       DEV_LOG="${FACTORY_ROOT}/dev/dev-agent.log"
@@ -408,14 +408,14 @@ check_project() {
   if [ "${CHECK_PRS:-true}" = "true" ]; then
     status "P3: ${proj_name}: checking PRs"
 
-    OPEN_PRS=$(codeberg_api GET "/pulls?state=open&limit=10" 2>/dev/null | jq -r '.[].number' 2>/dev/null || true)
+    OPEN_PRS=$(forge_api GET "/pulls?state=open&limit=10" 2>/dev/null | jq -r '.[].number' 2>/dev/null || true)
     for pr in $OPEN_PRS; do
-      PR_JSON=$(codeberg_api GET "/pulls/${pr}" 2>/dev/null || true)
+      PR_JSON=$(forge_api GET "/pulls/${pr}" 2>/dev/null || true)
       [ -z "$PR_JSON" ] && continue
       PR_SHA=$(echo "$PR_JSON" | jq -r '.head.sha // ""')
       [ -z "$PR_SHA" ] && continue
 
-      CI_STATE=$(codeberg_api GET "/commits/${PR_SHA}/status" 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null || true)
+      CI_STATE=$(forge_api GET "/commits/${PR_SHA}/status" 2>/dev/null | jq -r '.state // "unknown"' 2>/dev/null || true)
 
       MERGEABLE=$(echo "$PR_JSON" | jq -r '.mergeable // true')
       if [ "$MERGEABLE" = "false" ] && ci_passed "$CI_STATE"; then
@@ -429,7 +429,7 @@ check_project() {
           [ "$AGE_MIN" -gt 30 ] && p3 "${proj_name}: PR #${pr}: CI=${CI_STATE}, stale ${AGE_MIN}min"
         fi
       elif ci_passed "$CI_STATE"; then
-        HAS_REVIEW=$(codeberg_api GET "/issues/${pr}/comments?limit=50" 2>/dev/null | \
+        HAS_REVIEW=$(forge_api GET "/issues/${pr}/comments?limit=50" 2>/dev/null | \
           jq -r --arg sha "$PR_SHA" '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | length' 2>/dev/null || echo "0")
 
         if [ "${HAS_REVIEW:-0}" -eq 0 ]; then
@@ -454,7 +454,7 @@ check_project() {
   # ===========================================================================
   status "P3: ${proj_name}: checking for circular dependencies"
 
-  BACKLOG_FOR_DEPS=$(codeberg_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null || true)
+  BACKLOG_FOR_DEPS=$(forge_api GET "/issues?state=open&labels=backlog&type=issues&limit=50" 2>/dev/null || true)
   if [ -n "$BACKLOG_FOR_DEPS" ] && [ "$BACKLOG_FOR_DEPS" != "null" ] && [ "$(echo "$BACKLOG_FOR_DEPS" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
 
     PARSE_DEPS="${FACTORY_ROOT}/lib/parse-deps.sh"
@@ -524,7 +524,7 @@ check_project() {
         if [ -n "${DEP_CACHE[$dep]+x}" ]; then
           DEP_INFO="${DEP_CACHE[$dep]}"
         else
-          DEP_JSON=$(codeberg_api GET "/issues/${dep}" 2>/dev/null || true)
+          DEP_JSON=$(forge_api GET "/issues/${dep}" 2>/dev/null || true)
           [ -z "$DEP_JSON" ] && continue
           DEP_STATE=$(echo "$DEP_JSON" | jq -r '.state // "unknown"')
           DEP_CREATED=$(echo "$DEP_JSON" | jq -r '.created_at // ""')
@@ -646,8 +646,8 @@ Instructions:
     _sess_issue="${_sess#dev-"${proj_name}"-}"
     [[ "$_sess_issue" =~ ^[0-9]+$ ]] || continue
 
-    # Check Codeberg: is the issue still open?
-    _issue_state=$(codeberg_api GET "/issues/${_sess_issue}" 2>/dev/null \
+    # Check forge: is the issue still open?
+    _issue_state=$(forge_api GET "/issues/${_sess_issue}" 2>/dev/null \
       | jq -r '.state // "open"' 2>/dev/null || echo "open")
 
     _should_cleanup=false
@@ -671,7 +671,7 @@ Instructions:
       _has_open_pr=0
       _pr_page=1
       while true; do
-        _pr_page_json=$(codeberg_api GET "/pulls?state=open&limit=50&page=${_pr_page}" \
+        _pr_page_json=$(forge_api GET "/pulls?state=open&limit=50&page=${_pr_page}" \
           2>/dev/null || echo "[]")
         _pr_page_len=$(printf '%s' "$_pr_page_json" | jq 'length' 2>/dev/null || echo 0)
         _pr_match=$(printf '%s' "$_pr_page_json" | \
@@ -689,7 +689,7 @@ Instructions:
         _has_closed_pr=0
         _pr_page=1
         while true; do
-          _pr_page_json=$(codeberg_api GET "/pulls?state=closed&limit=50&page=${_pr_page}" \
+          _pr_page_json=$(forge_api GET "/pulls?state=closed&limit=50&page=${_pr_page}" \
             2>/dev/null || echo "[]")
           _pr_page_len=$(printf '%s' "$_pr_page_json" | jq 'length' 2>/dev/null || echo 0)
           _pr_match=$(printf '%s' "$_pr_page_json" | \
@@ -771,7 +771,7 @@ if [ -d "$PROJECTS_DIR" ]; then
     [ -f "$project_toml" ] || continue
     PROJECT_COUNT=$((PROJECT_COUNT + 1))
 
-    # Load project config (overrides CODEBERG_REPO, PROJECT_REPO_ROOT, etc.)
+    # Load project config (overrides FORGE_REPO, PROJECT_REPO_ROOT, etc.)
     source "${FACTORY_ROOT}/lib/load-project.sh" "$project_toml"
 
     check_project || flog "check_project failed for ${project_toml} (per-project checks incomplete)"

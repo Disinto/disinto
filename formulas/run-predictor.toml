@@ -3,7 +3,7 @@
 # Goal: find the project's biggest weakness. Explore when uncertain,
 # exploit when confident (dispatch a formula to prove the theory).
 #
-# Memory: previous predictions on Codeberg ARE the memory.
+# Memory: previous predictions on the forge ARE the memory.
 # No separate memory file — the issue tracker is the source of truth.
 #
 # Executed by predictor/predictor-run.sh via cron — no action issues.
@@ -33,12 +33,12 @@ Set up the working environment and load your prediction history.
      git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
 
 2. Fetch ALL your previous predictions (open + recently closed):
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/issues?state=closed&type=issues&labels=prediction%2Factioned&limit=50&sort=updated&direction=desc"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=closed&type=issues&labels=prediction%2Factioned&limit=50&sort=updated&direction=desc"
 
    For each prediction, note:
    - What you predicted (title + body)
@@ -150,21 +150,21 @@ For each weakness you identify, choose one:
 ## Filing
 
 1. Look up label IDs:
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/labels" | jq '[.[] | select(.name | startswith("prediction")) | {name, id}]'
-     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/labels" | jq '.[] | select(.name == "action") | .id'
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/labels" | jq '[.[] | select(.name | startswith("prediction")) | {name, id}]'
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/labels" | jq '.[] | select(.name == "action") | .id'
 
 2. File predictions:
-     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
        -H "Content-Type: application/json" \
-       "$CODEBERG_API/issues" \
+       "$FORGE_API/issues" \
        -d '{"title":"<title>","body":"<body>","labels":[<prediction_unreviewed_id>]}'
 
 3. File action dispatches (if exploiting):
-     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
        -H "Content-Type: application/json" \
-       "$CODEBERG_API/issues" \
+       "$FORGE_API/issues" \
        -d '{"title":"action: test prediction #NNN — <formula> <focus>","body":"<body>","labels":[<action_label_id>]}'
 
 4. Do NOT duplicate existing open predictions. If your theory matches

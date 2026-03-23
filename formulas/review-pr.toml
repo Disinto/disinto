@@ -78,25 +78,25 @@ If you discover pre-existing issues (NOT introduced by this PR), create
 tech-debt issues via API so they are tracked separately:
 
   # Look up tech-debt label ID (create if missing):
-  TECH_DEBT_ID=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/labels" | jq -r '.[] | select(.name=="tech-debt") | .id')
+  TECH_DEBT_ID=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/labels" | jq -r '.[] | select(.name=="tech-debt") | .id')
 
   if [ -z "$TECH_DEBT_ID" ]; then
     TECH_DEBT_ID=$(curl -sf -X POST \
-      -H "Authorization: token $CODEBERG_TOKEN" \
+      -H "Authorization: token $FORGE_TOKEN" \
       -H "Content-Type: application/json" \
-      "$CODEBERG_API/labels" \
+      "$FORGE_API/labels" \
       -d '{"name":"tech-debt","color":"#6B7280","description":"Pre-existing tech debt flagged by AI review"}' | jq -r '.id')
   fi
 
   # Check for duplicate before creating:
-  EXISTING=$(curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?state=open&labels=tech-debt&limit=50" | \
+  EXISTING=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/issues?state=open&labels=tech-debt&limit=50" | \
     jq --arg t "TITLE" '[.[] | select(.title == $t)] | length')
 
   # Create only if no duplicate:
-  curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-    -H "Content-Type: application/json" "$CODEBERG_API/issues" \
+  curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
+    -H "Content-Type: application/json" "$FORGE_API/issues" \
     -d '{"title":"...","body":"Flagged by AI reviewer in PR #NNN.\n\n## Problem\n...\n\n---\n*Auto-created from AI review*","labels":[TECH_DEBT_ID]}'
 
 Only create follow-ups for clear, actionable tech debt. Do not create
@@ -138,5 +138,5 @@ For a re-review, structure the markdown as:
 After writing the JSON file, signal completion:
   echo "PHASE:done" > "$PHASE_FILE"
 
-Then STOP and wait. The orchestrator will post your review to Codeberg.
+Then STOP and wait. The orchestrator will post your review to the forge.
 """

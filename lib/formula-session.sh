@@ -208,21 +208,21 @@ read_scratch_context() {
 # ── Prompt + monitor helpers ──────────────────────────────────────────────
 
 # build_prompt_footer [EXTRA_API_LINES]
-# Assembles the common Codeberg API reference + environment + phase protocol
+# Assembles the common forge API reference + environment + phase protocol
 # block for formula prompts.  Sets PROMPT_FOOTER.
 # Pass additional API endpoint lines (pre-formatted, newline-prefixed) via $1.
-# Requires globals: CODEBERG_API, FACTORY_ROOT, PROJECT_REPO_ROOT,
+# Requires globals: FORGE_API, FACTORY_ROOT, PROJECT_REPO_ROOT,
 #                   PRIMARY_BRANCH, PHASE_FILE.
 build_prompt_footer() {
   local extra_api="${1:-}"
   # shellcheck disable=SC2034  # consumed by the calling script's PROMPT
-  PROMPT_FOOTER="## Codeberg API reference
-Base URL: ${CODEBERG_API}
-Auth header: -H \"Authorization: token \$CODEBERG_TOKEN\"
-  Read issue:  curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/issues/{number}' | jq '.body'
-  Create issue: curl -sf -X POST -H \"Authorization: token \$CODEBERG_TOKEN\" -H 'Content-Type: application/json' '${CODEBERG_API}/issues' -d '{\"title\":\"...\",\"body\":\"...\",\"labels\":[LABEL_ID]}'${extra_api}
-  List labels: curl -sf -H \"Authorization: token \$CODEBERG_TOKEN\" '${CODEBERG_API}/labels'
-NEVER echo or include the actual token value in output — always reference \$CODEBERG_TOKEN.
+  PROMPT_FOOTER="## Forge API reference
+Base URL: ${FORGE_API}
+Auth header: -H \"Authorization: token \${FORGE_TOKEN}\"
+  Read issue:  curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/issues/{number}' | jq '.body'
+  Create issue: curl -sf -X POST -H \"Authorization: token \${FORGE_TOKEN}\" -H 'Content-Type: application/json' '${FORGE_API}/issues' -d '{\"title\":\"...\",\"body\":\"...\",\"labels\":[LABEL_ID]}'${extra_api}
+  List labels: curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/labels'
+NEVER echo or include the actual token value in output — always reference \${FORGE_TOKEN}.
 
 ## Environment
 FACTORY_ROOT=${FACTORY_ROOT}
@@ -240,7 +240,7 @@ On unrecoverable error:
 # run_formula_and_monitor AGENT_NAME [TIMEOUT]
 # Starts the formula session, injects PROMPT, monitors phase, and logs result.
 # Requires globals: SESSION_NAME, PHASE_FILE, PROJECT_REPO_ROOT, PROMPT,
-#                   CODEBERG_REPO, CLAUDE_MODEL (exported).
+#                   FORGE_REPO, CLAUDE_MODEL (exported).
 # shellcheck disable=SC2154  # SESSION_NAME, PHASE_FILE, PROJECT_REPO_ROOT, PROMPT set by caller
 run_formula_and_monitor() {
   local agent_name="$1"
@@ -258,7 +258,7 @@ run_formula_and_monitor() {
 
   agent_inject_into_session "$SESSION_NAME" "$PROMPT"
   log "Prompt sent to tmux session"
-  matrix_send "$agent_name" "${agent_name^} session started for ${CODEBERG_REPO}" 2>/dev/null || true
+  matrix_send "$agent_name" "${agent_name^} session started for ${FORGE_REPO}" 2>/dev/null || true
 
   log "Monitoring phase file: ${PHASE_FILE}"
   _FORMULA_CRASH_COUNT=0

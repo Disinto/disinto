@@ -10,7 +10,7 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
-API="${CODEBERG_API}"
+API="${FORGE_API}"
 LOGFILE="${FACTORY_ROOT}/review/review.log"
 SESSION="review-${PROJECT_NAME}-${PR_NUMBER}"
 PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.phase"
@@ -37,7 +37,7 @@ if [ -f "$LOCKFILE" ]; then
 fi
 echo $$ > "$LOCKFILE"
 status "fetching metadata"
-PR_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" "${API}/pulls/${PR_NUMBER}")
+PR_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/pulls/${PR_NUMBER}")
 PR_TITLE=$(printf '%s' "$PR_JSON" | jq -r '.title')
 PR_BODY=$(printf '%s' "$PR_JSON" | jq -r '.body // ""')
 PR_HEAD=$(printf '%s' "$PR_JSON" | jq -r '.head.ref')
@@ -50,16 +50,16 @@ if [ "$PR_STATE" != "open" ]; then
   cd "${PROJECT_REPO_ROOT}"; git worktree remove "$WORKTREE" --force 2>/dev/null || true
   rm -rf "$WORKTREE" "$PHASE_FILE" "$OUTPUT_FILE" 2>/dev/null || true; exit 0
 fi
-CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"')
 CI_NOTE=""; if ! ci_passed "$CI_STATE"; then
   ci_required_for_pr "$PR_NUMBER" && { log "SKIP: CI=${CI_STATE}"; exit 0; }
   CI_NOTE=" (not required — non-code PR)"; fi
-ALL_COMMENTS=$(codeberg_api_all "/issues/${PR_NUMBER}/comments")
+ALL_COMMENTS=$(forge_api_all "/issues/${PR_NUMBER}/comments")
 HAS_CMT=$(printf '%s' "$ALL_COMMENTS" | jq --arg s "$PR_SHA" \
   '[.[]|select(.body|contains("<!-- reviewed: "+$s+" -->"))]|length')
 [ "${HAS_CMT:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: reviewed ${PR_SHA:0:7}"; exit 0; }
-HAS_FML=$(codeberg_api_all "/pulls/${PR_NUMBER}/reviews" | jq --arg s "$PR_SHA" \
+HAS_FML=$(forge_api_all "/pulls/${PR_NUMBER}/reviews" | jq --arg s "$PR_SHA" \
   '[.[]|select(.commit_id==$s)|select(.state!="COMMENT")]|length')
 [ "${HAS_FML:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: formal review"; exit 0; }
 PREV_CONTEXT="" IS_RE_REVIEW=false PREV_SHA=""
@@ -81,7 +81,7 @@ if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
   fi
 fi
 status "fetching diff"
-curl -s -H "Authorization: token ${CODEBERG_TOKEN}" \
+curl -s -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/pulls/${PR_NUMBER}.diff" > "${REVIEW_TMPDIR}/full.diff"
 FSIZE=$(stat -c%s "${REVIEW_TMPDIR}/full.diff" 2>/dev/null || echo 0)
 DIFF=$(head -c "$MAX_DIFF" "${REVIEW_TMPDIR}/full.diff")
@@ -97,15 +97,15 @@ status "preparing review session"
 FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
 {
   printf 'You are the review agent for %s. Follow the formula to review PR #%s.\nYou MUST write PHASE:done to '\''%s'\'' when finished.\n\n' \
-    "${CODEBERG_REPO}" "${PR_NUMBER}" "${PHASE_FILE}"
+    "${FORGE_REPO}" "${PR_NUMBER}" "${PHASE_FILE}"
   printf '## PR Context\n**%s** (%s → %s) | SHA: %s | CI: %s%s\nRe-review: %s\n\n' \
     "$PR_TITLE" "$PR_HEAD" "$PR_BASE" "$PR_SHA" "$CI_STATE" "$CI_NOTE" "$IS_RE_REVIEW"
   printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
-  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nPHASE_FILE=%s\nCODEBERG_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
+  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nPHASE_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
     "$FORMULA" "$OUTPUT_FILE" "$PHASE_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
-  printf 'NEVER echo the actual token — always reference $CODEBERG_TOKEN or $REVIEW_BOT_TOKEN.\n'
+  printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'
 } > "${REVIEW_TMPDIR}/prompt.md"
 PROMPT=$(cat "${REVIEW_TMPDIR}/prompt.md")
 
@@ -142,7 +142,7 @@ fi
 if [ -z "$REVIEW_JSON" ]; then
   log "ERROR: no valid review output"
   jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed.\n---\n*${PR_SHA:0:7}*" \
-    '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+    '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
   matrix_send "review" "PR #${PR_NUMBER} review failed" 2>/dev/null || true; exit 1
 fi
@@ -163,7 +163,7 @@ COMMENT_BODY=$(printf '## AI %s\n<!-- reviewed: %s -->\n\n%s\n\n### Verdict\n**%
 printf '%s' "$COMMENT_BODY" > "${REVIEW_TMPDIR}/body.txt"
 jq -Rs '{body: .}' < "${REVIEW_TMPDIR}/body.txt" > "${REVIEW_TMPDIR}/comment.json"
 POST_RC=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  -H "Authorization: token ${REVIEW_BOT_TOKEN}" -H "Content-Type: application/json" \
+  -H "Authorization: token ${FORGE_REVIEW_TOKEN}" -H "Content-Type: application/json" \
   "${API}/issues/${PR_NUMBER}/comments" --data-binary @"${REVIEW_TMPDIR}/comment.json")
 [ "$POST_RC" != "201" ] && { log "ERROR: comment HTTP ${POST_RC}"; exit 1; }
 log "posted review comment"
@@ -171,19 +171,19 @@ log "posted review comment"
 REVENT="COMMENT"
 case "$VERDICT" in APPROVE) REVENT="APPROVED" ;; REQUEST_CHANGES|DISCUSS) REVENT="REQUEST_CHANGES" ;; esac
 if [ "$REVENT" = "APPROVED" ]; then
-  BLOGIN=$(curl -sf -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+  BLOGIN=$(curl -sf -H "Authorization: token ${FORGE_REVIEW_TOKEN}" \
     "${API%%/repos*}/user" 2>/dev/null | jq -r '.login // empty' || true)
-  [ -n "$BLOGIN" ] && codeberg_api_all "/pulls/${PR_NUMBER}/reviews" "$REVIEW_BOT_TOKEN" 2>/dev/null | \
+  [ -n "$BLOGIN" ] && forge_api_all "/pulls/${PR_NUMBER}/reviews" "${FORGE_REVIEW_TOKEN}" 2>/dev/null | \
     jq -r --arg l "$BLOGIN" '.[]|select(.state=="REQUEST_CHANGES")|select(.user.login==$l)|.id' | \
     while IFS= read -r rid; do
-      curl -sf -o /dev/null -X POST -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+      curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_REVIEW_TOKEN}" \
         -H "Content-Type: application/json" "${API}/pulls/${PR_NUMBER}/reviews/${rid}/dismissals" \
         -d '{"message":"Superseded by approval"}' || true; log "dismissed review ${rid}"
     done || true
 fi
 jq -n --arg b "AI ${RTYPE}: **${VERDICT}** — ${REASON}" --arg e "$REVENT" --arg s "$PR_SHA" \
   '{body: $b, event: $e, commit_id: $s}' > "${REVIEW_TMPDIR}/formal.json"
-curl -s -o /dev/null -X POST -H "Authorization: token ${REVIEW_BOT_TOKEN}" \
+curl -s -o /dev/null -X POST -H "Authorization: token ${FORGE_REVIEW_TOKEN}" \
   -H "Content-Type: application/json" "${API}/pulls/${PR_NUMBER}/reviews" \
   --data-binary @"${REVIEW_TMPDIR}/formal.json" >/dev/null 2>&1 || true
 log "formal ${REVENT} submitted"

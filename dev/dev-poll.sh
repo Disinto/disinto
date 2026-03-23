@@ -22,7 +22,7 @@ source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 
 # Gitea labels API requires []int64 — look up the "underspecified" label ID once
-UNDERSPECIFIED_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+UNDERSPECIFIED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
   | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
 UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
 
@@ -81,7 +81,7 @@ else:
 # Check whether an issue already has the "blocked" label
 is_blocked() {
   local issue="$1"
-  codeberg_api GET "/issues/${issue}/labels" 2>/dev/null \
+  forge_api GET "/issues/${issue}/labels" 2>/dev/null \
     | jq -e '.[] | select(.name == "blocked")' >/dev/null 2>&1
 }
 
@@ -103,14 +103,14 @@ _post_ci_blocked_comment() {
 | PR | #${pr_num} |"
 
   curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${CODEBERG_API}/issues/${issue_num}/comments" \
+    "${FORGE_API}/issues/${issue_num}/comments" \
     -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
   curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${CODEBERG_API}/issues/${issue_num}/labels" \
+    "${FORGE_API}/issues/${issue_num}/labels" \
     -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
 }
 
@@ -169,7 +169,7 @@ handle_ci_exhaustion() {
 # HELPER: merge an approved PR directly (no Claude needed)
 #
 # Merging an approved, CI-green PR is a single API call. Spawning dev-agent
-# for this fails when the issue is already closed (Codeberg auto-closes issues
+# for this fails when the issue is already closed (forge auto-closes issues
 # on PR creation when body contains "Fixes #N"), causing a respawn loop (#344).
 # =============================================================================
 try_direct_merge() {
@@ -179,7 +179,7 @@ try_direct_merge() {
 
   local merge_resp merge_http
   merge_resp=$(curl -sf -w '\n%{http_code}' -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H 'Content-Type: application/json' \
     "${API}/pulls/${pr_num}/merge" \
     -d '{"Do":"merge","delete_branch_after_merge":true}' 2>/dev/null) || true
@@ -189,15 +189,15 @@ try_direct_merge() {
   if [ "${merge_http:-0}" = "200" ] || [ "${merge_http:-0}" = "204" ]; then
     log "PR #${pr_num} merged successfully"
     if [ "$issue_num" -gt 0 ]; then
-      # Close the issue (may already be closed by Codeberg auto-close)
+      # Close the issue (may already be closed by forge auto-close)
       curl -sf -X PATCH \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         -H 'Content-Type: application/json' \
         "${API}/issues/${issue_num}" \
         -d '{"state":"closed"}' >/dev/null 2>&1 || true
       # Remove in-progress label
       curl -sf -X DELETE \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
       # Clean up phase/session artifacts
       rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
@@ -215,7 +215,7 @@ try_direct_merge() {
   return 1
 }
 
-API="${CODEBERG_API}"
+API="${FORGE_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
 LOGFILE="${FACTORY_ROOT}/dev/dev-agent-${PROJECT_NAME:-default}.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
@@ -233,7 +233,7 @@ log() {
 # (See #531: direct merges should not be blocked by agent lock)
 # =============================================================================
 log "pre-lock: scanning for mergeable PRs"
-PL_PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+PL_PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/pulls?state=open&limit=20")
 
 PL_MERGED_ANY=false
@@ -261,7 +261,7 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     fi
   fi
 
-  PL_CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  PL_CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/commits/${PL_PR_SHA}/status" | jq -r '.state // "unknown"') || true
 
   # Non-code PRs may have no CI — treat as passed
@@ -274,7 +274,7 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
   fi
 
   # Check for approval (non-stale)
-  PL_REVIEWS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  PL_REVIEWS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls/${PL_PR_NUM}/reviews") || true
   PL_HAS_APPROVE=$(echo "$PL_REVIEWS" | \
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
@@ -319,7 +319,7 @@ dep_is_merged() {
 
   # Check issue is closed
   local dep_state
-  dep_state=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  dep_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${dep_num}" | jq -r '.state // "open"')
   if [ "$dep_state" != "closed" ]; then
     return 1
@@ -370,7 +370,7 @@ issue_is_ready() {
 # PRIORITY 1: orphaned in-progress issues
 # =============================================================================
 log "checking for in-progress issues"
-ORPHANS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=in-progress&limit=10&type=issues")
 
 ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
@@ -383,21 +383,21 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|action|prediction/backlog|prediction/unreviewed)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
-    curl -sf -X DELETE -H "Authorization: token ${CODEBERG_TOKEN}" \
+    curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
     exit 0
   fi
 
   # Check if there's already an open PR for this issue
-  HAS_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
     jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
     '.[] | select(.head.ref == $branch) | .number' | head -1) || true
 
   if [ -n "$HAS_PR" ]; then
-    PR_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${HAS_PR}" | jq -r '.head.sha') || true
-    CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
 
     # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
@@ -407,7 +407,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     fi
 
     # Check formal reviews (single fetch to avoid race window)
-    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${HAS_PR}/reviews") || true
     HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
@@ -482,7 +482,7 @@ fi
 # PRIORITY 1.5: any open PR with REQUEST_CHANGES or CI failure (stuck PRs)
 # =============================================================================
 log "checking for stuck PRs"
-OPEN_PRS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+OPEN_PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/pulls?state=open&limit=20")
 
 for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
@@ -510,7 +510,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     fi
   fi
 
-  CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
 
   # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
@@ -520,7 +520,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   fi
 
   # Single fetch to avoid race window between review checks
-  REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls/${PR_NUM}/reviews") || true
   HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
     jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
@@ -601,12 +601,12 @@ log "scanning backlog for ready issues"
 ensure_priority_label >/dev/null 2>&1 || true
 
 # Tier 1: issues with both "priority" and "backlog" labels
-PRIORITY_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+PRIORITY_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=priority,backlog&limit=20&type=issues&sort=oldest") || true
 PRIORITY_BACKLOG_JSON="${PRIORITY_BACKLOG_JSON:-[]}"
 
 # Tier 2: all "backlog" issues (includes priority ones — deduplicated below)
-ALL_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+ALL_BACKLOG_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=backlog&limit=20&type=issues&sort=oldest")
 
 # Combine: priority issues first, then remaining backlog issues (deduped)
@@ -644,15 +644,15 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   fi
 
   # Check if there's already an open PR for this issue that needs attention
-  EXISTING_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  EXISTING_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
     jq -r --arg branch "fix/issue-${ISSUE_NUM}" --arg num "#${ISSUE_NUM}" \
     '.[] | select((.head.ref == $branch) or (.title | contains($num))) | .number' | head -1) || true
 
   if [ -n "$EXISTING_PR" ]; then
-    PR_SHA=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}" | jq -r '.head.sha') || true
-    CI_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    CI_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/commits/${PR_SHA}/status" | jq -r '.state // "unknown"') || true
 
     # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
@@ -662,7 +662,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     fi
 
     # Single fetch to avoid race window between review checks
-    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}/reviews") || true
     HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
       jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
@@ -766,7 +766,7 @@ if [ -f "$PREFLIGHT_RESULT" ]; then
       REASON=$(jq -r '.reason // "unspecified"' < "$PREFLIGHT_RESULT" 2>/dev/null || echo "unspecified")
       log "#${READY_ISSUE} too large: ${REASON}"
       # Label as underspecified
-      curl -sf -X POST -H "Authorization: token ${CODEBERG_TOKEN}" \
+      curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
         -H "Content-Type: application/json" \
         "${API}/issues/${READY_ISSUE}/labels" \
         -d "{\"labels\":[${UNDERSPECIFIED_LABEL_ID}]}" >/dev/null 2>&1 || true

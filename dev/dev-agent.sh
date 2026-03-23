@@ -34,21 +34,21 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 # --- Config ---
 ISSUE="${1:?Usage: dev-agent.sh <issue-number>}"
 # shellcheck disable=SC2034
-REPO="${CODEBERG_REPO}"
+REPO="${FORGE_REPO}"
 # shellcheck disable=SC2034
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
-API="${CODEBERG_API}"
+API="${FORGE_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
 STATUSFILE="/tmp/dev-agent-status-${PROJECT_NAME:-default}"
 
 # Gitea labels API requires []int64 — look up the "backlog" label ID once
-BACKLOG_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+BACKLOG_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
   | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
 BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
 
 # Same for "in-progress" label
-IN_PROGRESS_LABEL_ID=$(codeberg_api GET "/labels" 2>/dev/null \
+IN_PROGRESS_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
   | jq -r '.[] | select(.name == "in-progress") | .id' 2>/dev/null || true)
 IN_PROGRESS_LABEL_ID="${IN_PROGRESS_LABEL_ID:-1300818}"
 
@@ -128,14 +128,14 @@ cleanup_worktree() {
 
 cleanup_labels() {
   curl -sf -X DELETE \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
 }
 
 restore_to_backlog() {
   cleanup_labels
   curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${API}/issues/${ISSUE}/labels" \
     -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
@@ -151,10 +151,10 @@ cleanup() {
   if [ "$CLAIMED" = true ] && [ -z "${PR_NUMBER:-}" ]; then
     log "cleanup: unclaiming issue (no PR created)"
     curl -sf -X DELETE \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
     curl -sf -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
       "${API}/issues/${ISSUE}/labels" \
       -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
@@ -198,7 +198,7 @@ echo $$ > "$LOCKFILE"
 # FETCH ISSUE
 # =============================================================================
 status "fetching issue"
-ISSUE_JSON=$(curl -s -H "Authorization: token ${CODEBERG_TOKEN}" "${API}/issues/${ISSUE}") || true
+ISSUE_JSON=$(curl -s -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE}") || true
 if [ -z "$ISSUE_JSON" ] || ! echo "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; then
   log "ERROR: failed to fetch issue #${ISSUE} (API down or invalid response)"
   exit 1
@@ -208,17 +208,17 @@ ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 ISSUE_BODY_ORIGINAL="$ISSUE_BODY"
 
 # --- Resolve bot username(s) for comment filtering ---
-_bot_login=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
 
-# Build list: token owner + any extra names from CODEBERG_BOT_USERNAMES (comma-separated)
+# Build list: token owner + any extra names from FORGE_BOT_USERNAMES (comma-separated)
 _bot_logins="${_bot_login}"
-if [ -n "${CODEBERG_BOT_USERNAMES:-}" ]; then
-  _bot_logins="${_bot_logins:+${_bot_logins},}${CODEBERG_BOT_USERNAMES}"
+if [ -n "${FORGE_BOT_USERNAMES:-}" ]; then
+  _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
 fi
 
 # Append human comments to issue body (filter out bot accounts)
-ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues/${ISSUE}/comments" | \
   jq -r --arg bots "$_bot_logins" \
     '($bots | split(",") | map(select(. != ""))) as $bl |
@@ -264,7 +264,7 @@ if [ -n "$DEP_NUMBERS" ]; then
   while IFS= read -r dep_num; do
     [ -z "$dep_num" ] && continue
     # Check if dependency issue is closed (= satisfied)
-    DEP_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    DEP_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/issues/${dep_num}" | jq -r '.state // "unknown"')
 
     if [ "$DEP_STATE" != "closed" ]; then
@@ -280,9 +280,9 @@ if [ "${#BLOCKED_BY[@]}" -gt 0 ]; then
   # Find a suggestion: look for the first blocker that itself has no unmet deps
   SUGGESTION=""
   for blocker in "${BLOCKED_BY[@]}"; do
-    BLOCKER_BODY=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    BLOCKER_BODY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/issues/${blocker}" | jq -r '.body // ""')
-    BLOCKER_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    BLOCKER_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/issues/${blocker}" | jq -r '.state')
 
     if [ "$BLOCKER_STATE" != "open" ]; then
@@ -302,7 +302,7 @@ if [ "${#BLOCKED_BY[@]}" -gt 0 ]; then
     if [ -n "$BLOCKER_DEPS" ]; then
       while IFS= read -r bd; do
         [ -z "$bd" ] && continue
-        BD_STATE=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+        BD_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${API}/issues/${bd}" | jq -r '.state // "unknown"')
         if [ "$BD_STATE" != "closed" ]; then
           BLOCKER_BLOCKED=true
@@ -329,7 +329,7 @@ if [ "${#BLOCKED_BY[@]}" -gt 0 ]; then
 
   # Post comment ONLY if last comment isn't already an unmet dependency notice
   BLOCKED_LIST=$(printf '#%s, ' "${BLOCKED_BY[@]}" | sed 's/, $//')
-  LAST_COMMENT_IS_BLOCK=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  LAST_COMMENT_IS_BLOCK=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${ISSUE}/comments?limit=1" | \
     jq -r '.[0].body // ""' | grep -c 'Dev-agent: Unmet dependency' || true)
 
@@ -352,7 +352,7 @@ This issue depends on ${BLOCKED_LIST}, which $(if [ "${#BLOCKED_BY[@]}" -eq 1 ];
     printf '%s' "$BLOCK_COMMENT" > /tmp/block-comment.txt
     jq -Rs '{body: .}' < /tmp/block-comment.txt > /tmp/block-comment.json
     curl -sf -o /dev/null -X POST \
-      -H "Authorization: token ${CODEBERG_TOKEN}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
       -H "Content-Type: application/json" \
       "${API}/issues/${ISSUE}/comments" \
       --data-binary @/tmp/block-comment.json 2>/dev/null || true
@@ -373,13 +373,13 @@ log "preflight passed — no explicit unmet dependencies"
 # CLAIM ISSUE
 # =============================================================================
 curl -sf -X POST \
-  -H "Authorization: token ${CODEBERG_TOKEN}" \
+  -H "Authorization: token ${FORGE_TOKEN}" \
   -H "Content-Type: application/json" \
   "${API}/issues/${ISSUE}/labels" \
   -d "{\"labels\":[${IN_PROGRESS_LABEL_ID}]}" >/dev/null 2>&1 || true
 
 curl -sf -X DELETE \
-  -H "Authorization: token ${CODEBERG_TOKEN}" \
+  -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues/${ISSUE}/labels/${BACKLOG_LABEL_ID}" >/dev/null 2>&1 || true
 
 CLAIMED=true
@@ -393,7 +393,7 @@ RECOVERY_MODE=false
 
 BODY_PR=$(echo "$ISSUE_BODY_ORIGINAL" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
 if [ -n "$BODY_PR" ]; then
-  PR_CHECK=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  PR_CHECK=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls/${BODY_PR}" | jq -r '{state, head_ref: .head.ref}')
   PR_CHECK_STATE=$(echo "$PR_CHECK" | jq -r '.state')
   if [ "$PR_CHECK_STATE" = "open" ]; then
@@ -405,7 +405,7 @@ fi
 
 if [ -z "$EXISTING_PR" ]; then
   # Priority 1: match by branch name (most reliable)
-  FOUND_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
     jq -r --arg branch "$BRANCH" \
     '.[] | select(.head.ref == $branch) | "\(.number) \(.head.ref)"' | head -1) || true
@@ -418,7 +418,7 @@ fi
 
 if [ -z "$EXISTING_PR" ]; then
   # Priority 2: match "Fixes #NNN" in PR body
-  FOUND_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
     jq -r --arg issue "ixes #${ISSUE}\\b" \
     '.[] | select(.body | test($issue; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
@@ -432,14 +432,14 @@ fi
 # Priority 3: check CLOSED PRs for prior art (don't redo work from scratch)
 PRIOR_ART_DIFF=""
 if [ -z "$EXISTING_PR" ]; then
-  CLOSED_PR=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  CLOSED_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=closed&limit=30" | \
     jq -r --arg issue "#${ISSUE}" \
     '.[] | select(.merged != true) | select((.title | contains($issue)) or (.body // "" | test("ixes " + $issue + "\\b"; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
   if [ -n "$CLOSED_PR" ]; then
     CLOSED_PR_NUM=$(echo "$CLOSED_PR" | awk '{print $1}')
     log "found closed (unmerged) PR #${CLOSED_PR_NUM} as prior art"
-    PRIOR_ART_DIFF=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+    PRIOR_ART_DIFF=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${CLOSED_PR_NUM}.diff" | head -500) || true
     if [ -n "$PRIOR_ART_DIFF" ]; then
       log "captured prior art diff from PR #${CLOSED_PR_NUM} ($(echo "$PRIOR_ART_DIFF" | wc -l) lines)"
@@ -530,7 +530,7 @@ SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 # =============================================================================
 # BUILD PROMPT
 # =============================================================================
-OPEN_ISSUES_SUMMARY=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+OPEN_ISSUES_SUMMARY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=backlog&limit=20&type=issues" | \
   jq -r '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "(could not fetch)")
 
@@ -607,12 +607,12 @@ if [ "$RECOVERY_MODE" = true ]; then
   GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "origin/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
   LAST_PHASE=$(read_phase)
   CI_RESULT=$(cat "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || echo "")
-  REVIEW_COMMENTS=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
+  REVIEW_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${PR_NUMBER}/comments?limit=10" | \
     jq -r '.[-3:] | .[] | "[\(.user.login)] \(.body[:500])"' 2>/dev/null || echo "(none)")
 
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
-This is issue #${ISSUE} for the ${CODEBERG_REPO} project.
+This is issue #${ISSUE} for the ${FORGE_REPO} project.
 
 ## Issue: ${ISSUE_TITLE}
 
@@ -647,7 +647,7 @@ ${PHASE_PROTOCOL_INSTRUCTIONS}"
 else
   # Normal mode: initial implementation prompt
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
-You have been assigned issue #${ISSUE} for the ${CODEBERG_REPO} project.
+You have been assigned issue #${ISSUE} for the ${FORGE_REPO} project.
 
 ## Issue: ${ISSUE_TITLE}
 
@@ -713,7 +713,7 @@ fi
 # CREATE MATRIX THREAD (before tmux so MATRIX_THREAD_ID is available for Stop hook)
 # =============================================================================
 if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
-  ISSUE_URL="${CODEBERG_WEB}/issues/${ISSUE}"
+  ISSUE_URL="${FORGE_WEB}/issues/${ISSUE}"
   _thread_id=$(matrix_send_ctx "dev" \
     "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
     "🔧 <a href='${ISSUE_URL}'>Issue #${ISSUE}</a>: ${ISSUE_TITLE}") || true
@@ -760,11 +760,11 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     if [ "${_MONITOR_LOOP_EXIT:-}" = "idle_prompt" ]; then
       notify_ctx \
         "session finished without phase signal — killed. Marking blocked." \
-        "session finished without phase signal — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+        "session finished without phase signal — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     else
       notify_ctx \
         "session idle for 2h — killed. Marking blocked." \
-        "session idle for 2h — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${CODEBERG_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
+        "session idle for 2h — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     fi
     # Post diagnostic comment + label issue blocked
     post_blocked_diagnostic "${_MONITOR_LOOP_EXIT:-idle_timeout}"

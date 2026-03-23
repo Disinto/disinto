@@ -31,8 +31,8 @@ fi
 
 # --- Find open 'action' issues ---
 log "scanning for open action issues"
-ACTION_ISSUES=$(curl -sf -H "Authorization: token ${CODEBERG_TOKEN}" \
-  "${CODEBERG_API}/issues?state=open&labels=action&limit=50&type=issues") || true
+ACTION_ISSUES=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues?state=open&labels=action&limit=50&type=issues") || true
 
 if [ -z "$ACTION_ISSUES" ] || [ "$ACTION_ISSUES" = "null" ]; then
   log "no action issues found"
