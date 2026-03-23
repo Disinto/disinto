@@ -25,3 +25,7 @@ token_env = "MATRIX_TOKEN"
 check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = true
+
+# [mirrors]
+# github   = "git@github.com:johba/harb.git"
+# codeberg = "git@codeberg.org:johba/harb.git"

@@ -26,6 +26,8 @@ source "$FACTORY_ROOT/lib/agent-session.sh"
 source "$FACTORY_ROOT/lib/formula-session.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
+# shellcheck source=../lib/mirrors.sh
+source "$FACTORY_ROOT/lib/mirrors.sh"
 
 LOG_FILE="$SCRIPT_DIR/gardener.log"
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
@@ -292,6 +294,11 @@ _gardener_merge() {
 
   if [ "$merge_http_code" = "200" ] || [ "$merge_http_code" = "204" ]; then
     log "gardener PR #${_GARDENER_PR} merged"
+    # Pull merged primary branch and push to mirrors
+    git -C "$PROJECT_REPO_ROOT" fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" pull --ff-only origin "$PRIMARY_BRANCH" 2>/dev/null || true
+    mirror_push
     _gardener_execute_manifest
     printf 'PHASE:done\n' > "$PHASE_FILE"
     return 0
@@ -304,6 +311,11 @@ _gardener_merge() {
       "${FORGE_API}/pulls/${_GARDENER_PR}" | jq -r '.merged // false') || true
     if [ "$pr_merged" = "true" ]; then
       log "gardener PR #${_GARDENER_PR} already merged"
+      # Pull merged primary branch and push to mirrors
+      git -C "$PROJECT_REPO_ROOT" fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+      git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+      git -C "$PROJECT_REPO_ROOT" pull --ff-only origin "$PRIMARY_BRANCH" 2>/dev/null || true
+      mirror_push
       _gardener_execute_manifest
       printf 'PHASE:done\n' > "$PHASE_FILE"
       return 0

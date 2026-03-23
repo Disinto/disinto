@@ -25,3 +25,7 @@ token_env = "DISINTO_MATRIX_TOKEN"
 check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = false
+
+# [mirrors]
+# github   = "git@github.com:johba/disinto.git"
+# codeberg = "git@codeberg.org:johba/disinto.git"

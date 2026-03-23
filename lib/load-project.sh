@@ -8,7 +8,8 @@
 #   PROJECT_NAME, FORGE_REPO, FORGE_API, FORGE_WEB, FORGE_URL,
 #   PROJECT_REPO_ROOT, PRIMARY_BRANCH, WOODPECKER_REPO_ID,
 #   PROJECT_CONTAINERS, CHECK_PRS, CHECK_DEV_AGENT,
-#   CHECK_PIPELINE_STALL, CI_STALE_MINUTES
+#   CHECK_PIPELINE_STALL, CI_STALE_MINUTES,
+#   MIRROR_NAMES, MIRROR_URLS, MIRROR_<NAME> (per configured mirror)
 #   (plus backwards-compat aliases: CODEBERG_REPO, CODEBERG_API, CODEBERG_WEB)
 #
 # If no argument given, does nothing (allows poll scripts to work with
@@ -71,6 +72,14 @@ mon = cfg.get('monitoring', {})
 for key in ['check_prs', 'check_dev_agent', 'check_pipeline_stall']:
     if key in mon:
         emit(key.upper(), mon[key])
+
+# [mirrors] section
+mirrors = cfg.get('mirrors', {})
+for name, url in mirrors.items():
+    emit(f'MIRROR_{name.upper()}', url)
+if mirrors:
+    emit('MIRROR_NAMES', list(mirrors.keys()))
+    emit('MIRROR_URLS', list(mirrors.values()))
 " "$_PROJECT_TOML" 2>/dev/null) || {
   echo "WARNING: failed to parse project TOML: $_PROJECT_TOML" >&2
   return 1 2>/dev/null || exit 1

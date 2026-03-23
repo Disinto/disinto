@@ -20,3 +20,7 @@ containers = []
 check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = true
+
+# [mirrors]
+# github   = "git@github.com:johba/versi.git"
+# codeberg = "git@codeberg.org:johba/versi.git"

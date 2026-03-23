@@ -30,6 +30,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/secret-scan.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/ci-helpers.sh"
 
+# Load mirror push helper
+# shellcheck source=../lib/mirrors.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/mirrors.sh"
+
 # --- Default globals (agents can override after sourcing) ---
 : "${CI_POLL_TIMEOUT:=1800}"
 : "${REVIEW_POLL_TIMEOUT:=10800}"
@@ -549,6 +553,11 @@ Instructions:
               -H 'Content-Type: application/json' \
               "${API}/issues/${ISSUE}" \
               -d '{"state":"closed"}' >/dev/null 2>&1 || true
+            # Pull merged primary branch and push to mirrors
+            git -C "$PROJECT_REPO_ROOT" fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+            git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+            git -C "$PROJECT_REPO_ROOT" pull --ff-only origin "$PRIMARY_BRANCH" 2>/dev/null || true
+            mirror_push
             printf 'PHASE:done\n' > "$PHASE_FILE"
           elif [ "$_merge_rc" -ne 2 ]; then
             # Other merge failure (conflict, etc.) — delegate to Claude for rebase + retry
