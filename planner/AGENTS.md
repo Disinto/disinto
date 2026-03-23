@@ -1,4 +1,4 @@
-<!-- last-reviewed: f6fb79d94badca6ef2d3a7a8545ad701ff2b6cfc -->
+<!-- last-reviewed: eb7e24cb1df028c6061f47ddfdf9b4ebec33e1cf -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
@@ -11,12 +11,15 @@ project-specific formulas (`$PROJECT_REPO_ROOT/formulas/*.toml`). Phase 1
 Predictor — for each prediction: promote to action, promote to backlog, watch
 (relabel to prediction/backlog), or dismiss with reasoning. Phase 2
 (update-prerequisite-tree): scan repo state + open/closed issues, mark resolved
-prerequisites, discover new ones, update the tree. Phase 3
+prerequisites, discover new ones, update the tree. **Also scans comments on
+referenced issues for bounce/stuck signals** (BOUNCED, ESCALATED, LABEL_CHURN)
+to detect issues ping-ponging between backlog and underspecified. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
-the most downstream objectives — file issues at these constraints as either
-`backlog` (code changes, dev-agent) or `action` (run existing formula,
-action-agent). Action issues count toward the 3-issue constraint budget — they
-are strategic investments, not maintenance.
+the most downstream objectives — file issues as either `backlog` (code changes,
+dev-agent) or `action` (run existing formula, action-agent). **Stuck issues
+(detected BOUNCED/LABEL_CHURN) are dispatched to the `groom-backlog` formula
+in breakdown mode instead of being re-promoted** — this breaks the ping-pong
+loop by splitting them into dev-agent-sized sub-issues.
 Phase 4 (journal-and-memory): write updated prerequisite tree + daily journal
 entry (committed to git) and update `planner/MEMORY.md` (committed to git).
 Phase 5 (commit-and-pr): one commit with all file changes, push, create PR.
@@ -41,6 +44,9 @@ issues — the planner is a nervous system component, not work.
   prediction-triage, update-prerequisite-tree, file-at-constraints,
   journal-and-memory, commit-and-pr) with `needs` dependencies. Claude
   executes all steps in a single interactive session with tool access
+- `formulas/groom-backlog.toml` — Dual-mode formula: grooming (default) or
+  breakdown (dispatched by planner for bounced/stuck issues — splits the issue
+  into dev-agent-sized sub-issues, removes `underspecified` label)
 - `planner/prerequisite-tree.md` — Prerequisite tree: versioned constraint
   map linking VISION.md objectives to their prerequisites. Planner owns the
   tree, humans steer by editing VISION.md. Tree grows organically as the

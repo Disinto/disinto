@@ -1,4 +1,4 @@
-<!-- last-reviewed: f6fb79d94badca6ef2d3a7a8545ad701ff2b6cfc -->
+<!-- last-reviewed: eb7e24cb1df028c6061f47ddfdf9b4ebec33e1cf -->
 # Vault Agent
 
 **Role**: Dual-purpose gate — action safety classification and resource procurement.
