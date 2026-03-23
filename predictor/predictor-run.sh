@@ -45,7 +45,7 @@ log "--- Predictor run start ---"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-predictor.toml"
-build_context_block AGENTS.md RESOURCES.md
+build_context_block AGENTS.md RESOURCES.md VISION.md planner/prerequisite-tree.md
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -57,16 +57,16 @@ build_prompt_footer
 # shellcheck disable=SC2034  # consumed by run_formula_and_monitor
 PROMPT="You are the prediction agent (goblin) for ${CODEBERG_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
-Your role: spot patterns across three signal categories and file them as prediction issues:
-1. Health signals — CI trends, agent status, resource pressure, stale issues
-2. Outcome signals — output freshness, capacity utilization, throughput
-3. External signals — dependency advisories, upstream changes, ecosystem shifts
+Your role: abstract adversary. Find the project's biggest weakness, challenge
+planner claims, and generate evidence. Explore when uncertain (file a prediction),
+exploit when confident (file a prediction AND dispatch a formula via an action issue).
 
+Your prediction history IS your memory — review it to decide where to focus.
 The planner (adult) will triage every prediction before acting.
 You MUST NOT emit feature work or implementation issues — only predictions
-about health, outcomes, and external risks/opportunities.
+challenging claims, exposing gaps, and surfacing risks.
 Use WebSearch for external signal scanning — be targeted (project dependencies
-and tools only, not general news). Limit to 5 web searches per run.
+and tools only, not general news). Limit to 3 web searches per run.
 
 ## Project context
 ${CONTEXT_BLOCK}

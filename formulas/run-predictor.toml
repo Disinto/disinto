@@ -1,385 +1,187 @@
-# formulas/run-predictor.toml — Predictor formula (disinto-specific signals)
+# formulas/run-predictor.toml — Predictor v3: abstract adversary
+#
+# Goal: find the project's biggest weakness. Explore when uncertain,
+# exploit when confident (dispatch a formula to prove the theory).
+#
+# Memory: previous predictions on Codeberg ARE the memory.
+# No separate memory file — the issue tracker is the source of truth.
 #
 # Executed by predictor/predictor-run.sh via cron — no action issues.
 # predictor-run.sh creates a tmux session with Claude (sonnet) and injects
 # this formula as context. Claude executes all steps autonomously.
 #
-# Steps: preflight → collect-signals → re-evaluate-backlog → analyze-and-predict
-#
-# Signal sources (three categories):
-#   Health signals:
-#     - CI pipeline trends (Woodpecker)
-#     - Stale issues (open issues with no recent activity)
-#     - Agent health (tmux sessions, recent logs)
-#     - Resource patterns (RAM, disk, load, containers)
-#   Outcome signals:
-#     - Output freshness (formula evidence/artifacts)
-#     - Capacity utilization (idle agents vs dispatchable work)
-#     - Throughput (recently closed issues, merged PRs)
-#   External signals:
-#     - Dependency security advisories
-#     - Upstream breaking changes and deprecations
+# Steps: preflight → find-weakness-and-act
 
 name        = "run-predictor"
-description = "Evidence-based prediction: health, outcome measurement, external environment signals"
-version     = 2
+description = "Abstract adversary: find weaknesses, challenge the planner, generate evidence"
+version     = 3
 model       = "sonnet"
 
 [context]
-files = ["AGENTS.md", "RESOURCES.md"]
+files = ["AGENTS.md", "RESOURCES.md", "VISION.md", "planner/prerequisite-tree.md"]
 
 [[steps]]
 id    = "preflight"
-title = "Pull latest code and gather environment"
+title = "Pull latest and gather history"
 description = """
-Set up the working environment for this prediction run.
+Set up the working environment and load your prediction history.
 
-1. Change to the project repository:
+1. Pull latest code:
      cd "$PROJECT_REPO_ROOT"
-
-2. Pull the latest code:
      git fetch origin "$PRIMARY_BRANCH" --quiet
      git checkout "$PRIMARY_BRANCH" --quiet
      git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
-"""
 
-[[steps]]
-id    = "collect-signals"
-title = "Collect disinto-specific signals"
-description = """
-Gather raw signal data for pattern analysis. Collect each signal category
-and store the results for the analysis step.
-
-### 1. CI pipeline trends (Woodpecker)
-
-Fetch recent builds from Woodpecker CI:
-  curl -sf -H "Authorization: Bearer $WOODPECKER_TOKEN" \
-    "${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}/pipelines?page=1&perPage=20"
-
-Look for:
-- Build failure rate over last 20 builds
-- Repeated failures on the same step
-- Builds stuck in running/pending state
-- Time since last successful build
-
-If WOODPECKER_TOKEN or WOODPECKER_SERVER are not set, skip CI signals and note
-"CI signals unavailable — WOODPECKER_TOKEN not configured".
-
-### 2. Stale issues
-
-Fetch all open issues:
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?state=open&type=issues&limit=50&sort=updated&direction=asc"
-
-Identify:
-- Issues with no update in 14+ days (stale)
-- Issues with no update in 30+ days (very stale)
-- Issues labeled 'action' or 'backlog' that are stale (work not progressing)
-- Blocked issues where the blocker may have been resolved
-
-### 3. Agent health
-
-Check active tmux sessions:
-  tmux list-sessions 2>/dev/null || echo "no sessions"
-
-Check recent agent logs (last 24h of activity):
-  for log in supervisor/supervisor.log planner/planner.log planner/prediction.log \
-             gardener/gardener.log dev/dev.log review/review.log; do
-    if [ -f "$PROJECT_REPO_ROOT/$log" ]; then
-      echo "=== $log (last 20 lines) ==="
-      tail -20 "$PROJECT_REPO_ROOT/$log"
-    fi
-  done
-
-Look for:
-- Agents that haven't run recently (missing log entries in last 24h)
-- Repeated errors or failures in logs
-- Sessions stuck or crashed (tmux sessions present but no recent activity)
-- Lock files that may be stale: /tmp/*-poll.lock, /tmp/*-run.lock
-
-### 4. Resource patterns
-
-Collect current resource state:
-  free -m                          # RAM
-  df -h /                          # Disk
-  cat /proc/loadavg                # Load average
-  docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null || true  # Containers
-
-Look for:
-- Available RAM < 2000MB (agents will skip runs)
-- Disk usage > 80% (approaching danger zone)
-- Load average > 3.0 (box overloaded)
-- Containers in unhealthy or restarting state
-
-### 5. Already-open predictions (deduplication)
-
-Fetch existing open predictions to avoid duplicates:
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
-
-Also check prediction/backlog (watched but not yet actioned):
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
-
-Record their titles so you can avoid duplicating them.
-
-### 6. Outcome measurement
-
-Check whether the factory is producing results, not just running:
-
-- Read RESOURCES.md for available formulas and capabilities
-- Read $PROJECT_REPO_ROOT/formulas/*.toml for dispatchable work
-- Check evidence/output directories for freshness:
-    find "$PROJECT_REPO_ROOT" -maxdepth 3 -name "*.log" -o -name "journal" -type d | \
-      while read -r f; do
-        echo "=== $f ==="
-        find "$f" -maxdepth 1 -type f -printf '%T+ %p\n' 2>/dev/null | sort -r | head -5
-      done
-- Check recently closed issues — is work completing or just cycling?
-    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-      "$CODEBERG_API/issues?state=closed&type=issues&limit=20&sort=updated&direction=desc"
-- Check recently merged PRs — what's the throughput?
-    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-      "$CODEBERG_API/pulls?state=closed&sort=updated&direction=desc&limit=20" | \
-      jq '[.[] | select(.merged)]'
-- Compare available capacity vs actual utilization:
-    tmux list-sessions 2>/dev/null | wc -l  # active sessions
-    curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-      "$CODEBERG_API/issues?state=open&type=issues&labels=backlog&limit=50" | jq 'length'
-
-Look for:
-- Formulas that haven't produced output recently (stale journals/logs)
-- Idle compute when dispatchable work exists (backlog items but no active sessions)
-- High churn (issues opened and closed rapidly without merged PRs)
-- Low throughput relative to available agents
-
-### 7. External environment scan
-
-Look outside the box for signals that could affect the project:
-
-- Identify key dependencies from the project (package.json, go.mod, Cargo.toml,
-  requirements.txt, or similar — whatever exists in $PROJECT_REPO_ROOT)
-- Identify key tools (Claude CLI version, Woodpecker CI, Caddy, Docker, etc.)
-- For each major dependency or tool, use web search to check for:
-    - Security advisories or CVEs
-    - Breaking changes in recent releases
-    - Deprecation notices
-    - Major version bumps that could require migration
-
-Use WebSearch to gather these signals. Be targeted — search for specific
-dependencies and tools used by the project, not general news.
-Limit to 5 web searches maximum to keep the run fast.
-
-Look for:
-- CVEs or security advisories mentioning project dependencies
-- Major version releases of key tools (could break CI, require migration)
-- Deprecation notices for APIs or services in use
-- Ecosystem shifts that could obsolete current approaches
-"""
-needs = ["preflight"]
-
-[[steps]]
-id    = "re-evaluate-backlog"
-title = "Re-evaluate open prediction/backlog watches"
-description = """
-Re-check prediction/backlog issues to detect changed conditions or stale watches.
-The collect-signals step already fetched prediction/backlog issues (step 5).
-Now actively re-evaluate each one instead of just using them for dedup.
-
-For each open prediction/backlog issue:
-
-### 1. Read context
-
-Fetch the issue body and all comments:
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues/<issue_number>"
-  curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-    "$CODEBERG_API/issues/<issue_number>/comments"
-
-Pay attention to:
-- The original prediction body (signal source, confidence, suggested action)
-- The planner's triage comment (the "Watching — ..." comment with reasoning)
-- Any subsequent comments with updated context
-- The issue's created_at and updated_at timestamps
-
-### 2. Extract conditions
-
-From the planner's triage comment and original prediction body, identify the
-specific assumptions that made this a "watch, don't act" decision. Examples:
-- "static site config, no FastCGI" (Caddy CVE watch)
-- "RAM stable above 3GB" (resource pressure watch)
-- "no reverse proxy configured" (security exposure watch)
-- "dependency not in use yet" (CVE watch for unused feature)
-
-### 3. Re-check conditions
-
-Verify each assumption still holds by checking current system state:
-- Config files: read relevant configs in $PROJECT_REPO_ROOT
-- Versions: check installed versions of referenced tools/dependencies
-- Infrastructure: re-run relevant resource/health checks from collect-signals
-- Code changes: check git log for changes to affected files since the issue was created:
-    git log --oneline --since="<issue_created_at>" -- <affected_files>
-
-### 4. Decide
-
-For each prediction/backlog issue, choose one action:
-
-**CONDITIONS_CHANGED** — one or more assumptions no longer hold:
-  a. Resolve the prediction/backlog and prediction/unreviewed label IDs:
-       curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-         "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/unreviewed") | .id'
-       curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-         "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/actioned") | .id'
-  b. File a NEW prediction/unreviewed issue with updated context:
-       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues" \
-         -d '{"title":"<original title> — CONDITIONS CHANGED",
-              "body":"Re-evaluation of #<old_number>: conditions have changed.\\n\\n<what changed and why risk level is different now>\\n\\nOriginal prediction: #<old_number>\\n\\n---\\n**Signal source:** re-evaluation of prediction/backlog #<old_number>\\n**Confidence:** <high|medium|low>\\n**Suggested action:** <concrete next step>",
-              "labels":[<unreviewed_label_id>]}'
-  c. Comment on the OLD issue explaining what changed:
-       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<old_number>/comments" \
-         -d '{"body":"Superseded by #<new_number> — conditions changed: <summary>"}'
-  d. Relabel old issue: remove prediction/backlog, add prediction/actioned:
-       curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-         "$CODEBERG_API/issues/<old_number>/labels/<backlog_label_id>"
-       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<old_number>/labels" \
-         -d '{"labels":[<actioned_label_id>]}'
-  e. Close the old issue:
-       curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<old_number>" \
-         -d '{"state":"closed"}'
-
-**STALE** — 30+ days since last update AND conditions unchanged:
-  a. Comment explaining the closure:
-       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<issue_number>/comments" \
-         -d '{"body":"Closing stale watch — conditions stable for 30+ days. Will re-file if conditions change."}'
-  b. Relabel: remove prediction/backlog, add prediction/actioned:
-       curl -sf -X DELETE -H "Authorization: token $CODEBERG_TOKEN" \
-         "$CODEBERG_API/issues/<issue_number>/labels/<backlog_label_id>"
-       curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<issue_number>/labels" \
-         -d '{"labels":[<actioned_label_id>]}'
-  c. Close the issue:
-       curl -sf -X PATCH -H "Authorization: token $CODEBERG_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$CODEBERG_API/issues/<issue_number>" \
-         -d '{"state":"closed"}'
-
-**UNCHANGED_RECENT** — conditions unchanged AND last update < 30 days ago:
-  Skip — no action needed. This is the current behavior.
-
-## Rules
-- Process ALL open prediction/backlog issues (already fetched in collect-signals step 5)
-- New predictions filed here count toward the 5-prediction cap in analyze-and-predict
-- Track how many new predictions were filed so analyze-and-predict can adjust its cap
-- Be conservative: only mark CONDITIONS_CHANGED when you have concrete evidence
-- Use the updated_at timestamp from the issue API to determine staleness
-"""
-needs = ["collect-signals"]
-
-[[steps]]
-id    = "analyze-and-predict"
-title = "Analyze signals and file prediction issues"
-description = """
-Analyze the collected signals for patterns and file prediction issues.
-
-The re-evaluate-backlog step may have already filed new predictions from changed
-conditions. Subtract those from the 5-prediction cap: if re-evaluation filed N
-predictions, you may file at most (5 - N) new predictions in this step.
-
-## What to look for
-
-**CI regression** — Build failure rate increasing or repeated failures:
-- Failure rate > 30% over last 20 builds → high confidence
-- Same step failing 3+ times in a row → high confidence
-- No successful build in 24+ hours → medium confidence
-
-**Stale work** — Issues not progressing:
-- Action issues stale 7+ days → the action agent may be stuck
-- Backlog issues stale 14+ days → work not being picked up
-- Blocked issues whose blockers are now closed → can be unblocked
-
-**Agent health** — Agents not running or failing:
-- Agent log with no entries in 24+ hours → agent may be down
-- Repeated errors in agent logs → systemic problem
-- Stale lock files (process not running but lock exists)
-
-**Resource pressure** — System approaching limits:
-- RAM < 2000MB → agents will start skipping runs
-- Disk > 80% → approaching critical threshold
-- Load sustained > 3.0 → box is overloaded, queued work backing up
-
-**Opportunity** — Good conditions for expensive work:
-- Box idle (RAM > 3000MB, load < 1.0, few active sessions) → good time
-  for expensive operations if any are pending
-
-**Low throughput** — Factory running but not producing:
-- No issues closed in 7+ days despite available backlog → pipeline may be stuck
-- PRs merged but no issues closed → work not tracked properly
-- Agent sessions active but no PRs created → agents may be spinning
-- Formulas with no recent journal entries → agent may not be running
-
-**Idle capacity** — Dispatchable work not being picked up:
-- Backlog items available but no in-progress issues → dev-poll may be stuck
-- Multiple agents idle (few tmux sessions) with work queued → scheduling problem
-- High churn: issues opened and closed quickly without PRs → busy but not productive
-
-**External risk** — Threats or opportunities from outside:
-- CVE or security advisory for a project dependency → patch urgently
-- Major version release of a key tool → may require migration planning
-- Deprecation notice for an API or service in use → plan transition
-- Breaking change upstream that could affect CI or builds → investigate
-
-**External opportunity** — Beneficial changes in the ecosystem:
-- New tool release that could accelerate work → consider adoption
-- Upstream improvement that simplifies current workarounds → refactor opportunity
-- Security patch available for a known vulnerability → apply proactively
-
-## Filing predictions
-
-For each prediction, create a Codeberg issue with the `prediction/unreviewed` label.
-
-1. Look up the label ID:
+2. Fetch ALL your previous predictions (open + recently closed):
      curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
-       "$CODEBERG_API/labels" | jq '.[] | select(.name == "prediction/unreviewed") | .id'
+       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/issues?state=closed&type=issues&labels=prediction%2Factioned&limit=50&sort=updated&direction=desc"
 
-2. For each prediction, create an issue:
+   For each prediction, note:
+   - What you predicted (title + body)
+   - What the planner decided (comments — look for triage reasoning)
+   - Outcome: actioned (planner valued it), dismissed (planner rejected it),
+     watching (planner deferred it), unreviewed (planner hasn't seen it yet)
+
+3. Read the prerequisite tree:
+     cat "$PROJECT_REPO_ROOT/planner/prerequisite-tree.md"
+
+4. Count evidence per claim area:
+     for dir in evidence/red-team evidence/holdout evidence/evolution evidence/user-test; do
+       echo "=== $dir ===$(find "$PROJECT_REPO_ROOT/$dir" -name '*.json' 2>/dev/null | wc -l) files"
+       find "$PROJECT_REPO_ROOT/$dir" -name '*.json' -printf '%T+ %p\n' 2>/dev/null | sort -r | head -3
+     done
+
+5. Check current system state (lightweight — don't over-collect):
+     free -m | head -2
+     df -h / | tail -1
+     tmux list-sessions 2>/dev/null || echo "no sessions"
+"""
+
+[[steps]]
+id    = "find-weakness-and-act"
+title = "Find the biggest weakness and act on it"
+description = """
+You are an adversary. Your job is to find what's wrong, weak, or untested
+in this project. Not to help — to challenge.
+
+## Your track record
+
+Review your prediction history from the preflight step:
+- Which predictions did the planner action? Those are areas where your
+  instincts were right. The planner values those signals.
+- Which were dismissed? You were wrong or the planner disagreed. Don't
+  repeat the same theory without new evidence.
+- Which are watching (prediction/backlog)? Check if conditions changed.
+  If changed → file a new prediction superseding it (close the old one
+  as prediction/actioned with "superseded by #NNN").
+  If stale (30+ days, unchanged) → close it.
+  If recent and unchanged → leave it.
+
+## Finding weaknesses
+
+Look at EVERYTHING available to you:
+- The prerequisite tree — what does the planner claim is DONE? How much
+  evidence backs that claim? A DONE item with 2 data points is weak.
+- Evidence directories — which are empty? Which are stale?
+- VISION.md — what does "launched" require? Is the project on track?
+- RESOURCES.md — what capabilities exist? What's missing?
+- Open issues — are things stuck? Bouncing? Starved?
+- Agent logs — is the factory healthy?
+- External world — are there CVEs, breaking changes, or ecosystem shifts
+  affecting project dependencies? (Use web search — max 3 searches.)
+
+Don't scan everything every time. Use your history to focus:
+- If you've never looked at evidence gaps → explore there
+- If you found a crack last time → exploit it deeper
+- If the planner just marked something DONE → challenge it
+
+## Acting
+
+You have up to 5 actions per run (predictions + dispatches combined).
+
+For each weakness you identify, choose one:
+
+**EXPLORE** — low confidence, need more information:
+  File a prediction/unreviewed issue. The planner will triage it.
+
+  Body format:
+    <What you observed. Why it's a weakness. What could go wrong.>
+
+    ---
+    **Theory:** <your hypothesis>
+    **Confidence:** <low|medium>
+    **Evidence checked:** <what you looked at>
+    **Suggested action:** <what the planner should consider>
+
+**EXPLOIT** — high confidence, have a theory you can test:
+  File a prediction/unreviewed issue AND an action issue that dispatches
+  a formula to generate evidence.
+
+  The prediction explains the theory. The action generates the proof.
+  When the planner runs next, evidence is already there.
+
+  Action issue body format (label: action):
+    Dispatched by predictor to test theory in #<prediction_number>.
+
+    ## Task
+    Run <formula name> with focus on <specific test>.
+
+    ## Expected evidence
+    Results in evidence/<dir>/<date>-<name>.json
+
+    ## Acceptance criteria
+    - [ ] Formula ran to completion
+    - [ ] Evidence file written with structured results
+
+    ## Affected files
+    - evidence/<dir>/
+
+  Available formulas (check $PROJECT_REPO_ROOT/formulas/*.toml for current list):
+    cat "$PROJECT_REPO_ROOT/formulas/"*.toml | grep '^name' | head -10
+
+**SKIP** — nothing worth acting on:
+  Valid outcome. Not every run needs to produce a prediction.
+  But if you skip, write a brief note to your scratch file about why.
+
+## Filing
+
+1. Look up label IDs:
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/labels" | jq '[.[] | select(.name | startswith("prediction")) | {name, id}]'
+     curl -sf -H "Authorization: token $CODEBERG_TOKEN" \
+       "$CODEBERG_API/labels" | jq '.[] | select(.name == "action") | .id'
+
+2. File predictions:
      curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
        -H "Content-Type: application/json" \
        "$CODEBERG_API/issues" \
-       -d '{"title":"<title>","body":"<body>","labels":[<label_id>]}'
+       -d '{"title":"<title>","body":"<body>","labels":[<prediction_unreviewed_id>]}'
 
-   Body format:
-     <2-4 sentence description of what was observed, why it matters,
-      what the planner should consider>
+3. File action dispatches (if exploiting):
+     curl -sf -X POST -H "Authorization: token $CODEBERG_TOKEN" \
+       -H "Content-Type: application/json" \
+       "$CODEBERG_API/issues" \
+       -d '{"title":"action: test prediction #NNN — <formula> <focus>","body":"<body>","labels":[<action_label_id>]}'
 
-     ---
-     **Signal source:** <which signal triggered this>
-     **Confidence:** <high|medium|low>
-     **Suggested action:** <concrete next step for the planner>
-
-3. Send a Matrix notification for each prediction created (optional):
-     Use matrix_send if available, or skip if MATRIX_TOKEN is not set.
+4. Do NOT duplicate existing open predictions. If your theory matches
+   an open prediction/unreviewed or prediction/backlog issue, skip it.
 
 ## Rules
-- Max 5 predictions total (including any filed during re-evaluate-backlog)
-- Do NOT predict feature work — only health observations, outcome measurements,
-  and external risk/opportunity signals
-- Do NOT duplicate existing open predictions (checked in collect-signals)
-- Do NOT duplicate predictions just filed by re-evaluate-backlog for changed conditions
-- Be specific: name the metric, the value, the threshold
-- Prefer high-confidence predictions backed by concrete data
-- External signals must name the specific dependency/tool and the advisory/change
-- If no meaningful patterns found, file zero issues — that is a valid outcome
 
+- Max 5 actions total (predictions + action dispatches combined)
+- Each exploit counts as 2 (prediction + action dispatch)
+- So: 5 explores, or 2 exploits + 1 explore, or 1 exploit + 3 explores
+- Never re-file a dismissed prediction without new evidence
+- When superseding a prediction/backlog issue, close the old one properly
+- Action issues must reference existing formulas — don't invent formulas
+- Be specific: name the file, the metric, the threshold, the formula
+- If no weaknesses found, file nothing — that's a strong signal the project is healthy
+
+After filing (or deciding to skip), write PHASE:done to the phase file:
+  echo "PHASE:done" > "$PHASE_FILE"
 """
-needs = ["re-evaluate-backlog"]
+needs = ["preflight"]

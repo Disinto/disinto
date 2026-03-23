@@ -1,22 +1,26 @@
 <!-- last-reviewed: eb7e24cb1df028c6061f47ddfdf9b4ebec33e1cf -->
 # Predictor Agent
 
-**Role**: Risk oracle and opportunity spotter (the "goblin"). Runs a 4-step
-formula (preflight → collect-signals → re-evaluate-backlog → analyze-and-predict)
-via interactive tmux Claude session (sonnet). Collects three categories of signals:
+**Role**: Abstract adversary (the "goblin"). Runs a 2-step formula
+(preflight → find-weakness-and-act) via interactive tmux Claude session
+(sonnet). Finds the project's biggest weakness, challenges planner claims,
+and generates evidence through explore/exploit decisions:
 
-1. **Health signals** — CI pipeline trends (Woodpecker), stale issues, agent
-   health (tmux sessions + logs), resource patterns (RAM, disk, load, containers)
-2. **Outcome signals** — output freshness (formula journals/artifacts), capacity
-   utilization (idle agents vs dispatchable backlog), throughput (closed issues,
-   merged PRs, churn detection)
-3. **External signals** — dependency security advisories, upstream breaking
-   changes, deprecation notices, ecosystem shifts (via targeted web search)
+- **Explore** (low confidence) — file a `prediction/unreviewed` issue for
+  the planner to triage
+- **Exploit** (high confidence) — file a prediction AND dispatch a formula
+  via an `action` issue to generate evidence before the planner even runs
 
-Files up to 5 `prediction/unreviewed` issues for the Planner to triage.
-Predictions cover both "things going wrong" and "opportunities being missed".
-The predictor MUST NOT emit feature work — only observations about health,
-outcomes, and external risks/opportunities.
+The predictor's own prediction history (open + closed issues) serves as its
+memory — it reviews what was actioned, dismissed, or deferred to decide where
+to focus next. No hardcoded signal categories; Claude decides where to look
+based on available data: prerequisite tree, evidence directories, VISION.md,
+RESOURCES.md, open issues, agent logs, and external signals (via web search).
+
+Files up to 5 actions per run (predictions + dispatches combined). Each
+exploit counts as 2 (prediction + action dispatch). The predictor MUST NOT
+emit feature work — only observations challenging claims, exposing gaps,
+and surfacing risks.
 
 **Trigger**: `predictor-run.sh` runs daily at 06:00 UTC via cron (1h before
 the planner at 07:00). Guarded by PID lock (`/tmp/predictor-run.lock`) and
@@ -27,22 +31,21 @@ memory check (skips if available RAM < 2000 MB).
   sources disinto project config, builds prompt with formula + Codeberg API
   reference, creates tmux session (sonnet), monitors phase file, handles crash
   recovery via `run_formula_and_monitor`
-- `formulas/run-predictor.toml` — Execution spec: four steps (preflight,
-  collect-signals, re-evaluate-backlog, analyze-and-predict) with `needs`
-  dependencies. Claude collects signals, re-evaluates watched predictions,
-  and files prediction issues in a single interactive session
+- `formulas/run-predictor.toml` — Execution spec: two steps (preflight,
+  find-weakness-and-act) with `needs` dependencies. Claude reviews prediction
+  history, explores/exploits weaknesses, and files issues in a single
+  interactive session
 
 **Environment variables consumed**:
 - `CODEBERG_TOKEN`, `CODEBERG_REPO`, `CODEBERG_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
-- `WOODPECKER_TOKEN`, `WOODPECKER_SERVER` — CI pipeline trend queries (optional; skipped if unset)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 
 **Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →
-load formula + context → create tmux session → Claude collects signals
-(health: CI trends, stale issues, agent health, resources; outcomes: output
-freshness, capacity utilization, throughput; external: dependency advisories,
-ecosystem changes via web search) → dedup against existing open predictions →
-re-evaluate prediction/backlog watches (close stale, supersede changed) →
-file `prediction/unreviewed` issues → `PHASE:done`.
+load formula + context (AGENTS.md, RESOURCES.md, VISION.md, prerequisite-tree.md)
+→ create tmux session → Claude fetches prediction history (open + closed) →
+reviews track record (actioned/dismissed/watching) → finds weaknesses
+(prerequisite tree gaps, thin evidence, stale watches, external risks) →
+dedup against existing open predictions → explore (file prediction) or exploit
+(file prediction + dispatch formula via action issue) → `PHASE:done`.
 The planner's Phase 1 later triages these predictions.
