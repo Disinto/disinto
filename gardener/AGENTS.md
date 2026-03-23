@@ -1,4 +1,4 @@
-<!-- last-reviewed: 251d160e213b19a4fcc0cd8f8e3be9ea3283887f -->
+<!-- last-reviewed: a2438cb580d5a30bc910ad3ed9b2b57163471b3d -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -16,8 +16,12 @@ runs directly from cron like the planner, predictor, and supervisor.
 **Key files**:
 - `gardener/gardener-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
   consumes escalation replies, sources disinto project config, creates tmux session,
-  injects formula prompt, monitors phase file, handles crash recovery via
-  `run_formula_and_monitor`, executes pending-actions manifest after PR merge
+  injects formula prompt, monitors phase file via custom `_gardener_on_phase_change`
+  callback (passed to `run_formula_and_monitor`). Kills session on `PHASE:escalate`
+  to prevent zombies. Stays alive through CI/review/merge cycle after `PHASE:awaiting_ci`
+  — injects CI results and review feedback, re-signals `PHASE:awaiting_ci` after
+  fixes, signals `PHASE:awaiting_review` on CI pass. Executes pending-actions
+  manifest after PR merge.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling, blocked-review, agents-update, commit-and-pr
 - `gardener/pending-actions.json` — Manifest of deferred repo actions (label changes,
   closures, comments, issue creation). Written during grooming steps, committed to the
@@ -32,5 +36,7 @@ runs directly from cron like the planner, predictor, and supervisor.
 consume escalation replies → load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 reviews blocked issues, updates AGENTS.md, commits manifest + docs to PR →
-review-agent reviews all proposed actions → after merge, gardener-run.sh
-executes manifest actions via API → `PHASE:done`.
+`PHASE:awaiting_ci` (stays alive) → CI pass → `PHASE:awaiting_review` →
+review feedback → address + re-signal → merge → gardener-run.sh executes
+manifest actions via API → `PHASE:done`. On `PHASE:escalate`: session killed
+immediately.
