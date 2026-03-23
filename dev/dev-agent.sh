@@ -579,27 +579,8 @@ echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 (CI runs again after each push — always write awaiting_ci, not awaiting_review)
 
 **When you receive an \"Approved\" injection:**
-The injection includes exact API commands. Merge the PR and close the issue directly:
-\`\`\`bash
-# Merge (replace NNN with the actual PR number from the injection):
-curl -sf -X POST \\
-  -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
-  -H 'Content-Type: application/json' \\
-  \"${API}/pulls/NNN/merge\" \\
-  -d '{\"Do\":\"merge\",\"delete_branch_after_merge\":true}'
-
-# Close the issue:
-curl -sf -X PATCH \\
-  -H \"Authorization: token \${CODEBERG_TOKEN}\" \\
-  -H 'Content-Type: application/json' \\
-  \"${API}/issues/${ISSUE}\" \\
-  -d '{\"state\":\"closed\"}'
-
-# Signal done:
-echo \"PHASE:done\" > \"${PHASE_FILE}\"
-\`\`\`
-If merge fails due to conflicts, rebase first then retry the merge.
-If merge repeatedly fails, write PHASE:escalate with a reason.
+The orchestrator handles merging and issue closure automatically via the bash
+phase handler. You do not need to merge or close anything — stop and wait.
 
 **When you need human help (CI exhausted, merge blocked, stuck on a decision):**
 \`\`\`bash
