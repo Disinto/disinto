@@ -159,7 +159,7 @@ generate_compose() {
 
 services:
   forgejo:
-    image: forgejo/forgejo:latest
+    image: codeberg.org/forgejo/forgejo:11.0
     restart: unless-stopped
     volumes:
       - forgejo-data:/data
@@ -224,9 +224,9 @@ COMPOSEEOF
   # Patch the forgejo port mapping into the file if non-default
   if [ "$forge_port" != "3000" ]; then
     # Add port mapping to forgejo service so it's reachable from host during init
-    sed -i "/image: forgejo\/forgejo:latest/a\\    ports:\\n      - \"${forge_port}:3000\"" "$compose_file"
+    sed -i "/image: codeberg\.org\/forgejo\/forgejo:11\.0/a\\    ports:\\n      - \"${forge_port}:3000\"" "$compose_file"
   else
-    sed -i "/image: forgejo\/forgejo:latest/a\\    ports:\\n      - \"3000:3000\"" "$compose_file"
+    sed -i "/image: codeberg\.org\/forgejo\/forgejo:11\.0/a\\    ports:\\n      - \"3000:3000\"" "$compose_file"
   fi
 
   echo "Created: ${compose_file}"
@@ -305,7 +305,7 @@ setup_forge() {
           -e "FORGEJO__server__ROOT_URL=${forge_url}/" \
           -e "FORGEJO__server__HTTP_PORT=3000" \
           -e "FORGEJO__service__DISABLE_REGISTRATION=true" \
-          forgejo/forgejo:latest
+          codeberg.org/forgejo/forgejo:11.0
       fi
     else
       # Compose mode: start Forgejo via docker compose
