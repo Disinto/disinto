@@ -606,6 +606,7 @@ if [ "$RECOVERY_MODE" = true ]; then
   # Build recovery context
   GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "origin/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
   LAST_PHASE=$(read_phase)
+  rm -f "$PHASE_FILE"  # Clear stale phase — new session starts clean
   CI_RESULT=$(cat "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || echo "")
   REVIEW_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${PR_NUMBER}/comments?limit=10" | \
@@ -628,9 +629,14 @@ Git is the checkpoint — your code changes survived.
 ${GIT_DIFF_STAT}
 \`\`\`
 
-### Last known phase: ${LAST_PHASE:-unknown}
+$(if [ "$LAST_PHASE" = "PHASE:escalate" ]; then
+  printf '### Previous session escalated — starting fresh\nThe previous session hit an issue and escalated. Do NOT re-escalate for the same reason.\nRead the issue and review comments carefully, then address the problem.'
+else
+  printf '### Last known phase: %s' "${LAST_PHASE:-unknown}"
+fi)
 
 ### PR: #${PR_NUMBER} (${BRANCH})
+**IMPORTANT: PR #${PR_NUMBER} already exists — do NOT create a new PR.** Do NOT call the Codeberg/Gitea/Forgejo API to create PRs. The orchestrator manages PR creation.
 
 ### Recent PR comments:
 ${REVIEW_COMMENTS}
@@ -638,8 +644,9 @@ $(if [ -n "$CI_RESULT" ]; then printf '\n### Last CI result:\n%s\n' "$CI_RESULT"
 
 ### Next steps
 1. Run \`git log --oneline -5\` and \`git status\` to understand current state.
-2. Resume from the last known phase.
-3. Follow the phase protocol below.
+2. **PR #${PR_NUMBER} already exists.** Address any review comments, commit, push to \`${BRANCH}\`, then write \`PHASE:awaiting_ci\`.
+3. Do NOT attempt to create PRs via API calls — the orchestrator handles that.
+4. Follow the phase protocol below.
 
 ${SCRATCH_INSTRUCTION}
 
