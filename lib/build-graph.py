@@ -248,8 +248,8 @@ def parse_evidence(G, root):
 def parse_forge_issues(G, token):
     """Fetch issues from the Forge API and add nodes/edges."""
     issues = forge_get_all("/issues?state=open&type=issues", token)
-    issues += forge_get_all("/issues?state=closed&type=issues&sort=updated"
-                            "&direction=desc&limit=50", token)
+    issues += forge_get("/issues?state=closed&type=issues&sort=updated"
+                        "&direction=desc&limit=50", token)
     seen = set()
     for issue in issues:
         num = issue.get("number")
@@ -430,19 +430,15 @@ def filter_for_changed_files(report, G, changed_files, root):
     affected_prereqs = set()
     alerts = []
 
+    # Collect changed-file graph nodes to trace from
+    changed_nodes = set()
     for fpath in changed_files:
         # Check if the file relates to a formula
         if fpath.startswith("formulas/"):
             fname = os.path.basename(fpath).replace(".toml", "")
             for node in G.nodes():
                 if node.startswith("formula:") and fname in node:
-                    # Trace to objectives
-                    try:
-                        for desc in nx.descendants(G, node):
-                            if G.nodes.get(desc, {}).get("type") == "objective":
-                                affected_objectives.add(desc)
-                    except nx.NetworkXError:
-                        pass
+                    changed_nodes.add(node)
 
         # Check if file is in an agent directory
         for agent in ["dev", "review", "gardener", "predictor", "planner",
@@ -450,23 +446,29 @@ def filter_for_changed_files(report, G, changed_files, root):
             if fpath.startswith(f"{agent}/"):
                 agent_id = f"agent:{agent}"
                 if G.has_node(agent_id):
-                    try:
-                        for desc in nx.descendants(G, agent_id):
-                            if G.nodes.get(desc, {}).get("type") == "objective":
-                                affected_objectives.add(desc)
-                    except nx.NetworkXError:
-                        pass
+                    changed_nodes.add(agent_id)
 
         # Check if file is evidence
         if fpath.startswith("evidence/"):
             for node in G.nodes():
                 if node.startswith("evidence:") and _slug(fpath) in _slug(node):
-                    try:
-                        for desc in nx.descendants(G, node):
-                            if G.nodes.get(desc, {}).get("type") == "prerequisite":
-                                affected_prereqs.add(desc)
-                    except nx.NetworkXError:
-                        pass
+                    changed_nodes.add(node)
+
+    # The path from agent/formula to objective crosses edges with mixed
+    # directions (agent→formula→label←issue→objective), so use the
+    # undirected view to check reachability.
+    undirected = G.to_undirected()
+    for changed in changed_nodes:
+        try:
+            reachable = nx.node_connected_component(undirected, changed)
+        except (nx.NetworkXError, KeyError):
+            continue
+        for r in reachable:
+            ntype = G.nodes.get(r, {}).get("type")
+            if ntype == "objective":
+                affected_objectives.add(r)
+            elif ntype == "prerequisite":
+                affected_prereqs.add(r)
 
     # Check for DONE prerequisites affected by changes
     for prereq in affected_prereqs:
