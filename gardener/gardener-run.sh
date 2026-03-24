@@ -86,6 +86,7 @@ Supported actions:
   {\"action\":\"comment\",      \"issue\":NNN, \"body\":\"Relates to issue 1031\"}
   {\"action\":\"create_issue\", \"title\":\"...\", \"body\":\"...\", \"labels\":[\"backlog\"]}
   {\"action\":\"edit_body\",    \"issue\":NNN, \"body\":\"new body\"}
+  {\"action\":\"close_pr\",    \"pr\":NNN}
 
 The commit-and-pr step converts JSONL to JSON array. The orchestrator executes
 actions after the PR merges. Do NOT call mutation APIs directly during the run."
@@ -271,6 +272,19 @@ _gardener_execute_manifest() {
           log "manifest: edited body of #${issue}"
         else
           log "manifest: FAILED edit_body #${issue}"
+        fi
+        ;;
+
+      close_pr)
+        local pr
+        pr=$(jq -r ".[$i].pr" "$manifest_file")
+        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
+             -H 'Content-Type: application/json' \
+             "${FORGE_API}/pulls/${pr}" \
+             -d '{"state":"closed"}' >/dev/null 2>&1; then
+          log "manifest: closed PR #${pr}"
+        else
+          log "manifest: FAILED close_pr #${pr}"
         fi
         ;;
 
