@@ -7,7 +7,7 @@
 # No memory, no journal. The gardener does mechanical housekeeping
 # based on current state — it doesn't need to remember past runs.
 #
-# Steps: preflight → grooming → dust-bundling → blocked-review → agents-update → commit-and-pr
+# Steps: preflight → grooming → dust-bundling → blocked-review → stale-pr-recycle → agents-update → commit-and-pr
 
 name        = "run-gardener"
 description = "Mechanical housekeeping: grooming, blocked review, docs update"
@@ -290,7 +290,69 @@ CRITICAL: If this step fails, log the failure and move on.
 needs = ["dust-bundling"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 5: agents-update — AGENTS.md watermark staleness + size enforcement
+# Step 5: stale-pr-recycle — recycle stale failed PRs back to backlog
+# ─────────────────────────────────────────────────────────────────────
+
+[[steps]]
+id    = "stale-pr-recycle"
+title = "Recycle stale failed PRs back to backlog"
+description = """
+Detect open PRs where CI has failed and no work has happened in 24+ hours.
+These represent abandoned dev-agent attempts — recycle them so the pipeline
+can retry with a fresh session.
+
+1. Fetch all open PRs:
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/pulls?state=open&limit=50"
+
+2. For each PR, check all four conditions before recycling:
+
+   a. CI failed — get the HEAD SHA from the PR's head.sha field, then:
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/commits/<head_sha>/status"
+      Only proceed if the combined state is "failure" or "error".
+      Skip PRs with "success", "pending", or no CI status.
+
+   b. Last push > 24 hours ago — get the commit details:
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/git/commits/<head_sha>"
+      Parse the committer.date field. Only proceed if it is older than:
+        $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+   c. Linked issue exists — extract the issue number from the PR body.
+      Look for "Fixes #NNN" or "ixes #NNN" patterns (case-insensitive).
+      If no linked issue found, skip this PR (cannot reset labels).
+
+   d. No active tmux session — check:
+        tmux has-session -t "dev-${PROJECT_NAME}-<issue_number>" 2>/dev/null
+      If a session exists, someone may still be working — skip this PR.
+
+3. For each PR that passes all checks (failed CI, 24+ hours stale,
+   linked issue found, no active session):
+
+   a. Write a comment on the PR explaining the recycle:
+        echo '{"action":"comment","issue":<pr_number>,"body":"Recycling stale CI failure for fresh attempt. Previous PR: #<pr_number>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   b. Write a close_pr action:
+        echo '{"action":"close_pr","pr":<pr_number>}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   c. Remove the in-progress label from the linked issue:
+        echo '{"action":"remove_label","issue":<issue_number>,"label":"in-progress"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   d. Add the backlog label to the linked issue:
+        echo '{"action":"add_label","issue":<issue_number>,"label":"backlog"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   e. Log to result file:
+        echo "ACTION: recycled PR #<pr_number> (linked issue #<issue_number>) — stale CI failure" >> "$RESULT_FILE"
+
+4. If no stale failed PRs found, skip this step.
+
+CRITICAL: If this step fails, log the failure and move on to agents-update.
+"""
+needs = ["blocked-review"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Step 6: agents-update — AGENTS.md watermark staleness + size enforcement
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
@@ -411,10 +473,10 @@ needed. You wouldn't dump a 500-page wiki on a new hire's first morning.
 CRITICAL: If this step fails for any reason, log the failure and move on.
 Do NOT let an AGENTS.md failure prevent the commit-and-pr step.
 """
-needs = ["blocked-review"]
+needs = ["stale-pr-recycle"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 6: commit-and-pr — single commit with all file changes
+# Step 7: commit-and-pr — single commit with all file changes
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
