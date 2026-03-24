@@ -7,6 +7,14 @@ set -euo pipefail
 # Resolve script root (parent of lib/)
 FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Container detection: when running inside the agent container, DISINTO_CONTAINER
+# is set by docker-compose.yml.  Adjust paths so phase files, logs, and thread
+# maps land on the persistent volume instead of /tmp (which is ephemeral).
+if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
+  DISINTO_DATA_DIR="${HOME}/data"
+  mkdir -p "${DISINTO_DATA_DIR}"
+fi
+
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env
 if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   set -a
@@ -123,7 +131,12 @@ wpdb() {
 # Matrix messaging helper — usage: matrix_send <prefix> <message> [thread_event_id] [context_tag]
 # Returns event_id on stdout. Registers threads for listener dispatch.
 # context_tag is stored in the thread map (e.g. issue number) for routing replies.
-MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
+# Thread map: use persistent data dir inside container, /tmp on bare metal
+if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
+  MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-${DISINTO_DATA_DIR}/matrix-thread-map}"
+else
+  MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
+fi
 matrix_send() {
   [ -z "${MATRIX_TOKEN:-}" ] && return 0
   local prefix="$1" msg="$2" thread_id="${3:-}" ctx_tag="${4:-}"
