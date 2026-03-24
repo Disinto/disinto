@@ -410,9 +410,11 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
       _ci_pipeline_url="${WOODPECKER_SERVER}/repos/${WOODPECKER_REPO_ID}/pipeline/${PIPELINE_NUM:-0}"
       if [ "$CI_FIX_COUNT" -gt "$MAX_CI_FIXES" ]; then
         log "CI failure not recoverable after ${CI_FIX_COUNT} fix attempts — escalating"
+        local _mention_html=""
+        [ -n "${MATRIX_MENTION_USER:-}" ] && _mention_html="<a href='https://matrix.to/#/${MATRIX_MENTION_USER}'>${MATRIX_MENTION_USER}</a> "
         notify_ctx \
           "CI exhausted after ${CI_FIX_COUNT} attempts — escalating for human help" \
-          "CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${FORGE_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalating for human help"
+          "${_mention_html}CI exhausted after ${CI_FIX_COUNT} attempts on PR <a href='${PR_URL:-${FORGE_WEB}/pulls/${PR_NUMBER}}'>#${PR_NUMBER}</a> | <a href='${_ci_pipeline_url}'>Pipeline</a><br>Step: <code>${FAILED_STEP:-unknown}</code> — escalating for human help"
         printf 'PHASE:escalate\nReason: ci_exhausted after %d attempts (step: %s)\n' "$CI_FIX_COUNT" "${FAILED_STEP:-unknown}" > "$PHASE_FILE"
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect PHASE:escalate
         return 0
@@ -646,9 +648,11 @@ Instructions:
     _issue_url="${FORGE_WEB}/issues/${ISSUE}"
     _pr_link=""
     [ -n "${PR_NUMBER:-}" ] && _pr_link=" | PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>"
+    local _mention_html=""
+    [ -n "${MATRIX_MENTION_USER:-}" ] && _mention_html="<a href='https://matrix.to/#/${MATRIX_MENTION_USER}'>${MATRIX_MENTION_USER}</a> "
     notify_ctx \
       "⚠️ Issue #${ISSUE} (PR #${PR_NUMBER:-none}) escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}" \
-      "⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}<br>Reply in this thread to send guidance to the agent."
+      "${_mention_html}⚠️ <a href='${_issue_url}'>Issue #${ISSUE}</a>${_pr_link} escalated — needs human input.${ESCALATE_REASON:+ Reason: ${ESCALATE_REASON}}<br>Reply in this thread to send guidance to the agent."
     log "phase: escalate — notified via Matrix, session stays alive waiting for reply"
     # Session stays alive — matrix_listener injects human reply directly
 

@@ -66,6 +66,8 @@ if 'bot_user' in mx:
     emit('MATRIX_BOT_USER', mx['bot_user'])
 if 'token_env' in mx:
     emit('MATRIX_TOKEN_ENV', mx['token_env'])
+if 'mention_user' in mx:
+    emit('MATRIX_MENTION_USER', mx['mention_user'])
 
 # [monitoring] section
 mon = cfg.get('monitoring', {})
