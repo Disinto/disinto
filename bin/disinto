@@ -1226,13 +1226,14 @@ disinto_up() {
   if [ -f "$enc_file" ] && command -v sops &>/dev/null && [ ! -f "$env_file" ]; then
     tmp_env="${env_file}"
     sops -d --output-type dotenv "$enc_file" > "$tmp_env"
+    trap '[ -n "${tmp_env:-}" ] && rm -f "$tmp_env"' EXIT
     echo "Decrypted secrets for compose"
   fi
 
   docker compose -f "$compose_file" up -d "$@"
   echo "Stack is up"
 
-  # Clean up temp .env
+  # Clean up temp .env (also handled by EXIT trap if compose fails)
   if [ -n "$tmp_env" ] && [ -f "$tmp_env" ]; then
     rm -f "$tmp_env"
     echo "Removed temporary .env"
