@@ -192,7 +192,6 @@ services:
   agents:
     build: ./docker/agents
     restart: unless-stopped
-    user: "1000:1000"
     volumes:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos

@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# entrypoint.sh — Start agent container with cron and stay alive
+# entrypoint.sh — Start agent container with cron in foreground
 #
-# Installs crontab entries from project TOMLs found in the factory
-# mount, then runs cron in the background and tails the log.
+# Runs as root inside the container.  Installs crontab entries for the
+# agent user from project TOMLs, then starts cron in the foreground.
+# All cron jobs execute as the agent user (UID 1000).
 
-DISINTO_DIR="${HOME}/disinto"
-LOGFILE="${HOME}/data/agent-entrypoint.log"
-mkdir -p "${HOME}/data"
+DISINTO_DIR="/home/agent/disinto"
+LOGFILE="/home/agent/data/agent-entrypoint.log"
+mkdir -p /home/agent/data
+chown agent:agent /home/agent/data
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }
 
-# Build crontab from project TOMLs
+# Build crontab from project TOMLs and install for the agent user.
 install_project_crons() {
   local cron_lines=""
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
@@ -34,8 +36,8 @@ with open(sys.argv[1], 'rb') as f:
   done
 
   if [ -n "$cron_lines" ]; then
-    printf '%s\n' "$cron_lines" | crontab -
-    log "Installed crontab for projects"
+    printf '%s\n' "$cron_lines" | crontab -u agent -
+    log "Installed crontab for agent user"
   else
     log "No project TOMLs found — crontab empty"
   fi
@@ -44,8 +46,6 @@ with open(sys.argv[1], 'rb') as f:
 log "Agent container starting"
 install_project_crons
 
-# Keep container alive — cron runs in foreground via tail on log
-# (cron daemon needs root; since we run as agent, we use a polling approach
-#  or the host cron can be used via docker compose exec)
-log "Agent container ready — waiting for work"
-exec tail -f /dev/null
+# Run cron in the foreground.  Cron jobs execute as the agent user.
+log "Starting cron daemon"
+exec cron -f

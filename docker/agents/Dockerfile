@@ -14,7 +14,8 @@ RUN useradd -m -u 1000 -s /bin/bash agent
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER agent
+# Entrypoint runs as root to start the cron daemon;
+# cron jobs execute as the agent user (crontab -u agent).
 WORKDIR /home/agent
 
 ENTRYPOINT ["/entrypoint.sh"]
