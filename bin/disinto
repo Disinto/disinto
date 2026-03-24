@@ -732,7 +732,21 @@ EOF
 
 # Generate and optionally install cron entries for the project agents.
 install_cron() {
-  local name="$1" toml="$2" auto_yes="$3"
+  local name="$1" toml="$2" auto_yes="$3" bare="${4:-false}"
+
+  # In compose mode, skip host cron — the agents container runs cron internally
+  if [ "$bare" = false ]; then
+    echo ""
+    echo "Cron:    skipped (agents container handles scheduling in compose mode)"
+    return
+  fi
+
+  # Bare mode: crontab is required on the host
+  if ! command -v crontab &>/dev/null; then
+    echo "Error: crontab not found (required for bare-metal mode)" >&2
+    echo "  Install: apt install cron  /  brew install cron" >&2
+    exit 1
+  fi
 
   # Use absolute path for the TOML in cron entries
   local abs_toml
@@ -1058,7 +1072,7 @@ p.write_text(text)
   generate_vision "$repo_root" "$project_name"
 
   # Install cron jobs
-  install_cron "$project_name" "$toml_path" "$auto_yes"
+  install_cron "$project_name" "$toml_path" "$auto_yes" "$bare"
 
   # Set up mirror remotes if [mirrors] configured in TOML
   source "${FACTORY_ROOT}/lib/load-project.sh" "$toml_path"
