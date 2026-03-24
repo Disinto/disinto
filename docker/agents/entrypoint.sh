@@ -44,6 +44,17 @@ with open(sys.argv[1], 'rb') as f:
 }
 
 log "Agent container starting"
+
+# Verify Claude CLI is available (expected via volume mount from host).
+if ! command -v claude &>/dev/null; then
+  log "FATAL: claude CLI not found in PATH."
+  log "Mount the host binary into the container, e.g.:"
+  log "  volumes:"
+  log "    - /usr/local/bin/claude:/usr/local/bin/claude:ro"
+  exit 1
+fi
+log "Claude CLI: $(claude --version 2>&1 || true)"
+
 install_project_crons
 
 # Run cron in the foreground.  Cron jobs execute as the agent user.
