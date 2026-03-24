@@ -204,6 +204,7 @@ services:
       - project-repos:/home/agent/repos
       - ./:/home/agent/disinto:ro
       - claude-auth:/home/agent/.claude:ro
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
     environment:
       FORGE_URL: http://forgejo:3000
       WOODPECKER_SERVER: http://woodpecker:8000
@@ -227,6 +228,18 @@ networks:
   disinto-net:
     driver: bridge
 COMPOSEEOF
+
+  # Patch the Claude CLI binary path — resolve from host PATH at init time.
+  local claude_bin
+  claude_bin="$(command -v claude 2>/dev/null || true)"
+  if [ -n "$claude_bin" ]; then
+    # Resolve symlinks to get the real binary path
+    claude_bin="$(readlink -f "$claude_bin")"
+    sed -i "s|CLAUDE_BIN_PLACEHOLDER|${claude_bin}|" "$compose_file"
+  else
+    echo "Warning: claude CLI not found in PATH — update docker-compose.yml volumes manually" >&2
+    sed -i "s|CLAUDE_BIN_PLACEHOLDER|/usr/local/bin/claude|" "$compose_file"
+  fi
 
   # Patch the forgejo port mapping into the file if non-default
   if [ "$forge_port" != "3000" ]; then
