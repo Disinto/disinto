@@ -22,7 +22,7 @@ MAX_DIFF=25000
 REVIEW_TMPDIR=$(mktemp -d)
 log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"; }
 status() { printf '[%s] PR #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" > "$STATUSFILE"; log "$*"; }
-cleanup() { rm -rf "$REVIEW_TMPDIR" "$LOCKFILE" "$STATUSFILE"; }
+cleanup() { rm -rf "$REVIEW_TMPDIR" "$LOCKFILE" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"; }
 trap cleanup EXIT
 
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
@@ -93,6 +93,22 @@ if [ -d "$WORKTREE" ]; then
     rm -rf "$WORKTREE"; git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; }
 else git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; fi
 status "preparing review session"
+
+# ── Build structural analysis graph for changed files ────────────────────
+GRAPH_REPORT="/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"
+GRAPH_SECTION=""
+# shellcheck disable=SC2086
+if python3 "$FACTORY_ROOT/lib/build-graph.py" \
+     --project-root "$PROJECT_REPO_ROOT" \
+     --changed-files $FILES \
+     --output "$GRAPH_REPORT" 2>>"$LOGFILE"; then
+  GRAPH_SECTION=$(printf '\n## Structural analysis (affected objectives)\n```json\n%s\n```\n' \
+    "$(cat "$GRAPH_REPORT")")
+  log "graph report generated for PR #${PR_NUMBER}"
+else
+  log "WARN: build-graph.py failed — continuing without structural analysis"
+fi
+
 FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
 {
   printf 'You are the review agent for %s. Follow the formula to review PR #%s.\nYou MUST write PHASE:done to '\''%s'\'' when finished.\n\n' \
@@ -102,6 +118,7 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
   printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
+  [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nPHASE_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
     "$FORMULA" "$OUTPUT_FILE" "$PHASE_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
   printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'

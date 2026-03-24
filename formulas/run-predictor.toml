@@ -19,6 +19,7 @@ model       = "sonnet"
 
 [context]
 files = ["AGENTS.md", "RESOURCES.md", "VISION.md", "planner/prerequisite-tree.md"]
+graph_report = "Structural analysis JSON from lib/build-graph.py — orphans, cycles, thin objectives, bottlenecks"
 
 [[steps]]
 id    = "preflight"
