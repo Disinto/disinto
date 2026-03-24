@@ -271,9 +271,9 @@ setup_forge() {
   # Helper: run a command inside the Forgejo container
   _forgejo_exec() {
     if [ "$use_bare" = true ]; then
-      docker exec disinto-forgejo "$@"
+      docker exec -u git disinto-forgejo "$@"
     else
-      docker compose -f "${FACTORY_ROOT}/docker-compose.yml" exec -T forgejo "$@"
+      docker compose -f "${FACTORY_ROOT}/docker-compose.yml" exec -T -u git forgejo "$@"
     fi
   }
 
