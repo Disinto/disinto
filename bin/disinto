@@ -223,7 +223,7 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ./:/home/agent/disinto:ro
-      - ${HOME}/.claude:/home/agent/.claude:ro
+      - ${HOME}/.claude:/home/agent/.claude
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
     environment:
@@ -1517,6 +1517,14 @@ p.write_text(text)
   else
     echo "  Mode:    bare-metal"
   fi
+  echo ""
+  echo "── Claude authentication ──────────────────────────────"
+  echo "  OAuth (shared across containers):"
+  echo "    Run 'claude auth login' on the host once."
+  echo "    Credentials in ~/.claude are mounted into containers."
+  echo "  API key (alternative — metered billing, no rotation issues):"
+  echo "    Set ANTHROPIC_API_KEY in .env to skip OAuth entirely."
+  echo ""
   echo "  Run 'disinto status' to verify."
 }
 
