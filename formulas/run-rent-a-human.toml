@@ -1,0 +1,181 @@
+# formulas/run-rent-a-human.toml — Draft human actions for one-click execution
+#
+# "Rent a Human" — when the factory needs a human to do something it can't
+# (post on Reddit, sign up for a service, approve a payment, etc.), it drafts
+# the action and notifies the human for one-click copy-paste execution.
+#
+# Trigger: action issue created by planner or any formula.
+# The action-agent picks up the issue, executes these steps, writes a draft
+# to vault/outreach/{platform}/drafts/, notifies the human via Matrix,
+# and closes the issue.
+#
+# YAML front matter in the dispatching action issue:
+#   formula: run-rent-a-human
+#   vars:
+#     platform: reddit
+#     action_type: post
+#     context: "Write about our AI agent factory for r/autonomousAI"
+
+name        = "run-rent-a-human"
+description = "Draft a human action (post, comment, signup, etc.) for one-click execution"
+version     = 1
+
+[vars.platform]
+description = "Target platform (reddit, hackernews, twitter, linkedin, etc.)"
+required    = true
+
+[vars.action_type]
+description = "Type of action (post, comment, signup, reply, payment, etc.)"
+required    = true
+
+[vars.context]
+description = "What to write about — links, data, talking points, target subreddit/channel"
+required    = true
+
+[vars.target]
+description = "Specific target (subreddit, HN category, Twitter handle, etc.)"
+required    = false
+default     = ""
+
+[[steps]]
+id    = "draft-content"
+title = "Draft copy-paste-ready content for the human"
+description = """
+Draft the content that a human will copy-paste onto {{platform}}.
+
+1. Read the context provided: {{context}}
+
+2. Determine the target destination:
+   - If {{target}} is provided, use it (e.g. r/autonomousAI, HN Show)
+   - If not, infer the best target from the context and platform
+
+3. Draft the content based on platform={{platform}} and action_type={{action_type}}:
+
+   For reddit posts:
+     - Title: attention-grabbing but not clickbait, matches subreddit tone
+     - Body: conversational, authentic, includes relevant details
+     - No marketing-speak — write like a developer sharing their project
+
+   For hackernews posts:
+     - Title: factual, follows HN title conventions (Show HN: X — Y)
+     - Body/URL: concise description or link
+
+   For twitter/X:
+     - Tweet text: under 280 chars, engaging, no hashtag spam
+     - Thread format if content needs multiple tweets
+
+   For comments/replies:
+     - Natural, adds value to the conversation
+     - References the parent post/comment context
+
+   For signups/registrations:
+     - Step-by-step instructions for the human
+     - What information to enter, what options to select
+
+   For other platforms/actions:
+     - Adapt format to the platform conventions
+     - Always produce copy-paste-ready output
+
+4. The draft MUST be ready to use with zero editing — the human should only
+   need to copy-paste. No placeholders like [INSERT X HERE].
+
+5. Store the drafted content in environment variables for the next step:
+     DRAFT_TARGET="<target destination, e.g. r/autonomousAI>"
+     DRAFT_TITLE="<title if applicable>"
+     DRAFT_BODY="<body content>"
+     SLUG="<url-safe slug derived from title, e.g. ai-agent-factory>"
+
+   Write these to a temp file for the next step:
+     cat > /tmp/rent-a-human-draft.env << 'DRAFTEOF'
+     DRAFT_TARGET=<value>
+     DRAFT_TITLE=<value>
+     DRAFT_BODY=<value>
+     SLUG=<value>
+     DRAFTEOF
+"""
+
+[[steps]]
+id    = "write-draft"
+title = "Write draft file to vault/outreach"
+needs = ["draft-content"]
+description = """
+Write the drafted content to the outreach directory.
+
+1. Read the draft from the temp file:
+     source /tmp/rent-a-human-draft.env
+
+2. Create the output directory:
+     DRAFT_DIR="${PROJECT_REPO_ROOT}/vault/outreach/{{platform}}/drafts"
+     mkdir -p "$DRAFT_DIR"
+
+3. Generate the filename:
+     DATE=$(date -u +%Y-%m-%d)
+     DRAFT_FILE="${DRAFT_DIR}/${DATE}-${SLUG}.md"
+
+4. Write the draft file in the standard format:
+
+   # ${DRAFT_TARGET}
+   <!-- platform: {{platform}} -->
+   <!-- action: {{action_type}} -->
+   <!-- status: DRAFT -->
+   <!-- drafted: ${DATE} -->
+
+   ## Title
+   ${DRAFT_TITLE}
+
+   ## Body
+   ${DRAFT_BODY}
+
+   The file must contain ONLY copy-paste-ready content under the Title and
+   Body headings. No instructions, no meta-commentary inside those sections.
+
+5. Verify the file was written:
+     cat "$DRAFT_FILE"
+
+6. Stage and commit the draft:
+     cd "$PROJECT_REPO_ROOT"
+     git add "$DRAFT_FILE"
+
+7. Save the file path and title for the notification step:
+     echo "$DRAFT_FILE" > /tmp/rent-a-human-path
+     echo "$DRAFT_TITLE" > /tmp/rent-a-human-title
+
+8. Clean up the temp env file:
+     rm -f /tmp/rent-a-human-draft.env
+"""
+
+[[steps]]
+id    = "notify-human"
+title = "Notify human via Matrix"
+needs = ["write-draft"]
+description = """
+Send a Matrix notification so the human knows a draft is ready.
+
+1. Read saved state:
+     DRAFT_FILE=$(cat /tmp/rent-a-human-path)
+     DRAFT_TITLE=$(cat /tmp/rent-a-human-title)
+
+2. Send the notification:
+     source "$FACTORY_ROOT/lib/env.sh"
+     matrix_send "rent-a-human" "New {{platform}} {{action_type}} draft ready: ${DRAFT_TITLE}"
+
+3. Post a summary comment on the action issue:
+     curl -sf -X POST \
+       -H "Authorization: token ${FORGE_TOKEN}" \
+       -H 'Content-Type: application/json' \
+       "${FORGE_API}/issues/${ISSUE}/comments" \
+       -d "{\"body\": \"Draft written to \`${DRAFT_FILE}\`\\n\\nHuman: copy-paste the content, then change \`status: DRAFT\` to \`status: POSTED\` in the file.\"}"
+
+4. Clean up temp files:
+     rm -f /tmp/rent-a-human-path /tmp/rent-a-human-title
+
+5. Close the action issue:
+     curl -sf -X PATCH \
+       -H "Authorization: token ${FORGE_TOKEN}" \
+       -H 'Content-Type: application/json' \
+       "${FORGE_API}/issues/${ISSUE}" \
+       -d '{"state": "closed"}'
+
+6. Signal completion:
+     echo 'PHASE:done' > "$PHASE_FILE"
+"""
