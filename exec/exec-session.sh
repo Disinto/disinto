@@ -52,8 +52,8 @@ log "--- Exec session start ---"
 # ── Load compass (required — lives outside the repo) ──────────────────
 # The compass is the agent's core identity. It cannot live in code because
 # code can be changed by the factory. The compass cannot.
-COMPASS_FILE="${EXEC_COMPASS:-}"
-if [ -z "$COMPASS_FILE" ] || [ ! -f "$COMPASS_FILE" ]; then
+COMPASS_FILE="${EXEC_COMPASS:-${HOME}/.disinto/compass.md}"
+if [ ! -f "$COMPASS_FILE" ]; then
   log "FATAL: EXEC_COMPASS not set or file not found (${COMPASS_FILE:-unset})"
   log "The exec agent refuses to start without its compass."
   log "Set EXEC_COMPASS=/path/to/compass.md in .env or .env.enc"

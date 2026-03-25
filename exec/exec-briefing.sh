@@ -44,9 +44,9 @@ check_memory 2000
 log "--- Exec briefing start ---"
 
 # ── Load compass (required) ────────────────────────────────────────────
-COMPASS_FILE="${EXEC_COMPASS:-}"
-if [ -z "$COMPASS_FILE" ] || [ ! -f "$COMPASS_FILE" ]; then
-  log "FATAL: EXEC_COMPASS not set or file not found — exec agent refuses to start without its compass"
+COMPASS_FILE="${EXEC_COMPASS:-${HOME}/.disinto/compass.md}"
+if [ ! -f "$COMPASS_FILE" ]; then
+  log "FATAL: compass not found at ${COMPASS_FILE} — exec agent refuses to start without its compass"
   exit 1
 fi
 COMPASS_BLOCK=$(cat "$COMPASS_FILE")
