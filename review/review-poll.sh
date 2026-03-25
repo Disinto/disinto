@@ -152,7 +152,7 @@ ${review_text}
 Instructions:
 1. Address each piece of feedback carefully.
 2. Run lint and tests when done.
-3. Commit your changes and push: git push origin ${pr_branch}
+3. Commit your changes and push: git push ${FORGE_REMOTE:-origin} ${pr_branch}
 4. Write: echo \"PHASE:awaiting_ci\" > \"${phase_file}\"
 5. Stop and wait for the next CI result."
   fi

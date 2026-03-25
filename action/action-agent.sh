@@ -203,8 +203,15 @@ fi
 # --- Create isolated worktree ---
 log "creating worktree: ${WORKTREE}"
 cd "${PROJECT_REPO_ROOT}"
-git fetch origin "${PRIMARY_BRANCH}" 2>/dev/null || true
-if ! git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" 2>&1; then
+
+# Determine which git remote corresponds to FORGE_URL
+_forge_host=$(echo "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\)/ {print $1; exit}')
+FORGE_REMOTE="${FORGE_REMOTE:-origin}"
+export FORGE_REMOTE
+
+git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
+if ! git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" 2>&1; then
   log "ERROR: worktree creation failed"
   notify "failed to create worktree for #${ISSUE}"
   exit 1
@@ -266,7 +273,7 @@ ${PRIOR_SECTION}## Instructions
 ### Path A: If this action produces code changes (e.g. config updates, baselines):
    - You are already in an isolated worktree at: ${WORKTREE}
    - Create and switch to branch: git checkout -b ${BRANCH}
-   - Make your changes, commit, and push: git push origin ${BRANCH}
+   - Make your changes, commit, and push: git push ${FORGE_REMOTE} ${BRANCH}
    - **IMPORTANT:** The worktree is destroyed after completion. Push all
      results before signaling done — unpushed work will be lost.
    - Follow the phase protocol below — the orchestrator handles PR creation,

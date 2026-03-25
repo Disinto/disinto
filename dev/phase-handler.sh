@@ -114,10 +114,10 @@ ${tmux_output}
 
 # --- Build phase protocol prompt (shared across agents) ---
 # Generates the phase-signaling instructions for Claude prompts.
-# Args: phase_file summary_file branch
+# Args: phase_file summary_file branch [remote]
 # Output: The protocol text (stdout)
 build_phase_protocol_prompt() {
-  local _pf="$1" _sf="$2" _br="$3"
+  local _pf="$1" _sf="$2" _br="$3" _remote="${4:-${FORGE_REMOTE:-origin}}"
   cat <<_PHASE_PROTOCOL_EOF_
 ## Phase-Signaling Protocol (REQUIRED)
 
@@ -135,7 +135,7 @@ SUMMARY_FILE="${_sf}"
 
 **After committing and pushing your branch:**
 \`\`\`bash
-git push origin ${_br}
+git push ${_remote} ${_br}
 # Write a short summary of what you implemented:
 printf '%s' "<your summary>" > "\${SUMMARY_FILE}"
 # Signal the orchestrator to create the PR and watch for CI:
@@ -315,7 +315,7 @@ _on_phase_change() {
       else
         log "ERROR: PR creation failed (HTTP ${PR_HTTP_CODE})"
         notify "failed to create PR (HTTP ${PR_HTTP_CODE})"
-        agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP ${PR_HTTP_CODE}). Check branch was pushed: git push origin ${BRANCH}. Then write PHASE:awaiting_ci again."
+        agent_inject_into_session "$SESSION_NAME" "ERROR: Could not create PR (HTTP ${PR_HTTP_CODE}). Check branch was pushed: git push ${FORGE_REMOTE:-origin} ${BRANCH}. Then write PHASE:awaiting_ci again."
         return 0
       fi
     fi
@@ -398,7 +398,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         log "infra failure — retrigger CI (retry ${CI_RETRY_COUNT})"
         (cd "$WORKTREE" && git commit --allow-empty \
           -m "ci: retrigger after infra failure (#${ISSUE})" --no-verify 2>&1 | tail -1)
-        (cd "$WORKTREE" && git push origin "$BRANCH" --force 2>&1 | tail -3)
+        (cd "$WORKTREE" && git push "${FORGE_REMOTE:-origin}" "$BRANCH" --force 2>&1 | tail -3)
         # Touch phase file so we recheck CI on the new SHA
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect the fresh mtime
         touch "$PHASE_FILE"
@@ -451,7 +451,7 @@ Instructions:
 1. Run ci-debug.sh failures to get the full error output.
 2. Read the failing test file(s) — understand what the tests EXPECT.
 3. Fix the root cause — do NOT weaken tests.
-4. Commit your fix and push: git push origin ${BRANCH}
+4. Commit your fix and push: git push ${FORGE_REMOTE:-origin} ${BRANCH}
 5. Write: echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 6. Stop and wait."
     fi
@@ -471,7 +471,7 @@ Instructions:
         PR_NUMBER="$FOUND_PR"
         log "found PR #${PR_NUMBER}"
       else
-        agent_inject_into_session "$SESSION_NAME" "ERROR: Cannot find open PR for branch ${BRANCH}. Did you push? Verify with git status and git push origin ${BRANCH}, then write PHASE:awaiting_ci."
+        agent_inject_into_session "$SESSION_NAME" "ERROR: Cannot find open PR for branch ${BRANCH}. Did you push? Verify with git status and git push ${FORGE_REMOTE:-origin} ${BRANCH}, then write PHASE:awaiting_ci."
         return 0
       fi
     fi
@@ -556,9 +556,9 @@ Instructions:
               "${API}/issues/${ISSUE}" \
               -d '{"state":"closed"}' >/dev/null 2>&1 || true
             # Pull merged primary branch and push to mirrors
-            git -C "$PROJECT_REPO_ROOT" fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+            git -C "$PROJECT_REPO_ROOT" fetch "${FORGE_REMOTE:-origin}" "$PRIMARY_BRANCH" 2>/dev/null || true
             git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
-            git -C "$PROJECT_REPO_ROOT" pull --ff-only origin "$PRIMARY_BRANCH" 2>/dev/null || true
+            git -C "$PROJECT_REPO_ROOT" pull --ff-only "${FORGE_REMOTE:-origin}" "$PRIMARY_BRANCH" 2>/dev/null || true
             mirror_push
             printf 'PHASE:done\n' > "$PHASE_FILE"
           elif [ "$_merge_rc" -ne 2 ]; then
@@ -566,8 +566,8 @@ Instructions:
             agent_inject_into_session "$SESSION_NAME" "Approved! PR #${PR_NUMBER} has been approved, but the merge failed (likely conflicts).
 
 Rebase onto ${PRIMARY_BRANCH} and push:
-  git fetch origin ${PRIMARY_BRANCH} && git rebase origin/${PRIMARY_BRANCH}
-  git push --force-with-lease origin ${BRANCH}
+  git fetch ${FORGE_REMOTE:-origin} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH}
+  git push --force-with-lease ${FORGE_REMOTE:-origin} ${BRANCH}
   echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 
 Do NOT merge or close the issue — the orchestrator handles that after CI passes.
@@ -590,7 +590,7 @@ ${REVIEW_TEXT}
 Instructions:
 1. Address each piece of feedback carefully.
 2. Run lint and tests when done.
-3. Commit your changes and push: git push origin ${BRANCH}
+3. Commit your changes and push: git push ${FORGE_REMOTE:-origin} ${BRANCH}
 4. Write: echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 5. Stop and wait for the next CI result."
           log "review REQUEST_CHANGES received (round ${REVIEW_ROUND})"
