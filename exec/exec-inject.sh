@@ -33,7 +33,6 @@ source "$FACTORY_ROOT/lib/agent-session.sh"
 
 LOG_FILE="$SCRIPT_DIR/exec.log"
 SESSION_NAME="exec-${PROJECT_NAME}"
-PHASE_FILE="/tmp/exec-session-${PROJECT_NAME}.phase"
 RESPONSE_FILE="/tmp/exec-response-${PROJECT_NAME}.txt"
 CAPTURE_TIMEOUT="${EXEC_CAPTURE_TIMEOUT:-300}"  # 5 min max wait for response
 
