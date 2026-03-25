@@ -1,4 +1,4 @@
-<!-- last-reviewed: 0e5090bd513ea51862c027326c647bd2c781802e -->
+<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -21,12 +21,14 @@ check so approved PRs get merged even while a dev-agent session is active.
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
 - `FORGE_TOKEN` — Dev-agent token (push, PR creation, merge) — use the dedicated bot account
-- `FORGE_REPO`, `FORGE_API` — Target repository
+- `FORGE_REPO`, `FORGE_API`, `FORGE_URL` — Target repository (FORGE_URL used to auto-detect git remote)
 - `PROJECT_NAME`, `PROJECT_REPO_ROOT` — Local checkout path
 - `PRIMARY_BRANCH` — Branch to merge into (e.g. `main`, `master`)
 - `WOODPECKER_REPO_ID` — CI pipeline lookups
 - `CLAUDE_TIMEOUT` — Max seconds for a Claude session (default 7200)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
+
+**FORGE_REMOTE**: `dev-agent.sh` auto-detects which git remote corresponds to `FORGE_URL` by matching the remote's push URL hostname. This is exported as `FORGE_REMOTE` and used for all git push/pull/worktree operations. Defaults to `origin` if no match found. This ensures correct behaviour when the forge is local Forgejo (remote typically named `forgejo`) rather than Codeberg (`origin`).
 
 **Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → create Matrix
 thread + export `MATRIX_THREAD_ID` → tmux `dev-{project}-{issue}` → phase file

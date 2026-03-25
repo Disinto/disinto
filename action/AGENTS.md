@@ -1,4 +1,4 @@
-<!-- last-reviewed: 0e5090bd513ea51862c027326c647bd2c781802e -->
+<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,
@@ -26,7 +26,9 @@ session, and spawns `action-agent.sh <issue-number>`.
 8. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `FORGE_WEB`
+- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `FORGE_URL`, `PROJECT_NAME`, `FORGE_WEB`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
 - `ACTION_IDLE_TIMEOUT` — Max seconds before killing idle session (default 14400 = 4h)
 - `ACTION_MAX_LIFETIME` — Max total session wall-clock seconds (default 28800 = 8h); caps session independently of idle timeout
+
+**FORGE_REMOTE**: `action-agent.sh` auto-detects the git remote for `FORGE_URL` (same logic as dev-agent). Exported as `FORGE_REMOTE`, used for worktree creation and push instructions injected into the Claude prompt.

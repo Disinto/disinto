@@ -1,4 +1,4 @@
-<!-- last-reviewed: 0e5090bd513ea51862c027326c647bd2c781802e -->
+<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -22,7 +22,10 @@ runs directly from cron like the planner and predictor.
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active tmux sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
-  issues, Matrix escalation replies
+  issues, Matrix escalation replies. Also performs **stale phase cleanup**: scans
+  `/tmp/*-session-*.phase` files for `PHASE:escalate` entries and auto-removes any
+  whose linked issue is confirmed closed (24h grace period after closure to avoid
+  races)
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
