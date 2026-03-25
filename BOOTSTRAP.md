@@ -468,6 +468,19 @@ Meanwhile:
 | Dev-agent churns through issues without waiting for open PRs to land | No single-threaded enforcement | `WAITING_PRS` check in dev-poll holds new work — verify TOML `name` is consistent across invocations |
 | Label ping-pong (issue reopened then immediately re-closed) | `already_done` handler doesn't close issue | Review dev-agent log; `already_done` status should auto-close the issue |
 
+## Security: Docker Socket Sharing in CI
+
+The `woodpecker-agent` service mounts `/var/run/docker.sock` to execute `type: docker` CI pipelines. This grants root-equivalent access to the Docker host — any CI pipeline step can run privileged containers, mount arbitrary host paths, or access other containers' data.
+
+**Mitigations:**
+
+- **Run disinto in an LXD/VM container, not on bare metal.** When the Docker daemon runs inside an LXD container, LXD's user namespace mapping and resource limits contain the blast radius. A compromised CI step cannot reach the real host.
+- **`WOODPECKER_MAX_WORKFLOWS: 1`** limits concurrent CI resource usage, preventing a runaway pipeline from exhausting host resources.
+- **`WOODPECKER_AGENT_SECRET`** authenticates the agent↔server gRPC connection. `disinto init` auto-generates this secret and stores it in `.env` (or `.env.enc` when SOPS is available).
+- Consider setting `WOODPECKER_BACKEND_DOCKER_VOLUMES` on the agent to restrict which host volumes CI pipelines can mount.
+
+**Threat model:** PRs are created by the dev-agent (Claude) and auto-reviewed by the review-bot. A crafted backlog issue could theoretically produce a PR whose CI step exploits the Docker socket. The LXD containment boundary is the primary defense — treat the LXD container as the trust boundary, not the Docker daemon inside it.
+
 ## Action Runner — disinto (harb-staging)
 
 Added 2026-03-19. Polls disinto repo for `action`-labeled issues.

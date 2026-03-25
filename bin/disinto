@@ -189,10 +189,27 @@ services:
       WOODPECKER_FORGEJO_CLIENT: ${WP_FORGEJO_CLIENT:-}
       WOODPECKER_FORGEJO_SECRET: ${WP_FORGEJO_SECRET:-}
       WOODPECKER_HOST: http://woodpecker:8000
+      WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_DATABASE_DRIVER: sqlite3
       WOODPECKER_DATABASE_DATASOURCE: /var/lib/woodpecker/woodpecker.sqlite
     depends_on:
       - forgejo
+    networks:
+      - disinto-net
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:latest
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WOODPECKER_SERVER: woodpecker:9000
+      WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
+      WOODPECKER_MAX_WORKFLOWS: 1
+    depends_on:
+      - woodpecker
     networks:
       - disinto-net
 
@@ -1282,6 +1299,15 @@ p.write_text(text)
   # Create OAuth2 app on Forgejo for Woodpecker (before compose up)
   _WP_REPO_ID=""
   create_woodpecker_oauth "$forge_url" "$forge_repo"
+
+  # Generate WOODPECKER_AGENT_SECRET for server↔agent auth
+  local env_file="${FACTORY_ROOT}/.env"
+  if ! grep -q '^WOODPECKER_AGENT_SECRET=' "$env_file" 2>/dev/null; then
+    local agent_secret
+    agent_secret="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 40)"
+    printf 'WOODPECKER_AGENT_SECRET=%s\n' "$agent_secret" >> "$env_file"
+    echo "Config:  WOODPECKER_AGENT_SECRET generated and saved to .env"
+  fi
 
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
