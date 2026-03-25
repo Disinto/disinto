@@ -179,6 +179,8 @@ services:
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
+    ports:
+      - "8000:8000"
     volumes:
       - woodpecker-data:/var/lib/woodpecker
     environment:
@@ -840,28 +842,15 @@ install_cron() {
 
 # Set up Woodpecker CI to use Forgejo as its forge backend.
 # Creates an OAuth2 app on Forgejo for Woodpecker, activates the repo.
-setup_woodpecker() {
+create_woodpecker_oauth() {
   local forge_url="$1" repo_slug="$2"
-  local wp_server="${WOODPECKER_SERVER:-}"
-
-  if [ -z "$wp_server" ]; then
-    echo "Woodpecker: not configured (WOODPECKER_SERVER not set), skipping"
-    return
-  fi
-
-  # Check if Woodpecker is reachable
-  if ! curl -sf --max-time 5 "${wp_server}/api/version" >/dev/null 2>&1; then
-    echo "Woodpecker: not reachable at ${wp_server}, skipping"
-    return
-  fi
 
   echo ""
-  echo "── Woodpecker CI setup ────────────────────────────────"
-  echo "Server:  ${wp_server}"
+  echo "── Woodpecker OAuth2 setup ────────────────────────────"
 
   # Create OAuth2 application on Forgejo for Woodpecker
   local oauth2_name="woodpecker-ci"
-  local redirect_uri="${wp_server}/authorize"
+  local redirect_uri="http://localhost:8000/authorize"
   local existing_app client_id client_secret
 
   # Check if OAuth2 app already exists
@@ -899,16 +888,17 @@ setup_woodpecker() {
   fi
 
   # Store Woodpecker forge config in .env
+  # WP_FORGEJO_CLIENT/SECRET match the docker-compose.yml variable references
   local env_file="${FACTORY_ROOT}/.env"
   local wp_vars=(
     "WOODPECKER_FORGEJO=true"
     "WOODPECKER_FORGEJO_URL=${forge_url}"
   )
   if [ -n "${client_id:-}" ]; then
-    wp_vars+=("WOODPECKER_FORGEJO_CLIENT=${client_id}")
+    wp_vars+=("WP_FORGEJO_CLIENT=${client_id}")
   fi
   if [ -n "${client_secret:-}" ]; then
-    wp_vars+=("WOODPECKER_FORGEJO_SECRET=${client_secret}")
+    wp_vars+=("WP_FORGEJO_SECRET=${client_secret}")
   fi
 
   for var_line in "${wp_vars[@]}"; do
@@ -920,38 +910,60 @@ setup_woodpecker() {
     fi
   done
   echo "Config:  Woodpecker forge vars written to .env"
+}
 
-  # Activate repo in Woodpecker (if not already)
+activate_woodpecker_repo() {
+  local forge_repo="$1"
+  local wp_server="${WOODPECKER_SERVER:-http://localhost:8000}"
+
+  # Wait for Woodpecker to become ready after stack start
+  local retries=0
+  while [ $retries -lt 10 ]; do
+    if curl -sf --max-time 3 "${wp_server}/api/version" >/dev/null 2>&1; then
+      break
+    fi
+    retries=$((retries + 1))
+    sleep 2
+  done
+
+  if ! curl -sf --max-time 5 "${wp_server}/api/version" >/dev/null 2>&1; then
+    echo "Woodpecker: not reachable at ${wp_server} after stack start, skipping repo activation" >&2
+    return
+  fi
+
+  echo ""
+  echo "── Woodpecker repo activation ─────────────────────────"
+
   local wp_token="${WOODPECKER_TOKEN:-}"
   if [ -z "$wp_token" ]; then
     echo "Warning: WOODPECKER_TOKEN not set — cannot activate repo" >&2
-    echo "  Activate manually: woodpecker-cli repo add ${repo_slug}" >&2
+    echo "  Activate manually: woodpecker-cli repo add ${forge_repo}" >&2
     return
   fi
 
   local wp_repo_id
   wp_repo_id=$(curl -sf \
     -H "Authorization: Bearer ${wp_token}" \
-    "${wp_server}/api/repos/lookup/${repo_slug}" 2>/dev/null \
+    "${wp_server}/api/repos/lookup/${forge_repo}" 2>/dev/null \
     | jq -r '.id // empty' 2>/dev/null) || true
 
   if [ -n "$wp_repo_id" ] && [ "$wp_repo_id" != "0" ]; then
-    echo "Repo:    ${repo_slug} already active in Woodpecker (id=${wp_repo_id})"
+    echo "Repo:    ${forge_repo} already active in Woodpecker (id=${wp_repo_id})"
   else
     local activate_resp
     activate_resp=$(curl -sf -X POST \
       -H "Authorization: Bearer ${wp_token}" \
       -H "Content-Type: application/json" \
       "${wp_server}/api/repos" \
-      -d "{\"forge_remote_id\":\"${repo_slug}\"}" 2>/dev/null) || activate_resp=""
+      -d "{\"forge_remote_id\":\"${forge_repo}\"}" 2>/dev/null) || activate_resp=""
 
     wp_repo_id=$(printf '%s' "$activate_resp" | jq -r '.id // empty' 2>/dev/null) || true
 
     if [ -n "$wp_repo_id" ] && [ "$wp_repo_id" != "0" ]; then
-      echo "Repo:    ${repo_slug} activated in Woodpecker (id=${wp_repo_id})"
+      echo "Repo:    ${forge_repo} activated in Woodpecker (id=${wp_repo_id})"
     else
       echo "Warning: could not activate repo in Woodpecker" >&2
-      echo "  Activate manually: woodpecker-cli repo add ${repo_slug}" >&2
+      echo "  Activate manually: woodpecker-cli repo add ${forge_repo}" >&2
     fi
   fi
 
@@ -1252,25 +1264,9 @@ p.write_text(text)
     echo "Created: ${toml_path}"
   fi
 
-  # Set up Woodpecker CI to use Forgejo as forge backend
+  # Create OAuth2 app on Forgejo for Woodpecker (before compose up)
   _WP_REPO_ID=""
-  setup_woodpecker "$forge_url" "$forge_repo"
-
-  # Use detected Woodpecker repo ID if ci_id was not explicitly set
-  if [ "$ci_id" = "0" ] && [ -n "${_WP_REPO_ID:-}" ]; then
-    ci_id="$_WP_REPO_ID"
-    echo "CI ID:   ${ci_id} (from Woodpecker)"
-    # Update TOML if it already exists
-    if [ "$toml_exists" = true ] && [ -f "$toml_path" ]; then
-      python3 -c "
-import sys, re, pathlib
-p = pathlib.Path(sys.argv[1])
-text = p.read_text()
-text = re.sub(r'^woodpecker_repo_id\s*=\s*.*$', 'woodpecker_repo_id = ' + sys.argv[2], text, flags=re.MULTILINE)
-p.write_text(text)
-" "$toml_path" "$ci_id"
-    fi
-  fi
+  create_woodpecker_oauth "$forge_url" "$forge_repo"
 
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
@@ -1311,6 +1307,25 @@ p.write_text(text)
 
     # Provision Matrix now that Dendrite is running
     setup_matrix
+
+    # Activate repo in Woodpecker now that stack is running
+    activate_woodpecker_repo "$forge_repo"
+
+    # Use detected Woodpecker repo ID if ci_id was not explicitly set
+    if [ "$ci_id" = "0" ] && [ -n "${_WP_REPO_ID:-}" ]; then
+      ci_id="$_WP_REPO_ID"
+      echo "CI ID:   ${ci_id} (from Woodpecker)"
+      # Update TOML with Woodpecker repo ID
+      if [ -f "$toml_path" ]; then
+        python3 -c "
+import sys, re, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+text = re.sub(r'^woodpecker_repo_id\s*=\s*.*$', 'woodpecker_repo_id = ' + sys.argv[2], text, flags=re.MULTILINE)
+p.write_text(text)
+" "$toml_path" "$ci_id"
+      fi
+    fi
   fi
 
   echo ""
