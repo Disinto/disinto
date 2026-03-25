@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Review Agent
 
 **Role**: AI-powered PR review — post structured findings and formal
@@ -9,8 +9,8 @@ whose CI has passed and that lack a review for the current HEAD SHA, then
 spawns `review-pr.sh <pr-number>`.
 
 **Key files**:
-- `review/review-poll.sh` — Cron scheduler: finds unreviewed PRs with passing CI
-- `review/review-pr.sh` — Creates/reuses a tmux session (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output, posts markdown review + formal forge review, auto-creates follow-up issues for pre-existing tech debt
+- `review/review-poll.sh` — Cron scheduler: finds unreviewed PRs with passing CI. Sources `lib/guard.sh` and calls `check_active reviewer` — skips if `$FACTORY_ROOT/state/.reviewer-active` is absent.
+- `review/review-pr.sh` — Creates/reuses a tmux session (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output, posts markdown review + formal forge review, auto-creates follow-up issues for pre-existing tech debt. Before starting the session, runs `lib/build-graph.py --changed-files <PR files>` and appends the JSON structural analysis (affected objectives, orphaned prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review proceeds without it.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN` — Dev-agent token (must not be the same account as FORGE_REVIEW_TOKEN)

@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -26,7 +26,7 @@ disinto/
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
-├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh
+├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh, guard.sh, mirrors.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
