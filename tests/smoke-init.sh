@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # tests/smoke-init.sh — End-to-end smoke test for disinto init
 #
-# Runs against a real Forgejo instance (Woodpecker service container).
+# Expects a running Forgejo at SMOKE_FORGE_URL with a bootstrap admin
+# user already created (see .woodpecker/smoke-init.yml for CI setup).
 # Validates the full init flow: Forgejo API, user/token creation,
 # repo setup, labels, TOML generation, and cron installation.
 #
-# Required env:  SMOKE_FORGE_URL (default: http://forgejo:3000)
+# Required env:  SMOKE_FORGE_URL (default: http://localhost:3000)
 # Required tools: bash, curl, jq, python3, git
 
 set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FORGE_URL="${SMOKE_FORGE_URL:-http://forgejo:3000}"
+FORGE_URL="${SMOKE_FORGE_URL:-http://localhost:3000}"
 SETUP_ADMIN="setup-admin"
 SETUP_PASS="SetupPass-789xyz"
-SETUP_EMAIL="setup-admin@smoke.test"
 TEST_SLUG="smoke-org/smoke-repo"
 MOCK_BIN="/tmp/smoke-mock-bin"
 MOCK_STATE="/tmp/smoke-mock-state"
@@ -24,8 +24,8 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; FAILED=1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 cleanup() {
-  rm -rf "$MOCK_BIN" "$MOCK_STATE" /tmp/smoke-test-repo /tmp/forgejo-cookies \
-         /tmp/install-page.html "${FACTORY_ROOT}/projects/smoke-repo.toml" \
+  rm -rf "$MOCK_BIN" "$MOCK_STATE" /tmp/smoke-test-repo \
+         "${FACTORY_ROOT}/projects/smoke-repo.toml" \
          "${FACTORY_ROOT}/docker-compose.yml"
   # Restore .env only if we created the backup
   if [ -f "${FACTORY_ROOT}/.env.smoke-backup" ]; then
@@ -43,68 +43,8 @@ fi
 # Start with a clean .env (setup_forge writes tokens here)
 printf '' > "${FACTORY_ROOT}/.env"
 
-# ── 0. Wait for Forgejo HTTP ────────────────────────────────────────────────
-echo "=== 0/7 Waiting for Forgejo at ${FORGE_URL} ==="
-retries=0
-while true; do
-  if curl -sf --max-time 3 -o /dev/null "${FORGE_URL}/" 2>/dev/null; then
-    break
-  fi
-  retries=$((retries + 1))
-  if [ "$retries" -gt 90 ]; then
-    fail "Forgejo not responsive after 90s"
-    exit 1
-  fi
-  sleep 1
-done
-pass "Forgejo HTTP responsive (${retries}s)"
-
-# ── 1. Complete Forgejo install ──────────────────────────────────────────────
-echo "=== 1/7 Completing Forgejo initial setup ==="
-
-# GET the install page to obtain CSRF token and session cookie
-curl -sf -c /tmp/forgejo-cookies "${FORGE_URL}/install" \
-  -o /tmp/install-page.html 2>/dev/null || true
-
-# Extract CSRF token (hidden input or meta tag)
-csrf_token=""
-if [ -f /tmp/install-page.html ]; then
-  csrf_token=$(grep '_csrf' /tmp/install-page.html \
-    | grep -oE '(content|value)="[^"]*"' \
-    | head -1 | cut -d'"' -f2) || csrf_token=""
-fi
-
-# Build POST data array
-post_args=(
-  --data-urlencode "db_type=SQLite3"
-  --data-urlencode "db_path=/data/gitea/gitea.db"
-  --data-urlencode "app_name=Forgejo"
-  --data-urlencode "repo_root_path=/data/gitea/repositories"
-  --data-urlencode "lfs_root_path=/data/gitea/lfs"
-  --data-urlencode "run_user=git"
-  --data-urlencode "domain=forgejo"
-  --data-urlencode "ssh_port=22"
-  --data-urlencode "http_port=3000"
-  --data-urlencode "app_url=${FORGE_URL}/"
-  --data-urlencode "log_root_path=/data/gitea/log"
-  --data-urlencode "admin_name=${SETUP_ADMIN}"
-  --data-urlencode "admin_passwd=${SETUP_PASS}"
-  --data-urlencode "admin_confirm_passwd=${SETUP_PASS}"
-  --data-urlencode "admin_email=${SETUP_EMAIL}"
-)
-if [ -n "$csrf_token" ]; then
-  post_args+=(--data-urlencode "_csrf=${csrf_token}")
-fi
-
-install_code=$(curl -s -b /tmp/forgejo-cookies \
-  -o /dev/null -w '%{http_code}' \
-  -X POST "${FORGE_URL}/install" \
-  "${post_args[@]}" 2>/dev/null) || install_code="000"
-
-echo "Install POST returned HTTP ${install_code}"
-
-# Wait for Forgejo API to become functional after install
-echo -n "Waiting for Forgejo API"
+# ── 1. Verify Forgejo is ready ──────────────────────────────────────────────
+echo "=== 1/6 Verifying Forgejo at ${FORGE_URL} ==="
 retries=0
 api_version=""
 while true; do
@@ -114,26 +54,24 @@ while true; do
     break
   fi
   retries=$((retries + 1))
-  if [ "$retries" -gt 60 ]; then
-    echo ""
-    fail "Forgejo API not functional after install (60s)"
+  if [ "$retries" -gt 30 ]; then
+    fail "Forgejo API not responding after 30s"
     exit 1
   fi
-  echo -n "."
   sleep 1
 done
-echo " ready (v${api_version})"
+pass "Forgejo API v${api_version} (${retries}s)"
 
 # Verify bootstrap admin user exists
 if curl -sf --max-time 5 "${FORGE_URL}/api/v1/users/${SETUP_ADMIN}" >/dev/null 2>&1; then
-  pass "Bootstrap admin '${SETUP_ADMIN}' created via install endpoint"
+  pass "Bootstrap admin '${SETUP_ADMIN}' exists"
 else
-  fail "Bootstrap admin '${SETUP_ADMIN}' not found — install may have failed"
+  fail "Bootstrap admin '${SETUP_ADMIN}' not found — was Forgejo set up?"
   exit 1
 fi
 
 # ── 2. Set up mock binaries ─────────────────────────────────────────────────
-echo "=== 2/7 Setting up mock binaries ==="
+echo "=== 2/6 Setting up mock binaries ==="
 mkdir -p "$MOCK_BIN" "$MOCK_STATE"
 
 # Store bootstrap admin credentials for the docker mock
@@ -146,7 +84,7 @@ cat > "$MOCK_BIN/docker" << 'DOCKERMOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 
-FORGE_URL="${SMOKE_FORGE_URL:-http://forgejo:3000}"
+FORGE_URL="${SMOKE_FORGE_URL:-http://localhost:3000}"
 MOCK_STATE="/tmp/smoke-mock-state"
 
 if [ ! -f "$MOCK_STATE/bootstrap_creds" ]; then
@@ -266,20 +204,15 @@ chmod +x "$MOCK_BIN/crontab"
 export PATH="$MOCK_BIN:$PATH"
 pass "Mock binaries installed (docker, claude, tmux, crontab)"
 
-# ── 3. Prepare source repo ──────────────────────────────────────────────────
-echo "=== 3/7 Preparing source repo ==="
-# Configure git identity for the test (needed for any git operations)
+# ── 3. Run disinto init ─────────────────────────────────────────────────────
+echo "=== 3/6 Running disinto init ==="
+rm -f "${FACTORY_ROOT}/projects/smoke-repo.toml"
+
+# Configure git identity (needed for git operations)
 git config --global user.email "smoke@test.local"
 git config --global user.name "Smoke Test"
 
-pass "Git configured"
-
-# ── 4. Run disinto init ─────────────────────────────────────────────────────
-echo "=== 4/7 Running disinto init ==="
-rm -f "${FACTORY_ROOT}/projects/smoke-repo.toml"
-
 export SMOKE_FORGE_URL="$FORGE_URL"
-# FORGE_URL is read by lib/env.sh; override so init uses our test Forgejo
 export FORGE_URL
 
 if bash "${FACTORY_ROOT}/bin/disinto" init \
@@ -292,8 +225,8 @@ else
   fail "disinto init exited non-zero"
 fi
 
-# ── 5. Verify Forgejo state ─────────────────────────────────────────────────
-echo "=== 5/7 Verifying Forgejo state ==="
+# ── 4. Verify Forgejo state ─────────────────────────────────────────────────
+echo "=== 4/6 Verifying Forgejo state ==="
 
 # Admin user exists
 if curl -sf --max-time 5 "${FORGE_URL}/api/v1/users/disinto-admin" >/dev/null 2>&1; then
@@ -311,7 +244,7 @@ for bot in dev-bot review-bot; do
   fi
 done
 
-# Repo exists (try org path, then fallback to dev-bot user path)
+# Repo exists (try org path, then fallback paths)
 repo_found=false
 for repo_path in "${TEST_SLUG}" "dev-bot/smoke-repo" "disinto-admin/smoke-repo"; do
   if curl -sf --max-time 5 "${FORGE_URL}/api/v1/repos/${repo_path}" >/dev/null 2>&1; then
@@ -353,8 +286,8 @@ else
   fail "Could not obtain verification token from bootstrap admin"
 fi
 
-# ── 6. Verify local state ───────────────────────────────────────────────────
-echo "=== 6/7 Verifying local state ==="
+# ── 5. Verify local state ───────────────────────────────────────────────────
+echo "=== 5/6 Verifying local state ==="
 
 # TOML was generated
 toml_path="${FACTORY_ROOT}/projects/smoke-repo.toml"
@@ -398,8 +331,8 @@ else
   fail "Repo not cloned to /tmp/smoke-test-repo"
 fi
 
-# ── 7. Verify cron setup ────────────────────────────────────────────────────
-echo "=== 7/7 Verifying cron setup ==="
+# ── 6. Verify cron setup ────────────────────────────────────────────────────
+echo "=== 6/6 Verifying cron setup ==="
 cron_file="$MOCK_STATE/crontab-entries"
 if [ -f "$cron_file" ]; then
   if grep -q 'dev-poll.sh' "$cron_file"; then
