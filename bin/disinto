@@ -1369,6 +1369,13 @@ p.write_text(text)
     fi
   fi
 
+  # Activate default agents (zero-cost when idle — they only invoke Claude
+  # when there is actual work, so an empty project burns no LLM tokens)
+  mkdir -p "${FACTORY_ROOT}/state"
+  touch "${FACTORY_ROOT}/state/.dev-active"
+  touch "${FACTORY_ROOT}/state/.reviewer-active"
+  touch "${FACTORY_ROOT}/state/.gardener-active"
+
   echo ""
   echo "Done. Project ${project_name} is ready."
   echo "  Config:  ${toml_path}"
