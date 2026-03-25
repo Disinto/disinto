@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Predictor Agent
 
 **Role**: Abstract adversary (the "goblin"). Runs a 2-step formula
@@ -23,14 +23,18 @@ emit feature work — only observations challenging claims, exposing gaps,
 and surfacing risks.
 
 **Trigger**: `predictor-run.sh` runs daily at 06:00 UTC via cron (1h before
-the planner at 07:00). Guarded by PID lock (`/tmp/predictor-run.lock`) and
-memory check (skips if available RAM < 2000 MB).
+the planner at 07:00). Sources `lib/guard.sh` and calls `check_active predictor`
+first — skips if `$FACTORY_ROOT/state/.predictor-active` is absent. Also guarded
+by PID lock (`/tmp/predictor-run.lock`) and memory check (skips if available
+RAM < 2000 MB).
 
 **Key files**:
-- `predictor/predictor-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
-  sources disinto project config, builds prompt with formula + forge API
-  reference, creates tmux session (sonnet), monitors phase file, handles crash
-  recovery via `run_formula_and_monitor`
+- `predictor/predictor-run.sh` — Cron wrapper + orchestrator: active-state guard,
+  lock, memory guard, sources disinto project config, builds structural analysis
+  graph via `lib/build-graph.py` (full-project scan — results included in prompt
+  as `## Structural analysis`; failures non-fatal), builds prompt with formula +
+  forge API reference, creates tmux session (sonnet), monitors phase file, handles
+  crash recovery via `run_formula_and_monitor`
 - `formulas/run-predictor.toml` — Execution spec: two steps (preflight,
   find-weakness-and-act) with `needs` dependencies. Claude reviews prediction
   history, explores/exploits weaknesses, and files issues in a single

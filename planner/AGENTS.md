@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
@@ -31,10 +31,12 @@ and `$PROJECT_REPO_ROOT/vault/`, not `$FACTORY_ROOT`. Each project manages its
 own planner state independently.
 
 **Trigger**: `planner-run.sh` runs daily via cron (accepts an optional project
-TOML argument, defaults to `projects/disinto.toml`). It creates a tmux session
-with `claude --model opus`, injects `formulas/run-planner.toml` as context,
-monitors the phase file, and cleans up on completion or timeout. No action
-issues — the planner is a nervous system component, not work.
+TOML argument, defaults to `projects/disinto.toml`). Sources `lib/guard.sh` and
+calls `check_active planner` first — skips if `$FACTORY_ROOT/state/.planner-active`
+is absent. Then creates a tmux session with `claude --model opus`, injects
+`formulas/run-planner.toml` as context, monitors the phase file, and cleans up
+on completion or timeout. No action issues — the planner is a nervous system
+component, not work.
 
 **Key files**:
 - `planner/planner-run.sh` — Cron wrapper + orchestrator: lock, memory guard,

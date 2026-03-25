@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -7,11 +7,13 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix or escalate to a human via Matrix.
 
-**Trigger**: `gardener-run.sh` runs 4x/day via cron. It creates a tmux
-session with `claude --model sonnet`, injects `formulas/run-gardener.toml`
-with escalation replies as context, monitors the phase file, and cleans up
-on completion or timeout (2h max session). No action issues — the gardener
-runs directly from cron like the planner, predictor, and supervisor.
+**Trigger**: `gardener-run.sh` runs 4x/day via cron. Sources `lib/guard.sh` and
+calls `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active`
+is absent. Then creates a tmux session with `claude --model sonnet`, injects
+`formulas/run-gardener.toml` with escalation replies as context, monitors the
+phase file, and cleans up on completion or timeout (2h max session). No action
+issues — the gardener runs directly from cron like the planner, predictor, and
+supervisor.
 
 **Key files**:
 - `gardener/gardener-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
@@ -32,7 +34,7 @@ runs directly from cron like the planner, predictor, and supervisor.
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER`
 
-**Lifecycle**: gardener-run.sh (cron 0,6,12,18) → lock + memory guard →
+**Lifecycle**: gardener-run.sh (cron 0,6,12,18) → `check_active gardener` → lock + memory guard →
 consume escalation replies → load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 reviews blocked issues, updates AGENTS.md, commits manifest + docs to PR →

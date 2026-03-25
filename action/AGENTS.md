@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,
@@ -6,9 +6,10 @@ call APIs, send messages, collect human approval. Shares the same phase handler
 as the dev-agent: if an action produces code changes, the orchestrator creates a
 PR and drives the CI/review loop; otherwise Claude closes the issue directly.
 
-**Trigger**: `action-poll.sh` runs every 10 min via cron. It scans for open
-issues labeled `action` that have no active tmux session, then spawns
-`action-agent.sh <issue-number>`.
+**Trigger**: `action-poll.sh` runs every 10 min via cron. Sources `lib/guard.sh`
+and calls `check_active action` first — skips if `$FACTORY_ROOT/state/.action-active`
+is absent. Then scans for open issues labeled `action` that have no active tmux
+session, and spawns `action-agent.sh <issue-number>`.
 
 **Key files**:
 - `action/action-poll.sh` — Cron scheduler: finds open action issues with no active tmux session, spawns action-agent.sh

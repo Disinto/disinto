@@ -1,4 +1,4 @@
-<!-- last-reviewed: a2016db5c35ee3429ebaa212192983a03c4e4cb8 -->
+<!-- last-reviewed: 6afc7f183ffd831edae1a6c3f9d92e2094f2b998 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -6,10 +6,12 @@ Claude agent. Collects system and project metrics via a bash pre-flight script,
 then runs an interactive Claude session (sonnet) that assesses health, auto-fixes
 issues, escalates via Matrix, and writes a daily journal.
 
-**Trigger**: `supervisor-run.sh` runs every 20 min via cron. It creates a tmux
-session with `claude --model sonnet`, injects `formulas/run-supervisor.toml`
-with pre-collected metrics as context, monitors the phase file, and cleans up
-on completion or timeout (20 min max session). No action issues — the supervisor
+**Trigger**: `supervisor-run.sh` runs every 20 min via cron. Sources `lib/guard.sh`
+and calls `check_active supervisor` first — skips if
+`$FACTORY_ROOT/state/.supervisor-active` is absent. Then creates a tmux session
+with `claude --model sonnet`, injects `formulas/run-supervisor.toml` with
+pre-collected metrics as context, monitors the phase file, and cleans up on
+completion or timeout (20 min max session). No action issues — the supervisor
 runs directly from cron like the planner and predictor.
 
 **Key files**:
