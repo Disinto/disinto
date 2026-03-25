@@ -341,6 +341,21 @@ Interpret this response and decide how to proceed."
           fi
         fi
         ;;
+      exec)
+        # Route message to exec session — spawn on demand if needed
+        EXEC_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
+        EXEC_PROJECT="${EXEC_PROJECT:-${PROJECT_NAME:-disinto}}"
+
+        # Delegate entirely to exec-inject.sh (handles spawn + inject + capture + Matrix post)
+        bash "${FACTORY_ROOT}/exec/exec-inject.sh" "$SENDER" "$BODY" "$THREAD_ROOT" \
+          "${FACTORY_ROOT}/projects/${EXEC_PROJECT}.toml" >> "$LOGFILE" 2>&1 &
+        log "exec message from ${SENDER} dispatched to exec-inject.sh"
+
+        if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then
+          matrix_send "exec" "✓ Message forwarded to executive assistant" "$THREAD_ROOT" >/dev/null 2>&1 || true
+          printf '%s\n' "$THREAD_ROOT" >> "$ACKED_FILE"
+        fi
+        ;;
       *)
         log "no handler for agent '${AGENT}'"
         ;;
