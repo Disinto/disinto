@@ -398,6 +398,13 @@ setup_forge() {
       echo "  ${create_output}" >&2
       exit 1
     fi
+    # Forgejo 11.x ignores --must-change-password=false on create;
+    # explicitly clear the flag so basic-auth token creation works.
+    _forgejo_exec forgejo admin user change-password \
+      --username "${admin_user}" \
+      --password "${admin_pass}" \
+      --must-change-password=false
+
     # Verify admin user was actually created
     if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
       echo "Error: admin user '${admin_user}' not found after creation" >&2
@@ -447,6 +454,13 @@ setup_forge() {
         echo "  ${create_output}" >&2
         exit 1
       fi
+      # Forgejo 11.x ignores --must-change-password=false on create;
+      # explicitly clear the flag so basic-auth token creation works.
+      _forgejo_exec forgejo admin user change-password \
+        --username "${bot_user}" \
+        --password "${bot_pass}" \
+        --must-change-password=false
+
       # Verify bot user was actually created
       if ! curl -sf --max-time 5 \
         -H "Authorization: token ${admin_token}" \
