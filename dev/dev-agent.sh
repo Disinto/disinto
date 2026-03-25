@@ -460,8 +460,18 @@ fi
 status "setting up worktree"
 cd "$REPO_ROOT"
 
+# Determine which git remote corresponds to FORGE_URL.
+# When the forge is local Forgejo (not Codeberg), the remote is typically named
+# "forgejo" rather than "origin".  Matching by host ensures pushes target the
+# correct forge regardless of remote naming conventions.
+_forge_host=$(echo "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\)/ {print $1; exit}')
+FORGE_REMOTE="${FORGE_REMOTE:-origin}"
+export FORGE_REMOTE  # used by phase-handler.sh
+log "forge remote: ${FORGE_REMOTE} (FORGE_URL=${FORGE_URL})"
+
 if [ "$RECOVERY_MODE" = true ]; then
-  git fetch origin "$BRANCH" 2>/dev/null
+  git fetch "${FORGE_REMOTE}" "$BRANCH" 2>/dev/null
 
   # Reuse existing worktree if on the right branch (preserves session context)
   REUSE_WORKTREE=false
@@ -470,14 +480,14 @@ if [ "$RECOVERY_MODE" = true ]; then
     if [ "$WT_BRANCH" = "$BRANCH" ]; then
       log "reusing existing worktree (preserves session)"
       cd "$WORKTREE"
-      git pull --ff-only origin "$BRANCH" 2>/dev/null || git reset --hard "origin/${BRANCH}" 2>/dev/null || true
+      git pull --ff-only "${FORGE_REMOTE}" "$BRANCH" 2>/dev/null || git reset --hard "${FORGE_REMOTE}/${BRANCH}" 2>/dev/null || true
       REUSE_WORKTREE=true
     fi
   fi
 
   if [ "$REUSE_WORKTREE" = false ]; then
     cleanup_worktree
-    git worktree add "$WORKTREE" "origin/${BRANCH}" -B "$BRANCH" 2>&1 || {
+    git worktree add "$WORKTREE" "${FORGE_REMOTE}/${BRANCH}" -B "$BRANCH" 2>&1 || {
       log "ERROR: worktree creation failed for recovery"
       cleanup_labels
       exit 1
@@ -499,17 +509,17 @@ else
     git checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
   fi
 
-  git fetch origin "${PRIMARY_BRANCH}" 2>/dev/null
-  git pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
+  git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null
+  git pull --ff-only "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
   cleanup_worktree
-  git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 || {
+  git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 || {
     log "ERROR: worktree creation failed"
-    git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 | while read -r wt_line; do log "  $wt_line"; done || true
+    git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 | while read -r wt_line; do log "  $wt_line"; done || true
     cleanup_labels
     exit 1
   }
   cd "$WORKTREE"
-  git checkout -B "$BRANCH" "origin/${PRIMARY_BRANCH}" 2>/dev/null
+  git checkout -B "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" 2>/dev/null
   git submodule update --init --recursive 2>/dev/null || true
 
   # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
@@ -550,7 +560,7 @@ SUMMARY_FILE=\"${IMPL_SUMMARY_FILE}\"
 
 **After committing and pushing your branch:**
 \`\`\`bash
-git push origin ${BRANCH}
+git push ${FORGE_REMOTE} ${BRANCH}
 # Write a short summary of what you implemented:
 printf '%s' \"<your summary>\" > \"\${SUMMARY_FILE}\"
 # Signal the orchestrator to create the PR and watch for CI:
@@ -604,7 +614,7 @@ write_compact_context "$PHASE_FILE" "$PHASE_PROTOCOL_INSTRUCTIONS"
 
 if [ "$RECOVERY_MODE" = true ]; then
   # Build recovery context
-  GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "origin/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
+  GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
   LAST_PHASE=$(read_phase)
   rm -f "$PHASE_FILE"  # Clear stale phase — new session starts clean
   CI_RESULT=$(cat "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || echo "")
