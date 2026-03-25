@@ -8,8 +8,10 @@ tree from `planner/MEMORY.md` and `planner/prerequisite-tree.md`. Also reads
 all available formulas: factory formulas (`$FACTORY_ROOT/formulas/*.toml`) and
 project-specific formulas (`$PROJECT_REPO_ROOT/formulas/*.toml`). Phase 1
 (prediction-triage): triage `prediction/unreviewed` issues filed by the
-Predictor — for each prediction: promote to action, promote to backlog, watch
-(relabel to prediction/backlog), or dismiss with reasoning. Phase 2
+Predictor — for each prediction: action (create issue, relabel to
+prediction/actioned, close) or dismiss (comment reason, relabel to
+prediction/dismissed, close). No fence-sitting — dismissed predictions get
+re-filed by the predictor with stronger evidence if still valid. Phase 2
 (update-prerequisite-tree): scan repo state + open/closed issues, mark resolved
 prerequisites, discover new ones, update the tree. **Also scans comments on
 referenced issues for bounce/stuck signals** (BOUNCED, ESCALATED, LABEL_CHURN)
