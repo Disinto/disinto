@@ -1,0 +1,24 @@
+# .woodpecker/smoke-init.yml — End-to-end smoke test for disinto init
+#
+# Starts a real Forgejo instance as a service container, then runs
+# disinto init --bare --yes against it and verifies the results.
+
+when:
+  event: [push, pull_request]
+
+services:
+  - name: forgejo
+    image: codeberg.org/forgejo/forgejo:11.0
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__server__ROOT_URL: "http://forgejo:3000/"
+      FORGEJO__server__HTTP_PORT: "3000"
+
+steps:
+  - name: smoke-init
+    image: debian:bookworm-slim
+    environment:
+      SMOKE_FORGE_URL: http://forgejo:3000
+    commands:
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends bash curl jq python3 git ca-certificates >/dev/null 2>&1
+      - bash tests/smoke-init.sh
