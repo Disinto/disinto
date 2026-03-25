@@ -168,6 +168,43 @@ if [ "${1:-}" = "exec" ]; then
       echo "New user '${username}' has been successfully created!"
       exit 0
     fi
+
+    if [ "$subcmd" = "change-password" ]; then
+      shift 4  # skip 'forgejo admin user change-password'
+      username="" password=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --username)             username="$2"; shift 2 ;;
+          --password)             password="$2"; shift 2 ;;
+          --must-change-password*) shift ;;
+          --config*)              shift ;;
+          *)                      shift ;;
+        esac
+      done
+
+      if [ -z "$username" ]; then
+        echo "mock-docker: change-password missing --username" >&2
+        exit 1
+      fi
+
+      # PATCH user via Forgejo admin API to clear must_change_password
+      patch_body="{\"must_change_password\":false,\"login_name\":\"${username}\",\"source_id\":0"
+      if [ -n "$password" ]; then
+        patch_body="${patch_body},\"password\":\"${password}\""
+      fi
+      patch_body="${patch_body}}"
+
+      if ! curl -sf -X PATCH \
+        -u "$BOOTSTRAP_CREDS" \
+        -H "Content-Type: application/json" \
+        "${FORGE_URL}/api/v1/admin/users/${username}" \
+        -d "${patch_body}" \
+        >/dev/null 2>&1; then
+        echo "mock-docker: failed to change-password for '${username}'" >&2
+        exit 1
+      fi
+      exit 0
+    fi
   fi
 
   echo "mock-docker: unhandled exec: $*" >&2
