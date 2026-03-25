@@ -345,10 +345,12 @@ Interpret this response and decide how to proceed."
         # Route message to exec session — spawn on demand if needed
         EXEC_PROJECT=$(awk -F'\t' -v id="$THREAD_ROOT" '$1 == id {print $5}' "$THREAD_MAP" 2>/dev/null || true)
         EXEC_PROJECT="${EXEC_PROJECT:-${PROJECT_NAME:-disinto}}"
+        EXEC_TOML="${FACTORY_ROOT}/projects/${EXEC_PROJECT}.toml"
+        [ -f "$EXEC_TOML" ] || EXEC_TOML=""
 
-        # Delegate entirely to exec-inject.sh (handles spawn + inject + capture + Matrix post)
-        bash "${FACTORY_ROOT}/exec/exec-inject.sh" "$SENDER" "$BODY" "$THREAD_ROOT" \
-          "${FACTORY_ROOT}/projects/${EXEC_PROJECT}.toml" >> "$LOGFILE" 2>&1 &
+        # Delegate to exec-inject.sh (handles spawn + inject + capture + Matrix post)
+        nohup bash "${FACTORY_ROOT}/exec/exec-inject.sh" "$SENDER" "$BODY" "$THREAD_ROOT" \
+          "$EXEC_TOML" >> "$LOGFILE" 2>&1 &
         log "exec message from ${SENDER} dispatched to exec-inject.sh"
 
         if ! grep -qF "$THREAD_ROOT" "$ACKED_FILE" 2>/dev/null; then

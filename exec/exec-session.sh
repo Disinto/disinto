@@ -178,14 +178,9 @@ PROJECT_REPO_ROOT=${PROJECT_REPO_ROOT}
 PRIMARY_BRANCH=${PRIMARY_BRANCH}
 PHASE_FILE=${PHASE_FILE}
 
-## Response format
-When responding to the executive, write your response between these markers:
-\`\`\`
----EXEC-RESPONSE-START---
-Your response here.
----EXEC-RESPONSE-END---
-\`\`\`
-This allows the output capture to extract and post your response to Matrix.
+## How this works
+You are in a persistent tmux session. Messages from the executive arrive via
+Matrix. Just respond naturally — your output is captured automatically.
 
 ## Phase protocol
 When the executive ends the conversation (says goodbye, done, etc.):
