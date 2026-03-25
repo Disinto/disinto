@@ -12,7 +12,8 @@
 #   Thread reply to [vault] message      → APPROVE/REJECT dispatched via vault-fire/vault-reject
 #   Thread reply to [action] message     → injected into action tmux session
 #
-# Run as systemd service (see matrix_listener.service) or manually:
+# In compose mode, started by docker/agents/entrypoint.sh as a background process.
+# On bare metal, run as systemd service (see matrix_listener.service) or manually:
 #   ./matrix_listener.sh
 
 set -euo pipefail
@@ -20,14 +21,19 @@ set -euo pipefail
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
 
-# Pidfile guard — prevent duplicate listener processes
+# Pidfile guard — prevent duplicate listener processes.
+# Inside a container the PID file from a previous run is stale (container
+# restart resets the PID namespace), so we only honour it when the recorded
+# PID is still alive.
 PIDFILE="/tmp/matrix-listener.pid"
 if [ -f "$PIDFILE" ]; then
-  OLD_PID=$(cat "$PIDFILE")
-  if kill -0 "$OLD_PID" 2>/dev/null; then
+  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "Listener already running (PID $OLD_PID)" >&2
     exit 0
   fi
+  # Stale pidfile (previous container run or crashed process) — remove it
+  rm -f "$PIDFILE"
 fi
 echo $$ > "$PIDFILE"
 trap 'rm -f "$PIDFILE"' EXIT

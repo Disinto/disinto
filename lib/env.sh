@@ -67,6 +67,18 @@ export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-}"
 export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 
+# Matrix homeserver: inside compose Dendrite is at http://dendrite:8008,
+# on bare metal it defaults to http://localhost:8008.
+if [ -z "${MATRIX_HOMESERVER:-}" ]; then
+  if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
+    export MATRIX_HOMESERVER="http://dendrite:8008"
+  else
+    export MATRIX_HOMESERVER="http://localhost:8008"
+  fi
+else
+  export MATRIX_HOMESERVER
+fi
+
 # Shared log helper
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
