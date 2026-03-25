@@ -1,3 +1,6 @@
+# Legacy systemd unit for bare-metal deployments (disinto init --bare).
+# In compose mode, the matrix listener runs inside the agent container
+# as a background process — see docker/agents/entrypoint.sh.
 [Unit]
 Description=Disinto Matrix Listener
 After=network.target dendrite.service
