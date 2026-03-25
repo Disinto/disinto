@@ -49,7 +49,21 @@ fi
 
 log "--- Exec session start ---"
 
-# ── Load character ──────────────────────────────────────────────────────
+# ── Load compass (required — lives outside the repo) ──────────────────
+# The compass is the agent's core identity. It cannot live in code because
+# code can be changed by the factory. The compass cannot.
+COMPASS_FILE="${EXEC_COMPASS:-}"
+if [ -z "$COMPASS_FILE" ] || [ ! -f "$COMPASS_FILE" ]; then
+  log "FATAL: EXEC_COMPASS not set or file not found (${COMPASS_FILE:-unset})"
+  log "The exec agent refuses to start without its compass."
+  log "Set EXEC_COMPASS=/path/to/compass.md in .env or .env.enc"
+  matrix_send "exec" "❌ Exec agent cannot start: compass file missing (EXEC_COMPASS not configured)" 2>/dev/null || true
+  exit 1
+fi
+COMPASS_BLOCK=$(cat "$COMPASS_FILE")
+log "compass loaded from ${COMPASS_FILE}"
+
+# ── Load character (voice, relationships — lives in the repo) ─────────
 CHARACTER_FILE="${EXEC_CHARACTER:-$SCRIPT_DIR/CHARACTER.md}"
 CHARACTER_BLOCK=""
 if [ -f "$CHARACTER_FILE" ]; then
@@ -58,6 +72,11 @@ else
   log "WARNING: CHARACTER.md not found at ${CHARACTER_FILE}"
   CHARACTER_BLOCK="(no character file found — use your best judgment)"
 fi
+
+# Merge: compass first (identity), then character (voice/relationships)
+CHARACTER_BLOCK="${COMPASS_BLOCK}
+
+${CHARACTER_BLOCK}"
 
 # ── Load factory context ────────────────────────────────────────────────
 CONTEXT_BLOCK=""

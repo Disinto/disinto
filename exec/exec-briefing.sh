@@ -43,12 +43,25 @@ check_memory 2000
 
 log "--- Exec briefing start ---"
 
-# ── Load character ──────────────────────────────────────────────────────
+# ── Load compass (required) ────────────────────────────────────────────
+COMPASS_FILE="${EXEC_COMPASS:-}"
+if [ -z "$COMPASS_FILE" ] || [ ! -f "$COMPASS_FILE" ]; then
+  log "FATAL: EXEC_COMPASS not set or file not found — exec agent refuses to start without its compass"
+  exit 1
+fi
+COMPASS_BLOCK=$(cat "$COMPASS_FILE")
+
+# ── Load character (voice/relationships from repo) ────────────────────
 CHARACTER_FILE="${EXEC_CHARACTER:-$SCRIPT_DIR/CHARACTER.md}"
 CHARACTER_BLOCK=""
 if [ -f "$CHARACTER_FILE" ]; then
   CHARACTER_BLOCK=$(cat "$CHARACTER_FILE")
 fi
+
+# Merge: compass first, then character
+CHARACTER_BLOCK="${COMPASS_BLOCK}
+
+${CHARACTER_BLOCK}"
 
 # ── Load memory ─────────────────────────────────────────────────────────
 MEMORY_BLOCK="(no previous memory)"

@@ -55,14 +55,23 @@ A daily briefing can be scheduled via cron (optional):
 **Session lifecycle**:
 1. Matrix message arrives tagged `[exec]` (or dispatched to exec)
 2. Listener checks for active `exec-${PROJECT_NAME}` tmux session
-3. If no session → spawn via `exec-session.sh` (loads CHARACTER.md, MEMORY.md,
-   factory state into prompt)
+3. If no session → spawn via `exec-session.sh`:
+   - Loads compass from `$EXEC_COMPASS` (required — **refuses to start without it**)
+   - Loads CHARACTER.md from repo (voice, relationships)
+   - Loads MEMORY.md, factory state into prompt
 4. Inject message into tmux session
 5. Claude responds → response captured and posted back to Matrix thread
 6. Session stays alive for `EXEC_SESSION_TTL` (default: 1h idle timeout)
 7. On session end → Claude updates MEMORY.md, session logged to journal
 
+**Compass separation**: The compass (identity, moral core) lives **outside the
+repo** at a path specified by `EXEC_COMPASS` in `.env` or `.env.enc`. This is
+intentional — the factory can modify CHARACTER.md (voice, relationships) via
+PRs, but it cannot modify the compass. The executive controls the compass
+directly, like a secret.
+
 **Environment variables consumed**:
+- `EXEC_COMPASS` — **Required.** Path to the compass file (identity, moral core). Lives outside the repo. Agent refuses to start without it.
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Required (exec is Matrix-native)
