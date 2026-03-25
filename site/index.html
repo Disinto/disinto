@@ -657,12 +657,18 @@
     </div>
 
     <div class="section">
-      <h2>One VPS, one repo, one battery</h2>
+      <h2>One command, one stack, one battery</h2>
       <p>
-        <strong>Bash scripts and Claude.</strong> No Kubernetes, no microservices,
-        no SaaS dependencies. Runs on an 8GB VPS.
-        Point it at a <strong>forge repo</strong> with a
-        <strong>Woodpecker CI</strong> pipeline and it starts building.
+        <strong>Built-in Forgejo + Woodpecker CI.</strong> No external forge,
+        no CI setup, no SaaS dependencies. Two commands on an 8GB VPS:
+      </p>
+      <p>
+        <code>disinto init user/repo</code> &rarr; <code>disinto up</code>
+      </p>
+      <p>
+        The stack ships with a <strong>local Forgejo</strong> git forge and
+        <strong>pre-configured Woodpecker CI</strong> — or connect to your
+        existing Codeberg repo if you prefer.
       </p>
       <p>
         <strong>Built for web apps and crypto projects.</strong>
@@ -706,7 +712,7 @@
         <a href="/dashboard">dashboard</a>
       </div>
       <div class="under-hood">
-        Under the hood: dev, review, planner, gardener, supervisor, predictor, action, vault — eight agents orchestrated by cron and bash.
+        Under the hood: dev, review, planner, gardener, supervisor, predictor, action, vault, exec — nine agents orchestrated by cron and bash.
       </div>
     </div>
 

@@ -328,9 +328,7 @@
       <div class="label">Prerequisites</div>
       <ul>
         <li><strong>A VPS or server</strong> &mdash; 8 GB RAM minimum (Ubuntu/Debian recommended)</li>
-        <li><strong>A forge instance</strong> &mdash; with a repo and at least one issue</li>
-        <li><strong>A second forge instance</strong> &mdash; for the review bot (branch protection requires a different reviewer)</li>
-        <li><strong>Woodpecker CI</strong> &mdash; running and connected to your repo</li>
+        <li><strong>Docker + Docker Compose</strong> &mdash; the stack runs as containers (Forgejo + Woodpecker CI included)</li>
         <li><strong>An Anthropic API key</strong> &mdash; with the <code>claude</code> CLI installed and authenticated</li>
         <li><strong>tmux</strong> &mdash; for persistent dev sessions</li>
       </ul>
@@ -340,23 +338,13 @@
     <div class="section">
       <div class="step-header">
         <span class="step-num">1</span>
-        Clone the factory
+        Clone disinto
       </div>
-      <p>Clone disinto onto your server. This is the factory &mdash; the code that runs your agents.</p>
-<pre><code>git clone http://localhost:3000/johba/disinto.git ~/disinto
+      <p>Clone the factory onto your server and configure your API key.</p>
+<pre><code>git clone https://codeberg.org/johba/disinto.git ~/disinto
 cd ~/disinto
-cp .env.example .env</code></pre>
-      <p>Edit <code>.env</code> with your tokens:</p>
-<pre><code><span class="comment"># Required</span>
-FORGE_TOKEN=your_codeberg_token
-FORGE_REVIEW_TOKEN=your_review_bot_token
-
-<span class="comment"># Woodpecker CI</span>
-WOODPECKER_TOKEN=your_woodpecker_token
-WOODPECKER_SERVER=http://localhost:8000
-
-<span class="comment"># Timeouts</span>
-CLAUDE_TIMEOUT=7200</code></pre>
+cp .env.example .env
+<span class="comment"># Edit .env with your Anthropic API key</span></code></pre>
     </div>
 
     <!-- Step 2: Initialize your project -->
@@ -365,8 +353,9 @@ CLAUDE_TIMEOUT=7200</code></pre>
         <span class="step-num">2</span>
         Initialize your project
       </div>
-      <p><code>disinto init</code> provisions a local Forgejo instance, clones the repo, creates the project config, adds labels, and installs cron jobs.</p>
-<pre><code>bin/disinto init http://localhost:3000/you/your-project</code></pre>
+      <p><code>disinto init</code> starts the full stack (Forgejo + Woodpecker CI), creates your repo, clones it locally, generates the project config, adds labels, and installs cron jobs &mdash; all in one command.</p>
+<pre><code>bin/disinto init user/your-project</code></pre>
+      <p>Use <code>disinto up</code> / <code>disinto down</code> later to restart or stop the stack.</p>
       <div class="expected">
         <div class="label">Expected output</div>
 <code>=== disinto init ===
@@ -402,12 +391,12 @@ Done. Project your-project is ready.</code>
         <span class="step-num">3</span>
         Prepare your repo
       </div>
-      <p>Your project needs three things before agents can work on it:</p>
+      <p>Your project needs two things before agents can work on it:</p>
       <ol>
         <li><strong>A CI pipeline</strong> &mdash; at least one <code>.woodpecker/*.yml</code> file. Agents wait for CI before reviewing or merging.</li>
         <li><strong>A CLAUDE.md</strong> &mdash; project context that agents read before every task. Describe your tech stack, how to build/test, coding conventions, and directory layout.</li>
-        <li><strong>Branch protection</strong> &mdash; on Forgejo, require PR reviews and add the review bot as a write collaborator.</li>
       </ol>
+      <p>Branch protection and the review bot are pre-configured on the built-in Forgejo. If you're connecting to an external forge, set those up manually.</p>
 <pre><code><span class="comment"># Create CLAUDE.md in your project</span>
 cat > ~/your-project/CLAUDE.md &lt;&lt;'EOF'
 # Your Project
