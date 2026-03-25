@@ -213,7 +213,8 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ./:/home/agent/disinto:ro
-      - claude-auth:/home/agent/.claude:ro
+      - ${HOME}/.claude:/home/agent/.claude:ro
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
     environment:
       FORGE_URL: http://forgejo:3000
@@ -235,7 +236,6 @@ volumes:
   dendrite-data:
   agent-data:
   project-repos:
-  claude-auth:
 
 networks:
   disinto-net:
