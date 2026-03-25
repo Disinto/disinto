@@ -297,7 +297,7 @@ create_agent_session() {
   local lock_dir="${HOME}/.claude"
   mkdir -p "$lock_dir"
   local claude_lock="${lock_dir}/session.lock"
-  local claude_cmd="flock -n ${claude_lock} claude --dangerously-skip-permissions ${model_flag}"
+  local claude_cmd="flock -w 300 '${claude_lock}' claude --dangerously-skip-permissions ${model_flag}"
 
   tmux new-session -d -s "$session" -c "$workdir" \
     "$claude_cmd" 2>/dev/null
