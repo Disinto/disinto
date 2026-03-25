@@ -79,19 +79,14 @@ Draft the content that a human will copy-paste onto {{platform}}.
 4. The draft MUST be ready to use with zero editing — the human should only
    need to copy-paste. No placeholders like [INSERT X HERE].
 
-5. Store the drafted content in environment variables for the next step:
-     DRAFT_TARGET="<target destination, e.g. r/autonomousAI>"
-     DRAFT_TITLE="<title if applicable>"
-     DRAFT_BODY="<body content>"
-     SLUG="<url-safe slug derived from title, e.g. ai-agent-factory>"
-
-   Write these to a temp file for the next step:
-     cat > /tmp/rent-a-human-draft.env << 'DRAFTEOF'
-     DRAFT_TARGET=<value>
-     DRAFT_TITLE=<value>
-     DRAFT_BODY=<value>
-     SLUG=<value>
-     DRAFTEOF
+5. Store the drafted content as JSON (handles multi-line bodies safely):
+     jq -n \
+       --arg target "<target destination, e.g. r/autonomousAI>" \
+       --arg title  "<title if applicable>" \
+       --arg body   "<body content — may be multi-line>" \
+       --arg slug   "<url-safe slug derived from title, e.g. ai-agent-factory>" \
+       '{target: $target, title: $title, body: $body, slug: $slug}' \
+       > /tmp/rent-a-human-draft.json
 """
 
 [[steps]]
@@ -99,10 +94,13 @@ id    = "write-draft"
 title = "Write draft file to vault/outreach"
 needs = ["draft-content"]
 description = """
-Write the drafted content to the outreach directory.
+Write the drafted content to the outreach directory, commit, and push.
 
-1. Read the draft from the temp file:
-     source /tmp/rent-a-human-draft.env
+1. Read the draft from the JSON temp file:
+     DRAFT_TARGET=$(jq -r '.target' /tmp/rent-a-human-draft.json)
+     DRAFT_TITLE=$(jq -r '.title' /tmp/rent-a-human-draft.json)
+     DRAFT_BODY=$(jq -r '.body' /tmp/rent-a-human-draft.json)
+     SLUG=$(jq -r '.slug' /tmp/rent-a-human-draft.json)
 
 2. Create the output directory:
      DRAFT_DIR="${PROJECT_REPO_ROOT}/vault/outreach/{{platform}}/drafts"
@@ -132,16 +130,22 @@ Write the drafted content to the outreach directory.
 5. Verify the file was written:
      cat "$DRAFT_FILE"
 
-6. Stage and commit the draft:
+6. Create a branch, commit, and push the draft (AD-003: worktree is
+   destroyed after completion — unpushed work is lost):
      cd "$PROJECT_REPO_ROOT"
+     BRANCH="chore/rent-a-human-$(date -u +%Y%m%d-%H%M)"
+     git checkout -B "$BRANCH"
      git add "$DRAFT_FILE"
+     git commit -m "chore: rent-a-human draft — {{platform}} {{action_type}}"
+     git push -u "${FORGE_REMOTE:-origin}" "$BRANCH"
 
-7. Save the file path and title for the notification step:
+7. Save the file path, title, and branch for the notification step:
      echo "$DRAFT_FILE" > /tmp/rent-a-human-path
      echo "$DRAFT_TITLE" > /tmp/rent-a-human-title
+     echo "$BRANCH" > /tmp/rent-a-human-branch
 
-8. Clean up the temp env file:
-     rm -f /tmp/rent-a-human-draft.env
+8. Clean up the temp JSON file:
+     rm -f /tmp/rent-a-human-draft.json
 """
 
 [[steps]]
@@ -149,33 +153,41 @@ id    = "notify-human"
 title = "Notify human via Matrix"
 needs = ["write-draft"]
 description = """
-Send a Matrix notification so the human knows a draft is ready.
+Notify the human, create a PR, and hand off to the orchestrator for CI.
 
 1. Read saved state:
      DRAFT_FILE=$(cat /tmp/rent-a-human-path)
      DRAFT_TITLE=$(cat /tmp/rent-a-human-title)
+     BRANCH=$(cat /tmp/rent-a-human-branch)
 
-2. Send the notification:
+2. Send the Matrix notification:
      source "$FACTORY_ROOT/lib/env.sh"
      matrix_send "rent-a-human" "New {{platform}} {{action_type}} draft ready: ${DRAFT_TITLE}"
 
-3. Post a summary comment on the action issue:
+3. Create a PR for the draft:
+     PR_RESPONSE=$(curl -sf -X POST \
+       -H "Authorization: token ${FORGE_TOKEN}" \
+       -H "Content-Type: application/json" \
+       "${FORGE_API}/pulls" \
+       -d "{\"title\":\"chore: rent-a-human — {{platform}} {{action_type}} draft\",
+            \"head\":\"${BRANCH}\",\"base\":\"${PRIMARY_BRANCH}\",
+            \"body\":\"Rent-a-Human draft for {{platform}} ({{action_type}}).\\n\\nDraft file: \`${DRAFT_FILE}\`\\n\\nHuman: after merge, copy-paste the content from the draft file, then change \`status: DRAFT\` to \`status: POSTED\`.\"}")
+     PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
+
+4. Post a summary comment on the action issue:
      curl -sf -X POST \
        -H "Authorization: token ${FORGE_TOKEN}" \
        -H 'Content-Type: application/json' \
        "${FORGE_API}/issues/${ISSUE}/comments" \
-       -d "{\"body\": \"Draft written to \`${DRAFT_FILE}\`\\n\\nHuman: copy-paste the content, then change \`status: DRAFT\` to \`status: POSTED\` in the file.\"}"
+       -d "{\"body\": \"Draft written to \`${DRAFT_FILE}\` — PR #${PR_NUMBER}\\n\\nHuman: after merge, copy-paste the content, then change \`status: DRAFT\` to \`status: POSTED\`.\"}"
 
-4. Clean up temp files:
-     rm -f /tmp/rent-a-human-path /tmp/rent-a-human-title
+5. Clean up temp files:
+     rm -f /tmp/rent-a-human-path /tmp/rent-a-human-title /tmp/rent-a-human-branch
 
-5. Close the action issue:
-     curl -sf -X PATCH \
-       -H "Authorization: token ${FORGE_TOKEN}" \
-       -H 'Content-Type: application/json' \
-       "${FORGE_API}/issues/${ISSUE}" \
-       -d '{"state": "closed"}'
+6. Signal the orchestrator to monitor CI (do NOT write PHASE:done — the
+   orchestrator handles PR lifecycle, CI monitoring, and review injection):
+     echo "PHASE:awaiting_ci" > "$PHASE_FILE"
 
-6. Signal completion:
-     echo 'PHASE:done' > "$PHASE_FILE"
+7. STOP and WAIT. The orchestrator polls CI, injects results and review
+   feedback. When you receive injected feedback, follow its instructions.
 """
