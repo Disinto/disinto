@@ -674,6 +674,12 @@ push_to_forge() {
   fi
   echo "Remote:  forgejo -> ${display_url}"
 
+  # Skip push if local repo has no commits (e.g. cloned from empty Forgejo repo)
+  if ! git -C "$repo_root" rev-parse HEAD >/dev/null 2>&1; then
+    echo "Push:    skipped (local repo has no commits)"
+    return 0
+  fi
+
   # Push all branches and tags
   echo "Pushing: branches to forgejo"
   if ! git -C "$repo_root" push forgejo --all 2>&1; then
