@@ -152,6 +152,27 @@ fi
 
 log "Issue: ${ISSUE_TITLE}"
 
+# --- Dependency check (skip before spawning Claude) ---
+DEPS=$(printf '%s' "$ISSUE_BODY" | bash "${FACTORY_ROOT}/lib/parse-deps.sh")
+if [ -n "$DEPS" ]; then
+  ALL_MET=true
+  while IFS= read -r dep; do
+    [ -z "$dep" ] && continue
+    DEP_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${dep}" | jq -r '.state // "open"') || DEP_STATE="open"
+    if [ "$DEP_STATE" != "closed" ]; then
+      log "SKIP: dependency #${dep} still open — not spawning session"
+      ALL_MET=false
+      break
+    fi
+  done <<< "$DEPS"
+  if [ "$ALL_MET" = false ]; then
+    rm -f "$LOCKFILE"
+    exit 0
+  fi
+  log "all dependencies met"
+fi
+
 # --- Extract model from YAML front matter (if present) ---
 YAML_MODEL=$(printf '%s' "$ISSUE_BODY" | \
   sed -n '/^---$/,/^---$/p' | grep '^model:' | awk '{print $2}' | tr -d '"' || true)
