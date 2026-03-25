@@ -51,17 +51,7 @@ load_formula "$FACTORY_ROOT/formulas/run-predictor.toml"
 build_context_block AGENTS.md RESOURCES.md VISION.md planner/prerequisite-tree.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
-GRAPH_REPORT="/tmp/${PROJECT_NAME}-graph-report.json"
-GRAPH_SECTION=""
-if python3 "$FACTORY_ROOT/lib/build-graph.py" \
-     --project-root "$PROJECT_REPO_ROOT" \
-     --output "$GRAPH_REPORT" 2>>"$LOG_FILE"; then
-  GRAPH_SECTION=$(printf '\n## Structural analysis\n```json\n%s\n```\n' \
-    "$(cat "$GRAPH_REPORT")")
-  log "graph report generated: $(jq -r '.stats | "\(.nodes) nodes, \(.edges) edges"' "$GRAPH_REPORT")"
-else
-  log "WARN: build-graph.py failed — continuing without structural analysis"
-fi
+build_graph_section
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")

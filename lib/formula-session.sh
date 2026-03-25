@@ -205,6 +205,28 @@ read_scratch_context() {
   fi
 }
 
+# ── Graph report helper ───────────────────────────────────────────────────
+
+# build_graph_section
+# Runs build-graph.py and sets GRAPH_SECTION to a markdown block containing
+# the JSON report.  Sets GRAPH_SECTION="" on failure (non-fatal).
+# Requires globals: PROJECT_NAME, FACTORY_ROOT, PROJECT_REPO_ROOT, LOG_FILE.
+build_graph_section() {
+  local report="/tmp/${PROJECT_NAME}-graph-report.json"
+  # shellcheck disable=SC2034  # consumed by the calling script's PROMPT
+  GRAPH_SECTION=""
+  if python3 "$FACTORY_ROOT/lib/build-graph.py" \
+       --project-root "$PROJECT_REPO_ROOT" \
+       --output "$report" 2>>"$LOG_FILE"; then
+    # shellcheck disable=SC2034
+    GRAPH_SECTION=$(printf '\n## Structural analysis\n```json\n%s\n```\n' \
+      "$(cat "$report")")
+    log "graph report generated: $(jq -r '.stats | "\(.nodes) nodes, \(.edges) edges"' "$report")"
+  else
+    log "WARN: build-graph.py failed — continuing without structural analysis"
+  fi
+}
+
 # ── Prompt + monitor helpers ──────────────────────────────────────────────
 
 # build_prompt_footer [EXTRA_API_LINES]
