@@ -1032,7 +1032,14 @@ setup_matrix() {
   for var_line in "${matrix_vars[@]}"; do
     local var_name="${var_line%%=*}"
     if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${var_name}=.*|${var_line}|" "$env_file"
+      # Use Python to avoid sed delimiter collisions with opaque tokens
+      python3 -c "
+import sys, re, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+text = re.sub(r'^' + re.escape(sys.argv[2]) + r'=.*$', sys.argv[3], text, flags=re.MULTILINE)
+p.write_text(text)
+" "$env_file" "$var_name" "$var_line"
     else
       printf '%s\n' "$var_line" >> "$env_file"
     fi
@@ -1216,9 +1223,6 @@ p.write_text(text)
     fi
   fi
 
-  # Provision Matrix homeserver (compose mode only)
-  setup_matrix
-
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
 
@@ -1255,6 +1259,9 @@ p.write_text(text)
     echo "── Starting full stack ────────────────────────────────"
     docker compose -f "${FACTORY_ROOT}/docker-compose.yml" up -d
     echo "Stack:   running (forgejo + woodpecker + dendrite + agents)"
+
+    # Provision Matrix now that Dendrite is running
+    setup_matrix
   fi
 
   echo ""

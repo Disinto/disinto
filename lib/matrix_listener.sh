@@ -12,7 +12,8 @@
 #   Thread reply to [vault] message      → APPROVE/REJECT dispatched via vault-fire/vault-reject
 #   Thread reply to [action] message     → injected into action tmux session
 #
-# Run as systemd service (see matrix_listener.service) or manually:
+# In compose mode, started by docker/agents/entrypoint.sh as a background process.
+# On bare metal, run as systemd service (see matrix_listener.service) or manually:
 #   ./matrix_listener.sh
 
 set -euo pipefail
