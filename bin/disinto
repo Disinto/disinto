@@ -456,10 +456,11 @@ setup_forge() {
       fi
     fi
 
-    # Generate token via API (using admin credentials for the bot)
+    # Generate token via API (basic auth as the bot user — Forgejo requires
+    # basic auth on POST /users/{username}/tokens, token auth is rejected)
     local token
     token=$(curl -sf -X POST \
-      -H "Authorization: token ${admin_token}" \
+      -u "${bot_user}:${bot_pass}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/users/${bot_user}/tokens" \
       -d "{\"name\":\"disinto-${bot_user}-token\",\"scopes\":[\"all\"]}" 2>/dev/null \
@@ -468,7 +469,7 @@ setup_forge() {
     if [ -z "$token" ]; then
       # Token name collision — create with timestamp suffix
       token=$(curl -sf -X POST \
-        -H "Authorization: token ${admin_token}" \
+        -u "${bot_user}:${bot_pass}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/users/${bot_user}/tokens" \
         -d "{\"name\":\"disinto-${bot_user}-$(date +%s)\",\"scopes\":[\"all\"]}" 2>/dev/null \
