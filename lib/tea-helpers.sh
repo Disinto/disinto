@@ -55,7 +55,7 @@ tea_relabel() {
   local IFS=','
   local labels="$*"
 
-  tea issues labels "$issue_num" --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+  tea issues edit "$issue_num" --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
     --labels "$labels"
 }
 
