@@ -103,6 +103,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/guard.sh            — sourced by all cron entry points (check_active)
 #
 # Excluded — not sourced inline by agents:
+#   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
 #   lib/ci-debug.sh         — standalone CLI tool, run directly (not sourced)
 #   lib/matrix_listener.sh  — standalone systemd daemon (not sourced)
 #   lib/parse-deps.sh       — executed via `bash lib/parse-deps.sh` (not sourced)
@@ -124,7 +125,7 @@ KNOWN_CMDS=(
   false 'fi' find flock for getopts git grep gzip gunzip head hash
   'if' jq kill local ln ls mapfile mkdir mktemp mv nc pgrep printf
   python3 python read readarray return rm sed set sh shift sleep
-  sort source stat tail tar test 'then' tmux touch tr trap true type
+  sort source stat tail tar tea test 'then' tmux touch tr trap true type
   unset until wait wc while which xargs
 )
 
@@ -179,6 +180,7 @@ check_script lib/agent-session.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
 check_script lib/file-action-issue.sh   lib/secret-scan.sh
+check_script lib/tea-helpers.sh         lib/secret-scan.sh
 check_script lib/formula-session.sh     lib/agent-session.sh
 check_script lib/load-project.sh
 check_script lib/mirrors.sh

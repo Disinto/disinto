@@ -148,27 +148,27 @@ For each weakness you identify, choose one:
   Valid outcome. Not every run needs to produce a prediction.
   But if you skip, write a brief note to your scratch file about why.
 
-## Filing
+## Filing (use tea CLI — labels by name, no ID lookup needed)
 
-1. Look up label IDs:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/labels" | jq '[.[] | select(.name | startswith("prediction")) | {name, id}]'
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/labels" | jq '.[] | select(.name == "action") | .id'
+tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
 
-2. File predictions:
-     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-       -H "Content-Type: application/json" \
-       "$FORGE_API/issues" \
-       -d '{"title":"<title>","body":"<body>","labels":[<prediction_unreviewed_id>]}'
+1. File predictions (labels by name, no ID lookup):
+     tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+       --title "<title>" --body "<body>" --labels "prediction/unreviewed"
 
-3. File action dispatches (if exploiting):
-     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-       -H "Content-Type: application/json" \
-       "$FORGE_API/issues" \
-       -d '{"title":"action: test prediction #NNN — <formula> <focus>","body":"<body>","labels":[<action_label_id>]}'
+2. File action dispatches (if exploiting):
+     tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+       --title "action: test prediction #NNN — <formula> <focus>" \
+       --body "<body>" --labels "action"
 
-4. Do NOT duplicate existing open predictions. If your theory matches
+3. Close superseded predictions:
+     tea issues close <number> --login "$TEA_LOGIN" --repo "$FORGE_REPO"
+
+4. Add a comment when closing (optional):
+     tea comment create <number> --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+       --body "Superseded by #NNN"
+
+5. Do NOT duplicate existing open predictions. If your theory matches
    an open prediction/unreviewed or prediction/backlog issue, skip it.
 
 ## Rules
