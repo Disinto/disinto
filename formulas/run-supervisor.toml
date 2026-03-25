@@ -28,9 +28,12 @@ The pre-flight metrics have already been collected by supervisor/preflight.sh
 and injected into your prompt above. Review them now.
 
 1. Read the injected metrics data carefully (System Resources, Docker,
-   Active Sessions, Phase Files, Lock Files, Agent Logs, CI Pipelines,
-   Open PRs, Issue Status, Stale Worktrees, Pending Escalations,
+   Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
+   CI Pipelines, Open PRs, Issue Status, Stale Worktrees, Pending Escalations,
    Escalation Replies).
+   Note: preflight.sh auto-removes PHASE:escalate files for closed issues
+   (24h grace period). Check the "Stale Phase Cleanup" section for any
+   files cleaned or in grace period this run.
 
 2. If there are escalation replies from Matrix (human messages), note them —
    you will act on them in the decide-actions step.
@@ -68,6 +71,8 @@ Categorize every finding from the metrics into priority levels.
 - Pipeline stalled: backlog issues exist but no agent ran for > 20min
 - Dev-agent blocked: last N polls all report "no ready issues"
 - Dev/action sessions in PHASE:escalate for > 24h (escalation timeout)
+  (Note: PHASE:escalate files for closed issues are auto-cleaned by preflight;
+  this check covers escalations where the issue is still open)
 
 ### P3 — Factory degraded
 - PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed
@@ -118,6 +123,10 @@ For each finding from the health assessment, decide and execute an action.
 **P2 Wrong branch:**
   cd "$PROJECT_REPO_ROOT"
   git checkout "$PRIMARY_BRANCH" 2>/dev/null
+
+**P4 Stale PHASE:escalate files (closed issues):**
+  Already handled by preflight.sh auto-cleanup. Check "Stale Phase Cleanup"
+  in the metrics for results. Log any cleanups in the journal.
 
 **P4 Stale worktrees:**
   git -C "$PROJECT_REPO_ROOT" worktree remove --force /tmp/stale-worktree 2>/dev/null

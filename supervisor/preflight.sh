@@ -68,6 +68,52 @@ done
 [ "$_found_phase" = false ] && echo "  None"
 echo ""
 
+# ── Stale Phase Cleanup ─────────────────────────────────────────────────
+# Auto-remove PHASE:escalate files whose parent issue/PR is confirmed closed.
+# Grace period: 24h after issue closure to avoid race conditions.
+
+echo "## Stale Phase Cleanup"
+_cleaned_any=false
+for _pf in /tmp/*-session-*.phase; do
+  [ -f "$_pf" ] || continue
+  _phase_line=$(head -1 "$_pf" 2>/dev/null || echo "")
+  # Only target PHASE:escalate files
+  case "$_phase_line" in
+    PHASE:escalate*) ;;
+    *) continue ;;
+  esac
+  # Extract issue number: *-session-{PROJECT_NAME}-{number}.phase
+  _base=$(basename "$_pf" .phase)
+  if [[ "$_base" =~ -session-${PROJECT_NAME}-([0-9]+)$ ]]; then
+    _issue_num="${BASH_REMATCH[1]}"
+  else
+    continue
+  fi
+  # Query Forge for issue/PR state
+  _issue_json=$(forge_api GET "/issues/${_issue_num}" 2>/dev/null || echo "")
+  [ -n "$_issue_json" ] || continue
+  _state=$(printf '%s' "$_issue_json" | jq -r '.state // empty' 2>/dev/null)
+  [ "$_state" = "closed" ] || continue
+  # Enforce 24h grace period after closure
+  _closed_at=$(printf '%s' "$_issue_json" | jq -r '.closed_at // empty' 2>/dev/null)
+  [ -n "$_closed_at" ] || continue
+  _closed_epoch=$(date -d "$_closed_at" +%s 2>/dev/null || echo 0)
+  _now=$(date +%s)
+  _elapsed=$(( _now - _closed_epoch ))
+  if [ "$_elapsed" -gt 86400 ]; then
+    rm -f "$_pf"
+    echo "  Cleaned: $(basename "$_pf") — issue #${_issue_num} closed at ${_closed_at}"
+    _cleaned_any=true
+  else
+    _remaining_h=$(( (86400 - _elapsed) / 3600 ))
+    echo "  Grace: $(basename "$_pf") — issue #${_issue_num} closed, ${_remaining_h}h remaining"
+  fi
+done
+if [ "$_cleaned_any" = false ]; then
+  echo "  None"
+fi
+echo ""
+
 # ── Lock Files ────────────────────────────────────────────────────────────
 
 echo "## Lock Files"
