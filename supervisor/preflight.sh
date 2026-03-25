@@ -73,7 +73,7 @@ echo ""
 # Grace period: 24h after issue closure to avoid race conditions.
 
 echo "## Stale Phase Cleanup"
-_cleaned_any=false
+_found_stale=false
 for _pf in /tmp/*-session-*.phase; do
   [ -f "$_pf" ] || continue
   _phase_line=$(head -1 "$_pf" 2>/dev/null || echo "")
@@ -94,6 +94,7 @@ for _pf in /tmp/*-session-*.phase; do
   [ -n "$_issue_json" ] || continue
   _state=$(printf '%s' "$_issue_json" | jq -r '.state // empty' 2>/dev/null)
   [ "$_state" = "closed" ] || continue
+  _found_stale=true
   # Enforce 24h grace period after closure
   _closed_at=$(printf '%s' "$_issue_json" | jq -r '.closed_at // empty' 2>/dev/null)
   [ -n "$_closed_at" ] || continue
@@ -103,15 +104,12 @@ for _pf in /tmp/*-session-*.phase; do
   if [ "$_elapsed" -gt 86400 ]; then
     rm -f "$_pf"
     echo "  Cleaned: $(basename "$_pf") — issue #${_issue_num} closed at ${_closed_at}"
-    _cleaned_any=true
   else
     _remaining_h=$(( (86400 - _elapsed) / 3600 ))
     echo "  Grace: $(basename "$_pf") — issue #${_issue_num} closed, ${_remaining_h}h remaining"
   fi
 done
-if [ "$_cleaned_any" = false ]; then
-  echo "  None"
-fi
+[ "$_found_stale" = false ] && echo "  None"
 echo ""
 
 # ── Lock Files ────────────────────────────────────────────────────────────
