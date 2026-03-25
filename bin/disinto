@@ -865,8 +865,20 @@ create_labels() {
   )
 
   echo "Creating labels on ${repo}..."
+
+  # Fetch existing labels so we can skip duplicates
+  local existing
+  existing=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/labels?limit=50" 2>/dev/null \
+    | grep -o '"name":"[^"]*"' | cut -d'"' -f4) || existing=""
+
   local name color
   for name in backlog in-progress blocked tech-debt underspecified vision action; do
+    if echo "$existing" | grep -qx "$name"; then
+      echo "  . ${name} (already exists)"
+      continue
+    fi
     color="${labels[$name]}"
     if curl -sf -X POST \
       -H "Authorization: token ${FORGE_TOKEN}" \
@@ -875,7 +887,7 @@ create_labels() {
       -d "{\"name\":\"${name}\",\"color\":\"${color}\"}" >/dev/null 2>&1; then
       echo "  + ${name}"
     else
-      echo "  . ${name} (already exists)"
+      echo "  ! ${name} (failed to create)"
     fi
   done
 }
