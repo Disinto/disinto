@@ -15,6 +15,7 @@ check_active() {
   local agent_name="$1"
   local state_file="${FACTORY_ROOT}/state/.${agent_name}-active"
   if [ ! -f "$state_file" ]; then
+    echo "[check_active] SKIP: state file state/.${agent_name}-active not found — agent disabled" >&2
     log "${agent_name} not active — skipping"
     exit 0
   fi
