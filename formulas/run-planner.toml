@@ -1,35 +1,33 @@
-# formulas/run-planner.toml — Strategic planning formula (v3: Prerequisite Tree)
+# formulas/run-planner.toml — Strategic planning formula (v4: graph-driven)
 #
 # Executed directly by planner-run.sh via cron — no action issues.
 # planner-run.sh creates a tmux session with Claude (opus) and injects
-# this formula as context. Claude executes all steps autonomously.
+# this formula as context, plus the graph report from build-graph.py.
 #
-# Steps: preflight → prediction-triage → update-prerequisite-tree
-#        → file-at-constraints → journal-and-memory → commit-and-pr
+# Steps: preflight → triage-and-plan → journal-and-commit
 #
-# Core change from v2: replaces gap-analysis-and-spray with a constraint-
-# focused executive using a Prerequisite Tree (Theory of Constraints).
-# Issues are only filed at the top 5 unresolved constraints — everything
-# beyond the bottleneck exists in the tree but NOT as issues.
+# v4 changes from v3:
+#   - Graph report (orphans, cycles, thin objectives, bottlenecks) replaces
+#     manual repo scanning and hardcoded constraint patterns.
+#   - tea CLI helpers replace inline curl commands.
+#   - 3 steps instead of 6.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
 # All git writes (tree, journal, memory) happen in one commit at the end.
 
 name        = "run-planner"
-description = "Planner v3: prerequisite tree + resource-aware constraint executive"
-version     = 3
+description = "Planner v4: graph-driven planning with tea helpers"
+version     = 4
 model       = "opus"
 
 [context]
 files = ["VISION.md", "AGENTS.md", "RESOURCES.md", "planner/prerequisite-tree.md"]
-# Recent planner/journal/*.md files are loaded by planner-run.sh (last 5 entries)
+# Recent planner/journal/*.md files + graph report loaded by planner-run.sh
 
 [[steps]]
 id    = "preflight"
-title = "Pull latest code and load planner memory"
+title = "Pull latest code, run graph, load context"
 description = """
-Set up the working environment for this planning run.
-
 1. Change to the project repository:
      cd "$PROJECT_REPO_ROOT"
 
@@ -44,605 +42,202 @@ Set up the working environment for this planning run.
 
 4. Read the planner memory file at: $PROJECT_REPO_ROOT/planner/MEMORY.md
    If it does not exist, this is the first planning run.
-   Keep this memory context in mind for all subsequent steps.
 
 5. Read the prerequisite tree at: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
-   If it does not exist, create an initial tree from VISION.md in the
-   update-prerequisite-tree step.
+   If it does not exist, create an initial tree from VISION.md in the next step.
+
+6. Read the graph report injected into the prompt (## Structural analysis).
+   This JSON contains: orphans, cycles, disconnected clusters, thin_objectives,
+   bottlenecks (by betweenness centrality). Use it instead of manual file scanning.
 """
 
 [[steps]]
-id    = "prediction-triage"
-title = "Triage prediction/unreviewed issues"
+id    = "triage-and-plan"
+title = "Triage predictions, update tree, file at constraints"
 description = """
-Triage prediction issues filed by the predictor (goblin).
-Evidence from the preflight step informs whether each prediction is valid
-(e.g. "red-team stale since March 12" is confirmed by evidence/ timestamps).
+One unified step replacing the former prediction-triage, update-prerequisite-tree,
+and file-at-constraints steps.
+
+### Part A: Triage predictions
 
 1. Fetch unreviewed predictions:
      curl -sf -H "Authorization: token $FORGE_TOKEN" \
        "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+   If none, skip to Part B.
 
-   If there are none, note that and skip to step 3b (label resolution
-   is still required — the file-at-constraints step needs label IDs).
-
-2. Read available formulas:
-   - Factory formulas: $FACTORY_ROOT/formulas/*.toml
-   - Project formulas: $PROJECT_REPO_ROOT/formulas/*.toml
-   Project formulas are dispatched via action issues on the project repo.
-
-3. Fetch all open issues to check for overlap:
+2. Fetch all open issues (for overlap check):
      curl -sf -H "Authorization: token $FORGE_TOKEN" \
        "$FORGE_API/issues?state=open&type=issues&limit=50"
 
-3b. Resolve label IDs needed for triage AND filing (fetch via $FORGE_API/labels).
-    ALWAYS execute this step, even if there are no predictions to triage —
-    the file-at-constraints step depends on these IDs:
-    - <unreviewed_label_id>        → prediction/unreviewed
-    - <prediction_backlog_label_id> → prediction/backlog
-    - <actioned_label_id>          → prediction/actioned (create if missing,
-      color #c2e0c6, description "Prediction triaged by planner")
-    - <backlog_label_id>           → backlog
-    - <action_label_id>            → action
-    - <priority_label_id>          → priority (create if missing,
-      color #d4c5f9, description "Queue priority — picked before plain backlog")
-    These are DISTINCT labels — do not reuse IDs across them.
+3. Read available formulas: $FACTORY_ROOT/formulas/*.toml and $PROJECT_REPO_ROOT/formulas/*.toml
 
-4. For each prediction, read the title and body. Choose one action:
+4. For each prediction, choose one action:
+   - PROMOTE_ACTION: maps to a formula -> create action issue, close prediction
+   - PROMOTE_BACKLOG: warrants dev work -> create backlog issue, close prediction
+   - WATCH: not urgent -> comment why, relabel to prediction/backlog, keep open
+   - DISMISS: noise or covered -> comment reasoning, close prediction
 
-   - PROMOTE_ACTION: maps to an available formula → create an action issue
-     with YAML front matter referencing the formula name and vars.
-     Relabel prediction/unreviewed → prediction/actioned, then close
-     with comment "Actioned as #NNN — <reasoning>".
+5. Execute triage using tea helpers:
+   - Create issues:    tea_file_issue "<title>" "<body>" "backlog" (or "action")
+   - Relabel:          tea_relabel <num> "prediction/actioned" (or "prediction/backlog")
+   - Comment:          tea_comment <num> "<reasoning>"
+   - Close:            tea_close <num>
 
-   - PROMOTE_BACKLOG: warrants dev work → create a backlog issue.
-     Relabel prediction/unreviewed → prediction/actioned, then close
-     with comment "Actioned as #NNN — <reasoning>".
+   Issue body template (gardener quality gate requires these sections):
+     ## Problem
+     <what the prediction identified>
 
-   - WATCH: not urgent but worth tracking → post a comment explaining
-     why it is not urgent, then relabel from prediction/unreviewed to
-     prediction/backlog. Do NOT close.
+     ## Proposed solution
+     <approach>
 
-   - DISMISS: noise, already covered by an open issue, or not actionable →
-     relabel prediction/unreviewed → prediction/actioned, post a comment
-     with explicit reasoning, then close the prediction.
+     ## Affected files
+     - <file1>
+
+     ## Acceptance criteria
+     - [ ] <criterion>
+     - [ ] CI green
 
    Every decision MUST include reasoning in a comment on the prediction issue.
 
-5. Executing triage decisions via API:
-
-   For PROMOTE_ACTION / PROMOTE_BACKLOG:
-   a. Create the new issue with the 'action' or 'backlog' label.
-      IMPORTANT — the issue body MUST include these sections so the
-      gardener quality gate does not strip the backlog label:
-        - "## Acceptance criteria" with at least one checkbox (- [ ] ...)
-        - "## Affected files" with at least one file path
-      Example body structure:
-        ## Problem\n<what the prediction identified>\n\n## Proposed solution\n<approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion 1>\n- [ ] CI green
-      Create the issue:
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" "$FORGE_API/issues" \
-          -d '{"title":"...","body":"...","labels":[<label_id>]}'
-      Extract the issue number from the response (jq -r '.number').
-   a2. Verify the label was applied (the forge may silently drop labels
-       on creation). Re-apply via a separate POST if missing:
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<new_issue_num>/labels" \
-          -d '{"labels":[<label_id>]}'
-   b. Comment on the prediction with "Actioned as #NNN — <reasoning>":
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/comments" \
-          -d '{"body":"Actioned as #NNN — <reasoning>"}'
-   c. Relabel: remove prediction/unreviewed, add prediction/actioned:
-        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
-          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/labels" \
-          -d '{"labels":[<actioned_label_id>]}'
-   d. Close the prediction:
-        curl -sf -X PATCH -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>" \
-          -d '{"state":"closed"}'
-
-   For WATCH:
-   a. Comment with reasoning why not urgent:
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/comments" \
-          -d '{"body":"Watching — <reasoning>"}'
-   b. Replace prediction/unreviewed label with prediction/backlog:
-        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
-          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/labels" \
-          -d '{"labels":[<prediction_backlog_label_id>]}'
-
-   For DISMISS:
-   a. Comment with explicit reasoning:
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/comments" \
-          -d '{"body":"Dismissed — <reasoning>"}'
-   b. Relabel: remove prediction/unreviewed, add prediction/actioned:
-        curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
-          "$FORGE_API/issues/<pred_num>/labels/<unreviewed_label_id>"
-        curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>/labels" \
-          -d '{"labels":[<actioned_label_id>]}'
-   c. Close the prediction:
-        curl -sf -X PATCH -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/issues/<pred_num>" \
-          -d '{"state":"closed"}'
-
-6. Track promoted predictions — they are added to the prerequisite tree
-   in the next step if they represent real prerequisites.
-
-7. Validation: if you reference a formula, verify it exists on disk.
-   Fall back to a freeform backlog issue for unknown formulas.
-
-Be decisive — the predictor intentionally over-signals; your job is to filter.
-
-CRITICAL: If this step fails, log the failure and move on to update-prerequisite-tree.
-"""
-needs = ["preflight"]
-
-[[steps]]
-id    = "update-prerequisite-tree"
-title = "Scan repo state and update the prerequisite tree"
-description = """
-This is the constraint discovery step. Read the current state, then update
-the prerequisite tree to reflect reality.
+### Part B: Update prerequisite tree
 
 Read these inputs:
-  - VISION.md — where we want to be (objectives come from milestones)
-  - planner/prerequisite-tree.md — current tree (loaded in preflight)
-  - RESOURCES.md — available agents, boxes, assets, formulas
-  - $FACTORY_ROOT/formulas/*.toml — factory formulas
-  - $PROJECT_REPO_ROOT/formulas/*.toml — project-specific formulas
-  - Open issues (fetched via API, or reuse from prediction-triage)
-  - Closed issues (fetch recently closed to detect resolved prerequisites):
+  - VISION.md, RESOURCES.md, planner memory (from preflight)
+  - Graph report: orphans, cycles, thin_objectives, bottlenecks, disconnected
+  - Open issues (from Part A or fresh fetch)
+  - Recently closed issues:
       curl -sf -H "Authorization: token $FORGE_TOKEN" \
         "$FORGE_API/issues?state=closed&type=issues&limit=50&sort=updated&direction=desc"
-  - Planner memory (loaded in preflight)
-  - Promoted predictions from prediction-triage (add as prerequisites if relevant)
 
-### Comment scanning for bounce/stuck detection
+Update the tree:
+  1. Mark resolved prerequisites ([x]) — check if issue closed or capability present
+  2. Recalculate objective status (READY/BLOCKED/DONE)
+  3. Add new prerequisites discovered from graph report
+  4. Add new objectives from VISION.md not yet in tree
+  5. Check vault state: vault/pending/*.md (blocked-on-vault), vault/fired/*.md (resolved?)
+  6. Check RESOURCES.md for newly available capabilities
 
-For each issue referenced in the prerequisite tree (by #number), fetch its
-recent comments to detect signals that the issue is stuck or bouncing:
+Bounce/stuck detection — for issues in the tree, fetch recent comments:
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "$FORGE_API/issues/<number>/comments?limit=10"
+  Signals: BOUNCED (too_large, underspecified), ESCALATED (needs human decision),
+  LABEL_CHURN (3+ relabels between backlog/underspecified).
+  Track as stuck_issues[] for constraint filing below.
 
-    curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "$FORGE_API/issues/<number>/comments?limit=10"
+Hold the updated tree in memory — written to disk in journal-and-commit.
 
-Scan each comment body for these signals:
-
-  - **BOUNCED**: body contains "too large for single session", "too_large",
-    "underspecified", or "needs splitting" (case-insensitive). This means
-    the dev-agent refused the issue — it needs breakdown before retry.
-  - **ESCALATED**: body contains "escalating for human decision", "needs
-    human decision", or "escalate" from a non-human author. The issue
-    needs steering input.
-  - **UNBLOCKED**: body contains "dependency .* is now closed" or
-    "unblocked". The issue may be ready to work.
-  - **LABEL_CHURN**: the issue has been relabeled between backlog and
-    underspecified (or blocked) 3+ times. Check via label change events
-    or multiple bounce comments. This indicates a ping-pong loop.
-
-Track detected signals in a list: `stuck_issues[]` where each entry is:
-  { issue: <number>, signal: BOUNCED|ESCALATED|LABEL_CHURN, count: <N>,
-    reason: "<summary from comments>" }
-
-These signals feed into the file-at-constraints step to prevent the
-planner from re-promoting stuck issues and to dispatch formula-based
-breakdown instead.
-
-Update the tree by applying these operations:
-
-1. **Mark resolved prerequisites**: For each prerequisite in the tree,
-   check if the corresponding issue is closed or the capability is now
-   present in the repo. Mark resolved items with [x].
-
-2. **Update objective status**: Recalculate each objective's status:
-   - All prerequisites resolved → Status: READY (or DONE if the objective
-     itself is closed/implemented)
-   - Some unresolved → Status: BLOCKED — N prerequisites unresolved
-   - Depends on blocked objectives → Status: BLOCKED — prerequisite chain
-
-3. **Discover new prerequisites**: As you scan repo state, you may find
-   new prerequisites not yet in the tree. Add them. The tree grows
-   organically — this is expected and desirable.
-
-4. **Add new objectives**: If VISION.md has objectives not yet in the
-   tree, add them with their prerequisite chains.
-
-5. **Propose new capabilities**: If you identify a capability the factory
-   needs (e.g., "marketing formula, runs weekly"), add it to the tree as
-   a proposed prerequisite. Anything with recurring cost (new accounts,
-   new infra, new cron entries, new formulas) should be procured through
-   the vault — see the file-at-constraints step for how to file requests.
-
-6. **Check vault state**: Scan vault directories for procurement status:
-   - `$PROJECT_REPO_ROOT/vault/pending/*.md` — requests awaiting human action.
-     Any prerequisite that depends on a pending procurement request should
-     be marked: `[ ] <name> ⏳ blocked-on-vault (vault/pending/<id>.md)`
-   - `$PROJECT_REPO_ROOT/vault/approved/*.md` — fulfilled, being processed.
-   - `$PROJECT_REPO_ROOT/vault/fired/*.md` — completed. Check if the resource
-     now appears in RESOURCES.md and mark the prerequisite resolved.
-   - Do NOT file issues for objectives blocked on pending vault items.
-
-7. **Re-read RESOURCES.md**: Check for newly available capabilities that
-   were not present last run. If a new resource appears, mark the
-   corresponding prerequisite as resolved.
-
-Write the updated tree to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
-Use this format:
-
+Tree format:
   # Prerequisite Tree
   <!-- Last updated: YYYY-MM-DD -->
 
   ## Objective: <name> (#issue or description)
   - [x] Resolved prerequisite (reference)
   - [ ] Unresolved prerequisite (#issue or description)
-  - [ ] Resource need ⏳ blocked-on-vault (vault/pending/<id>.md)
-  Status: READY | BLOCKED — <reason> | BLOCKED — awaiting vault | DONE
+  - [ ] Resource need blocked-on-vault (vault/pending/<id>.md)
+  Status: READY | BLOCKED — <reason> | DONE
 
-Keep the tree focused — only include objectives from VISION.md milestones
-and their genuine prerequisites. Do not inflate the tree with nice-to-haves.
+### Part C: File at constraints
 
-IMPORTANT: Do NOT write the tree to disk yet — hold it in memory for the
-next step. The tree will be written along with the journal in commit-and-pr.
-"""
-needs = ["prediction-triage"]
+From the updated tree + graph bottlenecks, identify the top 5 constraints.
+A constraint is an unresolved prerequisite blocking the most downstream objectives.
+Graph bottlenecks (high betweenness centrality) and thin objectives inform ranking.
 
-[[steps]]
-id    = "file-at-constraints"
-title = "Identify top 5 constraints and file issues"
-description = """
-This is the constraint-focused filing step. The key principle from Theory
-of Constraints: only work on the bottleneck. Everything else is waste.
+Stuck issue handling:
+  - BOUNCED/LABEL_CHURN: do NOT re-promote. Dispatch groom-backlog formula instead:
+      tea_file_issue "chore: break down #<N> — bounced <count>x" "<body>" "action"
+  - ESCALATED: skip, mark in tree as "escalated — awaiting human decision"
 
-From the updated prerequisite tree, identify the top 5 constraints:
+Filing gate (for non-stuck constraints):
+  1. Check if issue already exists (match by #number in tree or title search)
+  2. If no issue, create one with tea_file_issue using the template above
+  3. If issue exists and is open, skip — no duplicates
 
-A **constraint** is an unresolved prerequisite that blocks the most
-downstream objectives. To find them:
+Priority label sync:
+  - Add priority to current top-5 constraint issues (if missing):
+      tea_relabel <num> "backlog,priority"
+  - Remove priority from issues no longer in top 5:
+      curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
+        "$FORGE_API/issues/<num>/labels/<priority_label_id>"
 
-1. For each unresolved prerequisite ([ ] item), count how many objectives
-   it transitively blocks. A prerequisite that blocks objective A, which
-   in turn blocks objectives B and C, has a blocking score of 3.
-
-2. Rank all unresolved prerequisites by blocking score (descending).
-
-3. Select the top 5. These are the constraints.
-
-When filing issues at constraints, choose the right agent type:
-
-- **backlog issue** (label: backlog): requires code changes — dev-agent
-- **action issue** (label: action): runs an existing formula — action-agent
-
-Prefer action dispatch when:
-- A formula exists that would produce data needed to RESOLVE or VALIDATE
-  a constraint
-- Evidence is required before a constraint can be marked done
-- A decision is blocked on data that a formula can provide
-
-Action issues count toward the 5-issue constraint budget — they are
-strategic investments, not maintenance. The planner decides what data
-matters based on current constraints, not what formulas exist.
-
-### Stuck issue handling — dispatch to groom-backlog formula
-
-Before filing, cross-reference the top 5 constraints against the
-`stuck_issues[]` list from the update-prerequisite-tree step.
-
-If a constraint issue was detected as BOUNCED or LABEL_CHURN:
-  - Do NOT re-promote it to backlog or add the priority label — this
-    would restart the ping-pong loop.
-  - Instead, dispatch the groom-backlog formula to break it down.
-    Create an action issue that invokes groom-backlog with the stuck
-    issue as target:
-
-      Title: "chore: break down #<number> — bounced <count>x, needs splitting"
-      Body:
-        ---
-        formula: groom-backlog
-        vars:
-          target_issue: <number>
-          mode: breakdown
-          reason: "<reason from stuck_issues entry>"
-        ---
-
-        ## Problem
-        Issue #<number> has bounced <count> time(s) between backlog and
-        underspecified. The dev-agent reports it is too large for a single
-        session. It needs to be broken into dev-agent-sized subtasks.
-
-        ## Affected files
-        - formulas/groom-backlog.toml
-
-        ## Acceptance criteria
-        - [ ] #<number> is split into implementable sub-issues
-        - [ ] Sub-issues have acceptance criteria and affected files
-        - [ ] Original issue updated with links to sub-issues
-
-    Label this action issue with the `action` label (not `backlog`).
-    This counts toward the 5-issue-per-run limit.
-
-If a constraint issue was detected as ESCALATED:
-  - Do NOT file new work. Add a comment to the issue noting the
-    escalation was seen, and mark the prerequisite in the tree as:
-      `[ ] <name> ⚠ escalated — awaiting human decision`
-  - Do NOT count this against the 5-issue limit.
-
-Filing gate — for each constraint (that is NOT stuck):
-
-1. Check if an issue already exists for this constraint (match by issue
-   number reference in the tree, or search open issues by title).
-
-2. If no issue exists, create one.
-   IMPORTANT — the issue body MUST include these sections so the
-   gardener quality gate does not strip the backlog label:
-     - "## Affected files" with at least one file path
-     - "## Acceptance criteria" with at least one checkbox (- [ ] ...)
-   Use this body structure:
-     ## Problem\n<what this prerequisite is and which objectives it blocks>\n\n## Proposed solution\n<rough approach>\n\n## Affected files\n- <file1>\n- <file2>\n\n## Acceptance criteria\n- [ ] <criterion derived from the constraint>\n- [ ] CI green\n\n## Dependencies\n- #NNN (if depends on other open issues)
-   Create the issue:
-     curl -sf -X POST \
-       -H "Authorization: token $FORGE_TOKEN" \
-       -H "Content-Type: application/json" \
-       "$FORGE_API/issues" \
-       -d '{"title":"...","body":"...","labels":[<backlog_label_id>]}'
-   Extract the issue number from the response (jq -r '.number').
-
-2b. Verify the label was applied (the forge may silently drop labels
-    on creation). Always re-apply via a separate POST to be safe:
-      curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-        -H "Content-Type: application/json" \
-        "$FORGE_API/issues/<new_issue_num>/labels" \
-        -d '{"labels":[<backlog_label_id>]}'
-
-3. If an issue already exists and is open, skip it — no duplicate filing.
-
-4. If an issue already exists but is in backlog without proper context,
-   consider adding a comment noting its constraint status.
-
-### Priority label management
-
-After identifying the top 5 constraints and their issues (existing or newly
-filed), synchronize the `priority` label so only the current bottleneck
-issues are prioritized. The `backlog` label is NEVER removed — `priority`
-is purely additive.
-
-5. **Add `priority` to top-5 constraint issues:**
-   For each of the top 5 constraint issues (whether just filed or already
-   existing), check if it already has the `priority` label. If not, add it:
-     curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-       -H "Content-Type: application/json" \
-       "$FORGE_API/issues/<issue_number>/labels" \
-       -d '{"labels":[<priority_label_id>]}'
-
-6. **Remove `priority` from issues no longer in top 5:**
-   Fetch all open issues that currently have the `priority` label:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues?state=open&labels=priority&type=issues&limit=50"
-   For each issue in this list that is NOT one of the current top 5
-   constraint issues, remove the `priority` label (demote back to plain
-   `backlog`):
-     curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues/<issue_number>/labels/<priority_label_id>"
-   This keeps the priority set current — only the active bottleneck issues
-   get priority, not stale constraints from previous runs.
+Vault procurement: if a constraint needs a resource not in RESOURCES.md with
+recurring cost, create vault/pending/<resource-id>.md instead of an issue.
 
 Rules:
-- **Maximum 5 issues filed per run** — only at constraints
-- **No issues filed past the bottleneck** — items beyond the top 5
-  constraints exist in the tree but NOT as issues
-- **Existing premature issues left as-is** — do not close issues filed
-  by previous planner versions, even if they're past the bottleneck
-- Do NOT create issues that overlap with ANY existing open issue
-- Only reference formulas that exist in formulas/*.toml
-- When deploying/operating, reference the resource alias from RESOURCES.md
-- Promoted predictions from triage may become constraints if they block
-  downstream objectives — rank them the same way
-- **Do NOT file issues for objectives blocked on pending vault items** —
-  these are waiting for human procurement, not dev work
+- Maximum 5 items per run (issues + procurement combined)
+- No issues filed past the bottleneck
+- Leave existing premature issues as-is
+- Only reference formulas that exist on disk
+- Do NOT file issues for objectives blocked on pending vault items
+- Promoted predictions may become constraints — rank them equally
 
-### Filing vault procurement requests
-
-If a constraint requires a resource the factory does not have (check
-RESOURCES.md), and that resource has recurring cost (account, infra,
-domain, API key, new cron job), file a procurement request instead of
-an issue:
-
-1. Check if a request already exists in vault/pending/ or vault/approved/
-   for this resource (match by filename).
-
-2. If no request exists, create a markdown file at:
-     $PROJECT_REPO_ROOT/vault/pending/<resource-id>.md
-
-   Format:
-   ```
-   # Procurement Request: <human-readable name>
-
-   ## What
-   <description of what's needed>
-
-   ## Why
-   <why the factory needs this — which objectives it enables>
-
-   ## Unblocks
-   <list prerequisite tree objectives this unblocks, with issue numbers>
-
-   ## Proposed RESOURCES.md Entry
-   ## <resource-id>
-   - type: <social|compute|asset|communication|ci|source-control>
-   - capability: <what it can do>
-   - env: <ENV_VAR_NAME if secrets needed>
-   ```
-
-3. Mark the prerequisite in the tree as blocked-on-vault:
-     `[ ] <name> ⏳ blocked-on-vault (vault/pending/<resource-id>.md)`
-
-4. vault-poll.sh will notify the human automatically.
-
-Procurement requests count toward the 5-item-per-run limit (issues +
-procurement requests combined).
-
-If all top 5 constraints already have open issues or pending vault
-requests, note that the backlog is aligned with the constraint focus.
-No new items needed.
+CRITICAL: If any part of this step fails, log the failure and continue.
 """
-needs = ["update-prerequisite-tree"]
+needs = ["preflight"]
 
 [[steps]]
-id    = "journal-and-memory"
-title = "Write prerequisite tree, journal entry, and periodic memory update"
+id    = "journal-and-commit"
+title = "Write tree, journal, optional memory; commit and PR"
 description = """
-Three outputs from this step — tree and journal are ALWAYS written,
-memory is PERIODIC.
+### 1. Write prerequisite tree
+Write to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
 
-### 1. Prerequisite tree (always — committed to git)
-
-Write the updated prerequisite tree to:
-  $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
-
-This is the tree you built in the update-prerequisite-tree step.
-Include the "Last updated" comment at the top.
-
-### 2. Journal entry (always — committed to git)
-
-Create a daily journal file at:
-  $PROJECT_REPO_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
-
-If the file already exists (multiple runs per day), append a new section
-with a timestamp header.
+### 2. Write journal entry
+Create/append to: $PROJECT_REPO_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
 
 Format:
   # Planner run — YYYY-MM-DD HH:MM UTC
 
   ## Predictions triaged
-  - #NNN: PROMOTE_ACTION/PROMOTE_BACKLOG/WATCH/DISMISS — reasoning
-  (or "No unreviewed predictions" if none)
+  - #NNN: ACTION — reasoning (or "No unreviewed predictions")
 
   ## Prerequisite tree updates
-  - Resolved: <list of newly resolved prerequisites>
-  - Discovered: <list of newly added prerequisites>
-  - Proposed: <list of new capabilities proposed>
-  (or "No tree changes" if none)
+  - Resolved: <list>  - Discovered: <list>  - Proposed: <list>
 
   ## Top 5 constraints
-  1. <prerequisite> — blocks N objectives — issue #NNN (existing|filed|already open)
-  2. <prerequisite> — blocks N objectives — issue #NNN
-  3. <prerequisite> — blocks N objectives — issue #NNN
+  1. <prerequisite> — blocks N objectives — #NNN (existing|filed)
 
   ## Stuck issues detected
   - #NNN: BOUNCED (Nx) — dispatched groom-backlog as #MMM
-  - #NNN: ESCALATED — awaiting human decision
-  - #NNN: LABEL_CHURN (Nx) — dispatched groom-backlog as #MMM
-  (or "No stuck issues detected" if none)
+  (or "No stuck issues detected")
 
   ## Issues created
-  - #NNN: title — why (constraint for objectives X, Y)
-  (or "No new issues — constraints already have open issues" if none)
+  - #NNN: title — why (or "No new issues")
 
   ## Priority label changes
-  - Added priority: #NNN, #NNN (top 5 constraints)
-  - Removed priority: #NNN (no longer in top 5)
-  (or "No priority changes" if the set is unchanged)
+  - Added/removed priority: #NNN (or "No priority changes")
 
   ## Observations
-  - Key patterns, resource state, metric trends noticed during this run
+  - Key patterns noticed this run
 
-  ## Deferred (in tree, not filed)
-  - Items in the tree beyond the top 5 constraints, and why they're not filed yet
+  ## Deferred
+  - Items in tree beyond top 5, why not filed
 
-Keep each entry concise — 30-50 lines max.
+Keep concise — 30-50 lines max.
 
-### 3. Memory update (periodic — every 5th run, committed to git)
+### 3. Memory update (every 5th run)
+Count "# Planner run —" headers across all journal files.
+Check "<!-- summarized-through-run: N -->" in MEMORY.md.
+If (count - N) >= 5 or MEMORY.md missing, write to:
+  $PROJECT_REPO_ROOT/planner/MEMORY.md
+Include: run counter marker, date, constraint focus, patterns, direction.
+Keep under 100 lines. Replace entire file.
 
-Decide whether to update memory:
-1. Count the total number of run entries across ALL journal files in
-   planner/journal/*.md. Each "# Planner run —" header counts as one run.
-2. Check the run count noted in MEMORY.md (look for the
-   "<!-- summarized-through-run: N -->" marker at the top).
-   If the marker is missing, treat it as 0.
-3. If (current_run_count - last_summarized_count) >= 5, OR if MEMORY.md
-   does not exist, perform the memory update below.
-4. Otherwise, skip the memory update — MEMORY.md remains read-only context.
-
-When updating memory, write to: $PROJECT_REPO_ROOT/planner/MEMORY.md
-(replace the entire file)
-
-Start the file with the run counter marker:
-  <!-- summarized-through-run: N -->
-where N is the current total run count.
-
-Include:
-- Date of this summarization
-- Current constraint focus (top 5 from this run)
-- Distilled patterns and learnings from recent journal entries
-- What was observed (resource state, metric trends, project progress)
-- Strategic direction and watch list for future runs
-
-Rules:
-- Keep under 100 lines total
-- Replace the file contents — distill from journal, prune stale entries
-- Focus on PATTERNS and LEARNINGS, not transient state
-- Do NOT include specific issue counts or numbers that will be stale
-- Read the recent journal files provided in context for source material
-- Most recent entries at top
-
-Format: simple markdown with dated sections.
+### 4. Commit and PR
+If no file changes (git status --porcelain), skip.
+Otherwise:
+  BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
+  git checkout -B "$BRANCH"
+  git add planner/prerequisite-tree.md planner/journal/ planner/MEMORY.md
+  git add -u
+  git diff --cached --quiet && skip
+  git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
+  git push -u origin "$BRANCH"
+  Create PR via forge API:
+    curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
+      -H "Content-Type: application/json" "$FORGE_API/pulls" \
+      -d '{"title":"chore: planner run — prerequisite tree update",
+           "head":"<branch>","base":"<primary-branch>",
+           "body":"Automated planner run — prerequisite tree update and journal entry."}'
+  git checkout "$PRIMARY_BRANCH"
 """
-needs = ["file-at-constraints"]
-
-[[steps]]
-id    = "commit-and-pr"
-title = "One commit with all file changes, push, create PR"
-description = """
-Collect all file changes from this run into a single commit.
-API calls (issue creation, prediction triage) already happened during the
-run — only file changes (tree, journal, MEMORY.md) need the PR.
-
-1. Check for staged or unstaged changes:
-     cd "$PROJECT_REPO_ROOT"
-     git status --porcelain
-
-   If there are no file changes, skip this entire step — no commit, no PR.
-
-2. If there are changes:
-   a. Create a branch:
-        BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
-        git checkout -B "$BRANCH"
-   b. Stage prerequisite tree, journal entries, and planner memory:
-        git add planner/prerequisite-tree.md 2>/dev/null || true
-        git add planner/journal/ 2>/dev/null || true
-        git add planner/MEMORY.md 2>/dev/null || true
-   c. Stage any other tracked files modified during the run:
-        git add -u
-   d. Check if there is anything to commit:
-        git diff --cached --quiet && echo "Nothing staged" && skip
-   e. Commit:
-        git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
-   f. Push:
-        git push -u origin "$BRANCH"
-   g. Create a PR:
-        curl -sf -X POST \
-          -H "Authorization: token $FORGE_TOKEN" \
-          -H "Content-Type: application/json" \
-          "$FORGE_API/pulls" \
-          -d '{"title":"chore: planner run — prerequisite tree update",
-               "head":"<branch>","base":"<primary-branch>",
-               "body":"Automated planner run — prerequisite tree update and journal entry."}'
-   h. Return to primary branch:
-        git checkout "$PRIMARY_BRANCH"
-
-3. If the PR creation fails, log and continue — the journal is committed locally.
-"""
-needs = ["journal-and-memory"]
+needs = ["triage-and-plan"]

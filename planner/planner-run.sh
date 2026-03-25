@@ -48,6 +48,19 @@ log "--- Planner run start ---"
 load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
 build_context_block VISION.md AGENTS.md RESOURCES.md planner/prerequisite-tree.md
 
+# ── Build structural analysis graph ──────────────────────────────────────
+GRAPH_REPORT="/tmp/${PROJECT_NAME}-graph-report.json"
+GRAPH_SECTION=""
+if python3 "$FACTORY_ROOT/lib/build-graph.py" \
+     --project-root "$PROJECT_REPO_ROOT" \
+     --output "$GRAPH_REPORT" 2>>"$LOG_FILE"; then
+  GRAPH_SECTION=$(printf '\n## Structural analysis\n```json\n%s\n```\n' \
+    "$(cat "$GRAPH_REPORT")")
+  log "graph report generated: $(jq -r '.stats | "\(.nodes) nodes, \(.edges) edges"' "$GRAPH_REPORT")"
+else
+  log "WARN: build-graph.py failed — continuing without structural analysis"
+fi
+
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
 MEMORY_FILE="$PROJECT_REPO_ROOT/planner/MEMORY.md"
@@ -93,6 +106,7 @@ PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formul
 
 ## Project context
 ${CONTEXT_BLOCK}${MEMORY_BLOCK}${JOURNAL_BLOCK}
+${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Formula
