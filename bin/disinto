@@ -175,7 +175,7 @@ services:
       - disinto-net
 
   woodpecker:
-    image: woodpeckerci/woodpecker-server:latest
+    image: woodpeckerci/woodpecker-server:v3
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
@@ -198,7 +198,7 @@ services:
       - disinto-net
 
   woodpecker-agent:
-    image: woodpeckerci/woodpecker-agent:latest
+    image: woodpeckerci/woodpecker-agent:v3
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
