@@ -4,6 +4,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux cron python3 openssh-client ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# tea CLI — official Gitea/Forgejo CLI for issue/label/comment operations
+RUN curl -sL https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64 -o /usr/local/bin/tea \
+    && chmod +x /usr/local/bin/tea
+
 # Claude CLI is mounted from the host via docker-compose volume.
 # No internet access to cli.anthropic.com required at build time.
 

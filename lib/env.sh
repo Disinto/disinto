@@ -65,6 +65,15 @@ export FORGE_API="${FORGE_API:-${FORGE_URL}/api/v1/repos/${FORGE_REPO}}"
 export FORGE_WEB="${FORGE_WEB:-${FORGE_URL}/${FORGE_REPO}}"
 export CODEBERG_API="${FORGE_API}"  # backwards compat
 export CODEBERG_WEB="${FORGE_WEB}"  # backwards compat
+# tea CLI login name: derived from FORGE_URL (codeberg vs local forgejo)
+if [ -z "${TEA_LOGIN:-}" ]; then
+  case "${FORGE_URL}" in
+    *codeberg.org*) TEA_LOGIN="codeberg" ;;
+    *)              TEA_LOGIN="forgejo" ;;
+  esac
+fi
+export TEA_LOGIN
+
 export PROJECT_NAME="${PROJECT_NAME:-${FORGE_REPO##*/}}"
 export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}}"
 export PRIMARY_BRANCH="${PRIMARY_BRANCH:-master}"
@@ -218,3 +227,9 @@ matrix_send_ctx() {
     printf '%s' "$event_id"
   fi
 }
+
+# Source tea helpers (available when tea binary is installed)
+if command -v tea &>/dev/null; then
+  # shellcheck source=tea-helpers.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/tea-helpers.sh"
+fi

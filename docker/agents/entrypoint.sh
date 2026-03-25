@@ -57,6 +57,24 @@ log "Claude CLI: $(claude --version 2>&1 || true)"
 
 install_project_crons
 
+# Configure tea CLI login for forge operations (runs as agent user).
+# tea stores config in ~/.config/tea/ — persistent across container restarts
+# only if that directory is on a mounted volume.
+if command -v tea &>/dev/null && [ -n "${FORGE_TOKEN:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+  local_tea_login="forgejo"
+  case "$FORGE_URL" in
+    *codeberg.org*) local_tea_login="codeberg" ;;
+  esac
+  su -s /bin/bash agent -c "tea login add \
+    --name '${local_tea_login}' \
+    --url '${FORGE_URL}' \
+    --token '${FORGE_TOKEN}' \
+    --no-version-check 2>/dev/null || true"
+  log "tea login configured: ${local_tea_login} → ${FORGE_URL}"
+else
+  log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
+fi
+
 # Start matrix listener in background (if configured)
 if [ -n "${MATRIX_TOKEN:-}" ] && [ -n "${MATRIX_ROOM_ID:-}" ]; then
   log "Starting matrix listener in background"
