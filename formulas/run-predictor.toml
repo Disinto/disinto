@@ -37,7 +37,7 @@ Set up the working environment and load your prediction history.
      curl -sf -H "Authorization: token $FORGE_TOKEN" \
        "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
      curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Fbacklog&limit=50"
+       "$FORGE_API/issues?state=closed&type=issues&labels=prediction%2Fdismissed&limit=50&sort=updated&direction=desc"
      curl -sf -H "Authorization: token $FORGE_TOKEN" \
        "$FORGE_API/issues?state=closed&type=issues&labels=prediction%2Factioned&limit=50&sort=updated&direction=desc"
 
@@ -45,7 +45,7 @@ Set up the working environment and load your prediction history.
    - What you predicted (title + body)
    - What the planner decided (comments — look for triage reasoning)
    - Outcome: actioned (planner valued it), dismissed (planner rejected it),
-     watching (planner deferred it), unreviewed (planner hasn't seen it yet)
+     unreviewed (planner hasn't seen it yet)
 
 3. Read the prerequisite tree:
      cat "$PROJECT_REPO_ROOT/planner/prerequisite-tree.md"
@@ -75,12 +75,8 @@ Review your prediction history from the preflight step:
 - Which predictions did the planner action? Those are areas where your
   instincts were right. The planner values those signals.
 - Which were dismissed? You were wrong or the planner disagreed. Don't
-  repeat the same theory without new evidence.
-- Which are watching (prediction/backlog)? Check if conditions changed.
-  If changed → file a new prediction superseding it (close the old one
-  as prediction/actioned with "superseded by #NNN").
-  If stale (30+ days, unchanged) → close it.
-  If recent and unchanged → leave it.
+  repeat the same theory without new evidence. If conditions have changed
+  since the dismissal, you may re-file with stronger evidence.
 
 ## Finding weaknesses
 
@@ -169,7 +165,7 @@ tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
        --body "Superseded by #NNN"
 
 5. Do NOT duplicate existing open predictions. If your theory matches
-   an open prediction/unreviewed or prediction/backlog issue, skip it.
+   an open prediction/unreviewed issue, skip it.
 
 ## Rules
 
@@ -177,7 +173,6 @@ tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
 - Each exploit counts as 2 (prediction + action dispatch)
 - So: 5 explores, or 2 exploits + 1 explore, or 1 exploit + 3 explores
 - Never re-file a dismissed prediction without new evidence
-- When superseding a prediction/backlog issue, close the old one properly
 - Action issues must reference existing formulas — don't invent formulas
 - Be specific: name the file, the metric, the threshold, the formula
 - If no weaknesses found, file nothing — that's a strong signal the project is healthy

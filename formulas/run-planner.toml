@@ -71,15 +71,18 @@ and file-at-constraints steps.
 
 3. Read available formulas: $FACTORY_ROOT/formulas/*.toml and $PROJECT_REPO_ROOT/formulas/*.toml
 
-4. For each prediction, choose one action:
-   - PROMOTE_ACTION: maps to a formula -> create action issue, close prediction
-   - PROMOTE_BACKLOG: warrants dev work -> create backlog issue, close prediction
-   - WATCH: not urgent -> comment why, relabel to prediction/backlog, keep open
-   - DISMISS: noise or covered -> comment reasoning, close prediction
+4. For each prediction, choose one of two actions (no fence-sitting):
+   - ACTION: agree with the prediction -> create a backlog or action issue,
+     relabel to prediction/actioned, close the prediction
+   - DISMISS: disagree or noise -> comment reasoning, relabel to
+     prediction/dismissed, close the prediction
+
+   If a dismissed prediction is real, the predictor will re-file it with
+   stronger evidence next run. The issue history is the predictor's memory.
 
 5. Execute triage using tea helpers:
    - Create issues:    tea_file_issue "<title>" "<body>" "backlog" (or "action")
-   - Relabel:          tea_relabel <num> "prediction/actioned" (or "prediction/backlog")
+   - Relabel:          tea_relabel <num> "prediction/actioned" (or "prediction/dismissed")
    - Comment:          tea_comment <num> "<reasoning>"
    - Close:            tea_close <num>
 
@@ -163,7 +166,9 @@ Vault procurement: if a constraint needs a resource not in RESOURCES.md with
 recurring cost, create vault/pending/<resource-id>.md instead of an issue.
 
 Rules:
-- Maximum 5 items per run (issues + procurement combined)
+- Action budget: the planner may create at most (predictions_addressed + 1)
+  new issues per run if any predictions were triaged, or 4 if no predictions.
+  This covers issues from Part A promotions + Part C constraint filing combined.
 - No issues filed past the bottleneck
 - Leave existing premature issues as-is
 - Only reference formulas that exist on disk
