@@ -101,18 +101,15 @@ fi
 JOURNAL_BLOCK=""
 JOURNAL_DIR="$PROJECT_REPO_ROOT/exec/journal"
 if [ -d "$JOURNAL_DIR" ]; then
-  JOURNAL_FILES=$(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -3)
-  if [ -n "$JOURNAL_FILES" ]; then
-    JOURNAL_BLOCK="
-### Recent conversation logs (exec/journal/)
-"
-    while IFS= read -r jf; do
-      JOURNAL_BLOCK="${JOURNAL_BLOCK}
+  while IFS= read -r jf; do
+    JOURNAL_BLOCK="${JOURNAL_BLOCK}
 #### $(basename "$jf")
 $(head -100 "$jf")
 "
-    done <<< "$JOURNAL_FILES"
-  fi
+  done < <(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -3)
+  [ -n "$JOURNAL_BLOCK" ] && JOURNAL_BLOCK="
+### Recent conversation logs (exec/journal/)
+${JOURNAL_BLOCK}"
 fi
 
 # ── Load recent agent activity summary ──────────────────────────────────
