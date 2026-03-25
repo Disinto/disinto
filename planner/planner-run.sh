@@ -48,6 +48,9 @@ log "--- Planner run start ---"
 load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
 build_context_block VISION.md AGENTS.md RESOURCES.md planner/prerequisite-tree.md
 
+# ── Build structural analysis graph ──────────────────────────────────────
+build_graph_section
+
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
 MEMORY_FILE="$PROJECT_REPO_ROOT/planner/MEMORY.md"
@@ -93,6 +96,7 @@ PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formul
 
 ## Project context
 ${CONTEXT_BLOCK}${MEMORY_BLOCK}${JOURNAL_BLOCK}
+${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Formula
