@@ -98,12 +98,12 @@ echo "=== 2/2  Function resolution ==="
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
 #   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
 #   lib/secret-scan.sh      — sourced by file-action-issue.sh, phase-handler.sh (scan_for_secrets, redact_secrets)
-#   lib/tea-helpers.sh      — sourced by env.sh when tea is available (tea_file_issue, tea_relabel, etc.)
 #   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
 #   lib/guard.sh            — sourced by all cron entry points (check_active)
 #
 # Excluded — not sourced inline by agents:
+#   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
 #   lib/ci-debug.sh         — standalone CLI tool, run directly (not sourced)
 #   lib/matrix_listener.sh  — standalone systemd daemon (not sourced)
 #   lib/parse-deps.sh       — executed via `bash lib/parse-deps.sh` (not sourced)
@@ -112,7 +112,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/tea-helpers.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
