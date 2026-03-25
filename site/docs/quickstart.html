@@ -334,13 +334,13 @@
       </ul>
     </div>
 
-    <!-- Step 1: Clone and start the stack -->
+    <!-- Step 1: Clone disinto -->
     <div class="section">
       <div class="step-header">
         <span class="step-num">1</span>
-        Clone and start the stack
+        Clone disinto
       </div>
-      <p>Clone disinto, then bring up the full stack &mdash; built-in Forgejo, Woodpecker CI, and agent runtime.</p>
+      <p>Clone the factory onto your server and configure your API key.</p>
 <pre><code>git clone https://codeberg.org/johba/disinto.git ~/disinto
 cd ~/disinto
 cp .env.example .env
@@ -353,9 +353,9 @@ cp .env.example .env
         <span class="step-num">2</span>
         Initialize your project
       </div>
-      <p><code>disinto init</code> creates your repo on the built-in Forgejo, clones it, generates the project config, adds labels, and installs cron jobs. Then <code>disinto up</code> starts everything.</p>
-<pre><code>bin/disinto init user/your-project
-bin/disinto up</code></pre>
+      <p><code>disinto init</code> starts the full stack (Forgejo + Woodpecker CI), creates your repo, clones it locally, generates the project config, adds labels, and installs cron jobs &mdash; all in one command.</p>
+<pre><code>bin/disinto init user/your-project</code></pre>
+      <p>Use <code>disinto up</code> / <code>disinto down</code> later to restart or stop the stack.</p>
       <div class="expected">
         <div class="label">Expected output</div>
 <code>=== disinto init ===
