@@ -194,20 +194,11 @@ chmod +x "$MOCK_BIN/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/tmux"
 chmod +x "$MOCK_BIN/tmux"
 
-# ── Mock: crontab ──
-cat > "$MOCK_BIN/crontab" << 'CRONMOCK'
-#!/usr/bin/env bash
-CRON_FILE="/tmp/smoke-mock-state/crontab-entries"
-case "${1:-}" in
-  -l) cat "$CRON_FILE" 2>/dev/null || true ;;
-  -)  cat > "$CRON_FILE" ;;
-  *)  exit 0 ;;
-esac
-CRONMOCK
-chmod +x "$MOCK_BIN/crontab"
+# No crontab mock — use real BusyBox crontab (available in the Forgejo
+# Alpine image). Cron entries are verified via 'crontab -l' in step 6.
 
 export PATH="$MOCK_BIN:$PATH"
-pass "Mock binaries installed (docker, claude, tmux, crontab)"
+pass "Mock binaries installed (docker, claude, tmux)"
 
 # ── 3. Run disinto init ─────────────────────────────────────────────────────
 echo "=== 3/6 Running disinto init ==="
@@ -338,25 +329,25 @@ fi
 
 # ── 6. Verify cron setup ────────────────────────────────────────────────────
 echo "=== 6/6 Verifying cron setup ==="
-cron_file="$MOCK_STATE/crontab-entries"
-if [ -f "$cron_file" ]; then
-  if grep -q 'dev-poll.sh' "$cron_file"; then
+cron_output=$(crontab -l 2>/dev/null) || cron_output=""
+if [ -n "$cron_output" ]; then
+  if printf '%s' "$cron_output" | grep -q 'dev-poll.sh'; then
     pass "Cron includes dev-poll entry"
   else
     fail "Cron missing dev-poll entry"
   fi
-  if grep -q 'review-poll.sh' "$cron_file"; then
+  if printf '%s' "$cron_output" | grep -q 'review-poll.sh'; then
     pass "Cron includes review-poll entry"
   else
     fail "Cron missing review-poll entry"
   fi
-  if grep -q 'gardener-run.sh' "$cron_file"; then
+  if printf '%s' "$cron_output" | grep -q 'gardener-run.sh'; then
     pass "Cron includes gardener entry"
   else
     fail "Cron missing gardener entry"
   fi
 else
-  fail "No cron entries captured (mock crontab file missing)"
+  fail "No cron entries found (crontab -l returned empty)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
