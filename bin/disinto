@@ -361,6 +361,23 @@ setup_forge() {
     echo " ready"
   fi
 
+  # Wait for Forgejo database to accept writes (API may be ready before DB is)
+  echo -n "Waiting for Forgejo database"
+  local db_ready=false
+  for _i in $(seq 1 30); do
+    if _forgejo_exec forgejo admin user list >/dev/null 2>&1; then
+      db_ready=true
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
+  if [ "$db_ready" != true ]; then
+    echo "Error: Forgejo database not ready after 30s" >&2
+    exit 1
+  fi
+
   # Create admin user if it doesn't exist
   local admin_user="disinto-admin"
   local admin_pass
@@ -368,12 +385,22 @@ setup_forge() {
 
   if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
     echo "Creating admin user: ${admin_user}"
-    _forgejo_exec forgejo admin user create \
+    local create_output
+    if ! create_output=$(_forgejo_exec forgejo admin user create \
       --admin \
       --username "${admin_user}" \
       --password "${admin_pass}" \
       --email "admin@disinto.local" \
-      --must-change-password=false 2>/dev/null || true
+      --must-change-password=false 2>&1); then
+      echo "Error: failed to create admin user '${admin_user}':" >&2
+      echo "  ${create_output}" >&2
+      exit 1
+    fi
+    # Verify admin user was actually created
+    if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
+      echo "Error: admin user '${admin_user}' not found after creation" >&2
+      exit 1
+    fi
   fi
 
   # Get or create admin token
@@ -393,6 +420,11 @@ setup_forge() {
       | jq -r '.[0].sha1 // empty') || admin_token=""
   fi
 
+  if [ -z "$admin_token" ]; then
+    echo "Error: failed to obtain admin API token" >&2
+    exit 1
+  fi
+
   # Create bot users and tokens
   local dev_token="" review_token=""
   for bot_user in dev-bot review-bot; do
@@ -403,11 +435,23 @@ setup_forge() {
       -H "Authorization: token ${admin_token}" \
       "${forge_url}/api/v1/users/${bot_user}" >/dev/null 2>&1; then
       echo "Creating bot user: ${bot_user}"
-      _forgejo_exec forgejo admin user create \
+      local create_output
+      if ! create_output=$(_forgejo_exec forgejo admin user create \
         --username "${bot_user}" \
         --password "${bot_pass}" \
         --email "${bot_user}@disinto.local" \
-        --must-change-password=false 2>/dev/null || true
+        --must-change-password=false 2>&1); then
+        echo "Error: failed to create bot user '${bot_user}':" >&2
+        echo "  ${create_output}" >&2
+        exit 1
+      fi
+      # Verify bot user was actually created
+      if ! curl -sf --max-time 5 \
+        -H "Authorization: token ${admin_token}" \
+        "${forge_url}/api/v1/users/${bot_user}" >/dev/null 2>&1; then
+        echo "Error: bot user '${bot_user}' not found after creation" >&2
+        exit 1
+      fi
     fi
 
     # Generate token via API (using admin credentials for the bot)
@@ -427,6 +471,11 @@ setup_forge() {
         "${forge_url}/api/v1/users/${bot_user}/tokens" \
         -d "{\"name\":\"disinto-${bot_user}-$(date +%s)\",\"scopes\":[\"all\"]}" 2>/dev/null \
         | jq -r '.sha1 // empty') || token=""
+    fi
+
+    if [ -z "$token" ]; then
+      echo "Error: failed to create API token for '${bot_user}'" >&2
+      exit 1
     fi
 
     if [ "$bot_user" = "dev-bot" ]; then
