@@ -150,15 +150,20 @@ if [ "${1:-}" = "exec" ]; then
         exit 1
       fi
 
-      # Promote to site admin if requested
+      # Patch user: ensure must_change_password is false (Forgejo admin
+      # API POST may ignore it) and promote to admin if requested
+      patch_body="{\"must_change_password\":false,\"login_name\":\"${username}\",\"source_id\":0"
       if [ "$is_admin" = "true" ]; then
-        curl -sf -X PATCH \
-          -u "$BOOTSTRAP_CREDS" \
-          -H "Content-Type: application/json" \
-          "${FORGE_URL}/api/v1/admin/users/${username}" \
-          -d "{\"admin\":true,\"login_name\":\"${username}\",\"source_id\":0}" \
-          >/dev/null 2>&1 || true
+        patch_body="${patch_body},\"admin\":true"
       fi
+      patch_body="${patch_body}}"
+
+      curl -sf -X PATCH \
+        -u "$BOOTSTRAP_CREDS" \
+        -H "Content-Type: application/json" \
+        "${FORGE_URL}/api/v1/admin/users/${username}" \
+        -d "${patch_body}" \
+        >/dev/null 2>&1 || true
 
       echo "New user '${username}' has been successfully created!"
       exit 0
