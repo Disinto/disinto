@@ -287,8 +287,20 @@ create_agent_session() {
   if [ -n "${CLAUDE_MODEL:-}" ]; then
     model_flag="--model ${CLAUDE_MODEL}"
   fi
+
+  # Acquire a session-level mutex via flock to prevent concurrent Claude
+  # sessions from racing on OAuth token refresh (rotating the refresh token
+  # invalidates it for other sessions).  The lock is held for the lifetime
+  # of the Claude process inside the tmux session.
+  # Use ~/.claude/session.lock so the lock is shared across containers when
+  # the host ~/.claude directory is bind-mounted.
+  local lock_dir="${HOME}/.claude"
+  mkdir -p "$lock_dir"
+  local claude_lock="${lock_dir}/session.lock"
+  local claude_cmd="flock -w 300 '${claude_lock}' claude --dangerously-skip-permissions ${model_flag}"
+
   tmux new-session -d -s "$session" -c "$workdir" \
-    "claude --dangerously-skip-permissions ${model_flag}" 2>/dev/null
+    "$claude_cmd" 2>/dev/null
   sleep 1
   tmux has-session -t "$session" 2>/dev/null || return 1
   agent_wait_for_claude_ready "$session" 120 || return 1
