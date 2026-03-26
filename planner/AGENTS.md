@@ -27,8 +27,10 @@ dev-agent) or `action` (run existing formula, action-agent). **Stuck issues
 (detected BOUNCED/LABEL_CHURN) are dispatched to the `groom-backlog` formula
 in breakdown mode instead of being re-promoted** — this breaks the ping-pong
 loop by splitting them into dev-agent-sized sub-issues. **Human-blocked issues
-are routed through the vault** — the planner files a procurement item and marks
-the prerequisite as blocked-on-vault in the tree.
+are routed through the vault** — the planner files an actionable procurement
+item (`vault/pending/<project>-<slug>.md` with What/Why/Human action/Factory
+will then sections) and marks the prerequisite as blocked-on-vault in the tree.
+Deduplication: checks pending/ + approved/ + fired/ before creating.
 Phase 4 (journal-and-memory): write updated prerequisite tree + daily journal
 entry (committed to git) and update `planner/MEMORY.md` (committed to git).
 Phase 5 (commit-and-pr): one commit with all file changes, push, create PR.
