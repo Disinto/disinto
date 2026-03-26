@@ -1,1 +1,126 @@
-[]
+[
+  {
+    "action": "comment",
+    "issue": 710,
+    "body": "Closing as duplicate of #714, which covers the same task (creating an OpenClaw/ClawHub skill package) with complete acceptance criteria and affected files. All work should proceed under #714."
+  },
+  {
+    "action": "close",
+    "issue": 710,
+    "reason": "duplicate of #714"
+  },
+  {
+    "action": "comment",
+    "issue": 711,
+    "body": "Closing as duplicate of #715, which covers the same task (publishing to ClawHub) with complete acceptance criteria and affected files. All work should proceed under #715."
+  },
+  {
+    "action": "close",
+    "issue": 711,
+    "reason": "duplicate of #715"
+  },
+  {
+    "action": "edit_body",
+    "issue": 712,
+    "body": "## Context\n\nAfter ClawHub publishing (#715), expand reach by listing on secondary registries and discovery channels.\n\n## Dependencies\n- #715 (ClawHub listing must be live first)\n\n## Acceptance criteria\n- [ ] disinto skill appears in SkillsMP search (auto-indexed from GitHub or submitted manually)\n- [ ] PR submitted to awesome-agent-skills repo listing disinto under DevOps/Automation\n- [ ] SkillHub listing submitted (or confirmed live)\n- [ ] GitHub repo topics updated: `agent-skill`, `openclaw`, `clawhub`, `code-factory`, `automation`\n\n## Affected files\n- `README.md` (add secondary registry badges/links)\n- `.github/` or repo settings (GitHub topics — manual step)\n\n## Action items\n\n### SkillsMP (skillsmp.com)\n- [ ] SkillsMP auto-indexes from GitHub — ensure the skill directory is in the public repo\n- [ ] Verify disinto appears in SkillsMP search after a few days\n- [ ] If not auto-indexed, submit manually\n\n### awesome-agent-skills\n- [ ] Submit PR to github.com/skillmatic-ai/awesome-agent-skills\n- [ ] Add disinto under appropriate category (DevOps / Automation)\n\n### SkillHub (skillhub.club)\n- [ ] Submit skill for AI evaluation\n- [ ] Verify listing\n\n### LobeHub (lobehub.com/skills)\n- [ ] Submit skill to curated directory\n\n### GitHub discoverability\n- [ ] Add topics to repo: `agent-skill`, `openclaw`, `clawhub`, `code-factory`, `automation`\n- [ ] Ensure SKILL.md is discoverable at repo root or skill/ directory\n\n## References\n\n- Research report: #709\n- Skill package: #714\n- ClawHub listing: #715\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 712,
+    "label": "backlog"
+  },
+  {
+    "action": "add_label",
+    "issue": 714,
+    "label": "backlog"
+  },
+  {
+    "action": "add_label",
+    "issue": 715,
+    "label": "backlog"
+  },
+  {
+    "action": "create_issue",
+    "title": "fix: add weekly Docker prune cron to prevent recurring disk P1 threshold breach",
+    "body": "## Problem\n\nDisk has twice crossed the 80% P1 threshold in two days (peaked at 82% on 2026-03-24). The supervisor performs reactive Docker prune when P1 is hit, but a proactive scheduled cleanup would prevent the threshold from being crossed in the first place.\n\nSupersedes prediction in #644.\n\n## Action\n\nAdd a scheduled weekly Docker prune to the supervisor or cron config so Docker image/container buildup is cleared before it reaches crisis levels. The cleanup should run at a time offset from the 06:00 formula burst (e.g. Sunday 04:00 UTC).\n\n## Acceptance criteria\n- [ ] A Docker prune cron entry (weekly, off-peak) is added to the factory cron config or supervisor schedule\n- [ ] The cron runs `docker system prune -f && docker image prune -f --filter \"until=168h\"` (keeping images used in last 7 days)\n- [ ] Cron time does not overlap with the 06:00 formula burst (gardener, predictor, supervisor)\n- [ ] After the change, disk stays below 75% between reactive supervisor prune events\n\n## Affected files\n- `supervisor/supervisor-run.sh` (if adding to supervisor schedule)\n- or cron config file (if adding standalone cron entry)\n- `projects/disinto.toml.example` (if scheduling parameters belong there)\n\n## Related\n- #644 (prediction that triggered this)\n",
+    "labels": [
+      "backlog"
+    ]
+  },
+  {
+    "action": "comment",
+    "issue": 644,
+    "body": "Actioned: created a backlog issue for adding a proactive weekly Docker prune cron to prevent recurring P1 disk threshold breaches. This supplements the reactive supervisor cleanup with a scheduled preventive pass."
+  },
+  {
+    "action": "add_label",
+    "issue": 644,
+    "label": "prediction/actioned"
+  },
+  {
+    "action": "remove_label",
+    "issue": 644,
+    "label": "prediction/backlog"
+  },
+  {
+    "action": "close",
+    "issue": 644,
+    "reason": "prediction actioned — recurring Docker prune cron backlog issue created"
+  },
+  {
+    "action": "create_issue",
+    "title": "fix: upgrade Caddy to v2.11.1 on harb-staging to patch CVE-2026-27590 RCE and medium CVEs",
+    "body": "## Problem\n\nThree CVEs affecting Caddy are fixed in v2.11.1:\n- CVE-2026-27590 (HIGH — RCE via FastCGI path-splitting bug)\n- Two medium CVEs (see #580 for details)\n\nharb-staging is currently running an older Caddy version and needs an upgrade.\n\nSupersedes prediction in #580.\n\n## Action\n\nUpgrade Caddy to v2.11.1 on harb-staging. Verify the service restarts cleanly.\n\n## Acceptance criteria\n- [ ] `caddy version` on harb-staging shows v2.11.1 or later\n- [ ] Caddy service is running and serving requests after upgrade\n- [ ] No CVE-2026-27590, CVE-2026-27589 in installed version\n\n## Affected files\n- harb-staging host: `/usr/local/bin/caddy` (upgraded in-place or via package manager)\n\n## References\n- Prediction: #580\n- CVE advisory: CVE-2026-27590 (FastCGI RCE), CVE-2026-27589 (medium)\n",
+    "labels": [
+      "action"
+    ]
+  },
+  {
+    "action": "comment",
+    "issue": 580,
+    "body": "Actioned: created an action issue for upgrading Caddy to v2.11.1 on harb-staging to remediate CVE-2026-27590 (HIGH/RCE) and two medium CVEs. Priority: high."
+  },
+  {
+    "action": "add_label",
+    "issue": 580,
+    "label": "prediction/actioned"
+  },
+  {
+    "action": "remove_label",
+    "issue": 580,
+    "label": "prediction/backlog"
+  },
+  {
+    "action": "close",
+    "issue": 580,
+    "reason": "prediction actioned — Caddy upgrade action issue created"
+  },
+  {
+    "action": "create_issue",
+    "title": "fix: stagger formula agent cron start times to reduce simultaneous 06:00 RAM burst",
+    "body": "## Problem\n\nThree formula agents (gardener, predictor, supervisor) all start at 06:00 UTC simultaneously, competing for RAM and driving swap usage to 57% (2335MB / 4095MB). Swap spikes under the burst introduce latency and risk OOM events if usage grows further.\n\nSupersedes prediction in #529.\n\n## Action\n\nStagger the cron start times for formula agents by 1–2 minutes each so RAM pressure is distributed across time rather than concentrated at 06:00.\n\nSuggested schedule:\n- Supervisor: 06:00 (runs first, gathers health snapshot)\n- Predictor: 06:02\n- Gardener: 06:04\n- Planner: 06:06 (if on same schedule)\n\n## Acceptance criteria\n- [ ] Formula agent cron entries are offset by at least 1 minute from each other\n- [ ] No two formula agents start within the same minute\n- [ ] Swap usage at the 06:00–06:10 window stays below 50% after the change\n\n## Affected files\n- `projects/disinto.toml` (cron schedule fields, if stored there)\n- or host cron config file (e.g. `/etc/cron.d/disinto-*`)\n- `BOOTSTRAP.md` (update documented cron schedule if shown there)\n\n## Related\n- #529 (prediction that triggered this)\n",
+    "labels": [
+      "backlog"
+    ]
+  },
+  {
+    "action": "comment",
+    "issue": 529,
+    "body": "Actioned: created a backlog issue for staggering formula agent cron start times (supervisor 06:00, predictor 06:02, gardener 06:04) to distribute the RAM burst across 4–6 minutes instead of hitting simultaneously."
+  },
+  {
+    "action": "add_label",
+    "issue": 529,
+    "label": "prediction/actioned"
+  },
+  {
+    "action": "remove_label",
+    "issue": 529,
+    "label": "prediction/backlog"
+  },
+  {
+    "action": "close",
+    "issue": 529,
+    "reason": "prediction actioned — cron stagger backlog issue created"
+  }
+]
