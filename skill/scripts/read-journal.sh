@@ -11,7 +11,12 @@ set -euo pipefail
 # Required env: PROJECT_REPO_ROOT
 
 usage() {
-    sed -n '3,10s/^# //p' "$0"
+    cat <<'USAGE'
+read-journal.sh AGENT [--date YYYY-MM-DD] [--list] [--help]
+  AGENT: planner, supervisor, or exec
+  --date: specific date (default: today)
+  --list: list available journal dates instead of reading
+USAGE
     exit 0
 }
 

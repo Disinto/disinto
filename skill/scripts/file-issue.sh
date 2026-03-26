@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
         --body)   body="$2";   shift 2 ;;
         --labels) labels="$2"; shift 2 ;;
         --help|-h) usage ;;
-        *) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) printf 'file-issue: unknown option: %s\n' "$1" >&2; exit 1 ;;
     esac
 done
 
