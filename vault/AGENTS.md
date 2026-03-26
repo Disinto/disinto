@@ -1,4 +1,4 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Vault Agent
 
 **Role**: Three-pipeline gate — action safety classification, resource procurement, and human-action drafting.
@@ -28,8 +28,9 @@ needed — the human reviews and publishes directly.
 **Key files**:
 - `vault/vault-poll.sh` — Processes pending items: retry approved, auto-reject after 48h timeout, invoke vault-agent for JSON actions, notify human for procurement requests
 - `vault/vault-agent.sh` — Classifies and routes pending JSON actions via `claude -p`: auto-approve, auto-reject, or escalate to human
+- `vault/vault-env.sh` — Shared env setup for vault sub-scripts: sources `lib/env.sh`, overrides `FORGE_TOKEN` with `FORGE_VAULT_TOKEN`, sets `VAULT_TOKEN` for vault-runner container
 - `vault/PROMPT.md` — System prompt for the vault agent's Claude invocation
-- `vault/vault-fire.sh` — Executes an approved action (JSON) or writes RESOURCES.md entry (procurement MD)
+- `vault/vault-fire.sh` — Executes an approved action (JSON) in an **ephemeral Docker container** with vault-only secrets injected (GITHUB_TOKEN, CLAWHUB_TOKEN — never exposed to agents). For deployment actions, calls `lib/ci-helpers.sh:ci_promote()` to gate production promotes via Woodpecker environments. Writes RESOURCES.md entry for procurement MD approvals.
 - `vault/vault-reject.sh` — Marks a JSON action as rejected
 - `formulas/run-rent-a-human.toml` — Formula for human-action drafts: Claude researches target platform norms, drafts copy-paste content, writes to `vault/outreach/{platform}/drafts/`, notifies human via vault/forge
 

@@ -1,4 +1,4 @@
-<!-- last-reviewed: f2064ba67c3b6819f5e252300927c01e2825dd7c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -28,7 +28,7 @@ directly from cron like the planner, predictor, and supervisor.
   PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Lifecycle**: gardener-run.sh (cron 0,6,12,18) → `check_active gardener` → lock + memory guard →

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,
@@ -24,8 +24,10 @@ session, and spawns `action-agent.sh <issue-number>`.
 6. **Path B (no git output):** Claude posts results as comment, closes issue → `PHASE:done` → handler cleans up (kill session, docker compose down, remove temp files).
 7. For human input: Claude writes `PHASE:escalate`; human responds via vault/forge.
 
+**Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
+
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `FORGE_URL`, `PROJECT_NAME`, `FORGE_WEB`
+- `FORGE_TOKEN`, `FORGE_ACTION_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `FORGE_URL`, `PROJECT_NAME`, `FORGE_WEB`
 - `ACTION_IDLE_TIMEOUT` — Max seconds before killing idle session (default 14400 = 4h)
 - `ACTION_MAX_LIFETIME` — Max total session wall-clock seconds (default 28800 = 8h); caps session independently of idle timeout
 
