@@ -439,10 +439,25 @@ setup_forge() {
   fi
 
   # Create bot users and tokens
-  local dev_token="" review_token=""
-  for bot_user in dev-bot review-bot; do
-    local bot_pass
+  # Each agent gets its own Forgejo account for identity and audit trail (#747).
+  # Map: bot-username -> env-var-name for the token
+  local -A bot_token_vars=(
+    [dev-bot]="FORGE_TOKEN"
+    [review-bot]="FORGE_REVIEW_TOKEN"
+    [planner-bot]="FORGE_PLANNER_TOKEN"
+    [gardener-bot]="FORGE_GARDENER_TOKEN"
+    [vault-bot]="FORGE_VAULT_TOKEN"
+    [supervisor-bot]="FORGE_SUPERVISOR_TOKEN"
+    [predictor-bot]="FORGE_PREDICTOR_TOKEN"
+    [action-bot]="FORGE_ACTION_TOKEN"
+  )
+
+  local env_file="${FACTORY_ROOT}/.env"
+  local bot_user bot_pass token token_var
+
+  for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
     bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+    token_var="${bot_token_vars[$bot_user]}"
 
     if ! curl -sf --max-time 5 \
       -H "Authorization: token ${admin_token}" \
@@ -476,7 +491,6 @@ setup_forge() {
 
     # Generate token via API (basic auth as the bot user — Forgejo requires
     # basic auth on POST /users/{username}/tokens, token auth is rejected)
-    local token
     token=$(curl -sf -X POST \
       -u "${bot_user}:${bot_pass}" \
       -H "Content-Type: application/json" \
@@ -499,40 +513,22 @@ setup_forge() {
       exit 1
     fi
 
-    if [ "$bot_user" = "dev-bot" ]; then
-      dev_token="$token"
+    # Store token in .env under the per-agent variable name
+    if grep -q "^${token_var}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${token_var}=.*|${token_var}=${token}|" "$env_file"
     else
-      review_token="$token"
+      printf '%s=%s\n' "$token_var" "$token" >> "$env_file"
+    fi
+    export "${token_var}=${token}"
+    echo "  ${bot_user} token saved (${token_var})"
+
+    # Backwards-compat aliases for dev-bot and review-bot
+    if [ "$bot_user" = "dev-bot" ]; then
+      export CODEBERG_TOKEN="$token"
+    elif [ "$bot_user" = "review-bot" ]; then
+      export REVIEW_BOT_TOKEN="$token"
     fi
   done
-
-  # Store tokens in .env
-  local env_file="${FACTORY_ROOT}/.env"
-  if [ -n "$dev_token" ]; then
-    if grep -q '^FORGE_TOKEN=' "$env_file" 2>/dev/null; then
-      sed -i "s|^FORGE_TOKEN=.*|FORGE_TOKEN=${dev_token}|" "$env_file"
-    elif grep -q '^CODEBERG_TOKEN=' "$env_file" 2>/dev/null; then
-      sed -i "s|^CODEBERG_TOKEN=.*|FORGE_TOKEN=${dev_token}|" "$env_file"
-    else
-      printf '\nFORGE_TOKEN=%s\n' "$dev_token" >> "$env_file"
-    fi
-    export FORGE_TOKEN="$dev_token"
-    export CODEBERG_TOKEN="$dev_token"
-    echo "  dev-bot token saved"
-  fi
-
-  if [ -n "$review_token" ]; then
-    if grep -q '^FORGE_REVIEW_TOKEN=' "$env_file" 2>/dev/null; then
-      sed -i "s|^FORGE_REVIEW_TOKEN=.*|FORGE_REVIEW_TOKEN=${review_token}|" "$env_file"
-    elif grep -q '^REVIEW_BOT_TOKEN=' "$env_file" 2>/dev/null; then
-      sed -i "s|^REVIEW_BOT_TOKEN=.*|FORGE_REVIEW_TOKEN=${review_token}|" "$env_file"
-    else
-      printf 'FORGE_REVIEW_TOKEN=%s\n' "$review_token" >> "$env_file"
-    fi
-    export FORGE_REVIEW_TOKEN="$review_token"
-    export REVIEW_BOT_TOKEN="$review_token"
-    echo "  review-bot token saved"
-  fi
 
   # Store FORGE_URL in .env if not already present
   if ! grep -q '^FORGE_URL=' "$env_file" 2>/dev/null; then
@@ -569,8 +565,8 @@ setup_forge() {
         -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1 || true
     fi
 
-    # Add bot users as collaborators
-    for bot_user in dev-bot review-bot; do
+    # Add all bot users as collaborators
+    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
       curl -sf -X PUT \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \

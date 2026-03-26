@@ -13,6 +13,8 @@ set -euo pipefail
 
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
+# Use action-bot's own Forgejo identity (#747)
+FORGE_TOKEN="${FORGE_ACTION_TOKEN:-${FORGE_TOKEN}}"
 # shellcheck source=../lib/guard.sh
 source "$(dirname "$0")/../lib/guard.sh"
 check_active action

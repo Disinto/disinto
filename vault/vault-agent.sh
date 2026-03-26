@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "${SCRIPT_DIR}/../lib/env.sh"
+source "${SCRIPT_DIR}/vault-env.sh"
 
 VAULT_DIR="${FACTORY_ROOT}/vault"
 PROMPT_FILE="${VAULT_DIR}/PROMPT.md"
