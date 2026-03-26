@@ -107,6 +107,10 @@ and file-at-constraints steps.
 Read these inputs:
   - VISION.md, RESOURCES.md, planner memory (from preflight)
   - Graph report: orphans, cycles, thin_objectives, bottlenecks, disconnected
+  - Portfolio: ## Addressables and ## Observables tables in AGENTS.md —
+    use these as the concrete inventory of what the factory has produced.
+    Plan toward making addressables observable (measurement wired).
+    Vision changes (#733) should trigger a review of these tables.
   - Open issues (from Part A or fresh fetch)
   - Recently closed issues:
       curl -sf -H "Authorization: token $FORGE_TOKEN" \
