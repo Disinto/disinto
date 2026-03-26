@@ -29,11 +29,13 @@ Different domains have different platforms:
 | Protocol | Ponder / GraphQL | On-chain state, trades, positions | **Partial** — Live (not yet wired to evidence) |
 | Infrastructure | DigitalOcean / system stats | CPU, RAM, disk, containers | **Planned** — Supervisor monitors, no evidence output yet |
 | User experience | Playwright personas | Conversion, friction, journey completion | **Partial** — Scripts exist (`run-usertest.sh`), no evidence output yet |
+| Engagement | Caddy access logs | Visitors, referral sources, page paths | **Implemented** — `site/collect-engagement.sh` |
 | Funnel | Analytics (future) | Bounce rate, conversion, retention | **Planned** — Not started |
 
 Agents won't need to understand each platform. **Processes act as adapters** — they will read a platform's API and write structured evidence to git.
 
 ```
+[Caddy logs]      ──→ collect-engagement process ──→ evidence/engagement/YYYY-MM-DD.json
 [Google Analytics] ──→ measure-funnel process ──→ evidence/funnel/YYYY-MM-DD.json
 [Ponder GraphQL]  ──→ measure-protocol process ──→ evidence/protocol/YYYY-MM-DD.json
 [System stats]    ──→ measure-resources process ──→ evidence/resources/YYYY-MM-DD.json
@@ -56,6 +58,7 @@ Produce evidence without modifying the project under test. Some sense processes 
 | `run-user-test` | UX quality across 5 personas | Playwright + docker stack | Spawns Docker stack (containers + volumes + networks); requires Docker daemon; leaves ephemeral state until torn down | **Implemented** — `run-usertest.sh` exists (harb #978) |
 | `measure-resources` | Infra state (CPU, RAM, disk, containers) | System / DigitalOcean API | Read-only API calls. Safe to run anytime | **Planned** |
 | `measure-protocol` | On-chain health (floor, reserves, volume) | Ponder GraphQL | Read-only API calls. Safe to run anytime | **Planned** |
+| `collect-engagement` | Visitor engagement (visitors, referrers, pages) | Caddy access logs | Read-only log parsing. Safe to run anytime | **Implemented** — `site/collect-engagement.sh` (disinto #718) |
 | `measure-funnel` | User conversion and retention | Analytics API | Read-only API calls. Safe to run anytime | **Planned** |
 
 ### Mutation processes (create change)
@@ -86,6 +89,7 @@ The planner won't need to know this loop exists as a rule. It will emerge from e
 
 ```
 evidence/
+  engagement/       # Visitor counts, referrers, page paths (from Caddy logs)
   evolution/        # Run params, generation stats, best fitness, champion
   red-team/         # Per-attack results, floor held/broken, ETH extracted
   holdout/          # Per-scenario pass/fail, gate decision
