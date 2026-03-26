@@ -117,7 +117,7 @@ Update the tree:
   2. Recalculate objective status (READY/BLOCKED/DONE)
   3. Add new prerequisites discovered from graph report
   4. Add new objectives from VISION.md not yet in tree
-  5. Check vault state: vault/pending/*.md (blocked-on-vault), vault/fired/*.md (resolved?)
+  5. Check vault state: vault/pending/*.md + vault/approved/*.md (blocked-on-vault), vault/fired/*.md (resolved?)
   6. Check RESOURCES.md for newly available capabilities
 
 Bounce/stuck detection — for issues in the tree, fetch recent comments:
@@ -150,14 +150,33 @@ Stuck issue handling:
   - BOUNCED/LABEL_CHURN: do NOT re-promote. Dispatch groom-backlog formula instead:
       tea_file_issue "chore: break down #<N> — bounced <count>x" "<body>" "action"
   - HUMAN_BLOCKED (needs human decision or external resource): file a vault
-    procurement item instead of skipping. Write vault/pending/<resource-id>.md:
-      # <What is needed>
+    procurement item instead of skipping. First check for duplicates across ALL
+    vault directories (pending/, approved/, fired/) — if a file with the same
+    slug already exists in any of them, do NOT create a new one.
+    Naming: vault/pending/<project>-<slug>.md (e.g. disinto-github-org.md).
+    Write with this template:
+
+      # Request: <short description>
+
       ## What
       <description of the resource or decision needed>
+
       ## Why
-      <which objective/issue this unblocks>
+      Blocks #<issue> (<title>), which blocks <downstream objective>.
+      Waiting since <date constraint was first identified>.
+
+      ## Human action
+      1. <concrete step>
+      2. <concrete step>
+      3. Paste result here or in #<issue>
+
+      ## Factory will then
+      - <what the factory does once the resource is available>
+      - <downstream work that unblocks>
+
       ## Unblocks
       - #<issue> — <title>
+
     Then mark the prerequisite in the tree as "blocked-on-vault (vault/pending/<id>.md)".
     Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
 
@@ -174,7 +193,9 @@ Priority label sync:
         "$FORGE_API/issues/<num>/labels/<priority_label_id>"
 
 Vault procurement: if a constraint needs a resource not in RESOURCES.md with
-recurring cost, create vault/pending/<resource-id>.md instead of an issue.
+recurring cost, create vault/pending/<project>-<slug>.md instead of an issue.
+Use the same template as HUMAN_BLOCKED above (What/Why/Human action/Factory will then/Unblocks).
+Dedup: check vault/pending/ + vault/approved/ + vault/fired/ before creating.
 
 Rules:
 - Action budget: the planner may create at most (predictions_addressed + 1)
@@ -216,6 +237,10 @@ Format:
   - #NNN: BOUNCED (Nx) — dispatched groom-backlog as #MMM
   (or "No stuck issues detected")
 
+  ## Vault items filed
+  - vault/pending/<id>.md — <what> — blocks #NNN
+  (or "No vault items filed")
+
   ## Issues created
   - #NNN: title — why (or "No new issues")
 
@@ -243,7 +268,7 @@ If no file changes (git status --porcelain), skip.
 Otherwise:
   BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
   git checkout -B "$BRANCH"
-  git add planner/prerequisite-tree.md planner/journal/ planner/MEMORY.md
+  git add planner/prerequisite-tree.md planner/journal/ planner/MEMORY.md vault/pending/
   git add -u
   git diff --cached --quiet && skip
   git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
