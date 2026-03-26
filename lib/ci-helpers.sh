@@ -235,3 +235,35 @@ classify_pipeline_failure() {
   echo "code"
   return 1
 }
+
+# ci_promote <repo_id> <pipeline_number> <environment>
+# Calls the Woodpecker promote API to trigger a deployment pipeline.
+# The promote endpoint creates a new pipeline with event=deployment and
+# deploy_to=<environment>, which fires pipelines filtered on that environment.
+# Requires: WOODPECKER_TOKEN, WOODPECKER_SERVER (from env.sh)
+# Returns 0 on success, 1 on failure. Prints the new pipeline number on success.
+ci_promote() {
+  local repo_id="$1" pipeline_num="$2" environment="$3"
+
+  if [ -z "$repo_id" ] || [ -z "$pipeline_num" ] || [ -z "$environment" ]; then
+    echo "Usage: ci_promote <repo_id> <pipeline_number> <environment>" >&2
+    return 1
+  fi
+
+  local resp new_num
+  resp=$(woodpecker_api "/repos/${repo_id}/pipelines/${pipeline_num}" \
+    -X POST \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "event=deployment&deploy_to=${environment}" 2>/dev/null) || {
+    echo "ERROR: promote API call failed" >&2
+    return 1
+  }
+
+  new_num=$(printf '%s' "$resp" | jq -r '.number // empty' 2>/dev/null)
+  if [ -z "$new_num" ]; then
+    echo "ERROR: promote returned no pipeline number" >&2
+    return 1
+  fi
+
+  echo "$new_num"
+}

@@ -260,6 +260,20 @@ services:
     networks:
       - disinto-net
 
+  # Staging deployment slot — activated by Woodpecker staging pipeline (#755).
+  # Profile-gated: only starts when explicitly targeted by deploy commands.
+  # Customize image/ports/volumes for your project after init.
+  staging:
+    image: alpine:3
+    profiles: ["staging"]
+    security_opt:
+      - apparmor=unconfined
+    environment:
+      DEPLOY_ENV: staging
+    networks:
+      - disinto-net
+    command: ["echo", "staging slot — replace with project image"]
+
 volumes:
   forgejo-data:
   woodpecker-data:
@@ -304,6 +318,86 @@ generate_agent_docker() {
   fi
   if [ ! -f "${docker_dir}/entrypoint.sh" ]; then
     echo "Warning: docker/agents/entrypoint.sh not found — expected in repo" >&2
+  fi
+}
+
+# Generate template .woodpecker/ deployment pipeline configs in a project repo.
+# Creates staging.yml and production.yml alongside the project's existing CI config.
+# These pipelines trigger on Woodpecker's deployment event with environment filters.
+generate_deploy_pipelines() {
+  local repo_root="$1" project_name="$2"
+  local wp_dir="${repo_root}/.woodpecker"
+
+  mkdir -p "$wp_dir"
+
+  # Skip if deploy pipelines already exist
+  if [ -f "${wp_dir}/staging.yml" ] && [ -f "${wp_dir}/production.yml" ]; then
+    echo "Deploy:  .woodpecker/{staging,production}.yml (already exist)"
+    return
+  fi
+
+  if [ ! -f "${wp_dir}/staging.yml" ]; then
+    cat > "${wp_dir}/staging.yml" <<'STAGINGEOF'
+# .woodpecker/staging.yml — Staging deployment pipeline
+# Triggered by vault-runner via Woodpecker promote API.
+# Human approves promotion in vault → vault-runner calls promote → this runs.
+
+when:
+  event: deployment
+  environment: staging
+
+steps:
+  - name: deploy-staging
+    image: docker:27
+    commands:
+      - echo "Deploying to staging environment..."
+      - echo "Pipeline ${CI_PIPELINE_NUMBER} promoted from CI #${CI_PIPELINE_PARENT}"
+      # Pull the image built by CI and deploy to staging
+      # Customize these commands for your project:
+      # - docker compose -f docker-compose.yml --profile staging up -d
+      - echo "Staging deployment complete"
+
+  - name: verify-staging
+    image: alpine:3
+    commands:
+      - echo "Verifying staging deployment..."
+      # Add health checks, smoke tests, or integration tests here:
+      # - curl -sf http://staging:8080/health || exit 1
+      - echo "Staging verification complete"
+STAGINGEOF
+    echo "Created: ${wp_dir}/staging.yml"
+  fi
+
+  if [ ! -f "${wp_dir}/production.yml" ]; then
+    cat > "${wp_dir}/production.yml" <<'PRODUCTIONEOF'
+# .woodpecker/production.yml — Production deployment pipeline
+# Triggered by vault-runner via Woodpecker promote API.
+# Human approves promotion in vault → vault-runner calls promote → this runs.
+
+when:
+  event: deployment
+  environment: production
+
+steps:
+  - name: deploy-production
+    image: docker:27
+    commands:
+      - echo "Deploying to production environment..."
+      - echo "Pipeline ${CI_PIPELINE_NUMBER} promoted from staging"
+      # Pull the verified image and deploy to production
+      # Customize these commands for your project:
+      # - docker compose -f docker-compose.yml up -d
+      - echo "Production deployment complete"
+
+  - name: verify-production
+    image: alpine:3
+    commands:
+      - echo "Verifying production deployment..."
+      # Add production health checks here:
+      # - curl -sf http://production:8080/health || exit 1
+      - echo "Production verification complete"
+PRODUCTIONEOF
+    echo "Created: ${wp_dir}/production.yml"
   fi
 }
 
@@ -1232,6 +1326,9 @@ p.write_text(text)
 
   # Generate VISION.md template
   generate_vision "$repo_root" "$project_name"
+
+  # Generate template deployment pipeline configs in project repo
+  generate_deploy_pipelines "$repo_root" "$project_name"
 
   # Install cron jobs
   install_cron "$project_name" "$toml_path" "$auto_yes" "$bare"
