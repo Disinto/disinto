@@ -160,7 +160,7 @@ if [ -z "$REVIEW_JSON" ]; then
   jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed.\n---\n*${PR_SHA:0:7}*" \
     '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
-  matrix_send "review" "PR #${PR_NUMBER} review failed" 2>/dev/null || true; exit 1
+  exit 1
 fi
 VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict' | tr '[:lower:]' '[:upper:]' | tr '-' '_')
 REASON=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict_reason // ""')
@@ -204,7 +204,6 @@ curl -s -o /dev/null -X POST -H "Authorization: token ${FORGE_REVIEW_TOKEN}" \
   --data-binary @"${REVIEW_TMPDIR}/formal.json" >/dev/null 2>&1 || true
 log "formal ${REVENT} submitted"
 
-matrix_send "review" "PR #${PR_NUMBER} ${RTYPE}: ${VERDICT} — ${PR_TITLE}" "" "$PR_NUMBER" >/dev/null 2>&1 || true
 case "$VERDICT" in
   REQUEST_CHANGES|DISCUSS) printf 'PHASE:awaiting_changes\nSHA:%s\n' "$PR_SHA" > "$PHASE_FILE" ;;
   *) rm -f "$PHASE_FILE" "$OUTPUT_FILE"; cd "${PROJECT_REPO_ROOT}"

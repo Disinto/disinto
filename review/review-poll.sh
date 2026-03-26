@@ -55,8 +55,6 @@ if [ -n "$REVIEW_SESSIONS" ]; then
       tmux kill-session -t "$session" 2>/dev/null || true
       rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
         "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
-      # Prune thread-map entries for this PR
-      sed -i "/\treview\t[^\t]*\t${pr_num}\t/d" "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
       cd "$REPO_ROOT"
       git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
       rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
@@ -71,8 +69,6 @@ if [ -n "$REVIEW_SESSIONS" ]; then
       tmux kill-session -t "$session" 2>/dev/null || true
       rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
         "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
-      # Prune thread-map entries for this PR
-      sed -i "/\treview\t[^\t]*\t${pr_num}\t/d" "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
       cd "$REPO_ROOT"
       git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
       rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
@@ -86,7 +82,6 @@ if [ -n "$REVIEW_SESSIONS" ]; then
       tmux kill-session -t "$session" 2>/dev/null || true
       rm -f "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json" \
         "/tmp/review-injected-${PROJECT_NAME}-${pr_num}"
-      sed -i "/\treview\t[^\t]*\t${pr_num}\t/d" "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
       cd "$REPO_ROOT"
       git worktree remove "/tmp/${PROJECT_NAME}-review-${pr_num}" --force 2>/dev/null || true
       rm -rf "/tmp/${PROJECT_NAME}-review-${pr_num}" 2>/dev/null || true
@@ -217,7 +212,6 @@ if [ -n "${REVIEW_SESSIONS:-}" ]; then
       inject_review_into_dev_session "$pr_num" "${FRESH_SHA:-$current_sha}" "$pr_branch"
     else
       log "  #${pr_num} re-review failed"
-      matrix_send "review" "❌ PR #${pr_num} re-review failed" 2>/dev/null || true
     fi
 
     [ "$REVIEWED" -lt "$MAX_REVIEWS" ] || break
@@ -265,7 +259,6 @@ while IFS= read -r line; do
     inject_review_into_dev_session "$PR_NUM" "${FRESH_SHA:-$PR_SHA}" "$PR_BRANCH"
   else
     log "  #${PR_NUM} review failed"
-    matrix_send "review" "❌ PR #${PR_NUM} review failed" 2>/dev/null || true
   fi
 
   if [ "$REVIEWED" -ge "$MAX_REVIEWS" ]; then

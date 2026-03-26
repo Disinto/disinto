@@ -16,7 +16,7 @@ check so approved PRs get merged even while a dev-agent session is active.
 **Key files**:
 - `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `action`, `prediction/dismissed`, or `prediction/unreviewed` (replaced `prediction/backlog` — that label no longer exists)
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
-- `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`. `do_merge()` detects already-merged PRs on HTTP 405 (race with dev-poll's pre-lock scan) and returns success instead of escalating. Sources `lib/mirrors.sh` and calls `mirror_push()` after every successful merge. Matrix escalation notifications include `MATRIX_MENTION_USER` HTML mention when set.
+- `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`. `do_merge()` detects already-merged PRs on HTTP 405 (race with dev-poll's pre-lock scan) and returns success instead of escalating. Sources `lib/mirrors.sh` and calls `mirror_push()` after every successful merge.
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
@@ -26,12 +26,10 @@ check so approved PRs get merged even while a dev-agent session is active.
 - `PRIMARY_BRANCH` — Branch to merge into (e.g. `main`, `master`)
 - `WOODPECKER_REPO_ID` — CI pipeline lookups
 - `CLAUDE_TIMEOUT` — Max seconds for a Claude session (default 7200)
-- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 
 **FORGE_REMOTE**: `dev-agent.sh` auto-detects which git remote corresponds to `FORGE_URL` by matching the remote's push URL hostname. This is exported as `FORGE_REMOTE` and used for all git push/pull/worktree operations. Defaults to `origin` if no match found. This ensures correct behaviour when the forge is local Forgejo (remote typically named `forgejo`) rather than Codeberg (`origin`).
 
-**Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → create Matrix
-thread + export `MATRIX_THREAD_ID` → tmux `dev-{project}-{issue}` → phase file
+**Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → tmux `dev-{project}-{issue}` → phase file
 drives CI/review loop → merge + `mirror_push()` → close issue. On respawn after
 `PHASE:escalate`, the stale phase file is cleared first so the session starts
 clean; the reinject prompt tells Claude not to re-escalate for the same reason.

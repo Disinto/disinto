@@ -29,9 +29,6 @@ else
   exit 1
 fi
 
-ACTION_TYPE=$(jq -r '.type // "unknown"' < "$ACTION_FILE" 2>/dev/null)
-ACTION_SOURCE=$(jq -r '.source // "unknown"' < "$ACTION_FILE" 2>/dev/null)
-
 # Update with rejection metadata and move to rejected/
 TMP=$(mktemp)
 jq --arg reason "$REASON" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -43,4 +40,3 @@ rm -f "$ACTION_FILE"
 rm -f "${VAULT_DIR}/.locks/${ACTION_ID}.lock"
 
 log "$ACTION_ID: rejected — $REASON"
-matrix_send "vault" "🚫 Vault rejected: ${ACTION_ID} (${ACTION_TYPE} from ${ACTION_SOURCE}) — ${REASON}" 2>/dev/null || true

@@ -5,8 +5,8 @@
 # builds a prompt with action summaries, and lets the LLM decide routing.
 #
 # The LLM can call vault-fire.sh (auto-approve) or vault-reject.sh (reject)
-# directly. For escalations, it sends a Matrix message and marks the action
-# as "escalated" in pending/ so vault-poll skips it on future runs.
+# directly. For escalations, it writes a PHASE:escalate file and marks the
+# action as "escalated" in pending/ so vault-poll skips it on future runs.
 
 set -euo pipefail
 
@@ -69,7 +69,6 @@ ${ACTIONS_BATCH}
 - Vault directory: ${VAULT_DIR}
 - vault-fire.sh: bash ${VAULT_DIR}/vault-fire.sh <action-id>
 - vault-reject.sh: bash ${VAULT_DIR}/vault-reject.sh <action-id> \"<reason>\"
-- matrix_send is available after: source ${FACTORY_ROOT}/lib/env.sh
 
 Process each action now. For auto-approve, fire immediately. For reject, call vault-reject.sh.
 
@@ -77,7 +76,7 @@ For actions that need human approval (escalate), write a PHASE:escalate file
 to signal the unified escalation path:
   printf 'PHASE:escalate\nReason: vault procurement — %s\n' '<action summary>' \\
     > /tmp/vault-escalate-<action-id>.phase
-Then send a Matrix message with context about what needs approval."
+Then STOP and wait — a human will review via the forge."
 
 CLAUDE_OUTPUT=$(timeout "$CLAUDE_TIMEOUT" claude -p "$PROMPT" \
   --model sonnet \

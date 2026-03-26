@@ -88,12 +88,6 @@ WOODPECKER_DB_USER=woodpecker
 WOODPECKER_DB_HOST=127.0.0.1
 WOODPECKER_DB_NAME=woodpecker
 
-# ── Optional: Matrix notifications ──────────────────────────
-# MATRIX_HOMESERVER=http://localhost:8008
-# MATRIX_BOT_USER=@factory:your.server
-# MATRIX_TOKEN=
-# MATRIX_ROOM_ID=
-
 # ── Tuning ──────────────────────────────────────────────────
 CLAUDE_TIMEOUT=7200                   # seconds per Claude invocation
 ```
@@ -105,7 +99,7 @@ If you have an existing deployment using `CODEBERG_TOKEN` / `REVIEW_BOT_TOKEN` i
 ## 3. Configure Project TOML
 
 Each project needs a `projects/<name>.toml` file with box-specific settings
-(absolute paths, Woodpecker CI IDs, Matrix credentials, forge URL). These files are
+(absolute paths, Woodpecker CI IDs, forge URL). These files are
 **gitignored** — they are local installation config, not shared code.
 
 To create one:
@@ -394,38 +388,6 @@ tail -30 supervisor/supervisor.log
 tail -30 dev/dev-agent.log
 tail -30 review/review.log
 ```
-
-## 10. Optional: Matrix Notifications
-
-If you want real-time notifications and human-in-the-loop escalation:
-
-1. Set `MATRIX_*` vars in `.env`
-2. Install the listener as a systemd service:
-   ```bash
-   sudo cp lib/matrix_listener.service /etc/systemd/system/
-   sudo systemctl enable --now matrix_listener
-   ```
-3. The supervisor and gardener will post status updates and escalation threads to the configured room. Reply in-thread to answer escalations.
-
-### Per-project Matrix setup
-
-Each project can post to its own Matrix room. For each project:
-
-1. **Create a Matrix room** and note its room ID (e.g. `!abc123:matrix.example.org`)
-2. **Create a bot user** (or reuse one) and join it to the room
-3. **Add the token** to `.env` using a project-prefixed name:
-   ```bash
-   PROJECTNAME_MATRIX_TOKEN=syt_xxxxx
-   ```
-4. **Configure the TOML** with a `[matrix]` section:
-   ```toml
-   [matrix]
-   room_id   = "!abc123:matrix.example.org"
-   bot_user  = "@projectname-bot:matrix.example.org"
-   token_env = "PROJECTNAME_MATRIX_TOKEN"
-   ```
-
-The `token_env` field points to the environment variable name, not the token value itself, so you can have multiple bots with separate credentials in a single `.env`.
 
 ## Lifecycle
 

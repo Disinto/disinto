@@ -8,12 +8,12 @@
 #
 # Key differences from planner/gardener:
 #   - Runs every 20min — lightweight health check
-#   - Primarily READS state, rarely WRITES (no PRs, just Matrix + journal)
+#   - Primarily READS state, rarely WRITES (no PRs, just journal)
 #   - Checks vault state for pending procurement items
-#   - Conversation memory via Matrix thread and journal
+#   - Conversation memory via journal
 
 name        = "run-supervisor"
-description = "Factory health monitoring: assess metrics, fix issues, report via Matrix, write journal"
+description = "Factory health monitoring: assess metrics, fix issues, write journal"
 version     = 1
 model       = "sonnet"
 
@@ -174,20 +174,16 @@ needs = ["health-assessment"]
 
 [[steps]]
 id    = "report"
-title = "Post health summary to Matrix"
+title = "Log health summary"
 description = """
-Post a status summary to Matrix. Use the matrix_send function:
-  source "$FACTORY_ROOT/lib/env.sh"
-  matrix_send "supervisor" "<message>"
+Log a status summary to the journal.
 
 ### When everything is healthy
-Post a brief "all clear" only if the PREVIOUS run had alerts (check journal).
-Do NOT post "all clear" every 20 minutes — that would be noise.
+Log a brief "all clear" only if the PREVIOUS run had alerts (check journal).
+Do NOT log "all clear" every 20 minutes — that would be noise.
 
 ### When there are findings
-Post a summary grouped by priority:
-  matrix_send "supervisor" "Supervisor health check:
-
+Log a summary grouped by priority with:
   Fixed:
   - <what was auto-fixed>
 
@@ -195,18 +191,12 @@ Post a summary grouped by priority:
   - [P2] <description>
   - [P3] <description>
 
-  Status: RAM=<X>MB Disk=<Y>% Load=<Z>"
+  Status: RAM=<X>MB Disk=<Y>% Load=<Z>
 
 ### When vault items were filed (P0-P2 unresolved)
-Note the vault items in the status summary:
-  matrix_send "supervisor" "Supervisor health check:
+Note the vault items in the status summary.
 
-  Filed vault items:
-  - vault/pending/<id>.md — <summary>
-
-  Status: RAM=<X>MB Disk=<Y>% Load=<Z>"
-
-Keep messages concise. Do not post identical messages to what was posted
+Keep messages concise. Do not log identical messages to what was logged
 in the previous run (check journal for prior messages).
 """
 needs = ["decide-actions"]

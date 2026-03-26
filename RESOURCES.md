@@ -31,12 +31,6 @@
 - domain: disinto.ai, www.disinto.ai
 - note: served by Caddy on harb-staging
 
-## matrix-bot
-- type: communication
-- capability: post factory status, receive human replies, escalation channel
-- env: MATRIX_TOKEN
-- note: used by supervisor and dev-agent for notifications
-
 ## telegram-clawy
 - type: communication
 - capability: notify human, collect decisions, relay vault requests

@@ -43,7 +43,6 @@ RAM < 2000 MB).
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
-- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Notifications (optional)
 
 **Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →
 load formula + context (AGENTS.md, RESOURCES.md, VISION.md, prerequisite-tree.md)

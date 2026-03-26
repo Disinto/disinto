@@ -30,7 +30,7 @@ Claude writes exactly one of these lines to the phase file when a phase ends:
 |----------|---------|---------------------|
 | `PHASE:awaiting_ci` | PR pushed, waiting for CI to run | Poll CI; inject result when done |
 | `PHASE:awaiting_review` | CI passed, PR open, waiting for review | Wait for `review-poll` to inject feedback |
-| `PHASE:escalate` | Needs human input (any reason) | Send Matrix notification; session stays alive; 24h timeout → blocked |
+| `PHASE:escalate` | Needs human input (any reason) | Send vault/forge notification; session stays alive; 24h timeout → blocked |
 | `PHASE:done` | Work complete, PR merged | Verify merge, kill tmux session, clean up |
 | `PHASE:failed` | Unrecoverable failure | Escalate to gardener/supervisor |
 
@@ -77,9 +77,8 @@ PHASE:awaiting_review → wait for review-poll.sh to post review comment
                          on APPROVE         → inject "approved" into session
                          on timeout (3h)    → inject "no review, escalating"
 
-PHASE:escalate        → send Matrix notification with context (issue/PR link, reason)
+PHASE:escalate        → send vault/forge notification with context (issue/PR link, reason)
                          session stays alive waiting for human reply
-                         on reply   → matrix_listener.sh injects reply into tmux session
                          on timeout → 24h: label issue blocked, kill session
 
 PHASE:done            → verify PR merged on forge
@@ -118,7 +117,7 @@ signal to the phase file.
 - **Post-loop exit handler (`case $_MONITOR_LOOP_EXIT`):** Must include an
   `idle_prompt)` branch. Typical actions: log the event, clean up temp files,
   and (for agents that use escalation) write an escalation entry or notify via
-  Matrix. See `dev/dev-agent.sh`, `action/action-agent.sh`, and
+  vault/forge. See `dev/dev-agent.sh`, `action/action-agent.sh`, and
   `gardener/gardener-agent.sh` for reference implementations.
 
 ## Crash Recovery

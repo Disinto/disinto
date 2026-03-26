@@ -16,12 +16,6 @@ stale_minutes      = 60
 [services]
 containers = ["ponder"]
 
-[matrix]
-room_id      = "!your_room_id:matrix.example.org"
-bot_user     = "@harb-factory:matrix.example.org"
-token_env    = "MATRIX_TOKEN"
-mention_user = "@johba:matrix.allf.in"  # Matrix user to @mention on escalations
-
 [monitoring]
 check_prs            = true
 check_dev_agent      = true

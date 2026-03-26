@@ -18,16 +18,14 @@ session, and spawns `action-agent.sh <issue-number>`.
 **Session lifecycle**:
 1. `action-poll.sh` finds open `action` issues with no active tmux session.
 2. Spawns `action-agent.sh <issue_num>`.
-3. Agent creates Matrix thread, exports `MATRIX_THREAD_ID` so Claude's output streams to the thread via a Stop hook (`on-stop-matrix.sh`).
-4. Agent creates tmux session `action-{project}-{issue_num}`, injects prompt (formula + prior comments + phase protocol).
-5. Agent enters `monitor_phase_loop` (shared with dev-agent via `dev/phase-handler.sh`).
-6. **Path A (git output):** Claude pushes branch → `PHASE:awaiting_ci` → handler creates PR, polls CI → injects failures → Claude fixes → push → re-poll → CI passes → `PHASE:awaiting_review` → handler polls reviews → injects REQUEST_CHANGES → Claude fixes → approved → merge → cleanup.
-7. **Path B (no git output):** Claude posts results as comment, closes issue → `PHASE:done` → handler cleans up (kill session, docker compose down, remove temp files).
-8. For human input: Claude sends a Matrix message and waits; the reply is injected into the session by `matrix_listener.sh`.
+3. Agent creates tmux session `action-{project}-{issue_num}`, injects prompt (formula + prior comments + phase protocol).
+4. Agent enters `monitor_phase_loop` (shared with dev-agent via `dev/phase-handler.sh`).
+5. **Path A (git output):** Claude pushes branch → `PHASE:awaiting_ci` → handler creates PR, polls CI → injects failures → Claude fixes → push → re-poll → CI passes → `PHASE:awaiting_review` → handler polls reviews → injects REQUEST_CHANGES → Claude fixes → approved → merge → cleanup.
+6. **Path B (no git output):** Claude posts results as comment, closes issue → `PHASE:done` → handler cleans up (kill session, docker compose down, remove temp files).
+7. For human input: Claude writes `PHASE:escalate`; human responds via vault/forge.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `FORGE_URL`, `PROJECT_NAME`, `FORGE_WEB`
-- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
 - `ACTION_IDLE_TIMEOUT` — Max seconds before killing idle session (default 14400 = 4h)
 - `ACTION_MAX_LIFETIME` — Max total session wall-clock seconds (default 28800 = 8h); caps session independently of idle timeout
 

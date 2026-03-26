@@ -87,14 +87,6 @@ else
   log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
 fi
 
-# Start matrix listener in background (if configured)
-if [ -n "${MATRIX_TOKEN:-}" ] && [ -n "${MATRIX_ROOM_ID:-}" ]; then
-  log "Starting matrix listener in background"
-  su -s /bin/bash agent -c "${DISINTO_DIR}/lib/matrix_listener.sh" &
-else
-  log "Matrix listener: skipped (MATRIX_TOKEN or MATRIX_ROOM_ID not set)"
-fi
-
 # Run cron in the foreground.  Cron jobs execute as the agent user.
 log "Starting cron daemon"
 exec cron -f
