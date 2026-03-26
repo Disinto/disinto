@@ -99,7 +99,7 @@ If you have an existing deployment using `CODEBERG_TOKEN` / `REVIEW_BOT_TOKEN` i
 ## 3. Configure Project TOML
 
 Each project needs a `projects/<name>.toml` file with box-specific settings
-(absolute paths, Woodpecker CI IDs, Matrix credentials, forge URL). These files are
+(absolute paths, Woodpecker CI IDs, forge URL). These files are
 **gitignored** — they are local installation config, not shared code.
 
 To create one:

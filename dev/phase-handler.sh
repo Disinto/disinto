@@ -167,7 +167,7 @@ echo "PHASE:awaiting_ci" > "${_pf}"
 \`\`\`bash
 printf 'PHASE:escalate\nReason: %s\n' "describe what you need" > "${_pf}"
 \`\`\`
-Then STOP and wait. A human will reply via Matrix and the response will be injected.
+Then STOP and wait. A human will review and respond via the forge.
 
 **On unrecoverable failure:**
 \`\`\`bash

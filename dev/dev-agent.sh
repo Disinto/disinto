@@ -574,7 +574,7 @@ phase handler. You do not need to merge or close anything — stop and wait.
 \`\`\`bash
 printf 'PHASE:escalate\nReason: %s\n' \"describe what you need\" > \"${PHASE_FILE}\"
 \`\`\`
-Then STOP and wait. A human will reply via Matrix and the response will be injected.
+Then STOP and wait. A human will review and respond via the forge.
 
 **If refusing (too large, unmet dep, already done):**
 \`\`\`bash

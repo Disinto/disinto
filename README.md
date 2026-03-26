@@ -153,7 +153,7 @@ disinto/
 | **Review** | Every 10 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
 | **Gardener** | Daily | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
 | **Planner** | Weekly | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
-| **Vault** | Every 30 min | Safety gate for dangerous or irreversible actions. Classifies pending actions via Claude: auto-approve, auto-reject, or escalate to a human via Matrix. |
+| **Vault** | Every 30 min | Safety gate for dangerous or irreversible actions. Classifies pending actions via Claude: auto-approve, auto-reject, or escalate to a human via vault/forge. |
 
 ## Design Principles
 
