@@ -100,6 +100,7 @@ fi
 echo $$ > "$LOCKFILE"
 
 cleanup() {
+  local exit_code=$?
   # Kill lifetime watchdog if running
   if [ -n "${LIFETIME_WATCHDOG_PID:-}" ] && kill -0 "$LIFETIME_WATCHDOG_PID" 2>/dev/null; then
     kill "$LIFETIME_WATCHDOG_PID" 2>/dev/null || true
@@ -118,8 +119,14 @@ cleanup() {
   fi
   # Best-effort docker cleanup for containers started during this action
   (cd "${WORKTREE}" 2>/dev/null && docker compose down 2>/dev/null) || true
-  # Destroy the worktree — the runtime owns the lifecycle
-  cleanup_worktree
+  # Preserve worktree on crash for debugging; clean up on success
+  local final_phase=""
+  [ -f "$PHASE_FILE" ] && final_phase=$(head -1 "$PHASE_FILE" 2>/dev/null || true)
+  if [ "${final_phase:-}" = "PHASE:crashed" ] || [ "${_MONITOR_LOOP_EXIT:-}" = "crashed" ] || [ "$exit_code" -ne 0 ]; then
+    log "PRESERVED crashed worktree for debugging: $WORKTREE"
+  else
+    cleanup_worktree
+  fi
   rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
 }
 trap cleanup EXIT

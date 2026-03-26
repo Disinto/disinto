@@ -817,8 +817,7 @@ $(printf '%s' "$REFUSAL_JSON" | head -c 2000)
       "session crashed unexpectedly — marking blocked" \
       "session crashed unexpectedly — marking blocked${PR_NUMBER:+ | PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
     post_blocked_diagnostic "crashed"
-    [ -z "${PR_NUMBER:-}" ] && cleanup_worktree
-    [ -n "${PR_NUMBER:-}" ] && log "keeping worktree (PR #${PR_NUMBER} still open)"
+    log "PRESERVED crashed worktree for debugging: $WORKTREE"
     rm -f "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "${SCRATCH_FILE:-}" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
