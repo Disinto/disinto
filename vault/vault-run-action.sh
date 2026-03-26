@@ -71,6 +71,52 @@ case "$ACTION_TYPE" in
     fi
     ;;
 
+  promote)
+    # Promote a Woodpecker pipeline to a deployment environment (staging/production).
+    # Payload: {"repo_id": N, "pipeline": N, "environment": "staging"|"production"}
+    PROMOTE_REPO_ID=$(echo "$PAYLOAD" | jq -r '.repo_id // ""')
+    PROMOTE_PIPELINE=$(echo "$PAYLOAD" | jq -r '.pipeline // ""')
+    PROMOTE_ENV=$(echo "$PAYLOAD" | jq -r '.environment // ""')
+
+    if [ -z "$PROMOTE_REPO_ID" ] || [ -z "$PROMOTE_PIPELINE" ] || [ -z "$PROMOTE_ENV" ]; then
+      log "ERROR: ${ACTION_ID} promote missing repo_id, pipeline, or environment"
+      FIRE_EXIT=1
+    else
+      # Validate environment is staging or production
+      case "$PROMOTE_ENV" in
+        staging|production) ;;
+        *)
+          log "ERROR: ${ACTION_ID} promote invalid environment '${PROMOTE_ENV}' (must be staging or production)"
+          FIRE_EXIT=1
+          ;;
+      esac
+
+      if [ "$FIRE_EXIT" -eq 0 ]; then
+        WP_SERVER="${WOODPECKER_SERVER:-http://woodpecker:8000}"
+        WP_TOKEN="${WOODPECKER_TOKEN:-}"
+
+        if [ -z "$WP_TOKEN" ]; then
+          log "ERROR: ${ACTION_ID} promote requires WOODPECKER_TOKEN"
+          FIRE_EXIT=1
+        else
+          PROMOTE_RESP=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${WP_TOKEN}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "event=deployment&deploy_to=${PROMOTE_ENV}" \
+            "${WP_SERVER}/api/repos/${PROMOTE_REPO_ID}/pipelines/${PROMOTE_PIPELINE}" 2>/dev/null) || PROMOTE_RESP=""
+
+          NEW_PIPELINE=$(printf '%s' "$PROMOTE_RESP" | jq -r '.number // empty' 2>/dev/null)
+          if [ -n "$NEW_PIPELINE" ]; then
+            log "${ACTION_ID}: promoted pipeline ${PROMOTE_PIPELINE} to ${PROMOTE_ENV} -> new pipeline #${NEW_PIPELINE}"
+          else
+            log "ERROR: ${ACTION_ID} promote API failed (repo_id=${PROMOTE_REPO_ID} pipeline=${PROMOTE_PIPELINE} env=${PROMOTE_ENV})"
+            FIRE_EXIT=1
+          fi
+        fi
+      fi
+    fi
+    ;;
+
   blog-post|social-post|email-blast|pricing-change|dns-change|stripe-charge)
     HANDLER="${VAULT_DIR}/handlers/${ACTION_TYPE}.sh"
     if [ -x "$HANDLER" ]; then
