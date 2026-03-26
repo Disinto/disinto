@@ -178,7 +178,7 @@ check_script() {
 # Inline-sourced lib files — check that their own function calls resolve.
 # These are already in LIB_FUNS (their definitions are available to agents),
 # but this verifies calls *within* each lib file are also resolvable.
-check_script lib/env.sh
+check_script lib/env.sh              lib/mirrors.sh
 check_script lib/agent-session.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
@@ -186,7 +186,7 @@ check_script lib/file-action-issue.sh   lib/secret-scan.sh
 check_script lib/tea-helpers.sh         lib/secret-scan.sh
 check_script lib/formula-session.sh     lib/agent-session.sh
 check_script lib/load-project.sh
-check_script lib/mirrors.sh
+check_script lib/mirrors.sh              lib/env.sh
 check_script lib/guard.sh
 
 # Standalone lib scripts (not sourced by agents; run directly or as services).
@@ -201,9 +201,9 @@ check_script dev/phase-handler.sh      dev/dev-agent.sh lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh
-check_script review/review-pr.sh
+check_script review/review-pr.sh         lib/agent-session.sh
 check_script review/review-poll.sh
-check_script planner/planner-run.sh
+check_script planner/planner-run.sh      lib/agent-session.sh lib/formula-session.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
 check_script vault/vault-agent.sh

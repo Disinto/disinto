@@ -135,6 +135,8 @@ SUMMARY_FILE="${_sf}"
 
 **After committing and pushing your branch:**
 \`\`\`bash
+# Rebase on target branch before push to avoid merge conflicts
+git fetch ${_remote} ${PRIMARY_BRANCH} && git rebase ${_remote}/${PRIMARY_BRANCH}
 git push ${_remote} ${_br}
 # Write a short summary of what you implemented:
 printf '%s' "<your summary>" > "\${SUMMARY_FILE}"
@@ -150,15 +152,19 @@ echo "PHASE:awaiting_review" > "${_pf}"
 Then STOP and wait. The orchestrator will inject review feedback.
 
 **When you receive a "CI failed:" injection:**
-Fix the CI issue, commit, push, then:
+Fix the CI issue, then rebase on target branch and push:
 \`\`\`bash
+git fetch ${_remote} ${PRIMARY_BRANCH} && git rebase ${_remote}/${PRIMARY_BRANCH}
+git push --force-with-lease ${_remote} ${_br}
 echo "PHASE:awaiting_ci" > "${_pf}"
 \`\`\`
 Then STOP and wait.
 
 **When you receive a "Review: REQUEST_CHANGES" injection:**
-Address ALL review feedback, commit, push, then:
+Address ALL review feedback, then rebase on target branch and push:
 \`\`\`bash
+git fetch ${_remote} ${PRIMARY_BRANCH} && git rebase ${_remote}/${PRIMARY_BRANCH}
+git push --force-with-lease ${_remote} ${_br}
 echo "PHASE:awaiting_ci" > "${_pf}"
 \`\`\`
 (CI runs again after each push — always write awaiting_ci, not awaiting_review)
@@ -394,7 +400,26 @@ Write PHASE:awaiting_review to the phase file, then stop and wait for review fee
         log "infra failure — retrigger CI (retry ${CI_RETRY_COUNT})"
         (cd "$WORKTREE" && git commit --allow-empty \
           -m "ci: retrigger after infra failure (#${ISSUE})" --no-verify 2>&1 | tail -1)
-        (cd "$WORKTREE" && git push "${FORGE_REMOTE:-origin}" "$BRANCH" --force 2>&1 | tail -3)
+        # Rebase on target branch before push to avoid merge conflicts
+        if ! (cd "$WORKTREE" && \
+          git fetch "${FORGE_REMOTE:-origin}" "${PRIMARY_BRANCH}" 2>/dev/null && \
+          git rebase "${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH}" 2>&1 | tail -5); then
+          log "rebase conflict detected — aborting, agent must resolve"
+          (cd "$WORKTREE" && git rebase --abort 2>/dev/null || git reset --hard HEAD 2>/dev/null) || true
+          agent_inject_into_session "$SESSION_NAME" "REBASE CONFLICT: Cannot rebase onto ${PRIMARY_BRANCH} automatically.
+
+Please resolve merge conflicts manually:
+1. Check conflict status: git status
+2. Resolve conflicts in the conflicted files
+3. Stage resolved files: git add <files>
+4. Continue rebase: git rebase --continue
+
+If you cannot resolve conflicts, abort: git rebase --abort
+Then write PHASE:escalate with a reason."
+          return 0
+        fi
+        # Rebase succeeded — push the result
+        (cd "$WORKTREE" && git push --force-with-lease "${FORGE_REMOTE:-origin}" "$BRANCH" 2>&1 | tail -3)
         # Touch phase file so we recheck CI on the new SHA
         # Do NOT update LAST_PHASE_MTIME here — let the main loop detect the fresh mtime
         touch "$PHASE_FILE"
@@ -436,7 +461,8 @@ Instructions:
 1. Run ci-debug.sh failures to get the full error output.
 2. Read the failing test file(s) — understand what the tests EXPECT.
 3. Fix the root cause — do NOT weaken tests.
-4. Commit your fix and push: git push ${FORGE_REMOTE:-origin} ${BRANCH}
+4. Rebase on target branch and push: git fetch ${FORGE_REMOTE:-origin} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH}
+  git push --force-with-lease ${FORGE_REMOTE:-origin} ${BRANCH}
 5. Write: echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 6. Stop and wait."
     fi
@@ -577,7 +603,8 @@ ${REVIEW_TEXT}
 Instructions:
 1. Address each piece of feedback carefully.
 2. Run lint and tests when done.
-3. Commit your changes and push: git push ${FORGE_REMOTE:-origin} ${BRANCH}
+3. Rebase on target branch and push: git fetch ${FORGE_REMOTE:-origin} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH}
+  git push --force-with-lease ${FORGE_REMOTE:-origin} ${BRANCH}
 4. Write: echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 5. Stop and wait for the next CI result."
           log "review REQUEST_CHANGES received (round ${REVIEW_ROUND})"

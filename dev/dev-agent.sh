@@ -538,6 +538,8 @@ SUMMARY_FILE=\"${IMPL_SUMMARY_FILE}\"
 
 **After committing and pushing your branch:**
 \`\`\`bash
+# Rebase on target branch before push to avoid merge conflicts
+git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
 git push ${FORGE_REMOTE} ${BRANCH}
 # Write a short summary of what you implemented:
 printf '%s' \"<your summary>\" > \"\${SUMMARY_FILE}\"
@@ -553,15 +555,19 @@ echo \"PHASE:awaiting_review\" > \"${PHASE_FILE}\"
 Then STOP and wait. The orchestrator will inject review feedback.
 
 **When you receive a \"CI failed:\" injection:**
-Fix the CI issue, commit, push, then:
+Fix the CI issue, then rebase on target branch and push:
 \`\`\`bash
+git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
+git push --force-with-lease ${FORGE_REMOTE} ${BRANCH}
 echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 \`\`\`
 Then STOP and wait.
 
 **When you receive a \"Review: REQUEST_CHANGES\" injection:**
-Address ALL review feedback, commit, push, then:
+Address ALL review feedback, then rebase on target branch and push:
 \`\`\`bash
+git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
+git push --force-with-lease ${FORGE_REMOTE} ${BRANCH}
 echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
 \`\`\`
 (CI runs again after each push — always write awaiting_ci, not awaiting_review)
