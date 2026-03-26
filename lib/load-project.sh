@@ -43,6 +43,10 @@ emit('FORGE_URL', cfg.get('forge_url', ''))
 
 if 'repo_root' in cfg:
     emit('PROJECT_REPO_ROOT', cfg['repo_root'])
+if 'ops_repo_root' in cfg:
+    emit('OPS_REPO_ROOT', cfg['ops_repo_root'])
+if 'ops_repo' in cfg:
+    emit('FORGE_OPS_REPO', cfg['ops_repo'])
 if 'primary_branch' in cfg:
     emit('PRIMARY_BRANCH', cfg['primary_branch'])
 
@@ -97,6 +101,16 @@ export CODEBERG_WEB="${FORGE_WEB:-}"
 # Derive PROJECT_REPO_ROOT if not explicitly set
 if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
   export PROJECT_REPO_ROOT="/home/${USER}/${PROJECT_NAME}"
+fi
+
+# Derive OPS_REPO_ROOT if not explicitly set
+if [ -z "${OPS_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
+  export OPS_REPO_ROOT="/home/${USER}/${PROJECT_NAME}-ops"
+fi
+
+# Derive FORGE_OPS_REPO if not explicitly set
+if [ -z "${FORGE_OPS_REPO:-}" ] && [ -n "${FORGE_REPO:-}" ]; then
+  export FORGE_OPS_REPO="${FORGE_REPO}-ops"
 fi
 
 unset _PROJECT_TOML _PROJECT_VARS _key _val

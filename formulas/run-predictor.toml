@@ -18,7 +18,8 @@ version     = 3
 model       = "sonnet"
 
 [context]
-files = ["AGENTS.md", "RESOURCES.md", "VISION.md", "planner/prerequisite-tree.md"]
+files = ["AGENTS.md", "VISION.md"]
+# RESOURCES.md and prerequisites.md loaded from ops repo (ops: prefix)
 graph_report = "Structural analysis JSON from lib/build-graph.py — orphans, cycles, thin objectives, bottlenecks"
 
 [[steps]]
@@ -48,12 +49,12 @@ Set up the working environment and load your prediction history.
      unreviewed (planner hasn't seen it yet)
 
 3. Read the prerequisite tree:
-     cat "$PROJECT_REPO_ROOT/planner/prerequisite-tree.md"
+     cat "$OPS_REPO_ROOT/prerequisites.md"
 
 4. Count evidence per claim area:
      for dir in evidence/red-team evidence/holdout evidence/evolution evidence/user-test; do
-       echo "=== $dir ===$(find "$PROJECT_REPO_ROOT/$dir" -name '*.json' 2>/dev/null | wc -l) files"
-       find "$PROJECT_REPO_ROOT/$dir" -name '*.json' -printf '%T+ %p\n' 2>/dev/null | sort -r | head -3
+       echo "=== $dir ===$(find "$OPS_REPO_ROOT/$dir" -name '*.json' 2>/dev/null | wc -l) files"
+       find "$OPS_REPO_ROOT/$dir" -name '*.json' -printf '%T+ %p\n' 2>/dev/null | sort -r | head -3
      done
 
 5. Check current system state (lightweight — don't over-collect):

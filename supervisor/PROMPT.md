@@ -15,14 +15,14 @@ You are the supervisor agent for `$FORGE_REPO`. You were called because
 
 Fix the issue yourself. You have full shell access and `--dangerously-skip-permissions`.
 
-Before acting, read the relevant best-practices file:
-- Memory issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/memory.md`
-- Disk issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/disk.md`
-- CI issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/ci.md`
-- forge / rate limits → `cat ${FACTORY_ROOT}/supervisor/best-practices/forge.md`
-- Dev-agent issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/dev-agent.md`
-- Review-agent issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/review-agent.md`
-- Git issues → `cat ${FACTORY_ROOT}/supervisor/best-practices/git.md`
+Before acting, read the relevant knowledge file from the ops repo:
+- Memory issues → `cat ${OPS_REPO_ROOT}/knowledge/memory.md`
+- Disk issues → `cat ${OPS_REPO_ROOT}/knowledge/disk.md`
+- CI issues → `cat ${OPS_REPO_ROOT}/knowledge/ci.md`
+- forge / rate limits → `cat ${OPS_REPO_ROOT}/knowledge/forge.md`
+- Dev-agent issues → `cat ${OPS_REPO_ROOT}/knowledge/dev-agent.md`
+- Review-agent issues → `cat ${OPS_REPO_ROOT}/knowledge/review-agent.md`
+- Git issues → `cat ${OPS_REPO_ROOT}/knowledge/git.md`
 
 ## Credentials & API Access
 
@@ -83,7 +83,7 @@ When you see "Dev-agent blocked: last N polls all report 'no ready issues'":
 
 File a vault procurement item so the human is notified through the vault:
 ```bash
-cat > "${PROJECT_REPO_ROOT}/vault/pending/supervisor-$(date -u +%Y%m%d-%H%M)-issue.md" <<'VAULT_EOF'
+cat > "${OPS_REPO_ROOT}/vault/pending/supervisor-$(date -u +%Y%m%d-%H%M)-issue.md" <<'VAULT_EOF'
 # <What is needed>
 ## What
 <description of the problem and why the supervisor cannot fix it>
@@ -106,13 +106,13 @@ FIXED: <what you did>
 ```
 or
 ```
-VAULT: filed vault/pending/<id>.md — <what's needed>
+VAULT: filed $OPS_REPO_ROOT/vault/pending/<id>.md — <what's needed>
 ```
 
 ## Learning
 
-If you discover something new, append it to the relevant best-practices file:
+If you discover something new, append it to the relevant knowledge file in the ops repo:
 ```bash
-bash ${FACTORY_ROOT}/supervisor/update-prompt.sh "best-practices/<file>.md" "### Lesson title
-Description of what you learned."
+echo "### Lesson title
+Description of what you learned." >> "${OPS_REPO_ROOT}/knowledge/<file>.md"
 ```

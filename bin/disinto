@@ -699,6 +699,127 @@ setup_forge() {
   echo "Forge:   ${forge_url} (ready)"
 }
 
+# Create and seed the {project}-ops repo on Forgejo with initial directory structure.
+# The ops repo holds operational data: vault items, journals, evidence, prerequisites.
+setup_ops_repo() {
+  local forge_url="$1" ops_slug="$2" ops_root="$3" primary_branch="${4:-main}"
+  local org_name="${ops_slug%%/*}"
+  local ops_name="${ops_slug##*/}"
+
+  echo ""
+  echo "── Ops repo setup ─────────────────────────────────────"
+
+  # Check if ops repo already exists on Forgejo
+  if curl -sf --max-time 5 \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${forge_url}/api/v1/repos/${ops_slug}" >/dev/null 2>&1; then
+    echo "Ops repo: ${ops_slug} (already exists on Forgejo)"
+  else
+    # Create ops repo under org
+    if ! curl -sf -X POST \
+      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/orgs/${org_name}/repos" \
+      -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
+      # Fallback: create under the user
+      curl -sf -X POST \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/user/repos" \
+        -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data\"}" >/dev/null 2>&1 || true
+    fi
+
+    # Add all bot users as collaborators
+    local bot_user
+    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
+      curl -sf -X PUT \
+        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/repos/${ops_slug}/collaborators/${bot_user}" \
+        -d '{"permission":"write"}' >/dev/null 2>&1 || true
+    done
+
+    echo "Ops repo: ${ops_slug} created on Forgejo"
+  fi
+
+  # Clone ops repo locally if not present
+  if [ ! -d "${ops_root}/.git" ]; then
+    local auth_url
+    auth_url=$(printf '%s' "$forge_url" | sed "s|://|://dev-bot:${FORGE_TOKEN}@|")
+    local clone_url="${auth_url}/${ops_slug}.git"
+    echo "Cloning: ops repo -> ${ops_root}"
+    git clone --quiet "$clone_url" "$ops_root" 2>/dev/null || {
+      echo "Initializing: ops repo at ${ops_root}"
+      mkdir -p "$ops_root"
+      git -C "$ops_root" init --initial-branch="${primary_branch}" -q
+    }
+  else
+    echo "Ops repo: ${ops_root} (already exists locally)"
+  fi
+
+  # Seed directory structure
+  local seeded=false
+  mkdir -p "${ops_root}/vault/pending"
+  mkdir -p "${ops_root}/vault/approved"
+  mkdir -p "${ops_root}/vault/fired"
+  mkdir -p "${ops_root}/vault/rejected"
+  mkdir -p "${ops_root}/journal/planner"
+  mkdir -p "${ops_root}/journal/supervisor"
+  mkdir -p "${ops_root}/knowledge"
+  mkdir -p "${ops_root}/evidence/engagement"
+
+  if [ ! -f "${ops_root}/README.md" ]; then
+    cat > "${ops_root}/README.md" <<OPSEOF
+# ${ops_name}
+
+Operational data for the ${ops_name%-ops} project.
+
+## Structure
+
+\`\`\`
+${ops_name}/
+├── vault/
+│   ├── pending/          # vault items awaiting approval
+│   ├── approved/         # approved vault items
+│   ├── fired/            # executed vault items
+│   └── rejected/         # rejected vault items
+├── journal/
+│   ├── planner/          # daily planning logs
+│   └── supervisor/       # operational health logs
+├── knowledge/            # shared agent knowledge and best practices
+├── evidence/             # engagement data, experiment results
+├── portfolio.md          # addressables + observables
+├── prerequisites.md      # dependency graph
+└── RESOURCES.md          # accounts, tokens (refs), infra inventory
+\`\`\`
+
+## Branch protection
+
+- \`main\`: 2 reviewers required for vault items
+- Journal/evidence commits may use lighter rules
+OPSEOF
+    seeded=true
+  fi
+
+  # Create stub files if they don't exist
+  [ -f "${ops_root}/portfolio.md" ] || { echo "# Portfolio" > "${ops_root}/portfolio.md"; seeded=true; }
+  [ -f "${ops_root}/prerequisites.md" ] || { echo "# Prerequisite Tree" > "${ops_root}/prerequisites.md"; seeded=true; }
+  [ -f "${ops_root}/RESOURCES.md" ] || { echo "# Resources" > "${ops_root}/RESOURCES.md"; seeded=true; }
+
+  # Commit and push seed content
+  if [ "$seeded" = true ] && [ -d "${ops_root}/.git" ]; then
+    git -C "$ops_root" add -A
+    if ! git -C "$ops_root" diff --cached --quiet 2>/dev/null; then
+      git -C "$ops_root" commit -m "chore: seed ops repo structure" -q
+      # Push if remote exists
+      if git -C "$ops_root" remote get-url origin >/dev/null 2>&1; then
+        git -C "$ops_root" push origin "${primary_branch}" -q 2>/dev/null || true
+      fi
+    fi
+    echo "Seeded:  ops repo with initial structure"
+  fi
+}
+
 # Push local clone to the Forgejo remote.
 push_to_forge() {
   local repo_root="$1" forge_url="$2" repo_slug="$3"
@@ -874,8 +995,10 @@ generate_toml() {
 
 name            = "${name}"
 repo            = "${repo}"
+ops_repo        = "${repo}-ops"
 forge_url       = "${forge_url}"
 repo_root       = "${root}"
+ops_repo_root   = "/home/${USER}/${name}-ops"
 primary_branch  = "${branch}"
 
 [ci]
@@ -1289,6 +1412,11 @@ p.write_text(text)
     branch=$(detect_branch "$repo_root")
   fi
   echo "Branch:  ${branch}"
+
+  # Set up {project}-ops repo (#757)
+  local ops_slug="${forge_repo}-ops"
+  local ops_root="/home/${USER}/${project_name}-ops"
+  setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch"
 
   # Generate project TOML (skip if already exists)
   if [ "$toml_exists" = false ]; then

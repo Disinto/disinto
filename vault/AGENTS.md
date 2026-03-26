@@ -10,11 +10,11 @@ to a human by writing `PHASE:escalate` to a phase file — using the same
 unified escalation path as dev/action agents.
 
 **Pipeline B — Procurement (*.md)**: The planner files resource requests as
-markdown files in `vault/pending/`. `vault-poll.sh` notifies the human via
+markdown files in `$OPS_REPO_ROOT/vault/pending/`. `vault-poll.sh` notifies the human via
 vault/forge. The human fulfills the request (creates accounts, provisions infra,
-adds secrets to `.env`) and moves the file to `vault/approved/`.
+adds secrets to `.env`) and moves the file to `$OPS_REPO_ROOT/vault/approved/`.
 `vault-fire.sh` then extracts the proposed entry and appends it to
-`RESOURCES.md`.
+`$OPS_REPO_ROOT/RESOURCES.md`.
 
 **Pipeline C — Rent-a-Human (outreach drafts)**: Any agent can dispatch the
 `run-rent-a-human` formula (via an `action` issue) when a task requires a human
@@ -30,15 +30,15 @@ needed — the human reviews and publishes directly.
 - `vault/vault-agent.sh` — Classifies and routes pending JSON actions via `claude -p`: auto-approve, auto-reject, or escalate to human
 - `vault/vault-env.sh` — Shared env setup for vault sub-scripts: sources `lib/env.sh`, overrides `FORGE_TOKEN` with `FORGE_VAULT_TOKEN`, sets `VAULT_TOKEN` for vault-runner container
 - `vault/PROMPT.md` — System prompt for the vault agent's Claude invocation
-- `vault/vault-fire.sh` — Executes an approved action (JSON) in an **ephemeral Docker container** with vault-only secrets injected (GITHUB_TOKEN, CLAWHUB_TOKEN — never exposed to agents). For deployment actions, calls `lib/ci-helpers.sh:ci_promote()` to gate production promotes via Woodpecker environments. Writes RESOURCES.md entry for procurement MD approvals.
+- `vault/vault-fire.sh` — Executes an approved action (JSON) in an **ephemeral Docker container** with vault-only secrets injected (GITHUB_TOKEN, CLAWHUB_TOKEN — never exposed to agents). For deployment actions, calls `lib/ci-helpers.sh:ci_promote()` to gate production promotes via Woodpecker environments. Writes `$OPS_REPO_ROOT/RESOURCES.md` entry for procurement MD approvals.
 - `vault/vault-reject.sh` — Marks a JSON action as rejected
 - `formulas/run-rent-a-human.toml` — Formula for human-action drafts: Claude researches target platform norms, drafts copy-paste content, writes to `vault/outreach/{platform}/drafts/`, notifies human via vault/forge
 
-**Procurement flow**:
-1. Planner drops `vault/pending/<name>.md` with what/why/proposed RESOURCES.md entry
+**Procurement flow** (all vault items live in `$OPS_REPO_ROOT/vault/`):
+1. Planner drops `$OPS_REPO_ROOT/vault/pending/<name>.md` with what/why/proposed RESOURCES.md entry
 2. `vault-poll.sh` notifies human via vault/forge
-3. Human fulfills: creates account, adds secrets to `.env`, moves file to `vault/approved/`
-4. `vault-fire.sh` extracts proposed entry, appends to RESOURCES.md, moves to `vault/fired/`
+3. Human fulfills: creates account, adds secrets to `.env`, moves file to `approved/`
+4. `vault-fire.sh` extracts proposed entry, appends to `$OPS_REPO_ROOT/RESOURCES.md`, moves to `fired/`
 5. Next planner run reads RESOURCES.md → new capability available → unblocks prerequisite tree
 
 **Environment variables consumed**:

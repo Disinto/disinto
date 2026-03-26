@@ -26,8 +26,9 @@ FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
 LOGFILE="${FACTORY_ROOT}/vault/vault.log"
 STATUSFILE="/tmp/vault-status"
 LOCKFILE="/tmp/vault-poll.lock"
-VAULT_DIR="${FACTORY_ROOT}/vault"
-LOCKS_DIR="${VAULT_DIR}/.locks"
+VAULT_SCRIPT_DIR="${FACTORY_ROOT}/vault"
+OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
+LOCKS_DIR="${VAULT_SCRIPT_DIR}/.locks"
 
 TIMEOUT_HOURS=48
 
@@ -78,7 +79,7 @@ unlock_action() {
 # =============================================================================
 status "phase 1: retrying approved items"
 
-for action_file in "${VAULT_DIR}/approved/"*.json; do
+for action_file in "${OPS_VAULT_DIR}/approved/"*.json; do
   [ -f "$action_file" ] || continue
   ACTION_ID=$(jq -r '.id // ""' < "$action_file" 2>/dev/null)
   [ -z "$ACTION_ID" ] && continue
@@ -89,7 +90,7 @@ for action_file in "${VAULT_DIR}/approved/"*.json; do
   fi
 
   log "retrying approved action: $ACTION_ID"
-  if bash "${VAULT_DIR}/vault-fire.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1; then
+  if bash "${VAULT_SCRIPT_DIR}/vault-fire.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1; then
     log "fired $ACTION_ID (retry)"
   else
     log "ERROR: fire failed for $ACTION_ID (retry)"
@@ -99,7 +100,7 @@ for action_file in "${VAULT_DIR}/approved/"*.json; do
 done
 
 # Retry approved procurement requests (.md)
-for req_file in "${VAULT_DIR}/approved/"*.md; do
+for req_file in "${OPS_VAULT_DIR}/approved/"*.md; do
   [ -f "$req_file" ] || continue
   REQ_ID=$(basename "$req_file" .md)
 
@@ -109,7 +110,7 @@ for req_file in "${VAULT_DIR}/approved/"*.md; do
   fi
 
   log "retrying approved procurement: $REQ_ID"
-  if bash "${VAULT_DIR}/vault-fire.sh" "$REQ_ID" >> "$LOGFILE" 2>&1; then
+  if bash "${VAULT_SCRIPT_DIR}/vault-fire.sh" "$REQ_ID" >> "$LOGFILE" 2>&1; then
     log "fired procurement $REQ_ID (retry)"
   else
     log "ERROR: fire failed for procurement $REQ_ID (retry)"
@@ -126,7 +127,7 @@ status "phase 2: checking escalation timeouts"
 NOW_EPOCH=$(date +%s)
 TIMEOUT_SECS=$((TIMEOUT_HOURS * 3600))
 
-for action_file in "${VAULT_DIR}/pending/"*.json; do
+for action_file in "${OPS_VAULT_DIR}/pending/"*.json; do
   [ -f "$action_file" ] || continue
 
   ACTION_STATUS=$(jq -r '.status // ""' < "$action_file" 2>/dev/null)
@@ -142,7 +143,7 @@ for action_file in "${VAULT_DIR}/pending/"*.json; do
   if [ "$AGE_SECS" -gt "$TIMEOUT_SECS" ]; then
     AGE_HOURS=$((AGE_SECS / 3600))
     log "timeout: $ACTION_ID escalated ${AGE_HOURS}h ago with no reply — auto-rejecting"
-    bash "${VAULT_DIR}/vault-reject.sh" "$ACTION_ID" "timeout (${AGE_HOURS}h, no human reply)" >> "$LOGFILE" 2>&1 || true
+    bash "${VAULT_SCRIPT_DIR}/vault-reject.sh" "$ACTION_ID" "timeout (${AGE_HOURS}h, no human reply)" >> "$LOGFILE" 2>&1 || true
   fi
 done
 
@@ -154,7 +155,7 @@ status "phase 3: processing pending actions"
 PENDING_COUNT=0
 PENDING_SUMMARY=""
 
-for action_file in "${VAULT_DIR}/pending/"*.json; do
+for action_file in "${OPS_VAULT_DIR}/pending/"*.json; do
   [ -f "$action_file" ] || continue
 
   ACTION_STATUS=$(jq -r '.status // ""' < "$action_file" 2>/dev/null)
@@ -181,7 +182,7 @@ if [ "$PENDING_COUNT" -gt 0 ]; then
   log "found $PENDING_COUNT pending action(s), invoking vault-agent"
   status "invoking vault-agent for $PENDING_COUNT action(s)"
 
-  bash "${VAULT_DIR}/vault-agent.sh" >> "$LOGFILE" 2>&1 || {
+  bash "${VAULT_SCRIPT_DIR}/vault-agent.sh" >> "$LOGFILE" 2>&1 || {
     log "ERROR: vault-agent failed"
   }
 fi
@@ -193,12 +194,12 @@ status "phase 4: processing pending procurement requests"
 
 PROCURE_COUNT=0
 
-for req_file in "${VAULT_DIR}/pending/"*.md; do
+for req_file in "${OPS_VAULT_DIR}/pending/"*.md; do
   [ -f "$req_file" ] || continue
   REQ_ID=$(basename "$req_file" .md)
 
   # Check if already notified (marker file)
-  if [ -f "${VAULT_DIR}/.locks/${REQ_ID}.notified" ]; then
+  if [ -f "${LOCKS_DIR}/${REQ_ID}.notified" ]; then
     continue
   fi
 
@@ -215,8 +216,8 @@ for req_file in "${VAULT_DIR}/pending/"*.md; do
   log "new procurement request: $REQ_ID — $REQ_TITLE"
 
   # Mark as notified so we don't re-send
-  mkdir -p "${VAULT_DIR}/.locks"
-  touch "${VAULT_DIR}/.locks/${REQ_ID}.notified"
+  mkdir -p "${LOCKS_DIR}"
+  touch "${LOCKS_DIR}/${REQ_ID}.notified"
 
   unlock_action "$REQ_ID"
 done
@@ -239,7 +240,7 @@ if [ -n "${FORGE_REPO:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
     ISSUE_NUM=$(printf '%s' "$ACTION_ISSUES" | jq -r ".[$idx].number")
 
     # Skip if already processed
-    if [ -f "${VAULT_DIR}/.locks/issue-${ISSUE_NUM}.vault-fired" ]; then
+    if [ -f "${LOCKS_DIR}/issue-${ISSUE_NUM}.vault-fired" ]; then
       continue
     fi
 
@@ -272,21 +273,21 @@ if [ -n "${FORGE_REPO:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
     fi
 
     # Skip if this action already exists in any stage
-    if [ -f "${VAULT_DIR}/approved/${ACTION_ID}.json" ] || \
-       [ -f "${VAULT_DIR}/fired/${ACTION_ID}.json" ] || \
-       [ -f "${VAULT_DIR}/rejected/${ACTION_ID}.json" ]; then
+    if [ -f "${OPS_VAULT_DIR}/approved/${ACTION_ID}.json" ] || \
+       [ -f "${OPS_VAULT_DIR}/fired/${ACTION_ID}.json" ] || \
+       [ -f "${OPS_VAULT_DIR}/rejected/${ACTION_ID}.json" ]; then
       continue
     fi
 
     log "vault-bot authorized action on issue #${ISSUE_NUM}: ${ACTION_ID}"
-    printf '%s' "$ACTION_JSON" | jq '.status = "approved"' > "${VAULT_DIR}/approved/${ACTION_ID}.json"
+    printf '%s' "$ACTION_JSON" | jq '.status = "approved"' > "${OPS_VAULT_DIR}/approved/${ACTION_ID}.json"
     COMMENT_COUNT=$((COMMENT_COUNT + 1))
 
     # Fire the action
-    if bash "${VAULT_DIR}/vault-fire.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1; then
+    if bash "${VAULT_SCRIPT_DIR}/vault-fire.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1; then
       log "fired ${ACTION_ID} from issue #${ISSUE_NUM}"
       # Mark issue as processed
-      touch "${VAULT_DIR}/.locks/issue-${ISSUE_NUM}.vault-fired"
+      touch "${LOCKS_DIR}/issue-${ISSUE_NUM}.vault-fired"
     else
       log "ERROR: fire failed for ${ACTION_ID} from issue #${ISSUE_NUM}"
     fi

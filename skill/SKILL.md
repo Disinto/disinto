@@ -324,7 +324,7 @@ Read `VISION.md` at the repo root for the full vision. Then cross-reference
 with the prerequisite tree:
 
 ```bash
-cat "${PROJECT_REPO_ROOT}/planner/prerequisite-tree.md"
+cat "${OPS_REPO_ROOT}/prerequisites.md"
 ```
 
 The prerequisite tree maps vision objectives to concrete issues. Items marked

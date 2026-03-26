@@ -12,8 +12,9 @@
 
 set -euo pipefail
 
-VAULT_DIR="${DISINTO_VAULT_DIR:-/home/agent/disinto/vault}"
-LOGFILE="${VAULT_DIR}/vault.log"
+VAULT_SCRIPT_DIR="${DISINTO_VAULT_DIR:-/home/agent/disinto/vault}"
+OPS_VAULT_DIR="${DISINTO_OPS_VAULT_DIR:-${VAULT_SCRIPT_DIR}}"
+LOGFILE="${VAULT_SCRIPT_DIR}/vault.log"
 ACTION_ID="${1:?Usage: vault-run-action.sh <action-id>}"
 
 log() {
@@ -22,7 +23,7 @@ log() {
 }
 
 # Find action file in approved/
-ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.json"
+ACTION_FILE="${OPS_VAULT_DIR}/approved/${ACTION_ID}.json"
 if [ ! -f "$ACTION_FILE" ]; then
   log "ERROR: action file not found: ${ACTION_FILE}"
   echo "ERROR: action file not found: ${ACTION_FILE}" >&2
@@ -118,7 +119,7 @@ case "$ACTION_TYPE" in
     ;;
 
   blog-post|social-post|email-blast|pricing-change|dns-change|stripe-charge)
-    HANDLER="${VAULT_DIR}/handlers/${ACTION_TYPE}.sh"
+    HANDLER="${VAULT_SCRIPT_DIR}/handlers/${ACTION_TYPE}.sh"
     if [ -x "$HANDLER" ]; then
       bash "$HANDLER" "$ACTION_ID" "$PAYLOAD" 2>&1 || FIRE_EXIT=$?
     else

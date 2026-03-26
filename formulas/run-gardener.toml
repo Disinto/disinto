@@ -120,7 +120,7 @@ DUST (trivial — single-line edit, rename, comment, style, whitespace):
   of 3+ into one backlog issue.
 
 VAULT (needs human decision or external resource):
-  File a vault procurement item at $PROJECT_REPO_ROOT/vault/pending/<id>.md:
+  File a vault procurement item at $OPS_REPO_ROOT/vault/pending/<id>.md:
     # <What decision or resource is needed>
     ## What
     <description>
@@ -128,7 +128,7 @@ VAULT (needs human decision or external resource):
     <which issue this unblocks>
     ## Unblocks
     - #NNN — <title>
-  Log: echo "VAULT: filed vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
+  Log: echo "VAULT: filed $OPS_REPO_ROOT/vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
 
 CLEAN (only if truly nothing to do):
   echo 'CLEAN' >> "$RESULT_FILE"

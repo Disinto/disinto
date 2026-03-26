@@ -34,12 +34,12 @@ and injected into your prompt above. Review them now.
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
 
-2. Check vault state: read vault/pending/*.md for any procurement items
+2. Check vault state: read $OPS_REPO_ROOT/vault/pending/*.md for any procurement items
    the planner has filed. Note items relevant to the health assessment
    (e.g. a blocked resource that explains why the pipeline is stalled).
 
 3. Read the supervisor journal for recent history:
-     JOURNAL_FILE="$FACTORY_ROOT/supervisor/journal/$(date -u +%Y-%m-%d).md"
+     JOURNAL_FILE="$OPS_REPO_ROOT/journal/supervisor/$(date -u +%Y-%m-%d).md"
      if [ -f "$JOURNAL_FILE" ]; then cat "$JOURNAL_FILE"; fi
 
 4. Note any values that cross these thresholds:
@@ -151,7 +151,7 @@ For each finding from the health assessment, decide and execute an action.
 
 For P0-P2 issues that persist after auto-fix attempts, or issues requiring
 human judgment, file a vault procurement item:
-  Write $PROJECT_REPO_ROOT/vault/pending/supervisor-<issue-slug>.md:
+  Write $OPS_REPO_ROOT/vault/pending/supervisor-<issue-slug>.md:
     # <What is needed>
     ## What
     <description of the problem and why the supervisor cannot fix it>
@@ -162,11 +162,11 @@ human judgment, file a vault procurement item:
   The vault-poll will notify the human and track the request.
 
 Read the relevant best-practices file before taking action:
-  cat "$FACTORY_ROOT/supervisor/best-practices/memory.md"    # P0
-  cat "$FACTORY_ROOT/supervisor/best-practices/disk.md"      # P1
-  cat "$FACTORY_ROOT/supervisor/best-practices/ci.md"        # P2 CI
-  cat "$FACTORY_ROOT/supervisor/best-practices/dev-agent.md" # P2 agent
-  cat "$FACTORY_ROOT/supervisor/best-practices/git.md"       # P2 git
+  cat "$OPS_REPO_ROOT/knowledge/memory.md"    # P0
+  cat "$OPS_REPO_ROOT/knowledge/disk.md"      # P1
+  cat "$OPS_REPO_ROOT/knowledge/ci.md"        # P2 CI
+  cat "$OPS_REPO_ROOT/knowledge/dev-agent.md" # P2 agent
+  cat "$OPS_REPO_ROOT/knowledge/git.md"       # P2 git
 
 Track what you fixed and what vault items you filed for the report step.
 """
@@ -208,7 +208,7 @@ description = """
 Append a timestamped entry to the supervisor journal.
 
 File path:
-  $FACTORY_ROOT/supervisor/journal/$(date -u +%Y-%m-%d).md
+  $OPS_REPO_ROOT/journal/supervisor/$(date -u +%Y-%m-%d).md
 
 If the file already exists (multiple runs per day), append a new section.
 If it does not exist, create it.

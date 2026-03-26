@@ -35,14 +35,14 @@ Different domains have different platforms:
 Agents won't need to understand each platform. **Processes act as adapters** — they will read a platform's API and write structured evidence to git.
 
 ```
-[Caddy logs]      ──→ collect-engagement process ──→ evidence/engagement/YYYY-MM-DD.json
-[Google Analytics] ──→ measure-funnel process ──→ evidence/funnel/YYYY-MM-DD.json
-[Ponder GraphQL]  ──→ measure-protocol process ──→ evidence/protocol/YYYY-MM-DD.json
-[System stats]    ──→ measure-resources process ──→ evidence/resources/YYYY-MM-DD.json
-[Playwright]      ──→ run-user-test process ──→ evidence/user-test/YYYY-MM-DD.json
+[Caddy logs]      ──→ collect-engagement process ──→ {project}-ops/evidence/engagement/YYYY-MM-DD.json
+[Google Analytics] ──→ measure-funnel process ──→ {project}-ops/evidence/funnel/YYYY-MM-DD.json
+[Ponder GraphQL]  ──→ measure-protocol process ──→ {project}-ops/evidence/protocol/YYYY-MM-DD.json
+[System stats]    ──→ measure-resources process ──→ {project}-ops/evidence/resources/YYYY-MM-DD.json
+[Playwright]      ──→ run-user-test process ──→ {project}-ops/evidence/user-test/YYYY-MM-DD.json
 ```
 
-The planner will read `evidence/` — not Analytics, not Ponder, not DigitalOcean. Evidence is the normalized interface between the world and decisions.
+The planner will read `$OPS_REPO_ROOT/evidence/` — not Analytics, not Ponder, not DigitalOcean. Evidence is the normalized interface between the world and decisions.
 
 > **Terminology note — "process" vs "formula":** In this document, "process" means a self-contained measurement or mutation pipeline that reads an external platform and writes structured evidence to git. This is distinct from disinto's "formulas" (`formulas/*.toml`), which are TOML issue templates that guide agents through multi-step operational work (see `AGENTS.md` § Directory layout). Processes produce evidence; formulas orchestrate agent tasks.
 

@@ -86,6 +86,13 @@ export TEA_LOGIN
 export PROJECT_NAME="${PROJECT_NAME:-${FORGE_REPO##*/}}"
 export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}}"
 export PRIMARY_BRANCH="${PRIMARY_BRANCH:-master}"
+
+# Ops repo: operational data (vault items, journals, evidence, prerequisites).
+# Default convention: sibling directory named {project}-ops.
+export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}-ops}"
+
+# Forge repo slug for the ops repo (used by agents that commit to ops).
+export FORGE_OPS_REPO="${FORGE_OPS_REPO:-${FORGE_REPO:+${FORGE_REPO}-ops}}"
 export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-}"
 export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"

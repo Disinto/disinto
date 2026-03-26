@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-: "${PROJECT_REPO_ROOT:?PROJECT_REPO_ROOT is required}"
+: "${OPS_REPO_ROOT:?OPS_REPO_ROOT is required}"
 
 if [[ -z "$agent" ]]; then
     echo "Error: agent name is required (planner, supervisor, predictor)" >&2
@@ -51,8 +51,8 @@ fi
 
 # --- Resolve journal directory ---
 case "$agent" in
-    planner)    journal_dir="${PROJECT_REPO_ROOT}/planner/journal" ;;
-    supervisor) journal_dir="${PROJECT_REPO_ROOT}/supervisor/journal" ;;
+    planner)    journal_dir="${OPS_REPO_ROOT}/journal/planner" ;;
+    supervisor) journal_dir="${OPS_REPO_ROOT}/journal/supervisor" ;;
     predictor)
         echo "The predictor does not write journal files."
         echo "Its memory lives in forge issues labeled 'prediction/unreviewed' and 'prediction/actioned'."

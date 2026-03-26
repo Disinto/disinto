@@ -21,8 +21,9 @@ version     = 4
 model       = "opus"
 
 [context]
-files = ["VISION.md", "AGENTS.md", "RESOURCES.md", "planner/prerequisite-tree.md"]
-# Recent planner/journal/*.md files + graph report loaded by planner-run.sh
+files = ["VISION.md", "AGENTS.md"]
+# RESOURCES.md and prerequisites.md loaded from ops repo (ops: prefix)
+# Recent journal/planner/*.md files + graph report loaded by planner-run.sh
 
 [[steps]]
 id    = "preflight"
@@ -40,10 +41,10 @@ description = """
      HEAD_SHA=$(git rev-parse HEAD)
      echo "$HEAD_SHA" > /tmp/planner-head-sha
 
-4. Read the planner memory file at: $PROJECT_REPO_ROOT/planner/MEMORY.md
+4. Read the planner memory file at: $OPS_REPO_ROOT/knowledge/planner-memory.md
    If it does not exist, this is the first planning run.
 
-5. Read the prerequisite tree at: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
+5. Read the prerequisite tree at: $OPS_REPO_ROOT/prerequisites.md
    If it does not exist, create an initial tree from VISION.md in the next step.
 
 6. Read the graph report injected into the prompt (## Structural analysis).
@@ -121,7 +122,7 @@ Update the tree:
   2. Recalculate objective status (READY/BLOCKED/DONE)
   3. Add new prerequisites discovered from graph report
   4. Add new objectives from VISION.md not yet in tree
-  5. Check vault state: vault/pending/*.md + vault/approved/*.md (blocked-on-vault), vault/fired/*.md (resolved?)
+  5. Check vault state: $OPS_REPO_ROOT/vault/pending/*.md + $OPS_REPO_ROOT/vault/approved/*.md (blocked-on-vault), $OPS_REPO_ROOT/vault/fired/*.md (resolved?)
   6. Check RESOURCES.md for newly available capabilities
 
 Bounce/stuck detection — for issues in the tree, fetch recent comments:
@@ -141,7 +142,7 @@ Tree format:
   ## Objective: <name> (#issue or description)
   - [x] Resolved prerequisite (reference)
   - [ ] Unresolved prerequisite (#issue or description)
-  - [ ] Resource need blocked-on-vault (vault/pending/<id>.md)
+  - [ ] Resource need blocked-on-vault ($OPS_REPO_ROOT/vault/pending/<id>.md)
   Status: READY | BLOCKED — <reason> | DONE
 
 ### Part C: File at constraints
@@ -157,7 +158,7 @@ Stuck issue handling:
     procurement item instead of skipping. First check for duplicates across ALL
     vault directories (pending/, approved/, fired/) — if a file with the same
     slug already exists in any of them, do NOT create a new one.
-    Naming: vault/pending/<project>-<slug>.md (e.g. disinto-github-org.md).
+    Naming: $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md (e.g. disinto-github-org.md).
     Write with this template:
 
       # Request: <short description>
@@ -181,7 +182,7 @@ Stuck issue handling:
       ## Unblocks
       - #<issue> — <title>
 
-    Then mark the prerequisite in the tree as "blocked-on-vault (vault/pending/<id>.md)".
+    Then mark the prerequisite in the tree as "blocked-on-vault ($OPS_REPO_ROOT/vault/pending/<id>.md)".
     Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
 
 Filing gate (for non-stuck constraints):
@@ -197,9 +198,9 @@ Priority label sync:
         "$FORGE_API/issues/<num>/labels/<priority_label_id>"
 
 Vault procurement: if a constraint needs a resource not in RESOURCES.md with
-recurring cost, create vault/pending/<project>-<slug>.md instead of an issue.
+recurring cost, create $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md instead of an issue.
 Use the same template as HUMAN_BLOCKED above (What/Why/Human action/Factory will then/Unblocks).
-Dedup: check vault/pending/ + vault/approved/ + vault/fired/ before creating.
+Dedup: check $OPS_REPO_ROOT/vault/pending/ + $OPS_REPO_ROOT/vault/approved/ + $OPS_REPO_ROOT/vault/fired/ before creating.
 
 Rules:
 - Action budget: the planner may create at most (predictions_addressed + 1)
@@ -220,10 +221,10 @@ id    = "journal-and-commit"
 title = "Write tree, journal, optional memory; commit and PR"
 description = """
 ### 1. Write prerequisite tree
-Write to: $PROJECT_REPO_ROOT/planner/prerequisite-tree.md
+Write to: $OPS_REPO_ROOT/prerequisites.md
 
 ### 2. Write journal entry
-Create/append to: $PROJECT_REPO_ROOT/planner/journal/$(date -u +%Y-%m-%d).md
+Create/append to: $OPS_REPO_ROOT/journal/planner/$(date -u +%Y-%m-%d).md
 
 Format:
   # Planner run — YYYY-MM-DD HH:MM UTC
@@ -242,7 +243,7 @@ Format:
   (or "No stuck issues detected")
 
   ## Vault items filed
-  - vault/pending/<id>.md — <what> — blocks #NNN
+  - $OPS_REPO_ROOT/vault/pending/<id>.md — <what> — blocks #NNN
   (or "No vault items filed")
 
   ## Issues created
@@ -261,28 +262,21 @@ Keep concise — 30-50 lines max.
 
 ### 3. Memory update (every 5th run)
 Count "# Planner run —" headers across all journal files.
-Check "<!-- summarized-through-run: N -->" in MEMORY.md.
-If (count - N) >= 5 or MEMORY.md missing, write to:
-  $PROJECT_REPO_ROOT/planner/MEMORY.md
+Check "<!-- summarized-through-run: N -->" in planner-memory.md.
+If (count - N) >= 5 or planner-memory.md missing, write to:
+  $OPS_REPO_ROOT/knowledge/planner-memory.md
 Include: run counter marker, date, constraint focus, patterns, direction.
 Keep under 100 lines. Replace entire file.
 
-### 4. Commit and PR
-If no file changes (git status --porcelain), skip.
-Otherwise:
-  BRANCH="chore/planner-$(date -u +%Y%m%d-%H%M)"
-  git checkout -B "$BRANCH"
-  git add planner/prerequisite-tree.md planner/journal/ planner/MEMORY.md vault/pending/
+### 4. Commit ops repo changes
+Commit the ops repo changes (prerequisites, journal, memory, vault items):
+  cd "$OPS_REPO_ROOT"
+  git add prerequisites.md journal/planner/ knowledge/planner-memory.md vault/pending/
   git add -u
-  git diff --cached --quiet && skip
-  git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
-  git push -u origin "$BRANCH"
-  Create PR via forge API:
-    curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-      -H "Content-Type: application/json" "$FORGE_API/pulls" \
-      -d '{"title":"chore: planner run — prerequisite tree update",
-           "head":"<branch>","base":"<primary-branch>",
-           "body":"Automated planner run — prerequisite tree update and journal entry."}'
-  git checkout "$PRIMARY_BRANCH"
+  if ! git diff --cached --quiet; then
+    git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
+    git push origin "$PRIMARY_BRANCH"
+  fi
+  cd "$PROJECT_REPO_ROOT"
 """
 needs = ["triage-and-plan"]

@@ -13,16 +13,14 @@ See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 ## Directory layout
 
 ```
-disinto/
+disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — direct cron executor for run-gardener formula
 ├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
-│                  planner/journal/ — daily raw logs from each planner run
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
 │                  preflight.sh — pre-flight data collection for supervisor formula
-│                  supervisor/journal/ — daily health logs from each run
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
@@ -30,6 +28,21 @@ disinto/
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+
+disinto-ops/             (ops repo — {project}-ops)
+├── vault/
+│   ├── pending/   vault items awaiting approval
+│   ├── approved/  approved vault items
+│   ├── fired/     executed vault items
+│   └── rejected/  rejected vault items
+├── journal/
+│   ├── planner/   daily planning logs
+│   └── supervisor/ operational health logs
+├── knowledge/     shared agent knowledge + best practices
+├── evidence/      engagement data, experiment results
+├── portfolio.md   addressables + observables
+├── prerequisites.md  dependency graph
+└── RESOURCES.md   accounts, tokens (refs), infra inventory
 ```
 
 > **Terminology note:** "Formulas" in this repo are TOML issue templates in `formulas/` that

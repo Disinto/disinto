@@ -31,10 +31,9 @@ runs directly from cron like the planner and predictor.
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
-- `supervisor/journal/*.md` — Daily health logs from each supervisor run (local,
-  committed periodically)
+- `$OPS_REPO_ROOT/journal/supervisor/*.md` — Daily health logs from each supervisor run
 - `supervisor/PROMPT.md` — Best-practices reference for remediation actions
-- `supervisor/best-practices/*.md` — Domain-specific remediation guides (memory,
+- `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 - `supervisor/supervisor-poll.sh` — Legacy bash orchestrator (superseded by
   supervisor-run.sh + formula)
@@ -43,7 +42,7 @@ runs directly from cron like the planner and predictor.
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 

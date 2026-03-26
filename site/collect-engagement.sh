@@ -32,8 +32,8 @@ log() {
 # Caddy structured access log (JSON lines)
 CADDY_LOG="${CADDY_ACCESS_LOG:-/var/log/caddy/access.log}"
 
-# Evidence output directory (committed to git)
-EVIDENCE_DIR="${FACTORY_ROOT}/evidence/engagement"
+# Evidence output directory (committed to ops repo)
+EVIDENCE_DIR="${OPS_REPO_ROOT}/evidence/engagement"
 
 # Report date — defaults to today
 REPORT_DATE=$(date -u +%Y-%m-%d)

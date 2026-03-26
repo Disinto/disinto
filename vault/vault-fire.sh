@@ -17,10 +17,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/vault-env.sh"
 
-VAULT_DIR="${FACTORY_ROOT}/vault"
-LOCKS_DIR="${VAULT_DIR}/.locks"
-LOGFILE="${VAULT_DIR}/vault.log"
-RESOURCES_FILE="${PROJECT_REPO_ROOT:-${FACTORY_ROOT}}/RESOURCES.md"
+OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
+LOCKS_DIR="${FACTORY_ROOT}/vault/.locks"
+LOGFILE="${FACTORY_ROOT}/vault/vault.log"
+RESOURCES_FILE="${OPS_REPO_ROOT}/RESOURCES.md"
 
 log() {
   printf '[%s] vault-fire: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
@@ -34,19 +34,19 @@ ACTION_ID="${1:?Usage: vault-fire.sh <item-id>}"
 IS_PROCUREMENT=false
 ACTION_FILE=""
 
-if [ -f "${VAULT_DIR}/approved/${ACTION_ID}.md" ]; then
+if [ -f "${OPS_VAULT_DIR}/approved/${ACTION_ID}.md" ]; then
   IS_PROCUREMENT=true
-  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.md"
-elif [ -f "${VAULT_DIR}/pending/${ACTION_ID}.md" ]; then
+  ACTION_FILE="${OPS_VAULT_DIR}/approved/${ACTION_ID}.md"
+elif [ -f "${OPS_VAULT_DIR}/pending/${ACTION_ID}.md" ]; then
   IS_PROCUREMENT=true
-  mv "${VAULT_DIR}/pending/${ACTION_ID}.md" "${VAULT_DIR}/approved/${ACTION_ID}.md"
-  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.md"
+  mv "${OPS_VAULT_DIR}/pending/${ACTION_ID}.md" "${OPS_VAULT_DIR}/approved/${ACTION_ID}.md"
+  ACTION_FILE="${OPS_VAULT_DIR}/approved/${ACTION_ID}.md"
   log "$ACTION_ID: pending → approved (procurement)"
-elif [ -f "${VAULT_DIR}/approved/${ACTION_ID}.json" ]; then
-  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.json"
-elif [ -f "${VAULT_DIR}/pending/${ACTION_ID}.json" ]; then
-  mv "${VAULT_DIR}/pending/${ACTION_ID}.json" "${VAULT_DIR}/approved/${ACTION_ID}.json"
-  ACTION_FILE="${VAULT_DIR}/approved/${ACTION_ID}.json"
+elif [ -f "${OPS_VAULT_DIR}/approved/${ACTION_ID}.json" ]; then
+  ACTION_FILE="${OPS_VAULT_DIR}/approved/${ACTION_ID}.json"
+elif [ -f "${OPS_VAULT_DIR}/pending/${ACTION_ID}.json" ]; then
+  mv "${OPS_VAULT_DIR}/pending/${ACTION_ID}.json" "${OPS_VAULT_DIR}/approved/${ACTION_ID}.json"
+  ACTION_FILE="${OPS_VAULT_DIR}/approved/${ACTION_ID}.json"
   TMP=$(mktemp)
   jq '.status = "approved"' "$ACTION_FILE" > "$TMP" && mv "$TMP" "$ACTION_FILE"
   log "$ACTION_ID: pending → approved"
@@ -93,7 +93,7 @@ if [ "$IS_PROCUREMENT" = true ]; then
   log "$ACTION_ID: wrote RESOURCES.md entry"
 
   # Move to fired/
-  mv "$ACTION_FILE" "${VAULT_DIR}/fired/${ACTION_ID}.md"
+  mv "$ACTION_FILE" "${OPS_VAULT_DIR}/fired/${ACTION_ID}.md"
   rm -f "${LOCKS_DIR}/${ACTION_ID}.notified"
   log "$ACTION_ID: approved → fired (procurement)"
   exit 0
@@ -122,7 +122,7 @@ if [ -f "${FACTORY_ROOT}/.env.vault.enc" ] && [ -f "${FACTORY_ROOT}/docker-compo
 else
   # Fallback for bare-metal or pre-migration setups: run action handler directly
   log "$ACTION_ID: no .env.vault.enc or docker-compose.yml — running action directly"
-  bash "${VAULT_DIR}/vault-run-action.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
+  bash "${SCRIPT_DIR}/vault-run-action.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
 fi
 
 # =============================================================================
@@ -132,7 +132,7 @@ if [ "$FIRE_EXIT" -eq 0 ]; then
   # Update with fired timestamp and move to fired/
   TMP=$(mktemp)
   jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.status = "fired" | .fired_at = $ts' "$ACTION_FILE" > "$TMP" \
-    && mv "$TMP" "${VAULT_DIR}/fired/${ACTION_ID}.json"
+    && mv "$TMP" "${OPS_VAULT_DIR}/fired/${ACTION_ID}.json"
   rm -f "$ACTION_FILE"
   log "$ACTION_ID: approved → fired"
 else

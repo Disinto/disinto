@@ -209,7 +209,7 @@ Check 2 — collect-engagement.sh is present in the repo:
   fi
 
 Check 3 — engagement evidence has been collected at least once:
-  EVIDENCE_DIR="$FACTORY_ROOT/evidence/engagement"
+  EVIDENCE_DIR="$OPS_REPO_ROOT/evidence/engagement"
   LATEST=$(ls -1t "$EVIDENCE_DIR"/*.json 2>/dev/null | head -1 || true)
   if [ -n "$LATEST" ]; then
     echo "OK: Latest engagement report: $LATEST"
@@ -222,7 +222,7 @@ Check 3 — engagement evidence has been collected at least once:
 Summary:
   echo ""
   echo "Observable status: addressable=disinto.ai measurement=caddy-access-logs"
-  echo "Evidence path: evidence/engagement/YYYY-MM-DD.json"
-  echo "Consumer: planner reads evidence/engagement/ during gap analysis"
+  echo "Evidence path: \$OPS_REPO_ROOT/evidence/engagement/YYYY-MM-DD.json"
+  echo "Consumer: planner reads ops repo evidence/engagement/ during gap analysis"
 """
 needs       = ["verify"]

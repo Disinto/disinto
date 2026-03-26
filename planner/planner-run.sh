@@ -48,30 +48,33 @@ log "--- Planner run start ---"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
-build_context_block VISION.md AGENTS.md RESOURCES.md planner/prerequisite-tree.md
+build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
 
+# ── Ensure ops repo is available ───────────────────────────────────────
+ensure_ops_repo
+
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
-MEMORY_FILE="$PROJECT_REPO_ROOT/planner/MEMORY.md"
+MEMORY_FILE="$OPS_REPO_ROOT/knowledge/planner-memory.md"
 if [ -f "$MEMORY_FILE" ]; then
   MEMORY_BLOCK="
-### planner/MEMORY.md (persistent memory from prior runs)
+### knowledge/planner-memory.md (persistent memory from prior runs)
 $(cat "$MEMORY_FILE")
 "
 fi
 
 # ── Read recent journal files ──────────────────────────────────────────
 JOURNAL_BLOCK=""
-JOURNAL_DIR="$PROJECT_REPO_ROOT/planner/journal"
+JOURNAL_DIR="$OPS_REPO_ROOT/journal/planner"
 if [ -d "$JOURNAL_DIR" ]; then
   # Load last 5 journal files (most recent first) for run history context
   JOURNAL_FILES=$(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -5)
   if [ -n "$JOURNAL_FILES" ]; then
     JOURNAL_BLOCK="
-### Recent journal entries (planner/journal/)
+### Recent journal entries (journal/planner/)
 "
     while IFS= read -r jf; do
       JOURNAL_BLOCK="${JOURNAL_BLOCK}

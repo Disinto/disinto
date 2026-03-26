@@ -13,9 +13,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/vault-env.sh"
 
-VAULT_DIR="${FACTORY_ROOT}/vault"
-PROMPT_FILE="${VAULT_DIR}/PROMPT.md"
-LOGFILE="${VAULT_DIR}/vault.log"
+VAULT_SCRIPT_DIR="${FACTORY_ROOT}/vault"
+OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
+PROMPT_FILE="${VAULT_SCRIPT_DIR}/PROMPT.md"
+LOGFILE="${VAULT_SCRIPT_DIR}/vault.log"
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
 
 log() {
@@ -26,7 +27,7 @@ log() {
 ACTIONS_BATCH=""
 ACTION_COUNT=0
 
-for action_file in "${VAULT_DIR}/pending/"*.json; do
+for action_file in "${OPS_VAULT_DIR}/pending/"*.json; do
   [ -f "$action_file" ] || continue
 
   ACTION_STATUS=$(jq -r '.status // ""' < "$action_file" 2>/dev/null)
@@ -36,7 +37,7 @@ for action_file in "${VAULT_DIR}/pending/"*.json; do
   if ! jq empty < "$action_file" 2>/dev/null; then
     ACTION_ID=$(basename "$action_file" .json)
     log "malformed JSON: $action_file — rejecting"
-    bash "${VAULT_DIR}/vault-reject.sh" "$ACTION_ID" "malformed JSON" 2>/dev/null || true
+    bash "${VAULT_SCRIPT_DIR}/vault-reject.sh" "$ACTION_ID" "malformed JSON" 2>/dev/null || true
     continue
   fi
 
@@ -66,9 +67,10 @@ ${ACTIONS_BATCH}
 
 ## Environment
 - FACTORY_ROOT=${FACTORY_ROOT}
-- Vault directory: ${VAULT_DIR}
-- vault-fire.sh: bash ${VAULT_DIR}/vault-fire.sh <action-id>
-- vault-reject.sh: bash ${VAULT_DIR}/vault-reject.sh <action-id> \"<reason>\"
+- OPS_REPO_ROOT=${OPS_REPO_ROOT}
+- Vault data: ${OPS_VAULT_DIR}
+- vault-fire.sh: bash ${VAULT_SCRIPT_DIR}/vault-fire.sh <action-id>
+- vault-reject.sh: bash ${VAULT_SCRIPT_DIR}/vault-reject.sh <action-id> \"<reason>\"
 
 Process each action now. For auto-approve, fire immediately. For reject, call vault-reject.sh.
 

@@ -96,7 +96,7 @@ The dev-agent is completely starved until they are promoted or resolved.
 For each tier-0 issue:
   - Read the full body: curl -sf -H "Authorization: token $FORGE_TOKEN" "$FORGE_API/issues/{number}"
   - If resolvable: promote to backlog — add acceptance criteria, affected files, relabel
-  - If needs human decision: file a vault procurement item (vault/pending/<id>.md)
+  - If needs human decision: file a vault procurement item ($OPS_REPO_ROOT/vault/pending/<id>.md)
   - If invalid / wontfix: close with explanation comment
 
 After completing all tier-0, re-fetch to check for new blockers:
@@ -136,7 +136,7 @@ DUPLICATE (>80% overlap after reading both bodies — confirm before closing):
   Write: echo "ACTION: closed #NNN as duplicate of #OLDER" >> "$RESULT_FILE"
 
 VAULT (ambiguous scope, architectural question, needs human decision):
-  File a vault procurement item at $PROJECT_REPO_ROOT/vault/pending/<id>.md:
+  File a vault procurement item at $OPS_REPO_ROOT/vault/pending/<id>.md:
     # <What decision or resource is needed>
     ## What
     <description>
@@ -144,7 +144,7 @@ VAULT (ambiguous scope, architectural question, needs human decision):
     <which issue this unblocks>
     ## Unblocks
     - #NNN — <title>
-  Log: echo "VAULT: filed vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
+  Log: echo "VAULT: filed $OPS_REPO_ROOT/vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
 
 Dust vs ore rules:
   Dust: comment fix, variable rename, whitespace/formatting, single-line edit, trivial cleanup with no behavior change

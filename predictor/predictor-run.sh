@@ -50,7 +50,7 @@ log "--- Predictor run start ---"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-predictor.toml"
-build_context_block AGENTS.md RESOURCES.md VISION.md planner/prerequisite-tree.md
+build_context_block AGENTS.md ops:RESOURCES.md VISION.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section

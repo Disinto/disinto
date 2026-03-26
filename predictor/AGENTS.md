@@ -15,7 +15,7 @@ The predictor's own prediction history (open + closed issues) serves as its
 memory — it reviews what was actioned, dismissed, or deferred to decide where
 to focus next. No hardcoded signal categories; Claude decides where to look
 based on available data: prerequisite tree, evidence directories, VISION.md,
-RESOURCES.md, open issues, agent logs, and external signals (via web search).
+RESOURCES.md (from ops repo), open issues, agent logs, and external signals (via web search).
 
 Files up to 5 actions per run (predictions + dispatches combined). Each
 exploit counts as 2 (prediction + action dispatch). The predictor MUST NOT
@@ -41,11 +41,11 @@ RAM < 2000 MB).
   interactive session
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_PREDICTOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_PREDICTOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
 
 **Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →
-load formula + context (AGENTS.md, RESOURCES.md, VISION.md, prerequisite-tree.md)
+load formula + context (AGENTS.md, VISION.md from code repo; RESOURCES.md, prerequisites.md from ops repo)
 → create tmux session → Claude fetches prediction history (open + closed) →
 reviews track record (actioned/dismissed/watching) → finds weaknesses
 (prerequisite tree gaps, thin evidence, stale watches, external risks) →

@@ -63,7 +63,7 @@ Do NOT flag:
 
 ## 4. Vault item quality (conditional)
 
-If the PR adds or modifies files in `vault/pending/*.md`, apply these
+If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these
 additional checks. These criteria apply ON TOP of the normal review —
 a vault PR must also pass the standard checklist above.
 
@@ -102,9 +102,9 @@ propose a specific action.
 
 ### Dedup check
 
-Check whether `vault/pending/`, `vault/approved/`, or `vault/fired/`
+Check whether `$OPS_REPO_ROOT/vault/pending/`, `$OPS_REPO_ROOT/vault/approved/`, or `$OPS_REPO_ROOT/vault/fired/`
 already contains a similar item (same resource, same ask). List the
-vault directories to inspect existing items. If a duplicate or
+vault directories in the ops repo to inspect existing items. If a duplicate or
 near-duplicate exists, REQUEST_CHANGES and reference the existing item.
 
 ## 5. External action detection (token separation)
@@ -112,7 +112,7 @@ near-duplicate exists, REQUEST_CHANGES and reference the existing item.
 Agents must NEVER execute external actions directly. Any action that touches
 an external system (publish, deploy, post, push to external registry, API
 calls to third-party services) MUST go through vault dispatch — i.e., the
-agent files a vault item (`vault/pending/*.json`) and the vault-runner
+agent files a vault item (`$OPS_REPO_ROOT/vault/pending/*.json`) and the vault-runner
 container executes it with injected secrets.
 
 Scan the diff for these patterns:
@@ -128,7 +128,7 @@ Scan the diff for these patterns:
 
 If ANY of these patterns appear in agent code (scripts in `dev/`, `action/`,
 `planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`,
-`lib/`) WITHOUT routing through vault dispatch (`vault/pending/`, `vault-fire.sh`,
+`lib/`) WITHOUT routing through vault dispatch (`$OPS_REPO_ROOT/vault/pending/`, `vault-fire.sh`,
 `vault-run-action.sh`), **REQUEST_CHANGES**.
 
 Explain that external actions must use vault dispatch per AD-006. The agent

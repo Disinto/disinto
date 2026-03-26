@@ -218,7 +218,7 @@ echo ""
 
 echo "## Pending Vault Items"
 _found_vault=false
-for _vf in "${PROJECT_REPO_ROOT}/vault/pending/"*.md; do
+for _vf in "${OPS_REPO_ROOT}/vault/pending/"*.md; do
   [ -f "$_vf" ] || continue
   _found_vault=true
   _vtitle=$(grep -m1 '^# ' "$_vf" | sed 's/^# //' || basename "$_vf")

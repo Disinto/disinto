@@ -67,37 +67,91 @@ load_formula() {
 
 # build_context_block FILE [FILE ...]
 # Reads each file from $PROJECT_REPO_ROOT and builds CONTEXT_BLOCK.
+# Files prefixed with "ops:" are read from $OPS_REPO_ROOT instead.
 build_context_block() {
   CONTEXT_BLOCK=""
-  local ctx ctx_path
+  local ctx ctx_path ctx_label
   for ctx in "$@"; do
-    ctx_path="${PROJECT_REPO_ROOT}/${ctx}"
+    case "$ctx" in
+      ops:*)
+        ctx_label="${ctx#ops:}"
+        ctx_path="${OPS_REPO_ROOT}/${ctx_label}"
+        ;;
+      *)
+        ctx_label="$ctx"
+        ctx_path="${PROJECT_REPO_ROOT}/${ctx}"
+        ;;
+    esac
     if [ -f "$ctx_path" ]; then
       CONTEXT_BLOCK="${CONTEXT_BLOCK}
-### ${ctx}
+### ${ctx_label}
 $(cat "$ctx_path")
 "
     fi
   done
 }
 
-# ── Escalation reply consumption ─────────────────────────────────────────
+# ── Ops repo helpers ─────────────────────────────────────────────────
 
-# consume_escalation_reply AGENT_NAME
-# Atomically consumes /tmp/{agent}-escalation-reply if it exists.
-# Sets ESCALATION_REPLY to the file contents (empty string if no reply).
-consume_escalation_reply() {
-  local agent="$1"
-  local reply_file="/tmp/${agent}-escalation-reply"
-  ESCALATION_REPLY=""
-  if [ -s "$reply_file" ]; then
-    local tmp_file="${reply_file}.consumed.$$"
-    if mv "$reply_file" "$tmp_file" 2>/dev/null; then
-      ESCALATION_REPLY=$(cat "$tmp_file")
-      rm -f "$tmp_file"
-      log "Consumed escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
-    fi
+# ensure_ops_repo
+# Clones or pulls the ops repo so agents can read/write operational data.
+# Requires: OPS_REPO_ROOT, FORGE_OPS_REPO, FORGE_URL, FORGE_TOKEN.
+# No-op if OPS_REPO_ROOT already exists and is up-to-date.
+ensure_ops_repo() {
+  local ops_root="${OPS_REPO_ROOT:-}"
+  [ -n "$ops_root" ] || return 0
+
+  if [ -d "${ops_root}/.git" ]; then
+    # Pull latest from primary branch
+    git -C "$ops_root" fetch origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    git -C "$ops_root" checkout "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    git -C "$ops_root" pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    return 0
   fi
+
+  # Clone from Forgejo
+  local ops_repo="${FORGE_OPS_REPO:-}"
+  [ -n "$ops_repo" ] || return 0
+  local forge_url="${FORGE_URL:-http://localhost:3000}"
+  local clone_url
+  if [ -n "${FORGE_TOKEN:-}" ]; then
+    local auth_url
+    auth_url=$(printf '%s' "$forge_url" | sed "s|://|://$(whoami):${FORGE_TOKEN}@|")
+    clone_url="${auth_url}/${ops_repo}.git"
+  else
+    clone_url="${forge_url}/${ops_repo}.git"
+  fi
+
+  log "Cloning ops repo: ${ops_repo} -> ${ops_root}"
+  if git clone --quiet "$clone_url" "$ops_root" 2>/dev/null; then
+    log "Ops repo cloned: ${ops_root}"
+  else
+    log "WARNING: failed to clone ops repo ${ops_repo} — creating local directory"
+    mkdir -p "$ops_root"
+  fi
+}
+
+# ops_commit_and_push MESSAGE [FILE ...]
+# Stage, commit, and push changes in the ops repo.
+# If no files specified, stages all changes.
+ops_commit_and_push() {
+  local msg="$1"
+  shift
+  local ops_root="${OPS_REPO_ROOT:-}"
+  [ -d "${ops_root}/.git" ] || return 0
+
+  (
+    cd "$ops_root" || return
+    if [ $# -gt 0 ]; then
+      git add "$@"
+    else
+      git add -A
+    fi
+    if ! git diff --cached --quiet; then
+      git commit -m "$msg"
+      git push origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    fi
+  )
 }
 
 # ── Session management ───────────────────────────────────────────────────
@@ -296,6 +350,7 @@ NEVER echo or include the actual token value in output — always reference \${F
 ## Environment
 FACTORY_ROOT=${FACTORY_ROOT}
 PROJECT_REPO_ROOT=${PROJECT_REPO_ROOT}
+OPS_REPO_ROOT=${OPS_REPO_ROOT}
 PRIMARY_BRANCH=${PRIMARY_BRANCH}
 PHASE_FILE=${PHASE_FILE}
 
