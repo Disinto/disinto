@@ -3,6 +3,8 @@
 #
 # Handles two pipelines:
 #   A. Action gating (*.json): pending/ → approved/ → fired/
+#      Execution delegated to ephemeral vault-runner container via disinto vault-run.
+#      The vault-runner gets vault secrets (.env.vault.enc); this script does NOT.
 #   B. Procurement (*.md): approved/ → fired/ (writes RESOURCES.md entry)
 #
 # If item is in pending/, moves to approved/ first.
@@ -98,70 +100,30 @@ if [ "$IS_PROCUREMENT" = true ]; then
 fi
 
 # =============================================================================
-# Pipeline B: Action gating — dispatch to handler
+# Pipeline B: Action gating — delegate to ephemeral vault-runner container
 # =============================================================================
 ACTION_TYPE=$(jq -r '.type // ""' < "$ACTION_FILE")
 ACTION_SOURCE=$(jq -r '.source // ""' < "$ACTION_FILE")
-PAYLOAD=$(jq -c '.payload // {}' < "$ACTION_FILE")
 
 if [ -z "$ACTION_TYPE" ]; then
   log "ERROR: $ACTION_ID has no type field"
   exit 1
 fi
 
-log "$ACTION_ID: firing type=$ACTION_TYPE source=$ACTION_SOURCE"
+log "$ACTION_ID: firing type=$ACTION_TYPE source=$ACTION_SOURCE via vault-runner"
 
 FIRE_EXIT=0
 
-case "$ACTION_TYPE" in
-  webhook-call)
-    # Universal handler: HTTP call to endpoint with optional method/headers/body
-    ENDPOINT=$(echo "$PAYLOAD" | jq -r '.endpoint // ""')
-    METHOD=$(echo "$PAYLOAD" | jq -r '.method // "POST"')
-    REQ_BODY=$(echo "$PAYLOAD" | jq -r '.body // ""')
-    HEADERS=$(echo "$PAYLOAD" | jq -r '.headers // {} | to_entries[] | "-H\n\(.key): \(.value)"' 2>/dev/null || true)
-
-    if [ -z "$ENDPOINT" ]; then
-      log "ERROR: $ACTION_ID webhook-call missing endpoint"
-      exit 1
-    fi
-
-    # Build curl args
-    CURL_ARGS=(-sf -X "$METHOD" -o /dev/null -w "%{http_code}")
-    if [ -n "$HEADERS" ]; then
-      while IFS= read -r header; do
-        [ -n "$header" ] && CURL_ARGS+=(-H "$header")
-      done < <(echo "$PAYLOAD" | jq -r '.headers // {} | to_entries[] | "\(.key): \(.value)"' 2>/dev/null || true)
-    fi
-    if [ -n "$REQ_BODY" ] && [ "$REQ_BODY" != "null" ]; then
-      CURL_ARGS+=(-d "$REQ_BODY")
-    fi
-
-    HTTP_CODE=$(curl "${CURL_ARGS[@]}" "$ENDPOINT" 2>/dev/null) || HTTP_CODE="000"
-    if [[ "$HTTP_CODE" =~ ^2 ]]; then
-      log "$ACTION_ID: webhook-call → HTTP $HTTP_CODE OK"
-    else
-      log "ERROR: $ACTION_ID webhook-call → HTTP $HTTP_CODE"
-      FIRE_EXIT=1
-    fi
-    ;;
-
-  blog-post|social-post|email-blast|pricing-change|dns-change|stripe-charge)
-    # Check for a handler script
-    HANDLER="${VAULT_DIR}/handlers/${ACTION_TYPE}.sh"
-    if [ -x "$HANDLER" ]; then
-      bash "$HANDLER" "$ACTION_ID" "$PAYLOAD" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
-    else
-      log "ERROR: $ACTION_ID no handler for type '$ACTION_TYPE' (${HANDLER} not found)"
-      FIRE_EXIT=1
-    fi
-    ;;
-
-  *)
-    log "ERROR: $ACTION_ID unknown action type '$ACTION_TYPE'"
-    FIRE_EXIT=1
-    ;;
-esac
+# Delegate execution to the ephemeral vault-runner container.
+# The vault-runner gets vault secrets (.env.vault.enc) injected at runtime;
+# this host process never sees those secrets.
+if [ -f "${FACTORY_ROOT}/.env.vault.enc" ] && [ -f "${FACTORY_ROOT}/docker-compose.yml" ]; then
+  bash "${FACTORY_ROOT}/bin/disinto" vault-run "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
+else
+  # Fallback for bare-metal or pre-migration setups: run action handler directly
+  log "$ACTION_ID: no .env.vault.enc or docker-compose.yml — running action directly"
+  bash "${VAULT_DIR}/vault-run-action.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
+fi
 
 # =============================================================================
 # Move to fired/ or leave in approved/ on failure

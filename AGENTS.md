@@ -50,7 +50,7 @@ disinto/
 - All scripts start with `#!/usr/bin/env bash` and `set -euo pipefail`
 - Source shared environment: `source "$(dirname "$0")/../lib/env.sh"`
 - Log to `$LOGFILE` using the `log()` function from env.sh or defined locally
-- Never hardcode secrets — all come from `.env.enc` (or `.env` fallback) or TOML project files
+- Never hardcode secrets — agent secrets come from `.env.enc`, vault secrets from `.env.vault.enc` (or `.env`/`.env.vault` fallback)
 - Never embed secrets in issue bodies, PR descriptions, or comments — use env var references (e.g. `$BASE_RPC_URL`)
 - ShellCheck must pass (CI runs `shellcheck` on all `.sh` files)
 - Avoid duplicate code — shared helpers go in `lib/`
@@ -151,7 +151,7 @@ Humans write these. Agents read and enforce them.
 | AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
-| AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Secrets go in `.env.enc` (SOPS-encrypted) or fall back to `.env`, referenced as `$VAR_NAME`. |
+| AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (both SOPS-encrypted). Referenced as `$VAR_NAME`. Vault-runner gets only vault secrets; agents get only agent secrets. |
 
 **Who enforces what:**
 - **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.
