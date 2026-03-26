@@ -24,7 +24,7 @@ runs directly from cron like the planner and predictor.
   load), Docker status, active tmux sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
   issues. Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
-  files for stale `PHASE:failed` entries and auto-removes any whose linked issue
+  files for `PHASE:escalate` entries and auto-removes any whose linked issue
   is confirmed closed (24h grace period after closure to avoid races)
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
@@ -42,9 +42,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Matrix integration**: The supervisor has its own Matrix thread. Posts health
 summaries when there are changes, reports P0-P2 issues, and processes replies
-from humans ("ignore disk warning", "kill that agent", "what's stuck?"). The
-Matrix listener routes thread replies to `/tmp/supervisor-escalation-reply`,
-which `supervisor-run.sh` consumes atomically on each run.
+from humans ("ignore disk warning", "kill that agent", "what's stuck?").
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
