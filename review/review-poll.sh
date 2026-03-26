@@ -121,17 +121,36 @@ inject_review_into_dev_session() {
   current_phase=$(head -1 "${phase_file}" 2>/dev/null | tr -d '[:space:]' || true)
   [ "${current_phase}" = "PHASE:awaiting_review" ] || return 0
 
+  local review_text="" verdict=""
+
+  # Try bot review comment first (richer content with <!-- reviewed: SHA --> marker)
   local review_comment
   review_comment=$(forge_api_all "/issues/${pr_num}/comments" | \
     jq -r --arg sha "${pr_sha}" \
     '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last // empty') || true
-  if [ -z "${review_comment}" ] || [ "${review_comment}" = "null" ]; then
-    return 0
+  if [ -n "${review_comment}" ] && [ "${review_comment}" != "null" ]; then
+    review_text=$(printf '%s' "${review_comment}" | jq -r '.body')
+    verdict=$(printf '%s' "${review_text}" | grep -oP '\*\*(APPROVE|REQUEST_CHANGES|DISCUSS)\*\*' | head -1 | tr -d '*' || true)
   fi
 
-  local review_text verdict
-  review_text=$(printf '%s' "${review_comment}" | jq -r '.body')
-  verdict=$(printf '%s' "${review_text}" | grep -oP '\*\*(APPROVE|REQUEST_CHANGES|DISCUSS)\*\*' | head -1 | tr -d '*' || true)
+  # Fallback: check formal forge reviews (#771)
+  if [ -z "$verdict" ]; then
+    local formal_review formal_state
+    formal_review=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API_BASE}/pulls/${pr_num}/reviews" | \
+      jq -r '[.[] | select(.stale == false) | select(.state == "APPROVED" or .state == "REQUEST_CHANGES")] | last // empty') || true
+    if [ -n "$formal_review" ] && [ "$formal_review" != "null" ]; then
+      formal_state=$(printf '%s' "$formal_review" | jq -r '.state // ""')
+      if [ "$formal_state" = "APPROVED" ]; then
+        verdict="APPROVE"
+      elif [ "$formal_state" = "REQUEST_CHANGES" ]; then
+        verdict="REQUEST_CHANGES"
+      fi
+      [ -z "$review_text" ] && review_text=$(printf '%s' "$formal_review" | jq -r '.body // ""')
+    fi
+  fi
+
+  [ -z "$verdict" ] && return 0
 
   local inject_msg=""
   if [ "${verdict}" = "APPROVE" ]; then
@@ -243,6 +262,8 @@ while IFS= read -r line; do
 
   if [ "${HAS_REVIEW:-0}" -gt "0" ]; then
     log "  #${PR_NUM} formal review exists for ${PR_SHA:0:7}, skip"
+    # Inject review feedback into dev session if awaiting (#771)
+    inject_review_into_dev_session "$PR_NUM" "$PR_SHA" "$PR_BRANCH"
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
