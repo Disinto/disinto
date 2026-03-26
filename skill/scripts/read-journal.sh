@@ -4,7 +4,7 @@ set -euo pipefail
 # read-journal.sh — read agent journal entries
 #
 # Usage: read-journal.sh AGENT [--date YYYY-MM-DD] [--list] [--help]
-#   AGENT: planner, supervisor, or exec
+#   AGENT: planner, supervisor, or predictor
 #   --date: specific date (default: today)
 #   --list: list available journal dates instead of reading
 #
@@ -13,7 +13,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 read-journal.sh AGENT [--date YYYY-MM-DD] [--list] [--help]
-  AGENT: planner, supervisor, or exec
+  AGENT: planner, supervisor, or predictor
   --date: specific date (default: today)
   --list: list available journal dates instead of reading
 USAGE
@@ -44,7 +44,7 @@ done
 : "${PROJECT_REPO_ROOT:?PROJECT_REPO_ROOT is required}"
 
 if [[ -z "$agent" ]]; then
-    echo "Error: agent name is required (planner, supervisor, exec)" >&2
+    echo "Error: agent name is required (planner, supervisor, predictor)" >&2
     echo "" >&2
     usage
 fi
@@ -53,7 +53,6 @@ fi
 case "$agent" in
     planner)    journal_dir="${PROJECT_REPO_ROOT}/planner/journal" ;;
     supervisor) journal_dir="${PROJECT_REPO_ROOT}/supervisor/journal" ;;
-    exec)       journal_dir="${PROJECT_REPO_ROOT}/exec/journal" ;;
     predictor)
         echo "The predictor does not write journal files."
         echo "Its memory lives in forge issues labeled 'prediction/unreviewed' and 'prediction/actioned'."
@@ -64,7 +63,7 @@ case "$agent" in
         ;;
     *)
         echo "Error: unknown agent '${agent}'" >&2
-        echo "Available: planner, supervisor, exec, predictor" >&2
+        echo "Available: planner, supervisor, predictor" >&2
         exit 1
         ;;
 esac
