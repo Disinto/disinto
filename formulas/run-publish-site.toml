@@ -178,3 +178,51 @@ Clean up temp files:
   rm -f /tmp/publish-site-deploy-sha /tmp/publish-site-deploy-target
 """
 needs       = ["prune-old-deploys"]
+
+[[steps]]
+id          = "verify-observable"
+title       = "Verify engagement measurement is active"
+description = """
+Every deploy must confirm that the addressable has a return path (observable).
+This is the bridge from Ship (Fold 2) to Learn (Fold 3).
+
+Check 1 — Caddy access log exists and is being written:
+  CADDY_LOG="${CADDY_ACCESS_LOG:-/var/log/caddy/access.log}"
+  if [ ! -f "$CADDY_LOG" ]; then
+    echo "WARNING: Caddy access log not found at $CADDY_LOG"
+    echo "Engagement measurement is NOT active — set CADDY_ACCESS_LOG if the path differs."
+  else
+    AGE_MIN=$(( ($(date +%s) - $(stat -c %Y "$CADDY_LOG" 2>/dev/null || echo 0)) / 60 ))
+    if [ "$AGE_MIN" -gt 60 ]; then
+      echo "WARNING: Caddy access log is ${AGE_MIN} minutes old — may not be active"
+    else
+      echo "OK: Caddy access log is active (last written ${AGE_MIN}m ago)"
+    fi
+  fi
+
+Check 2 — collect-engagement.sh is present in the repo:
+  FACTORY_ROOT="${FACTORY_ROOT:-/home/debian/dark-factory}"
+  if [ -x "$FACTORY_ROOT/site/collect-engagement.sh" ]; then
+    echo "OK: collect-engagement.sh is present and executable"
+  else
+    echo "WARNING: collect-engagement.sh not found or not executable"
+  fi
+
+Check 3 — engagement evidence has been collected at least once:
+  EVIDENCE_DIR="$FACTORY_ROOT/evidence/engagement"
+  LATEST=$(ls -1t "$EVIDENCE_DIR"/*.json 2>/dev/null | head -1 || true)
+  if [ -n "$LATEST" ]; then
+    echo "OK: Latest engagement report: $LATEST"
+    jq -r '"  visitors=\(.unique_visitors) pages=\(.page_views) referrals=\(.referred_visitors)"' "$LATEST" 2>/dev/null || true
+  else
+    echo "NOTE: No engagement reports yet — run: bash site/collect-engagement.sh"
+    echo "The first report will appear after the cron job runs (daily at 23:55 UTC)."
+  fi
+
+Summary:
+  echo ""
+  echo "Observable status: addressable=disinto.ai measurement=caddy-access-logs"
+  echo "Evidence path: evidence/engagement/YYYY-MM-DD.json"
+  echo "Consumer: planner reads evidence/engagement/ during gap analysis"
+"""
+needs       = ["verify"]
