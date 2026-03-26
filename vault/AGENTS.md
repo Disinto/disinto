@@ -1,7 +1,7 @@
-<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Vault Agent
 
-**Role**: Dual-purpose gate — action safety classification and resource procurement.
+**Role**: Three-pipeline gate — action safety classification, resource procurement, and human-action drafting.
 
 **Pipeline A — Action Gating (*.json)**: Actions enter a pending queue and are
 classified by Claude via `vault-agent.sh`, which can auto-approve (call
@@ -16,6 +16,13 @@ adds secrets to `.env`) and moves the file to `vault/approved/`.
 `vault-fire.sh` then extracts the proposed entry and appends it to
 `RESOURCES.md`.
 
+**Pipeline C — Rent-a-Human (outreach drafts)**: Any agent can dispatch the
+`run-rent-a-human` formula (via an `action` issue) when a task requires a human
+touch — posting on Reddit, commenting on HN, signing up for a service, etc.
+Claude drafts copy-paste-ready content to `vault/outreach/{platform}/drafts/`
+and notifies the human via Matrix for one-click execution. No vault approval
+needed — the human reviews and publishes directly.
+
 **Trigger**: `vault-poll.sh` runs every 30 min via cron.
 
 **Key files**:
@@ -24,6 +31,7 @@ adds secrets to `.env`) and moves the file to `vault/approved/`.
 - `vault/PROMPT.md` — System prompt for the vault agent's Claude invocation
 - `vault/vault-fire.sh` — Executes an approved action (JSON) or writes RESOURCES.md entry (procurement MD)
 - `vault/vault-reject.sh` — Marks a JSON action as rejected
+- `formulas/run-rent-a-human.toml` — Formula for human-action drafts: Claude researches target platform norms, drafts copy-paste content, writes to `vault/outreach/{platform}/drafts/`, notifies human via Matrix
 
 **Procurement flow**:
 1. Planner drops `vault/pending/<name>.md` with what/why/proposed RESOURCES.md entry

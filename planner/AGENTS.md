@@ -1,4 +1,4 @@
-<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
@@ -8,10 +8,13 @@ tree from `planner/MEMORY.md` and `planner/prerequisite-tree.md`. Also reads
 all available formulas: factory formulas (`$FACTORY_ROOT/formulas/*.toml`) and
 project-specific formulas (`$PROJECT_REPO_ROOT/formulas/*.toml`). Phase 1
 (prediction-triage): triage `prediction/unreviewed` issues filed by the
-Predictor — for each prediction: action (create issue, relabel to
-prediction/actioned, close) or dismiss (comment reason, relabel to
-prediction/dismissed, close). No fence-sitting — dismissed predictions get
-re-filed by the predictor with stronger evidence if still valid. Phase 2
+Predictor — for each prediction, the planner **must** act or dismiss with a
+stated reason (no fence-sitting, no `prediction/backlog` label). Actions:
+promote to a real issue (relabel to `prediction/actioned`, close) or
+dismiss (comment reason, relabel to `prediction/dismissed`, close).
+The planner has a per-run action budget — it cannot defer indefinitely.
+Dismissed predictions get re-filed by the predictor with stronger evidence
+if still valid. Phase 2
 (update-prerequisite-tree): scan repo state + open/closed issues, mark resolved
 prerequisites, discover new ones, update the tree. **Also scans comments on
 referenced issues for bounce/stuck signals** (BOUNCED, ESCALATED, LABEL_CHURN)
@@ -42,8 +45,8 @@ component, not work.
 
 **Key files**:
 - `planner/planner-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
-  sources disinto project config, creates tmux session, injects formula prompt,
-  monitors phase file, handles crash recovery, cleans up
+  sources disinto project config, builds structural analysis via `lib/formula-session.sh:build_graph_section()`,
+  creates tmux session, injects formula prompt, monitors phase file, handles crash recovery, cleans up
 - `formulas/run-planner.toml` — Execution spec: six steps (preflight,
   prediction-triage, update-prerequisite-tree, file-at-constraints,
   journal-and-memory, commit-and-pr) with `needs` dependencies. Claude

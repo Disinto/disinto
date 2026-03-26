@@ -1,4 +1,4 @@
-<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Action Agent
 
 **Role**: Execute operational tasks described by action formulas — run scripts,
@@ -13,7 +13,7 @@ session, and spawns `action-agent.sh <issue-number>`.
 
 **Key files**:
 - `action/action-poll.sh` — Cron scheduler: finds open action issues with no active tmux session, spawns action-agent.sh
-- `action/action-agent.sh` — Orchestrator: fetches issue body + prior comments, creates tmux session (`action-{project}-{issue_num}`) with interactive `claude`, injects formula prompt with phase protocol, enters `monitor_phase_loop` (shared via `dev/phase-handler.sh`) for CI/review lifecycle or direct completion
+- `action/action-agent.sh` — Orchestrator: fetches issue body + prior comments, **checks all dependencies via `lib/parse-deps.sh` before spawning** (skips silently if any dep is still open), creates tmux session (`action-{project}-{issue_num}`) with interactive `claude`, injects formula prompt with phase protocol, enters `monitor_phase_loop` (shared via `dev/phase-handler.sh`) for CI/review lifecycle or direct completion
 
 **Session lifecycle**:
 1. `action-poll.sh` finds open `action` issues with no active tmux session.

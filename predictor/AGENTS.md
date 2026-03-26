@@ -1,4 +1,4 @@
-<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Predictor Agent
 
 **Role**: Abstract adversary (the "goblin"). Runs a 2-step formula
@@ -31,10 +31,10 @@ RAM < 2000 MB).
 **Key files**:
 - `predictor/predictor-run.sh` — Cron wrapper + orchestrator: active-state guard,
   lock, memory guard, sources disinto project config, builds structural analysis
-  graph via `lib/build-graph.py` (full-project scan — results included in prompt
-  as `## Structural analysis`; failures non-fatal), builds prompt with formula +
-  forge API reference, creates tmux session (sonnet), monitors phase file, handles
-  crash recovery via `run_formula_and_monitor`
+  via `lib/formula-session.sh:build_graph_section()` (full-project scan — results
+  included in prompt as `## Structural analysis`; failures non-fatal), builds
+  prompt with formula + forge API reference, creates tmux session (sonnet),
+  monitors phase file, handles crash recovery via `run_formula_and_monitor`
 - `formulas/run-predictor.toml` — Execution spec: two steps (preflight,
   find-weakness-and-act) with `needs` dependencies. Claude reviews prediction
   history, explores/exploits weaknesses, and files issues in a single

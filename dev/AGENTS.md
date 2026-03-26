@@ -1,4 +1,4 @@
-<!-- last-reviewed: d13f1a6997a3f5a2c9a51fea3fb18ab75f161d7b -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -14,7 +14,7 @@ in-progress issues are also picked up. The direct-merge scan runs before the loc
 check so approved PRs get merged even while a dev-agent session is active.
 
 **Key files**:
-- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts
+- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `action`, `prediction/dismissed`, or `prediction/unreviewed` (replaced `prediction/backlog` — that label no longer exists)
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
 - `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`. `do_merge()` detects already-merged PRs on HTTP 405 (race with dev-poll's pre-lock scan) and returns success instead of escalating. Sources `lib/mirrors.sh` and calls `mirror_push()` after every successful merge. Matrix escalation notifications include `MATRIX_MENTION_USER` HTML mention when set.
 - `dev/phase-test.sh` — Integration test for the phase protocol
