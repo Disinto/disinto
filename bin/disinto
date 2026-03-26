@@ -870,6 +870,7 @@ push_to_forge() {
       -H "Authorization: token ${FORGE_TOKEN}" \
       "${forge_url}/api/v1/repos/${repo_slug}" 2>/dev/null) || repo_info=""
     if [ -z "$repo_info" ]; then
+      is_empty="skipped"
       break  # API unreachable, skip verification
     fi
     is_empty=$(printf '%s' "$repo_info" | jq -r '.empty // "unknown"')
