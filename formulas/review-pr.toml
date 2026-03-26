@@ -61,7 +61,53 @@ Do NOT flag:
 - Things that look wrong but actually work — verify by reading the code first
 - Files that were truncated from the diff (the orchestrator notes truncation)
 
-## 4. Re-review (if previous review is provided)
+## 4. Vault item quality (conditional)
+
+If the PR adds or modifies files in `vault/pending/*.md`, apply these
+additional checks. These criteria apply ON TOP of the normal review —
+a vault PR must also pass the standard checklist above.
+
+### Required sections
+
+Every vault item must contain all five of these sections with non-empty
+content:
+- **What** — what is needed
+- **Why** — what this unblocks and why it matters now
+- **Unblocks** — specific issue numbers (e.g. #123)
+- **Human Action** — specific steps the human should take
+- **Factory Will Then** — what happens after approval
+
+If any section is missing or empty, REQUEST_CHANGES. Quote the missing
+section names in your review.
+
+### Human Action must be specific
+
+The Human Action section must contain concrete, actionable steps — not
+open-ended decisions or vague asks. The filing agent must have done
+the research before escalating to the human.
+
+PASS examples:
+- "Go to github.com/organizations/new, create org named disinto"
+- "Add SMTP_HOST=mail.example.com to .env.enc via sops"
+- "Run: ssh root@prod apt install redis-server"
+
+FAIL examples:
+- "Decide the approach for #466"
+- "Make a decision about branding"
+- "Figure out which provider to use"
+
+If the human action is vague or pushes decision-making to the human,
+REQUEST_CHANGES. Explain that the filing agent must research and
+propose a specific action.
+
+### Dedup check
+
+Check whether `vault/pending/`, `vault/approved/`, or `vault/fired/`
+already contains a similar item (same resource, same ask). List the
+vault directories to inspect existing items. If a duplicate or
+near-duplicate exists, REQUEST_CHANGES and reference the existing item.
+
+## 5. Re-review (if previous review is provided)
 
 If the orchestrator injected a previous review and incremental diff:
 1. For each finding in the previous review, check if it was addressed
@@ -72,7 +118,7 @@ If the orchestrator injected a previous review and incremental diff:
 Focus on the incremental diff for finding-by-finding status, but use the
 full diff to check overall correctness.
 
-## 5. Follow-up issues (pre-existing tech debt)
+## 6. Follow-up issues (pre-existing tech debt)
 
 If you discover pre-existing issues (NOT introduced by this PR), create
 tech-debt issues via API so they are tracked separately:
@@ -102,7 +148,7 @@ tech-debt issues via API so they are tracked separately:
 Only create follow-ups for clear, actionable tech debt. Do not create
 issues for minor style nits or speculative improvements.
 
-## 6. Verdict
+## 7. Verdict
 
 Choose one:
 - **APPROVE**: Change is correct, complete, and follows conventions
@@ -113,7 +159,7 @@ Bias toward APPROVE for small, correct changes. Use REQUEST_CHANGES only
 for actual problems (bugs, security issues, broken functionality, missing
 required behavior). Use DISCUSS sparingly.
 
-## 7. Output
+## 8. Output
 
 Write a single JSON object to the file path from REVIEW_OUTPUT_FILE.
 Use jq to ensure proper JSON escaping of the markdown content:
