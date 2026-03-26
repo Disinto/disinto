@@ -21,9 +21,12 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  awk '/^[ \t]*[a-zA-Z_][a-zA-Z0-9_]+[ \t]*\(\)/ {
-    sub(/^[ \t]+/, "")
-    sub(/[ \t]*\(\).*/, "")
+  # Use POSIX character classes and bracket-escaped parens for BusyBox awk
+  # compatibility (BusyBox awk does not expand \t to tab in character classes
+  # and may handle \( differently in ERE patterns).
+  awk '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*[(][)]/ {
+    sub(/^[[:space:]]+/, "")
+    sub(/[[:space:]]*[(][)].*/, "")
     print
   }' "$f" 2>/dev/null | sort -u || true
 }
@@ -64,9 +67,10 @@ get_candidates() {
         if (match(p, /^[a-z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+/)) {
           word = substr(p, RSTART, RLENGTH)
           rest = substr(p, RSTART + RLENGTH, 1)
-          # Skip: case labels (word) or word|), Python/jq patterns (word:),
-          #        object method calls (word.method), assignments (word=)
-          if (rest == ")" || rest == "|" || rest == ":" || rest == "." || rest == "=") continue
+          # Skip: function definitions (word(), case labels (word) or word|),
+          #        Python/jq patterns (word:), object method calls (word.method),
+          #        assignments (word=)
+          if (rest == "(" || rest == ")" || rest == "|" || rest == ":" || rest == "." || rest == "=") continue
           print word
         }
       }
