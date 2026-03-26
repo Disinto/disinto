@@ -261,6 +261,8 @@ _on_phase_change() {
 
   # ── PHASE: awaiting_ci ──────────────────────────────────────────────────────
   if [ "$phase" = "PHASE:awaiting_ci" ]; then
+    # Release session lock — Claude is idle during CI polling (#724)
+    session_lock_release
 
     # Create PR if not yet created
     if [ -z "${PR_NUMBER:-}" ]; then
@@ -458,6 +460,8 @@ Instructions:
 
   # ── PHASE: awaiting_review ──────────────────────────────────────────────────
   elif [ "$phase" = "PHASE:awaiting_review" ]; then
+    # Release session lock — Claude is idle during review wait (#724)
+    session_lock_release
     status "waiting for review on PR #${PR_NUMBER:-?}"
     CI_FIX_COUNT=0  # Reset CI fix budget for this review cycle
 
