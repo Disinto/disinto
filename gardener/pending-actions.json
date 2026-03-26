@@ -1,126 +1,32 @@
 [
   {
-    "action": "comment",
-    "issue": 710,
-    "body": "Closing as duplicate of #714, which covers the same task (creating an OpenClaw/ClawHub skill package) with complete acceptance criteria and affected files. All work should proceed under #714."
-  },
-  {
-    "action": "close",
-    "issue": 710,
-    "reason": "duplicate of #714"
-  },
-  {
-    "action": "comment",
-    "issue": 711,
-    "body": "Closing as duplicate of #715, which covers the same task (publishing to ClawHub) with complete acceptance criteria and affected files. All work should proceed under #715."
-  },
-  {
-    "action": "close",
-    "issue": 711,
-    "reason": "duplicate of #715"
+    "action": "edit_body",
+    "issue": 765,
+    "body": "Depends on: none\n\n## Goal\n\nThe disinto website becomes a versioned artifact: built by CI, published to Codeberg's generic package registry, deployed to staging automatically. Version visible in footer.\n\n## Files to add/change\n\n### `site/VERSION`\n```\n0.1.0\n```\n\n### `site/build.sh`\n```bash\n#!/bin/bash\nVERSION=$(cat VERSION)\nmkdir -p dist\ncp *.html *.jpg *.webp *.png *.ico *.xml robots.txt dist/\nsed -i \"s|Built from scrap, powered by a single battery.|v${VERSION} · Built from scrap, powered by a single battery.|\" dist/index.html\necho \"$VERSION\" > dist/VERSION\n```\n\n### `site/index.html`\nNo template placeholder needed — `build.sh` does the sed replacement on the existing footer text.\n\n### `.woodpecker/site.yml`\n```yaml\nwhen:\n  path: \"site/**\"\n  event: push\n  branch: main\n\nsteps:\n  - name: build\n    image: alpine\n    commands:\n      - cd site && sh build.sh\n      - VERSION=$(cat site/VERSION)\n      - tar czf site-${VERSION}.tar.gz -C site/dist .\n\n  - name: publish\n    image: alpine\n    commands:\n      - apk add curl\n      - VERSION=$(cat site/VERSION)\n      - >-\n        curl -sf --user \"johba:$$FORGE_TOKEN\"\n        --upload-file site-${VERSION}.tar.gz\n        \"https://codeberg.org/api/packages/johba/generic/disinto-site/${VERSION}/site-${VERSION}.tar.gz\"\n    environment:\n      FORGE_TOKEN:\n        from_secret: forge_token\n\n  - name: deploy-staging\n    image: alpine\n    commands:\n      - apk add curl\n      - VERSION=$(cat site/VERSION)\n      - >-\n        curl -sf --user \"johba:$$FORGE_TOKEN\"\n        \"https://codeberg.org/api/packages/johba/generic/disinto-site/${VERSION}/site-${VERSION}.tar.gz\"\n        -o site.tar.gz\n      - rm -rf /srv/staging/*\n      - tar xzf site.tar.gz -C /srv/staging/\n    environment:\n      FORGE_TOKEN:\n        from_secret: forge_token\n    volumes:\n      - /home/debian/staging-site:/srv/staging\n```\n\n## Infra setup (manual, before first run)\n- `mkdir -p /home/debian/staging-site`\n- Add to Caddyfile: `staging.disinto.ai { root * /home/debian/staging-site; file_server }`\n- DNS: `staging.disinto.ai` A record → same IP as `disinto.ai`\n- Reload Caddy: `sudo systemctl reload caddy`\n- Add `forge_token` as Woodpecker repo secret for johba/disinto (if not already set)\n- Add `/home/debian/staging-site` to `WOODPECKER_BACKEND_DOCKER_VOLUMES`\n\n## Verification\n- [ ] Merge PR that touches `site/` → CI runs site pipeline\n- [ ] Package appears at `codeberg.org/johba/-/packages/generic/disinto-site/0.1.0`\n- [ ] `staging.disinto.ai` serves the site with `v0.1.0` in footer\n- [ ] `disinto.ai` (production) unchanged\n\n## Related\n- #764 — docker stack edge proxy + staging (future: this moves inside the stack)\n- #755 — vault-gated production promotion (production deploy comes later)\n\n## Affected files\n- `site/VERSION` — new, holds current version string\n- `site/build.sh` — new, builds dist/ with version injected into footer\n- `.woodpecker/site.yml` — new, CI pipeline for build/publish/deploy-staging"
   },
   {
     "action": "edit_body",
-    "issue": 712,
-    "body": "## Context\n\nAfter ClawHub publishing (#715), expand reach by listing on secondary registries and discovery channels.\n\n## Dependencies\n- #715 (ClawHub listing must be live first)\n\n## Acceptance criteria\n- [ ] disinto skill appears in SkillsMP search (auto-indexed from GitHub or submitted manually)\n- [ ] PR submitted to awesome-agent-skills repo listing disinto under DevOps/Automation\n- [ ] SkillHub listing submitted (or confirmed live)\n- [ ] GitHub repo topics updated: `agent-skill`, `openclaw`, `clawhub`, `code-factory`, `automation`\n\n## Affected files\n- `README.md` (add secondary registry badges/links)\n- `.github/` or repo settings (GitHub topics — manual step)\n\n## Action items\n\n### SkillsMP (skillsmp.com)\n- [ ] SkillsMP auto-indexes from GitHub — ensure the skill directory is in the public repo\n- [ ] Verify disinto appears in SkillsMP search after a few days\n- [ ] If not auto-indexed, submit manually\n\n### awesome-agent-skills\n- [ ] Submit PR to github.com/skillmatic-ai/awesome-agent-skills\n- [ ] Add disinto under appropriate category (DevOps / Automation)\n\n### SkillHub (skillhub.club)\n- [ ] Submit skill for AI evaluation\n- [ ] Verify listing\n\n### LobeHub (lobehub.com/skills)\n- [ ] Submit skill to curated directory\n\n### GitHub discoverability\n- [ ] Add topics to repo: `agent-skill`, `openclaw`, `clawhub`, `code-factory`, `automation`\n- [ ] Ensure SKILL.md is discoverable at repo root or skill/ directory\n\n## References\n\n- Research report: #709\n- Skill package: #714\n- ClawHub listing: #715\n"
+    "issue": 764,
+    "body": "Depends on: none (builds on existing docker-compose generation in `bin/disinto`)\n\n## Design\n\n`disinto init` + `disinto up` starts two additional containers as base factory infrastructure:\n\n### Edge proxy (Caddy)\n- Reverse proxies to Forgejo and Woodpecker\n- Serves staging site\n- Runs on ports 80/443\n- At bootstrap: IP-only, self-signed TLS or HTTP\n- Domain + Let's Encrypt added later via vault resource request\n\n### Staging container (Caddy)\n- Static file server for the project's staging artifacts\n- Starts with a default \"Nothing shipped yet\" page\n- CI pipelines write to a shared volume to update staging content\n- No vault approval needed — staging is the factory's sandbox\n\n### docker-compose addition\n```yaml\nservices:\n  edge:\n    image: caddy:alpine\n    ports:\n      - \"80:80\"\n      - \"443:443\"\n    volumes:\n      - ./Caddyfile:/etc/caddy/Caddyfile\n      - caddy_data:/data\n    depends_on:\n      - forgejo\n      - woodpecker-server\n      - staging\n\n  staging:\n    image: caddy:alpine\n    volumes:\n      - staging-site:/srv/site\n    # Not exposed directly — edge proxies to it\n\nvolumes:\n  caddy_data:\n  staging-site:\n```\n\n### Caddyfile (generated by `disinto init`)\n```\n# IP-only at bootstrap, domain added later\n:80 {\n    handle /forgejo/* {\n        reverse_proxy forgejo:3000\n    }\n    handle /ci/* {\n        reverse_proxy woodpecker-server:8000\n    }\n    handle {\n        reverse_proxy staging:80\n    }\n}\n```\n\n### Staging update flow\n1. CI builds artifact (site tarball, etc.)\n2. CI step writes to `staging-site` volume\n3. Staging container serves updated content immediately\n4. No restart needed — Caddy serves files directly\n\n### Domain lifecycle\n- Bootstrap: no domain, edge serves on IP\n- Later: factory files vault resource request for domain\n- Human buys domain, sets DNS\n- Caddyfile updated with domain, Let's Encrypt auto-provisions TLS\n\n## Affected files\n- `bin/disinto` — `generate_compose()` adds edge + staging services\n- New: default staging page (\"Nothing shipped yet\")\n- New: Caddyfile template in `docker/`\n\n## Related\n- #755 — vault-gated deployment promotion (production comes later)\n- #757 — ops repo (domain is a resource requested through vault)\n\n## Acceptance criteria\n- [ ] `disinto init` generates a `docker-compose.yml` that includes `edge` (Caddy) and `staging` containers\n- [ ] Edge proxy routes `/forgejo/*` → Forgejo, `/ci/*` → Woodpecker, default → staging container\n- [ ] Staging container serves a default \"Nothing shipped yet\" page on first boot\n- [ ] `docker/` directory contains a Caddyfile template generated by `disinto init`\n- [ ] `disinto up` starts all containers including edge and staging without manual steps"
+  },
+  {
+    "action": "edit_body",
+    "issue": 761,
+    "body": "Depends on: #747\n\n## Design\n\nEach agent account on the bundled Forgejo gets a `.profile` repo. This repo holds the agent's formula (copied from disinto at creation time) and its journal.\n\n### Structure\n```\n{agent-bot}/.profile/\n├── formula.toml        # snapshot of the formula at agent creation time\n├── journal/            # daily logs of what the agent did\n│   ├── 2026-03-26.md\n│   └── ...\n└── knowledge/          # learned patterns, best-practices (optional, agent can evolve)\n```\n\n### Lifecycle\n1. **Create agent** — `disinto init` or `disinto spawn-agent` creates Forgejo account + `.profile` repo\n2. **Copy formula** — current `formulas/{role}.toml` from disinto repo is copied to `.profile/formula.toml`\n3. **Agent reads its own formula** — at session start, agent reads from its `.profile`, not from the disinto repo\n4. **Agent writes journal** — daily entries pushed to `.profile/journal/`\n5. **Agent can evolve knowledge** — best-practices, heuristics, patterns written to `.profile/knowledge/`\n\n### What this enables\n\n**A/B testing formulas:** Create two agents from different formula versions, run both against the same backlog, compare results (cycle time, CI pass rate, review rejection rate).\n\n**Rollback:** New formula worse? Kill agent, spawn from older formula version.\n\n**Audit:** What formula was this agent running when it produced that PR? Check its `.profile` at that git commit.\n\n**Drift tracking:** Diff what an agent learned (`.profile/knowledge/`) vs what it started with. Measure formula evolution over time.\n\n**Portability:** Move agent to different box — `git clone` its `.profile`.\n\n### Disinto repo becomes the template\n\n```\ndisinto repo:\n  formulas/dev-agent.toml       ← canonical template, evolves\n  formulas/review-agent.toml\n  formulas/planner.toml\n  ...\n\nRunning agents:\n  dev-bot-v2/.profile/formula.toml   ← snapshot from formulas/dev-agent.toml@v2\n  dev-bot-v3/.profile/formula.toml   ← snapshot from formulas/dev-agent.toml@v3\n  review-bot/.profile/formula.toml   ← snapshot from formulas/review-agent.toml\n```\n\nThe formula in the disinto repo is the template. The `.profile` copy is the instance. They can diverge — that's a feature, not a bug.\n\n## Affected files\n- `bin/disinto` — agent creation copies formula to .profile\n- Agent session scripts — read formula from .profile instead of local formulas/ dir\n- Planner/supervisor — can read other agents' journals from their .profile repos\n\n## Related\n- #747 — per-agent Forgejo accounts (prerequisite)\n- #757 — ops repo (shared concerns stay there: vault, portfolio, resources)\n\n## Acceptance criteria\n- [ ] `disinto spawn-agent` (or `disinto init`) creates a Forgejo account + `.profile` repo for each agent bot\n- [ ] Current `formulas/{role}.toml` is copied to `.profile/formula.toml` at agent creation time\n- [ ] Agent session script reads its formula from `.profile/formula.toml`, not from the repo's `formulas/` directory\n- [ ] Agent writes daily journal entries to `.profile/journal/YYYY-MM-DD.md`"
+  },
+  {
+    "action": "edit_body",
+    "issue": 742,
+    "body": "## Problem\n\n`gardener/recipes/*.toml` (4 files: cascade-rebase, chicken-egg-ci, flaky-test, shellcheck-violations) are an older pattern predating `formulas/*.toml`. Two systems for the same thing.\n\n## Fix\n\nMigrate any unique content from recipes to the gardener formula or to new formulas. Delete the recipes directory.\n\n## Affected files\n- `gardener/recipes/*.toml` — delete after migration\n- `formulas/run-gardener.toml` — absorb relevant content\n- Gardener scripts that reference recipes/\n\n## Acceptance criteria\n- [ ] Contents of `gardener/recipes/*.toml` are diff'd against `formulas/run-gardener.toml` — any unique content is migrated\n- [ ] `gardener/recipes/` directory is deleted\n- [ ] No scripts in `gardener/` reference the `recipes/` path after migration\n- [ ] ShellCheck passes on all modified scripts"
   },
   {
     "action": "add_label",
-    "issue": 712,
+    "issue": 742,
     "label": "backlog"
   },
   {
     "action": "add_label",
-    "issue": 714,
+    "issue": 741,
     "label": "backlog"
-  },
-  {
-    "action": "add_label",
-    "issue": 715,
-    "label": "backlog"
-  },
-  {
-    "action": "create_issue",
-    "title": "fix: add weekly Docker prune cron to prevent recurring disk P1 threshold breach",
-    "body": "## Problem\n\nDisk has twice crossed the 80% P1 threshold in two days (peaked at 82% on 2026-03-24). The supervisor performs reactive Docker prune when P1 is hit, but a proactive scheduled cleanup would prevent the threshold from being crossed in the first place.\n\nSupersedes prediction in #644.\n\n## Action\n\nAdd a scheduled weekly Docker prune to the supervisor or cron config so Docker image/container buildup is cleared before it reaches crisis levels. The cleanup should run at a time offset from the 06:00 formula burst (e.g. Sunday 04:00 UTC).\n\n## Acceptance criteria\n- [ ] A Docker prune cron entry (weekly, off-peak) is added to the factory cron config or supervisor schedule\n- [ ] The cron runs `docker system prune -f && docker image prune -f --filter \"until=168h\"` (keeping images used in last 7 days)\n- [ ] Cron time does not overlap with the 06:00 formula burst (gardener, predictor, supervisor)\n- [ ] After the change, disk stays below 75% between reactive supervisor prune events\n\n## Affected files\n- `supervisor/supervisor-run.sh` (if adding to supervisor schedule)\n- or cron config file (if adding standalone cron entry)\n- `projects/disinto.toml.example` (if scheduling parameters belong there)\n\n## Related\n- #644 (prediction that triggered this)\n",
-    "labels": [
-      "backlog"
-    ]
-  },
-  {
-    "action": "comment",
-    "issue": 644,
-    "body": "Actioned: created a backlog issue for adding a proactive weekly Docker prune cron to prevent recurring P1 disk threshold breaches. This supplements the reactive supervisor cleanup with a scheduled preventive pass."
-  },
-  {
-    "action": "add_label",
-    "issue": 644,
-    "label": "prediction/actioned"
-  },
-  {
-    "action": "remove_label",
-    "issue": 644,
-    "label": "prediction/backlog"
-  },
-  {
-    "action": "close",
-    "issue": 644,
-    "reason": "prediction actioned — recurring Docker prune cron backlog issue created"
-  },
-  {
-    "action": "create_issue",
-    "title": "fix: upgrade Caddy to v2.11.1 on harb-staging to patch CVE-2026-27590 RCE and medium CVEs",
-    "body": "## Problem\n\nThree CVEs affecting Caddy are fixed in v2.11.1:\n- CVE-2026-27590 (HIGH — RCE via FastCGI path-splitting bug)\n- Two medium CVEs (see #580 for details)\n\nharb-staging is currently running an older Caddy version and needs an upgrade.\n\nSupersedes prediction in #580.\n\n## Action\n\nUpgrade Caddy to v2.11.1 on harb-staging. Verify the service restarts cleanly.\n\n## Acceptance criteria\n- [ ] `caddy version` on harb-staging shows v2.11.1 or later\n- [ ] Caddy service is running and serving requests after upgrade\n- [ ] No CVE-2026-27590, CVE-2026-27589 in installed version\n\n## Affected files\n- harb-staging host: `/usr/local/bin/caddy` (upgraded in-place or via package manager)\n\n## References\n- Prediction: #580\n- CVE advisory: CVE-2026-27590 (FastCGI RCE), CVE-2026-27589 (medium)\n",
-    "labels": [
-      "action"
-    ]
-  },
-  {
-    "action": "comment",
-    "issue": 580,
-    "body": "Actioned: created an action issue for upgrading Caddy to v2.11.1 on harb-staging to remediate CVE-2026-27590 (HIGH/RCE) and two medium CVEs. Priority: high."
-  },
-  {
-    "action": "add_label",
-    "issue": 580,
-    "label": "prediction/actioned"
-  },
-  {
-    "action": "remove_label",
-    "issue": 580,
-    "label": "prediction/backlog"
-  },
-  {
-    "action": "close",
-    "issue": 580,
-    "reason": "prediction actioned — Caddy upgrade action issue created"
-  },
-  {
-    "action": "create_issue",
-    "title": "fix: stagger formula agent cron start times to reduce simultaneous 06:00 RAM burst",
-    "body": "## Problem\n\nThree formula agents (gardener, predictor, supervisor) all start at 06:00 UTC simultaneously, competing for RAM and driving swap usage to 57% (2335MB / 4095MB). Swap spikes under the burst introduce latency and risk OOM events if usage grows further.\n\nSupersedes prediction in #529.\n\n## Action\n\nStagger the cron start times for formula agents by 1–2 minutes each so RAM pressure is distributed across time rather than concentrated at 06:00.\n\nSuggested schedule:\n- Supervisor: 06:00 (runs first, gathers health snapshot)\n- Predictor: 06:02\n- Gardener: 06:04\n- Planner: 06:06 (if on same schedule)\n\n## Acceptance criteria\n- [ ] Formula agent cron entries are offset by at least 1 minute from each other\n- [ ] No two formula agents start within the same minute\n- [ ] Swap usage at the 06:00–06:10 window stays below 50% after the change\n\n## Affected files\n- `projects/disinto.toml` (cron schedule fields, if stored there)\n- or host cron config file (e.g. `/etc/cron.d/disinto-*`)\n- `BOOTSTRAP.md` (update documented cron schedule if shown there)\n\n## Related\n- #529 (prediction that triggered this)\n",
-    "labels": [
-      "backlog"
-    ]
-  },
-  {
-    "action": "comment",
-    "issue": 529,
-    "body": "Actioned: created a backlog issue for staggering formula agent cron start times (supervisor 06:00, predictor 06:02, gardener 06:04) to distribute the RAM burst across 4–6 minutes instead of hitting simultaneously."
-  },
-  {
-    "action": "add_label",
-    "issue": 529,
-    "label": "prediction/actioned"
-  },
-  {
-    "action": "remove_label",
-    "issue": 529,
-    "label": "prediction/backlog"
-  },
-  {
-    "action": "close",
-    "issue": 529,
-    "reason": "prediction actioned — cron stagger backlog issue created"
   }
 ]

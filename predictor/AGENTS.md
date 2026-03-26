@@ -1,4 +1,4 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Predictor Agent
 
 **Role**: Abstract adversary (the "goblin"). Runs a 2-step formula
@@ -41,7 +41,7 @@ RAM < 2000 MB).
   interactive session
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_PREDICTOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by predictor-run.sh)
 
 **Lifecycle**: predictor-run.sh (daily 06:00 cron) → lock + memory guard →

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -28,6 +28,10 @@ check so approved PRs get merged even while a dev-agent session is active.
 - `CLAUDE_TIMEOUT` — Max seconds for a Claude session (default 7200)
 
 **FORGE_REMOTE**: `dev-agent.sh` auto-detects which git remote corresponds to `FORGE_URL` by matching the remote's push URL hostname. This is exported as `FORGE_REMOTE` and used for all git push/pull/worktree operations. Defaults to `origin` if no match found. This ensures correct behaviour when the forge is local Forgejo (remote typically named `forgejo`) rather than Codeberg (`origin`).
+
+**Session lock**: fd-based flock — released during idle phases (`awaiting_review`, `awaiting_ci`) so other agents can proceed; re-acquired before injecting the next prompt. This prevents the lock from blocking the whole factory while the dev session waits.
+
+**Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
 
 **Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → tmux `dev-{project}-{issue}` → phase file
 drives CI/review loop → merge + `mirror_push()` → close issue. On respawn after

@@ -1,4 +1,4 @@
-<!-- last-reviewed: f2064ba67c3b6819f5e252300927c01e2825dd7c -->
+<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -25,7 +25,9 @@ runs directly from cron like the planner and predictor.
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
   issues. Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
-  is confirmed closed (24h grace period after closure to avoid races)
+  is confirmed closed (24h grace period after closure to avoid races). Reports
+  **stale crashed worktrees** (worktrees preserved after crash) — supervisor
+  housekeeping removes them after 24h
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
@@ -41,7 +43,7 @@ runs directly from cron like the planner and predictor.
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
