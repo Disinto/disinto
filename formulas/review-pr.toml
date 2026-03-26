@@ -107,7 +107,40 @@ already contains a similar item (same resource, same ask). List the
 vault directories to inspect existing items. If a duplicate or
 near-duplicate exists, REQUEST_CHANGES and reference the existing item.
 
-## 5. Re-review (if previous review is provided)
+## 5. External action detection (token separation)
+
+Agents must NEVER execute external actions directly. Any action that touches
+an external system (publish, deploy, post, push to external registry, API
+calls to third-party services) MUST go through vault dispatch — i.e., the
+agent files a vault item (`vault/pending/*.json`) and the vault-runner
+container executes it with injected secrets.
+
+Scan the diff for these patterns:
+
+- **Direct publish commands**: `clawhub publish`, `npm publish`,
+  `cargo publish`, `docker push`, `gh release create`, or similar
+- **Direct deploy commands**: `ssh ... deploy`, `rsync` to external hosts,
+  `kubectl apply`, `helm install`, cloud CLI deploy commands
+- **Direct external API calls**: `curl`/`wget` to external services with
+  auth tokens, posting to social media APIs, sending emails
+- **Token usage**: Direct references to `GITHUB_TOKEN`, `CLAWHUB_TOKEN`,
+  or other vault-only secrets in agent code (outside of vault/ directory)
+
+If ANY of these patterns appear in agent code (scripts in `dev/`, `action/`,
+`planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`,
+`lib/`) WITHOUT routing through vault dispatch (`vault/pending/`, `vault-fire.sh`,
+`vault-run-action.sh`), **REQUEST_CHANGES**.
+
+Explain that external actions must use vault dispatch per AD-006. The agent
+should file a vault item instead of executing directly.
+
+**Exceptions** (do NOT flag these):
+- Code inside `vault/` — the vault system itself is allowed to handle secrets
+- References in comments or documentation explaining the architecture
+- `bin/disinto` setup commands that manage `.env.vault.enc`
+- Local operations (git push to forge, forge API calls with `FORGE_TOKEN`)
+
+## 6. Re-review (if previous review is provided)
 
 If the orchestrator injected a previous review and incremental diff:
 1. For each finding in the previous review, check if it was addressed
@@ -118,7 +151,7 @@ If the orchestrator injected a previous review and incremental diff:
 Focus on the incremental diff for finding-by-finding status, but use the
 full diff to check overall correctness.
 
-## 6. Follow-up issues (pre-existing tech debt)
+## 7. Follow-up issues (pre-existing tech debt)
 
 If you discover pre-existing issues (NOT introduced by this PR), create
 tech-debt issues via API so they are tracked separately:
@@ -148,7 +181,7 @@ tech-debt issues via API so they are tracked separately:
 Only create follow-ups for clear, actionable tech debt. Do not create
 issues for minor style nits or speculative improvements.
 
-## 7. Verdict
+## 8. Verdict
 
 Choose one:
 - **APPROVE**: Change is correct, complete, and follows conventions
@@ -159,7 +192,7 @@ Bias toward APPROVE for small, correct changes. Use REQUEST_CHANGES only
 for actual problems (bugs, security issues, broken functionality, missing
 required behavior). Use DISCUSS sparingly.
 
-## 8. Output
+## 9. Output
 
 Write a single JSON object to the file path from REVIEW_OUTPUT_FILE.
 Use jq to ensure proper JSON escaping of the markdown content:

@@ -233,6 +233,10 @@ services:
       DISINTO_CONTAINER: "1"
     env_file:
       - .env
+    # IMPORTANT: agents get .env only (forge tokens, CI tokens, config).
+    # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
+    # .env.vault.enc and are NEVER injected here — only the vault-runner
+    # container receives them at fire time (AD-006, #745).
     depends_on:
       - forgejo
       - woodpecker

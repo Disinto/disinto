@@ -152,6 +152,7 @@ Humans write these. Agents read and enforce them.
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
 | AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (both SOPS-encrypted). Referenced as `$VAR_NAME`. Vault-runner gets only vault secrets; agents get only agent secrets. |
+| AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `.env.vault.enc` and are injected into the ephemeral vault-runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. |
 
 **Who enforces what:**
 - **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.
