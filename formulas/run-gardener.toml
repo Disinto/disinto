@@ -181,12 +181,28 @@ Sibling dependency rule (CRITICAL):
    Well-structured issues (both sections present) are left untouched —
    they are ready for dev-agent pickup.
 
+9. Portfolio lifecycle — maintain ## Addressables and ## Observables in AGENTS.md:
+   Read the current Addressables and Observables tables from AGENTS.md.
+
+   a. ADD: if a recently closed issue shipped a new deployment, listing,
+      package, or external presence not yet in the table, add a row.
+   b. PROMOTE: if an addressable now has measurement wired (an evidence
+      process reads from it), move it to the Observables section.
+   c. REMOVE: if an addressable was decommissioned (vision change
+      invalidated it, service shut down), remove the row and log why.
+   d. FLAG: if an addressable has been live > 2 weeks with Observable? = No
+      and no evidence process is planned, add a comment to the result file:
+        echo "ACTION: flagged addressable '<name>' — live >2 weeks, no observation path" >> "$RESULT_FILE"
+
+   Stage AGENTS.md if changed — the commit-and-pr step handles the actual commit.
+
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
   2. AD alignment check — close backlog issues that violate architecture decisions
   3. Quality gate — strip backlog from issues missing acceptance criteria or affected files
   4. Process tech-debt issues by score (impact/effort)
   5. Classify remaining items as dust or route to vault
+  6. Portfolio lifecycle — update addressables/observables tables
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.

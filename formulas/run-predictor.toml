@@ -84,6 +84,9 @@ Look at EVERYTHING available to you:
 - The prerequisite tree — what does the planner claim is DONE? How much
   evidence backs that claim? A DONE item with 2 data points is weak.
 - Evidence directories — which are empty? Which are stale?
+- Portfolio — ## Addressables and ## Observables in AGENTS.md. Challenge
+  addressables that have no observation path. Are there addressables the
+  planner ignores? Observables with stale or missing evidence?
 - VISION.md — what does "launched" require? Is the project on track?
 - RESOURCES.md — what capabilities exist? What's missing?
 - Open issues — are things stuck? Bouncing? Starved?

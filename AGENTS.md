@@ -119,6 +119,28 @@ prevents merge conflicts between concurrent changes.
 
 ---
 
+## Addressables
+
+Concrete artifacts the factory has produced or is building. The gardener
+maintains this table during grooming — see `formulas/run-gardener.toml`.
+
+| Artifact | Location | Observable? |
+|----------|----------|-------------|
+| Website  | disinto.ai | No |
+| Repo     | codeberg.org/johba/disinto | Partial |
+| Skill    | ClawHub (in progress) | No |
+| GitHub org | github.com/Disinto | No |
+
+## Observables
+
+Addressables with measurement wired — the factory can read structured
+feedback from these. The gardener promotes addressables here once an
+evidence process is connected.
+
+None yet.
+
+---
+
 ## Architecture Decisions
 
 Humans write these. Agents read and enforce them.
