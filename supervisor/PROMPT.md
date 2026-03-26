@@ -53,7 +53,7 @@ stuck. Your job: figure out the correct dependency direction and fix the wrong o
    actually depends on which
 3. Edit the issue that has the incorrect dep to remove the `#NNN` reference from its
    `## Dependencies` section (replace with `- None` if it was the only dep)
-4. If the correct direction is unclear from code, escalate with both issue summaries
+4. If the correct direction is unclear from code, file a vault item with both issue summaries
 
 Use the forge API to edit issue bodies:
 ```bash
@@ -70,25 +70,35 @@ obsolete or misprioritized. Investigate:
 
 1. Check if dep #B is still relevant (read its body, check if the code it targets changed)
 2. If the dep is obsolete → remove it from #A's `## Dependencies` section
-3. If the dep is still needed → escalate, suggesting to prioritize #B or split #A
+3. If the dep is still needed → file a vault item, suggesting to prioritize #B or split #A
 
 ### Dev-agent blocked (P2)
 When you see "Dev-agent blocked: last N polls all report 'no ready issues'":
 
 1. Check if circular deps exist (they'll appear as separate P3 alerts)
-2. Check if all backlog issues depend on a single unmerged issue — if so, escalate
-   to prioritize that blocker
-3. If no clear blocker, escalate with the list of blocked issues and their deps
+2. Check if all backlog issues depend on a single unmerged issue — if so, file a vault
+   item to prioritize that blocker
+3. If no clear blocker, file a vault item with the list of blocked issues and their deps
 
-## Escalation
+## When you cannot fix it
 
-If you can't fix it, escalate via Matrix:
+File a vault procurement item so the human is notified through the vault:
 ```bash
-source ${FACTORY_ROOT}/lib/env.sh
-matrix_send "supervisor" "🏭 ESCALATE: <what's wrong and why you can't fix it>"
+cat > "${PROJECT_REPO_ROOT}/vault/pending/supervisor-$(date -u +%Y%m%d-%H%M)-issue.md" <<'VAULT_EOF'
+# <What is needed>
+## What
+<description of the problem and why the supervisor cannot fix it>
+## Why
+<impact on factory health>
+## Unblocks
+- Factory health: <what this resolves>
+VAULT_EOF
 ```
 
-Do NOT escalate if you can fix it. Do NOT ask permission. Fix first, report after.
+The vault-poll will notify the human and track the request.
+
+Do NOT talk to the human directly. The vault is the factory's only interface
+to the human for resources and approvals. Fix first, report after.
 
 ## Output
 
@@ -97,7 +107,7 @@ FIXED: <what you did>
 ```
 or
 ```
-ESCALATE: <what's wrong>
+VAULT: filed vault/pending/<id>.md — <what's needed>
 ```
 
 ## Learning

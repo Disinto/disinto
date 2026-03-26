@@ -1,10 +1,11 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: f2064ba67c3b6819f5e252300927c01e2825dd7c -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
 Claude agent. Collects system and project metrics via a bash pre-flight script,
 then runs an interactive Claude session (sonnet) that assesses health, auto-fixes
-issues, escalates via Matrix, and writes a daily journal.
+issues, reports via Matrix, and writes a daily journal. When blocked on external
+resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` runs every 20 min via cron. Sources `lib/guard.sh`
 and calls `check_active supervisor` first — skips if
@@ -22,10 +23,9 @@ runs directly from cron like the planner and predictor.
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active tmux sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
-  issues, Matrix escalation replies. Also performs **stale phase cleanup**: scans
-  `/tmp/*-session-*.phase` files for `PHASE:escalate` entries and auto-removes any
-  whose linked issue is confirmed closed (24h grace period after closure to avoid
-  races)
+  issues. Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
+  files for `PHASE:escalate` entries and auto-removes any whose linked issue
+  is confirmed closed (24h grace period after closure to avoid races)
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
@@ -41,10 +41,8 @@ runs directly from cron like the planner and predictor.
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Matrix integration**: The supervisor has its own Matrix thread. Posts health
-summaries when there are changes, escalates P0-P2 issues, and processes replies
-from humans ("ignore disk warning", "kill that agent", "what's stuck?"). The
-Matrix listener routes thread replies to `/tmp/supervisor-escalation-reply`,
-which `supervisor-run.sh` consumes atomically on each run.
+summaries when there are changes, reports P0-P2 issues, and processes replies
+from humans ("ignore disk warning", "kill that agent", "what's stuck?").
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
@@ -53,6 +51,6 @@ which `supervisor-run.sh` consumes atomically on each run.
 - `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
 
 **Lifecycle**: supervisor-run.sh (cron */20) → lock + memory guard → run
-preflight.sh (collect metrics) → consume escalation replies → load formula +
+preflight.sh (collect metrics) → consume Matrix replies → load formula +
 context → create tmux session → Claude assesses health, auto-fixes, posts
 Matrix summary, writes journal → `PHASE:done`.

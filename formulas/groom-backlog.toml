@@ -96,7 +96,7 @@ The dev-agent is completely starved until they are promoted or resolved.
 For each tier-0 issue:
   - Read the full body: curl -sf -H "Authorization: token $FORGE_TOKEN" "$FORGE_API/issues/{number}"
   - If resolvable: promote to backlog — add acceptance criteria, affected files, relabel
-  - If needs human decision: add to ESCALATE block
+  - If needs human decision: file a vault procurement item (vault/pending/<id>.md)
   - If invalid / wontfix: close with explanation comment
 
 After completing all tier-0, re-fetch to check for new blockers:
@@ -135,8 +135,16 @@ DUPLICATE (>80% overlap after reading both bodies — confirm before closing):
   Close:        curl -X PATCH ... /issues/NNN -d '{"state":"closed"}'
   Write: echo "ACTION: closed #NNN as duplicate of #OLDER" >> "$RESULT_FILE"
 
-ESCALATE (ambiguous scope, architectural question, needs human decision):
-  Collect into the ESCALATE block written to the result file at the end.
+VAULT (ambiguous scope, architectural question, needs human decision):
+  File a vault procurement item at $PROJECT_REPO_ROOT/vault/pending/<id>.md:
+    # <What decision or resource is needed>
+    ## What
+    <description>
+    ## Why
+    <which issue this unblocks>
+    ## Unblocks
+    - #NNN — <title>
+  Log: echo "VAULT: filed vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
 
 Dust vs ore rules:
   Dust: comment fix, variable rename, whitespace/formatting, single-line edit, trivial cleanup with no behavior change
@@ -179,7 +187,7 @@ Re-fetch ALL open tech-debt issues and count them:
 
 Check each tier:
   tier-0 count == 0  (HARD REQUIREMENT — factory is blocked until zero)
-  tier-1 all processed or escalated
+  tier-1 all processed or routed to vault
   tier-2 all classified
 
 If tier-0 > 0:
@@ -195,8 +203,7 @@ If all tiers clear, write the completion summary and signal done:
   echo "ACTION: grooming complete — 0 tech-debt remaining" >> "$RESULT_FILE"
   echo 'PHASE:done' > "$PHASE_FILE"
 
-Escalation format (for items needing human decision — write to result file):
-  printf 'ESCALATE\n1. #NNN "title" — reason (a) option1 (b) option2 (c) option3\n' >> "$RESULT_FILE"
+Vault items filed during this run are picked up by vault-poll automatically.
 
 On unrecoverable error (API unavailable, repeated failures):
   printf 'PHASE:failed\nReason: %s\n' 'describe what failed' > "$PHASE_FILE"

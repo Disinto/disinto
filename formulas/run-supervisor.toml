@@ -9,7 +9,7 @@
 # Key differences from planner/gardener:
 #   - Runs every 20min — lightweight health check
 #   - Primarily READS state, rarely WRITES (no PRs, just Matrix + journal)
-#   - Reactive to escalations — processes pending escalation events
+#   - Checks vault state for pending procurement items
 #   - Conversation memory via Matrix thread and journal
 
 name        = "run-supervisor"
@@ -29,14 +29,14 @@ and injected into your prompt above. Review them now.
 
 1. Read the injected metrics data carefully (System Resources, Docker,
    Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
-   CI Pipelines, Open PRs, Issue Status, Stale Worktrees, Pending Escalations,
-   Escalation Replies).
+   CI Pipelines, Open PRs, Issue Status, Stale Worktrees).
    Note: preflight.sh auto-removes PHASE:escalate files for closed issues
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
 
-2. If there are escalation replies from Matrix (human messages), note them —
-   you will act on them in the decide-actions step.
+2. Check vault state: read vault/pending/*.md for any procurement items
+   the planner has filed. Note items relevant to the health assessment
+   (e.g. a blocked resource that explains why the pipeline is stalled).
 
 3. Read the supervisor journal for recent history:
      JOURNAL_FILE="$FACTORY_ROOT/supervisor/journal/$(date -u +%Y-%m-%d).md"
@@ -70,9 +70,9 @@ Categorize every finding from the metrics into priority levels.
 - Git repo on wrong branch or in broken rebase state
 - Pipeline stalled: backlog issues exist but no agent ran for > 20min
 - Dev-agent blocked: last N polls all report "no ready issues"
-- Dev/action sessions in PHASE:escalate for > 24h (escalation timeout)
+- Dev/action sessions in PHASE:escalate for > 24h (session timeout)
   (Note: PHASE:escalate files for closed issues are auto-cleaned by preflight;
-  this check covers escalations where the issue is still open)
+  this check covers sessions where the issue is still open)
 
 ### P3 — Factory degraded
 - PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed
@@ -92,7 +92,7 @@ needs = ["preflight"]
 
 [[steps]]
 id    = "decide-actions"
-title = "Fix what you can, escalate what you cannot"
+title = "Fix what you can, file vault items for what you cannot"
 description = """
 For each finding from the health assessment, decide and execute an action.
 
@@ -145,20 +145,21 @@ For each finding from the health assessment, decide and execute an action.
       tmux send-keys -t "$SESSION" "# [supervisor] PR stale >20min — CI finished, please push or update" Enter
     fi
   If no active tmux session exists, note it in the journal for the next dev-poll cycle.
-  Do NOT escalate stale PRs to Matrix unless they remain stale for >3 consecutive runs.
+  Do NOT file vault items for stale PRs unless they remain stale for >3 consecutive runs.
 
-### Escalation replies (from Matrix)
-
-If there are escalation replies from a human, act on them:
-- "ignore X" → note in journal, do not alert on X this run
-- "kill that agent" → identify and kill the referenced session
-- "what's stuck?" → include detailed status in the Matrix report
-- Other instructions → follow them, use best judgment
-
-### Cannot auto-fix → escalate
+### Cannot auto-fix → file vault item
 
 For P0-P2 issues that persist after auto-fix attempts, or issues requiring
-human judgment, prepare an escalation message for the report step.
+human judgment, file a vault procurement item:
+  Write $PROJECT_REPO_ROOT/vault/pending/supervisor-<issue-slug>.md:
+    # <What is needed>
+    ## What
+    <description of the problem and why the supervisor cannot fix it>
+    ## Why
+    <impact on factory health — reference the priority level>
+    ## Unblocks
+    - Factory health: <what this resolves>
+  The vault-poll will notify the human and track the request.
 
 Read the relevant best-practices file before taking action:
   cat "$FACTORY_ROOT/supervisor/best-practices/memory.md"    # P0
@@ -167,7 +168,7 @@ Read the relevant best-practices file before taking action:
   cat "$FACTORY_ROOT/supervisor/best-practices/dev-agent.md" # P2 agent
   cat "$FACTORY_ROOT/supervisor/best-practices/git.md"       # P2 git
 
-Track what you fixed and what needs escalation for the report step.
+Track what you fixed and what vault items you filed for the report step.
 """
 needs = ["health-assessment"]
 
@@ -196,15 +197,14 @@ Post a summary grouped by priority:
 
   Status: RAM=<X>MB Disk=<Y>% Load=<Z>"
 
-### When escalation is needed (P0-P2 unresolved)
-Escalate with a clear call to action:
-  matrix_send "supervisor" "ESCALATE: <what's wrong and why you can't fix it>
+### When vault items were filed (P0-P2 unresolved)
+Note the vault items in the status summary:
+  matrix_send "supervisor" "Supervisor health check:
 
-  Suggested action: <what the human should do>"
+  Filed vault items:
+  - vault/pending/<id>.md — <summary>
 
-### Responding to escalation replies
-If you acted on a human's reply, confirm what you did:
-  matrix_send "supervisor" "Acted on your reply: <summary of action taken>"
+  Status: RAM=<X>MB Disk=<Y>% Load=<Z>"
 
 Keep messages concise. Do not post identical messages to what was posted
 in the previous run (check journal for prior messages).
@@ -233,15 +233,15 @@ Format:
   - Docker: <N> containers
 
   ### Findings
-  - [P<N>] <finding> — <action taken or "escalated">
+  - [P<N>] <finding> — <action taken or "filed vault item">
   (or "No issues found — all systems healthy")
 
   ### Actions taken
   - <what was fixed>
   (or "No actions needed")
 
-  ### Escalation replies processed
-  - <human said X, did Y>
+  ### Vault items filed
+  - vault/pending/<id>.md — <reason>
   (or "None")
 
 Keep each entry concise — 15-25 lines max. This journal provides

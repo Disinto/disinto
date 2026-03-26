@@ -59,9 +59,6 @@ else
   log "WARNING: preflight.sh failed, continuing with partial data"
 fi
 
-# ── Consume escalation replies ────────────────────────────────────────────
-consume_escalation_reply "supervisor"
-
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-supervisor.toml"
 build_context_block AGENTS.md
@@ -77,16 +74,11 @@ build_prompt_footer
 PROMPT="You are the supervisor agent for ${FORGE_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
 
 You have full shell access and --dangerously-skip-permissions.
-Fix what you can. Escalate what you cannot. Do NOT ask permission — act first, report after.
+Fix what you can. File vault items for what you cannot. Do NOT ask permission — act first, report after.
 
 ## Pre-flight metrics (collected $(date -u +%H:%M) UTC)
 ${PREFLIGHT_OUTPUT}
-${ESCALATION_REPLY:+
-## Escalation Reply (from Matrix — human message)
-${ESCALATION_REPLY}
 
-Act on this reply in the decide-actions step.
-}
 ## Project context
 ${CONTEXT_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
