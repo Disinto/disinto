@@ -1383,6 +1383,9 @@ p.write_text(text)
     forge_port="${forge_port:-3000}"
     generate_compose "$forge_port"
     generate_agent_docker
+    # Create empty .env so docker compose can parse the agents service
+    # env_file reference before setup_forge generates the real tokens (#769)
+    touch "${FACTORY_ROOT}/.env"
   fi
 
   # Set up local Forgejo instance (provision if needed, create users/tokens/repo)
