@@ -20,6 +20,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/../lib/env.sh"
+# Use vault-bot's own Forgejo identity (#747)
+FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
 
 LOGFILE="${FACTORY_ROOT}/vault/vault.log"
 STATUSFILE="/tmp/vault-status"

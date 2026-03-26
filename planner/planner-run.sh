@@ -18,6 +18,8 @@ FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
+# Use planner-bot's own Forgejo identity (#747)
+FORGE_TOKEN="${FORGE_PLANNER_TOKEN:-${FORGE_TOKEN}}"
 # shellcheck source=../lib/agent-session.sh
 source "$FACTORY_ROOT/lib/agent-session.sh"
 # shellcheck source=../lib/formula-session.sh
