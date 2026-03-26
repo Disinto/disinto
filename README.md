@@ -6,6 +6,8 @@
 
   **Autonomous code factory** — [disinto.ai](https://disinto.ai)
 
+  [![ClawHub](https://clawhub.ai/badge/disinto)](https://clawhub.ai/skills/disinto)
+
   *A mining robot, lost and confused, builds a Disinto from scrap —<br>
   a device so powerful it vaporizes three-quarters of a mountain on a single battery.*<br>
   — Isaac Asimov, "Robot AL-76 Goes Astray" (1942)
