@@ -50,6 +50,9 @@ check_memory 2000
 
 log "--- Supervisor run start ---"
 
+# ── Housekeeping: clean up stale crashed worktrees (>24h) ────────────────
+cleanup_stale_crashed_worktrees 24
+
 # ── Collect pre-flight metrics ────────────────────────────────────────────
 log "Running preflight.sh"
 PREFLIGHT_OUTPUT=""
