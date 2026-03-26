@@ -7,7 +7,21 @@ description: >-
 license: AGPL-3.0
 metadata:
   author: johba
-  version: "0.1.0"
+  version: "0.1.1"
+env_vars:
+  required:
+    - FORGE_TOKEN
+    - FORGE_API
+    - PROJECT_REPO_ROOT
+  optional:
+    - WOODPECKER_SERVER
+    - WOODPECKER_TOKEN
+    - WOODPECKER_REPO_ID
+tools:
+  - bash
+  - curl
+  - jq
+  - git
 ---
 
 # Disinto Factory Skill
