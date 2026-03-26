@@ -56,23 +56,6 @@ log() {
   printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
 
-notify() {
-  local thread_id=""
-  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  matrix_send "dev" "🔧 #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
-}
-
-notify_ctx() {
-  local plain="$1" html="$2"
-  local thread_id=""
-  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  if [ -n "$thread_id" ]; then
-    matrix_send_ctx "dev" "🔧 #${ISSUE}: ${plain}" "🔧 #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
-  else
-    matrix_send "dev" "🔧 #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
-  fi
-}
-
 status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"
@@ -86,9 +69,6 @@ WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
 PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.phase"
 SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE}"
 IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
-
-# Matrix thread tracking — one thread per issue for conversational notifications
-THREAD_FILE="/tmp/dev-thread-${PROJECT_NAME}-${ISSUE}"
 
 # Scratch file for context compaction survival
 SCRATCH_FILE="/tmp/dev-${PROJECT_NAME}-${ISSUE}-scratch.md"
@@ -246,7 +226,6 @@ log "Issue: ${ISSUE_TITLE}"
 ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(",")') || true
 if echo "$ISSUE_LABELS" | grep -qw 'formula'; then
   log "SKIP: issue #${ISSUE} has 'formula' label but formula dispatch is not yet implemented (feat/formula branch not merged)"
-  notify "issue #${ISSUE} skipped — formula label requires feat/formula branch (not yet merged to main)"
   echo '{"status":"unmet_dependency","blocked_by":"formula dispatch not implemented — feat/formula branch not merged to main","suggestion":null}' > "$PREFLIGHT_RESULT"
   exit 0
 fi
@@ -362,7 +341,6 @@ This issue depends on ${BLOCKED_LIST}, which $(if [ "${#BLOCKED_BY[@]}" -eq 1 ];
   fi
 
   log "BLOCKED: unmet dependencies: ${BLOCKED_BY[*]}$(if [ -n "$SUGGESTION" ]; then echo ", suggest #${SUGGESTION}"; fi)"
-  notify "blocked by unmet dependencies: ${BLOCKED_BY[*]}"
   exit 0
 fi
 
@@ -727,27 +705,6 @@ ${PHASE_PROTOCOL_INSTRUCTIONS}"
 fi
 
 # =============================================================================
-# CREATE MATRIX THREAD (before tmux so MATRIX_THREAD_ID is available for Stop hook)
-# =============================================================================
-if [ ! -f "${THREAD_FILE}" ] || [ -z "$(cat "$THREAD_FILE" 2>/dev/null)" ]; then
-  ISSUE_URL="${FORGE_WEB}/issues/${ISSUE}"
-  _thread_id=$(matrix_send_ctx "dev" \
-    "🔧 Issue #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
-    "🔧 <a href='${ISSUE_URL}'>Issue #${ISSUE}</a>: ${ISSUE_TITLE}") || true
-  if [ -n "${_thread_id:-}" ]; then
-    printf '%s' "$_thread_id" > "$THREAD_FILE"
-    # Register thread root in map for listener dispatch
-    printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "dev" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
-  fi
-fi
-
-# Export for on-stop-matrix.sh hook (streams Claude output to thread)
-_thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-if [ -n "${_thread_id:-}" ]; then
-  export MATRIX_THREAD_ID="$_thread_id"
-fi
-
-# =============================================================================
 # CREATE TMUX SESSION
 # =============================================================================
 status "creating tmux session: ${SESSION_NAME}"
@@ -765,8 +722,6 @@ log "initial prompt sent to tmux session"
 
 # Signal to dev-poll.sh that we're running (session is up)
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
-notify "tmux session ${SESSION_NAME} started for issue #${ISSUE}: ${ISSUE_TITLE}"
-
 
 status "monitoring phase: ${PHASE_FILE}"
 monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change
@@ -774,15 +729,6 @@ monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change
 # Handle exit reason from monitor_phase_loop
 case "${_MONITOR_LOOP_EXIT:-}" in
   idle_timeout|idle_prompt)
-    if [ "${_MONITOR_LOOP_EXIT:-}" = "idle_prompt" ]; then
-      notify_ctx \
-        "session finished without phase signal — killed. Marking blocked." \
-        "session finished without phase signal — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
-    else
-      notify_ctx \
-        "session idle for 2h — killed. Marking blocked." \
-        "session idle for 2h — killed. Marking blocked.${PR_NUMBER:+ PR <a href='${FORGE_WEB}/pulls/${PR_NUMBER}'>#${PR_NUMBER}</a>}"
-    fi
     # Post diagnostic comment + label issue blocked
     post_blocked_diagnostic "${_MONITOR_LOOP_EXIT:-idle_timeout}"
     if [ -n "${PR_NUMBER:-}" ]; then
@@ -791,7 +737,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
       cleanup_worktree
     fi
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
-      "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
+      "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     ;;
@@ -807,7 +753,7 @@ case "${_MONITOR_LOOP_EXIT:-}" in
     # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
     rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
-      "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE" \
+      "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE" \
       "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
     [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
     CLAIMED=false

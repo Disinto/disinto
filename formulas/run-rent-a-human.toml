@@ -6,7 +6,7 @@
 #
 # Trigger: action issue created by planner or any formula.
 # The action-agent picks up the issue, executes these steps, writes a draft
-# to vault/outreach/{platform}/drafts/, notifies the human via Matrix,
+# to vault/outreach/{platform}/drafts/, notifies the human via the forge,
 # and closes the issue.
 #
 # YAML front matter in the dispatching action issue:
@@ -150,21 +150,17 @@ Write the drafted content to the outreach directory, commit, and push.
 
 [[steps]]
 id    = "notify-human"
-title = "Notify human via Matrix"
+title = "Notify human and create PR"
 needs = ["write-draft"]
 description = """
-Notify the human, create a PR, and hand off to the orchestrator for CI.
+Create a PR for the draft and hand off to the orchestrator for CI.
 
 1. Read saved state:
      DRAFT_FILE=$(cat /tmp/rent-a-human-path)
      DRAFT_TITLE=$(cat /tmp/rent-a-human-title)
      BRANCH=$(cat /tmp/rent-a-human-branch)
 
-2. Send the Matrix notification:
-     source "$FACTORY_ROOT/lib/env.sh"
-     matrix_send "rent-a-human" "New {{platform}} {{action_type}} draft ready: ${DRAFT_TITLE}"
-
-3. Create a PR for the draft:
+2. Create a PR for the draft:
      PR_RESPONSE=$(curl -sf -X POST \
        -H "Authorization: token ${FORGE_TOKEN}" \
        -H "Content-Type: application/json" \

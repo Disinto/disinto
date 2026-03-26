@@ -29,8 +29,8 @@ For each pending JSON action, decide: **auto-approve**, **escalate**, or **rejec
 |----------|------------|---------------------------------------------|
 | low      | true       | auto-approve → fire immediately             |
 | low      | false      | auto-approve → fire, log prominently        |
-| medium   | true       | auto-approve → fire, matrix notify          |
-| medium   | false      | escalate via matrix → wait for human reply   |
+| medium   | true       | auto-approve → fire, notify via vault/forge  |
+| medium   | false      | escalate via vault/forge → wait for human reply |
 | high     | any        | always escalate → wait for human reply       |
 
 ## Rules
@@ -94,18 +94,9 @@ source ${FACTORY_ROOT}/lib/env.sh
 bash ${FACTORY_ROOT}/vault/vault-fire.sh <action-id>
 ```
 
-### Escalate via Matrix
+### Escalate
 ```bash
-matrix_send "vault" "🔒 VAULT — approval required
-
-Source:  <source>
-Type:    <type>
-Risk:    <risk> / <reversible|irreversible>
-Created: <created>
-
-<one-line summary of what the action does>
-
-Reply APPROVE <id> or REJECT <id>" 2>/dev/null
+echo "PHASE:escalate" > "$PHASE_FILE"
 ```
 
 ### Reject
@@ -125,8 +116,7 @@ ROUTE: <action-id> → <auto-approve|escalate|reject> — <reason>
 
 - Process ALL pending JSON actions in the batch. Never skip silently.
 - For auto-approved actions, fire them immediately via `vault-fire.sh`.
-- For escalated actions, move to `vault/approved/` only AFTER human approval
-  (vault-poll handles this via matrix_listener dispatch).
+- For escalated actions, move to `vault/approved/` only AFTER human approval.
 - Read the action JSON carefully. Check the payload, not just the metadata.
 - Ignore `.md` files in pending/ — those are procurement requests handled
   separately by vault-poll.sh and the human.

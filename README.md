@@ -40,10 +40,6 @@ cron (weekly) ──→ planner-poll.sh  ← gap-analyse VISION.md, create backl
 cron (*/30) ──→ vault-poll.sh    ← safety gate for dangerous/irreversible actions
                  └── claude -p: classify → auto-approve/reject or escalate
 
-systemd ──→ matrix_listener.sh   ← long-poll daemon for human replies
-              └── dispatches thread replies → supervisor/gardener/dev/review/vault
-
-all agents ──→ matrix_send()     ← status updates, escalations, merge notifications
 ```
 
 ## Prerequisites
@@ -58,7 +54,6 @@ all agents ──→ matrix_send()     ← status updates, escalations, merge no
 
 **Optional:**
 
-- [Matrix](https://matrix.org/) homeserver ([Dendrite](https://github.com/matrix-org/dendrite) or Synapse) — real-time notifications, escalation threads with human-in-the-loop replies
 - [Foundry](https://getfoundry.sh/) (`forge`, `cast`, `anvil`) — only needed if your target project uses Solidity
 - [Node.js](https://nodejs.org/) — only needed if your target project uses Node
 
@@ -115,10 +110,8 @@ disinto/
 ├── .env.example          # Template — copy to .env, add secrets + project config
 ├── .gitignore            # Excludes .env, logs, state files
 ├── lib/
-│   ├── env.sh              # Shared: load .env, PATH, API helpers, matrix_send()
-│   ├── ci-debug.sh         # Woodpecker CI log/failure helper
-│   ├── matrix_listener.sh  # Matrix long-poll daemon (dispatches replies)
-│   └── matrix_listener.service  # systemd unit for the listener
+│   ├── env.sh              # Shared: load .env, PATH, API helpers
+│   └── ci-debug.sh         # Woodpecker CI log/failure helper
 ├── dev/
 │   ├── dev-poll.sh       # Cron entry: find ready issues
 │   └── dev-agent.sh      # Implementation agent (claude -p)

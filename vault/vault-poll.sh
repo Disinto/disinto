@@ -91,7 +91,6 @@ for action_file in "${VAULT_DIR}/approved/"*.json; do
     log "fired $ACTION_ID (retry)"
   else
     log "ERROR: fire failed for $ACTION_ID (retry)"
-    matrix_send "vault" "❌ Vault fire failed on retry: ${ACTION_ID}" 2>/dev/null || true
   fi
 
   unlock_action "$ACTION_ID"
@@ -112,7 +111,6 @@ for req_file in "${VAULT_DIR}/approved/"*.md; do
     log "fired procurement $REQ_ID (retry)"
   else
     log "ERROR: fire failed for procurement $REQ_ID (retry)"
-    matrix_send "vault" "❌ Vault fire failed on retry: ${REQ_ID} (procurement)" 2>/dev/null || true
   fi
 
   unlock_action "$REQ_ID"
@@ -143,7 +141,6 @@ for action_file in "${VAULT_DIR}/pending/"*.json; do
     AGE_HOURS=$((AGE_SECS / 3600))
     log "timeout: $ACTION_ID escalated ${AGE_HOURS}h ago with no reply — auto-rejecting"
     bash "${VAULT_DIR}/vault-reject.sh" "$ACTION_ID" "timeout (${AGE_HOURS}h, no human reply)" >> "$LOGFILE" 2>&1 || true
-    matrix_send "vault" "⏰ Vault auto-rejected ${ACTION_ID} — no reply after ${AGE_HOURS}h" 2>/dev/null || true
   fi
 done
 
@@ -184,7 +181,6 @@ if [ "$PENDING_COUNT" -gt 0 ]; then
 
   bash "${VAULT_DIR}/vault-agent.sh" >> "$LOGFILE" 2>&1 || {
     log "ERROR: vault-agent failed"
-    matrix_send "vault" "❌ vault-agent.sh failed — check vault.log" 2>/dev/null || true
   }
 fi
 
@@ -215,15 +211,6 @@ for req_file in "${VAULT_DIR}/pending/"*.md; do
   REQ_TITLE=$(grep -m1 '^# ' "$req_file" | sed 's/^# //' || echo "$REQ_ID")
 
   log "new procurement request: $REQ_ID — $REQ_TITLE"
-
-  # Notify human via Matrix
-  matrix_send "vault" "🔑 PROCUREMENT REQUEST — ${REQ_TITLE}
-
-ID: ${REQ_ID}
-Action: review vault/pending/${REQ_ID}.md
-To approve: fulfill the request, add secrets to .env, move file to vault/approved/
-
-$(head -20 "$req_file")" 2>/dev/null || true
 
   # Mark as notified so we don't re-send
   mkdir -p "${VAULT_DIR}/.locks"

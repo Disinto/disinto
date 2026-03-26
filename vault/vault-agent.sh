@@ -69,7 +69,6 @@ ${ACTIONS_BATCH}
 - Vault directory: ${VAULT_DIR}
 - vault-fire.sh: bash ${VAULT_DIR}/vault-fire.sh <action-id>
 - vault-reject.sh: bash ${VAULT_DIR}/vault-reject.sh <action-id> \"<reason>\"
-- matrix_send is available after: source ${FACTORY_ROOT}/lib/env.sh
 
 Process each action now. For auto-approve, fire immediately. For reject, call vault-reject.sh.
 

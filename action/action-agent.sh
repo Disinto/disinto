@@ -12,7 +12,7 @@
 #   Path A (git output): Claude pushes → handler creates PR → CI poll → review
 #     injection → merge → cleanup (same loop as dev-agent via phase-handler.sh)
 #   Path B (no git output): Claude posts results → PHASE:done → cleanup
-#   6. For human input: Claude asks via Matrix; reply injected via matrix_listener
+#   6. For human input: Claude writes PHASE:escalate; human responds via vault/forge
 #   7. Cleanup on terminal phase: kill children, destroy worktree, remove temp files
 #
 # Key principle: The runtime creates and destroys. The formula preserves.
@@ -35,7 +35,6 @@ source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${PROJECT_NAME}-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
-THREAD_FILE="/tmp/action-thread-${ISSUE}"
 IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
 MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}" # 8h default wall-clock cap
 SESSION_START_EPOCH=$(date +%s)
@@ -53,22 +52,6 @@ SCRATCH_FILE="/tmp/action-${ISSUE}-scratch.md"
 
 log() {
   printf '[%s] action#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
-}
-
-notify() {
-  local thread_id=""
-  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  matrix_send "action" "⚡ #${ISSUE}: $*" "${thread_id}" 2>/dev/null || true
-}
-
-notify_ctx() {
-  local plain="$1" html="$2" thread_id=""
-  [ -f "${THREAD_FILE:-}" ] && thread_id=$(cat "$THREAD_FILE" 2>/dev/null || true)
-  if [ -n "$thread_id" ]; then
-    matrix_send_ctx "action" "⚡ #${ISSUE}: ${plain}" "⚡ #${ISSUE}: ${html}" "${thread_id}" 2>/dev/null || true
-  else
-    matrix_send "action" "⚡ #${ISSUE}: ${plain}" "" "${ISSUE}" 2>/dev/null || true
-  fi
 }
 
 status() {
@@ -211,23 +194,6 @@ if [ -n "$COMMENTS_JSON" ] && [ "$COMMENTS_JSON" != "null" ] && [ "$COMMENTS_JSO
        "[\(.user.login) at \(.created_at[:19])]\n\(.body)\n---"' 2>/dev/null || true)
 fi
 
-# --- Create Matrix thread for this issue ---
-ISSUE_URL="${FORGE_WEB}/issues/${ISSUE}"
-_thread_id=$(matrix_send_ctx "action" \
-  "⚡ Action #${ISSUE}: ${ISSUE_TITLE} — ${ISSUE_URL}" \
-  "⚡ <a href='${ISSUE_URL}'>Action #${ISSUE}</a>: ${ISSUE_TITLE}") || true
-
-THREAD_ID=""
-if [ -n "${_thread_id:-}" ]; then
-  printf '%s' "$_thread_id" > "$THREAD_FILE"
-  THREAD_ID="$_thread_id"
-  # Export for on-stop-matrix.sh hook (streams Claude output to thread)
-  export MATRIX_THREAD_ID="$_thread_id"
-  # Register thread root in map for listener dispatch (column 4 = issue number)
-  printf '%s\t%s\t%s\t%s\t%s\n' "$_thread_id" "action" "$(date +%s)" "${ISSUE}" "${PROJECT_NAME}" \
-    >> "${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}" 2>/dev/null || true
-fi
-
 # --- Create isolated worktree ---
 log "creating worktree: ${WORKTREE}"
 cd "${PROJECT_REPO_ROOT}"
@@ -241,7 +207,6 @@ export FORGE_REMOTE
 git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
 if ! git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" 2>&1; then
   log "ERROR: worktree creation failed"
-  notify "failed to create worktree for #${ISSUE}"
   exit 1
 fi
 log "worktree ready: ${WORKTREE}"
@@ -258,14 +223,6 @@ if [ -n "$PRIOR_COMMENTS" ]; then
 ${PRIOR_COMMENTS}
 
 "
-fi
-
-THREAD_HINT=""
-if [ -n "$THREAD_ID" ]; then
-  THREAD_HINT="
-   The Matrix thread ID for this issue is: ${THREAD_ID}
-   Use it as the thread_event_id when sending Matrix messages so replies
-   are routed back to this session."
 fi
 
 # Build phase protocol from shared function (Path B covered in Instructions section above)
@@ -294,9 +251,8 @@ ${PRIOR_SECTION}## Instructions
      \"${FORGE_API}/issues/${ISSUE}/comments\" \\
      -d \"{\\\"body\\\": \\\"your comment here\\\"}\"
 
-4. If a step requires human input or approval, send a Matrix message explaining
-   what you need, then wait. A human will reply and the reply will be injected
-   into this session automatically.${THREAD_HINT}
+4. If a step requires human input or approval, write PHASE:escalate with a reason.
+   A human will review and respond via the forge.
 
 ### Path A: If this action produces code changes (e.g. config updates, baselines):
    - You are already in an isolated worktree at: ${WORKTREE}
@@ -348,9 +304,6 @@ fi
 inject_formula "${SESSION_NAME}" "${INITIAL_PROMPT}"
 log "initial prompt injected into session"
 
-matrix_send "action" "⚡ #${ISSUE}: session started — ${ISSUE_TITLE}" \
-  "${THREAD_ID}" 2>/dev/null || true
-
 # --- Wall-clock lifetime watchdog (background) ---
 # Caps total session time independently of idle timeout.  When the cap is
 # hit the watchdog kills the tmux session, posts a summary comment on the
@@ -383,31 +336,25 @@ monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change "$SESSION_NAME
 # Handle exit reason from monitor_phase_loop
 case "${_MONITOR_LOOP_EXIT:-}" in
   idle_timeout)
-    notify_ctx \
-      "session idle for $((IDLE_TIMEOUT / 3600))h — killed" \
-      "session idle for $((IDLE_TIMEOUT / 3600))h — killed"
     # Post diagnostic comment + label blocked
     post_blocked_diagnostic "idle_timeout"
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
     ;;
   idle_prompt)
     # Notification + blocked label already handled by _on_phase_change(PHASE:failed) callback
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
     ;;
   PHASE:failed)
     # Check if this was a max_lifetime kill (phase file contains the reason)
     if grep -q 'max_lifetime' "$PHASE_FILE" 2>/dev/null; then
-      notify_ctx \
-        "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached" \
-        "session killed — wall-clock cap ($((MAX_LIFETIME / 3600))h) reached"
       post_blocked_diagnostic "max_lifetime"
     fi
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
     ;;
   done)
     # Belt-and-suspenders: callback handles primary cleanup,
     # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$THREAD_FILE" "$SCRATCH_FILE"
+    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
     ;;
 esac
 

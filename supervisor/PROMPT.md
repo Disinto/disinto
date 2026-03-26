@@ -40,7 +40,6 @@ This gives you:
 - `$PROJECT_NAME` — short project name (for worktree prefixes, container names)
 - `$PRIMARY_BRANCH` — main branch (master or main)
 - `$FACTORY_ROOT` — path to the disinto repo
-- `matrix_send <prefix> <message>` — send notifications to the Matrix coordination room
 
 ## Handling Dependency Alerts
 

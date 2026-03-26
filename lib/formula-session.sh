@@ -327,7 +327,6 @@ run_formula_and_monitor() {
 
   agent_inject_into_session "$SESSION_NAME" "$PROMPT"
   log "Prompt sent to tmux session"
-  matrix_send "$agent_name" "${agent_name^} session started for ${FORGE_REPO}" 2>/dev/null || true
 
   log "Monitoring phase file: ${PHASE_FILE}"
   _FORMULA_CRASH_COUNT=0
@@ -350,8 +349,6 @@ run_formula_and_monitor() {
         ;;
     esac
   fi
-
-  matrix_send "$agent_name" "${agent_name^} session finished (${FINAL_PHASE:-no phase})" 2>/dev/null || true
 
   # Preserve worktree on crash for debugging; clean up on success
   if [ "${_MONITOR_LOOP_EXIT:-}" = "crashed" ]; then

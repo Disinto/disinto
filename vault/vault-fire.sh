@@ -83,7 +83,6 @@ if [ "$IS_PROCUREMENT" = true ]; then
 
   if [ -z "$ENTRY" ]; then
     log "ERROR: $ACTION_ID has no '## Proposed RESOURCES.md Entry' section"
-    matrix_send "vault" "❌ Procurement $ACTION_ID has no RESOURCES.md entry — cannot fire" 2>/dev/null || true
     exit 1
   fi
 
@@ -95,7 +94,6 @@ if [ "$IS_PROCUREMENT" = true ]; then
   mv "$ACTION_FILE" "${VAULT_DIR}/fired/${ACTION_ID}.md"
   rm -f "${LOCKS_DIR}/${ACTION_ID}.notified"
   log "$ACTION_ID: approved → fired (procurement)"
-  matrix_send "vault" "✅ Procurement fulfilled: ${ACTION_ID} — RESOURCES.md updated" 2>/dev/null || true
   exit 0
 fi
 
@@ -175,9 +173,7 @@ if [ "$FIRE_EXIT" -eq 0 ]; then
     && mv "$TMP" "${VAULT_DIR}/fired/${ACTION_ID}.json"
   rm -f "$ACTION_FILE"
   log "$ACTION_ID: approved → fired"
-  matrix_send "vault" "✅ Vault fired: ${ACTION_ID} (${ACTION_TYPE} from ${ACTION_SOURCE})" 2>/dev/null || true
 else
   log "ERROR: $ACTION_ID fire failed (exit $FIRE_EXIT) — stays in approved/ for retry"
-  matrix_send "vault" "❌ Vault fire failed: ${ACTION_ID} (${ACTION_TYPE}) — will retry" 2>/dev/null || true
   exit "$FIRE_EXIT"
 fi

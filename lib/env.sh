@@ -85,18 +85,6 @@ export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 # Factory processes must never phone home or auto-update mid-session (#725).
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
-# Matrix homeserver: inside compose Dendrite is at http://dendrite:8008,
-# on bare metal it defaults to http://localhost:8008.
-if [ -z "${MATRIX_HOMESERVER:-}" ]; then
-  if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
-    export MATRIX_HOMESERVER="http://dendrite:8008"
-  else
-    export MATRIX_HOMESERVER="http://localhost:8008"
-  fi
-else
-  export MATRIX_HOMESERVER
-fi
-
 # Shared log helper
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
@@ -156,80 +144,6 @@ wpdb() {
     -h "${WOODPECKER_DB_HOST:-127.0.0.1}" \
     -d "${WOODPECKER_DB_NAME:-woodpecker}" \
     -t "$@" 2>/dev/null
-}
-
-# Matrix messaging helper — usage: matrix_send <prefix> <message> [thread_event_id] [context_tag]
-# Returns event_id on stdout. Registers threads for listener dispatch.
-# context_tag is stored in the thread map (e.g. issue number) for routing replies.
-# Thread map: use persistent data dir inside container, /tmp on bare metal
-if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
-  MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-${DISINTO_DATA_DIR}/matrix-thread-map}"
-else
-  MATRIX_THREAD_MAP="${MATRIX_THREAD_MAP:-/tmp/matrix-thread-map}"
-fi
-matrix_send() {
-  [ -z "${MATRIX_TOKEN:-}" ] && return 0
-  local prefix="$1" msg="$2" thread_id="${3:-}" ctx_tag="${4:-}"
-  local room_encoded="${MATRIX_ROOM_ID//!/%21}"
-  local txn
-  txn="$(date +%s%N)$$"
-  local body
-  if [ -n "$thread_id" ]; then
-    body=$(jq -nc --arg m "[${prefix}] ${msg}" --arg t "$thread_id" \
-      '{msgtype:"m.text",body:$m,"m.relates_to":{rel_type:"m.thread",event_id:$t}}')
-  else
-    body=$(jq -nc --arg m "[${prefix}] ${msg}" '{msgtype:"m.text",body:$m}')
-  fi
-  local response
-  response=$(curl -s -X PUT \
-    -H "Authorization: Bearer ${MATRIX_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${MATRIX_HOMESERVER}/_matrix/client/v3/rooms/${room_encoded}/send/m.room.message/${txn}" \
-    -d "$body" 2>/dev/null) || return 0
-  local event_id
-  event_id=$(printf '%s' "$response" | jq -r '.event_id // empty' 2>/dev/null)
-  if [ -n "$event_id" ]; then
-    printf '%s' "$event_id"
-    # Register thread root for listener dispatch (escalations only)
-    if [ -z "$thread_id" ]; then
-      printf '%s\t%s\t%s\t%s\t%s\n' "$event_id" "$prefix" "$(date +%s)" "${ctx_tag}" "${PROJECT_NAME:-}" >> "$MATRIX_THREAD_MAP" 2>/dev/null || true
-    fi
-  fi
-}
-
-# matrix_send_ctx — Send rich Matrix message with HTML formatting
-# Usage: matrix_send_ctx <prefix> <plain_text> <html_body> [thread_event_id]
-# Use for notifications that benefit from links, code blocks, or structured content.
-matrix_send_ctx() {
-  [ -z "${MATRIX_TOKEN:-}" ] && return 0
-  local prefix="$1" plain="$2" html="$3" thread_id="${4:-}"
-  local room_encoded="${MATRIX_ROOM_ID//!/%21}"
-  local txn
-  txn="$(date +%s%N)$$"
-  local body
-  if [ -n "$thread_id" ]; then
-    body=$(jq -nc \
-      --arg m "[${prefix}] ${plain}" \
-      --arg h "<b>[${prefix}]</b> ${html}" \
-      --arg t "$thread_id" \
-      '{msgtype:"m.text",body:$m,format:"org.matrix.custom.html",formatted_body:$h,"m.relates_to":{rel_type:"m.thread",event_id:$t}}')
-  else
-    body=$(jq -nc \
-      --arg m "[${prefix}] ${plain}" \
-      --arg h "<b>[${prefix}]</b> ${html}" \
-      '{msgtype:"m.text",body:$m,format:"org.matrix.custom.html",formatted_body:$h}')
-  fi
-  local response
-  response=$(curl -s -X PUT \
-    -H "Authorization: Bearer ${MATRIX_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${MATRIX_HOMESERVER}/_matrix/client/v3/rooms/${room_encoded}/send/m.room.message/${txn}" \
-    -d "$body" 2>/dev/null) || return 0
-  local event_id
-  event_id=$(printf '%s' "$response" | jq -r '.event_id // empty' 2>/dev/null)
-  if [ -n "$event_id" ]; then
-    printf '%s' "$event_id"
-  fi
 }
 
 # Source tea helpers (available when tea binary is installed)

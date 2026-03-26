@@ -156,7 +156,6 @@ handle_ci_exhaustion() {
       CI_FIX_ATTEMPTS="${result#exhausted_first_time:}"
       log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — marking blocked"
       _post_ci_blocked_comment "$issue_num" "$pr_num" "$CI_FIX_ATTEMPTS"
-      matrix_send "dev" "🚨 PR #${pr_num} (issue #${issue_num}) CI failed after ${CI_FIX_ATTEMPTS} attempts — marked blocked" 2>/dev/null || true
       ;;
     exhausted:*)
       CI_FIX_ATTEMPTS="${result#exhausted:}"
@@ -207,9 +206,6 @@ try_direct_merge() {
       # Clean up phase/session artifacts
       rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
             "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
-      matrix_send "dev" "✅ PR #${pr_num} (issue #${issue_num}) merged directly by dev-poll" 2>/dev/null || true
-    else
-      matrix_send "dev" "✅ PR #${pr_num} merged directly by dev-poll (chore)" 2>/dev/null || true
     fi
     # Pull merged primary branch and push to mirrors
     git -C "${PROJECT_REPO_ROOT:-}" fetch origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
@@ -316,7 +312,6 @@ fi
 AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
 if [ "$AVAIL_MB" -lt 2000 ]; then
   log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
-  matrix_send "dev" "⚠️ Low memory (${AVAIL_MB}MB) — skipping dev-agent" 2>/dev/null || true
   exit 0
 fi
 
@@ -739,7 +734,6 @@ if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
 fi
 
 log "launching dev-agent for #${READY_ISSUE}"
-matrix_send "dev" "🚀 Starting dev-agent on issue #${READY_ISSUE}" 2>/dev/null || true
 rm -f "$PREFLIGHT_RESULT"
 
 nohup "${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1 &

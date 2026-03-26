@@ -105,7 +105,6 @@ echo "=== 2/2  Function resolution ==="
 # Excluded — not sourced inline by agents:
 #   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
 #   lib/ci-debug.sh         — standalone CLI tool, run directly (not sourced)
-#   lib/matrix_listener.sh  — standalone systemd daemon (not sourced)
 #   lib/parse-deps.sh       — executed via `bash lib/parse-deps.sh` (not sourced)
 #   lib/hooks/*.sh          — Claude Code hook scripts, executed by the harness (not sourced)
 #
@@ -189,7 +188,6 @@ check_script lib/guard.sh
 # Standalone lib scripts (not sourced by agents; run directly or as services).
 # Still checked for function resolution against LIB_FUNS + own definitions.
 check_script lib/ci-debug.sh
-check_script lib/matrix_listener.sh
 check_script lib/parse-deps.sh
 
 # Agent scripts — list cross-sourced files where function scope flows across files.

@@ -134,11 +134,9 @@ if [ "${AVAIL_MB:-9999}" -lt 500 ] || { [ "${SWAP_USED_MB:-0}" -gt 3000 ] && [ "
   fi
 fi
 
-# P0 is urgent — send immediately before per-project checks can crash the script
+# P0 alerts already logged — clear so they are not duplicated in the final consolidated log
 if [ -n "$P0_ALERTS" ]; then
-  matrix_send "supervisor" "🚨 Supervisor P0 alerts:
-$(printf '%b' "$P0_ALERTS")" 2>/dev/null || true
-  P0_ALERTS=""  # clear so it is not duplicated in the final consolidated send
+  P0_ALERTS=""
 fi
 
 # =============================================================================
@@ -184,11 +182,9 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   fi
 fi
 
-# P1 is urgent — send immediately before per-project checks can crash the script
+# P1 alerts already logged — clear so they are not duplicated in the final consolidated log
 if [ -n "$P1_ALERTS" ]; then
-  matrix_send "supervisor" "⚠️ Supervisor P1 alerts:
-$(printf '%b' "$P1_ALERTS")" 2>/dev/null || true
-  P1_ALERTS=""  # clear so it is not duplicated in the final consolidated send
+  P1_ALERTS=""
 fi
 
 # Emit infra metric
@@ -618,7 +614,6 @@ Instructions:
         _nh_renotify="/tmp/dev-renotify-${proj_name}-${_nh_issue}"
         if [ ! -f "$_nh_renotify" ]; then
           _nh_age_h=$(( _nh_age / 3600 ))
-          matrix_send "dev" "⏰ Reminder: Issue #${_nh_issue} still needs human input (waiting ${_nh_age_h}h)" 2>/dev/null || true
           touch "$_nh_renotify"
           flog "${proj_name}: #${_nh_issue} re-notified (escalate for ${_nh_age_h}h)"
         fi
@@ -784,10 +779,6 @@ ALL_ALERTS="${P0_ALERTS}${P1_ALERTS}${P2_ALERTS}${P3_ALERTS}${P4_ALERTS}"
 
 if [ -n "$ALL_ALERTS" ]; then
   ALERT_TEXT=$(echo -e "$ALL_ALERTS")
-
-  # Notify Matrix
-  matrix_send "supervisor" "⚠️ Supervisor alerts:
-${ALERT_TEXT}" 2>/dev/null || true
 
   flog "Invoking claude -p for alerts"
 

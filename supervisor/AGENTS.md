@@ -4,7 +4,7 @@
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
 Claude agent. Collects system and project metrics via a bash pre-flight script,
 then runs an interactive Claude session (sonnet) that assesses health, auto-fixes
-issues, reports via Matrix, and writes a daily journal. When blocked on external
+issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` runs every 20 min via cron. Sources `lib/guard.sh`
@@ -40,17 +40,11 @@ runs directly from cron like the planner and predictor.
 **Alert priorities**: P0 (memory crisis), P1 (disk), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
-**Matrix integration**: The supervisor has its own Matrix thread. Posts health
-summaries when there are changes, reports P0-P2 issues, and processes replies
-from humans ("ignore disk warning", "kill that agent", "what's stuck?").
-
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
-- `MATRIX_TOKEN`, `MATRIX_ROOM_ID`, `MATRIX_HOMESERVER` — Matrix notifications + human input
 
 **Lifecycle**: supervisor-run.sh (cron */20) → lock + memory guard → run
-preflight.sh (collect metrics) → consume Matrix replies → load formula +
-context → create tmux session → Claude assesses health, auto-fixes, posts
-Matrix summary, writes journal → `PHASE:done`.
+preflight.sh (collect metrics) → load formula + context → create tmux
+session → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.

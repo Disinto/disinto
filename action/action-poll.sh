@@ -28,7 +28,6 @@ log() {
 AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
 if [ "$AVAIL_MB" -lt 2000 ]; then
   log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
-  matrix_send "action" "⚠️ Low memory (${AVAIL_MB}MB) — skipping action-poll" 2>/dev/null || true
   exit 0
 fi
 

@@ -43,4 +43,3 @@ rm -f "$ACTION_FILE"
 rm -f "${VAULT_DIR}/.locks/${ACTION_ID}.lock"
 
 log "$ACTION_ID: rejected — $REASON"
-matrix_send "vault" "🚫 Vault rejected: ${ACTION_ID} (${ACTION_TYPE} from ${ACTION_SOURCE}) — ${REASON}" 2>/dev/null || true
