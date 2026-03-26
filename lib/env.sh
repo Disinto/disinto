@@ -81,6 +81,10 @@ export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-}"
 export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 
+# Disable Claude Code auto-updater, telemetry, error reporting in factory sessions.
+# Factory processes must never phone home or auto-update mid-session (#725).
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
 # Matrix homeserver: inside compose Dendrite is at http://dendrite:8008,
 # on bare metal it defaults to http://localhost:8008.
 if [ -z "${MATRIX_HOMESERVER:-}" ]; then
