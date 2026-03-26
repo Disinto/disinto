@@ -8,6 +8,37 @@
 #   agent_inject_into_session   SESSION_NAME TEXT
 #   agent_kill_session          SESSION_NAME
 #   monitor_phase_loop          PHASE_FILE IDLE_TIMEOUT_SECS CALLBACK_FN [SESSION_NAME]
+#   session_lock_acquire        [TIMEOUT_SECS]
+#   session_lock_release
+
+# --- Cooperative session lock (fd-based) ---
+# File descriptor for the session lock. Set by create_agent_session().
+# Callers can release/re-acquire via session_lock_release/session_lock_acquire
+# to allow other Claude sessions during idle phases (awaiting_review/awaiting_ci).
+SESSION_LOCK_FD=""
+
+# Release the session lock without closing the file descriptor.
+# The fd stays open so it can be re-acquired later.
+session_lock_release() {
+  if [ -n "${SESSION_LOCK_FD:-}" ]; then
+    flock -u "$SESSION_LOCK_FD"
+  fi
+}
+
+# Re-acquire the session lock. Blocks until available or timeout.
+# Opens the lock fd if not already open (for use by external callers).
+# Args: [timeout_secs] (default 300)
+# Returns 0 on success, 1 on timeout/error.
+# shellcheck disable=SC2120  # timeout arg is used by external callers
+session_lock_acquire() {
+  local timeout="${1:-300}"
+  if [ -z "${SESSION_LOCK_FD:-}" ]; then
+    local lock_dir="${HOME}/.claude"
+    mkdir -p "$lock_dir"
+    exec {SESSION_LOCK_FD}>>"${lock_dir}/session.lock"
+  fi
+  flock -w "$timeout" "$SESSION_LOCK_FD"
+}
 
 # Wait for the Claude ❯ ready prompt in a tmux pane.
 # Returns 0 if ready within TIMEOUT_SECS (default 120), 1 otherwise.
@@ -30,6 +61,9 @@ agent_inject_into_session() {
   local session="$1"
   local text="$2"
   local tmpfile
+  # Re-acquire session lock before injecting — Claude will resume working
+  # shellcheck disable=SC2119  # using default timeout
+  session_lock_acquire || true
   agent_wait_for_claude_ready "$session" 120 || true
   # Clear idle marker — new work incoming
   rm -f "/tmp/claude-idle-${session}.ts"
@@ -288,16 +322,23 @@ create_agent_session() {
     model_flag="--model ${CLAUDE_MODEL}"
   fi
 
-  # Acquire a session-level mutex via flock to prevent concurrent Claude
-  # sessions from racing on OAuth token refresh (rotating the refresh token
-  # invalidates it for other sessions).  The lock is held for the lifetime
-  # of the Claude process inside the tmux session.
+  # Acquire a session-level mutex via fd-based flock to prevent concurrent
+  # Claude sessions from racing on OAuth token refresh.  Unlike the previous
+  # command-wrapper flock, the fd approach allows callers to release the lock
+  # during idle phases (awaiting_review/awaiting_ci) and re-acquire before
+  # injecting the next prompt.  See #724.
   # Use ~/.claude/session.lock so the lock is shared across containers when
   # the host ~/.claude directory is bind-mounted.
   local lock_dir="${HOME}/.claude"
   mkdir -p "$lock_dir"
   local claude_lock="${lock_dir}/session.lock"
-  local claude_cmd="flock -w 300 '${claude_lock}' claude --dangerously-skip-permissions ${model_flag}"
+  if [ -z "${SESSION_LOCK_FD:-}" ]; then
+    exec {SESSION_LOCK_FD}>>"${claude_lock}"
+  fi
+  if ! flock -w 300 "$SESSION_LOCK_FD"; then
+    return 1
+  fi
+  local claude_cmd="claude --dangerously-skip-permissions ${model_flag}"
 
   tmux new-session -d -s "$session" -c "$workdir" \
     "$claude_cmd" 2>/dev/null
