@@ -90,6 +90,13 @@ export WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-}"
 export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 
+# Vault-only token guard (#745): external-action tokens (GITHUB_TOKEN, CLAWHUB_TOKEN)
+# must NEVER be available to agents. They live in .env.vault.enc and are injected
+# only into the ephemeral vault-runner container at fire time. Unset them here so
+# even an accidental .env inclusion cannot leak them into agent sessions.
+unset GITHUB_TOKEN 2>/dev/null || true
+unset CLAWHUB_TOKEN 2>/dev/null || true
+
 # Disable Claude Code auto-updater, telemetry, error reporting in factory sessions.
 # Factory processes must never phone home or auto-update mid-session (#725).
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
