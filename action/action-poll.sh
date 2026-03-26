@@ -25,11 +25,7 @@ log() {
 }
 
 # --- Memory guard ---
-AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
-if [ "$AVAIL_MB" -lt 2000 ]; then
-  log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
-  exit 0
-fi
+memory_guard 2000
 
 # --- Find open 'action' issues ---
 log "scanning for open action issues"

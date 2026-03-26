@@ -146,6 +146,18 @@ wpdb() {
     -t "$@" 2>/dev/null
 }
 
+# Memory guard — exit 0 (skip) if available RAM is below MIN_MB.
+# Usage: memory_guard [MIN_MB]   (default 2000)
+memory_guard() {
+  local min_mb="${1:-2000}"
+  local avail_mb
+  avail_mb=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
+  if [ "${avail_mb:-0}" -lt "$min_mb" ]; then
+    log "SKIP: only ${avail_mb}MB available (need ${min_mb}MB)"
+    exit 0
+  fi
+}
+
 # Source tea helpers (available when tea binary is installed)
 if command -v tea &>/dev/null; then
   # shellcheck source=tea-helpers.sh
