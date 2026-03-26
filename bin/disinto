@@ -1486,27 +1486,6 @@ p.write_text(text)
   touch "${FACTORY_ROOT}/state/.reviewer-active"
   touch "${FACTORY_ROOT}/state/.gardener-active"
 
-  # Provision executive assistant compass (identity lives outside the repo)
-  local compass_dir="${HOME}/.disinto"
-  local compass_path="${compass_dir}/compass.md"
-  if [ ! -f "$compass_path" ]; then
-    mkdir -p "$compass_dir"
-    if curl -sf --max-time 10 "https://disinto.ai/compass.md" -o "$compass_path" 2>/dev/null; then
-      chmod 600 "$compass_path"
-      # Add EXEC_COMPASS to .env if not already present
-      if ! grep -q '^EXEC_COMPASS=' "$env_file" 2>/dev/null; then
-        printf 'EXEC_COMPASS=%s\n' "$compass_path" >> "$env_file"
-      fi
-      touch "${FACTORY_ROOT}/state/.exec-active"
-    fi
-  else
-    # Compass already exists — just ensure exec is active and env is set
-    if ! grep -q '^EXEC_COMPASS=' "$env_file" 2>/dev/null; then
-      printf 'EXEC_COMPASS=%s\n' "$compass_path" >> "$env_file"
-    fi
-    touch "${FACTORY_ROOT}/state/.exec-active"
-  fi
-
   echo ""
   echo "Done. Project ${project_name} is ready."
   echo "  Config:  ${toml_path}"

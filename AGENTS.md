@@ -1,13 +1,12 @@
-<!-- last-reviewed: 043bf0f0217aef3f319b844f1a1277acd6327a1c -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages nine agents (dev, review,
-gardener, supervisor, planner, predictor, action, vault, exec) that pick up issues from forge,
+Disinto is an autonomous code factory. It manages eight agents (dev, review,
+gardener, supervisor, planner, predictor, action, vault) that pick up issues from forge,
 implement them, review PRs, plan from the vision, gate dangerous actions, and
-keep the system healthy — all via cron and `claude -p`. The exec agent is
-the human-facing interface: an interactive assistant reachable via Matrix.
+keep the system healthy — all via cron and `claude -p`.
 
 See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
 
@@ -26,10 +25,6 @@ disinto/
 │                  supervisor/journal/ — daily health logs from each run
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
-├── exec/          exec-session.sh — interactive executive assistant (Matrix-driven)
-│                  exec-briefing.sh — optional daily morning briefing
-│                  CHARACTER.md — personality and moral compass
-│                  exec/journal/ — conversation logs
 ├── action/        action-poll.sh, action-agent.sh — operational task execution
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, matrix_listener.sh, guard.sh, mirrors.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
@@ -84,7 +79,6 @@ bash dev/phase-test.sh
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
 | Action | `action/` | Operational task execution | [action/AGENTS.md](action/AGENTS.md) |
 | Vault | `vault/` | Action gating + resource procurement | [vault/AGENTS.md](vault/AGENTS.md) |
-| Exec | `exec/` | Executive assistant (interactive, Matrix-driven) | [exec/AGENTS.md](exec/AGENTS.md) |
 
 See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
 
