@@ -1,4 +1,4 @@
-<!-- last-reviewed: new -->
+<!-- last-reviewed: cebcb8c13ab7948fc794f49c379ed34570e45652 -->
 # Executive Assistant Agent
 
 **Role**: Interactive personal assistant for the executive (project founder).
