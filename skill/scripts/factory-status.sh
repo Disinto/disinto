@@ -47,7 +47,7 @@ print_agent_status() {
     echo "## Agent Status"
     echo ""
     local state_dir="${PROJECT_REPO_ROOT}/state"
-    local agents=(dev review gardener supervisor planner predictor action vault exec)
+    local agents=(dev review gardener supervisor planner predictor action vault)
     for agent in "${agents[@]}"; do
         local state_file="${state_dir}/.${agent}-active"
         if [[ -f "$state_file" ]]; then
