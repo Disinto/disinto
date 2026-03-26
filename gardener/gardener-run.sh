@@ -60,9 +60,6 @@ check_memory 2000
 
 log "--- Gardener run start ---"
 
-# ── Consume escalation replies ────────────────────────────────────────────
-consume_escalation_reply "gardener"
-
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-gardener.toml"
 build_context_block AGENTS.md
@@ -114,13 +111,8 @@ If no file changes in commit-and-pr:
 PROMPT="You are the issue gardener for ${FORGE_REPO}. Work through the formula below. Follow the phase protocol: if the commit-and-pr step creates a PR, write PHASE:awaiting_ci and wait for orchestrator CI/review/merge handling. If no file changes, write PHASE:done. The orchestrator will time you out if you return to the prompt without signalling.
 
 You have full shell access and --dangerously-skip-permissions.
-Fix what you can. Escalate what you cannot. Do NOT ask permission — act first, report after.
-${ESCALATION_REPLY:+
-## Escalation Reply (from Matrix — human message)
-${ESCALATION_REPLY}
+Fix what you can. File vault items for what you cannot. Do NOT ask permission — act first, report after.
 
-Act on this reply during the grooming step.
-}
 ## Project context
 ${CONTEXT_BLOCK}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
@@ -337,8 +329,8 @@ _gardener_merge() {
       printf 'PHASE:done\n' > "$PHASE_FILE"
       return 0
     fi
-    log "gardener merge blocked (HTTP 405) — escalating"
-    printf 'PHASE:escalate\nReason: gardener PR #%s merge blocked (HTTP 405)\n' \
+    log "gardener merge blocked (HTTP 405)"
+    printf 'PHASE:failed\nReason: gardener PR #%s merge blocked (HTTP 405)\n' \
       "$_GARDENER_PR" > "$PHASE_FILE"
     return 0
   fi
@@ -350,7 +342,7 @@ _gardener_merge() {
   git fetch origin ${PRIMARY_BRANCH} && git rebase origin/${PRIMARY_BRANCH}
   git push --force-with-lease origin HEAD
   echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
-If rebase fails, write PHASE:escalate with a reason."
+If rebase fails, write PHASE:failed with a reason."
 }
 
 # shellcheck disable=SC2317  # called indirectly by monitor_phase_loop
@@ -468,7 +460,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
   if ! $ci_done; then
     log "CI timeout for PR #${_GARDENER_PR}"
     agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" \
-      "CI TIMEOUT: CI did not complete within 15 minutes for PR #${_GARDENER_PR}. Write PHASE:escalate if you cannot proceed."
+      "CI TIMEOUT: CI did not complete within 15 minutes for PR #${_GARDENER_PR}. Write PHASE:failed with a reason if you cannot proceed."
     return 0
   fi
 
@@ -484,7 +476,7 @@ Write PHASE:awaiting_review to the phase file, then stop and wait:
     _GARDENER_CI_FIX_COUNT=$(( _GARDENER_CI_FIX_COUNT + 1 ))
     if [ "$_GARDENER_CI_FIX_COUNT" -gt 3 ]; then
       log "CI exhausted after ${_GARDENER_CI_FIX_COUNT} attempts"
-      printf 'PHASE:escalate\nReason: gardener CI exhausted after %d attempts\n' \
+      printf 'PHASE:failed\nReason: gardener CI exhausted after %d attempts\n' \
         "$_GARDENER_CI_FIX_COUNT" > "$PHASE_FILE"
       return 0
     fi
@@ -625,7 +617,7 @@ Then stop and wait."
   if [ "$review_elapsed" -ge "$review_timeout" ]; then
     log "review wait timed out for PR #${_GARDENER_PR}"
     agent_inject_into_session "${_MONITOR_SESSION:-$SESSION_NAME}" \
-      "No review received after ${review_timeout}s for PR #${_GARDENER_PR}. Write PHASE:escalate if you cannot proceed."
+      "No review received after ${review_timeout}s for PR #${_GARDENER_PR}. Write PHASE:failed with a reason if you cannot proceed."
   fi
 }
 
@@ -645,13 +637,6 @@ _gardener_on_phase_change() {
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
     PHASE:failed)
-      agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
-      ;;
-    PHASE:escalate)
-      local reason
-      reason=$(sed -n '2p' "$PHASE_FILE" 2>/dev/null | sed 's/^Reason: //' || true)
-      log "escalated: ${reason}"
-      matrix_send "gardener" "Gardener escalated: ${reason}" 2>/dev/null || true
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
     PHASE:crashed)

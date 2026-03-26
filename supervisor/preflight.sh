@@ -214,14 +214,15 @@ else
 fi
 echo ""
 
-# ── Escalation Replies from Matrix ────────────────────────────────────────
+# ── Pending Vault Items ───────────────────────────────────────────────────
 
-echo "## Escalation Replies (from Matrix)"
-if [ -s /tmp/supervisor-escalation-reply ]; then
-  cat /tmp/supervisor-escalation-reply
-  echo ""
-  echo "(Reply already consumed by supervisor-run.sh before this session)"
-else
-  echo "  None"
-fi
+echo "## Pending Vault Items"
+_found_vault=false
+for _vf in "${PROJECT_REPO_ROOT}/vault/pending/"*.md; do
+  [ -f "$_vf" ] || continue
+  _found_vault=true
+  _vtitle=$(grep -m1 '^# ' "$_vf" | sed 's/^# //' || basename "$_vf")
+  echo "  $(basename "$_vf"): ${_vtitle}"
+done
+[ "$_found_vault" = false ] && echo "  None"
 echo ""

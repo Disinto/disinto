@@ -123,8 +123,9 @@ Update the tree:
 Bounce/stuck detection — for issues in the tree, fetch recent comments:
   curl -sf -H "Authorization: token $FORGE_TOKEN" \
     "$FORGE_API/issues/<number>/comments?limit=10"
-  Signals: BOUNCED (too_large, underspecified), ESCALATED (needs human decision),
+  Signals: BOUNCED (too_large, underspecified),
   LABEL_CHURN (3+ relabels between backlog/underspecified).
+  If an issue needs a human decision or external resource, it is HUMAN_BLOCKED.
   Track as stuck_issues[] for constraint filing below.
 
 Hold the updated tree in memory — written to disk in journal-and-commit.
@@ -148,7 +149,17 @@ Graph bottlenecks (high betweenness centrality) and thin objectives inform ranki
 Stuck issue handling:
   - BOUNCED/LABEL_CHURN: do NOT re-promote. Dispatch groom-backlog formula instead:
       tea_file_issue "chore: break down #<N> — bounced <count>x" "<body>" "action"
-  - ESCALATED: skip, mark in tree as "escalated — awaiting human decision"
+  - HUMAN_BLOCKED (needs human decision or external resource): file a vault
+    procurement item instead of skipping. Write vault/pending/<resource-id>.md:
+      # <What is needed>
+      ## What
+      <description of the resource or decision needed>
+      ## Why
+      <which objective/issue this unblocks>
+      ## Unblocks
+      - #<issue> — <title>
+    Then mark the prerequisite in the tree as "blocked-on-vault (vault/pending/<id>.md)".
+    Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
 
 Filing gate (for non-stuck constraints):
   1. Check if issue already exists (match by #number in tree or title search)

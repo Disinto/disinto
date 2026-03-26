@@ -17,14 +17,18 @@ Dismissed predictions get re-filed by the predictor with stronger evidence
 if still valid. Phase 2
 (update-prerequisite-tree): scan repo state + open/closed issues, mark resolved
 prerequisites, discover new ones, update the tree. **Also scans comments on
-referenced issues for bounce/stuck signals** (BOUNCED, ESCALATED, LABEL_CHURN)
-to detect issues ping-ponging between backlog and underspecified. Phase 3
+referenced issues for bounce/stuck signals** (BOUNCED, LABEL_CHURN)
+to detect issues ping-ponging between backlog and underspecified. Issues that
+need human decisions or external resources are filed as vault procurement items
+(`vault/pending/*.md`) instead of being escalated. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
 the most downstream objectives — file issues as either `backlog` (code changes,
 dev-agent) or `action` (run existing formula, action-agent). **Stuck issues
 (detected BOUNCED/LABEL_CHURN) are dispatched to the `groom-backlog` formula
 in breakdown mode instead of being re-promoted** — this breaks the ping-pong
-loop by splitting them into dev-agent-sized sub-issues.
+loop by splitting them into dev-agent-sized sub-issues. **Human-blocked issues
+are routed through the vault** — the planner files a procurement item and marks
+the prerequisite as blocked-on-vault in the tree.
 Phase 4 (journal-and-memory): write updated prerequisite tree + daily journal
 entry (committed to git) and update `planner/MEMORY.md` (committed to git).
 Phase 5 (commit-and-pr): one commit with all file changes, push, create PR.

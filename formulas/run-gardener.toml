@@ -119,8 +119,16 @@ DUST (trivial — single-line edit, rename, comment, style, whitespace):
   Do NOT close dust issues — the dust-bundling step auto-bundles groups
   of 3+ into one backlog issue.
 
-ESCALATE (needs human decision):
-  printf 'ESCALATE\n1. #NNN "title" — reason (a) option1 (b) option2\n' >> "$RESULT_FILE"
+VAULT (needs human decision or external resource):
+  File a vault procurement item at $PROJECT_REPO_ROOT/vault/pending/<id>.md:
+    # <What decision or resource is needed>
+    ## What
+    <description>
+    ## Why
+    <which issue this unblocks>
+    ## Unblocks
+    - #NNN — <title>
+  Log: echo "VAULT: filed vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
 
 CLEAN (only if truly nothing to do):
   echo 'CLEAN' >> "$RESULT_FILE"
@@ -150,7 +158,7 @@ Sibling dependency rule (CRITICAL):
 
    Only close for clear, unambiguous violations. If the issue is
    borderline or could be interpreted as compatible, leave it open
-   and ESCALATE instead.
+   and file a VAULT item for human decision instead.
 
 8. Quality gate — backlog label enforcement:
    For each open issue labeled 'backlog', verify it has the required
@@ -178,7 +186,7 @@ Processing order:
   2. AD alignment check — close backlog issues that violate architecture decisions
   3. Quality gate — strip backlog from issues missing acceptance criteria or affected files
   4. Process tech-debt issues by score (impact/effort)
-  5. Classify remaining items as dust or escalate
+  5. Classify remaining items as dust or route to vault
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.

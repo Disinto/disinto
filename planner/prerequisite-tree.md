@@ -24,8 +24,8 @@ Status: DONE — #395 closed
 
 ## Objective: Example project demonstrating full lifecycle (#466)
 - [x] disinto init working (#393)
-- [ ] Human decision on implementation approach (external repo vs local demo) ⚠ escalated — awaiting human decision (since 2026-03-23)
-Status: BLOCKED — bounced by dev-agent (too large), escalated by gardener, 3 days without human response
+- [ ] Human decision on implementation approach (external repo vs local demo) — blocked-on-vault
+Status: BLOCKED — bounced by dev-agent (too large), routed to vault for human decision
 
 ## Objective: Landing page communicating value proposition (#534)
 - [x] disinto init working (#393)

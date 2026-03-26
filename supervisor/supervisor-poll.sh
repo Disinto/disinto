@@ -80,14 +80,6 @@ status() {
   flog "$*"
 }
 
-# ── Check for escalation replies from Matrix ──────────────────────────────
-ESCALATION_REPLY=""
-if [ -s /tmp/supervisor-escalation-reply ]; then
-  ESCALATION_REPLY=$(cat /tmp/supervisor-escalation-reply)
-  rm -f /tmp/supervisor-escalation-reply
-  flog "Got escalation reply: $(echo "$ESCALATION_REPLY" | head -1)"
-fi
-
 # Alerts by priority
 P0_ALERTS=""
 P1_ALERTS=""
@@ -813,13 +805,7 @@ Disk: $(df -h / | awk 'NR==2{printf "%s used of %s (%s)", $3, $2, $5}')
 Docker: $(sudo docker ps --format '{{.Names}}' 2>/dev/null | wc -l) containers running
 Claude procs: $(pgrep -f "claude" 2>/dev/null | wc -l)
 
-$(if [ -n "$ESCALATION_REPLY" ]; then echo "
-## Human Response to Previous Escalation
-${ESCALATION_REPLY}
-
-Act on this response."; fi)
-
-Fix what you can. Escalate what you can't. Read the relevant best-practices file first."
+Fix what you can. File vault items for what you can't. Read the relevant best-practices file first."
 
   CLAUDE_OUTPUT=$(timeout 300 claude -p --model sonnet --dangerously-skip-permissions \
     "$CLAUDE_PROMPT" 2>&1) || true
