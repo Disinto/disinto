@@ -636,7 +636,7 @@ _gardener_on_phase_change() {
     PHASE:done|PHASE:merged)
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
-    PHASE:failed)
+    PHASE:failed|PHASE:escalate)
       agent_kill_session "${_MONITOR_SESSION:-$SESSION_NAME}"
       ;;
     PHASE:crashed)
