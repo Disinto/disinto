@@ -9,7 +9,8 @@
 #   disinto logs [service]              Tail service logs
 #   disinto shell                       Shell into the agent container
 #   disinto status                      Show factory status
-#   disinto secrets <edit|show|migrate> Manage encrypted secrets
+#   disinto secrets <subcommand>        Manage encrypted secrets
+#   disinto vault-run <action-id>        Run action in ephemeral vault container
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -37,7 +38,8 @@ Usage:
   disinto logs [service]               Tail service logs
   disinto shell                        Shell into the agent container
   disinto status                       Show factory status
-  disinto secrets <edit|show|migrate>  Manage encrypted secrets (.env.enc)
+  disinto secrets <subcommand>         Manage encrypted secrets
+  disinto vault-run <action-id>        Run action in ephemeral vault container
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -107,7 +109,7 @@ write_sops_yaml() {
   local pub_key="$1"
   cat > "${FACTORY_ROOT}/.sops.yaml" <<EOF
 creation_rules:
-  - path_regex: \.env\.enc$
+  - path_regex: \.env(\.vault)?\.enc$
     age: "${pub_key}"
 EOF
 }
@@ -234,6 +236,23 @@ services:
     depends_on:
       - forgejo
       - woodpecker
+    networks:
+      - disinto-net
+
+  vault-runner:
+    build: ./docker/agents
+    profiles: ["vault"]
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - ./vault:/home/agent/disinto/vault
+      - ./lib:/home/agent/disinto/lib:ro
+      - ./formulas:/home/agent/disinto/formulas:ro
+    environment:
+      FORGE_URL: http://forgejo:3000
+      DISINTO_CONTAINER: "1"
+    # env_file set at runtime by: disinto vault-run --env-file <tmpfile>
+    entrypoint: ["bash", "/home/agent/disinto/vault/vault-run-action.sh"]
     networks:
       - disinto-net
 
@@ -1370,6 +1389,26 @@ disinto_secrets() {
   local subcmd="${1:-}"
   local enc_file="${FACTORY_ROOT}/.env.enc"
   local env_file="${FACTORY_ROOT}/.env"
+  local vault_enc_file="${FACTORY_ROOT}/.env.vault.enc"
+  local vault_env_file="${FACTORY_ROOT}/.env.vault"
+
+  # Shared helper: ensure sops+age and .sops.yaml exist
+  _secrets_ensure_sops() {
+    if ! command -v sops &>/dev/null || ! command -v age-keygen &>/dev/null; then
+      echo "Error: sops and age are required." >&2
+      echo "  Install sops: https://github.com/getsops/sops/releases" >&2
+      echo "  Install age:  apt install age  /  brew install age" >&2
+      exit 1
+    fi
+    if ! ensure_age_key; then
+      echo "Error: failed to generate age key" >&2
+      exit 1
+    fi
+    if [ ! -f "${FACTORY_ROOT}/.sops.yaml" ]; then
+      write_sops_yaml "$AGE_PUBLIC_KEY"
+      echo "Created: .sops.yaml"
+    fi
+  }
 
   case "$subcmd" in
     edit)
@@ -1391,29 +1430,108 @@ disinto_secrets() {
         echo "Error: ${env_file} not found — nothing to migrate." >&2
         exit 1
       fi
-      if ! command -v sops &>/dev/null || ! command -v age-keygen &>/dev/null; then
-        echo "Error: sops and age are required for migration." >&2
-        echo "  Install sops: https://github.com/getsops/sops/releases" >&2
-        echo "  Install age:  apt install age  /  brew install age" >&2
-        exit 1
-      fi
-      if ! ensure_age_key; then
-        echo "Error: failed to generate age key" >&2
-        exit 1
-      fi
-      if [ ! -f "${FACTORY_ROOT}/.sops.yaml" ]; then
-        write_sops_yaml "$AGE_PUBLIC_KEY"
-        echo "Created: .sops.yaml"
-      fi
+      _secrets_ensure_sops
       encrypt_env_file "$env_file" "$enc_file"
       rm -f "$env_file"
       echo "Migrated: .env -> .env.enc (plaintext removed)"
       ;;
+    edit-vault)
+      if [ ! -f "$vault_enc_file" ]; then
+        echo "Error: ${vault_enc_file} not found. Run 'disinto secrets migrate-vault' first." >&2
+        exit 1
+      fi
+      sops "$vault_enc_file"
+      ;;
+    show-vault)
+      if [ ! -f "$vault_enc_file" ]; then
+        echo "Error: ${vault_enc_file} not found." >&2
+        exit 1
+      fi
+      sops -d "$vault_enc_file"
+      ;;
+    migrate-vault)
+      if [ ! -f "$vault_env_file" ]; then
+        echo "Error: ${vault_env_file} not found — nothing to migrate." >&2
+        echo "  Create .env.vault with vault secrets (GITHUB_TOKEN, deploy keys, etc.)" >&2
+        exit 1
+      fi
+      _secrets_ensure_sops
+      encrypt_env_file "$vault_env_file" "$vault_enc_file"
+      rm -f "$vault_env_file"
+      echo "Migrated: .env.vault -> .env.vault.enc (plaintext removed)"
+      ;;
     *)
-      echo "Usage: disinto secrets <edit|show|migrate>" >&2
+      cat <<EOF >&2
+Usage: disinto secrets <subcommand>
+
+Agent secrets (.env.enc):
+  edit           Edit agent secrets (FORGE_TOKEN, CLAUDE_API_KEY, etc.)
+  show           Show decrypted agent secrets
+  migrate        Encrypt .env -> .env.enc
+
+Vault secrets (.env.vault.enc):
+  edit-vault     Edit vault secrets (GITHUB_TOKEN, deploy keys, etc.)
+  show-vault     Show decrypted vault secrets
+  migrate-vault  Encrypt .env.vault -> .env.vault.enc
+EOF
       exit 1
       ;;
   esac
+}
+
+# ── vault-run command ─────────────────────────────────────────────────────────
+
+disinto_vault_run() {
+  local action_id="${1:?Usage: disinto vault-run <action-id>}"
+  local compose_file="${FACTORY_ROOT}/docker-compose.yml"
+  local vault_enc="${FACTORY_ROOT}/.env.vault.enc"
+
+  if [ ! -f "$compose_file" ]; then
+    echo "Error: docker-compose.yml not found" >&2
+    echo "  Run 'disinto init <repo-url>' first (without --bare)" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$vault_enc" ]; then
+    echo "Error: .env.vault.enc not found — create vault secrets first" >&2
+    echo "  Run 'disinto secrets migrate-vault' after creating .env.vault" >&2
+    exit 1
+  fi
+
+  if ! command -v sops &>/dev/null; then
+    echo "Error: sops not found — required to decrypt vault secrets" >&2
+    exit 1
+  fi
+
+  # Decrypt vault secrets to temp file
+  local tmp_env
+  tmp_env=$(mktemp /tmp/disinto-vault-XXXXXX)
+  trap 'rm -f "$tmp_env"' EXIT
+
+  if ! sops -d --output-type dotenv "$vault_enc" > "$tmp_env" 2>/dev/null; then
+    rm -f "$tmp_env"
+    echo "Error: failed to decrypt .env.vault.enc" >&2
+    exit 1
+  fi
+
+  echo "Vault secrets decrypted to tmpfile"
+
+  # Run action in ephemeral vault-runner container
+  local rc=0
+  docker compose -f "$compose_file" \
+    run --rm --env-file "$tmp_env" \
+    vault-runner "$action_id" || rc=$?
+
+  # Clean up — secrets gone
+  rm -f "$tmp_env"
+  echo "Vault tmpfile removed"
+
+  if [ "$rc" -eq 0 ]; then
+    echo "Vault action ${action_id} completed successfully"
+  else
+    echo "Vault action ${action_id} failed (exit ${rc})" >&2
+  fi
+  return "$rc"
 }
 
 # ── up command ────────────────────────────────────────────────────────────────
@@ -1484,13 +1602,14 @@ disinto_shell() {
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
-  init)    shift; disinto_init "$@" ;;
-  up)      shift; disinto_up "$@" ;;
-  down)    shift; disinto_down "$@" ;;
-  logs)    shift; disinto_logs "$@" ;;
-  shell)   shift; disinto_shell ;;
-  status)  shift; disinto_status "$@" ;;
-  secrets) shift; disinto_secrets "$@" ;;
+  init)      shift; disinto_init "$@" ;;
+  up)        shift; disinto_up "$@" ;;
+  down)      shift; disinto_down "$@" ;;
+  logs)      shift; disinto_logs "$@" ;;
+  shell)     shift; disinto_shell ;;
+  status)    shift; disinto_status "$@" ;;
+  secrets)   shift; disinto_secrets "$@" ;;
+  vault-run) shift; disinto_vault_run "$@" ;;
   -h|--help) usage ;;
   *)         usage ;;
 esac

@@ -221,8 +221,80 @@ for req_file in "${VAULT_DIR}/pending/"*.md; do
   unlock_action "$REQ_ID"
 done
 
-if [ "$PENDING_COUNT" -eq 0 ] && [ "$PROCURE_COUNT" -eq 0 ]; then
+# =============================================================================
+# PHASE 5: Detect vault-bot authorized comments on issues
+# =============================================================================
+status "phase 5: scanning for vault-bot authorized comments"
+
+COMMENT_COUNT=0
+
+if [ -n "${FORGE_REPO:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
+  # Get open issues with action label
+  ACTION_ISSUES=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/issues?state=open&labels=action&limit=50" 2>/dev/null) || ACTION_ISSUES="[]"
+
+  ISSUE_COUNT=$(printf '%s' "$ACTION_ISSUES" | jq 'length')
+  for idx in $(seq 0 $((ISSUE_COUNT - 1))); do
+    ISSUE_NUM=$(printf '%s' "$ACTION_ISSUES" | jq -r ".[$idx].number")
+
+    # Skip if already processed
+    if [ -f "${VAULT_DIR}/.locks/issue-${ISSUE_NUM}.vault-fired" ]; then
+      continue
+    fi
+
+    # Get comments on this issue
+    COMMENTS=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/issues/${ISSUE_NUM}/comments?limit=50" 2>/dev/null) || continue
+
+    # Look for vault-bot comments containing VAULT:APPROVED with a JSON action spec
+    APPROVED_BODY=$(printf '%s' "$COMMENTS" | jq -r '
+      [.[] | select(.user.login == "vault-bot") | select(.body | test("VAULT:APPROVED"))] | last | .body // empty
+    ' 2>/dev/null) || continue
+
+    [ -z "$APPROVED_BODY" ] && continue
+
+    # Extract JSON action spec from fenced code block in the comment
+    ACTION_JSON=$(printf '%s' "$APPROVED_BODY" | sed -n '/^```json$/,/^```$/p' | sed '1d;$d')
+    [ -z "$ACTION_JSON" ] && continue
+
+    # Validate JSON
+    if ! printf '%s' "$ACTION_JSON" | jq empty 2>/dev/null; then
+      log "malformed action JSON in vault-bot comment on issue #${ISSUE_NUM}"
+      continue
+    fi
+
+    ACTION_ID=$(printf '%s' "$ACTION_JSON" | jq -r '.id // empty')
+    if [ -z "$ACTION_ID" ]; then
+      ACTION_ID="issue-${ISSUE_NUM}-$(date +%s)"
+      ACTION_JSON=$(printf '%s' "$ACTION_JSON" | jq --arg id "$ACTION_ID" '.id = $id')
+    fi
+
+    # Skip if this action already exists in any stage
+    if [ -f "${VAULT_DIR}/approved/${ACTION_ID}.json" ] || \
+       [ -f "${VAULT_DIR}/fired/${ACTION_ID}.json" ] || \
+       [ -f "${VAULT_DIR}/rejected/${ACTION_ID}.json" ]; then
+      continue
+    fi
+
+    log "vault-bot authorized action on issue #${ISSUE_NUM}: ${ACTION_ID}"
+    printf '%s' "$ACTION_JSON" | jq '.status = "approved"' > "${VAULT_DIR}/approved/${ACTION_ID}.json"
+    COMMENT_COUNT=$((COMMENT_COUNT + 1))
+
+    # Fire the action
+    if bash "${VAULT_DIR}/vault-fire.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1; then
+      log "fired ${ACTION_ID} from issue #${ISSUE_NUM}"
+      # Mark issue as processed
+      touch "${VAULT_DIR}/.locks/issue-${ISSUE_NUM}.vault-fired"
+    else
+      log "ERROR: fire failed for ${ACTION_ID} from issue #${ISSUE_NUM}"
+    fi
+  done
+fi
+
+if [ "$PENDING_COUNT" -eq 0 ] && [ "$PROCURE_COUNT" -eq 0 ] && [ "$COMMENT_COUNT" -eq 0 ]; then
   status "all clear — no pending items"
 else
-  status "poll complete — ${PENDING_COUNT} action(s), ${PROCURE_COUNT} procurement request(s)"
+  status "poll complete — ${PENDING_COUNT} action(s), ${PROCURE_COUNT} procurement(s), ${COMMENT_COUNT} comment-authorized"
 fi
