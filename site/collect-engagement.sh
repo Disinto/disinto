@@ -69,8 +69,9 @@ log "Parsing ${CADDY_LOG} for entries since $(date -u -d "@${CUTOFF_TS}" +%Y-%m-
 #   request.headers.User-Agent, status, size, duration
 #
 # Filter to last 24h, exclude assets/bots, produce a clean JSONL stream.
-PARSED=$(jq -c --argjson cutoff "$CUTOFF_TS" '
-  select(.ts >= $cutoff)
+PARSED=$(jq -Rc --argjson cutoff "$CUTOFF_TS" '
+  try fromjson
+  | select(.ts >= $cutoff)
   | select(.request.uri != null)
   | {
       ts: .ts,
@@ -99,8 +100,10 @@ if [ -z "$PARSED" ]; then
       total_requests: 0,
       unique_visitors: 0,
       page_views: 0,
+      referred_visitors: 0,
       top_pages: [],
       top_referrers: [],
+      response_time: { p50_seconds: 0, p95_seconds: 0, p99_seconds: 0 },
       note: "no entries in period"
     }' > "${EVIDENCE_DIR}/${REPORT_DATE}.json"
   log "Empty report written to ${EVIDENCE_DIR}/${REPORT_DATE}.json"
@@ -126,7 +129,7 @@ UNIQUE_VISITORS=$(printf '%s\n' "$PAGES" | jq -r '.ip' | sort -u | wc -l | tr -d
 TOP_PAGES=$(printf '%s\n' "$PAGES" | jq -r '.uri' \
   | sort | uniq -c | sort -rn | head -10 \
   | awk '{printf "{\"path\":\"%s\",\"views\":%d}\n", $2, $1}' \
-  | jq -sc '.')
+  | jq -sc '.' 2>/dev/null || echo '[]')
 
 # Top referrers (exclude direct/self)
 TOP_REFERRERS=$(printf '%s\n' "$PAGES" | jq -r '.referer' \
