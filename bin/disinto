@@ -1416,6 +1416,12 @@ p.write_text(text)
     echo "Config:  WOODPECKER_AGENT_SECRET generated and saved to .env"
   fi
 
+  # Ensure Claude Code never auto-updates, phones home, or sends telemetry (#725)
+  if ! grep -q '^CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=' "$env_file" 2>/dev/null; then
+    printf 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1\n' >> "$env_file"
+    echo "Config:  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 saved to .env"
+  fi
+
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
 
