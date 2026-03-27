@@ -16,6 +16,8 @@ steps:
 
   - name: agent-smoke
     image: alpine:3
+    when:
+      event: pull_request
     commands:
       - apk add --no-cache bash
       - bash .woodpecker/agent-smoke.sh
