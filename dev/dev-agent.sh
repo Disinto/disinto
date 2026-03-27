@@ -142,8 +142,7 @@ echo $$ > "$LOCKFILE"
 status "fetching issue"
 ISSUE_JSON=$(forge_api GET "/issues/${ISSUE}") || true
 if [ -z "$ISSUE_JSON" ] || ! printf '%s' "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; then
-  log "ERROR: failed to fetch issue #${ISSUE}"
-  exit 1
+  log "ERROR: failed to fetch issue #${ISSUE} (API down or invalid response)"; exit 1
 fi
 ISSUE_TITLE=$(printf '%s' "$ISSUE_JSON" | jq -r '.title')
 ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body // ""')
