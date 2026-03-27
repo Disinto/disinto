@@ -113,7 +113,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -186,6 +186,7 @@ check_script lib/formula-session.sh     lib/agent-session.sh
 check_script lib/load-project.sh
 check_script lib/mirrors.sh              lib/env.sh
 check_script lib/guard.sh
+check_script lib/pr-lifecycle.sh
 
 # Standalone lib scripts (not sourced by agents; run directly or as services).
 # Still checked for function resolution against LIB_FUNS + own definitions.
