@@ -136,37 +136,32 @@ issue_release() {
 issue_block() {
   local issue="$1" reason="$2" result_text="${3:-}"
 
-  # Redact secrets from result text
+  # Redact secrets from result text before posting to a public issue
   if [ -n "$result_text" ]; then
     result_text=$(redact_secrets "$result_text")
   fi
 
-  # Build diagnostic comment
-  local comment
-  comment="### Session failure diagnostic
-
-| Field | Value |
-|---|---|
-| Exit reason | \`${reason}\` |
-| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |"
-
-  if [ -n "$result_text" ]; then
-    comment="${comment}
-
-<details><summary>Diagnostic output</summary>
-
-\`\`\`
-${result_text}
-\`\`\`
-</details>"
-  fi
+  # Build diagnostic comment via temp file (avoids large inline strings)
+  local tmpfile
+  tmpfile=$(mktemp /tmp/ilc-block-XXXXXX.md)
+  {
+    printf '### Blocked — issue #%s\n\n' "$issue"
+    printf '| Field | Value |\n|---|---|\n'
+    printf '| Exit reason | `%s` |\n' "$reason"
+    printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -n "$result_text" ]; then
+      printf '\n<details><summary>Diagnostic output</summary>\n\n```\n%s\n```\n</details>\n' "$result_text"
+    fi
+  } > "$tmpfile"
 
   # Post comment
-  curl -sf -X POST \
+  jq -Rs '{body:.}' < "$tmpfile" > "${tmpfile}.json"
+  curl -sf -o /dev/null -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_API}/issues/${issue}/comments" \
-    -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
+    --data-binary @"${tmpfile}.json" 2>/dev/null || true
+  rm -f "$tmpfile" "${tmpfile}.json"
 
   # Remove in-progress, add blocked
   local ip_id bk_id
