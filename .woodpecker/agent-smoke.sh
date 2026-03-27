@@ -104,6 +104,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
 #   lib/guard.sh            — sourced by all cron entry points (check_active)
 #   lib/issue-lifecycle.sh  — sourced by agents for issue claim/release/block/deps
+#   lib/worktree.sh         — sourced by agents for worktree create/recover/cleanup/preserve
 #
 # Excluded — not sourced inline by agents:
 #   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
@@ -114,7 +115,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )

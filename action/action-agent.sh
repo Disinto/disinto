@@ -32,6 +32,7 @@ FORGE_TOKEN="${FORGE_ACTION_TOKEN:-${FORGE_TOKEN}}"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
 # shellcheck source=../dev/phase-handler.sh
 source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${PROJECT_NAME}-${ISSUE}"
@@ -62,13 +63,7 @@ status() {
 
 # --- Action-specific helpers for phase-handler.sh ---
 cleanup_worktree() {
-  cd "${PROJECT_REPO_ROOT}" 2>/dev/null || true
-  git worktree remove "$WORKTREE" --force 2>/dev/null || true
-  rm -rf "$WORKTREE"
-  # Clear Claude Code session history for this worktree to prevent hallucinated "already done"
-  local claude_project_dir
-  claude_project_dir="$HOME/.claude/projects/$(echo "$WORKTREE" | sed 's|/|-|g; s|^-||')"
-  rm -rf "$claude_project_dir" 2>/dev/null || true
+  worktree_cleanup "$WORKTREE"
   log "destroyed worktree: ${WORKTREE}"
 }
 cleanup_labels() { :; }    # action agent doesn't use in-progress labels
@@ -108,7 +103,7 @@ cleanup() {
   local final_phase=""
   [ -f "$PHASE_FILE" ] && final_phase=$(head -1 "$PHASE_FILE" 2>/dev/null || true)
   if [ "${final_phase:-}" = "PHASE:crashed" ] || [ "${_MONITOR_LOOP_EXIT:-}" = "crashed" ] || [ "$exit_code" -ne 0 ]; then
-    log "PRESERVED crashed worktree for debugging: $WORKTREE"
+    worktree_preserve "$WORKTREE" "crashed (exit=$exit_code, phase=${final_phase:-unknown})"
   else
     cleanup_worktree
   fi

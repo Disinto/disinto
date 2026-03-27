@@ -25,6 +25,7 @@ source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/agent-session.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
 # shellcheck source=./phase-handler.sh
 source "$(dirname "$0")/phase-handler.sh"
 
@@ -98,12 +99,7 @@ PR_NUMBER=""
 
 # --- Cleanup helpers ---
 cleanup_worktree() {
-  cd "$REPO_ROOT"
-  git worktree remove "$WORKTREE" --force 2>/dev/null || true
-  rm -rf "$WORKTREE"
-  # Clear Claude Code session history for this worktree to prevent hallucinated "already done"
-  CLAUDE_PROJECT_DIR="$HOME/.claude/projects/$(echo "$WORKTREE" | sed 's|/|-|g; s|^-||')"
-  rm -rf "$CLAUDE_PROJECT_DIR" 2>/dev/null || true
+  worktree_cleanup "$WORKTREE"
 }
 
 cleanup_labels() {
@@ -449,29 +445,13 @@ export FORGE_REMOTE  # used by phase-handler.sh
 log "forge remote: ${FORGE_REMOTE} (FORGE_URL=${FORGE_URL})"
 
 if [ "$RECOVERY_MODE" = true ]; then
-  git fetch "${FORGE_REMOTE}" "$BRANCH" 2>/dev/null
-
-  # Reuse existing worktree if on the right branch (preserves session context)
-  REUSE_WORKTREE=false
-  if [ -d "$WORKTREE/.git" ] || [ -f "$WORKTREE/.git" ]; then
-    WT_BRANCH=$(cd "$WORKTREE" && git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    if [ "$WT_BRANCH" = "$BRANCH" ]; then
-      log "reusing existing worktree (preserves session)"
-      cd "$WORKTREE"
-      git pull --ff-only "${FORGE_REMOTE}" "$BRANCH" 2>/dev/null || git reset --hard "${FORGE_REMOTE}/${BRANCH}" 2>/dev/null || true
-      REUSE_WORKTREE=true
-    fi
+  if ! worktree_recover "$WORKTREE" "$BRANCH" "$FORGE_REMOTE"; then
+    log "ERROR: worktree recovery failed"
+    cleanup_labels
+    exit 1
   fi
-
-  if [ "$REUSE_WORKTREE" = false ]; then
-    cleanup_worktree
-    git worktree add "$WORKTREE" "${FORGE_REMOTE}/${BRANCH}" -B "$BRANCH" 2>&1 || {
-      log "ERROR: worktree creation failed for recovery"
-      cleanup_labels
-      exit 1
-    }
-    cd "$WORKTREE"
-    git submodule update --init --recursive 2>/dev/null || true
+  if [ "$_WORKTREE_REUSED" = true ]; then
+    log "reusing existing worktree (preserves session)"
   fi
 else
   # Normal mode: create fresh worktree from primary branch
@@ -489,16 +469,11 @@ else
 
   git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null
   git pull --ff-only "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
-  cleanup_worktree
-  git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 || {
+  if ! worktree_create "$WORKTREE" "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}"; then
     log "ERROR: worktree creation failed"
-    git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" -B "$BRANCH" 2>&1 | while read -r wt_line; do log "  $wt_line"; done || true
     cleanup_labels
     exit 1
-  }
-  cd "$WORKTREE"
-  git checkout -B "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" 2>/dev/null
-  git submodule update --init --recursive 2>/dev/null || true
+  fi
 
   # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
   for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
