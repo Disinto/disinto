@@ -80,9 +80,17 @@ if mirrors:
   return 1 2>/dev/null || exit 1
 }
 
-# Export parsed variables
+# Export parsed variables.
+# Inside the agents container (DISINTO_CONTAINER=1), compose already sets the
+# correct FORGE_URL (http://forgejo:3000) and path vars for the container
+# environment.  The TOML carries host-perspective values (localhost, /home/johba/…)
+# that would break container API calls and path resolution.  Skip overriding
+# any env var that is already set when running inside the container.
 while IFS='=' read -r _key _val; do
   [ -z "$_key" ] && continue
+  if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${!_key:-}" ]; then
+    continue
+  fi
   export "$_key=$_val"
 done <<< "$_PROJECT_VARS"
 
