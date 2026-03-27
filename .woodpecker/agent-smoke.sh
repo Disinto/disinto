@@ -103,6 +103,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
 #   lib/guard.sh            — sourced by all cron entry points (check_active)
+#   lib/issue-lifecycle.sh  — sourced by agents for issue claim/release/block/deps
 #
 # Excluded — not sourced inline by agents:
 #   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
@@ -113,7 +114,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh; do
+  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -187,6 +188,7 @@ check_script lib/load-project.sh
 check_script lib/mirrors.sh              lib/env.sh
 check_script lib/guard.sh
 check_script lib/pr-lifecycle.sh
+check_script lib/issue-lifecycle.sh   lib/secret-scan.sh
 
 # Standalone lib scripts (not sourced by agents; run directly or as services).
 # Still checked for function resolution against LIB_FUNS + own definitions.
