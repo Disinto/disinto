@@ -24,6 +24,8 @@ FORGE_TOKEN="${FORGE_PLANNER_TOKEN:-${FORGE_TOKEN}}"
 source "$FACTORY_ROOT/lib/agent-session.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
+# shellcheck source=../lib/worktree.sh
+source "$FACTORY_ROOT/lib/worktree.sh"
 # shellcheck source=../lib/guard.sh
 source "$FACTORY_ROOT/lib/guard.sh"
 

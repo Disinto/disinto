@@ -231,48 +231,11 @@ formula_phase_callback() {
 # ── Stale crashed worktree cleanup ─────────────────────────────────────────
 
 # cleanup_stale_crashed_worktrees [MAX_AGE_HOURS]
-# Removes preserved crashed worktrees older than MAX_AGE_HOURS (default 24).
-# Scans /tmp for orphaned worktrees matching agent naming patterns.
-# Safe to call from any agent; intended for supervisor/gardener housekeeping.
-# Requires globals: PROJECT_REPO_ROOT.
+# Thin wrapper around worktree_cleanup_stale() from lib/worktree.sh.
+# Kept for backwards compatibility with existing callers.
+# Requires: lib/worktree.sh sourced.
 cleanup_stale_crashed_worktrees() {
-  local max_age_hours="${1:-24}"
-  local max_age_seconds=$((max_age_hours * 3600))
-  local now
-  now=$(date +%s)
-  local cleaned=0
-
-  # Collect active tmux pane working directories for safety check
-  local active_dirs=""
-  active_dirs=$(tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null || true)
-
-  local wt_dir
-  for wt_dir in /tmp/*-worktree-* /tmp/action-*-[0-9]* /tmp/disinto-*; do
-    [ -d "$wt_dir" ] || continue
-    # Must be a git worktree (has .git file or directory)
-    [ -f "$wt_dir/.git" ] || [ -d "$wt_dir/.git" ] || continue
-
-    # Check age (use directory mtime)
-    local dir_mtime
-    dir_mtime=$(stat -c %Y "$wt_dir" 2>/dev/null || echo "$now")
-    local age=$((now - dir_mtime))
-    [ "$age" -lt "$max_age_seconds" ] && continue
-
-    # Skip if an active tmux pane is using this worktree
-    if [ -n "$active_dirs" ] && echo "$active_dirs" | grep -qF "$wt_dir"; then
-      continue
-    fi
-
-    # Remove the worktree
-    git -C "${PROJECT_REPO_ROOT}" worktree remove "$wt_dir" --force 2>/dev/null || rm -rf "$wt_dir"
-    log "cleaned stale crashed worktree: ${wt_dir} (age: $((age / 3600))h)"
-    cleaned=$((cleaned + 1))
-  done
-
-  # Prune any dangling worktree references
-  git -C "${PROJECT_REPO_ROOT}" worktree prune 2>/dev/null || true
-
-  [ "$cleaned" -gt 0 ] && log "cleaned ${cleaned} stale crashed worktree(s)"
+  worktree_cleanup_stale "${1:-24}"
 }
 
 # ── Scratch file helpers (compaction survival) ────────────────────────────
@@ -407,7 +370,7 @@ run_formula_and_monitor() {
 
   # Preserve worktree on crash for debugging; clean up on success
   if [ "${_MONITOR_LOOP_EXIT:-}" = "crashed" ]; then
-    log "PRESERVED crashed worktree for debugging: ${_FORMULA_SESSION_WORKDIR:-}"
+    worktree_preserve "${_FORMULA_SESSION_WORKDIR:-}" "crashed (agent=${agent_name})"
   else
     remove_formula_worktree
   fi
