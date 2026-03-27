@@ -60,7 +60,7 @@ status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"
 }
-LOGFILE="${FACTORY_ROOT}/dev/dev-agent.log"
+LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 BRANCH="fix/issue-${ISSUE}"
 WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"

@@ -18,8 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/vault-env.sh"
 
 OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
-LOCKS_DIR="${FACTORY_ROOT}/vault/.locks"
-LOGFILE="${FACTORY_ROOT}/vault/vault.log"
+LOCKS_DIR="${DISINTO_LOG_DIR}/vault/.locks"
+LOGFILE="${DISINTO_LOG_DIR}/vault/vault.log"
 RESOURCES_FILE="${OPS_REPO_ROOT}/RESOURCES.md"
 
 log() {

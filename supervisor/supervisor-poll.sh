@@ -16,13 +16,13 @@ set -euo pipefail
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 
-LOGFILE="${FACTORY_ROOT}/supervisor/supervisor.log"
+LOGFILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 STATUSFILE="/tmp/supervisor-status"
 LOCKFILE="/tmp/supervisor-poll.lock"
 PROMPT_FILE="${FACTORY_ROOT}/supervisor/PROMPT.md"
 PROJECTS_DIR="${FACTORY_ROOT}/projects"
 
-METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
+METRICS_FILE="${DISINTO_LOG_DIR}/metrics/supervisor-metrics.jsonl"
 
 emit_metric() {
   printf '%s\n' "$1" >> "$METRICS_FILE"
@@ -428,7 +428,7 @@ check_project() {
             AGE_MIN=$(( (NOW_EPOCH - UPDATED_EPOCH) / 60 ))
             if [ "$AGE_MIN" -gt 60 ]; then
               p3 "${proj_name}: PR #${pr}: CI passed, no review for ${AGE_MIN}min"
-              bash "${FACTORY_ROOT}/review/review-pr.sh" "$pr" >> "${FACTORY_ROOT}/review/review.log" 2>&1 &
+              bash "${FACTORY_ROOT}/review/review-pr.sh" "$pr" >> "${DISINTO_LOG_DIR}/review/review.log" 2>&1 &
               fixed "${proj_name}: Auto-triggered review for PR #${pr}"
             fi
           fi

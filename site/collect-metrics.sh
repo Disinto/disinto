@@ -21,7 +21,7 @@ source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$FACTORY_ROOT/lib/ci-helpers.sh" 2>/dev/null || true
 
-LOGFILE="${FACTORY_ROOT}/site/collect-metrics.log"
+LOGFILE="${DISINTO_LOG_DIR}/site/collect-metrics.log"
 log() {
   printf '[%s] collect-metrics: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }

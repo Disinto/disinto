@@ -12,8 +12,12 @@ FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # maps land on the persistent volume instead of /tmp (which is ephemeral).
 if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
   DISINTO_DATA_DIR="${HOME}/data"
-  mkdir -p "${DISINTO_DATA_DIR}"
+  DISINTO_LOG_DIR="${DISINTO_DATA_DIR}/logs"
+  mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics}
+else
+  DISINTO_LOG_DIR="${FACTORY_ROOT}"
 fi
+export DISINTO_LOG_DIR
 
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env.
 # Inside the container, compose already injects env vars via env_file + environment

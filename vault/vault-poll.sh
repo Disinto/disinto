@@ -23,12 +23,12 @@ source "${SCRIPT_DIR}/../lib/env.sh"
 # Use vault-bot's own Forgejo identity (#747)
 FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
 
-LOGFILE="${FACTORY_ROOT}/vault/vault.log"
+LOGFILE="${DISINTO_LOG_DIR}/vault/vault.log"
 STATUSFILE="/tmp/vault-status"
 LOCKFILE="/tmp/vault-poll.lock"
 VAULT_SCRIPT_DIR="${FACTORY_ROOT}/vault"
 OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
-LOCKS_DIR="${VAULT_SCRIPT_DIR}/.locks"
+LOCKS_DIR="${DISINTO_LOG_DIR}/vault/.locks"
 
 TIMEOUT_HOURS=48
 
