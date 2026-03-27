@@ -21,14 +21,11 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  # Use POSIX character classes and bracket-escaped parens for BusyBox awk
-  # compatibility (BusyBox awk does not expand \t to tab in character classes
-  # and may handle \( differently in ERE patterns).
-  awk '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*[(][)]/ {
-    sub(/^[[:space:]]+/, "")
-    sub(/[[:space:]]*[(][)].*/, "")
-    print
-  }' "$f" 2>/dev/null | sort -u || true
+  # Use grep+sed instead of awk for BusyBox compatibility — BusyBox awk
+  # unreliably handles [(][)] bracket expressions in some Alpine builds.
+  grep -E '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)' "$f" 2>/dev/null \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*().*$//' \
+    | sort -u || true
 }
 
 # Extract call-position identifiers that look like custom function calls:

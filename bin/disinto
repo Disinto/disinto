@@ -808,6 +808,14 @@ OPSEOF
 
   # Commit and push seed content
   if [ "$seeded" = true ] && [ -d "${ops_root}/.git" ]; then
+    # Auto-configure repo-local git identity if missing (#778)
+    if [ -z "$(git -C "$ops_root" config user.name 2>/dev/null)" ]; then
+      git -C "$ops_root" config user.name "disinto-admin"
+    fi
+    if [ -z "$(git -C "$ops_root" config user.email 2>/dev/null)" ]; then
+      git -C "$ops_root" config user.email "disinto-admin@localhost"
+    fi
+
     git -C "$ops_root" add -A
     if ! git -C "$ops_root" diff --cached --quiet 2>/dev/null; then
       git -C "$ops_root" commit -m "chore: seed ops repo structure" -q
@@ -944,6 +952,17 @@ preflight_check() {
       echo "Error: Forge API auth failed at ${forge_url}" >&2
       echo "  Verify your FORGE_TOKEN and that Forgejo is running" >&2
       errors=$((errors + 1))
+    fi
+  fi
+
+  # ── Git identity check ──
+  if command -v git &>/dev/null; then
+    local git_name git_email
+    git_name=$(git config user.name 2>/dev/null) || git_name=""
+    git_email=$(git config user.email 2>/dev/null) || git_email=""
+    if [ -z "$git_name" ] || [ -z "$git_email" ]; then
+      echo "Warning: git user.name/user.email not configured" >&2
+      echo "  Init will set a repo-local identity for ops commits" >&2
     fi
   fi
 
