@@ -531,6 +531,8 @@ setup_forge() {
       echo "Error: admin user '${admin_user}' not found after creation" >&2
       exit 1
     fi
+    # Preserve password for Woodpecker OAuth2 token generation (#779)
+    _FORGE_ADMIN_PASS="$admin_pass"
   fi
 
   # Get or create admin token
@@ -1248,6 +1250,190 @@ create_woodpecker_oauth() {
   echo "Config:  Woodpecker forge vars written to .env"
 }
 
+# Auto-generate WOODPECKER_TOKEN by driving the Forgejo OAuth2 login flow.
+# Requires _FORGE_ADMIN_PASS (set by setup_forge when admin user was just created).
+# Called after compose stack is up, before activate_woodpecker_repo.
+generate_woodpecker_token() {
+  local forge_url="$1"
+  local wp_server="${WOODPECKER_SERVER:-http://localhost:8000}"
+  local env_file="${FACTORY_ROOT}/.env"
+  local admin_user="disinto-admin"
+  local admin_pass="${_FORGE_ADMIN_PASS:-}"
+
+  # Skip if already set
+  if grep -q '^WOODPECKER_TOKEN=' "$env_file" 2>/dev/null; then
+    echo "Config:  WOODPECKER_TOKEN already set in .env"
+    return 0
+  fi
+
+  echo ""
+  echo "── Woodpecker token generation ────────────────────────"
+
+  if [ -z "$admin_pass" ]; then
+    echo "Warning: Forgejo admin password not available — cannot generate WOODPECKER_TOKEN" >&2
+    echo "  Log into Woodpecker at ${wp_server} and create a token manually" >&2
+    return 1
+  fi
+
+  # Wait for Woodpecker to become ready
+  echo -n "Waiting for Woodpecker"
+  local retries=0
+  while ! curl -sf --max-time 3 "${wp_server}/api/version" >/dev/null 2>&1; do
+    retries=$((retries + 1))
+    if [ "$retries" -gt 30 ]; then
+      echo ""
+      echo "Warning: Woodpecker not ready at ${wp_server} — skipping token generation" >&2
+      return 1
+    fi
+    echo -n "."
+    sleep 2
+  done
+  echo " ready"
+
+  # Flow: Forgejo web login → OAuth2 authorize → Woodpecker callback → token
+  local cookie_jar auth_body_file
+  cookie_jar=$(mktemp /tmp/wp-auth-XXXXXX)
+  auth_body_file=$(mktemp /tmp/wp-body-XXXXXX)
+
+  # Step 1: Log into Forgejo web UI (session cookie needed for OAuth consent)
+  local csrf
+  csrf=$(curl -sf -c "$cookie_jar" "${forge_url}/user/login" 2>/dev/null \
+    | grep -o 'name="_csrf"[^>]*' | head -1 \
+    | grep -oE '(content|value)="[^"]*"' | head -1 \
+    | cut -d'"' -f2) || csrf=""
+
+  if [ -z "$csrf" ]; then
+    echo "Warning: could not get Forgejo CSRF token — skipping token generation" >&2
+    rm -f "$cookie_jar" "$auth_body_file"
+    return 1
+  fi
+
+  curl -sf -b "$cookie_jar" -c "$cookie_jar" -X POST \
+    -o /dev/null \
+    "${forge_url}/user/login" \
+    --data-urlencode "_csrf=${csrf}" \
+    --data-urlencode "user_name=${admin_user}" \
+    --data-urlencode "password=${admin_pass}" \
+    2>/dev/null || true
+
+  # Step 2: Start Woodpecker OAuth2 flow (captures authorize URL with state param)
+  local wp_redir
+  wp_redir=$(curl -sf -o /dev/null -w '%{redirect_url}' \
+    "${wp_server}/authorize" 2>/dev/null) || wp_redir=""
+
+  if [ -z "$wp_redir" ]; then
+    echo "Warning: Woodpecker did not provide OAuth redirect — skipping token generation" >&2
+    rm -f "$cookie_jar" "$auth_body_file"
+    return 1
+  fi
+
+  # Rewrite internal Docker network URL to host-accessible URL
+  # (compose uses http://forgejo:3000 internally)
+  wp_redir=$(printf '%s' "$wp_redir" | sed "s|http://forgejo:3000|${forge_url}|g")
+
+  # Step 3: Hit Forgejo OAuth authorize endpoint with session
+  # First time: shows consent page. Already approved: redirects with code.
+  local auth_headers redirect_loc auth_code
+  auth_headers=$(curl -sf -b "$cookie_jar" -c "$cookie_jar" \
+    -D - -o "$auth_body_file" \
+    "$wp_redir" 2>/dev/null) || auth_headers=""
+
+  redirect_loc=$(printf '%s' "$auth_headers" \
+    | grep -i '^location:' | head -1 | tr -d '\r' | awk '{print $2}')
+
+  if printf '%s' "${redirect_loc:-}" | grep -q 'code='; then
+    # Auto-approved: extract code from redirect
+    auth_code=$(printf '%s' "$redirect_loc" | sed 's/.*code=\([^&]*\).*/\1/')
+  else
+    # Consent page: extract CSRF and POST grant approval
+    local consent_csrf
+    consent_csrf=$(grep -o 'name="_csrf"[^>]*' "$auth_body_file" 2>/dev/null \
+      | head -1 | grep -oE '(content|value)="[^"]*"' | head -1 \
+      | cut -d'"' -f2) || consent_csrf=""
+
+    if [ -n "$consent_csrf" ]; then
+      local grant_headers
+      grant_headers=$(curl -sf -b "$cookie_jar" -c "$cookie_jar" \
+        -D - -o /dev/null -X POST \
+        "${forge_url}/login/oauth/grant" \
+        --data-urlencode "_csrf=${consent_csrf}" \
+        2>/dev/null) || grant_headers=""
+
+      redirect_loc=$(printf '%s' "$grant_headers" \
+        | grep -i '^location:' | head -1 | tr -d '\r' | awk '{print $2}')
+
+      if printf '%s' "${redirect_loc:-}" | grep -q 'code='; then
+        auth_code=$(printf '%s' "$redirect_loc" | sed 's/.*code=\([^&]*\).*/\1/')
+      fi
+    fi
+  fi
+
+  rm -f "$auth_body_file"
+
+  if [ -z "${auth_code:-}" ]; then
+    echo "Warning: could not obtain OAuth2 authorization code — skipping token generation" >&2
+    rm -f "$cookie_jar"
+    return 1
+  fi
+
+  # Step 4: Complete Woodpecker OAuth callback (exchanges code for session)
+  local state
+  state=$(printf '%s' "$wp_redir" | sed -n 's/.*[&?]state=\([^&]*\).*/\1/p')
+
+  local wp_headers wp_token
+  wp_headers=$(curl -sf -c "$cookie_jar" \
+    -D - -o /dev/null \
+    "${wp_server}/authorize?code=${auth_code}&state=${state:-}" \
+    2>/dev/null) || wp_headers=""
+
+  # Extract token from redirect URL (Woodpecker returns ?access_token=...)
+  redirect_loc=$(printf '%s' "$wp_headers" \
+    | grep -i '^location:' | head -1 | tr -d '\r' | awk '{print $2}')
+
+  wp_token=""
+  if printf '%s' "${redirect_loc:-}" | grep -q 'access_token='; then
+    wp_token=$(printf '%s' "$redirect_loc" | sed 's/.*access_token=\([^&]*\).*/\1/')
+  fi
+
+  # Fallback: check for user_sess cookie
+  if [ -z "$wp_token" ]; then
+    wp_token=$(awk '/user_sess/{print $NF}' "$cookie_jar" 2>/dev/null) || wp_token=""
+  fi
+
+  rm -f "$cookie_jar"
+
+  if [ -z "$wp_token" ]; then
+    echo "Warning: could not obtain Woodpecker token — skipping token generation" >&2
+    return 1
+  fi
+
+  # Step 5: Create persistent personal access token via Woodpecker API
+  local pat_resp final_token
+  pat_resp=$(curl -sf -X POST \
+    -H "Authorization: Bearer ${wp_token}" \
+    "${wp_server}/api/user/token" \
+    2>/dev/null) || pat_resp=""
+
+  final_token=""
+  if [ -n "$pat_resp" ]; then
+    final_token=$(printf '%s' "$pat_resp" \
+      | jq -r 'if .token then .token elif .access_token then .access_token else empty end' \
+      2>/dev/null) || final_token=""
+  fi
+
+  # Use persistent token if available, otherwise use session token
+  final_token="${final_token:-$wp_token}"
+
+  # Save to .env
+  if grep -q '^WOODPECKER_TOKEN=' "$env_file" 2>/dev/null; then
+    sed -i "s|^WOODPECKER_TOKEN=.*|WOODPECKER_TOKEN=${final_token}|" "$env_file"
+  else
+    printf 'WOODPECKER_TOKEN=%s\n' "$final_token" >> "$env_file"
+  fi
+  export WOODPECKER_TOKEN="$final_token"
+  echo "Config:  WOODPECKER_TOKEN generated and saved to .env"
+}
+
 activate_woodpecker_repo() {
   local forge_repo="$1"
   local wp_server="${WOODPECKER_SERVER:-http://localhost:8000}"
@@ -1521,6 +1707,9 @@ p.write_text(text)
     echo "── Starting full stack ────────────────────────────────"
     docker compose -f "${FACTORY_ROOT}/docker-compose.yml" up -d
     echo "Stack:   running (forgejo + woodpecker + agents)"
+
+    # Generate WOODPECKER_TOKEN via Forgejo OAuth2 flow (#779)
+    generate_woodpecker_token "$forge_url" || true
 
     # Activate repo in Woodpecker now that stack is running
     activate_woodpecker_repo "$forge_repo"

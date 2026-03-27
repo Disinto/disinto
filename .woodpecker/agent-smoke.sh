@@ -21,9 +21,9 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  # Use grep+sed instead of awk for BusyBox compatibility — BusyBox awk
-  # unreliably handles [(][)] bracket expressions in some Alpine builds.
-  grep -E '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]+[[:space:]]*\(\)' "$f" 2>/dev/null \
+  # BRE mode (no -E): () is literal in BRE, avoiding BusyBox ERE bugs
+  # where \(\) is misinterpreted. BRE one-or-more via [X][X]* instead of +.
+  grep '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_][a-zA-Z0-9_]*[[:space:]]*()' "$f" 2>/dev/null \
     | sed 's/^[[:space:]]*//; s/[[:space:]]*().*$//' \
     | sort -u || true
 }
