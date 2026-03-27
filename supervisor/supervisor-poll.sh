@@ -16,13 +16,13 @@ set -euo pipefail
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 
-LOGFILE="${FACTORY_ROOT}/supervisor/supervisor.log"
+LOGFILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 STATUSFILE="/tmp/supervisor-status"
 LOCKFILE="/tmp/supervisor-poll.lock"
 PROMPT_FILE="${FACTORY_ROOT}/supervisor/PROMPT.md"
 PROJECTS_DIR="${FACTORY_ROOT}/projects"
 
-METRICS_FILE="${FACTORY_ROOT}/metrics/supervisor-metrics.jsonl"
+METRICS_FILE="${DISINTO_LOG_DIR}/metrics/supervisor-metrics.jsonl"
 
 emit_metric() {
   printf '%s\n' "$1" >> "$METRICS_FILE"
@@ -153,7 +153,7 @@ if [ "${DISK_PERCENT:-0}" -gt 80 ]; then
   sudo docker system prune -f >/dev/null 2>&1 && fixed "Docker prune"
 
   # Truncate logs >10MB
-  for logfile in "${FACTORY_ROOT}"/{dev,review,supervisor}/*.log; do
+  for logfile in "${DISINTO_LOG_DIR}"/{dev,review,supervisor}/*.log; do
     if [ -f "$logfile" ]; then
       SIZE_KB=$(du -k "$logfile" 2>/dev/null | cut -f1)
       if [ "${SIZE_KB:-0}" -gt 10240 ]; then
@@ -210,7 +210,7 @@ if [ -n "$STALE_CLAUDES" ]; then
 fi
 
 # Rotate logs >5MB
-for logfile in "${FACTORY_ROOT}"/{dev,review,supervisor}/*.log; do
+for logfile in "${DISINTO_LOG_DIR}"/{dev,review,supervisor}/*.log; do
   if [ -f "$logfile" ]; then
     SIZE_KB=$(du -k "$logfile" 2>/dev/null | cut -f1)
     if [ "${SIZE_KB:-0}" -gt 5120 ]; then
@@ -358,7 +358,7 @@ check_project() {
     IN_PROGRESS=$(forge_api GET "/issues?state=open&labels=in-progress&type=issues&limit=1" 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
 
     if [ "${BACKLOG_COUNT:-0}" -gt 0 ] && [ "${IN_PROGRESS:-0}" -eq 0 ]; then
-      DEV_LOG="${FACTORY_ROOT}/dev/dev-agent.log"
+      DEV_LOG="${DISINTO_LOG_DIR}/dev/dev-agent.log"
       if [ -f "$DEV_LOG" ]; then
         LAST_LOG_EPOCH=$(stat -c %Y "$DEV_LOG" 2>/dev/null || echo 0)
       else
@@ -379,7 +379,7 @@ check_project() {
   if [ "${CHECK_DEV_AGENT:-true}" = "true" ]; then
     status "P2: ${proj_name}: checking dev-agent productivity"
 
-    DEV_LOG_FILE="${FACTORY_ROOT}/dev/dev-agent.log"
+    DEV_LOG_FILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
     if [ -f "$DEV_LOG_FILE" ]; then
       RECENT_POLLS=$(tail -100 "$DEV_LOG_FILE" | grep "poll:" | tail -6)
       TOTAL_RECENT=$(echo "$RECENT_POLLS" | grep -c "." || true)
@@ -428,7 +428,7 @@ check_project() {
             AGE_MIN=$(( (NOW_EPOCH - UPDATED_EPOCH) / 60 ))
             if [ "$AGE_MIN" -gt 60 ]; then
               p3 "${proj_name}: PR #${pr}: CI passed, no review for ${AGE_MIN}min"
-              bash "${FACTORY_ROOT}/review/review-pr.sh" "$pr" >> "${FACTORY_ROOT}/review/review.log" 2>&1 &
+              bash "${FACTORY_ROOT}/review/review-pr.sh" "$pr" >> "${DISINTO_LOG_DIR}/review/review.log" 2>&1 &
               fixed "${proj_name}: Auto-triggered review for PR #${pr}"
             fi
           fi

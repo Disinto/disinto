@@ -36,7 +36,7 @@ source "$(dirname "$0")/../lib/formula-session.sh"
 source "$(dirname "$0")/../dev/phase-handler.sh"
 SESSION_NAME="action-${PROJECT_NAME}-${ISSUE}"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
-LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
+LOGFILE="${DISINTO_LOG_DIR}/action/action-poll-${PROJECT_NAME:-default}.log"
 IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
 MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}" # 8h default wall-clock cap
 SESSION_START_EPOCH=$(date +%s)

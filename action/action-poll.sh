@@ -19,7 +19,7 @@ FORGE_TOKEN="${FORGE_ACTION_TOKEN:-${FORGE_TOKEN}}"
 source "$(dirname "$0")/../lib/guard.sh"
 check_active action
 
-LOGFILE="${FACTORY_ROOT}/action/action-poll-${PROJECT_NAME:-default}.log"
+LOGFILE="${DISINTO_LOG_DIR}/action/action-poll-${PROJECT_NAME:-default}.log"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 log() {

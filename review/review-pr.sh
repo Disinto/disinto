@@ -11,7 +11,7 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
 API="${FORGE_API}"
-LOGFILE="${FACTORY_ROOT}/review/review.log"
+LOGFILE="${DISINTO_LOG_DIR}/review/review.log"
 SESSION="review-${PROJECT_NAME}-${PR_NUMBER}"
 PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.phase"
 OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"

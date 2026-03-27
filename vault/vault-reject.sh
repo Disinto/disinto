@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/vault-env.sh"
 
 OPS_VAULT_DIR="${OPS_REPO_ROOT}/vault"
-LOGFILE="${FACTORY_ROOT}/vault/vault.log"
-LOCKS_DIR="${FACTORY_ROOT}/vault/.locks"
+LOGFILE="${DISINTO_LOG_DIR}/vault/vault.log"
+LOCKS_DIR="${DISINTO_LOG_DIR}/vault/.locks"
 
 log() {
   printf '[%s] vault-reject: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"

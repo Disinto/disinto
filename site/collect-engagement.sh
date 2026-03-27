@@ -21,7 +21,7 @@ FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
 
-LOGFILE="${FACTORY_ROOT}/site/collect-engagement.log"
+LOGFILE="${DISINTO_LOG_DIR}/site/collect-engagement.log"
 log() {
   printf '[%s] collect-engagement: %s\n' \
     "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
