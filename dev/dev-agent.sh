@@ -1,57 +1,51 @@
 #!/usr/bin/env bash
-# dev-agent.sh — Autonomous developer agent for a single issue (tmux session manager)
+# dev-agent.sh — Synchronous developer agent for a single issue
 #
 # Usage: ./dev-agent.sh <issue-number>
 #
-# Lifecycle:
-#   1. Fetch issue, check dependencies (preflight)
-#   2. Claim issue (label: in-progress, remove backlog)
-#   3. Create worktree + branch
-#   4. Create tmux session: dev-{project}-{issue} with interactive claude
-#   5. Send initial prompt via tmux (issue body, context, phase protocol)
-#   6. Monitor phase file — Claude signals when it needs input
-#   7. React to phases: create PR, poll CI, inject results, inject review, merge
-#   8. Kill session on PHASE:done, PHASE:failed, or 2h idle timeout
+# Architecture:
+#   Synchronous bash loop using claude -p (one-shot invocations).
+#   Session continuity via --resume and .sid file.
+#   CI/review loop delegated to pr_walk_to_merge().
 #
-# Phase file:  /tmp/dev-session-{project}-{issue}.phase
-# Session:     dev-{project}-{issue} (tmux)
-# Peek phase:  head -1 /tmp/dev-session-{project}-{issue}.phase
-# Log:         tail -f dev-agent.log
+# Flow:
+#   1. Preflight: issue_check_deps, issue_claim, memory guard, lock
+#   2. Worktree: worktree_recover or worktree_create
+#   3. Prompt: build context (issue body, open issues, push instructions)
+#   4. Implement: agent_run → Claude implements + pushes → save session_id
+#   5. Create PR: pr_create or pr_find_by_branch
+#   6. Walk to merge: pr_walk_to_merge (CI fix, review feedback loops)
+#   7. Cleanup: worktree_cleanup, issue_close, label cleanup
+#
+# Session file: /tmp/dev-session-{project}-{issue}.sid
+# Log:          tail -f dev-agent.log
 
 set -euo pipefail
 
-# Load shared environment
+# Load shared environment and libraries
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
-source "$(dirname "$0")/../lib/agent-session.sh"
-source "$(dirname "$0")/../lib/formula-session.sh"
+source "$(dirname "$0")/../lib/issue-lifecycle.sh"
 source "$(dirname "$0")/../lib/worktree.sh"
-# shellcheck source=./phase-handler.sh
-source "$(dirname "$0")/phase-handler.sh"
+source "$(dirname "$0")/../lib/pr-lifecycle.sh"
+source "$(dirname "$0")/../lib/mirrors.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 # --- Config ---
 ISSUE="${1:?Usage: dev-agent.sh <issue-number>}"
-# shellcheck disable=SC2034
-REPO="${FORGE_REPO}"
-# shellcheck disable=SC2034
 REPO_ROOT="${PROJECT_REPO_ROOT}"
 
-API="${FORGE_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
 STATUSFILE="/tmp/dev-agent-status-${PROJECT_NAME:-default}"
+BRANCH="fix/issue-${ISSUE}"
+WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
+SID_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.sid"
+PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
+IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 
-# Gitea labels API requires []int64 — look up the "backlog" label ID once
-BACKLOG_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
-  | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
-BACKLOG_LABEL_ID="${BACKLOG_LABEL_ID:-1300815}"
-
-# Same for "in-progress" label
-IN_PROGRESS_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
-  | jq -r '.[] | select(.name == "in-progress") | .id' 2>/dev/null || true)
-IN_PROGRESS_LABEL_ID="${IN_PROGRESS_LABEL_ID:-1300818}"
+LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
 
 log() {
   printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
@@ -61,83 +55,59 @@ status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"
 }
-LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
-PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
-BRANCH="fix/issue-${ISSUE}"
-WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
 
-# Tmux session + phase protocol
-PHASE_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.phase"
-SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE}"
-IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
+# =============================================================================
+# agent_run — synchronous Claude invocation (one-shot claude -p)
+# =============================================================================
+# Usage: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
+# Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
+_AGENT_SESSION_ID=""
 
-# Scratch file for context compaction survival
-SCRATCH_FILE="/tmp/dev-${PROJECT_NAME}-${ISSUE}-scratch.md"
+agent_run() {
+  local resume_id="" worktree_dir=""
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --resume) shift; resume_id="${1:-}"; shift ;;
+      --worktree) shift; worktree_dir="${1:-}"; shift ;;
+      *) shift ;;
+    esac
+  done
+  local prompt="${1:-}"
 
-# Timing
-export PHASE_POLL_INTERVAL=30    # seconds between phase checks (read by agent-session.sh)
-IDLE_TIMEOUT=7200         # 2h: kill session if phase stale this long
-# shellcheck disable=SC2034  # used by phase-handler.sh
-CI_POLL_TIMEOUT=1800      # 30min max for CI to complete
-# shellcheck disable=SC2034  # used by phase-handler.sh
-REVIEW_POLL_TIMEOUT=10800 # 3h max wait for review
+  local -a args=(-p "$prompt" --output-format json --dangerously-skip-permissions --max-turns 200)
+  [ -n "$resume_id" ] && args+=(--resume "$resume_id")
+  [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
 
-# Limits
-# shellcheck disable=SC2034  # used by phase-handler.sh
-MAX_CI_FIXES=3
-# shellcheck disable=SC2034  # used by phase-handler.sh
-MAX_REVIEW_ROUNDS=5
+  local run_dir="${worktree_dir:-$(pwd)}"
+  local output
+  log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
+  output=$(cd "$run_dir" && timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") || true
 
-# Counters — global state shared with phase-handler.sh across phase transitions
-# shellcheck disable=SC2034
-CI_RETRY_COUNT=0
-# shellcheck disable=SC2034
-CI_FIX_COUNT=0
-# shellcheck disable=SC2034
-REVIEW_ROUND=0
+  # Extract and persist session_id
+  local new_sid
+  new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
+  if [ -n "$new_sid" ]; then
+    _AGENT_SESSION_ID="$new_sid"
+    printf '%s' "$new_sid" > "$SID_FILE"
+    log "agent_run: session_id=${new_sid:0:12}..."
+  fi
+}
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+CLAIMED=false
 PR_NUMBER=""
 
-# --- Cleanup helpers ---
-cleanup_worktree() {
-  worktree_cleanup "$WORKTREE"
-}
-
-cleanup_labels() {
-  curl -sf -X DELETE \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
-}
-
-restore_to_backlog() {
-  cleanup_labels
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${API}/issues/${ISSUE}/labels" \
-    -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
-  CLAIMED=false  # Don't unclaim again in cleanup()
-}
-
-CLAIMED=false
 cleanup() {
   rm -f "$LOCKFILE" "$STATUSFILE"
-  # Kill any live session so Claude doesn't run without an orchestrator attached
-  agent_kill_session "$SESSION_NAME"
-  # If we claimed the issue but never created a PR, unclaim it
-  if [ "$CLAIMED" = true ] && [ -z "${PR_NUMBER:-}" ]; then
-    log "cleanup: unclaiming issue (no PR created)"
-    curl -sf -X DELETE \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${ISSUE}/labels/${IN_PROGRESS_LABEL_ID}" >/dev/null 2>&1 || true
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${ISSUE}/labels" \
-      -d "{\"labels\":[${BACKLOG_LABEL_ID}]}" >/dev/null 2>&1 || true
+  # If we claimed the issue but never created a PR, release it
+  if [ "$CLAIMED" = true ] && [ -z "$PR_NUMBER" ]; then
+    log "cleanup: releasing issue (no PR created)"
+    issue_release "$ISSUE"
   fi
 }
 trap cleanup EXIT
-
 
 # =============================================================================
 # LOG ROTATION
@@ -150,11 +120,7 @@ fi
 # =============================================================================
 # MEMORY GUARD
 # =============================================================================
-AVAIL_MB=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo)
-if [ "$AVAIL_MB" -lt 2000 ]; then
-  log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
-  exit 0
-fi
+memory_guard 2000
 
 # =============================================================================
 # CONCURRENCY LOCK
@@ -174,39 +140,15 @@ echo $$ > "$LOCKFILE"
 # FETCH ISSUE
 # =============================================================================
 status "fetching issue"
-ISSUE_JSON=$(curl -s -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE}") || true
-if [ -z "$ISSUE_JSON" ] || ! echo "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; then
-  log "ERROR: failed to fetch issue #${ISSUE} (API down or invalid response)"
+ISSUE_JSON=$(forge_api GET "/issues/${ISSUE}") || true
+if [ -z "$ISSUE_JSON" ] || ! printf '%s' "$ISSUE_JSON" | jq -e '.id' >/dev/null 2>&1; then
+  log "ERROR: failed to fetch issue #${ISSUE}"
   exit 1
 fi
-ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
-ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+ISSUE_TITLE=$(printf '%s' "$ISSUE_JSON" | jq -r '.title')
+ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body // ""')
 ISSUE_BODY_ORIGINAL="$ISSUE_BODY"
-
-# --- Resolve bot username(s) for comment filtering ---
-_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
-
-# Build list: token owner + any extra names from FORGE_BOT_USERNAMES (comma-separated)
-_bot_logins="${_bot_login}"
-if [ -n "${FORGE_BOT_USERNAMES:-}" ]; then
-  _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
-fi
-
-# Append human comments to issue body (filter out bot accounts)
-ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API}/issues/${ISSUE}/comments" | \
-  jq -r --arg bots "$_bot_logins" \
-    '($bots | split(",") | map(select(. != ""))) as $bl |
-     .[] | select(.user.login as $u | $bl | index($u) | not) |
-     "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
-if [ -n "$ISSUE_COMMENTS" ]; then
-  ISSUE_BODY="${ISSUE_BODY}
-
-## Issue comments
-${ISSUE_COMMENTS}"
-fi
-ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
+ISSUE_STATE=$(printf '%s' "$ISSUE_JSON" | jq -r '.state')
 
 if [ "$ISSUE_STATE" != "open" ]; then
   log "SKIP: issue #${ISSUE} is ${ISSUE_STATE}"
@@ -217,215 +159,130 @@ fi
 log "Issue: ${ISSUE_TITLE}"
 
 # =============================================================================
-# GUARD: Reject formula-labeled issues (feat/formula not yet merged)
+# GUARD: Reject formula-labeled issues
 # =============================================================================
-ISSUE_LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(",")') || true
-if echo "$ISSUE_LABELS" | grep -qw 'formula'; then
-  log "SKIP: issue #${ISSUE} has 'formula' label but formula dispatch is not yet implemented (feat/formula branch not merged)"
-  echo '{"status":"unmet_dependency","blocked_by":"formula dispatch not implemented — feat/formula branch not merged to main","suggestion":null}' > "$PREFLIGHT_RESULT"
+ISSUE_LABELS=$(printf '%s' "$ISSUE_JSON" | jq -r '[.labels[].name] | join(",")') || true
+if printf '%s' "$ISSUE_LABELS" | grep -qw 'formula'; then
+  log "SKIP: issue #${ISSUE} has 'formula' label"
+  echo '{"status":"unmet_dependency","blocked_by":"formula dispatch not implemented","suggestion":null}' > "$PREFLIGHT_RESULT"
   exit 0
 fi
 
+# --- Append human comments to issue body ---
+_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
+_bot_logins="${_bot_login}"
+[ -n "${FORGE_BOT_USERNAMES:-}" ] && \
+  _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
+
+ISSUE_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues/${ISSUE}/comments" | \
+  jq -r --arg bots "$_bot_logins" \
+    '($bots | split(",") | map(select(. != ""))) as $bl |
+     .[] | select(.user.login as $u | $bl | index($u) | not) |
+     "### @\(.user.login) (\(.created_at[:10])):\n\(.body)\n"' 2>/dev/null || true)
+if [ -n "$ISSUE_COMMENTS" ]; then
+  ISSUE_BODY="${ISSUE_BODY}
+
+## Issue comments
+${ISSUE_COMMENTS}"
+fi
+
 # =============================================================================
-# PREFLIGHT: Check dependencies before doing any work
+# PREFLIGHT: Check dependencies
 # =============================================================================
 status "preflight check"
 
-# Extract dependency references using shared parser (use original body only — not comments)
-DEP_NUMBERS=$(echo "$ISSUE_BODY_ORIGINAL" | bash "${FACTORY_ROOT}/lib/parse-deps.sh")
+if ! issue_check_deps "$ISSUE"; then
+  BLOCKED_LIST=$(printf '#%s, ' "${_ISSUE_BLOCKED_BY[@]}" | sed 's/, $//')
+  COMMENT_BODY="### Blocked by open issues
 
-BLOCKED_BY=()
-if [ -n "$DEP_NUMBERS" ]; then
-  while IFS= read -r dep_num; do
-    [ -z "$dep_num" ] && continue
-    # Check if dependency issue is closed (= satisfied)
-    DEP_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${dep_num}" | jq -r '.state // "unknown"')
+This issue depends on ${BLOCKED_LIST}, which $([ "${#_ISSUE_BLOCKED_BY[@]}" -eq 1 ] && echo "is" || echo "are") not yet closed."
+  [ -n "$_ISSUE_SUGGESTION" ] && COMMENT_BODY="${COMMENT_BODY}
 
-    if [ "$DEP_STATE" != "closed" ]; then
-      BLOCKED_BY+=("$dep_num")
-      log "dependency #${dep_num} is ${DEP_STATE} (not satisfied)"
-    else
-      log "dependency #${dep_num} is closed (satisfied)"
-    fi
-  done <<< "$DEP_NUMBERS"
-fi
+**Suggestion:** Work on #${_ISSUE_SUGGESTION} first."
 
-if [ "${#BLOCKED_BY[@]}" -gt 0 ]; then
-  # Find a suggestion: look for the first blocker that itself has no unmet deps
-  SUGGESTION=""
-  for blocker in "${BLOCKED_BY[@]}"; do
-    BLOCKER_BODY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${blocker}" | jq -r '.body // ""')
-    BLOCKER_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${blocker}" | jq -r '.state')
-
-    if [ "$BLOCKER_STATE" != "open" ]; then
-      continue
-    fi
-
-    # Check if this blocker has its own unmet deps
-    BLOCKER_DEPS=$(echo "$BLOCKER_BODY" | \
-      grep -ioP '(?:depends on|blocked by|requires|after)\s+#\K[0-9]+' | sort -un || true)
-    BLOCKER_SECTION=$(echo "$BLOCKER_BODY" | sed -n '/^## Dependencies/,/^## /p' | sed '1d;$d')
-    if [ -n "$BLOCKER_SECTION" ]; then
-      BLOCKER_SECTION_DEPS=$(echo "$BLOCKER_SECTION" | grep -oP '#\K[0-9]+' | sort -un || true)
-      BLOCKER_DEPS=$(printf '%s\n%s' "$BLOCKER_DEPS" "$BLOCKER_SECTION_DEPS" | sort -un | grep -v '^$' || true)
-    fi
-
-    BLOCKER_BLOCKED=false
-    if [ -n "$BLOCKER_DEPS" ]; then
-      while IFS= read -r bd; do
-        [ -z "$bd" ] && continue
-        BD_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-          "${API}/issues/${bd}" | jq -r '.state // "unknown"')
-        if [ "$BD_STATE" != "closed" ]; then
-          BLOCKER_BLOCKED=true
-          break
-        fi
-      done <<< "$BLOCKER_DEPS"
-    fi
-
-    if [ "$BLOCKER_BLOCKED" = false ]; then
-      SUGGESTION="$blocker"
-      break
-    fi
-  done
+  issue_post_refusal "$ISSUE" "🚧" "Unmet dependency" "$COMMENT_BODY"
 
   # Write preflight result
-  BLOCKED_JSON=$(printf '%s\n' "${BLOCKED_BY[@]}" | jq -R 'tonumber' | jq -sc '.')
-  if [ -n "$SUGGESTION" ]; then
-    jq -n --argjson blocked "$BLOCKED_JSON" --argjson suggestion "$SUGGESTION" \
+  BLOCKED_JSON=$(printf '%s\n' "${_ISSUE_BLOCKED_BY[@]}" | jq -R 'tonumber' | jq -sc '.')
+  if [ -n "$_ISSUE_SUGGESTION" ]; then
+    jq -n --argjson blocked "$BLOCKED_JSON" --argjson suggestion "$_ISSUE_SUGGESTION" \
       '{"status":"unmet_dependency","blocked_by":$blocked,"suggestion":$suggestion}' > "$PREFLIGHT_RESULT"
   else
     jq -n --argjson blocked "$BLOCKED_JSON" \
       '{"status":"unmet_dependency","blocked_by":$blocked,"suggestion":null}' > "$PREFLIGHT_RESULT"
   fi
-
-  # Post comment ONLY if last comment isn't already an unmet dependency notice
-  BLOCKED_LIST=$(printf '#%s, ' "${BLOCKED_BY[@]}" | sed 's/, $//')
-  LAST_COMMENT_IS_BLOCK=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/issues/${ISSUE}/comments?limit=1" | \
-    jq -r '.[0].body // ""' | grep -c 'Dev-agent: Unmet dependency' || true)
-
-  if [ "$LAST_COMMENT_IS_BLOCK" -eq 0 ]; then
-    BLOCK_COMMENT="🚧 **Dev-agent: Unmet dependency**
-
-### Blocked by open issues
-
-This issue depends on ${BLOCKED_LIST}, which $(if [ "${#BLOCKED_BY[@]}" -eq 1 ]; then echo "is"; else echo "are"; fi) not yet closed."
-    if [ -n "$SUGGESTION" ]; then
-      BLOCK_COMMENT="${BLOCK_COMMENT}
-
-**Suggestion:** Work on #${SUGGESTION} first."
-    fi
-    BLOCK_COMMENT="${BLOCK_COMMENT}
-
----
-*Automated assessment by dev-agent · $(date -u '+%Y-%m-%d %H:%M UTC')*"
-
-    printf '%s' "$BLOCK_COMMENT" > /tmp/block-comment.txt
-    jq -Rs '{body: .}' < /tmp/block-comment.txt > /tmp/block-comment.json
-    curl -sf -o /dev/null -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${API}/issues/${ISSUE}/comments" \
-      --data-binary @/tmp/block-comment.json 2>/dev/null || true
-    rm -f /tmp/block-comment.txt /tmp/block-comment.json
-  else
-    log "skipping duplicate dependency comment"
-  fi
-
-  log "BLOCKED: unmet dependencies: ${BLOCKED_BY[*]}$(if [ -n "$SUGGESTION" ]; then echo ", suggest #${SUGGESTION}"; fi)"
+  log "BLOCKED: unmet dependencies: ${_ISSUE_BLOCKED_BY[*]}"
   exit 0
 fi
 
-# Preflight passed (no explicit unmet deps)
-log "preflight passed — no explicit unmet dependencies"
+log "preflight passed"
 
 # =============================================================================
 # CLAIM ISSUE
 # =============================================================================
-curl -sf -X POST \
-  -H "Authorization: token ${FORGE_TOKEN}" \
-  -H "Content-Type: application/json" \
-  "${API}/issues/${ISSUE}/labels" \
-  -d "{\"labels\":[${IN_PROGRESS_LABEL_ID}]}" >/dev/null 2>&1 || true
-
-curl -sf -X DELETE \
-  -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API}/issues/${ISSUE}/labels/${BACKLOG_LABEL_ID}" >/dev/null 2>&1 || true
-
+issue_claim "$ISSUE"
 CLAIMED=true
 
 # =============================================================================
 # CHECK FOR EXISTING PR (recovery mode)
 # =============================================================================
-EXISTING_PR=""
-EXISTING_BRANCH=""
 RECOVERY_MODE=false
 
-BODY_PR=$(echo "$ISSUE_BODY_ORIGINAL" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
+# Check issue body for explicit PR reference
+BODY_PR=$(printf '%s' "$ISSUE_BODY_ORIGINAL" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
 if [ -n "$BODY_PR" ]; then
-  PR_CHECK=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls/${BODY_PR}" | jq -r '{state, head_ref: .head.ref}')
-  PR_CHECK_STATE=$(echo "$PR_CHECK" | jq -r '.state')
+  PR_CHECK=$(forge_api GET "/pulls/${BODY_PR}") || true
+  PR_CHECK_STATE=$(printf '%s' "$PR_CHECK" | jq -r '.state')
   if [ "$PR_CHECK_STATE" = "open" ]; then
-    EXISTING_PR="$BODY_PR"
-    EXISTING_BRANCH=$(echo "$PR_CHECK" | jq -r '.head_ref')
-    log "found existing PR #${EXISTING_PR} on branch ${EXISTING_BRANCH} (from issue body)"
+    PR_NUMBER="$BODY_PR"
+    BRANCH=$(printf '%s' "$PR_CHECK" | jq -r '.head.ref')
+    log "found existing PR #${PR_NUMBER} on branch ${BRANCH} (from issue body)"
   fi
 fi
 
-if [ -z "$EXISTING_PR" ]; then
-  # Priority 1: match by branch name (most reliable)
-  FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=open&limit=20" | \
-    jq -r --arg branch "$BRANCH" \
-    '.[] | select(.head.ref == $branch) | "\(.number) \(.head.ref)"' | head -1) || true
-  if [ -n "$FOUND_PR" ]; then
-    EXISTING_PR=$(echo "$FOUND_PR" | awk '{print $1}')
-    EXISTING_BRANCH=$(echo "$FOUND_PR" | awk '{print $2}')
-    log "found existing PR #${EXISTING_PR} on branch ${EXISTING_BRANCH} (from branch match)"
-  fi
+# Priority 1: match by branch name
+if [ -z "$PR_NUMBER" ]; then
+  PR_NUMBER=$(pr_find_by_branch "$BRANCH") || true
+  [ -n "$PR_NUMBER" ] && log "found existing PR #${PR_NUMBER} (from branch match)"
 fi
 
-if [ -z "$EXISTING_PR" ]; then
-  # Priority 2: match "Fixes #NNN" in PR body
-  FOUND_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=open&limit=20" | \
+# Priority 2: match "Fixes #NNN" in PR body
+if [ -z "$PR_NUMBER" ]; then
+  FOUND_PR=$(forge_api GET "/pulls?state=open&limit=20" | \
     jq -r --arg issue "ixes #${ISSUE}\\b" \
     '.[] | select(.body | test($issue; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
   if [ -n "$FOUND_PR" ]; then
-    EXISTING_PR=$(echo "$FOUND_PR" | awk '{print $1}')
-    EXISTING_BRANCH=$(echo "$FOUND_PR" | awk '{print $2}')
-    log "found existing PR #${EXISTING_PR} on branch ${EXISTING_BRANCH} (from body match)"
+    PR_NUMBER=$(printf '%s' "$FOUND_PR" | awk '{print $1}')
+    BRANCH=$(printf '%s' "$FOUND_PR" | awk '{print $2}')
+    log "found existing PR #${PR_NUMBER} on branch ${BRANCH} (from body match)"
   fi
 fi
 
-# Priority 3: check CLOSED PRs for prior art (don't redo work from scratch)
+# Priority 3: check closed PRs for prior art
 PRIOR_ART_DIFF=""
-if [ -z "$EXISTING_PR" ]; then
-  CLOSED_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=closed&limit=30" | \
+if [ -z "$PR_NUMBER" ]; then
+  CLOSED_PR=$(forge_api GET "/pulls?state=closed&limit=30" | \
     jq -r --arg issue "#${ISSUE}" \
     '.[] | select(.merged != true) | select((.title | contains($issue)) or (.body // "" | test("ixes " + $issue + "\\b"; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
   if [ -n "$CLOSED_PR" ]; then
-    CLOSED_PR_NUM=$(echo "$CLOSED_PR" | awk '{print $1}')
+    CLOSED_PR_NUM=$(printf '%s' "$CLOSED_PR" | awk '{print $1}')
     log "found closed (unmerged) PR #${CLOSED_PR_NUM} as prior art"
-    PRIOR_ART_DIFF=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls/${CLOSED_PR_NUM}.diff" | head -500) || true
-    if [ -n "$PRIOR_ART_DIFF" ]; then
-      log "captured prior art diff from PR #${CLOSED_PR_NUM} ($(echo "$PRIOR_ART_DIFF" | wc -l) lines)"
-    fi
+    PRIOR_ART_DIFF=$(forge_api GET "/pulls/${CLOSED_PR_NUM}.diff" 2>/dev/null \
+      | head -500) || true
   fi
 fi
 
-if [ -n "$EXISTING_PR" ]; then
+if [ -n "$PR_NUMBER" ]; then
   RECOVERY_MODE=true
-  PR_NUMBER="$EXISTING_PR"
-  BRANCH="$EXISTING_BRANCH"
   log "RECOVERY MODE: adopting PR #${PR_NUMBER} on branch ${BRANCH}"
+fi
+
+# Recover session_id from .sid file (crash recovery)
+if [ -f "$SID_FILE" ]; then
+  _AGENT_SESSION_ID=$(cat "$SID_FILE")
+  log "recovered session_id: ${_AGENT_SESSION_ID:0:12}..."
 fi
 
 # =============================================================================
@@ -434,36 +291,28 @@ fi
 status "setting up worktree"
 cd "$REPO_ROOT"
 
-# Determine which git remote corresponds to FORGE_URL.
-# When the forge is local Forgejo (not Codeberg), the remote is typically named
-# "forgejo" rather than "origin".  Matching by host ensures pushes target the
-# correct forge regardless of remote naming conventions.
-_forge_host=$(echo "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+# Determine forge remote by matching FORGE_URL host against git remotes
+_forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
 FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\)/ {print $1; exit}')
 FORGE_REMOTE="${FORGE_REMOTE:-origin}"
-export FORGE_REMOTE  # used by phase-handler.sh
-log "forge remote: ${FORGE_REMOTE} (FORGE_URL=${FORGE_URL})"
+export FORGE_REMOTE
+log "forge remote: ${FORGE_REMOTE}"
 
 if [ "$RECOVERY_MODE" = true ]; then
   if ! worktree_recover "$WORKTREE" "$BRANCH" "$FORGE_REMOTE"; then
     log "ERROR: worktree recovery failed"
-    cleanup_labels
+    issue_release "$ISSUE"
+    CLAIMED=false
     exit 1
   fi
-  if [ "$_WORKTREE_REUSED" = true ]; then
-    log "reusing existing worktree (preserves session)"
-  fi
 else
-  # Normal mode: create fresh worktree from primary branch
-
-  # Ensure repo is in clean state (abort stale rebases, checkout primary branch)
+  # Ensure repo is in clean state
   if [ -d "$REPO_ROOT/.git/rebase-merge" ] || [ -d "$REPO_ROOT/.git/rebase-apply" ]; then
-    log "WARNING: stale rebase detected in main repo — aborting"
+    log "WARNING: stale rebase detected — aborting"
     git rebase --abort 2>/dev/null || true
   fi
   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
   if [ "$CURRENT_BRANCH" != "${PRIMARY_BRANCH}" ]; then
-    log "WARNING: main repo on '$CURRENT_BRANCH' instead of ${PRIMARY_BRANCH} — switching"
     git checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
   fi
 
@@ -471,11 +320,12 @@ else
   git pull --ff-only "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
   if ! worktree_create "$WORKTREE" "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}"; then
     log "ERROR: worktree creation failed"
-    cleanup_labels
+    issue_release "$ISSUE"
+    CLAIMED=false
     exit 1
   fi
 
-  # Symlink lib node_modules from main repo (submodule init doesn't run npm install)
+  # Symlink shared node_modules from main repo
   for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
     lib_name=$(basename "$lib_dir")
     if [ -d "$lib_dir/node_modules" ] && [ ! -d "$WORKTREE/onchain/lib/$lib_name/node_modules" ]; then
@@ -485,101 +335,16 @@ else
 fi
 
 # =============================================================================
-# READ SCRATCH FILE (compaction survival)
-# =============================================================================
-SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
-SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
-
-# =============================================================================
 # BUILD PROMPT
 # =============================================================================
-OPEN_ISSUES_SUMMARY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API}/issues?state=open&labels=backlog&limit=20&type=issues" | \
+OPEN_ISSUES_SUMMARY=$(forge_api GET "/issues?state=open&labels=backlog&limit=20&type=issues" | \
   jq -r '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "(could not fetch)")
 
-PHASE_PROTOCOL_INSTRUCTIONS="## Phase-Signaling Protocol (REQUIRED)
-
-You are running in a persistent tmux session managed by an orchestrator.
-Communicate progress by writing to the phase file. The orchestrator watches
-this file and injects events (CI results, review feedback) back into this session.
-
-### Key files
-\`\`\`
-PHASE_FILE=\"${PHASE_FILE}\"
-SUMMARY_FILE=\"${IMPL_SUMMARY_FILE}\"
-\`\`\`
-
-### Phase transitions — write these exactly:
-
-**After committing and pushing your branch:**
-\`\`\`bash
-# Rebase on target branch before push to avoid merge conflicts
-git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
-git push ${FORGE_REMOTE} ${BRANCH}
-# Write a short summary of what you implemented:
-printf '%s' \"<your summary>\" > \"\${SUMMARY_FILE}\"
-# Signal the orchestrator to create the PR and watch for CI:
-echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
-\`\`\`
-Then STOP and wait. The orchestrator will inject CI results.
-
-**When you receive a \"CI passed\" injection:**
-\`\`\`bash
-echo \"PHASE:awaiting_review\" > \"${PHASE_FILE}\"
-\`\`\`
-Then STOP and wait. The orchestrator will inject review feedback.
-
-**When you receive a \"CI failed:\" injection:**
-Fix the CI issue, then rebase on target branch and push:
-\`\`\`bash
-git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
-git push --force-with-lease ${FORGE_REMOTE} ${BRANCH}
-echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
-\`\`\`
-Then STOP and wait.
-
-**When you receive a \"Review: REQUEST_CHANGES\" injection:**
-Address ALL review feedback, then rebase on target branch and push:
-\`\`\`bash
-git fetch ${FORGE_REMOTE} ${PRIMARY_BRANCH} && git rebase ${FORGE_REMOTE}/${PRIMARY_BRANCH}
-git push --force-with-lease ${FORGE_REMOTE} ${BRANCH}
-echo \"PHASE:awaiting_ci\" > \"${PHASE_FILE}\"
-\`\`\`
-(CI runs again after each push — always write awaiting_ci, not awaiting_review)
-
-**When you receive an \"Approved\" injection:**
-The orchestrator handles merging and issue closure automatically via the bash
-phase handler. You do not need to merge or close anything — stop and wait.
-
-**When you need human help (CI exhausted, merge blocked, stuck on a decision):**
-\`\`\`bash
-printf 'PHASE:escalate\nReason: %s\n' \"describe what you need\" > \"${PHASE_FILE}\"
-\`\`\`
-Then STOP and wait. A human will review and respond via the forge.
-
-**If refusing (too large, unmet dep, already done):**
-\`\`\`bash
-printf '%s' '{\"status\":\"too_large\",\"reason\":\"...\"}' > \"\${SUMMARY_FILE}\"
-printf 'PHASE:failed\nReason: refused\n' > \"${PHASE_FILE}\"
-\`\`\`
-
-**On unrecoverable failure:**
-\`\`\`bash
-printf 'PHASE:failed\nReason: %s\n' \"describe what failed\" > \"${PHASE_FILE}\"
-\`\`\`"
-
-# Write phase protocol to context file for compaction survival
-write_compact_context "$PHASE_FILE" "$PHASE_PROTOCOL_INSTRUCTIONS"
+PUSH_INSTRUCTIONS=$(build_phase_protocol_prompt "$BRANCH" "$FORGE_REMOTE")
 
 if [ "$RECOVERY_MODE" = true ]; then
-  # Build recovery context
-  GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null | head -20 || echo "(no diff)")
-  LAST_PHASE=$(read_phase)
-  rm -f "$PHASE_FILE"  # Clear stale phase — new session starts clean
-  CI_RESULT=$(cat "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt" 2>/dev/null || echo "")
-  REVIEW_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/issues/${PR_NUMBER}/comments?limit=10" | \
-    jq -r '.[-3:] | .[] | "[\(.user.login)] \(.body[:500])"' 2>/dev/null || echo "(none)")
+  GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null \
+    | head -20 || echo "(no diff)")
 
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
 This is issue #${ISSUE} for the ${FORGE_REPO} project.
@@ -587,7 +352,7 @@ This is issue #${ISSUE} for the ${FORGE_REPO} project.
 ## Issue: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-${SCRATCH_CONTEXT}
+
 ## CRASH RECOVERY
 
 Your previous session for this issue was interrupted. Resume from where you left off.
@@ -598,147 +363,194 @@ Git is the checkpoint — your code changes survived.
 ${GIT_DIFF_STAT}
 \`\`\`
 
-$(if [ "$LAST_PHASE" = "PHASE:escalate" ]; then
-  printf '### Previous session escalated — starting fresh\nThe previous session hit an issue and escalated. Do NOT re-escalate for the same reason.\nRead the issue and review comments carefully, then address the problem.'
-else
-  printf '### Last known phase: %s' "${LAST_PHASE:-unknown}"
-fi)
-
 ### PR: #${PR_NUMBER} (${BRANCH})
-**IMPORTANT: PR #${PR_NUMBER} already exists — do NOT create a new PR.** Do NOT call the Codeberg/Gitea/Forgejo API to create PRs. The orchestrator manages PR creation.
-
-### Recent PR comments:
-${REVIEW_COMMENTS}
-$(if [ -n "$CI_RESULT" ]; then printf '\n### Last CI result:\n%s\n' "$CI_RESULT"; fi)
+**IMPORTANT: PR #${PR_NUMBER} already exists — do NOT create a new PR.**
 
 ### Next steps
 1. Run \`git log --oneline -5\` and \`git status\` to understand current state.
-2. **PR #${PR_NUMBER} already exists.** Address any review comments, commit, push to \`${BRANCH}\`, then write \`PHASE:awaiting_ci\`.
-3. Do NOT attempt to create PRs via API calls — the orchestrator handles that.
-4. Follow the phase protocol below.
+2. Read AGENTS.md for project conventions.
+3. Address any pending review comments or CI failures.
+4. Commit and push to \`${BRANCH}\`.
 
-${SCRATCH_INSTRUCTION}
-
-${PHASE_PROTOCOL_INSTRUCTIONS}"
+${PUSH_INSTRUCTIONS}"
 else
-  # Normal mode: initial implementation prompt
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
 You have been assigned issue #${ISSUE} for the ${FORGE_REPO} project.
 
 ## Issue: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-${SCRATCH_CONTEXT}
-## Other open issues labeled 'backlog' (for context if you need to suggest alternatives):
+
+## Other open issues labeled 'backlog' (for context):
 ${OPEN_ISSUES_SUMMARY}
 
 $(if [ -n "$PRIOR_ART_DIFF" ]; then
-  printf '## Prior Art (closed PR — DO NOT start from scratch)\n\nA previous PR attempted this issue but was closed without merging. Review the diff below and reuse as much as possible. Fix whatever caused it to fail (merge conflicts, CI errors, review findings).\n\n```diff\n%s\n```\n' "$PRIOR_ART_DIFF"
+  printf '## Prior Art (closed PR — DO NOT start from scratch)\n\nA previous PR attempted this issue but was closed without merging. Reuse as much as possible.\n\n```diff\n%s\n```\n' "$PRIOR_ART_DIFF"
 fi)
-
 ## Instructions
 
-**Before implementing, assess whether you should proceed.** You have two options:
-
-### Option A: Implement
-If the issue is clear, dependencies are met, and scope is reasonable:
 1. Read AGENTS.md in this repo for project context and coding conventions.
 2. Implement the changes described in the issue.
 3. Run lint and tests before you're done (see AGENTS.md for commands).
 4. Commit your changes with message: fix: ${ISSUE_TITLE} (#${ISSUE})
-5. Follow the phase protocol below to signal progress.
+5. Push your branch.
 
-### Option B: Refuse (write JSON to SUMMARY_FILE, then write PHASE:failed)
-If you cannot or should not implement this issue, write ONLY a JSON object to \$SUMMARY_FILE:
+If you cannot implement this issue, write ONLY a JSON object to ${IMPL_SUMMARY_FILE}:
+- Unmet dependency: {\"status\":\"unmet_dependency\",\"blocked_by\":\"what's missing\",\"suggestion\":<number-or-null>}
+- Too large: {\"status\":\"too_large\",\"reason\":\"explanation\"}
+- Already done: {\"status\":\"already_done\",\"reason\":\"where\"}
 
-**Unmet dependency** — required code/infrastructure doesn't exist in the repo yet:
-\`\`\`
-{\"status\": \"unmet_dependency\", \"blocked_by\": \"short explanation of what's missing\", \"suggestion\": <issue-number-to-work-on-first or null>}
-\`\`\`
-
-**Too large** — issue needs to be split, spec is too vague, or scope exceeds a single session:
-\`\`\`
-{\"status\": \"too_large\", \"reason\": \"what makes it too large and how to split it\"}
-\`\`\`
-
-**Already done** — the work described is already implemented in the codebase:
-\`\`\`
-{\"status\": \"already_done\", \"reason\": \"where the existing implementation is\"}
-\`\`\`
-
-Then write:
-\`\`\`bash
-printf 'PHASE:failed\nReason: refused\n' > \"${PHASE_FILE}\"
-\`\`\`
-
-### How to decide
-- Read the issue carefully. Check if files/functions it references actually exist in the repo.
-- If it depends on other issues, check if those issues' deliverables are present in the codebase.
-- If the issue spec is vague or requires designing multiple new systems, refuse as too_large.
-- If another open issue should be done first, suggest it.
-- When in doubt, implement. Only refuse if there's a clear, specific reason.
-
-**Do NOT invent dependencies that aren't real.** If the code compiles and tests pass, that's ready.
-
-${SCRATCH_INSTRUCTION}
-
-${PHASE_PROTOCOL_INSTRUCTIONS}"
+${PUSH_INSTRUCTIONS}"
 fi
 
 # =============================================================================
-# CREATE TMUX SESSION
+# IMPLEMENT
 # =============================================================================
-status "creating tmux session: ${SESSION_NAME}"
+status "running implementation"
+echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 
-if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}" "${PHASE_FILE}"; then
-  log "ERROR: failed to create agent session"
-  cleanup_labels
-  cleanup_worktree
+if [ -n "$_AGENT_SESSION_ID" ]; then
+  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" "$INITIAL_PROMPT"
+else
+  agent_run --worktree "$WORKTREE" "$INITIAL_PROMPT"
+fi
+
+# =============================================================================
+# CHECK RESULT: did Claude push?
+# =============================================================================
+REMOTE_SHA=$(git ls-remote "$FORGE_REMOTE" "refs/heads/${BRANCH}" 2>/dev/null \
+  | awk '{print $1}') || true
+
+if [ -z "$REMOTE_SHA" ]; then
+  # Check for refusal in summary file
+  if [ -f "$IMPL_SUMMARY_FILE" ] && jq -e '.status' < "$IMPL_SUMMARY_FILE" >/dev/null 2>&1; then
+    REFUSAL_JSON=$(cat "$IMPL_SUMMARY_FILE")
+    REFUSAL_STATUS=$(printf '%s' "$REFUSAL_JSON" | jq -r '.status')
+    log "claude refused: ${REFUSAL_STATUS}"
+    printf '%s' "$REFUSAL_JSON" > "$PREFLIGHT_RESULT"
+
+    case "$REFUSAL_STATUS" in
+      unmet_dependency)
+        BLOCKED_BY_MSG=$(printf '%s' "$REFUSAL_JSON" | jq -r '.blocked_by // "unknown"')
+        SUGGESTION=$(printf '%s' "$REFUSAL_JSON" | jq -r '.suggestion // empty')
+        COMMENT_BODY="### Blocked by unmet dependency
+
+${BLOCKED_BY_MSG}"
+        [ -n "$SUGGESTION" ] && [ "$SUGGESTION" != "null" ] && \
+          COMMENT_BODY="${COMMENT_BODY}
+
+**Suggestion:** Work on #${SUGGESTION} first."
+        issue_post_refusal "$ISSUE" "🚧" "Unmet dependency" "$COMMENT_BODY"
+        issue_release "$ISSUE"
+        CLAIMED=false
+        ;;
+      too_large)
+        REASON=$(printf '%s' "$REFUSAL_JSON" | jq -r '.reason // "unspecified"')
+        issue_post_refusal "$ISSUE" "📏" "Too large for single session" \
+          "### Why this can't be implemented as-is
+
+${REASON}
+
+### Next steps
+A maintainer should split this issue or add more detail to the spec."
+        # Add underspecified label, remove backlog + in-progress
+        UNDERSPEC_ID=$(forge_api GET "/labels" 2>/dev/null \
+          | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
+        if [ -n "$UNDERSPEC_ID" ]; then
+          forge_api POST "/issues/${ISSUE}/labels" \
+            -d "{\"labels\":[${UNDERSPEC_ID}]}" >/dev/null 2>&1 || true
+        fi
+        BACKLOG_ID=$(forge_api GET "/labels" 2>/dev/null \
+          | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
+        if [ -n "$BACKLOG_ID" ]; then
+          forge_api DELETE "/issues/${ISSUE}/labels/${BACKLOG_ID}" >/dev/null 2>&1 || true
+        fi
+        IP_ID=$(forge_api GET "/labels" 2>/dev/null \
+          | jq -r '.[] | select(.name == "in-progress") | .id' 2>/dev/null || true)
+        if [ -n "$IP_ID" ]; then
+          forge_api DELETE "/issues/${ISSUE}/labels/${IP_ID}" >/dev/null 2>&1 || true
+        fi
+        CLAIMED=false
+        ;;
+      already_done)
+        REASON=$(printf '%s' "$REFUSAL_JSON" | jq -r '.reason // "unspecified"')
+        issue_post_refusal "$ISSUE" "✅" "Already implemented" \
+          "### Existing implementation
+
+${REASON}
+
+Closing as already implemented."
+        issue_close "$ISSUE"
+        CLAIMED=false
+        ;;
+    esac
+    worktree_cleanup "$WORKTREE"
+    rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+    exit 0
+  fi
+
+  log "ERROR: no branch pushed after agent_run"
+  issue_block "$ISSUE" "no_push" "Claude did not push branch ${BRANCH}"
+  CLAIMED=false
+  worktree_cleanup "$WORKTREE"
+  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
   exit 1
 fi
 
-# Send initial prompt into the session
-inject_formula "${SESSION_NAME}" "${INITIAL_PROMPT}"
-log "initial prompt sent to tmux session"
+log "branch pushed: ${REMOTE_SHA:0:7}"
 
-# Signal to dev-poll.sh that we're running (session is up)
-echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
-
-status "monitoring phase: ${PHASE_FILE}"
-monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change
-
-# Handle exit reason from monitor_phase_loop
-case "${_MONITOR_LOOP_EXIT:-}" in
-  idle_timeout|idle_prompt)
-    # Post diagnostic comment + label issue blocked
-    post_blocked_diagnostic "${_MONITOR_LOOP_EXIT:-idle_timeout}"
-    if [ -n "${PR_NUMBER:-}" ]; then
-      log "keeping worktree (PR #${PR_NUMBER} still open)"
-    else
-      cleanup_worktree
+# =============================================================================
+# CREATE PR (if not in recovery mode)
+# =============================================================================
+if [ -z "$PR_NUMBER" ]; then
+  status "creating PR"
+  IMPL_SUMMARY=""
+  if [ -f "$IMPL_SUMMARY_FILE" ]; then
+    if ! jq -e '.status' < "$IMPL_SUMMARY_FILE" >/dev/null 2>&1; then
+      IMPL_SUMMARY=$(head -c 4000 "$IMPL_SUMMARY_FILE")
     fi
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
-      "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE" \
-      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
-    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
-    ;;
-  crashed)
-    # Belt-and-suspenders: _on_phase_change(PHASE:crashed) handles primary
-    # cleanup (diagnostic comment, blocked label, worktree, files).
-    # Only post if the callback didn't already (guard prevents double comment).
-    if [ "${_BLOCKED_POSTED:-}" != "true" ]; then
-      post_blocked_diagnostic "crashed"
-    fi
-    ;;
-  done)
-    # Belt-and-suspenders: callback in phase-handler.sh handles primary cleanup,
-    # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" \
-      "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE" \
-      "/tmp/ci-result-${PROJECT_NAME}-${ISSUE}.txt"
-    [ -n "${PR_NUMBER:-}" ] && rm -f "/tmp/review-injected-${PROJECT_NAME}-${PR_NUMBER}"
+  fi
+
+  PR_BODY=$(printf 'Fixes #%s\n\n## Changes\n%s' "$ISSUE" "$IMPL_SUMMARY")
+  PR_TITLE="fix: ${ISSUE_TITLE} (#${ISSUE})"
+  PR_NUMBER=$(pr_create "$BRANCH" "$PR_TITLE" "$PR_BODY") || true
+
+  if [ -z "$PR_NUMBER" ]; then
+    log "ERROR: failed to create PR"
+    issue_block "$ISSUE" "pr_create_failed"
     CLAIMED=false
-    ;;
-esac
+    exit 1
+  fi
+  log "created PR #${PR_NUMBER}"
+fi
+
+# =============================================================================
+# WALK PR TO MERGE
+# =============================================================================
+status "walking PR #${PR_NUMBER} to merge"
+
+rc=0
+pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
+
+if [ "$rc" -eq 0 ]; then
+  # Merged successfully
+  log "PR #${PR_NUMBER} merged"
+  issue_close "$ISSUE"
+
+  # Pull primary branch and push to mirrors
+  git -C "$REPO_ROOT" fetch "$FORGE_REMOTE" "$PRIMARY_BRANCH" 2>/dev/null || true
+  git -C "$REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+  git -C "$REPO_ROOT" pull --ff-only "$FORGE_REMOTE" "$PRIMARY_BRANCH" 2>/dev/null || true
+  mirror_push
+
+  worktree_cleanup "$WORKTREE"
+  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+  CLAIMED=false
+else
+  # Exhausted or unrecoverable failure
+  log "PR walk failed: ${_PR_WALK_EXIT_REASON:-unknown}"
+  issue_block "$ISSUE" "${_PR_WALK_EXIT_REASON:-agent_failed}"
+  CLAIMED=false
+fi
 
 log "dev-agent finished for issue #${ISSUE}"
