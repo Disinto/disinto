@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # dev-poll.sh — Pull-based scheduler: find the next ready issue and start dev-agent
 #
+# SDK version: No tmux — checks PID lockfile for active agents.
+# Uses pr_merge() and issue_block() from shared libraries.
+#
 # Pull system: issues labeled "backlog" are candidates. An issue is READY when
 # ALL its dependency issues are closed (and their PRs merged).
 # No "todo" label needed — readiness is derived from reality.
@@ -16,37 +19,38 @@
 
 set -euo pipefail
 
-# Load shared environment (with optional project TOML override)
+# Load shared environment and libraries
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
+# shellcheck source=../lib/pr-lifecycle.sh
+source "$(dirname "$0")/../lib/pr-lifecycle.sh"
+# shellcheck source=../lib/issue-lifecycle.sh
+source "$(dirname "$0")/../lib/issue-lifecycle.sh"
 # shellcheck source=../lib/mirrors.sh
 source "$(dirname "$0")/../lib/mirrors.sh"
 # shellcheck source=../lib/guard.sh
 source "$(dirname "$0")/../lib/guard.sh"
 check_active dev
 
-# Gitea labels API requires []int64 — look up the "underspecified" label ID once
-UNDERSPECIFIED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
-  | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
-UNDERSPECIFIED_LABEL_ID="${UNDERSPECIFIED_LABEL_ID:-1300816}"
+API="${FORGE_API}"
+LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
+LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent-${PROJECT_NAME:-default}.log"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Track CI fix attempts per PR to avoid infinite respawn loops
+log() {
+  printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
+}
+
+# =============================================================================
+# CI FIX TRACKER: per-PR counter to avoid infinite respawn loops (max 3)
+# =============================================================================
 CI_FIX_TRACKER="${DISINTO_LOG_DIR}/dev/ci-fixes-${PROJECT_NAME:-default}.json"
 CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
+
 ci_fix_count() {
   local pr="$1"
   flock "$CI_FIX_LOCK" python3 -c "import json,sys;d=json.load(open('$CI_FIX_TRACKER')) if __import__('os').path.exists('$CI_FIX_TRACKER') else {};print(d.get(str($pr),0))" 2>/dev/null || echo 0
-}
-ci_fix_increment() {
-  local pr="$1"
-  flock "$CI_FIX_LOCK" python3 -c "
-import json,os
-f='$CI_FIX_TRACKER'
-d=json.load(open(f)) if os.path.exists(f) else {}
-d[str($pr)]=d.get(str($pr),0)+1
-json.dump(d,open(f,'w'))
-" 2>/dev/null || true
 }
 ci_fix_reset() {
   local pr="$1"
@@ -90,44 +94,14 @@ is_blocked() {
     | jq -e '.[] | select(.name == "blocked")' >/dev/null 2>&1
 }
 
-# Post a CI-exhaustion diagnostic comment and label issue as blocked.
-# Args: issue_num pr_num attempts
-_post_ci_blocked_comment() {
-  local issue_num="$1" pr_num="$2" attempts="$3"
-  local blocked_id
-  blocked_id=$(ensure_blocked_label_id)
-  [ -z "$blocked_id" ] && return 0
-
-  local comment
-  comment="### Session failure diagnostic
-
-| Field | Value |
-|---|---|
-| Exit reason | \`ci_exhausted_poll (${attempts} attempts)\` |
-| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |
-| PR | #${pr_num} |"
-
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue_num}/comments" \
-    -d "$(jq -nc --arg b "$comment" '{body:$b}')" >/dev/null 2>&1 || true
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue_num}/labels" \
-    -d "{\"labels\":[${blocked_id}]}" >/dev/null 2>&1 || true
-}
-
 # =============================================================================
 # HELPER: handle CI-exhaustion check/block (DRY for 3 call sites)
 # Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
+# Uses issue_block() from lib/issue-lifecycle.sh for blocking.
 #
 # Pass "check_only" as third arg for the backlog scan path: ok-counts are
 # returned without incrementing (deferred to launch time so a WAITING_PRS
-# exit cannot waste a fix attempt). The 3→4 sentinel bump is always atomic
-# regardless of mode, preventing duplicate blocked labels from concurrent
-# pollers.
+# exit cannot waste a fix attempt). The 3->4 sentinel bump is always atomic.
 # =============================================================================
 handle_ci_exhaustion() {
   local pr_num="$1" issue_num="$2"
@@ -141,11 +115,6 @@ handle_ci_exhaustion() {
     return 0
   fi
 
-  # Single flock-protected call: read + threshold-check + conditional bump.
-  # In check_only mode, ok-counts are returned without incrementing (deferred
-  # to launch time). In both modes, the 3→4 sentinel bump is atomic, so only
-  # one concurrent poller can ever receive exhausted_first_time:3 and label
-  # the issue blocked.
   result=$(ci_fix_check_and_increment "$pr_num" "$check_only")
   case "$result" in
     ok:*)
@@ -155,7 +124,7 @@ handle_ci_exhaustion() {
     exhausted_first_time:*)
       CI_FIX_ATTEMPTS="${result#exhausted_first_time:}"
       log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — marking blocked"
-      _post_ci_blocked_comment "$issue_num" "$pr_num" "$CI_FIX_ATTEMPTS"
+      issue_block "$issue_num" "ci_exhausted_poll (${CI_FIX_ATTEMPTS} attempts, PR #${pr_num})"
       ;;
     exhausted:*)
       CI_FIX_ATTEMPTS="${result#exhausted:}"
@@ -170,7 +139,7 @@ handle_ci_exhaustion() {
 }
 
 # =============================================================================
-# HELPER: merge an approved PR directly (no Claude needed)
+# HELPER: merge an approved PR directly via pr_merge() (no Claude needed)
 #
 # Merging an approved, CI-green PR is a single API call. Spawning dev-agent
 # for this fails when the issue is already closed (forge auto-closes issues
@@ -181,30 +150,15 @@ try_direct_merge() {
 
   log "PR #${pr_num} (issue #${issue_num}) approved + CI green → attempting direct merge"
 
-  local merge_resp merge_http
-  merge_resp=$(curl -sf -w '\n%{http_code}' -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    "${API}/pulls/${pr_num}/merge" \
-    -d '{"Do":"merge","delete_branch_after_merge":true}' 2>/dev/null) || true
-
-  merge_http=$(echo "$merge_resp" | tail -1)
-
-  if [ "${merge_http:-0}" = "200" ] || [ "${merge_http:-0}" = "204" ]; then
+  if pr_merge "$pr_num"; then
     log "PR #${pr_num} merged successfully"
     if [ "$issue_num" -gt 0 ]; then
-      # Close the issue (may already be closed by forge auto-close)
-      curl -sf -X PATCH \
-        -H "Authorization: token ${FORGE_TOKEN}" \
-        -H 'Content-Type: application/json' \
-        "${API}/issues/${issue_num}" \
-        -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      # Remove in-progress label
+      issue_close "$issue_num"
+      # Remove in-progress label (don't re-add backlog — issue is closed)
       curl -sf -X DELETE \
         -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
-      # Clean up phase/session artifacts
-      rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase" \
+      rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.sid" \
             "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
     fi
     # Pull merged primary branch and push to mirrors
@@ -212,199 +166,68 @@ try_direct_merge() {
     git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH:-}" 2>/dev/null || true
     git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
     mirror_push
-    # Clean up CI fix tracker
     ci_fix_reset "$pr_num"
     return 0
   fi
 
-  log "PR #${pr_num} direct merge failed (HTTP ${merge_http:-?}) — falling back to dev-agent"
+  log "PR #${pr_num} direct merge failed — falling back to dev-agent"
   return 1
 }
 
 # =============================================================================
-# HELPER: inject text into a tmux session via load-buffer + paste (#771)
-# All tmux calls guarded with || true to prevent aborting under set -euo pipefail.
-# Args: session text
+# HELPER: extract issue number from PR branch/title/body
 # =============================================================================
-_inject_into_session() {
-  local session="$1" text="$2"
-  local tmpfile
-  tmpfile=$(mktemp /tmp/dev-poll-inject-XXXXXX)
-  printf '%s' "$text" > "$tmpfile"
-  tmux load-buffer -b "poll-inject-$$" "$tmpfile" || true
-  tmux paste-buffer -t "$session" -b "poll-inject-$$" || true
-  sleep 0.5
-  tmux send-keys -t "$session" "" Enter || true
-  tmux delete-buffer -b "poll-inject-$$" 2>/dev/null || true
-  rm -f "$tmpfile"
+extract_issue_from_pr() {
+  local branch="$1" title="$2" body="$3"
+  local issue
+  issue=$(echo "$branch" | grep -oP '(?<=fix/issue-)\d+' || true)
+  if [ -z "$issue" ]; then
+    issue=$(echo "$title" | grep -oP '#\K\d+' | tail -1 || true)
+  fi
+  if [ -z "$issue" ]; then
+    issue=$(echo "$body" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
+  fi
+  printf '%s' "$issue"
 }
 
 # =============================================================================
-# HELPER: handle events for a running dev session (#771)
-#
-# When a tmux session is alive, check for injectable events instead of skipping.
-# Handles: externally merged/closed PRs, CI results (awaiting_ci), and
-# review feedback (awaiting_review).
-#
-# Args: session_name issue_num [pr_num]
-# Sets: ACTIVE_SESSION_ACTION = "cleaned" | "injected" | "skip"
+# DEPENDENCY HELPERS
 # =============================================================================
-# shellcheck disable=SC2034  # ACTIVE_SESSION_ACTION is read by callers
-handle_active_session() {
-  local session="$1" issue_num="$2" pr_num="${3:-}"
-  local phase_file="/tmp/dev-session-${PROJECT_NAME}-${issue_num}.phase"
-  local sentinel="/tmp/dev-poll-injected-${PROJECT_NAME}-${issue_num}"
-  ACTIVE_SESSION_ACTION="skip"
-
-  local phase
-  phase=$(head -1 "$phase_file" 2>/dev/null | tr -d '[:space:]' || true)
-
-  local pr_json="" pr_sha="" pr_branch=""
-
-  # --- Detect externally merged/closed PR ---
-  if [ -n "$pr_num" ]; then
-    local pr_state pr_merged
-    pr_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls/${pr_num}") || true
-    pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "unknown"')
-    pr_sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')
-    pr_branch=$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')
-
-    if [ "$pr_state" != "open" ]; then
-      pr_merged=$(printf '%s' "$pr_json" | jq -r '.merged // false')
-      tmux kill-session -t "$session" 2>/dev/null || true
-      rm -f "$phase_file" "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt" "$sentinel"
-      if [ "$pr_merged" = "true" ]; then
-        curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${API}/issues/${issue_num}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      fi
-      curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
-      ci_fix_reset "$pr_num"
-      log "PR #${pr_num} (issue #${issue_num}) merged/closed externally — cleaned up session ${session}"
-      ACTIVE_SESSION_ACTION="cleaned"
-      return 0
-    fi
-  else
-    # No PR number — check if a merged PR exists for this issue's branch
-    local closed_pr closed_merged
-    closed_pr=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls?state=closed&limit=10" | \
-      jq -r --arg branch "fix/issue-${issue_num}" \
-      '.[] | select(.head.ref == $branch) | .number' | head -1) || true
-    if [ -n "$closed_pr" ]; then
-      closed_merged=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/pulls/${closed_pr}" | jq -r '.merged // false') || true
-      if [ "$closed_merged" = "true" ]; then
-        tmux kill-session -t "$session" 2>/dev/null || true
-        rm -f "$phase_file" "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt" "$sentinel"
-        curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${API}/issues/${issue_num}" -d '{"state":"closed"}' >/dev/null 2>&1 || true
-        curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-          "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
-        log "issue #${issue_num} PR #${closed_pr} merged externally — cleaned up session ${session}"
-        ACTIVE_SESSION_ACTION="cleaned"
-        return 0
-      fi
-    fi
-    return 0  # no PR — can't inject CI/review events
+dep_is_merged() {
+  local dep_num="$1"
+  local dep_state
+  dep_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${dep_num}" | jq -r '.state // "open"')
+  if [ "$dep_state" != "closed" ]; then
+    return 1
   fi
-
-  # Sentinel: avoid re-injecting for the same SHA across poll cycles
-  local last_injected
-  last_injected=$(cat "$sentinel" 2>/dev/null || true)
-  if [ -n "$last_injected" ] && [ "$last_injected" = "$pr_sha" ]; then
-    log "already injected for ${session} SHA ${pr_sha:0:7} — skipping"
-    return 0
-  fi
-
-  # --- Inject CI result into awaiting_ci session ---
-  if [ "$phase" = "PHASE:awaiting_ci" ] && [ -n "$pr_sha" ]; then
-    local ci_state
-    ci_state=$(ci_commit_status "$pr_sha") || true
-
-    if ci_passed "$ci_state"; then
-      _inject_into_session "$session" "CI passed on PR #${pr_num}.
-
-Write PHASE:awaiting_review to the phase file, then stop and wait for review feedback:
-  echo \"PHASE:awaiting_review\" > \"${phase_file}\""
-      printf '%s' "$pr_sha" > "$sentinel"
-      log "injected CI success into session ${session} for PR #${pr_num}"
-      ACTIVE_SESSION_ACTION="injected"
-      return 0
-    fi
-
-    if ci_failed "$ci_state"; then
-      local pipeline_num error_log
-      pipeline_num=$(ci_pipeline_number "$pr_sha") || true
-      error_log=""
-      if [ -n "$pipeline_num" ]; then
-        error_log=$(bash "${FACTORY_ROOT}/lib/ci-debug.sh" failures "$pipeline_num" 2>/dev/null \
-          | tail -80 | head -c 4000 || true)
-      fi
-      _inject_into_session "$session" "CI failed on PR #${pr_num} (pipeline #${pipeline_num:-?}).
-
-Error excerpt:
-${error_log:-No logs available. Run: bash ${FACTORY_ROOT}/lib/ci-debug.sh failures ${pipeline_num:-0}}
-
-Fix the issue, commit, push, then write:
-  echo \"PHASE:awaiting_ci\" > \"${phase_file}\""
-      printf '%s' "$pr_sha" > "$sentinel"
-      log "injected CI failure into session ${session} for PR #${pr_num}"
-      ACTIVE_SESSION_ACTION="injected"
-      return 0
-    fi
-  fi
-
-  # --- Inject review feedback into awaiting_review session ---
-  if [ "$phase" = "PHASE:awaiting_review" ] && [ -n "$pr_sha" ]; then
-    local reviews_json has_changes review_body
-    reviews_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls/${pr_num}/reviews") || true
-    has_changes=$(printf '%s' "$reviews_json" | \
-      jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
-
-    if [ "${has_changes:-0}" -gt 0 ]; then
-      review_body=$(printf '%s' "$reviews_json" | \
-        jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | last | .body // ""') || true
-
-      # Prefer bot review comment if available (richer content)
-      local review_comment
-      review_comment=$(forge_api_all "/issues/${pr_num}/comments" | \
-        jq -r --arg sha "$pr_sha" \
-        '[.[] | select(.body | contains("<!-- reviewed: " + $sha))] | last | .body // empty') || true
-      [ -n "$review_comment" ] && review_body="$review_comment"
-
-      _inject_into_session "$session" "Review: REQUEST_CHANGES on PR #${pr_num}:
-
-${review_body:-Review requested changes but no details provided.}
-
-Instructions:
-1. Address each piece of feedback carefully.
-2. Run lint and tests when done.
-3. Commit your changes and push: git push origin ${pr_branch}
-4. Write: echo \"PHASE:awaiting_ci\" > \"${phase_file}\"
-5. Stop and wait for the next CI result."
-      printf '%s' "$pr_sha" > "$sentinel"
-      log "injected review feedback into session ${session} for PR #${pr_num}"
-      ACTIVE_SESSION_ACTION="injected"
-      return 0
-    fi
-  fi
-
   return 0
 }
 
-API="${FORGE_API}"
-LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
-LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent-${PROJECT_NAME:-default}.log"
-PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+get_deps() {
+  local issue_body="$1"
+  echo "$issue_body" | bash "${FACTORY_ROOT}/lib/parse-deps.sh"
+}
 
-log() {
-  printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
+issue_is_ready() {
+  local issue_num="$1"
+  local issue_body="$2"
+  local deps
+  deps=$(get_deps "$issue_body")
+
+  if [ -z "$deps" ]; then
+    return 0
+  fi
+
+  while IFS= read -r dep; do
+    [ -z "$dep" ] && continue
+    if ! dep_is_merged "$dep"; then
+      log "  #${issue_num} blocked: dep #${dep} not merged"
+      return 1
+    fi
+  done <<< "$deps"
+
+  return 0
 }
 
 # =============================================================================
@@ -426,14 +249,7 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
   PL_PR_TITLE=$(echo "$PL_PRS" | jq -r ".[$i].title")
   PL_PR_BODY=$(echo "$PL_PRS" | jq -r ".[$i].body // \"\"")
 
-  # Extract issue number from branch name, PR title, or PR body
-  PL_ISSUE=$(echo "$PL_PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
-  if [ -z "$PL_ISSUE" ]; then
-    PL_ISSUE=$(echo "$PL_PR_TITLE" | grep -oP '#\K\d+' | tail -1 || true)
-  fi
-  if [ -z "$PL_ISSUE" ]; then
-    PL_ISSUE=$(echo "$PL_PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
-  fi
+  PL_ISSUE=$(extract_issue_from_pr "$PL_PR_BRANCH" "$PL_PR_TITLE" "$PL_PR_BODY")
   if [ -z "$PL_ISSUE" ]; then
     # Allow chore PRs from gardener/planner/predictor to merge without issue number
     if [[ "$PL_PR_BRANCH" =~ ^chore/(gardener|planner|predictor)- ]]; then
@@ -474,7 +290,7 @@ if [ "$PL_MERGED_ANY" = true ]; then
 fi
 log "pre-lock: no PRs merged, checking agent lock"
 
-# --- Check if dev-agent already running ---
+# --- Check if dev-agent already running (PID lockfile) ---
 if [ -f "$LOCKFILE" ]; then
   LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null || echo "")
   if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
@@ -486,61 +302,6 @@ fi
 
 # --- Memory guard ---
 memory_guard 2000
-
-# =============================================================================
-# HELPER: check if a dependency issue is fully resolved (closed + PR merged)
-# =============================================================================
-dep_is_merged() {
-  local dep_num="$1"
-
-  # Check issue is closed
-  local dep_state
-  dep_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/issues/${dep_num}" | jq -r '.state // "open"')
-  if [ "$dep_state" != "closed" ]; then
-    return 1
-  fi
-
-  # Issue closed = dep satisfied. The scheduler only closes issues after
-  # merging, so closed state is trustworthy. No need to hunt for the
-  # specific PR — that was over-engineering that caused false negatives.
-  return 0
-}
-
-# =============================================================================
-# HELPER: extract dependency numbers from issue body
-# =============================================================================
-get_deps() {
-  local issue_body="$1"
-  # Shared parser: lib/parse-deps.sh (single source of truth)
-  echo "$issue_body" | bash "${FACTORY_ROOT}/lib/parse-deps.sh"
-}
-
-# =============================================================================
-# HELPER: check if issue is ready (all deps merged)
-# =============================================================================
-issue_is_ready() {
-  local issue_num="$1"
-  local issue_body="$2"
-
-  local deps
-  deps=$(get_deps "$issue_body")
-
-  if [ -z "$deps" ]; then
-    # No dependencies — always ready
-    return 0
-  fi
-
-  while IFS= read -r dep; do
-    [ -z "$dep" ] && continue
-    if ! dep_is_merged "$dep"; then
-      log "  #${issue_num} blocked: dep #${dep} not merged"
-      return 1
-    fi
-  done <<< "$deps"
-
-  return 0
-}
 
 # =============================================================================
 # PRIORITY 1: orphaned in-progress issues
@@ -594,35 +355,20 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         exit 0
       fi
       # Direct merge failed (conflicts?) — fall back to dev-agent
-      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
-      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        handle_active_session "$SESSION_NAME" "$ISSUE_NUM" "$HAS_PR"
-      else
-        log "falling back to dev-agent for PR #${HAS_PR} merge"
-        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-        log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
-      fi
+      log "falling back to dev-agent for PR #${HAS_PR} merge"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
 
     # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
     # pending/unknown. Definitive CI failure is handled by the elif below.
     elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
-      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        handle_active_session "$SESSION_NAME" "$ISSUE_NUM" "$HAS_PR"
-      else
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
-        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-        log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
-      fi
+      log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
+      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
       exit 0
 
     elif ci_failed "$CI_STATE"; then
-      SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
-      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        handle_active_session "$SESSION_NAME" "$ISSUE_NUM" "$HAS_PR"
-        exit 0
-      fi
       if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM" "check_only"; then
         # Fall through to backlog scan instead of exit
         :
@@ -641,14 +387,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
     fi
   else
-    SESSION_NAME="dev-${PROJECT_NAME}-${ISSUE_NUM}"
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      handle_active_session "$SESSION_NAME" "$ISSUE_NUM" ""
-    else
-      log "recovering orphaned issue #${ISSUE_NUM} (no PR found)"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
-    fi
+    log "recovering orphaned issue #${ISSUE_NUM} (no PR found)"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
     exit 0
   fi
 fi
@@ -664,17 +405,10 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   PR_NUM=$(echo "$OPEN_PRS" | jq -r ".[$i].number")
   PR_BRANCH=$(echo "$OPEN_PRS" | jq -r ".[$i].head.ref")
   PR_SHA=$(echo "$OPEN_PRS" | jq -r ".[$i].head.sha")
-
-  # Extract issue number from branch name (fix/issue-NNN), PR title (#NNN), or PR body (Closes #NNN)
   PR_TITLE=$(echo "$OPEN_PRS" | jq -r ".[$i].title")
   PR_BODY=$(echo "$OPEN_PRS" | jq -r ".[$i].body // \"\"")
-  STUCK_ISSUE=$(echo "$PR_BRANCH" | grep -oP '(?<=fix/issue-)\d+' || true)
-  if [ -z "$STUCK_ISSUE" ]; then
-    STUCK_ISSUE=$(echo "$PR_TITLE" | grep -oP '#\K\d+' | tail -1 || true)
-  fi
-  if [ -z "$STUCK_ISSUE" ]; then
-    STUCK_ISSUE=$(echo "$PR_BODY" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
-  fi
+
+  STUCK_ISSUE=$(extract_issue_from_pr "$PR_BRANCH" "$PR_TITLE" "$PR_BODY")
   if [ -z "$STUCK_ISSUE" ]; then
     # Allow chore PRs from gardener/planner/predictor to merge without issue number
     if [[ "$PR_BRANCH" =~ ^chore/(gardener|planner|predictor)- ]]; then
@@ -712,14 +446,9 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       continue
     fi
     # Direct merge failed (conflicts?) — fall back to dev-agent
-    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      handle_active_session "$SESSION_NAME" "$STUCK_ISSUE" "$PR_NUM"
-    else
-      log "falling back to dev-agent for PR #${PR_NUM} merge"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
-    fi
+    log "falling back to dev-agent for PR #${PR_NUM} merge"
+    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
     exit 0
   fi
 
@@ -728,27 +457,13 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     continue
   fi
 
-  # Stuck: REQUEST_CHANGES or CI failure → spawn agent
-  # Do NOT gate REQUEST_CHANGES on ci_passed: if a reviewer leaves REQUEST_CHANGES
-  # while CI is still pending/unknown, we must act immediately rather than wait for
-  # CI to settle. Definitive CI failure (non-pending, non-unknown) is handled by
-  # the elif below, so we only spawn here when CI has not definitively failed.
+  # Stuck: REQUEST_CHANGES or CI failure -> spawn agent
   if [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      handle_active_session "$SESSION_NAME" "$STUCK_ISSUE" "$PR_NUM"
-      continue
-    fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
   elif ci_failed "$CI_STATE"; then
-    SESSION_NAME="dev-${PROJECT_NAME}-${STUCK_ISSUE}"
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      handle_active_session "$SESSION_NAME" "$STUCK_ISSUE" "$PR_NUM"
-      continue
-    fi
     if handle_ci_exhaustion "$PR_NUM" "$STUCK_ISSUE" "check_only"; then
       continue  # skip this PR, check next stuck PR or fall through to backlog
     fi
@@ -800,12 +515,13 @@ log "found ${BACKLOG_COUNT} backlog issues (${PRIORITY_COUNT} priority)"
 
 # Check each for readiness
 READY_ISSUE=""
+READY_PR_FOR_INCREMENT=""
+WAITING_PRS=""
 for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   ISSUE_NUM=$(echo "$BACKLOG_JSON" | jq -r ".[$i].number")
   ISSUE_BODY=$(echo "$BACKLOG_JSON" | jq -r ".[$i].body // \"\"")
 
   # Formula guard: formula-labeled issues must not be picked up by dev-agent.
-  # A formula issue that accidentally acquires the backlog label should be skipped.
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
   SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|action|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
@@ -895,9 +611,6 @@ fi
 # LAUNCH: start dev-agent for the ready issue
 # =============================================================================
 # Deferred CI fix increment — only now that we're certain we are launching.
-# Uses the atomic ci_fix_check_and_increment (inside handle_ci_exhaustion) so
-# the counter is bumped exactly once even under concurrent poll invocations,
-# and a WAITING_PRS exit above cannot silently consume a fix attempt.
 if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
   if handle_ci_exhaustion "$READY_PR_FOR_INCREMENT" "$READY_ISSUE"; then
     # exhausted (another poller incremented between scan and launch) — bail out
@@ -906,52 +619,5 @@ if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
 fi
 
 log "launching dev-agent for #${READY_ISSUE}"
-rm -f "$PREFLIGHT_RESULT"
-
 nohup "${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1 &
-AGENT_PID=$!
-
-# Wait briefly for preflight (agent writes result before claiming)
-for _w in $(seq 1 30); do
-  if [ -f "$PREFLIGHT_RESULT" ]; then
-    break
-  fi
-  if ! kill -0 "$AGENT_PID" 2>/dev/null; then
-    break
-  fi
-  sleep 2
-done
-
-if [ -f "$PREFLIGHT_RESULT" ]; then
-  PREFLIGHT_STATUS=$(jq -r '.status // "unknown"' < "$PREFLIGHT_RESULT")
-  rm -f "$PREFLIGHT_RESULT"
-
-  case "$PREFLIGHT_STATUS" in
-    ready)
-      log "dev-agent running for #${READY_ISSUE}"
-      ;;
-    unmet_dependency)
-      log "#${READY_ISSUE} has code-level dependency (preflight blocked)"
-      wait "$AGENT_PID" 2>/dev/null || true
-      ;;
-    too_large)
-      REASON=$(jq -r '.reason // "unspecified"' < "$PREFLIGHT_RESULT" 2>/dev/null || echo "unspecified")
-      log "#${READY_ISSUE} too large: ${REASON}"
-      # Label as underspecified
-      curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/issues/${READY_ISSUE}/labels" \
-        -d "{\"labels\":[${UNDERSPECIFIED_LABEL_ID}]}" >/dev/null 2>&1 || true
-      ;;
-    already_done)
-      log "#${READY_ISSUE} already done"
-      ;;
-    *)
-      log "#${READY_ISSUE} unknown preflight: ${PREFLIGHT_STATUS}"
-      ;;
-  esac
-elif kill -0 "$AGENT_PID" 2>/dev/null; then
-  log "dev-agent running for #${READY_ISSUE} (passed preflight)"
-else
-  log "dev-agent exited for #${READY_ISSUE} without preflight result"
-fi
+log "started dev-agent PID $! for issue #${READY_ISSUE}"
