@@ -135,10 +135,7 @@ if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
 fi
 
 # Recover session_id from .sid file (re-review continuity)
-if [ -f "$SID_FILE" ]; then
-  _AGENT_SESSION_ID=$(cat "$SID_FILE")
-  log "recovered session_id: ${_AGENT_SESSION_ID:0:12}..."
-fi
+agent_recover_session
 
 # =============================================================================
 # FETCH DIFF

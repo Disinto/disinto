@@ -12,12 +12,20 @@
 #   agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
 #
 # After each call, _AGENT_SESSION_ID holds the session ID (also saved to SID_FILE).
-# Recover a previous session on startup:
-#   if [ -f "$SID_FILE" ]; then _AGENT_SESSION_ID=$(cat "$SID_FILE"); fi
+# Call agent_recover_session() on startup to restore a previous session.
 
 set -euo pipefail
 
 _AGENT_SESSION_ID=""
+
+# agent_recover_session — restore session_id from SID_FILE if it exists.
+# Call this before agent_run --resume to enable session continuity.
+agent_recover_session() {
+  if [ -f "$SID_FILE" ]; then
+    _AGENT_SESSION_ID=$(cat "$SID_FILE")
+    log "agent_recover_session: ${_AGENT_SESSION_ID:0:12}..."
+  fi
+}
 
 # agent_run — synchronous Claude invocation (one-shot claude -p)
 # Usage: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
