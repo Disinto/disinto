@@ -155,9 +155,10 @@ try_direct_merge() {
     if [ "$issue_num" -gt 0 ]; then
       issue_close "$issue_num"
       # Remove in-progress label (don't re-add backlog — issue is closed)
+      IP_ID=$(_ilc_in_progress_id)
       curl -sf -X DELETE \
         -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/issues/${issue_num}/labels/in-progress" >/dev/null 2>&1 || true
+        "${API}/issues/${issue_num}/labels/${IP_ID}" >/dev/null 2>&1 || true
       rm -f "/tmp/dev-session-${PROJECT_NAME}-${issue_num}.sid" \
             "/tmp/dev-impl-summary-${PROJECT_NAME}-${issue_num}.txt"
     fi
@@ -325,8 +326,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|action|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
+    IP_ID=$(_ilc_in_progress_id)
     curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
+      "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
     exit 0
   fi
 
@@ -400,8 +402,9 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     if [ -n "$ASSIGNEE" ] && [ "$ASSIGNEE" != "$BOT_USER" ]; then
       log "issue #${ISSUE_NUM} assigned to ${ASSIGNEE} — skipping (not orphaned)"
       # Remove in-progress label since this agent isn't working on it
+      IP_ID=$(_ilc_in_progress_id)
       curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
+        "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
       exit 0
     fi
 
