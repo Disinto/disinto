@@ -2059,13 +2059,23 @@ disinto_secrets() {
 
       printf 'Enter value for %s: ' "$name" >&2
       local value
-      IFS= read -r value
+      IFS= read -rs value
+      echo >&2
       if [ -z "$value" ]; then
         echo "Error: empty value" >&2
         exit 1
       fi
 
       local enc_path="${secrets_dir}/${name}.enc"
+      if [ -f "$enc_path" ]; then
+        printf 'Secret %s already exists. Overwrite? [y/N] ' "$name" >&2
+        local confirm
+        read -r confirm
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+          echo "Aborted." >&2
+          exit 1
+        fi
+      fi
       if ! printf '%s' "$value" | age -r "$AGE_PUBLIC_KEY" -o "$enc_path"; then
         echo "Error: encryption failed" >&2
         exit 1
