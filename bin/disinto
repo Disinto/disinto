@@ -183,6 +183,7 @@ services:
       - apparmor=unconfined
     ports:
       - "8000:8000"
+      - "9000:9000"
     volumes:
       - woodpecker-data:/var/lib/woodpecker
     environment:
@@ -203,18 +204,18 @@ services:
   woodpecker-agent:
     image: woodpeckerci/woodpecker-agent:v3
     restart: unless-stopped
-    security_opt:
-      - apparmor=unconfined
+    network_mode: host
+    privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      WOODPECKER_SERVER: woodpecker:9000
+      WOODPECKER_SERVER: localhost:9000
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
+      WOODPECKER_GRPC_SECURE: "false"
+      WOODPECKER_HEALTHCHECK_ADDR: ":3333"
       WOODPECKER_MAX_WORKFLOWS: 1
     depends_on:
       - woodpecker
-    networks:
-      - disinto-net
 
   agents:
     build: ./docker/agents
