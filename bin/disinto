@@ -260,10 +260,37 @@ services:
     networks:
       - disinto-net
 
+  # Edge proxy — reverse proxy to Forgejo, Woodpecker, and staging
+  # Serves on ports 80/443, routes based on path
+  edge:
+    image: caddy:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - forgejo
+      - woodpecker
+      - staging
+    networks:
+      - disinto-net
+
+  # Staging container — static file server for staging artifacts
+  # Edge proxy routes to this container for default requests
+  staging:
+    image: caddy:alpine
+    command: ["caddy", "file-server", "--root", "/srv/site"]
+    volumes:
+      - ./docker:/srv/site:ro
+    networks:
+      - disinto-net
+
   # Staging deployment slot — activated by Woodpecker staging pipeline (#755).
   # Profile-gated: only starts when explicitly targeted by deploy commands.
   # Customize image/ports/volumes for your project after init.
-  staging:
+  staging-deploy:
     image: alpine:3
     profiles: ["staging"]
     security_opt:
@@ -279,6 +306,7 @@ volumes:
   woodpecker-data:
   agent-data:
   project-repos:
+  caddy_data:
 
 networks:
   disinto-net:
@@ -319,6 +347,95 @@ generate_agent_docker() {
   if [ ! -f "${docker_dir}/entrypoint.sh" ]; then
     echo "Warning: docker/agents/entrypoint.sh not found — expected in repo" >&2
   fi
+}
+
+# Generate docker/Caddyfile template for edge proxy.
+generate_caddyfile() {
+  local docker_dir="${FACTORY_ROOT}/docker"
+  local caddyfile="${docker_dir}/Caddyfile"
+
+  if [ -f "$caddyfile" ]; then
+    echo "Caddyfile:  ${caddyfile} (already exists, skipping)"
+    return
+  fi
+
+  cat > "$caddyfile" <<'CADDYFILEEOF'
+# Caddyfile — edge proxy configuration
+# IP-only binding at bootstrap; domain + TLS added later via vault resource request
+
+:80 {
+    # Reverse proxy to Forgejo
+    handle /forgejo/* {
+        reverse_proxy forgejo:3000
+    }
+
+    # Reverse proxy to Woodpecker CI
+    handle /ci/* {
+        reverse_proxy woodpecker:8000
+    }
+
+    # Default: proxy to staging container
+    handle {
+        reverse_proxy staging:80
+    }
+}
+CADDYFILEEOF
+
+  echo "Created: ${caddyfile}"
+}
+
+# Generate docker/index.html default page.
+generate_staging_index() {
+  local docker_dir="${FACTORY_ROOT}/docker"
+  local index_file="${docker_dir}/index.html"
+
+  if [ -f "$index_file" ]; then
+    echo "Staging:  ${index_file} (already exists, skipping)"
+    return
+  fi
+
+  cat > "$index_file" <<'INDEXEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nothing shipped yet</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 3rem;
+            margin: 0 0 1rem 0;
+        }
+        p {
+            font-size: 1.25rem;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Nothing shipped yet</h1>
+        <p>CI pipelines will update this page with your staging artifacts.</p>
+    </div>
+</body>
+</html>
+INDEXEOF
+
+  echo "Created: ${index_file}"
 }
 
 # Generate template .woodpecker/ deployment pipeline configs in a project repo.
@@ -1599,6 +1716,8 @@ p.write_text(text)
     forge_port="${forge_port:-3000}"
     generate_compose "$forge_port"
     generate_agent_docker
+    generate_caddyfile
+    generate_staging_index
     # Create empty .env so docker compose can parse the agents service
     # env_file reference before setup_forge generates the real tokens (#769)
     touch "${FACTORY_ROOT}/.env"
