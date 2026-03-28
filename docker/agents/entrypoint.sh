@@ -18,7 +18,7 @@ log() {
 
 # Build crontab from project TOMLs and install for the agent user.
 install_project_crons() {
-  local cron_lines=""
+  local cron_lines="DISINTO_CONTAINER=1"
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
     local pname
