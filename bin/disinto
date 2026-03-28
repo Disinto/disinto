@@ -190,7 +190,9 @@ services:
       WOODPECKER_FORGEJO_URL: http://forgejo:3000
       WOODPECKER_FORGEJO_CLIENT: ${WP_FORGEJO_CLIENT:-}
       WOODPECKER_FORGEJO_SECRET: ${WP_FORGEJO_SECRET:-}
-      WOODPECKER_HOST: http://woodpecker:8000
+      WOODPECKER_HOST: http://localhost:8000
+      WOODPECKER_OPEN: "true"
+      WOODPECKER_GRPC_ADDR: ":9000"
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_DATABASE_DRIVER: sqlite3
       WOODPECKER_DATABASE_DATASOURCE: /var/lib/woodpecker/woodpecker.sqlite
@@ -1444,9 +1446,16 @@ generate_woodpecker_token() {
     return 1
   fi
 
-  # Rewrite internal Docker network URL to host-accessible URL
-  # (compose uses http://forgejo:3000 internally)
-  wp_redir=$(printf '%s' "$wp_redir" | sed "s|http://forgejo:3000|${forge_url}|g")
+  # Rewrite internal Docker network URLs to host-accessible URLs.
+  # Handle both plain and URL-encoded forms of the internal hostnames.
+  local forge_url_enc wp_server_enc
+  forge_url_enc=$(printf '%s' "$forge_url" | sed 's|:|%3A|g; s|/|%2F|g')
+  wp_server_enc=$(printf '%s' "$wp_server" | sed 's|:|%3A|g; s|/|%2F|g')
+  wp_redir=$(printf '%s' "$wp_redir" \
+    | sed "s|http://forgejo:3000|${forge_url}|g" \
+    | sed "s|http%3A%2F%2Fforgejo%3A3000|${forge_url_enc}|g" \
+    | sed "s|http://woodpecker:8000|${wp_server}|g" \
+    | sed "s|http%3A%2F%2Fwoodpecker%3A8000|${wp_server_enc}|g")
 
   # Step 3: Hit Forgejo OAuth authorize endpoint with session
   # First time: shows consent page. Already approved: redirects with code.
@@ -1462,11 +1471,17 @@ generate_woodpecker_token() {
     # Auto-approved: extract code from redirect
     auth_code=$(printf '%s' "$redirect_loc" | sed 's/.*code=\([^&]*\).*/\1/')
   else
-    # Consent page: extract CSRF and POST grant approval
-    local consent_csrf
+    # Consent page: extract CSRF and all form fields, POST grant approval
+    local consent_csrf form_client_id form_state form_redirect_uri
     consent_csrf=$(grep -o 'name="_csrf"[^>]*' "$auth_body_file" 2>/dev/null \
       | head -1 | grep -oE '(content|value)="[^"]*"' | head -1 \
       | cut -d'"' -f2) || consent_csrf=""
+    form_client_id=$(grep 'name="client_id"' "$auth_body_file" 2>/dev/null \
+      | grep -oE 'value="[^"]*"' | cut -d'"' -f2) || form_client_id=""
+    form_state=$(grep 'name="state"' "$auth_body_file" 2>/dev/null \
+      | grep -oE 'value="[^"]*"' | cut -d'"' -f2) || form_state=""
+    form_redirect_uri=$(grep 'name="redirect_uri"' "$auth_body_file" 2>/dev/null \
+      | grep -oE 'value="[^"]*"' | cut -d'"' -f2) || form_redirect_uri=""
 
     if [ -n "$consent_csrf" ]; then
       local grant_headers
@@ -1474,6 +1489,12 @@ generate_woodpecker_token() {
         -D - -o /dev/null -X POST \
         "${forge_url}/login/oauth/grant" \
         --data-urlencode "_csrf=${consent_csrf}" \
+        --data-urlencode "client_id=${form_client_id}" \
+        --data-urlencode "state=${form_state}" \
+        --data-urlencode "scope=" \
+        --data-urlencode "nonce=" \
+        --data-urlencode "redirect_uri=${form_redirect_uri}" \
+        --data-urlencode "granted=true" \
         2>/dev/null) || grant_headers=""
 
       redirect_loc=$(printf '%s' "$grant_headers" \
@@ -1525,9 +1546,16 @@ generate_woodpecker_token() {
   fi
 
   # Step 5: Create persistent personal access token via Woodpecker API
+  # WP v3 requires CSRF header for POST operations with session tokens.
+  local wp_csrf
+  wp_csrf=$(curl -sf -b "user_sess=${wp_token}" \
+    "${wp_server}/web-config.js" 2>/dev/null \
+    | sed -n 's/.*WOODPECKER_CSRF = "\([^"]*\)".*/\1/p') || wp_csrf=""
+
   local pat_resp final_token
   pat_resp=$(curl -sf -X POST \
-    -H "Authorization: Bearer ${wp_token}" \
+    -b "user_sess=${wp_token}" \
+    ${wp_csrf:+-H "X-CSRF-Token: ${wp_csrf}"} \
     "${wp_server}/api/user/token" \
     2>/dev/null) || pat_resp=""
 
@@ -1589,12 +1617,18 @@ activate_woodpecker_repo() {
   if [ -n "$wp_repo_id" ] && [ "$wp_repo_id" != "0" ]; then
     echo "Repo:    ${forge_repo} already active in Woodpecker (id=${wp_repo_id})"
   else
+    # Get Forgejo repo numeric ID for WP activation
+    local forge_repo_id
+    forge_repo_id=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL:-http://localhost:3000}/api/v1/repos/${forge_repo}" 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null) || forge_repo_id=""
+
     local activate_resp
     activate_resp=$(curl -sf -X POST \
       -H "Authorization: Bearer ${wp_token}" \
-      -H "Content-Type: application/json" \
-      "${wp_server}/api/repos" \
-      -d "{\"forge_remote_id\":\"${forge_repo}\"}" 2>/dev/null) || activate_resp=""
+      "${wp_server}/api/repos?forge_remote_id=${forge_repo_id:-0}" \
+      2>/dev/null) || activate_resp=""
 
     wp_repo_id=$(printf '%s' "$activate_resp" | jq -r '.id // empty' 2>/dev/null) || true
 
