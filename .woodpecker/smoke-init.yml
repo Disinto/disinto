@@ -11,7 +11,6 @@ when:
   event: [push, pull_request]
   path:
     - "bin/disinto"
-    - "lib/env.sh"
     - "lib/load-project.sh"
     - "tests/smoke-init.sh"
     - ".woodpecker/smoke-init.yml"
