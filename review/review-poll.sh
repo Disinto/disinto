@@ -139,7 +139,6 @@ fi
 while IFS= read -r line; do
   PR_NUM=$(echo "$line" | awk '{print $1}')
   PR_SHA=$(echo "$line" | awk '{print $2}')
-  PR_BRANCH=$(echo "$line" | awk '{print $3}')
 
   CI_STATE=$(ci_commit_status "$PR_SHA")
 
