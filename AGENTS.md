@@ -8,7 +8,7 @@ gardener, supervisor, planner, predictor, action, vault) that pick up issues fro
 implement them, review PRs, plan from the vision, gate dangerous actions, and
 keep the system healthy — all via cron and `claude -p`.
 
-See `README.md` for the full architecture and `BOOTSTRAP.md` for setup.
+See `README.md` for the full architecture and `disinto-factory/SKILL.md` for setup.
 
 ## Directory layout
 

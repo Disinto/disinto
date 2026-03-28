@@ -203,7 +203,6 @@ docker exec disinto-forgejo-1 su -c "forgejo admin user change-password --userna
 
 - Read `AGENTS.md` for per-agent architecture and file-level docs
 - Read `VISION.md` for project philosophy
-- Read `BOOTSTRAP.md` for detailed init walkthrough
 - The factory uses a single internal Forgejo as its forge, regardless of where mirrors go
 - Dev-agent uses `claude -p --resume` for session continuity across CI/review cycles
 - Mirror pushes happen automatically after every merge (fire-and-forget)
