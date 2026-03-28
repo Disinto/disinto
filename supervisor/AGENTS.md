@@ -32,7 +32,6 @@ runs directly from cron like the planner and predictor.
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
 - `$OPS_REPO_ROOT/journal/supervisor/*.md` — Daily health logs from each supervisor run
-- `supervisor/PROMPT.md` — Best-practices reference for remediation actions
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 - `supervisor/supervisor-poll.sh` — Legacy bash orchestrator (superseded by
