@@ -30,9 +30,9 @@ with open(sys.argv[1], 'rb') as f:
 
     cron_lines="${cron_lines}
 # disinto: ${pname}
-2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >/dev/null 2>&1
-4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >/dev/null 2>&1
-0 0,6,12,18 * * * cd ${DISINTO_DIR} && bash gardener/gardener-run.sh ${toml} >/dev/null 2>&1"
+2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
+4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
+0 0,6,12,18 * * * cd ${DISINTO_DIR} && bash gardener/gardener-run.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
   done
 
   if [ -n "$cron_lines" ]; then
