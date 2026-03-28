@@ -1,72 +1,71 @@
 #!/usr/bin/env bash
-# action-agent.sh — Autonomous action agent: tmux + Claude + action formula
+# =============================================================================
+# action-agent.sh — Synchronous action agent: SDK + shared libraries
+#
+# Synchronous bash loop using claude -p (one-shot invocation).
+# No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Usage: ./action-agent.sh <issue-number> [project.toml]
 #
-# Lifecycle:
-#   1. Fetch issue body (action formula) + existing comments
-#   2. Create isolated git worktree: /tmp/action-{issue}-{timestamp}
-#   3. Create tmux session: action-{project}-{issue_num} with interactive claude in worktree
-#   4. Inject initial prompt: formula + comments + phase protocol instructions
-#   5. Monitor phase file via monitor_phase_loop (shared with dev-agent)
-#   Path A (git output): Claude pushes → handler creates PR → CI poll → review
-#     injection → merge → cleanup (same loop as dev-agent via phase-handler.sh)
-#   Path B (no git output): Claude posts results → PHASE:done → cleanup
-#   6. For human input: Claude writes PHASE:escalate; human responds via vault/forge
-#   7. Cleanup on terminal phase: kill children, destroy worktree, remove temp files
+# Flow:
+#   1. Preflight: issue_check_deps(), memory guard, concurrency lock
+#   2. Parse model from YAML front matter in issue body (custom model selection)
+#   3. Worktree: worktree_create() for action isolation
+#   4. Load formula from issue body
+#   5. Build prompt: formula + prior non-bot comments (resume context)
+#   6. agent_run(worktree, prompt) → Claude executes action, may push
+#   7. If pushed: pr_walk_to_merge() from lib/pr-lifecycle.sh
+#   8. Cleanup: worktree_cleanup(), issue_close()
 #
-# Key principle: The runtime creates and destroys. The formula preserves.
-# The formula must push results before signaling done — the worktree is nuked after.
+# Action-specific (stays in runner):
+#   - YAML front matter parsing (model selection)
+#   - Bot username filtering for prior comments
+#   - Lifetime watchdog (MAX_LIFETIME=8h wall-clock cap)
+#   - Child process cleanup (docker compose, background jobs)
 #
-# Session:  action-{project}-{issue_num} (tmux)
-# Log:      action/action-poll-{project}.log
-
+# From shared libraries:
+#   - Issue lifecycle: lib/issue-lifecycle.sh
+#   - Worktree: lib/worktree.sh
+#   - PR lifecycle: lib/pr-lifecycle.sh
+#   - Agent SDK: lib/agent-sdk.sh
+#
+# Log: action/action-poll-{project}.log
+# =============================================================================
 set -euo pipefail
 
 ISSUE="${1:?Usage: action-agent.sh <issue-number> [project.toml]}"
 export PROJECT_TOML="${2:-${PROJECT_TOML:-}}"
 
-source "$(dirname "$0")/../lib/env.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# shellcheck source=../lib/env.sh
+source "$FACTORY_ROOT/lib/env.sh"
 # Use action-bot's own Forgejo identity (#747)
 FORGE_TOKEN="${FORGE_ACTION_TOKEN:-${FORGE_TOKEN}}"
-source "$(dirname "$0")/../lib/ci-helpers.sh"
-source "$(dirname "$0")/../lib/agent-session.sh"
-source "$(dirname "$0")/../lib/formula-session.sh"
-source "$(dirname "$0")/../lib/worktree.sh"
-# shellcheck source=../dev/phase-handler.sh
-source "$(dirname "$0")/../dev/phase-handler.sh"
-SESSION_NAME="action-${PROJECT_NAME}-${ISSUE}"
+# shellcheck source=../lib/ci-helpers.sh
+source "$FACTORY_ROOT/lib/ci-helpers.sh"
+# shellcheck source=../lib/worktree.sh
+source "$FACTORY_ROOT/lib/worktree.sh"
+# shellcheck source=../lib/issue-lifecycle.sh
+source "$FACTORY_ROOT/lib/issue-lifecycle.sh"
+# shellcheck source=../lib/agent-sdk.sh
+source "$FACTORY_ROOT/lib/agent-sdk.sh"
+# shellcheck source=../lib/pr-lifecycle.sh
+source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
+
+BRANCH="action/issue-${ISSUE}"
+WORKTREE="/tmp/action-${ISSUE}-$(date +%s)"
 LOCKFILE="/tmp/action-agent-${ISSUE}.lock"
 LOGFILE="${DISINTO_LOG_DIR}/action/action-poll-${PROJECT_NAME:-default}.log"
-IDLE_TIMEOUT="${ACTION_IDLE_TIMEOUT:-14400}"  # 4h default
-MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}" # 8h default wall-clock cap
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh
+SID_FILE="/tmp/action-session-${PROJECT_NAME:-default}-${ISSUE}.sid"
+MAX_LIFETIME="${ACTION_MAX_LIFETIME:-28800}"  # 8h default wall-clock cap
 SESSION_START_EPOCH=$(date +%s)
-
-# --- Phase handler globals (agent-specific; defaults in phase-handler.sh) ---
-# shellcheck disable=SC2034  # used by phase-handler.sh
-API="${FORGE_API}"
-BRANCH="action/issue-${ISSUE}"
-# shellcheck disable=SC2034  # used by phase-handler.sh
-WORKTREE="/tmp/action-${ISSUE}-$(date +%s)"
-PHASE_FILE="/tmp/action-session-${PROJECT_NAME:-default}-${ISSUE}.phase"
-IMPL_SUMMARY_FILE="/tmp/action-impl-summary-${PROJECT_NAME:-default}-${ISSUE}.txt"
-PREFLIGHT_RESULT="/tmp/action-preflight-${ISSUE}.json"
-SCRATCH_FILE="/tmp/action-${ISSUE}-scratch.md"
 
 log() {
   printf '[%s] action#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
-
-status() {
-  log "$*"
-}
-
-# --- Action-specific helpers for phase-handler.sh ---
-cleanup_worktree() {
-  worktree_cleanup "$WORKTREE"
-  log "destroyed worktree: ${WORKTREE}"
-}
-cleanup_labels() { :; }    # action agent doesn't use in-progress labels
 
 # --- Concurrency lock (per issue) ---
 if [ -f "$LOCKFILE" ]; then
@@ -87,7 +86,6 @@ cleanup() {
     wait "$LIFETIME_WATCHDOG_PID" 2>/dev/null || true
   fi
   rm -f "$LOCKFILE"
-  agent_kill_session "$SESSION_NAME"
   # Kill any remaining child processes spawned during the run
   local children
   children=$(jobs -p 2>/dev/null) || true
@@ -100,23 +98,17 @@ cleanup() {
   # Best-effort docker cleanup for containers started during this action
   (cd "${WORKTREE}" 2>/dev/null && docker compose down 2>/dev/null) || true
   # Preserve worktree on crash for debugging; clean up on success
-  local final_phase=""
-  [ -f "$PHASE_FILE" ] && final_phase=$(head -1 "$PHASE_FILE" 2>/dev/null || true)
-  if [ "${final_phase:-}" = "PHASE:crashed" ] || [ "${_MONITOR_LOOP_EXIT:-}" = "crashed" ] || [ "$exit_code" -ne 0 ]; then
-    worktree_preserve "$WORKTREE" "crashed (exit=$exit_code, phase=${final_phase:-unknown})"
+  if [ "$exit_code" -ne 0 ]; then
+    worktree_preserve "$WORKTREE" "crashed (exit=$exit_code)"
   else
-    cleanup_worktree
+    worktree_cleanup "$WORKTREE"
   fi
-  rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$PREFLIGHT_RESULT"
+  rm -f "$SID_FILE"
 }
 trap cleanup EXIT
 
 # --- Memory guard ---
-AVAIL_MB=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo)
-if [ "$AVAIL_MB" -lt 2000 ]; then
-  log "SKIP: only ${AVAIL_MB}MB available (need 2000MB)"
-  exit 0
-fi
+memory_guard 2000
 
 # --- Fetch issue ---
 log "fetching issue #${ISSUE}"
@@ -139,25 +131,10 @@ fi
 
 log "Issue: ${ISSUE_TITLE}"
 
-# --- Dependency check (skip before spawning Claude) ---
-DEPS=$(printf '%s' "$ISSUE_BODY" | bash "${FACTORY_ROOT}/lib/parse-deps.sh")
-if [ -n "$DEPS" ]; then
-  ALL_MET=true
-  while IFS= read -r dep; do
-    [ -z "$dep" ] && continue
-    DEP_STATE=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${dep}" | jq -r '.state // "open"') || DEP_STATE="open"
-    if [ "$DEP_STATE" != "closed" ]; then
-      log "SKIP: dependency #${dep} still open — not spawning session"
-      ALL_MET=false
-      break
-    fi
-  done <<< "$DEPS"
-  if [ "$ALL_MET" = false ]; then
-    rm -f "$LOCKFILE"
-    exit 0
-  fi
-  log "all dependencies met"
+# --- Dependency check (shared library) ---
+if ! issue_check_deps "$ISSUE"; then
+  log "SKIP: issue #${ISSUE} blocked by: ${_ISSUE_BLOCKED_BY[*]}"
+  exit 0
 fi
 
 # --- Extract model from YAML front matter (if present) ---
@@ -191,28 +168,23 @@ if [ -n "$COMMENTS_JSON" ] && [ "$COMMENTS_JSON" != "null" ] && [ "$COMMENTS_JSO
        "[\(.user.login) at \(.created_at[:19])]\n\(.body)\n---"' 2>/dev/null || true)
 fi
 
-# --- Create isolated worktree ---
-log "creating worktree: ${WORKTREE}"
+# --- Determine git remote ---
 cd "${PROJECT_REPO_ROOT}"
-
-# Determine which git remote corresponds to FORGE_URL
 _forge_host=$(echo "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
 FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\)/ {print $1; exit}')
 FORGE_REMOTE="${FORGE_REMOTE:-origin}"
 export FORGE_REMOTE
 
+# --- Create isolated worktree ---
+log "creating worktree: ${WORKTREE}"
 git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
-if ! git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" 2>&1; then
+if ! worktree_create "$WORKTREE" "$BRANCH"; then
   log "ERROR: worktree creation failed"
   exit 1
 fi
 log "worktree ready: ${WORKTREE}"
 
-# --- Read scratch file (compaction survival) ---
-SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
-SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
-
-# --- Build initial prompt ---
+# --- Build prompt ---
 PRIOR_SECTION=""
 if [ -n "$PRIOR_COMMENTS" ]; then
   PRIOR_SECTION="## Prior comments (resume context)
@@ -222,19 +194,15 @@ ${PRIOR_COMMENTS}
 "
 fi
 
-# Build phase protocol from shared function (Path B covered in Instructions section above)
-PHASE_PROTOCOL_INSTRUCTIONS="$(build_phase_protocol_prompt "$PHASE_FILE" "$IMPL_SUMMARY_FILE" "$BRANCH")"
+GIT_INSTRUCTIONS=$(build_phase_protocol_prompt "$BRANCH" "$FORGE_REMOTE")
 
-# Write phase protocol to context file for compaction survival
-write_compact_context "$PHASE_FILE" "$PHASE_PROTOCOL_INSTRUCTIONS"
-
-INITIAL_PROMPT="You are an action agent. Your job is to execute the action formula
+PROMPT="You are an action agent. Your job is to execute the action formula
 in the issue below.
 
 ## Issue #${ISSUE}: ${ISSUE_TITLE}
 
 ${ISSUE_BODY}
-${SCRATCH_CONTEXT}
+
 ${PRIOR_SECTION}## Instructions
 
 1. Read the action formula steps in the issue body carefully.
@@ -248,29 +216,20 @@ ${PRIOR_SECTION}## Instructions
      \"${FORGE_API}/issues/${ISSUE}/comments\" \\
      -d \"{\\\"body\\\": \\\"your comment here\\\"}\"
 
-4. If a step requires human input or approval, write PHASE:escalate with a reason.
-   A human will review and respond via the forge.
+4. If a step requires human input or approval, post a comment explaining what
+   is needed and stop — the orchestrator will block the issue.
 
 ### Path A: If this action produces code changes (e.g. config updates, baselines):
    - You are already in an isolated worktree at: ${WORKTREE}
-   - Create and switch to branch: git checkout -b ${BRANCH}
+   - You are on branch: ${BRANCH}
    - Make your changes, commit, and push: git push ${FORGE_REMOTE} ${BRANCH}
    - **IMPORTANT:** The worktree is destroyed after completion. Push all
-     results before signaling done — unpushed work will be lost.
-   - Follow the phase protocol below — the orchestrator handles PR creation,
-     CI monitoring, and review injection.
+     results before finishing — unpushed work will be lost.
 
 ### Path B: If this action produces no code changes (investigation, report):
    - Post results as a comment on issue #${ISSUE}.
    - **IMPORTANT:** The worktree is destroyed after completion. Copy any
-     files you need to persistent paths before signaling done.
-   - Close the issue:
-     curl -sf -X PATCH \\
-       -H \"Authorization: token \${FORGE_TOKEN}\" \\
-       -H 'Content-Type: application/json' \\
-       \"${FORGE_API}/issues/${ISSUE}\" \\
-       -d '{\"state\": \"closed\"}'
-   - Signal completion: echo \"PHASE:done\" > \"${PHASE_FILE}\"
+     files you need to persistent paths before finishing.
 
 5. Environment variables available in your bash sessions:
    FORGE_TOKEN, FORGE_API, FORGE_REPO, FORGE_WEB, PROJECT_NAME
@@ -286,73 +245,79 @@ ${PRIOR_SECTION}## Instructions
 If the prior comments above show work already completed, resume from where it
 left off.
 
-${SCRATCH_INSTRUCTION}
-
-${PHASE_PROTOCOL_INSTRUCTIONS}"
-
-# --- Create tmux session ---
-log "creating tmux session: ${SESSION_NAME}"
-if ! create_agent_session "${SESSION_NAME}" "${WORKTREE}" "${PHASE_FILE}"; then
-  log "ERROR: failed to create tmux session"
-  exit 1
-fi
-
-# --- Inject initial prompt ---
-inject_formula "${SESSION_NAME}" "${INITIAL_PROMPT}"
-log "initial prompt injected into session"
+${GIT_INSTRUCTIONS}"
 
 # --- Wall-clock lifetime watchdog (background) ---
-# Caps total session time independently of idle timeout.  When the cap is
-# hit the watchdog kills the tmux session, posts a summary comment on the
-# issue, and writes PHASE:failed so monitor_phase_loop exits.
+# Caps total run time independently of claude -p timeout. When the cap is
+# hit the watchdog kills the main process, which triggers cleanup via trap.
 _lifetime_watchdog() {
   local remaining=$(( MAX_LIFETIME - ($(date +%s) - SESSION_START_EPOCH) ))
   [ "$remaining" -le 0 ] && remaining=1
   sleep "$remaining"
   local hours=$(( MAX_LIFETIME / 3600 ))
-  log "MAX_LIFETIME (${hours}h) reached — killing session"
-  agent_kill_session "$SESSION_NAME"
+  log "MAX_LIFETIME (${hours}h) reached — killing agent"
   # Post summary comment on issue
-  local body="Action session killed: wall-clock lifetime cap (${hours}h) reached."
+  local body="Action agent killed: wall-clock lifetime cap (${hours}h) reached."
   curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H 'Content-Type: application/json' \
     "${FORGE_API}/issues/${ISSUE}/comments" \
     -d "{\"body\": \"${body}\"}" >/dev/null 2>&1 || true
-  printf 'PHASE:failed\nReason: max_lifetime (%sh) reached\n' "$hours" > "$PHASE_FILE"
-  # Touch phase-changed marker so monitor_phase_loop picks up immediately
-  touch "/tmp/phase-changed-${SESSION_NAME}.marker"
+  kill $$ 2>/dev/null || true
 }
 _lifetime_watchdog &
 LIFETIME_WATCHDOG_PID=$!
 
-# --- Monitor phase loop (shared with dev-agent) ---
-status "monitoring phase: ${PHASE_FILE} (action agent)"
-monitor_phase_loop "$PHASE_FILE" "$IDLE_TIMEOUT" _on_phase_change "$SESSION_NAME"
+# --- Run agent ---
+log "running agent (worktree: ${WORKTREE})"
+agent_run --worktree "$WORKTREE" "$PROMPT"
+log "agent_run complete"
 
-# Handle exit reason from monitor_phase_loop
-case "${_MONITOR_LOOP_EXIT:-}" in
-  idle_timeout)
-    # Post diagnostic comment + label blocked
-    post_blocked_diagnostic "idle_timeout"
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
-    ;;
-  idle_prompt)
-    # Notification + blocked label already handled by _on_phase_change(PHASE:failed) callback
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
-    ;;
-  PHASE:failed)
-    # Check if this was a max_lifetime kill (phase file contains the reason)
-    if grep -q 'max_lifetime' "$PHASE_FILE" 2>/dev/null; then
-      post_blocked_diagnostic "max_lifetime"
-    fi
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
-    ;;
-  done)
-    # Belt-and-suspenders: callback handles primary cleanup,
-    # but ensure sentinel files are removed if callback was interrupted
-    rm -f "$PHASE_FILE" "${PHASE_FILE%.phase}.context" "$IMPL_SUMMARY_FILE" "$SCRATCH_FILE"
-    ;;
-esac
+# --- Detect if branch was pushed (Path A vs Path B) ---
+PUSHED=false
+# Check if remote branch exists
+git fetch "${FORGE_REMOTE}" "$BRANCH" 2>/dev/null || true
+if git rev-parse --verify "${FORGE_REMOTE}/${BRANCH}" >/dev/null 2>&1; then
+  PUSHED=true
+fi
+# Fallback: check local commits ahead of base
+if [ "$PUSHED" = false ]; then
+  if git -C "$WORKTREE" log "${FORGE_REMOTE}/${PRIMARY_BRANCH}..${BRANCH}" --oneline 2>/dev/null | grep -q .; then
+    PUSHED=true
+  fi
+fi
+
+if [ "$PUSHED" = true ]; then
+  # --- Path A: code changes pushed — create PR and walk to merge ---
+  log "branch pushed — creating PR"
+  PR_NUMBER=""
+  PR_NUMBER=$(pr_create "$BRANCH" "action: ${ISSUE_TITLE}" \
+    "Closes #${ISSUE}
+
+Automated action execution by action-agent.") || true
+
+  if [ -n "$PR_NUMBER" ]; then
+    log "walking PR #${PR_NUMBER} to merge"
+    pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" || true
+
+    case "${_PR_WALK_EXIT_REASON:-}" in
+      merged)
+        log "PR #${PR_NUMBER} merged — closing issue"
+        issue_close "$ISSUE"
+        ;;
+      *)
+        log "PR #${PR_NUMBER} not merged (reason: ${_PR_WALK_EXIT_REASON:-unknown})"
+        issue_block "$ISSUE" "pr_not_merged: ${_PR_WALK_EXIT_REASON:-unknown}"
+        ;;
+    esac
+  else
+    log "ERROR: failed to create PR"
+    issue_block "$ISSUE" "pr_creation_failed"
+  fi
+else
+  # --- Path B: no code changes — close issue directly ---
+  log "no branch pushed — closing issue (Path B)"
+  issue_close "$ISSUE"
+fi
 
 log "action-agent finished for issue #${ISSUE}"
