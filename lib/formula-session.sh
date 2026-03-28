@@ -291,6 +291,33 @@ build_graph_section() {
   fi
 }
 
+# ── SDK helpers ───────────────────────────────────────────────────────────
+
+# build_sdk_prompt_footer [EXTRA_API_LINES]
+# Like build_prompt_footer but omits the phase protocol section (SDK mode).
+# Sets PROMPT_FOOTER.
+build_sdk_prompt_footer() {
+  # shellcheck disable=SC2034  # consumed by build_prompt_footer
+  PHASE_FILE=""  # not used in SDK mode
+  build_prompt_footer "${1:-}"
+  PROMPT_FOOTER="${PROMPT_FOOTER%%## Phase protocol*}"
+}
+
+# formula_worktree_setup WORKTREE
+# Creates an isolated worktree for synchronous formula execution.
+# Fetches primary branch, cleans stale worktree, creates new one, and
+# sets an EXIT trap for cleanup.
+# Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH.
+formula_worktree_setup() {
+  local worktree="$1"
+  cd "$PROJECT_REPO_ROOT" || return
+  git fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+  worktree_cleanup "$worktree"
+  git worktree add "$worktree" "origin/${PRIMARY_BRANCH}" --detach 2>/dev/null
+  # shellcheck disable=SC2064  # expand worktree now, not at trap time
+  trap "worktree_cleanup '$worktree'" EXIT
+}
+
 # ── Prompt + monitor helpers ──────────────────────────────────────────────
 
 # build_prompt_footer [EXTRA_API_LINES]

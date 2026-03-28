@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# predictor-run.sh — Cron wrapper: predictor execution via Claude + formula
+# predictor-run.sh — Cron wrapper: predictor execution via SDK + formula
 #
-# Runs daily (or on-demand). Guards against concurrent runs and low memory.
-# Creates a tmux session with Claude (sonnet) reading formulas/run-predictor.toml.
-# Files prediction/unreviewed issues for the planner to triage.
+# Synchronous bash loop using claude -p (one-shot invocation).
+# No tmux sessions, no phase files — the bash script IS the state machine.
+#
+# Flow:
+#   1. Guards: cron lock, memory check
+#   2. Load formula (formulas/run-predictor.toml)
+#   3. Context: AGENTS.md, ops:RESOURCES.md, VISION.md, structural graph
+#   4. agent_run(worktree, prompt) → Claude analyzes, writes to ops repo
 #
 # Usage:
 #   predictor-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -22,24 +27,22 @@ export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 source "$FACTORY_ROOT/lib/env.sh"
 # Use predictor-bot's own Forgejo identity (#747)
 FORGE_TOKEN="${FORGE_PREDICTOR_TOKEN:-${FORGE_TOKEN}}"
-# shellcheck source=../lib/agent-session.sh
-source "$FACTORY_ROOT/lib/agent-session.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
 # shellcheck source=../lib/worktree.sh
 source "$FACTORY_ROOT/lib/worktree.sh"
 # shellcheck source=../lib/guard.sh
 source "$FACTORY_ROOT/lib/guard.sh"
+# shellcheck source=../lib/agent-sdk.sh
+source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
 LOG_FILE="$SCRIPT_DIR/predictor.log"
-# shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-SESSION_NAME="predictor-${PROJECT_NAME}"
-PHASE_FILE="/tmp/predictor-session-${PROJECT_NAME}.phase"
-
-# shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
-PHASE_POLL_INTERVAL=15
-
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh
+LOGFILE="$LOG_FILE"
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh
+SID_FILE="/tmp/predictor-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/predictor-${PROJECT_NAME}-scratch.md"
+WORKTREE="/tmp/${PROJECT_NAME}-predictor-run"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
@@ -62,10 +65,10 @@ SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
 # ── Build prompt ─────────────────────────────────────────────────────────
-build_prompt_footer
+build_sdk_prompt_footer
+export CLAUDE_MODEL="sonnet"
 
-# shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-PROMPT="You are the prediction agent (goblin) for ${FORGE_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
+PROMPT="You are the prediction agent (goblin) for ${FORGE_REPO}. Work through the formula below.
 
 Your role: abstract adversary. Find the project's biggest weakness, challenge
 planner claims, and generate evidence. Explore when uncertain (file a prediction),
@@ -88,12 +91,12 @@ ${FORMULA_CONTENT}
 ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
-# ── Run session ──────────────────────────────────────────────────────────
-export CLAUDE_MODEL="sonnet"
-run_formula_and_monitor "predictor"
+# ── Create worktree ──────────────────────────────────────────────────────
+formula_worktree_setup "$WORKTREE"
 
-# ── Cleanup scratch file on normal exit ──────────────────────────────────
-# FINAL_PHASE already set by run_formula_and_monitor
-if [ "${FINAL_PHASE:-}" = "PHASE:done" ]; then
-  rm -f "$SCRATCH_FILE"
-fi
+# ── Run agent ─────────────────────────────────────────────────────────────
+agent_run --worktree "$WORKTREE" "$PROMPT"
+log "agent_run complete"
+
+rm -f "$SCRATCH_FILE"
+log "--- Predictor run done ---"
