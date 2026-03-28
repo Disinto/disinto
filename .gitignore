@@ -25,3 +25,4 @@ gardener/dust.jsonl
 
 # Individual encrypted secrets (managed by disinto secrets add)
 secrets/
+.woodpecker/smoke-init.yml
