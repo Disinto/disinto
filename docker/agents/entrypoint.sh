@@ -19,7 +19,9 @@ log() {
 # Build crontab from project TOMLs and install for the agent user.
 install_project_crons() {
   local cron_lines="DISINTO_CONTAINER=1
-USER=agent"
+USER=agent
+FORGE_URL=http://forgejo:3000
+PROJECT_REPO_ROOT=/home/agent/repos/${pname}"
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
     local pname
