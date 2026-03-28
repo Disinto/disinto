@@ -96,6 +96,7 @@ echo "=== 2/2  Function resolution ==="
 # Included — these are inline-sourced by agent scripts:
 #   lib/env.sh              — sourced by every agent (log, forge_api, etc.)
 #   lib/agent-session.sh    — sourced by orchestrators (create_agent_session, monitor_phase_loop, etc.)
+#   lib/agent-sdk.sh        — sourced by SDK agents (agent_run, agent_recover_session)
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
 #   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
@@ -115,7 +116,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
+  for f in lib/agent-session.sh lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -180,6 +181,7 @@ check_script() {
 # but this verifies calls *within* each lib file are also resolvable.
 check_script lib/env.sh              lib/mirrors.sh
 check_script lib/agent-session.sh
+check_script lib/agent-sdk.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
 check_script lib/file-action-issue.sh   lib/secret-scan.sh
@@ -203,7 +205,7 @@ check_script dev/phase-handler.sh      action/action-agent.sh lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh
-check_script review/review-pr.sh         lib/agent-session.sh
+check_script review/review-pr.sh         lib/agent-sdk.sh
 check_script review/review-poll.sh
 check_script planner/planner-run.sh      lib/agent-session.sh lib/formula-session.sh
 check_script supervisor/supervisor-poll.sh
