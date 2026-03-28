@@ -3,14 +3,21 @@ set -euo pipefail
 
 LOG_DIR="/home/agent/data/logs/dev"
 mkdir -p "$LOG_DIR" /home/agent/data
+chown -R agent:agent /home/agent/data 2>/dev/null || true
 
 log() {
-  printf "[%s] llama-loop: %s\n" "$(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)" "$*" | tee -a "$LOG_DIR/llama-loop.log"
+  printf "[%s] llama-loop: %s\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOG_DIR/llama-loop.log"
 }
+
+# Apply token override for named agent identity
+if [ -n "${FORGE_TOKEN_OVERRIDE:-}" ]; then
+  export FORGE_TOKEN="$FORGE_TOKEN_OVERRIDE"
+fi
 
 log "Starting llama dev-agent loop"
 log "Backend: ${ANTHROPIC_BASE_URL:-not set}"
 log "Claude CLI: $(claude --version 2>&1 || echo not found)"
+log "Agent identity: $(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${FORGE_URL:-http://forgejo:3000}/api/v1/user" 2>/dev/null | jq -r '.login // "unknown"')"
 
 # Clone repo if not present
 if [ ! -d "${PROJECT_REPO_ROOT}/.git" ]; then
@@ -24,8 +31,10 @@ fi
 log "Entering poll loop (interval: ${POLL_INTERVAL:-300}s)"
 
 # Run dev-poll in a loop as agent user
+# Export FORGE_TOKEN so the child process inherits the override
 while true; do
   su -s /bin/bash agent -c "
+    export FORGE_TOKEN='${FORGE_TOKEN}'
     cd /home/agent/disinto && \
     bash dev/dev-poll.sh ${PROJECT_TOML:-projects/disinto.toml}
   " >> "$LOG_DIR/llama-loop.log" 2>&1 || true
