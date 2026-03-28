@@ -307,6 +307,11 @@ memory_guard 2000
 # PRIORITY 1: orphaned in-progress issues
 # =============================================================================
 log "checking for in-progress issues"
+
+# Get current bot identity for assignee checks
+BOT_USER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${API%%/repos*}/user" | jq -r '.login') || BOT_USER=""
+
 ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=in-progress&limit=10&type=issues")
 
@@ -387,7 +392,20 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
     fi
   else
-    log "recovering orphaned issue #${ISSUE_NUM} (no PR found)"
+    # Check assignee before adopting orphaned issue
+    ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${ISSUE_NUM}") || true
+    ASSIGNEE=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+
+    if [ -n "$ASSIGNEE" ] && [ "$ASSIGNEE" != "$BOT_USER" ]; then
+      log "issue #${ISSUE_NUM} assigned to ${ASSIGNEE} — skipping (not orphaned)"
+      # Remove in-progress label since this agent isn't working on it
+      curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+        "${API}/issues/${ISSUE_NUM}/labels/in-progress" >/dev/null 2>&1 || true
+      exit 0
+    fi
+
+    log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
     exit 0
