@@ -26,6 +26,7 @@ set -euo pipefail
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/worktree.sh"
+source "$(dirname "$0")/../lib/agent-sdk.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -47,43 +48,6 @@ log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMB
 status() { printf '[%s] PR #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" > "$STATUSFILE"; log "$*"; }
 cleanup() { rm -rf "$REVIEW_TMPDIR" "$LOCKFILE" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"; }
 trap cleanup EXIT
-
-# =============================================================================
-# agent_run — synchronous Claude invocation (one-shot claude -p)
-# =============================================================================
-# Usage: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
-# Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
-_AGENT_SESSION_ID=""
-
-agent_run() {
-  local resume_id="" worktree_dir=""
-  while [[ "${1:-}" == --* ]]; do
-    case "$1" in
-      --resume) shift; resume_id="${1:-}"; shift ;;
-      --worktree) shift; worktree_dir="${1:-}"; shift ;;
-      *) shift ;;
-    esac
-  done
-  local prompt="${1:-}"
-
-  local -a args=(-p "$prompt" --output-format json --dangerously-skip-permissions --max-turns 200)
-  [ -n "$resume_id" ] && args+=(--resume "$resume_id")
-  [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
-
-  local run_dir="${worktree_dir:-$(pwd)}"
-  local output
-  log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
-  output=$(cd "$run_dir" && timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") || true
-
-  # Extract and persist session_id
-  local new_sid
-  new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
-  if [ -n "$new_sid" ]; then
-    _AGENT_SESSION_ID="$new_sid"
-    printf '%s' "$new_sid" > "$SID_FILE"
-    log "agent_run: session_id=${new_sid:0:12}..."
-  fi
-}
 
 # =============================================================================
 # LOG ROTATION
