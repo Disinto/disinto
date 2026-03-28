@@ -92,21 +92,11 @@ Supported actions:
 The commit-and-pr step converts JSONL to JSON array. The orchestrator executes
 actions after the PR merges. Do NOT call mutation APIs directly during the run."
 
-PROMPT_FOOTER="## Forge API reference
-Base URL: ${FORGE_API}
-Auth header: -H \"Authorization: token \${FORGE_TOKEN}\"
-  Read issue:  curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/issues/{number}' | jq '.body'
-  Create issue: curl -sf -X POST -H \"Authorization: token \${FORGE_TOKEN}\" -H 'Content-Type: application/json' '${FORGE_API}/issues' -d '{\"title\":\"...\",\"body\":\"...\",\"labels\":[LABEL_ID]}'${GARDENER_API_EXTRA}
-  List labels: curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/labels'
-NEVER echo or include the actual token value in output — always reference \${FORGE_TOKEN}.
-
-## Environment
-FACTORY_ROOT=${FACTORY_ROOT}
-PROJECT_REPO_ROOT=${PROJECT_REPO_ROOT}
-OPS_REPO_ROOT=${OPS_REPO_ROOT}
-PRIMARY_BRANCH=${PRIMARY_BRANCH}
-
-## Completion protocol (REQUIRED)
+# Reuse shared footer (API reference + environment), replace phase protocol
+# shellcheck disable=SC2034  # consumed by build_prompt_footer
+PHASE_FILE=""  # not used in SDK mode
+build_prompt_footer "$GARDENER_API_EXTRA"
+PROMPT_FOOTER="${PROMPT_FOOTER%%## Phase protocol*}## Completion protocol (REQUIRED)
 When the commit-and-pr step creates a PR, write the PR number and stop:
   echo \"\$PR_NUMBER\" > '${GARDENER_PR_FILE}'
 Then STOP. Do NOT write PHASE: signals — the orchestrator handles CI, review, and merge.
