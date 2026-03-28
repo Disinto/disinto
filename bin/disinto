@@ -1639,6 +1639,9 @@ activate_woodpecker_repo() {
 
     if [ -n "$wp_repo_id" ] && [ "$wp_repo_id" != "0" ]; then
       echo "Repo:    ${forge_repo} activated in Woodpecker (id=${wp_repo_id})"
+
+      # Set pipeline timeout to 5 minutes (default is 60)
+      curl -sf -X PATCH         -H "Authorization: Bearer ${wp_token}"         -H "Content-Type: application/json"         "${wp_server}/api/repos/${wp_repo_id}"         -d '{"timeout": 5}' >/dev/null 2>&1         && echo "Config:  pipeline timeout set to 5 minutes"         || true
     else
       echo "Warning: could not activate repo in Woodpecker" >&2
       echo "  Activate manually: woodpecker-cli repo add ${forge_repo}" >&2
