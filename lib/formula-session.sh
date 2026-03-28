@@ -310,7 +310,7 @@ build_sdk_prompt_footer() {
 # Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH.
 formula_worktree_setup() {
   local worktree="$1"
-  cd "$PROJECT_REPO_ROOT"
+  cd "$PROJECT_REPO_ROOT" || return
   git fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
   worktree_cleanup "$worktree"
   git worktree add "$worktree" "origin/${PRIMARY_BRANCH}" --detach 2>/dev/null
