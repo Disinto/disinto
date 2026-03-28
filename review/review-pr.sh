@@ -1,41 +1,79 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015,SC2016
-# review-pr.sh — Thin orchestrator for AI PR review (formula: formulas/review-pr.toml)
+# review-pr.sh — Synchronous reviewer agent for a single PR
+#
 # Usage: ./review-pr.sh <pr-number> [--force]
+#
+# Architecture:
+#   Synchronous bash loop using claude -p (one-shot invocations).
+#   Session continuity via --resume and .sid file.
+#   Re-review resumes the original session — Claude remembers its prior review.
+#
+# Flow:
+#   1. Fetch PR metadata (title, body, head, base, SHA, CI state)
+#   2. Detect re-review (previous review at different SHA, incremental diff)
+#   3. Create review worktree, checkout PR head
+#   4. Build structural analysis graph
+#   5. Load review formula
+#   6. agent_run(worktree, prompt) → Claude reviews, writes verdict JSON
+#   7. Parse verdict, post as Forge review (APPROVE / REQUEST_CHANGES / COMMENT)
+#   8. Save session ID to .sid file for re-review continuity
+#
+# Session file: /tmp/review-session-{project}-{pr}.sid
 set -euo pipefail
+
+# Load shared environment and libraries
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
-source "$(dirname "$0")/../lib/agent-session.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
+source "$(dirname "$0")/../lib/agent-sdk.sh"
+
+# Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
+# --- Config ---
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
 FORCE="${2:-}"
 API="${FORGE_API}"
 LOGFILE="${DISINTO_LOG_DIR}/review/review.log"
-SESSION="review-${PROJECT_NAME}-${PR_NUMBER}"
-PHASE_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.phase"
-OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"
 WORKTREE="/tmp/${PROJECT_NAME}-review-${PR_NUMBER}"
+SID_FILE="/tmp/review-session-${PROJECT_NAME}-${PR_NUMBER}.sid"
+OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"
 LOCKFILE="/tmp/${PROJECT_NAME}-review.lock"
 STATUSFILE="/tmp/${PROJECT_NAME}-review-status"
 MAX_DIFF=25000
 REVIEW_TMPDIR=$(mktemp -d)
+
 log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"; }
 status() { printf '[%s] PR #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" > "$STATUSFILE"; log "$*"; }
 cleanup() { rm -rf "$REVIEW_TMPDIR" "$LOCKFILE" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"; }
 trap cleanup EXIT
 
+# =============================================================================
+# LOG ROTATION
+# =============================================================================
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
   mv "$LOGFILE" "$LOGFILE.old"
 fi
-AVAIL=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
-[ "$AVAIL" -lt 1500 ] && { log "SKIP: ${AVAIL}MB available"; exit 0; }
+
+# =============================================================================
+# MEMORY GUARD
+# =============================================================================
+memory_guard 1500
+
+# =============================================================================
+# CONCURRENCY LOCK
+# =============================================================================
 if [ -f "$LOCKFILE" ]; then
   LPID=$(cat "$LOCKFILE" 2>/dev/null || true)
   [ -n "$LPID" ] && kill -0 "$LPID" 2>/dev/null && { log "SKIP: locked"; exit 0; }
   rm -f "$LOCKFILE"
 fi
 echo $$ > "$LOCKFILE"
+
+# =============================================================================
+# FETCH PR METADATA
+# =============================================================================
 status "fetching metadata"
 PR_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/pulls/${PR_NUMBER}")
 PR_TITLE=$(printf '%s' "$PR_JSON" | jq -r '.title')
@@ -45,15 +83,27 @@ PR_BASE=$(printf '%s' "$PR_JSON" | jq -r '.base.ref')
 PR_SHA=$(printf '%s' "$PR_JSON" | jq -r '.head.sha')
 PR_STATE=$(printf '%s' "$PR_JSON" | jq -r '.state')
 log "${PR_TITLE} (${PR_HEAD}→${PR_BASE} ${PR_SHA:0:7})"
+
 if [ "$PR_STATE" != "open" ]; then
-  log "SKIP: state=${PR_STATE}"; agent_kill_session "$SESSION"
-  cd "${PROJECT_REPO_ROOT}"; git worktree remove "$WORKTREE" --force 2>/dev/null || true
-  rm -rf "$WORKTREE" "$PHASE_FILE" "$OUTPUT_FILE" 2>/dev/null || true; exit 0
+  log "SKIP: state=${PR_STATE}"
+  worktree_cleanup "$WORKTREE"
+  rm -f "$OUTPUT_FILE" "$SID_FILE" 2>/dev/null || true
+  exit 0
 fi
+
+# =============================================================================
+# CI CHECK
+# =============================================================================
 CI_STATE=$(ci_commit_status "$PR_SHA")
-CI_NOTE=""; if ! ci_passed "$CI_STATE"; then
+CI_NOTE=""
+if ! ci_passed "$CI_STATE"; then
   ci_required_for_pr "$PR_NUMBER" && { log "SKIP: CI=${CI_STATE}"; exit 0; }
-  CI_NOTE=" (not required — non-code PR)"; fi
+  CI_NOTE=" (not required — non-code PR)"
+fi
+
+# =============================================================================
+# DUPLICATE CHECK — skip if already reviewed at this SHA
+# =============================================================================
 ALL_COMMENTS=$(forge_api_all "/issues/${PR_NUMBER}/comments")
 HAS_CMT=$(printf '%s' "$ALL_COMMENTS" | jq --arg s "$PR_SHA" \
   '[.[]|select(.body|contains("<!-- reviewed: "+$s+" -->"))]|length')
@@ -61,6 +111,10 @@ HAS_CMT=$(printf '%s' "$ALL_COMMENTS" | jq --arg s "$PR_SHA" \
 HAS_FML=$(forge_api_all "/pulls/${PR_NUMBER}/reviews" | jq --arg s "$PR_SHA" \
   '[.[]|select(.commit_id==$s)|select(.state!="COMMENT")]|length')
 [ "${HAS_FML:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: formal review"; exit 0; }
+
+# =============================================================================
+# RE-REVIEW DETECTION
+# =============================================================================
 PREV_CONTEXT="" IS_RE_REVIEW=false PREV_SHA=""
 PREV_REV=$(printf '%s' "$ALL_COMMENTS" | jq -r --arg s "$PR_SHA" \
   '[.[]|select(.body|contains("<!-- reviewed:"))|select(.body|contains($s)|not)]|last // empty')
@@ -79,6 +133,13 @@ if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
       "${PREV_SHA:0:7}" "$PREV_BODY" "$DEV_SEC" "${PREV_SHA:0:7}" "${PR_SHA:0:7}" "$INCR")
   fi
 fi
+
+# Recover session_id from .sid file (re-review continuity)
+agent_recover_session
+
+# =============================================================================
+# FETCH DIFF
+# =============================================================================
 status "fetching diff"
 curl -s -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/pulls/${PR_NUMBER}.diff" > "${REVIEW_TMPDIR}/full.diff"
@@ -86,15 +147,25 @@ FSIZE=$(stat -c%s "${REVIEW_TMPDIR}/full.diff" 2>/dev/null || echo 0)
 DIFF=$(head -c "$MAX_DIFF" "${REVIEW_TMPDIR}/full.diff")
 FILES=$(grep -E '^\+\+\+ b/' "${REVIEW_TMPDIR}/full.diff" | sed 's|^+++ b/||' | grep -v '/dev/null' | sort -u || true)
 DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes)"
-cd "${PROJECT_REPO_ROOT}"; git fetch origin "$PR_HEAD" 2>/dev/null || true
+
+# =============================================================================
+# WORKTREE SETUP
+# =============================================================================
+cd "${PROJECT_REPO_ROOT}"
+git fetch origin "$PR_HEAD" 2>/dev/null || true
+
 if [ -d "$WORKTREE" ]; then
   cd "$WORKTREE"; git checkout --detach "$PR_SHA" 2>/dev/null || {
-    cd "${PROJECT_REPO_ROOT}"; git worktree remove "$WORKTREE" --force 2>/dev/null || true
-    rm -rf "$WORKTREE"; git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; }
-else git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; fi
-status "preparing review session"
+    cd "${PROJECT_REPO_ROOT}"; worktree_cleanup "$WORKTREE"
+    git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; }
+else
+  git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null
+fi
 
-# ── Build structural analysis graph for changed files ────────────────────
+# =============================================================================
+# BUILD STRUCTURAL ANALYSIS GRAPH
+# =============================================================================
+status "preparing review"
 GRAPH_REPORT="/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"
 GRAPH_SECTION=""
 # shellcheck disable=SC2086
@@ -109,42 +180,43 @@ else
   log "WARN: build-graph.py failed — continuing without structural analysis"
 fi
 
+# =============================================================================
+# BUILD PROMPT
+# =============================================================================
 FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
 {
-  printf 'You are the review agent for %s. Follow the formula to review PR #%s.\nYou MUST write PHASE:done to '\''%s'\'' when finished.\n\n' \
-    "${FORGE_REPO}" "${PR_NUMBER}" "${PHASE_FILE}"
+  printf 'You are the review agent for %s. Follow the formula to review PR #%s.\n\n' \
+    "${FORGE_REPO}" "${PR_NUMBER}"
   printf '## PR Context\n**%s** (%s → %s) | SHA: %s | CI: %s%s\nRe-review: %s\n\n' \
     "$PR_TITLE" "$PR_HEAD" "$PR_BASE" "$PR_SHA" "$CI_STATE" "$CI_NOTE" "$IS_RE_REVIEW"
   printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
   [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
-  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nPHASE_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
-    "$FORMULA" "$OUTPUT_FILE" "$PHASE_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
+  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
+    "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
   printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'
+  printf '\n## Completion\nAfter writing the JSON file to REVIEW_OUTPUT_FILE, stop.\nDo NOT write to any phase file — completion is automatic.\n'
 } > "${REVIEW_TMPDIR}/prompt.md"
 PROMPT=$(cat "${REVIEW_TMPDIR}/prompt.md")
 
-rm -f "$OUTPUT_FILE" "$PHASE_FILE"; agent_kill_session "$SESSION"
+# =============================================================================
+# RUN REVIEW AGENT
+# =============================================================================
+status "running review"
+rm -f "$OUTPUT_FILE"
 export CLAUDE_MODEL="sonnet"
-create_agent_session "$SESSION" "$WORKTREE" "$PHASE_FILE" || { log "ERROR: session failed"; exit 1; }
-agent_inject_into_session "$SESSION" "$PROMPT"
-log "prompt injected (${#PROMPT} bytes, re-review: ${IS_RE_REVIEW})"
 
-status "waiting for review"
-_REVIEW_CRASH=0
-review_cb() {
-  log "phase: $1"
-  case "$1" in
-    PHASE:crashed)
-      [ "$_REVIEW_CRASH" -gt 0 ] && return 0; _REVIEW_CRASH=$((_REVIEW_CRASH + 1))
-      create_agent_session "${_MONITOR_SESSION}" "$WORKTREE" "$PHASE_FILE" 2>/dev/null && \
-        agent_inject_into_session "${_MONITOR_SESSION}" "$PROMPT" ;;
-    PHASE:done|PHASE:failed|PHASE:escalate) agent_kill_session "${_MONITOR_SESSION}" ;;
-  esac
-}
-monitor_phase_loop "$PHASE_FILE" 600 "review_cb" "$SESSION"
+if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
+  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" "$PROMPT"
+else
+  agent_run --worktree "$WORKTREE" "$PROMPT"
+fi
+log "agent_run complete (re-review: ${IS_RE_REVIEW})"
 
+# =============================================================================
+# PARSE REVIEW OUTPUT
+# =============================================================================
 REVIEW_JSON=""
 if [ -f "$OUTPUT_FILE" ]; then
   RAW=$(cat "$OUTPUT_FILE")
@@ -155,6 +227,7 @@ if [ -f "$OUTPUT_FILE" ]; then
     [ -n "${EXT:-}" ] && printf '%s' "$EXT" | jq -e '.verdict' >/dev/null 2>&1 && REVIEW_JSON="$EXT"
   fi
 fi
+
 if [ -z "$REVIEW_JSON" ]; then
   log "ERROR: no valid review output"
   jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed.\n---\n*${PR_SHA:0:7}*" \
@@ -162,11 +235,15 @@ if [ -z "$REVIEW_JSON" ]; then
     -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
   exit 1
 fi
+
 VERDICT=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict' | tr '[:lower:]' '[:upper:]' | tr '-' '_')
 REASON=$(printf '%s' "$REVIEW_JSON" | jq -r '.verdict_reason // ""')
 REVIEW_MD=$(printf '%s' "$REVIEW_JSON" | jq -r '.review_markdown // ""')
 log "verdict: ${VERDICT}"
 
+# =============================================================================
+# POST REVIEW
+# =============================================================================
 status "posting review"
 RTYPE="Review"
 if [ "$IS_RE_REVIEW" = true ]; then
@@ -184,6 +261,9 @@ POST_RC=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
 [ "$POST_RC" != "201" ] && { log "ERROR: comment HTTP ${POST_RC}"; exit 1; }
 log "posted review comment"
 
+# =============================================================================
+# POST FORMAL REVIEW
+# =============================================================================
 REVENT="COMMENT"
 case "$VERDICT" in APPROVE) REVENT="APPROVED" ;; REQUEST_CHANGES|DISCUSS) REVENT="REQUEST_CHANGES" ;; esac
 if [ "$REVENT" = "APPROVED" ]; then
@@ -204,10 +284,18 @@ curl -s -o /dev/null -X POST -H "Authorization: token ${FORGE_REVIEW_TOKEN}" \
   --data-binary @"${REVIEW_TMPDIR}/formal.json" >/dev/null 2>&1 || true
 log "formal ${REVENT} submitted"
 
+# =============================================================================
+# FINAL CLEANUP
+# =============================================================================
 case "$VERDICT" in
-  REQUEST_CHANGES|DISCUSS) printf 'PHASE:awaiting_changes\nSHA:%s\n' "$PR_SHA" > "$PHASE_FILE" ;;
-  *) rm -f "$PHASE_FILE" "$OUTPUT_FILE"; cd "${PROJECT_REPO_ROOT}"
-     git worktree remove "$WORKTREE" --force 2>/dev/null || true
-     rm -rf "$WORKTREE" 2>/dev/null || true ;;
+  REQUEST_CHANGES|DISCUSS)
+    # Keep session and worktree for re-review continuity
+    log "keeping session for re-review (SID: ${_AGENT_SESSION_ID:0:12}...)"
+    ;;
+  *)
+    rm -f "$SID_FILE" "$OUTPUT_FILE"
+    worktree_cleanup "$WORKTREE"
+    ;;
 esac
+
 log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
