@@ -20,21 +20,21 @@ fi
 export DISINTO_LOG_DIR
 
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env.
-# Inside the container, compose already injects env vars via env_file + environment
-# overrides (e.g. FORGE_URL=http://forgejo:3000).  Re-sourcing .env would clobber
-# those compose-level values, so we skip it when DISINTO_CONTAINER=1.
-if [ "${DISINTO_CONTAINER:-}" != "1" ]; then
-  if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
-    set -a
-    eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" \
-      || echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
-    set +a
-  elif [ -f "$FACTORY_ROOT/.env" ]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$FACTORY_ROOT/.env"
-    set +a
-  fi
+# Always source .env — cron jobs inside the container do NOT inherit compose
+# env vars (FORGE_TOKEN, etc.). Compose-injected vars (like FORGE_URL) are
+# already set and won't be clobbered since env.sh uses ${VAR:-default} patterns
+# for derived values. FORGE_URL from .env (localhost:3000) is overridden below
+# by the compose-injected value when running via docker exec.
+if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
+  set -a
+  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" \
+    || echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
+  set +a
+elif [ -f "$FACTORY_ROOT/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$FACTORY_ROOT/.env"
+  set +a
 fi
 
 # PATH: foundry, node, system
