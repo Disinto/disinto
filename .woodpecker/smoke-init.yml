@@ -8,13 +8,21 @@
 # to run as the 'git' user (pre-created in the Forgejo Docker image).
 
 when:
-  event: [push, pull_request]
-  path:
-    - "bin/disinto"
-    - "lib/load-project.sh"
-    - "tests/smoke-init.sh"
-    - ".woodpecker/smoke-init.yml"
-    - "docker/**"
+  - event: pull_request
+    path:
+      - "bin/disinto"
+      - "lib/load-project.sh"
+      - "tests/smoke-init.sh"
+      - ".woodpecker/smoke-init.yml"
+      - "docker/**"
+  - event: push
+    branch: main
+    path:
+      - "bin/disinto"
+      - "lib/load-project.sh"
+      - "tests/smoke-init.sh"
+      - ".woodpecker/smoke-init.yml"
+      - "docker/**"
 
 steps:
   - name: smoke-init
