@@ -128,11 +128,9 @@ disinto/
 │   ├── vault-poll.sh     # Cron entry: process pending dangerous actions
 │   ├── vault-agent.sh    # Classifies and routes actions (claude -p)
 │   ├── vault-fire.sh     # Executes an approved action
-│   ├── vault-reject.sh   # Marks an action as rejected
-│   └── PROMPT.md         # System prompt for vault agent
+│   └── vault-reject.sh   # Marks an action as rejected
 └── supervisor/
     ├── supervisor-poll.sh   # Supervisor: health checks + claude -p
-    ├── PROMPT.md         # Supervisor's system prompt
     ├── update-prompt.sh  # Self-learning: append to best-practices
     └── best-practices/   # Progressive disclosure knowledge base
         ├── memory.md

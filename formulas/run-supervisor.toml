@@ -241,6 +241,16 @@ run-to-run context so future supervisor runs can detect trends
 IMPORTANT: Do NOT commit or push the journal — it is a local working file.
 The journal directory is committed to git periodically by other agents.
 
+## Learning
+
+If you discover something new during this run, append it to the relevant
+knowledge file in the ops repo:
+  echo "### Lesson title
+  Description of what you learned." >> "${OPS_REPO_ROOT}/knowledge/<file>.md"
+
+Knowledge files: memory.md, disk.md, ci.md, forge.md, dev-agent.md,
+review-agent.md, git.md.
+
 After writing the journal, write the phase signal:
   echo 'PHASE:done' > "$PHASE_FILE"
 """

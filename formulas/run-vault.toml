@@ -1,0 +1,104 @@
+# formulas/run-vault.toml — Vault agent formula (action gating + classification)
+#
+# Source of truth for the vault agent's classification and routing logic.
+# Used by vault/vault-agent.sh via claude -p when pending actions exist.
+#
+# The vault handles two kinds of items:
+#   A. Action Gating (*.json) — classified and routed by this formula
+#   B. Procurement Requests (*.md) — handled by vault-poll.sh + human
+#
+# This formula covers Pipeline A only.
+
+name        = "run-vault"
+description = "Vault action gating: classify pending actions, route by risk"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md"]
+
+[[steps]]
+id    = "classify-and-route"
+title = "Classify and route all pending vault actions"
+description = """
+You are the vault agent. For each pending JSON action, decide:
+**auto-approve**, **escalate**, or **reject**.
+
+## Two Pipelines
+
+### A. Action Gating (*.json)
+Actions from agents that need safety classification before execution.
+You classify and route these: auto-approve, escalate, or reject.
+
+### B. Procurement Requests (*.md)
+Resource requests from the planner. These always escalate to the human —
+you do NOT auto-approve or reject procurement requests. The human fulfills
+the request (creates accounts, provisions infra, adds secrets to .env)
+and moves the file from $OPS_REPO_ROOT/vault/pending/ to $OPS_REPO_ROOT/vault/approved/.
+vault-fire.sh then writes the RESOURCES.md entry.
+
+## Routing Table (risk x reversibility)
+
+| Risk     | Reversible | Route                                      |
+|----------|------------|---------------------------------------------|
+| low      | true       | auto-approve -> fire immediately             |
+| low      | false      | auto-approve -> fire, log prominently        |
+| medium   | true       | auto-approve -> fire, notify via vault/forge  |
+| medium   | false      | escalate via vault/forge -> wait for human reply |
+| high     | any        | always escalate -> wait for human reply       |
+
+## Rules
+
+1. **Never lower risk.** You may override the source agent's self-assessed
+   risk *upward*, never downward. If a blog-post looks like it contains
+   pricing claims, bump it to medium or high.
+2. **requires_human: true always escalates.** Regardless of risk level.
+3. **Unknown action types -> reject** with reason unknown_type.
+4. **Malformed JSON -> reject** with reason malformed.
+5. **Payload validation:** Check that the payload has the minimum required
+   fields for the action type. Missing fields -> reject with reason.
+6. **Procurement requests (*.md) -> skip.** These are handled by the human
+   directly. Do not attempt to classify, approve, or reject them.
+
+## Action Type Defaults
+
+| Type             | Default Risk | Default Reversible |
+|------------------|-------------|-------------------|
+| blog-post        | low         | yes               |
+| social-post      | medium      | yes               |
+| email-blast      | high        | no                |
+| pricing-change   | high        | partial           |
+| dns-change       | high        | partial           |
+| webhook-call     | medium      | depends           |
+| stripe-charge    | high        | no                |
+
+## Available Tools
+
+You have shell access. Use these for routing decisions:
+
+source ${FACTORY_ROOT}/lib/env.sh
+
+### Auto-approve and fire
+bash ${FACTORY_ROOT}/vault/vault-fire.sh <action-id>
+
+### Escalate
+echo "PHASE:escalate" > "$PHASE_FILE"
+
+### Reject
+bash ${FACTORY_ROOT}/vault/vault-reject.sh <action-id> "<reason>"
+
+## Output Format
+
+After processing each action, print exactly:
+
+ROUTE: <action-id> -> <auto-approve|escalate|reject> -- <reason>
+
+## Important
+
+- Process ALL pending JSON actions in the batch. Never skip silently.
+- For auto-approved actions, fire them immediately via vault-fire.sh.
+- For escalated actions, move to $OPS_REPO_ROOT/vault/approved/ only AFTER human approval.
+- Read the action JSON carefully. Check the payload, not just the metadata.
+- Ignore .md files in pending/ -- those are procurement requests handled
+  separately by vault-poll.sh and the human.
+"""

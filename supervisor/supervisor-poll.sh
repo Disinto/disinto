@@ -19,7 +19,7 @@ source "$(dirname "$0")/../lib/ci-helpers.sh"
 LOGFILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 STATUSFILE="/tmp/supervisor-status"
 LOCKFILE="/tmp/supervisor-poll.lock"
-PROMPT_FILE="${FACTORY_ROOT}/supervisor/PROMPT.md"
+PROMPT_FILE="${FACTORY_ROOT}/formulas/run-supervisor.toml"
 PROJECTS_DIR="${FACTORY_ROOT}/projects"
 
 METRICS_FILE="${DISINTO_LOG_DIR}/metrics/supervisor-metrics.jsonl"
