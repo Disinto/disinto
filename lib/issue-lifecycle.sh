@@ -81,11 +81,35 @@ _ilc_in_progress_id()  { _ilc_ensure_label_id _ILC_IN_PROGRESS_ID "in-progress" 
 _ilc_blocked_id()      { _ilc_ensure_label_id _ILC_BLOCKED_ID     "blocked"     "#e11d48"; }
 
 # ---------------------------------------------------------------------------
-# issue_claim — add "in-progress" label, remove "backlog" label.
+# issue_claim — assign issue to bot, add "in-progress" label, remove "backlog".
 # Args: issue_number
+# Returns: 0 on success, 1 if already assigned to another agent
 # ---------------------------------------------------------------------------
 issue_claim() {
   local issue="$1"
+
+  # Get current bot identity
+  local me
+  me=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/user" | jq -r '.login') || return 1
+
+  # Check current assignee
+  local current
+  current=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue}" | jq -r '.assignee.login // ""') || return 1
+
+  if [ -n "$current" ] && [ "$current" != "$me" ]; then
+    _ilc_log "issue #${issue} already assigned to ${current} — skipping"
+    return 1
+  fi
+
+  # Assign to self (Forgejo rejects if already assigned differently)
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}" \
+    -d "{\"assignees\":[\"${me}\"]}" >/dev/null 2>&1 || return 1
+
   local ip_id bl_id
   ip_id=$(_ilc_in_progress_id)
   bl_id=$(_ilc_backlog_id)
@@ -102,14 +126,23 @@ issue_claim() {
       "${FORGE_API}/issues/${issue}/labels/${bl_id}" >/dev/null 2>&1 || true
   fi
   _ilc_log "claimed issue #${issue}"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
-# issue_release — remove "in-progress" label, add "backlog" label.
+# issue_release — remove "in-progress" label, add "backlog" label, clear assignee.
 # Args: issue_number
 # ---------------------------------------------------------------------------
 issue_release() {
   local issue="$1"
+
+  # Clear assignee
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}" \
+    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+
   local ip_id bl_id
   ip_id=$(_ilc_in_progress_id)
   bl_id=$(_ilc_backlog_id)
@@ -184,11 +217,19 @@ issue_block() {
 }
 
 # ---------------------------------------------------------------------------
-# issue_close — PATCH state to closed.
+# issue_close — clear assignee, PATCH state to closed.
 # Args: issue_number
 # ---------------------------------------------------------------------------
 issue_close() {
   local issue="$1"
+
+  # Clear assignee before closing
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}" \
+    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+
   curl -sf -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \

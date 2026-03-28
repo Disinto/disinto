@@ -185,7 +185,11 @@ log "preflight passed"
 # =============================================================================
 # CLAIM ISSUE
 # =============================================================================
-issue_claim "$ISSUE"
+if ! issue_claim "$ISSUE"; then
+  log "SKIP: failed to claim issue #${ISSUE} (already assigned to another agent)"
+  echo '{"status":"already_done","reason":"issue was claimed by another agent"}' > "$PREFLIGHT_RESULT"
+  exit 0
+fi
 CLAIMED=true
 
 # =============================================================================
