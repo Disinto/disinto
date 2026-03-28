@@ -58,4 +58,9 @@ agent_run() {
     printf '%s' "$new_sid" > "$SID_FILE"
     log "agent_run: session_id=${new_sid:0:12}..."
   fi
+
+  # Save output for diagnostics (no_push, crashes)
+  _AGENT_LAST_OUTPUT="$output"
+  local diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
+  printf '%s' "$output" > "$diag_file" 2>/dev/null || true
 }

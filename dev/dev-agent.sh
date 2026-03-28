@@ -454,6 +454,18 @@ Closing as already implemented."
   fi
 
   log "ERROR: no branch pushed after agent_run"
+  # Dump diagnostics
+  local diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
+  if [ -f "$diag_file" ]; then
+    local result_text cost_usd num_turns
+    result_text=$(jq -r '.result // "no result field"' "$diag_file" 2>/dev/null | head -50) || result_text="(parse error)"
+    cost_usd=$(jq -r '.cost_usd // "?"' "$diag_file" 2>/dev/null) || cost_usd="?"
+    num_turns=$(jq -r '.num_turns // "?"' "$diag_file" 2>/dev/null) || num_turns="?"
+    log "no_push diagnostics: turns=${num_turns} cost=${cost_usd}"
+    log "no_push result: ${result_text}"
+    # Save full output for later analysis
+    cp "$diag_file" "${DISINTO_LOG_DIR:-/tmp}/dev/no-push-${ISSUE}-$(date +%s).json" 2>/dev/null || true
+  fi
   issue_block "$ISSUE" "no_push" "Claude did not push branch ${BRANCH}"
   CLAIMED=false
   worktree_cleanup "$WORKTREE"
