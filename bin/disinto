@@ -2119,6 +2119,12 @@ disinto_secrets() {
       fi
       _secrets_ensure_sops
       encrypt_env_file "$env_file" "$enc_file"
+      # Verify decryption works
+      if ! sops -d "$enc_file" >/dev/null 2>&1; then
+        echo "Error: failed to verify .env.enc decryption" >&2
+        rm -f "$enc_file"
+        exit 1
+      fi
       rm -f "$env_file"
       echo "Migrated: .env -> .env.enc (plaintext removed)"
       ;;
