@@ -19,7 +19,7 @@ REPO_ROOT="${PROJECT_REPO_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 API_BASE="${FORGE_API}"
-LOGFILE="$SCRIPT_DIR/review.log"
+LOGFILE="${DISINTO_LOG_DIR}/review/review-poll.log"
 MAX_REVIEWS=3
 REVIEW_IDLE_TIMEOUT=14400  # 4h: kill review session if idle
 
