@@ -232,6 +232,7 @@ services:
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       - \${HOME}/.ssh:/home/agent/.ssh:ro
+      - \${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
     environment:
       FORGE_URL: http://forgejo:3000
       WOODPECKER_SERVER: http://woodpecker:8000
