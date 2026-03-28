@@ -34,6 +34,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/ci-helpers.sh"
 # shellcheck source=../lib/mirrors.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/mirrors.sh"
 
+# --- Default callback stubs (agents can override after sourcing) ---
+# cleanup_worktree and cleanup_labels are called during phase transitions.
+# Provide no-op defaults so phase-handler.sh is self-contained; sourcing
+# agents override these with real implementations.
+if ! declare -f cleanup_worktree >/dev/null 2>&1; then
+  cleanup_worktree() { :; }
+fi
+if ! declare -f cleanup_labels >/dev/null 2>&1; then
+  cleanup_labels() { :; }
+fi
+
 # --- Default globals (agents can override after sourcing) ---
 : "${CI_POLL_TIMEOUT:=1800}"
 : "${REVIEW_POLL_TIMEOUT:=10800}"

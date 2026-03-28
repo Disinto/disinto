@@ -199,9 +199,9 @@ check_script lib/ci-debug.sh
 check_script lib/parse-deps.sh
 
 # Agent scripts — list cross-sourced files where function scope flows across files.
-# phase-handler.sh calls helpers defined by its sourcing agent (action-agent.sh).
+# phase-handler.sh defines default callback stubs; sourcing agents may override.
 check_script dev/dev-agent.sh
-check_script dev/phase-handler.sh      action/action-agent.sh lib/secret-scan.sh
+check_script dev/phase-handler.sh      lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh
@@ -215,7 +215,7 @@ check_script vault/vault-fire.sh
 check_script vault/vault-poll.sh
 check_script vault/vault-reject.sh
 check_script action/action-poll.sh
-check_script action/action-agent.sh    dev/phase-handler.sh
+check_script action/action-agent.sh
 check_script supervisor/supervisor-run.sh
 check_script supervisor/preflight.sh
 check_script predictor/predictor-run.sh
