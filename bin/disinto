@@ -2023,20 +2023,94 @@ disinto_secrets() {
     fi
   }
 
+  local secrets_dir="${FACTORY_ROOT}/secrets"
+  local age_key_file="${HOME}/.config/sops/age/keys.txt"
+
+  # Shared helper: ensure age key exists and export AGE_PUBLIC_KEY
+  _secrets_ensure_age_key() {
+    if ! command -v age &>/dev/null; then
+      echo "Error: age is required." >&2
+      echo "  Install age: apt install age  /  brew install age" >&2
+      exit 1
+    fi
+    if [ ! -f "$age_key_file" ]; then
+      echo "Error: age key not found at ${age_key_file}" >&2
+      echo "  Run 'disinto init' to generate one, or create manually with:" >&2
+      echo "    mkdir -p ~/.config/sops/age && age-keygen -o ${age_key_file}" >&2
+      exit 1
+    fi
+    AGE_PUBLIC_KEY="$(age-keygen -y "$age_key_file" 2>/dev/null)"
+    if [ -z "$AGE_PUBLIC_KEY" ]; then
+      echo "Error: failed to read public key from ${age_key_file}" >&2
+      exit 1
+    fi
+    export AGE_PUBLIC_KEY
+  }
+
   case "$subcmd" in
+    add)
+      local name="${2:-}"
+      if [ -z "$name" ]; then
+        echo "Usage: disinto secrets add <NAME>" >&2
+        exit 1
+      fi
+      _secrets_ensure_age_key
+      mkdir -p "$secrets_dir"
+
+      printf 'Enter value for %s: ' "$name" >&2
+      local value
+      IFS= read -rs value
+      echo >&2
+      if [ -z "$value" ]; then
+        echo "Error: empty value" >&2
+        exit 1
+      fi
+
+      local enc_path="${secrets_dir}/${name}.enc"
+      if [ -f "$enc_path" ]; then
+        printf 'Secret %s already exists. Overwrite? [y/N] ' "$name" >&2
+        local confirm
+        read -r confirm
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+          echo "Aborted." >&2
+          exit 1
+        fi
+      fi
+      if ! printf '%s' "$value" | age -r "$AGE_PUBLIC_KEY" -o "$enc_path"; then
+        echo "Error: encryption failed" >&2
+        exit 1
+      fi
+      echo "Stored: ${enc_path}"
+      ;;
+    show)
+      local name="${2:-}"
+      if [ -n "$name" ]; then
+        # Show individual secret: disinto secrets show <NAME>
+        local enc_path="${secrets_dir}/${name}.enc"
+        if [ ! -f "$enc_path" ]; then
+          echo "Error: ${enc_path} not found" >&2
+          exit 1
+        fi
+        if [ ! -f "$age_key_file" ]; then
+          echo "Error: age key not found at ${age_key_file}" >&2
+          exit 1
+        fi
+        age -d -i "$age_key_file" "$enc_path"
+      else
+        # Show all agent secrets: disinto secrets show
+        if [ ! -f "$enc_file" ]; then
+          echo "Error: ${enc_file} not found." >&2
+          exit 1
+        fi
+        sops -d "$enc_file"
+      fi
+      ;;
     edit)
       if [ ! -f "$enc_file" ]; then
         echo "Error: ${enc_file} not found. Run 'disinto secrets migrate' first." >&2
         exit 1
       fi
       sops "$enc_file"
-      ;;
-    show)
-      if [ ! -f "$enc_file" ]; then
-        echo "Error: ${enc_file} not found." >&2
-        exit 1
-      fi
-      sops -d "$enc_file"
       ;;
     migrate)
       if [ ! -f "$env_file" ]; then
@@ -2077,9 +2151,13 @@ disinto_secrets() {
       cat <<EOF >&2
 Usage: disinto secrets <subcommand>
 
+Individual secrets (secrets/<NAME>.enc):
+  add <NAME>     Prompt for value, encrypt, store in secrets/<NAME>.enc
+  show <NAME>    Decrypt and print an individual secret
+
 Agent secrets (.env.enc):
   edit           Edit agent secrets (FORGE_TOKEN, CLAUDE_API_KEY, etc.)
-  show           Show decrypted agent secrets
+  show           Show decrypted agent secrets (no argument)
   migrate        Encrypt .env -> .env.enc
 
 Vault secrets (.env.vault.enc):

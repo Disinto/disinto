@@ -22,3 +22,6 @@ metrics/supervisor-metrics.jsonl
 .DS_Store
 dev/ci-fixes-*.json
 gardener/dust.jsonl
+
+# Individual encrypted secrets (managed by disinto secrets add)
+secrets/
