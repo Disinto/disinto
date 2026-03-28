@@ -92,11 +92,8 @@ Supported actions:
 The commit-and-pr step converts JSONL to JSON array. The orchestrator executes
 actions after the PR merges. Do NOT call mutation APIs directly during the run."
 
-# Reuse shared footer (API reference + environment), replace phase protocol
-# shellcheck disable=SC2034  # consumed by build_prompt_footer
-PHASE_FILE=""  # not used in SDK mode
-build_prompt_footer "$GARDENER_API_EXTRA"
-PROMPT_FOOTER="${PROMPT_FOOTER%%## Phase protocol*}## Completion protocol (REQUIRED)
+build_sdk_prompt_footer "$GARDENER_API_EXTRA"
+PROMPT_FOOTER="${PROMPT_FOOTER}## Completion protocol (REQUIRED)
 When the commit-and-pr step creates a PR, write the PR number and stop:
   echo \"\$PR_NUMBER\" > '${GARDENER_PR_FILE}'
 Then STOP. Do NOT write PHASE: signals — the orchestrator handles CI, review, and merge.

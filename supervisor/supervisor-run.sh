@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# supervisor-run.sh — Cron wrapper: supervisor execution via Claude + formula
+# supervisor-run.sh — Cron wrapper: supervisor execution via SDK + formula
 #
-# Runs every 20 minutes (or on-demand). Guards against concurrent runs and
-# low memory. Collects metrics via preflight.sh, then creates a tmux session
-# with Claude (sonnet) reading formulas/run-supervisor.toml.
+# Synchronous bash loop using claude -p (one-shot invocation).
+# No tmux sessions, no phase files — the bash script IS the state machine.
 #
-# Replaces supervisor-poll.sh (bash orchestrator + claude -p one-shot) with
-# formula-driven interactive Claude session matching the planner/predictor
-# pattern.
+# Flow:
+#   1. Guards: cron lock, memory check
+#   2. Housekeeping: clean up stale crashed worktrees
+#   3. Collect pre-flight metrics (supervisor/preflight.sh)
+#   4. Load formula (formulas/run-supervisor.toml)
+#   5. Context: AGENTS.md, preflight metrics, structural graph
+#   6. agent_run(worktree, prompt) → Claude monitors, may clean up
 #
 # Usage:
 #   supervisor-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -26,24 +29,22 @@ export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 source "$FACTORY_ROOT/lib/env.sh"
 # Use supervisor-bot's own Forgejo identity (#747)
 FORGE_TOKEN="${FORGE_SUPERVISOR_TOKEN:-${FORGE_TOKEN}}"
-# shellcheck source=../lib/agent-session.sh
-source "$FACTORY_ROOT/lib/agent-session.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
 # shellcheck source=../lib/worktree.sh
 source "$FACTORY_ROOT/lib/worktree.sh"
 # shellcheck source=../lib/guard.sh
 source "$FACTORY_ROOT/lib/guard.sh"
+# shellcheck source=../lib/agent-sdk.sh
+source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
 LOG_FILE="$SCRIPT_DIR/supervisor.log"
-# shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-SESSION_NAME="supervisor-${PROJECT_NAME}"
-PHASE_FILE="/tmp/supervisor-session-${PROJECT_NAME}.phase"
-
-# shellcheck disable=SC2034  # read by monitor_phase_loop in lib/agent-session.sh
-PHASE_POLL_INTERVAL=15
-
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh
+LOGFILE="$LOG_FILE"
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh
+SID_FILE="/tmp/supervisor-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/supervisor-${PROJECT_NAME}-scratch.md"
+WORKTREE="/tmp/${PROJECT_NAME}-supervisor-run"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
@@ -75,10 +76,13 @@ SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
 # ── Build prompt ─────────────────────────────────────────────────────────
-build_prompt_footer
+build_sdk_prompt_footer
+export CLAUDE_MODEL="sonnet"
 
-# shellcheck disable=SC2034  # consumed by run_formula_and_monitor
-PROMPT="You are the supervisor agent for ${FORGE_REPO}. Work through the formula below. You MUST write PHASE:done to '${PHASE_FILE}' when finished — the orchestrator will time you out if you return to the prompt without signalling.
+# ── Create worktree (before prompt assembly so trap is set early) ────────
+formula_worktree_setup "$WORKTREE"
+
+PROMPT="You are the supervisor agent for ${FORGE_REPO}. Work through the formula below.
 
 You have full shell access and --dangerously-skip-permissions.
 Fix what you can. File vault items for what you cannot. Do NOT ask permission — act first, report after.
@@ -97,12 +101,9 @@ ${FORMULA_CONTENT}
 ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
-# ── Run session ──────────────────────────────────────────────────────────
-export CLAUDE_MODEL="sonnet"
-run_formula_and_monitor "supervisor" 1200
+# ── Run agent ─────────────────────────────────────────────────────────────
+agent_run --worktree "$WORKTREE" "$PROMPT"
+log "agent_run complete"
 
-# ── Cleanup scratch file on normal exit ──────────────────────────────────
-# FINAL_PHASE already set by run_formula_and_monitor
-if [ "${FINAL_PHASE:-}" = "PHASE:done" ]; then
-  rm -f "$SCRATCH_FILE"
-fi
+rm -f "$SCRATCH_FILE"
+log "--- Supervisor run done ---"
