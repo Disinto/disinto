@@ -1,0 +1,43 @@
+# .woodpecker/smoke-init.yml — End-to-end smoke test for disinto init
+#
+# Uses the Forgejo image directly (not as a service) so we have CLI
+# access to set up Forgejo and create the bootstrap admin user.
+# Then runs disinto init --bare --yes against the local Forgejo instance.
+#
+# Forgejo refuses to run as root, so all forgejo commands use su-exec
+# to run as the 'git' user (pre-created in the Forgejo Docker image).
+
+when:
+  - event: pull_request
+    path:
+      - "bin/disinto"
+      - "lib/load-project.sh"
+      - "tests/smoke-init.sh"
+      - ".woodpecker/smoke-init.yml"
+  - event: push
+    branch: main
+    path:
+      - "bin/disinto"
+      - "lib/load-project.sh"
+      - "tests/smoke-init.sh"
+      - ".woodpecker/smoke-init.yml"
+
+steps:
+  - name: smoke-init
+    image: codeberg.org/forgejo/forgejo:11.0
+    environment:
+      SMOKE_FORGE_URL: http://localhost:3000
+    commands:
+      # Install test dependencies (Alpine-based image)
+      - apk add --no-cache bash curl jq python3 git >/dev/null 2>&1
+      # Set up Forgejo data directories and config (owned by git user)
+      - mkdir -p /data/gitea/conf /data/gitea/repositories /data/gitea/lfs /data/gitea/log /data/git/.ssh /data/ssh
+      - printf '[database]\nDB_TYPE = sqlite3\nPATH = /data/gitea/forgejo.db\n\n[server]\nHTTP_PORT = 3000\nROOT_URL = http://localhost:3000/\nLFS_START_SERVER = false\n\n[security]\nINSTALL_LOCK = true\n\n[service]\nDISABLE_REGISTRATION = true\n' > /data/gitea/conf/app.ini
+      - chown -R git:git /data
+      # Start Forgejo as git user in background and wait for API
+      - su-exec git forgejo web --config /data/gitea/conf/app.ini &
+      - for i in $(seq 1 30); do curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1 && break; sleep 1; done
+      # Create bootstrap admin user via CLI
+      - su-exec git forgejo admin user create --admin --username setup-admin --password "SetupPass-789xyz" --email "setup-admin@smoke.test" --must-change-password=false --config /data/gitea/conf/app.ini
+      # Run the smoke test (as root is fine — only forgejo binary needs git user)
+      - bash tests/smoke-init.sh

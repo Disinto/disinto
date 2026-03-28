@@ -1,8 +1,15 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates \
+    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age \
     && pip3 install --break-system-packages networkx \
+    && curl -sL https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64 \
+       -o /usr/local/bin/sops \
+    && curl -sL https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.checksums.txt \
+       -o /tmp/sops-checksums.txt \
+    && sha256sum -c --ignore-missing /tmp/sops-checksums.txt \
+    && rm -f /tmp/sops-checksums.txt \
+    && chmod +x /usr/local/bin/sops \
     && rm -rf /var/lib/apt/lists/*
 
 # tea CLI — official Gitea/Forgejo CLI for issue/label/comment operations
