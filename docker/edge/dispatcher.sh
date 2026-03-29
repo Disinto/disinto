@@ -48,8 +48,8 @@ log() {
 # Clone or pull the ops repo
 ensure_ops_repo() {
   if [ ! -d "${OPS_REPO_ROOT}/.git" ]; then
-    log "Cloning ops repo from ${FORGE_OPS_REPO}..."
-    git clone "${FORGE_OPS_REPO}" "${OPS_REPO_ROOT}"
+    log "Cloning ops repo from ${FORGE_URL}/${FORGE_OPS_REPO}..."
+    git clone "${FORGE_URL}/${FORGE_OPS_REPO}" "${OPS_REPO_ROOT}"
   else
     log "Pulling latest ops repo changes..."
     (cd "${OPS_REPO_ROOT}" && git pull --rebase)
@@ -93,14 +93,28 @@ launch_runner() {
 
   # Add environment variables BEFORE service name
   for secret in "${secrets[@]+"${secrets[@]}"}"; do
-    cmd+=(-e "${secret}=***")  # Redact value in the command array
+    cmd+=(-e "${secret}")  # Pass actual value to container (from env)
   done
 
   # Add formula and id as arguments (after service name)
   cmd+=("$formula" "$id")
 
-  # Log command skeleton (secrets are redacted)
-  log "Running: ${cmd[*]}"
+  # Log command skeleton (hide all -e flags for security)
+  local -a log_cmd=()
+  local skip_next=0
+  for arg in "${cmd[@]}"; do
+    if [[ $skip_next -eq 1 ]]; then
+      skip_next=0
+      continue
+    fi
+    if [[ "$arg" == "-e" ]]; then
+      log_cmd+=("$arg" "<redacted>")
+      skip_next=1
+    else
+      log_cmd+=("$arg")
+    fi
+  done
+  log "Running: ${log_cmd[*]}"
 
   # Execute with array expansion (safe from shell injection)
   "${cmd[@]}"
