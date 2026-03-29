@@ -392,6 +392,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
 
     else
       log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
+      exit 0
     fi
   else
     # Check assignee before adopting orphaned issue
