@@ -28,18 +28,22 @@ export DISINTO_LOG_DIR
 if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   set -a
   _saved_forge_url="${FORGE_URL:-}"
+  _saved_forge_token="${FORGE_TOKEN:-}"
   eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" \
     || echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
   set +a
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
+  [ -n "$_saved_forge_token" ] && export FORGE_TOKEN="$_saved_forge_token"
 elif [ -f "$FACTORY_ROOT/.env" ]; then
   # Preserve compose-injected FORGE_URL (localhost in .env != forgejo in Docker)
   _saved_forge_url="${FORGE_URL:-}"
+  _saved_forge_token="${FORGE_TOKEN:-}"
   set -a
   # shellcheck source=/dev/null
   source "$FACTORY_ROOT/.env"
   set +a
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
+  [ -n "$_saved_forge_token" ] && export FORGE_TOKEN="$_saved_forge_token"
 fi
 
 # PATH: foundry, node, system
