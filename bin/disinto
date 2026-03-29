@@ -10,7 +10,7 @@
 #   disinto shell                       Shell into the agent container
 #   disinto status                      Show factory status
 #   disinto secrets <subcommand>        Manage encrypted secrets
-#   disinto vault-run <action-id>        Run action in ephemeral vault container
+#   disinto run <action-id>              Run action in ephemeral runner container
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -39,7 +39,7 @@ Usage:
   disinto shell                        Shell into the agent container
   disinto status                       Show factory status
   disinto secrets <subcommand>         Manage encrypted secrets
-  disinto vault-run <action-id>        Run action in ephemeral vault container
+  disinto run <action-id>              Run action in ephemeral runner container
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -242,7 +242,7 @@ services:
       - .env
     # IMPORTANT: agents get .env only (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
-    # .env.vault.enc and are NEVER injected here — only the vault-runner
+    # .env.vault.enc and are NEVER injected here — only the runner
     # container receives them at fire time (AD-006, #745).
     depends_on:
       - forgejo
@@ -250,7 +250,7 @@ services:
     networks:
       - disinto-net
 
-  vault-runner:
+  runner:
     build: ./docker/agents
     profiles: ["vault"]
     security_opt:
@@ -263,8 +263,8 @@ services:
       FORGE_URL: http://forgejo:3000
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/\${PROJECT_NAME:-project}
-    # env_file set at runtime by: disinto vault-run --env-file <tmpfile>
-    entrypoint: ["bash", "/home/agent/disinto/vault/vault-run-action.sh"]
+    # env_file set at runtime by: disinto run --env-file <tmpfile>
+    entrypoint: ["bash", "/home/agent/disinto/vault/run-action.sh"]
     networks:
       - disinto-net
 
@@ -466,8 +466,8 @@ generate_deploy_pipelines() {
   if [ ! -f "${wp_dir}/staging.yml" ]; then
     cat > "${wp_dir}/staging.yml" <<'STAGINGEOF'
 # .woodpecker/staging.yml — Staging deployment pipeline
-# Triggered by vault-runner via Woodpecker promote API.
-# Human approves promotion in vault → vault-runner calls promote → this runs.
+# Triggered by runner via Woodpecker promote API.
+# Human approves promotion in vault → runner calls promote → this runs.
 
 when:
   event: deployment
@@ -498,8 +498,8 @@ STAGINGEOF
   if [ ! -f "${wp_dir}/production.yml" ]; then
     cat > "${wp_dir}/production.yml" <<'PRODUCTIONEOF'
 # .woodpecker/production.yml — Production deployment pipeline
-# Triggered by vault-runner via Woodpecker promote API.
-# Human approves promotion in vault → vault-runner calls promote → this runs.
+# Triggered by runner via Woodpecker promote API.
+# Human approves promotion in vault → runner calls promote → this runs.
 
 when:
   event: deployment
@@ -2184,10 +2184,10 @@ EOF
   esac
 }
 
-# ── vault-run command ─────────────────────────────────────────────────────────
+# ── run command ───────────────────────────────────────────────────────────────
 
-disinto_vault_run() {
-  local action_id="${1:?Usage: disinto vault-run <action-id>}"
+disinto_run() {
+  local action_id="${1:?Usage: disinto run <action-id>}"
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
   local vault_enc="${FACTORY_ROOT}/.env.vault.enc"
 
@@ -2221,20 +2221,20 @@ disinto_vault_run() {
 
   echo "Vault secrets decrypted to tmpfile"
 
-  # Run action in ephemeral vault-runner container
+  # Run action in ephemeral runner container
   local rc=0
   docker compose -f "$compose_file" \
     run --rm --env-file "$tmp_env" \
-    vault-runner "$action_id" || rc=$?
+    runner "$action_id" || rc=$?
 
   # Clean up — secrets gone
   rm -f "$tmp_env"
-  echo "Vault tmpfile removed"
+  echo "Run tmpfile removed"
 
   if [ "$rc" -eq 0 ]; then
-    echo "Vault action ${action_id} completed successfully"
+    echo "Run action ${action_id} completed successfully"
   else
-    echo "Vault action ${action_id} failed (exit ${rc})" >&2
+    echo "Run action ${action_id} failed (exit ${rc})" >&2
   fi
   return "$rc"
 }
@@ -2314,7 +2314,7 @@ case "${1:-}" in
   shell)     shift; disinto_shell ;;
   status)    shift; disinto_status "$@" ;;
   secrets)   shift; disinto_secrets "$@" ;;
-  vault-run) shift; disinto_vault_run "$@" ;;
+  run) shift; disinto_run "$@" ;;
   -h|--help) usage ;;
   *)         usage ;;
 esac

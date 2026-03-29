@@ -112,7 +112,7 @@ near-duplicate exists, REQUEST_CHANGES and reference the existing item.
 Agents must NEVER execute external actions directly. Any action that touches
 an external system (publish, deploy, post, push to external registry, API
 calls to third-party services) MUST go through vault dispatch — i.e., the
-agent files a vault item (`$OPS_REPO_ROOT/vault/pending/*.json`) and the vault-runner
+agent files a vault item (`$OPS_REPO_ROOT/vault/pending/*.json`) and the runner
 container executes it with injected secrets.
 
 Scan the diff for these patterns:
@@ -129,7 +129,7 @@ Scan the diff for these patterns:
 If ANY of these patterns appear in agent code (scripts in `dev/`, `action/`,
 `planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`,
 `lib/`) WITHOUT routing through vault dispatch (`$OPS_REPO_ROOT/vault/pending/`, `vault-fire.sh`,
-`vault-run-action.sh`), **REQUEST_CHANGES**.
+`run-action.sh`), **REQUEST_CHANGES**.
 
 Explain that external actions must use vault dispatch per AD-006. The agent
 should file a vault item instead of executing directly.
@@ -137,7 +137,7 @@ should file a vault item instead of executing directly.
 **Exceptions** (do NOT flag these):
 - Code inside `vault/` — the vault system itself is allowed to handle secrets
 - References in comments or documentation explaining the architecture
-- `bin/disinto` setup commands that manage `.env.vault.enc`
+- `bin/disinto` setup commands that manage `.env.vault.enc` and the `run` subcommand
 - Local operations (git push to forge, forge API calls with `FORGE_TOKEN`)
 
 ## 6. Re-review (if previous review is provided)

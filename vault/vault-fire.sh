@@ -3,8 +3,8 @@
 #
 # Handles two pipelines:
 #   A. Action gating (*.json): pending/ → approved/ → fired/
-#      Execution delegated to ephemeral vault-runner container via disinto vault-run.
-#      The vault-runner gets vault secrets (.env.vault.enc); this script does NOT.
+#      Execution delegated to ephemeral runner container via disinto run.
+#      The runner gets vault secrets (.env.vault.enc); this script does NOT.
 #   B. Procurement (*.md): approved/ → fired/ (writes RESOURCES.md entry)
 #
 # If item is in pending/, moves to approved/ first.
@@ -100,7 +100,7 @@ if [ "$IS_PROCUREMENT" = true ]; then
 fi
 
 # =============================================================================
-# Pipeline B: Action gating — delegate to ephemeral vault-runner container
+# Pipeline B: Action gating — delegate to ephemeral runner container
 # =============================================================================
 ACTION_TYPE=$(jq -r '.type // ""' < "$ACTION_FILE")
 ACTION_SOURCE=$(jq -r '.source // ""' < "$ACTION_FILE")
@@ -110,19 +110,19 @@ if [ -z "$ACTION_TYPE" ]; then
   exit 1
 fi
 
-log "$ACTION_ID: firing type=$ACTION_TYPE source=$ACTION_SOURCE via vault-runner"
+log "$ACTION_ID: firing type=$ACTION_TYPE source=$ACTION_SOURCE via runner"
 
 FIRE_EXIT=0
 
-# Delegate execution to the ephemeral vault-runner container.
-# The vault-runner gets vault secrets (.env.vault.enc) injected at runtime;
+# Delegate execution to the ephemeral runner container.
+# The runner gets vault secrets (.env.vault.enc) injected at runtime;
 # this host process never sees those secrets.
 if [ -f "${FACTORY_ROOT}/.env.vault.enc" ] && [ -f "${FACTORY_ROOT}/docker-compose.yml" ]; then
-  bash "${FACTORY_ROOT}/bin/disinto" vault-run "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
+  bash "${FACTORY_ROOT}/bin/disinto" run "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
 else
   # Fallback for bare-metal or pre-migration setups: run action handler directly
   log "$ACTION_ID: no .env.vault.enc or docker-compose.yml — running action directly"
-  bash "${SCRIPT_DIR}/vault-run-action.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
+  bash "${SCRIPT_DIR}/run-action.sh" "$ACTION_ID" >> "$LOGFILE" 2>&1 || FIRE_EXIT=$?
 fi
 
 # =============================================================================

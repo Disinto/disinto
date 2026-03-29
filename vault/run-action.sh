@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# vault-run-action.sh — Execute an action inside the ephemeral vault-runner container
+# run-action.sh — Execute an action inside the ephemeral runner container
 #
-# This script is the entrypoint for the vault-runner container. It runs with
+# This script is the entrypoint for the runner container. It runs with
 # vault secrets injected as environment variables (GITHUB_TOKEN, CLAWHUB_TOKEN,
 # deploy keys, etc.) and dispatches to the appropriate action handler.
 #
-# The vault-runner container is ephemeral: it starts, runs the action, and is
+# The runner container is ephemeral: it starts, runs the action, and is
 # destroyed. Secrets exist only in container memory, never on disk.
 #
-# Usage: vault-run-action.sh <action-id>
+# Usage: run-action.sh <action-id>
 
 set -euo pipefail
 
 VAULT_SCRIPT_DIR="${DISINTO_VAULT_DIR:-/home/agent/disinto/vault}"
 OPS_VAULT_DIR="${DISINTO_OPS_VAULT_DIR:-${VAULT_SCRIPT_DIR}}"
 LOGFILE="${VAULT_SCRIPT_DIR}/vault.log"
-ACTION_ID="${1:?Usage: vault-run-action.sh <action-id>}"
+ACTION_ID="${1:?Usage: run-action.sh <action-id>}"
 
 log() {
-  printf '[%s] vault-runner: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE" 2>/dev/null || \
-    printf '[%s] vault-runner: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >&2
+  printf '[%s] runner: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE" 2>/dev/null || \
+    printf '[%s] runner: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >&2
 }
 
 # Find action file in approved/

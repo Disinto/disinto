@@ -112,7 +112,7 @@ export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 
 # Vault-only token guard (#745): external-action tokens (GITHUB_TOKEN, CLAWHUB_TOKEN)
 # must NEVER be available to agents. They live in .env.vault.enc and are injected
-# only into the ephemeral vault-runner container at fire time. Unset them here so
+# only into the ephemeral runner container at fire time. Unset them here so
 # even an accidental .env inclusion cannot leak them into agent sessions.
 unset GITHUB_TOKEN 2>/dev/null || true
 unset CLAWHUB_TOKEN 2>/dev/null || true

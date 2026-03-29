@@ -7,3 +7,6 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 # Use vault-bot's own Forgejo identity
 FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
+
+# Set entrypoint for runner container
+export VAULT_RUNNER_ENTRYPOINT="run-action.sh"
