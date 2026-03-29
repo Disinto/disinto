@@ -63,4 +63,30 @@ agent_run() {
   _AGENT_LAST_OUTPUT="$output"
   local diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
   printf '%s' "$output" > "$diag_file" 2>/dev/null || true
+
+  # Nudge: if the model stopped without pushing, resume with encouragement.
+  # Some models emit end_turn prematurely when confused. A nudge often unsticks them.
+  if [ -n "$_AGENT_SESSION_ID" ]; then
+    local has_changes
+    has_changes=$(cd "$run_dir" && git status --porcelain 2>/dev/null | head -1) || true
+    local has_pushed
+    has_pushed=$(cd "$run_dir" && git log --oneline "${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH:-main}..HEAD" 2>/dev/null | head -1) || true
+    if [ -z "$has_pushed" ]; then
+      local nudge="You stopped but did not push any code. "
+      if [ -n "$has_changes" ]; then
+        nudge+="You have uncommitted changes. Commit them and push."
+      else
+        nudge+="Complete the implementation, commit, and push your branch."
+      fi
+      log "agent_run: nudging (no push detected)"
+      output=$(cd "$run_dir" && timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
+      new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
+      if [ -n "$new_sid" ]; then
+        _AGENT_SESSION_ID="$new_sid"
+        printf '%s' "$new_sid" > "$SID_FILE"
+      fi
+      printf '%s' "$output" > "$diag_file" 2>/dev/null || true
+      _AGENT_LAST_OUTPUT="$output"
+    fi
+  fi
 }
