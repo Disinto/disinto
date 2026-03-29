@@ -455,9 +455,9 @@ Closing as already implemented."
 
   log "ERROR: no branch pushed after agent_run"
   # Dump diagnostics
-  local diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
+  diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
   if [ -f "$diag_file" ]; then
-    local result_text cost_usd num_turns
+    result_text=""; cost_usd=""; num_turns=""
     result_text=$(jq -r '.result // "no result field"' "$diag_file" 2>/dev/null | head -50) || result_text="(parse error)"
     cost_usd=$(jq -r '.cost_usd // "?"' "$diag_file" 2>/dev/null) || cost_usd="?"
     num_turns=$(jq -r '.num_turns // "?"' "$diag_file" 2>/dev/null) || num_turns="?"
