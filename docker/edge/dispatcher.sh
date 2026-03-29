@@ -22,6 +22,20 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Source shared environment
 source "${SCRIPT_ROOT}/../lib/env.sh"
 
+# Load vault secrets after env.sh (env.sh unsets them for agent security)
+# Vault secrets must be available to the dispatcher
+if [ -f "$FACTORY_ROOT/.env.vault.enc" ] && command -v sops &>/dev/null; then
+  set -a
+  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.vault.enc" 2>/dev/null)" \
+    || echo "Warning: failed to decrypt .env.vault.enc — vault secrets not loaded" >&2
+  set +a
+elif [ -f "$FACTORY_ROOT/.env.vault" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$FACTORY_ROOT/.env.vault"
+  set +a
+fi
+
 # Ops repo location (vault/actions directory)
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/debian/disinto-ops}"
 VAULT_ACTIONS_DIR="${OPS_REPO_ROOT}/vault/actions"
@@ -35,7 +49,7 @@ log() {
 ensure_ops_repo() {
   if [ ! -d "${OPS_REPO_ROOT}/.git" ]; then
     log "Cloning ops repo from ${FORGE_OPS_REPO}..."
-    git clone "${FORGE_WEB}" "${OPS_REPO_ROOT}"
+    git clone "${FORGE_OPS_REPO}" "${OPS_REPO_ROOT}"
   else
     log "Pulling latest ops repo changes..."
     (cd "${OPS_REPO_ROOT}" && git pull --rebase)
@@ -68,24 +82,29 @@ launch_runner() {
     return 1
   fi
 
-  # Extract secrets (as space-separated list for env injection)
-  local secrets
-  secrets=$(jq -r '.secrets[]? // empty' "$action_file" 2>/dev/null | tr '\n' ' ')
+  # Extract secrets (array for safe handling)
+  local -a secrets=()
+  while IFS= read -r secret; do
+    [ -n "$secret" ] && secrets+=("$secret")
+  done < <(jq -r '.secrets[]? // empty' "$action_file" 2>/dev/null)
 
-  # Run the formula via docker compose with action ID as argument
-  # The runner container should be defined in docker-compose.yml
-  # Secrets are injected via -e flags
-  local compose_cmd="docker compose run --rm runner ${formula} ${id}"
+  # Build command array (safe from shell injection)
+  local -a cmd=(docker compose run --rm runner)
 
-  if [ -n "$secrets" ]; then
-    # Inject secrets as environment variables
-    for secret in $secrets; do
-      compose_cmd+=" -e ${secret}=${!secret}"
-    done
-  fi
+  # Add environment variables BEFORE service name
+  for secret in "${secrets[@]+"${secrets[@]}"}"; do
+    local secret_val="${!secret:-}"
+    cmd+=(-e "${secret}=***")  # Redact value in the command array
+  done
 
-  log "Running: ${compose_cmd}"
-  eval "${compose_cmd}"
+  # Add formula and id as arguments (after service name)
+  cmd+=("$formula" "$id")
+
+  # Log command skeleton (secrets are redacted)
+  log "Running: ${cmd[*]}"
+
+  # Execute with array expansion (safe from shell injection)
+  "${cmd[@]}"
 
   log "Runner completed for action: ${id}"
 }
@@ -95,10 +114,10 @@ main() {
   log "Starting dispatcher..."
   log "Polling ops repo: ${VAULT_ACTIONS_DIR}"
 
-  # Ensure ops repo is available
-  ensure_ops_repo
-
   while true; do
+    # Refresh ops repo at the start of each poll cycle
+    ensure_ops_repo
+
     # Check if actions directory exists
     if [ ! -d "${VAULT_ACTIONS_DIR}" ]; then
       log "Actions directory not found: ${VAULT_ACTIONS_DIR}"
