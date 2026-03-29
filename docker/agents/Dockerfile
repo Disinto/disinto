@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age \
+    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age shellcheck \
     && pip3 install --break-system-packages networkx \
     && curl -sL https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64 \
        -o /usr/local/bin/sops \
