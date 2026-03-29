@@ -271,13 +271,15 @@ services:
   # Edge proxy — reverse proxy to Forgejo, Woodpecker, and staging
   # Serves on ports 80/443, routes based on path
   edge:
-    image: caddy:alpine
+    build: ./docker/edge
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
+      - ./docker/edge/dispatcher.sh:/usr/local/bin/dispatcher.sh:ro
       - caddy_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - forgejo
       - woodpecker
