@@ -466,6 +466,28 @@ Closing as already implemented."
     # Save full output for later analysis
     cp "$diag_file" "${DISINTO_LOG_DIR:-/tmp}/dev/no-push-${ISSUE}-$(date +%s).json" 2>/dev/null || true
   fi
+
+  # Save full session log for debugging
+  # Session logs are stored in CLAUDE_CONFIG_DIR/projects/{worktree-hash}/{session-id}.jsonl
+  _wt_hash=$(printf '%s' "$WORKTREE" | md5sum | cut -c1-12)
+  _cl_config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  _session_log="${_cl_config}/projects/${_wt_hash}/${_AGENT_SESSION_ID}.jsonl"
+  if [ -f "$_session_log" ]; then
+    cp "$_session_log" "${DISINTO_LOG_DIR}/dev/no-push-session-${ISSUE}-$(date +%s).jsonl" 2>/dev/null || true
+    log "no_push session log saved to ${DISINTO_LOG_DIR}/dev/no-push-session-${ISSUE}-*.jsonl"
+  fi
+
+  # Log session summary for debugging
+  if [ -f "$_session_log" ]; then
+    _read_calls=$(grep -c '"type":"read"' "$_session_log" 2>/dev/null || echo "0")
+    _edit_calls=$(grep -c '"type":"edit"' "$_session_log" 2>/dev/null || echo "0")
+    _bash_calls=$(grep -c '"type":"bash"' "$_session_log" 2>/dev/null || echo "0")
+    _text_calls=$(grep -c '"type":"text"' "$_session_log" 2>/dev/null || echo "0")
+    _failed_calls=$(grep -c '"exit_code":null' "$_session_log" 2>/dev/null || echo "0")
+    _total_turns=$(grep -c '"type":"turn"' "$_session_log" 2>/dev/null || echo "0")
+    log "no_push session summary: turns=${_total_turns} reads=${_read_calls} edits=${_edit_calls} bash=${_bash_calls} text=${_text_calls} failed=${_failed_calls}"
+  fi
+
   issue_block "$ISSUE" "no_push" "Claude did not push branch ${BRANCH}"
   CLAIMED=false
   worktree_cleanup "$WORKTREE"
