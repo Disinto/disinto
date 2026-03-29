@@ -93,7 +93,6 @@ launch_runner() {
 
   # Add environment variables BEFORE service name
   for secret in "${secrets[@]+"${secrets[@]}"}"; do
-    local secret_val="${!secret:-}"
     cmd+=(-e "${secret}=***")  # Redact value in the command array
   done
 
