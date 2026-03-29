@@ -2150,6 +2150,12 @@ disinto_secrets() {
       fi
       _secrets_ensure_sops
       encrypt_env_file "$vault_env_file" "$vault_enc_file"
+      # Verify decryption works before removing plaintext
+      if ! sops -d "$vault_enc_file" >/dev/null 2>&1; then
+        echo "Error: failed to verify .env.vault.enc decryption" >&2
+        rm -f "$vault_enc_file"
+        exit 1
+      fi
       rm -f "$vault_env_file"
       echo "Migrated: .env.vault -> .env.vault.enc (plaintext removed)"
       ;;
