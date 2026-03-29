@@ -30,9 +30,12 @@ fi
 
 log "Entering poll loop (interval: ${POLL_INTERVAL:-300}s)"
 
-# Run dev-poll in a loop as agent user
-# Export FORGE_TOKEN so the child process inherits the override
 while true; do
+  # Clear stale session IDs before each poll.
+  # Local llama does not support --resume (no server-side session storage).
+  # Stale .sid files cause agent_run to exit instantly on every retry.
+  rm -f /tmp/dev-session-*.sid 2>/dev/null || true
+
   su -s /bin/bash agent -c "
     export FORGE_TOKEN='${FORGE_TOKEN}'
     cd /home/agent/disinto && \
