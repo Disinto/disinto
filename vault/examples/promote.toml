@@ -1,0 +1,21 @@
+# vault/examples/promote.toml
+# Example: Promote a build/artifact to production
+#
+# This vault action demonstrates promoting a built artifact to a
+# production environment with proper authentication.
+
+id = "promote-20260331"
+formula = "run-supervisor"
+context = "Promote build v1.2.3 to production environment"
+
+# Secrets to inject for deployment authentication
+secrets = ["DEPLOY_KEY", "DOCKER_HUB_TOKEN"]
+
+# Optional: use larger model for complex deployment logic
+model = "sonnet"
+
+# Optional: enable MCP tools for container operations
+tools = ["docker"]
+
+# Optional: deployments may take longer
+timeout_minutes = 45

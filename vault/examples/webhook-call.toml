@@ -1,0 +1,21 @@
+# vault/examples/webhook-call.toml
+# Example: Call an external webhook with authentication
+#
+# This vault action demonstrates calling an external webhook endpoint
+# with proper authentication via injected secrets.
+
+id = "webhook-call-20260331"
+formula = "run-rent-a-human"
+context = "Notify Slack channel about deployment completion"
+
+# Secrets to inject (only these get passed to the container)
+secrets = ["DEPLOY_KEY"]
+
+# Optional: use sonnet model for this action
+model = "sonnet"
+
+# Optional: enable MCP tools
+tools = []
+
+# Optional: 30 minute timeout
+timeout_minutes = 30

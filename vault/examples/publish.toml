@@ -1,0 +1,21 @@
+# vault/examples/publish.toml
+# Example: Publish a skill to ClawHub
+#
+# This vault action demonstrates publishing a skill to ClawHub
+# using the clawhub-publish formula.
+
+id = "publish-site-20260331"
+formula = "run-publish-site"
+context = "Publish updated site to production"
+
+# Secrets to inject (only these get passed to the container)
+secrets = ["DEPLOY_KEY"]
+
+# Optional: use sonnet model
+model = "sonnet"
+
+# Optional: enable MCP tools
+tools = []
+
+# Optional: 30 minute timeout
+timeout_minutes = 30
