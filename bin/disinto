@@ -695,13 +695,12 @@ setup_forge() {
     [vault-bot]="FORGE_VAULT_TOKEN"
     [supervisor-bot]="FORGE_SUPERVISOR_TOKEN"
     [predictor-bot]="FORGE_PREDICTOR_TOKEN"
-    [action-bot]="FORGE_ACTION_TOKEN"
   )
 
   local env_file="${FACTORY_ROOT}/.env"
   local bot_user bot_pass token token_var
 
-  for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
+  for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
     bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
     token_var="${bot_token_vars[$bot_user]}"
 
@@ -812,7 +811,7 @@ setup_forge() {
     fi
 
     # Add all bot users as collaborators
-    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
+    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
       curl -sf -X PUT \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
@@ -860,7 +859,7 @@ setup_ops_repo() {
 
     # Add all bot users as collaborators
     local bot_user
-    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot action-bot; do
+    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
       curl -sf -X PUT \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \

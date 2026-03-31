@@ -23,7 +23,7 @@ need human decisions or external resources are filed as vault procurement items
 (`$OPS_REPO_ROOT/vault/pending/*.md`) instead of being escalated. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
 the most downstream objectives — file issues as either `backlog` (code changes,
-dev-agent) or `action` (run existing formula, action-agent). **Stuck issues
+dev-agent) or `action` (run existing formula, dispatcher). **Stuck issues
 (detected BOUNCED/LABEL_CHURN) are dispatched to the `groom-backlog` formula
 in breakdown mode instead of being re-promoted** — this breaks the ping-pong
 loop by splitting them into dev-agent-sized sub-issues. **Human-blocked issues

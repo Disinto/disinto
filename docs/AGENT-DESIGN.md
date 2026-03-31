@@ -114,4 +114,3 @@ When reviewing PRs or designing new agents, ask:
 | gardener | 1242 (agent 471 + poll 771) | Medium — backlog triage, duplicate detection, tech-debt scoring | Poll is heavy orchestration; agent is prompt-driven |
 | vault | 442 (4 scripts) | Medium — approval flow, human gate decisions | Intentionally bash-heavy (security gate should be deterministic) |
 | planner | 382 | Medium — AGENTS.md update, gap analysis | Tmux+formula (done, #232) |
-| action-agent | 192 | Light — formula execution | Close to target |
