@@ -159,7 +159,7 @@ human judgment, file a vault procurement item:
     <impact on factory health — reference the priority level>
     ## Unblocks
     - Factory health: <what this resolves>
-  The vault-poll will notify the human and track the request.
+  Vault PR filed on ops repo — human approves via PR review.
 
 Read the relevant best-practices file before taking action:
   cat "$OPS_REPO_ROOT/knowledge/memory.md"    # P0

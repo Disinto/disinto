@@ -128,8 +128,7 @@ Scan the diff for these patterns:
 
 If ANY of these patterns appear in agent code (scripts in `dev/`, `action/`,
 `planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`,
-`lib/`) WITHOUT routing through vault dispatch (`$OPS_REPO_ROOT/vault/pending/`, `vault-fire.sh`,
-`run-action.sh`), **REQUEST_CHANGES**.
+`lib/`) WITHOUT routing through vault dispatch (file a vault PR on ops repo — see #73-#77), **REQUEST_CHANGES**.
 
 Explain that external actions must use vault dispatch per AD-006. The agent
 should file a vault item instead of executing directly.

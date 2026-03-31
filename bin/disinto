@@ -263,8 +263,8 @@ services:
       FORGE_URL: http://forgejo:3000
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
-    # env_file set at runtime by: disinto run --env-file <tmpfile>
-    entrypoint: ["bash", "/home/agent/disinto/vault/run-action.sh"]
+    # Vault redesign in progress (PR-based approval, see #73-#77)
+    # This container is being replaced — entrypoint will be updated in follow-up
     networks:
       - disinto-net
 
