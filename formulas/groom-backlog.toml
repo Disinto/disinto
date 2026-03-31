@@ -203,7 +203,7 @@ If all tiers clear, write the completion summary and signal done:
   echo "ACTION: grooming complete — 0 tech-debt remaining" >> "$RESULT_FILE"
   echo 'PHASE:done' > "$PHASE_FILE"
 
-Vault items filed during this run are picked up by vault-poll automatically.
+Vault items filed during this run appear as PRs on ops repo for human approval.
 
 On unrecoverable error (API unavailable, repeated failures):
   printf 'PHASE:failed\nReason: %s\n' 'describe what failed' > "$PHASE_FILE"

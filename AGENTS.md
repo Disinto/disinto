@@ -3,11 +3,14 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages seven agents (dev, review,
-gardener, supervisor, planner, predictor, vault) that pick up issues from forge,
-implement them, review PRs, plan from the vision, gate dangerous actions, and
-keep the system healthy — all via cron and `claude -p`. The dispatcher
-executes formula-based operational tasks.
+Disinto is an autonomous code factory. It manages six agents (dev, review,
+gardener, supervisor, planner, predictor) that pick up issues from forge,
+implement them, review PRs, plan from the vision, and keep the system healthy —
+all via cron and `claude -p`. The dispatcher executes formula-based operational
+tasks.
+
+> **Note:** The vault is being redesigned as a PR-based approval workflow on the
+> ops repo (see issues #73-#77). Old vault scripts are being removed.
 
 See `README.md` for the full architecture and `disinto-factory/SKILL.md` for setup.
 
@@ -23,7 +26,7 @@ disinto/                 (code repo)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
-├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
+├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
@@ -90,7 +93,8 @@ bash dev/phase-test.sh
 | Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
-| Vault | `vault/` | Action gating + resource procurement | [vault/AGENTS.md](vault/AGENTS.md) |
+
+> **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 
 See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
 
@@ -163,7 +167,7 @@ Humans write these. Agents read and enforce them.
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
 | AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (both SOPS-encrypted). Referenced as `$VAR_NAME`. Runner gets only vault secrets; agents get only agent secrets. |
-| AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `.env.vault.enc` and are injected into the ephemeral runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. |
+| AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `.env.vault.enc` and are injected into the ephemeral runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. (Vault redesign in progress: PR-based approval on ops repo, see #73-#77) |
 
 **Who enforces what:**
 - **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.

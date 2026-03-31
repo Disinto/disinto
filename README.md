@@ -37,9 +37,6 @@ cron (daily) ──→ gardener-poll.sh  ← backlog grooming (duplicates, stale
 cron (weekly) ──→ planner-poll.sh  ← gap-analyse VISION.md, create backlog issues
                    └── claude -p: update AGENTS.md → create issues
 
-cron (*/30) ──→ vault-poll.sh    ← safety gate for dangerous/irreversible actions
-                 └── claude -p: classify → auto-approve/reject or escalate
-
 ```
 
 ## Prerequisites
@@ -96,7 +93,6 @@ crontab -e
 #   3,13,23,33,43,53 * * * * /path/to/disinto/review/review-poll.sh
 #   6,16,26,36,46,56 * * * * /path/to/disinto/dev/dev-poll.sh
 #   15 8 * * *                /path/to/disinto/gardener/gardener-poll.sh
-#   0,30 * * * *              /path/to/disinto/vault/vault-poll.sh
 #   0 9 * * 1                 /path/to/disinto/planner/planner-poll.sh
 
 # 4. Verify
@@ -125,10 +121,7 @@ disinto/
 │   ├── planner-poll.sh   # Cron entry: weekly vision gap analysis
 │   └── (formula-driven)  # run-planner.toml executed by dispatcher
 ├── vault/
-│   ├── vault-poll.sh     # Cron entry: process pending dangerous actions
-│   ├── vault-agent.sh    # Classifies and routes actions (claude -p)
-│   ├── vault-fire.sh     # Executes an approved action
-│   └── vault-reject.sh   # Marks an action as rejected
+│   └── vault-env.sh      # Shared env setup (vault redesign in progress, see #73-#77)
 └── supervisor/
     ├── supervisor-poll.sh   # Supervisor: health checks + claude -p
     ├── update-prompt.sh  # Self-learning: append to best-practices
@@ -151,7 +144,8 @@ disinto/
 | **Review** | Every 10 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
 | **Gardener** | Daily | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
 | **Planner** | Weekly | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
-| **Vault** | Every 30 min | Safety gate for dangerous or irreversible actions. Classifies pending actions via Claude: auto-approve, auto-reject, or escalate to a human via vault/forge. |
+
+> **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 
 ## Design Principles
 
