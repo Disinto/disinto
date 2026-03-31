@@ -17,6 +17,11 @@ REPO="${FORGE_REPO}"
 API="${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}"
 
 api() {
+  # Validate API URL to prevent URL injection
+  if ! validate_url "$API"; then
+    echo "ERROR: API URL validation failed - possible URL injection attempt" >&2
+    return 1
+  fi
   curl -sf -H "Authorization: Bearer ${WOODPECKER_TOKEN}" "${API}/$1"
 }
 

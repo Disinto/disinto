@@ -144,10 +144,62 @@ log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
 }
 
-# Forge API helper — usage: forge_api GET /issues?state=open
+# =============================================================================
+# URL VALIDATION HELPER
+# =============================================================================
+# Validates that a URL variable matches expected patterns to prevent
+# URL injection or redirection attacks (OWASP URL Redirection prevention).
+# Returns 0 if valid, 1 if invalid.
+# =============================================================================
+validate_url() {
+  local url="$1"
+  local allowed_hosts="${2:-}"
+
+  # Must start with http:// or https://
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    return 1
+  fi
+
+  # Extract host and reject if it contains @ (credential injection)
+  if [[ "$url" =~ ^https?://[^@]+@ ]]; then
+    return 1
+  fi
+
+  # If allowed_hosts is specified, validate against it
+  if [ -n "$allowed_hosts" ]; then
+    local host
+    host=$(echo "$url" | sed -E 's|^https?://([^/:]+).*|\1|')
+    local valid=false
+    for allowed in $allowed_hosts; do
+      if [ "$host" = "$allowed" ]; then
+        valid=true
+        break
+      fi
+    done
+    if [ "$valid" = false ]; then
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+# =============================================================================
+# FORGE API HELPER
+# =============================================================================
+# Usage: forge_api GET /issues?state=open
+# Validates FORGE_API before use to prevent URL injection attacks.
+# =============================================================================
 forge_api() {
   local method="$1" path="$2"
   shift 2
+
+  # Validate FORGE_API to prevent URL injection
+  if ! validate_url "$FORGE_API"; then
+    echo "ERROR: FORGE_API validation failed - possible URL injection attempt" >&2
+    return 1
+  fi
+
   curl -sf -X "$method" \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -179,13 +231,23 @@ forge_api_all() {
   done
   printf '%s' "$all_items"
 }
-# Backwards-compat alias
-codeberg_api_all() { forge_api_all "$@"; }
 
-# Woodpecker API helper
+# =============================================================================
+# WOODPECKER API HELPER
+# =============================================================================
+# Usage: woodpecker_api /repos/{id}/pipelines
+# Validates WOODPECKER_SERVER before use to prevent URL injection attacks.
+# =============================================================================
 woodpecker_api() {
   local path="$1"
   shift
+
+  # Validate WOODPECKER_SERVER to prevent URL injection
+  if ! validate_url "$WOODPECKER_SERVER"; then
+    echo "ERROR: WOODPECKER_SERVER validation failed - possible URL injection attempt" >&2
+    return 1
+  fi
+
   curl -sfL \
     -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
     "${WOODPECKER_SERVER}/api${path}" "$@"
