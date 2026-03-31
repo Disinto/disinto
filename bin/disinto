@@ -231,13 +231,13 @@ services:
       - ${HOME}/.claude:/home/agent/.claude
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - \${HOME}/.ssh:/home/agent/.ssh:ro
-      - \${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
     environment:
       FORGE_URL: http://forgejo:3000
       WOODPECKER_SERVER: http://woodpecker:8000
       DISINTO_CONTAINER: "1"
-      PROJECT_REPO_ROOT: /home/agent/repos/\${PROJECT_NAME:-project}
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
     env_file:
       - .env
     # IMPORTANT: agents get .env only (forge tokens, CI tokens, config).
@@ -262,7 +262,7 @@ services:
     environment:
       FORGE_URL: http://forgejo:3000
       DISINTO_CONTAINER: "1"
-      PROJECT_REPO_ROOT: /home/agent/repos/\${PROJECT_NAME:-project}
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
     # env_file set at runtime by: disinto run --env-file <tmpfile>
     entrypoint: ["bash", "/home/agent/disinto/vault/run-action.sh"]
     networks:
