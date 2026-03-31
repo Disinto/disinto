@@ -61,13 +61,15 @@ _prl_log() {
 
 # ---------------------------------------------------------------------------
 # pr_create — Create a PR via forge API.
-# Args: branch title body [base_branch]
+# Args: branch title body [base_branch] [api_url]
 # Stdout: PR number
 # Returns: 0=created (or found existing), 1=failed
+# api_url defaults to FORGE_API if not provided
 # ---------------------------------------------------------------------------
 pr_create() {
   local branch="$1" title="$2" body="$3"
   local base="${4:-${PRIMARY_BRANCH:-main}}"
+  local api_url="${5:-${FORGE_API}}"
   local tmpfile resp http_code resp_body pr_num
 
   tmpfile=$(mktemp /tmp/prl-create-XXXXXX.json)
@@ -77,7 +79,7 @@ pr_create() {
   resp=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/pulls" \
+    "${api_url}/pulls" \
     --data-binary @"$tmpfile") || true
   rm -f "$tmpfile"
 
@@ -92,7 +94,7 @@ pr_create() {
       return 0
       ;;
     409)
-      pr_num=$(pr_find_by_branch "$branch") || true
+      pr_num=$(pr_find_by_branch "$branch" "$api_url") || true
       if [ -n "$pr_num" ]; then
         _prl_log "PR already exists: #${pr_num}"
         printf '%s' "$pr_num"
@@ -110,15 +112,17 @@ pr_create() {
 
 # ---------------------------------------------------------------------------
 # pr_find_by_branch — Find an open PR by head branch name.
-# Args: branch
+# Args: branch [api_url]
 # Stdout: PR number
 # Returns: 0=found, 1=not found
+# api_url defaults to FORGE_API if not provided
 # ---------------------------------------------------------------------------
 pr_find_by_branch() {
   local branch="$1"
+  local api_url="${2:-${FORGE_API}}"
   local pr_num
   pr_num=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/pulls?state=open&limit=20" | \
+    "${api_url}/pulls?state=open&limit=20" | \
     jq -r --arg b "$branch" '.[] | select(.head.ref == $b) | .number' \
     | head -1) || true
   if [ -n "$pr_num" ]; then
