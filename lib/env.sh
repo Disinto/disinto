@@ -29,8 +29,26 @@ if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   set -a
   _saved_forge_url="${FORGE_URL:-}"
   _saved_forge_token="${FORGE_TOKEN:-}"
-  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" 2>/dev/null)" \
-    || echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
+  # Use temp file + validate dotenv format before sourcing (avoids eval injection)
+  _tmpenv=$(mktemp) || { echo "Warning: failed to create temp file for .env.enc" >&2; exit 1; }
+  if sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" > "$_tmpenv" 2>/dev/null; then
+    # Validate: non-empty, non-comment lines must match KEY=value pattern
+    # Filter out blank lines and comments before validation
+    _validated=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$_tmpenv" 2>/dev/null || true)
+    if [ -n "$_validated" ]; then
+      # Write validated content to a second temp file and source it
+      _validated_env=$(mktemp)
+      printf '%s\n' "$_validated" > "$_validated_env"
+      # shellcheck source=/dev/null
+      source "$_validated_env"
+      rm -f "$_validated_env"
+    else
+      echo "Warning: .env.enc decryption output failed format validation" >&2
+    fi
+  else
+    echo "Warning: failed to decrypt .env.enc — secrets not loaded" >&2
+  fi
+  rm -f "$_tmpenv"
   set +a
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
   [ -n "$_saved_forge_token" ] && export FORGE_TOKEN="$_saved_forge_token"

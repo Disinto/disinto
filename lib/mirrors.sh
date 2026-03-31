@@ -13,7 +13,16 @@ mirror_push() {
 
   local name url
   for name in $MIRROR_NAMES; do
-    url=$(eval "echo \"\$MIRROR_$(echo "$name" | tr '[:lower:]' '[:upper:]')\"") || true
+    # Convert name to uppercase env var name safely (only alphanumeric allowed)
+    local upper_name
+    upper_name=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+    # Validate: only allow alphanumeric + underscore in var name
+    if [[ ! "$upper_name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+      continue
+    fi
+    # Use indirect expansion safely (no eval) — MIRROR_ prefix required
+    local varname="MIRROR_${upper_name}"
+    url="${!varname:-}"
     [ -z "$url" ] && continue
 
     # Ensure remote exists with correct URL
