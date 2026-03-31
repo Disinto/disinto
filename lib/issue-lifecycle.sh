@@ -45,16 +45,16 @@ _ilc_log() {
 # Label ID caching — lookup once per name, cache in globals.
 # Pattern follows ci-helpers.sh (ensure_blocked_label_id).
 # ---------------------------------------------------------------------------
-_ILC_BACKLOG_ID=""
-_ILC_IN_PROGRESS_ID=""
-_ILC_BLOCKED_ID=""
+declare -A _ILC_LABEL_IDS
+_ILC_LABEL_IDS["backlog"]=""
+_ILC_LABEL_IDS["in-progress"]=""
+_ILC_LABEL_IDS["blocked"]=""
 
-# _ilc_ensure_label_id VARNAME LABEL_NAME [COLOR]
-# Generic: looks up label by name, creates if missing, caches in the named var.
+# _ilc_ensure_label_id LABEL_NAME [COLOR]
+# Looks up label by name, creates if missing, caches in associative array.
 _ilc_ensure_label_id() {
-  local varname="$1" name="$2" color="${3:-#e0e0e0}"
-  local current
-  eval "current=\"\${${varname}:-}\""
+  local name="$1" color="${2:-#e0e0e0}"
+  local current="${_ILC_LABEL_IDS[$name]:-}"
   if [ -n "$current" ]; then
     printf '%s' "$current"
     return 0
@@ -71,14 +71,14 @@ _ilc_ensure_label_id() {
       | jq -r '.id // empty' 2>/dev/null || true)
   fi
   if [ -n "$label_id" ]; then
-    eval "${varname}=\"${label_id}\""
+    _ILC_LABEL_IDS["$name"]="$label_id"
   fi
   printf '%s' "$label_id"
 }
 
-_ilc_backlog_id()      { _ilc_ensure_label_id _ILC_BACKLOG_ID     "backlog"     "#0075ca"; }
-_ilc_in_progress_id()  { _ilc_ensure_label_id _ILC_IN_PROGRESS_ID "in-progress" "#1d76db"; }
-_ilc_blocked_id()      { _ilc_ensure_label_id _ILC_BLOCKED_ID     "blocked"     "#e11d48"; }
+_ilc_backlog_id()      { _ilc_ensure_label_id "backlog"     "#0075ca"; }
+_ilc_in_progress_id()  { _ilc_ensure_label_id "in-progress" "#1d76db"; }
+_ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
 
 # ---------------------------------------------------------------------------
 # issue_claim — assign issue to bot, add "in-progress" label, remove "backlog".
