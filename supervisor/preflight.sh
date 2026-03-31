@@ -132,8 +132,7 @@ echo ""
 
 echo "## Recent Agent Logs"
 for _log in supervisor/supervisor.log dev/dev-agent.log review/review.log \
-            gardener/gardener.log planner/planner.log predictor/predictor.log \
-            action/action.log; do
+            gardener/gardener.log planner/planner.log predictor/predictor.log; do
   _logpath="${FACTORY_ROOT}/${_log}"
   if [ -f "$_logpath" ]; then
     _log_age_min=$(( ($(date +%s) - $(stat -c %Y "$_logpath" 2>/dev/null || echo 0)) / 60 ))

@@ -84,7 +84,7 @@ while IFS= read -r -d '' f; do
     printf 'FAIL [syntax] %s\n' "$f"
     FAILED=1
   fi
-done < <(find dev gardener review planner supervisor lib vault action -name "*.sh" -print0 2>/dev/null)
+done < <(find dev gardener review planner supervisor lib vault -name "*.sh" -print0 2>/dev/null)
 echo "syntax check done"
 
 # ── 2. Function-resolution check ─────────────────────────────────────────────

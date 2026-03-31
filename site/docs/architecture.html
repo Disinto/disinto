@@ -398,11 +398,6 @@
           <div class="trigger">Cron: daily</div>
         </div>
         <div class="agent-card">
-          <div class="name">action-agent</div>
-          <div class="role">Executes <strong>operational tasks</strong> defined as formulas &mdash; site deployments, data migrations, any multi-step procedure.</div>
-          <div class="trigger">Cron: every 5 min</div>
-        </div>
-        <div class="agent-card">
           <div class="name">vault</div>
           <div class="role"><strong>Safety gate.</strong> Reviews dangerous actions before they execute. Auto-approves safe operations, escalates risky ones to a human.</div>
           <div class="trigger">Event-driven</div>
@@ -525,7 +520,6 @@ disinto/
 ├── <span class="agent-name">planner/</span>       planner-run.sh (weekly cron executor)
 ├── <span class="agent-name">supervisor/</span>    supervisor-run.sh (health monitoring)
 ├── <span class="agent-name">vault/</span>         vault-poll.sh, vault-agent.sh, vault-fire.sh
-├── <span class="agent-name">action/</span>        action-poll.sh, action-agent.sh
 ├── <span class="agent-name">lib/</span>           env.sh, agent-session.sh, ci-helpers.sh
 ├── <span class="agent-name">projects/</span>      *.toml per-project config
 ├── <span class="agent-name">formulas/</span>      TOML specs for multi-step agent tasks

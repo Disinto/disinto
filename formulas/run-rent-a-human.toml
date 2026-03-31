@@ -5,7 +5,7 @@
 # the action and notifies the human for one-click copy-paste execution.
 #
 # Trigger: action issue created by planner or any formula.
-# The action-agent picks up the issue, executes these steps, writes a draft
+# The dispatcher picks up the issue, executes these steps, writes a draft
 # to vault/outreach/{platform}/drafts/, notifies the human via the forge,
 # and closes the issue.
 #
