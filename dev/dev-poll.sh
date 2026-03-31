@@ -323,7 +323,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   # Formula guard: formula-labeled issues should not be worked on by dev-agent.
   # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
   ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
-  SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|action|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
+  SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
     IP_ID=$(_ilc_in_progress_id)
@@ -545,7 +545,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
 
   # Formula guard: formula-labeled issues must not be picked up by dev-agent.
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
-  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|action|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
+  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — skipping in backlog scan"
     continue
