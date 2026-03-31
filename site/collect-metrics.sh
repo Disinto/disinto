@@ -188,7 +188,7 @@ collect_agent_metrics() {
   local agent_name log_path age_min last_active
   for log_entry in dev/dev-agent.log review/review.log gardener/gardener.log \
                    planner/planner.log predictor/predictor.log supervisor/supervisor.log \
-                   action/action.log vault/vault.log; do
+                   vault/vault.log; do
     agent_name=$(basename "$(dirname "$log_entry")")
     log_path="${FACTORY_ROOT}/${log_entry}"
     if [ -f "$log_path" ]; then

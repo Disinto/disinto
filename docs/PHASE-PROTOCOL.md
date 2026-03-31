@@ -117,7 +117,7 @@ signal to the phase file.
 - **Post-loop exit handler (`case $_MONITOR_LOOP_EXIT`):** Must include an
   `idle_prompt)` branch. Typical actions: log the event, clean up temp files,
   and (for agents that use escalation) write an escalation entry or notify via
-  vault/forge. See `dev/dev-agent.sh`, `action/action-agent.sh`, and
+  vault/forge. See `dev/dev-agent.sh` and
   `gardener/gardener-agent.sh` for reference implementations.
 
 ## Crash Recovery

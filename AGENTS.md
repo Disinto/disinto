@@ -3,8 +3,8 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages eight agents (dev, review,
-gardener, supervisor, planner, predictor, action, vault) that pick up issues from forge,
+Disinto is an autonomous code factory. It manages seven agents (dev, review,
+gardener, supervisor, planner, predictor, vault) that pick up issues from forge,
 implement them, review PRs, plan from the vision, gate dangerous actions, and
 keep the system healthy — all via cron and `claude -p`.
 
@@ -23,7 +23,6 @@ disinto/                 (code repo)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── vault/         vault-poll.sh, vault-agent.sh, vault-fire.sh — action gating + procurement
-├── action/        action-poll.sh, action-agent.sh — operational task execution
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
@@ -90,7 +89,6 @@ bash dev/phase-test.sh
 | Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
-| Action | `action/` | Operational task execution | [action/AGENTS.md](action/AGENTS.md) |
 | Vault | `vault/` | Action gating + resource procurement | [vault/AGENTS.md](vault/AGENTS.md) |
 
 See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
@@ -108,14 +106,14 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. | Planner, gardener, humans |
 | `priority` | Queue tier above plain backlog. Issues with both `priority` and `backlog` are picked before plain `backlog` issues. FIFO within each tier. | Planner, humans |
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. | dev-agent.sh (claims issue) |
-| `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, action-agent.sh, dev-poll.sh (on failure) |
+| `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, dev-poll.sh (on failure) |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |
 | `prediction/unreviewed` | Unprocessed prediction filed by predictor. | predictor-run.sh |
 | `prediction/dismissed` | Prediction triaged as DISMISS — planner disagrees, closed with reason. | Planner (triage-predictions step) |
 | `prediction/actioned` | Prediction promoted or dismissed by planner. | Planner (triage-predictions step) |
-| `action` | Operational task for the action-agent to execute via formula. | Planner, humans |
+| `action` | Operational task for the dispatcher to execute via formula. | Planner, humans |
 
 ### Dependency conventions
 

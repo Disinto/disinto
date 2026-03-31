@@ -3,7 +3,7 @@
 # Trigger: action issue created by planner (gap analysis), dev-poll (post-merge
 # hook detecting site/ changes), or gardener (periodic SHA drift check).
 #
-# The action-agent picks up the issue, executes these steps, posts results
+# The dispatcher picks up the issue, executes these steps, posts results
 # as a comment, and closes the issue.
 
 name        = "run-publish-site"
