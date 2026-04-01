@@ -58,6 +58,12 @@ log "--- Supervisor run start ---"
 # ── Housekeeping: clean up stale crashed worktrees (>24h) ────────────────
 cleanup_stale_crashed_worktrees 24
 
+# ── Resolve agent identity for .profile repo ────────────────────────────
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_SUPERVISOR_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_SUPERVISOR_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Collect pre-flight metrics ────────────────────────────────────────────
 log "Running preflight.sh"
 PREFLIGHT_OUTPUT=""
@@ -68,8 +74,11 @@ else
 fi
 
 # ── Load formula + context ───────────────────────────────────────────────
-load_formula "$FACTORY_ROOT/formulas/run-supervisor.toml"
+load_formula_or_profile "supervisor" "$FACTORY_ROOT/formulas/run-supervisor.toml" || exit 1
 build_context_block AGENTS.md
+
+# ── Prepare .profile context (lessons injection) ─────────────────────────
+formula_prepare_profile_context
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -91,7 +100,10 @@ Fix what you can. File vault items for what you cannot. Do NOT ask permission �
 ${PREFLIGHT_OUTPUT}
 
 ## Project context
-${CONTEXT_BLOCK}
+${CONTEXT_BLOCK}${LESSONS_INJECTION:+## Lessons learned
+${LESSONS_INJECTION}
+
+}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 Priority order: P0 memory > P1 disk > P2 stopped > P3 degraded > P4 housekeeping
@@ -104,6 +116,9 @@ ${PROMPT_FOOTER}"
 # ── Run agent ─────────────────────────────────────────────────────────────
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# Write journal entry post-session
+profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$SCRATCH_FILE"
 log "--- Supervisor run done ---"

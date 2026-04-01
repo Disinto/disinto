@@ -13,6 +13,7 @@
 #   build_prompt_footer    [EXTRA_API]      — sets PROMPT_FOOTER (API ref + env + phase)
 #   run_formula_and_monitor AGENT [TIMEOUT] [CALLBACK] — session start, inject, monitor, log
 #   formula_phase_callback PHASE           — standard crash-recovery callback
+#   formula_prepare_profile_context        — load lessons from .profile repo (pre-session)
 #
 # Requires: lib/agent-session.sh sourced first (for create_agent_session,
 # agent_kill_session, agent_inject_into_session).
@@ -348,6 +349,17 @@ ${lessons_content}"
   fi
 
   return 0
+}
+
+# formula_prepare_profile_context
+# Pre-session: loads lessons from .profile repo and sets LESSONS_CONTEXT for prompt injection.
+# Single shared function to avoid duplicate boilerplate across agent scripts.
+# Requires: AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL (via profile_load_lessons).
+# Exports: LESSONS_CONTEXT (set by profile_load_lessons).
+# Returns 0 on success, 1 if agent has no .profile repo (silent no-op).
+formula_prepare_profile_context() {
+  profile_load_lessons || true
+  LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
 }
 
 # profile_write_journal ISSUE_NUM ISSUE_TITLE OUTCOME [FILES_CHANGED]
