@@ -122,6 +122,8 @@ disinto/
 │   └── (formula-driven)  # run-planner.toml executed by dispatcher
 ├── vault/
 │   └── vault-env.sh      # Shared env setup (vault redesign in progress, see #73-#77)
+├── docs/
+│   └── VAULT.md          # Vault PR workflow and branch protection documentation
 └── supervisor/
     ├── supervisor-poll.sh   # Supervisor: health checks + claude -p
     ├── update-prompt.sh  # Self-learning: append to best-practices
@@ -146,6 +148,7 @@ disinto/
 | **Planner** | Weekly | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
+> See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow and branch protection details.
 
 ## Design Principles
 

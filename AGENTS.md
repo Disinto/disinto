@@ -10,7 +10,7 @@ all via cron and `claude -p`. The dispatcher executes formula-based operational
 tasks.
 
 > **Note:** The vault is being redesigned as a PR-based approval workflow on the
-> ops repo (see issues #73-#77). Old vault scripts are being removed.
+> ops repo (see issues #73-#77). See [docs/VAULT.md](docs/VAULT.md) for details. Old vault scripts are being removed.
 
 See `README.md` for the full architecture and `disinto-factory/SKILL.md` for setup.
 
@@ -95,6 +95,7 @@ bash dev/phase-test.sh
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
+> See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow details.
 
 See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
 
