@@ -1,3 +1,4 @@
 FROM caddy:alpine
 RUN apk add --no-cache bash jq curl git docker-cli
-COPY dispatcher.sh /usr/local/bin/dispatcher.sh
+COPY entrypoint-edge.sh /usr/local/bin/entrypoint-edge.sh
+ENTRYPOINT ["bash", "/usr/local/bin/entrypoint-edge.sh"]

@@ -278,9 +278,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - DISINTO_VERSION=${DISINTO_VERSION:-main}
+      - FORGE_URL=http://forgejo:3000
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
-      - ./docker/edge/dispatcher.sh:/usr/local/bin/dispatcher.sh:ro
       - caddy_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
