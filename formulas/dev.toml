@@ -1,0 +1,175 @@
+# formulas/dev.toml — Dev agent formula (issue implementation)
+#
+# Executed by dev/dev-agent.sh via tmux session with Claude.
+# dev-agent.sh is called by dev-poll.sh which finds the next ready issue
+# from the backlog (priority tier first, then plain backlog).
+#
+# Steps: preflight → implement → CI → review → merge → journal
+#
+# Key behaviors:
+#   - Creates worktree for isolation
+#   - Uses tmux session for persistent Claude interaction
+#   - Phase-file signaling for orchestrator coordination
+#   - Auto-retry on CI failures (max 3 attempts)
+#   - Direct-merge for approved PRs (bypasses lock)
+
+name        = "dev"
+description = "Issue implementation: code, commit, push, address CI/review"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md", "dev/AGENTS.md", "lib/env.sh", "lib/pr-lifecycle.sh", "lib/ci-helpers.sh"]
+
+[[steps]]
+id    = "preflight"
+title = "Review the issue and prepare implementation plan"
+description = """
+Read the issue body carefully. Understand:
+- What needs to be implemented
+- Any dependencies (check `## Dependencies` section)
+- Existing code that might be affected
+- Testing requirements
+
+Then create a plan:
+1. What files need to be modified/created
+2. What tests need to be added
+3. Any documentation updates
+
+Check the preflight metrics from supervisor if available:
+  cat "$OPS_REPO_ROOT/journal/supervisor/$(date -u +%Y-%m-%d).md"
+
+Note: Only proceed if all dependency issues are closed.
+"""
+
+[[steps]]
+id    = "implement"
+title = "Write code to implement the issue"
+description = """
+Implement the changes:
+
+1. Create a new worktree:
+   cd "$PROJECT_REPO_ROOT"
+   git worktree add -b "dev/{agent}-{issue}" ../{agent}-{issue}
+
+2. Make your changes to the codebase
+3. Add tests if applicable
+4. Update documentation if needed
+5. Commit with conventional commits:
+   git add -A
+   git commit -m "feat({issue}): {description}"
+
+6. Push to forge:
+   git push -u origin dev/{agent}-{issue}
+
+7. Create PR via API or web interface
+   - Title: feat({issue}): {description}
+   - Body: Link to issue, describe changes
+   - Labels: backlog, in-progress
+
+Note: The worktree is preserved on crash for debugging.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "ci"
+title = "Wait for CI and address failures"
+description = """
+Monitor CI pipeline status via Woodpecker API:
+  woodpecker_api /repos/${WOODPECKER_REPO_ID}/pipelines?branch=dev/{agent}-{issue}
+
+Wait for CI to complete. If CI fails:
+
+1. Read the CI logs to understand the failure
+2. Fix the issue
+3. Amend commit and force push
+4. Track CI attempts (max 3 retries)
+
+CI fix tracker file:
+  $DISINTO_LOG_DIR/dev/ci-fixes-{project}.json
+
+On CI success, proceed to review.
+If CI exhausted (3 failures), escalate via PHASE:escalate.
+"""
+needs = ["implement"]
+
+[[steps]]
+id    = "review"
+title = "Address review feedback"
+description = """
+Check PR for review comments:
+  curl -sf "${FORGE_API}/pulls/{pr-number}/comments"
+
+For each comment:
+1. Understand the feedback
+2. Make changes to fix the issue
+3. Amend commit and force push
+4. Address the comment in the PR
+
+If review approves, proceed to merge.
+If stuck or needs clarification, escalate via PHASE:escalate.
+"""
+needs = ["ci"]
+
+[[steps]]
+id    = "merge"
+title = "Merge the PR"
+description = """
+Check if PR is approved and CI is green:
+  curl -sf "${FORGE_API}/pulls/{pr-number}"
+
+If approved (merged=true or approved_by set):
+1. Merge the PR:
+   curl -sf -X PUT "${FORGE_API}/pulls/{pr-number}/merge" \\
+     -d '{"merge_method":"merge"}'
+
+2. Mirror push to other remotes:
+   mirror_push
+
+3. Close the issue:
+   curl -sf -X PATCH "${FORGE_API}/issues/{issue-number}" \\
+     -d '{"state":"closed"}'
+
+4. Delete the branch:
+   git push origin --delete dev/{agent}-{issue}
+
+If direct merge is blocked, note in journal and escalate.
+"""
+needs = ["review"]
+
+[[steps]]
+id    = "journal"
+title = "Write implementation journal"
+description = """
+Append a timestamped entry to the dev journal:
+
+File path:
+  $OPS_REPO_ROOT/journal/dev/$(date -u +%Y-%m-%d).md
+
+If the file already exists (multiple PRs merged same day), append.
+If it does not exist, create it.
+
+Format:
+  ## Dev implementation — {issue-number}
+  Time: {timestamp}
+  PR: {pr-number}
+  Branch: dev/{agent}-{issue}
+
+  ### Changes
+  - {summary of changes}
+
+  ### CI attempts: {n}
+  ### Review feedback: {n} comments addressed
+
+  ### Lessons learned
+  - {what you learned during implementation}
+
+  ### Knowledge added
+  If you discovered something new, add to knowledge:
+  echo "### Lesson title
+  Description." >> "${OPS_REPO_ROOT}/knowledge/{topic}.md"
+
+After writing the journal, write the phase signal:
+  echo 'PHASE:done' > "$PHASE_FILE"
+"""
+needs = ["merge"]
