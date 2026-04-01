@@ -25,4 +25,6 @@ gardener/dust.jsonl
 
 # Individual encrypted secrets (managed by disinto secrets add)
 secrets/
-.woodpecker/smoke-init.yml
+
+# Pre-built binaries for Docker builds (avoid network calls during build)
+docker/agents/bin/
