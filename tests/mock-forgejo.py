@@ -11,7 +11,9 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
+import threading
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -103,10 +105,12 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
         log_request(self, method, self.path, "PENDING")
 
-        # Strip /api/v1/ prefix for routing
+        # Strip /api/v1/ prefix for routing (or leading slash for other routes)
         route_path = path
         if route_path.startswith("/api/v1/"):
             route_path = route_path[8:]
+        elif route_path.startswith("/"):
+            route_path = route_path.lstrip("/")
 
         # Route to handler
         try:
@@ -146,8 +150,6 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             (r"^admin/users/([^/]+)$", f"handle_{method}_admin_users_username"),
             # Org patterns
             (r"^orgs$", f"handle_{method}_orgs"),
-            # OAuth2 patterns
-            (r"^user/applications/oauth2$", f"handle_{method}_user_applications_oauth2"),
         ]
 
         for pattern, handler_name in patterns:
@@ -297,6 +299,7 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             "scopes": data.get("scopes", ["all"]),
             "created_at": "2026-04-01T00:00:00Z",
             "expires_at": None,
+            "username": username,  # Store username for lookup
         }
 
         state["tokens"][token_str] = token
@@ -388,11 +391,11 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         auth_header = self.headers.get("Authorization", "")
         token = auth_header.split(" ", 1)[1] if " " in auth_header else ""
 
-        # Find user by token
+        # Find user by token (use stored username field)
         owner = None
-        for uname, tok in state["tokens"].items():
-            if tok.get("sha1") == token:
-                owner = uname
+        for tok_sha1, tok in state["tokens"].items():
+            if tok_sha1 == token:
+                owner = tok.get("username")
                 break
 
         if not owner:
@@ -567,10 +570,10 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         require_token(self)
 
         parts = self.path.split("/")
-        if len(parts) >= 7:
+        if len(parts) >= 8:
             owner = parts[4]
             repo = parts[5]
-            collaborator = parts[6]
+            collaborator = parts[7]
         else:
             json_response(self, 404, {"message": "repository not found"})
             return
@@ -605,7 +608,7 @@ def main():
     port = int(os.environ.get("MOCK_FORGE_PORT", 3000))
     server = ThreadingHTTPServer(("0.0.0.0", port), ForgejoHandler)
     try:
-        server.socket.setsockopt(2, 4, 1)  # SO_REUSEADDR
+        server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     except OSError:
         pass  # Not all platforms support this
 
@@ -614,6 +617,8 @@ def main():
     def shutdown_handler(signum, frame):
         global SHUTDOWN_REQUESTED
         SHUTDOWN_REQUESTED = True
+        # Can't call server.shutdown() directly from signal handler in threaded server
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
