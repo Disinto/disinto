@@ -575,6 +575,13 @@ else
   outcome="blocked_${_PR_WALK_EXIT_REASON:-agent_failed}"
   profile_write_journal "$ISSUE" "$ISSUE_TITLE" "$outcome" "$FILES_CHANGED" || true
 
+  # Cleanup on failure: close PR, delete remote branch, clean up worktree
+  if [ -n "$PR_NUMBER" ]; then
+    pr_close "$PR_NUMBER"
+  fi
+  git push "$FORGE_REMOTE" --delete "$BRANCH" 2>/dev/null || true
+  worktree_cleanup "$WORKTREE"
+  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
   CLAIMED=false
 fi
 
