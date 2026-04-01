@@ -362,6 +362,17 @@ formula_prepare_profile_context() {
   LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
 }
 
+# formula_lessons_block
+# Returns a formatted lessons block for prompt injection.
+# Usage: LESSONS_BLOCK=$(formula_lessons_block)
+# Expects: LESSONS_INJECTION to be set by formula_prepare_profile_context.
+# Returns: formatted block or empty string.
+formula_lessons_block() {
+  if [ -n "${LESSONS_INJECTION:-}" ]; then
+    printf '\n## Lessons learned (from .profile/knowledge/lessons-learned.md)\n%s' "$LESSONS_INJECTION"
+  fi
+}
+
 # profile_write_journal ISSUE_NUM ISSUE_TITLE OUTCOME [FILES_CHANGED]
 # Post-session: writes a reflection journal entry after work completes.
 # Returns 0 on success, 1 on failure.

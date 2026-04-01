@@ -114,10 +114,7 @@ You have full shell access and --dangerously-skip-permissions.
 Fix what you can. File vault items for what you cannot. Do NOT ask permission — act first, report after.
 
 ## Project context
-${CONTEXT_BLOCK}${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-
-}
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Result file

@@ -91,10 +91,7 @@ Use WebSearch for external signal scanning — be targeted (project dependencies
 and tools only, not general news). Limit to 3 web searches per run.
 
 ## Project context
-${CONTEXT_BLOCK}${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-
-}
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }

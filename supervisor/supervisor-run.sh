@@ -100,10 +100,7 @@ Fix what you can. File vault items for what you cannot. Do NOT ask permission â€
 ${PREFLIGHT_OUTPUT}
 
 ## Project context
-${CONTEXT_BLOCK}${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-
-}
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 Priority order: P0 memory > P1 disk > P2 stopped > P3 degraded > P4 housekeeping

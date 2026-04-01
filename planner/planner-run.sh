@@ -95,10 +95,7 @@ build_sdk_prompt_footer "
 PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formula below.
 
 ## Project context
-${CONTEXT_BLOCK}${MEMORY_BLOCK}${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-
-}
+${CONTEXT_BLOCK}${MEMORY_BLOCK}$(formula_lessons_block)
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
