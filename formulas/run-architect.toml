@@ -32,15 +32,43 @@ Actions:
 2. Read prerequisite tree from $OPS_REPO_ROOT/prerequisites.md
 3. Fetch open issues labeled 'vision' from Forgejo API
 4. Check for open architect PRs on ops repo (handled by #101/#102)
-5. If open architect PRs exist or no vision issues, signal PHASE:done
+5. If open architect PRs exist, handle accept/reject responses (see Capability B below)
+6. If no vision issues, signal PHASE:done
 
 Skip conditions:
-- If open architect PRs exist on ops repo, signal PHASE:done
 - If no vision issues are found, signal PHASE:done
 
 Output:
 - Sets ARCHITECT_TARGET_ISSUE to the issue number of the selected vision issue
 - Exports VISION_ISSUES as a JSON array of issue objects
+
+## Capability B: Handle accept/reject on existing pitch PRs
+
+When open architect PRs exist on the ops repo:
+
+1. Fetch comments on each open architect PR via Forgejo API
+2. Look for human response:
+
+   **ACCEPT** (case insensitive): Human wants to proceed
+   - Architect does deep research for design forks (same as #100 research but now identifying decision points)
+   - Formulates multiple-choice questions (Q1, Q2, Q3...)
+   - Updates the sprint spec file on the PR branch:
+     - Adds `## Design forks` section with fork options
+     - Adds `## Proposed sub-issues` section with concrete issues per fork path
+   - Comments on the PR with the questions formatted as multiple choice
+   - Signal PHASE:done (answer processing is #102)
+
+   **REJECT: <reason>** (case insensitive, reason after colon):
+   - Journal the rejection reason via profile_write_journal (if .profile exists)
+     — the architect learns what pitches fail
+   - Close the PR via Forgejo API (do not merge — rejected pitches do not persist in sprints/)
+   - Remove the branch via Forgejo API
+   - Signal PHASE:done
+
+   **No response yet**: skip silently, signal PHASE:done
+
+All git operations use the Forgejo API (create branch, write/update file, create PR,
+close PR, delete branch). No SSH.
 """
 
 [[steps]]
@@ -102,18 +130,84 @@ Output:
 id    = "sprint_pr_creation"
 title = "Sprint PR creation with questions (issue #101)"
 description = """
-This step creates a PR on the ops repo with the sprint proposal and design questions.
+This step creates a PR on the ops repo with the sprint proposal when no PR exists yet.
 
-Actions:
-1. Read the sprint pitch from the scratch file
-2. Create a PR on the ops repo with the sprint proposal
-3. Include design questions and forks for human review
-4. Tag the original vision issue in the PR description
+## Capability A: Create pitch PR (from research output)
 
-Output:
-- Creates PR on ops repo with sprint proposal
-- Links to original vision issue(s)
-- Includes design questions for architect-human conversation
+If step 2 (research/pitch) produced a pitch and no PR exists yet:
+
+1. Create branch `architect/<sprint-slug>` on ops repo via Forgejo API
+   - Sprint slug: lowercase, hyphenated version of sprint name
+   - Use Forgejo API: POST /repos/{owner}/{repo}/git/branches
+
+2. Write sprint spec file to sprints/<sprint-slug>.md on the new branch:
+
+# Sprint: <name>
+
+## Vision issues
+- #N — <title>
+
+## What this enables
+<what the project can do after this sprint that it can't do now>
+
+## What exists today
+<current state — infrastructure, interfaces, code that can be reused>
+
+## Complexity
+<number of files/subsystems, estimated sub-issues>
+<gluecode vs greenfield ratio>
+
+## Risks
+<what could go wrong, what breaks if this is done badly>
+
+## Cost — new infra to maintain
+<what ongoing maintenance burden does this sprint add>
+<new services, cron jobs, formulas, agent roles>
+
+## Recommendation
+<architect's assessment: worth it / defer / alternative approach>
+
+3. Create PR on ops repo via Forgejo API:
+   - Title: `architect: <sprint summary>`
+   - Body: pitch content (what it enables, complexity, risks, cost)
+   - Base branch: primary branch (main/master)
+   - Head branch: architect/<sprint-slug>
+   - Footer: "Reply `ACCEPT` to proceed with design questions, or `REJECT: <reason>` to decline."
+
+4. Signal PHASE:done
+
+## Forgejo API Reference
+
+All operations use the Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
+
+### Create branch
+```
+POST /repos/{owner}/{repo}/branches
+Body: {"new_branch_name": "architect/<sprint-slug>", "old_branch_name": "main"}
+```
+
+### Create/update file
+```
+PUT /repos/{owner}/{repo}/contents/<path>
+Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-content>", "branch": "architect/<sprint-slug>"}
+```
+
+### Create PR
+```
+POST /repos/{owner}/{repo}/pulls
+Body: {"title": "architect: <sprint summary>", "body": "<pitch-content>", "head": "architect/<sprint-slug>", "base": "main"}
+```
+
+### Close PR
+```
+PATCH /repos/{owner}/{repo}/pulls/{index}
+Body: {"state": "closed"}
+```
+
+### Delete branch
+```
+DELETE /repos/{owner}/{repo}/git/branches/<branch-name>
+```
 """
 
 [[steps]]
