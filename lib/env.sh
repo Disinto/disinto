@@ -98,7 +98,7 @@ export FORGE_PREDICTOR_TOKEN="${FORGE_PREDICTOR_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_ARCHITECT_TOKEN="${FORGE_ARCHITECT_TOKEN:-${FORGE_TOKEN}}"
 
 # Bot usernames filter: FORGE_BOT_USERNAMES > legacy CODEBERG_BOT_USERNAMES
-export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-${CODEBERG_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot}}"
+export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-${CODEBERG_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot,architect-bot}}"
 export CODEBERG_BOT_USERNAMES="${FORGE_BOT_USERNAMES}"  # backwards compat
 
 # Project config (FORGE_* preferred, CODEBERG_* fallback)
