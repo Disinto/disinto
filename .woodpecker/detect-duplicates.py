@@ -179,8 +179,11 @@ def collect_findings(root):
     Returns ``(ap_hits, dup_groups)`` with file paths relative to *root*.
     """
     root = Path(root)
+    # Skip architect scripts for duplicate detection (stub formulas, see #99)
+    EXCLUDED_FILES = {"architect/architect-run.sh"}
     sh_files = sorted(
-        p for p in root.rglob("*.sh") if ".git" not in p.parts
+        p for p in root.rglob("*.sh")
+        if ".git" not in p.parts and str(p) not in EXCLUDED_FILES
     )
 
     ap_hits = check_anti_patterns(sh_files)
@@ -238,8 +241,11 @@ def print_duplicates(groups, label=""):
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    # Skip architect scripts for duplicate detection (stub formulas, see #99)
+    EXCLUDED_FILES = {"architect/architect-run.sh"}
     sh_files = sorted(
-        p for p in Path(".").rglob("*.sh") if ".git" not in p.parts
+        p for p in Path(".").rglob("*.sh")
+        if ".git" not in p.parts and str(p) not in EXCLUDED_FILES
     )
 
     if not sh_files:
