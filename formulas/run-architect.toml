@@ -1,0 +1,36 @@
+# formulas/run-architect.toml — Architect formula (stub)
+#
+# Executed by architect-run.sh via cron — strategic decomposition of vision
+# issues into development sprints.
+#
+# This is a stub formula — steps will be filled in by follow-up issues:
+#   #100: research + design fork identification
+#   #101: sprint PR creation with questions
+#   #102: answer parsing + sub-issue filing
+#
+# AGENTS.md maintenance is handled by the gardener (#246).
+
+name        = "run-architect"
+description = "Architect: strategic decomposition of vision into sprints"
+version     = 1
+model       = "opus"
+
+[context]
+files = ["VISION.md", "AGENTS.md"]
+# Prerequisite tree loaded from ops repo (ops: prefix)
+# Sprints directory tracked in ops repo
+
+[[steps]]
+id    = "placeholder"
+title = "TODO: implement formula steps"
+description = """
+This step is a placeholder. The actual formula steps will be implemented in
+follow-up issues:
+
+- #100: research + design fork identification
+- #101: sprint PR creation with questions
+- #102: answer parsing + sub-issue filing
+
+The architect formula will decompose vision items into coherent sprints,
+identify design forks, and file sub-issues after design decisions are made.
+"""

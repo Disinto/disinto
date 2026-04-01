@@ -3,11 +3,11 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages six agents (dev, review,
-gardener, supervisor, planner, predictor) that pick up issues from forge,
-implement them, review PRs, plan from the vision, and keep the system healthy —
-all via cron and `claude -p`. The dispatcher executes formula-based operational
-tasks.
+Disinto is an autonomous code factory. It manages seven agents (dev, review,
+gardener, supervisor, planner, predictor, architect) that pick up issues from
+forge, implement them, review PRs, plan from the vision, and keep the system
+healthy — all via cron and `claude -p`. The dispatcher executes formula-based
+operational tasks.
 
 > **Note:** The vault is being redesigned as a PR-based approval workflow on the
 > ops repo (see issues #73-#77). See [docs/VAULT.md](docs/VAULT.md) for details. Old vault scripts are being removed.
@@ -26,6 +26,7 @@ disinto/                 (code repo)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
+├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 ├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
@@ -93,6 +94,7 @@ bash dev/phase-test.sh
 | Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
+| Architect | `architect/` | Strategic decomposition | [architect/AGENTS.md](architect/AGENTS.md) |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 > See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow details.

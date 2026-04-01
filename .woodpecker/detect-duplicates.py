@@ -179,9 +179,16 @@ def collect_findings(root):
     Returns ``(ap_hits, dup_groups)`` with file paths relative to *root*.
     """
     root = Path(root)
-    sh_files = sorted(
-        p for p in root.rglob("*.sh") if ".git" not in p.parts
-    )
+    # Skip architect scripts for duplicate detection (stub formulas, see #99)
+    EXCLUDED_SUFFIXES = ("architect/architect-run.sh",)
+
+    def is_excluded(p):
+        """Check if path should be excluded by suffix match."""
+        return p.suffix == ".sh" and ".git" not in p.parts and any(
+            str(p).endswith(suffix) for suffix in EXCLUDED_SUFFIXES
+        )
+
+    sh_files = sorted(p for p in root.rglob("*.sh") if not is_excluded(p))
 
     ap_hits = check_anti_patterns(sh_files)
     dup_groups = check_duplicates(sh_files)
@@ -238,9 +245,16 @@ def print_duplicates(groups, label=""):
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    sh_files = sorted(
-        p for p in Path(".").rglob("*.sh") if ".git" not in p.parts
-    )
+    # Skip architect scripts for duplicate detection (stub formulas, see #99)
+    EXCLUDED_SUFFIXES = ("architect/architect-run.sh",)
+
+    def is_excluded(p):
+        """Check if path should be excluded by suffix match."""
+        return p.suffix == ".sh" and ".git" not in p.parts and any(
+            str(p).endswith(suffix) for suffix in EXCLUDED_SUFFIXES
+        )
+
+    sh_files = sorted(p for p in Path(".").rglob("*.sh") if not is_excluded(p))
 
     if not sh_files:
         print("No .sh files found.")
