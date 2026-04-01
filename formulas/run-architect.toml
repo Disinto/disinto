@@ -1,12 +1,13 @@
-# formulas/run-architect.toml — Architect formula (stub)
+# formulas/run-architect.toml — Architect formula
 #
 # Executed by architect-run.sh via cron — strategic decomposition of vision
 # issues into development sprints.
 #
-# This is a stub formula — steps will be filled in by follow-up issues:
-#   #100: research + design fork identification
-#   #101: sprint PR creation with questions
-#   #102: answer parsing + sub-issue filing
+# This formula orchestrates the architect agent's workflow:
+#   Step 1: Preflight — validate prerequisites and identify target issue
+#   Step 2: Research + pitch — analyze codebase and write sprint pitch
+#   Step 3: Sprint PR creation with questions (issue #101)
+#   Step 4: Answer parsing + sub-issue filing (issue #102)
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
 
@@ -21,16 +22,113 @@ files = ["VISION.md", "AGENTS.md"]
 # Sprints directory tracked in ops repo
 
 [[steps]]
-id    = "placeholder"
-title = "TODO: implement formula steps"
+id    = "preflight"
+title = "Preflight: validate prerequisites and identify target vision issue"
 description = """
-This step is a placeholder. The actual formula steps will be implemented in
-follow-up issues:
+This step performs preflight checks and identifies the most unblocking vision issue.
 
-- #100: research + design fork identification
-- #101: sprint PR creation with questions
-- #102: answer parsing + sub-issue filing
+Actions:
+1. Pull latest code from both disinto repo and ops repo
+2. Read prerequisite tree from $OPS_REPO_ROOT/prerequisites.md
+3. Fetch open issues labeled 'vision' from Forgejo API
+4. Check for open architect PRs on ops repo (handled by #101/#102)
+5. If open architect PRs exist or no vision issues, signal PHASE:done
 
-The architect formula will decompose vision items into coherent sprints,
-identify design forks, and file sub-issues after design decisions are made.
+Skip conditions:
+- If open architect PRs exist on ops repo, signal PHASE:done
+- If no vision issues are found, signal PHASE:done
+
+Output:
+- Sets ARCHITECT_TARGET_ISSUE to the issue number of the selected vision issue
+- Exports VISION_ISSUES as a JSON array of issue objects
+"""
+
+[[steps]]
+id    = "research_pitch"
+title = "Research + pitch: analyze codebase and write sprint pitch"
+description = """
+This step performs deep codebase research and writes a sprint pitch for the
+selected vision issue.
+
+Actions:
+
+1. Read the codebase deeply:
+   - Read all files mentioned in the issue body
+   - Search for existing interfaces that could be reused
+   - Check what infrastructure already exists
+
+2. Assess complexity and cost:
+   - How many files/subsystems are touched?
+   - What new infrastructure would need to be maintained after this sprint?
+   - What are the risks (breaking changes, security implications, integration complexity)?
+   - Is this mostly gluecode or greenfield?
+
+3. Write sprint pitch to scratch file for PR creation step (#101):
+
+# Sprint pitch: <name>
+
+## Vision issues
+- #N — <title>
+
+## What this enables
+<what the project can do after this sprint that it can't do now>
+
+## What exists today
+<current state — infrastructure, interfaces, code that can be reused>
+
+## Complexity
+<number of files, subsystems, estimated sub-issues>
+<gluecode vs greenfield ratio>
+
+## Risks
+<what could go wrong, what breaks if this is done badly>
+
+## Cost — new infra to maintain
+<what ongoing maintenance burden does this sprint add>
+<new services, cron jobs, formulas, agent roles>
+
+## Recommendation
+<architect's assessment: worth it / defer / alternative approach>
+
+IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
+decision for the human. Questions come only after acceptance.
+
+Output:
+- Writes sprint pitch to $SCRATCH_FILE (/tmp/architect-{project}-scratch.md)
+- The pitch serves as input for sprint PR creation step (#101)
+"""
+
+[[steps]]
+id    = "sprint_pr_creation"
+title = "Sprint PR creation with questions (issue #101)"
+description = """
+This step creates a PR on the ops repo with the sprint proposal and design questions.
+
+Actions:
+1. Read the sprint pitch from the scratch file
+2. Create a PR on the ops repo with the sprint proposal
+3. Include design questions and forks for human review
+4. Tag the original vision issue in the PR description
+
+Output:
+- Creates PR on ops repo with sprint proposal
+- Links to original vision issue(s)
+- Includes design questions for architect-human conversation
+"""
+
+[[steps]]
+id    = "answer_parsing"
+title = "Answer parsing + sub-issue filing (issue #102)"
+description = """
+This step processes human answers to design questions and files sub-issues.
+
+Actions:
+1. Monitor PR comments for human responses to design questions
+2. Parse answers and extract design decisions
+3. File concrete sub-issues for each accepted design fork path
+4. Close or update the sprint PR based on decisions
+
+Output:
+- Sub-issues filed in disinto repo with proper dependencies
+- Sprint PR updated or closed based on design decisions
 """

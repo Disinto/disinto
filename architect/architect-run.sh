@@ -98,7 +98,7 @@ PROMPT=$(build_architect_prompt)
 formula_worktree_setup "$WORKTREE"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
-export CLAUDE_MODEL="opus"
+export CLAUDE_MODEL="sonnet"
 
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
