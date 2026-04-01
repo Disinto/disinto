@@ -45,6 +45,12 @@ WORKTREE="/tmp/${PROJECT_NAME}-planner-run"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
+# Ensure AGENT_IDENTITY is set for profile functions
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PLANNER_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PLANNER_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
 acquire_cron_lock "/tmp/planner-run.lock"
@@ -72,24 +78,9 @@ $(cat "$MEMORY_FILE")
 "
 fi
 
-# ── Read recent journal files ──────────────────────────────────────────
-JOURNAL_BLOCK=""
-JOURNAL_DIR="$OPS_REPO_ROOT/journal/planner"
-if [ -d "$JOURNAL_DIR" ]; then
-  # Load last 5 journal files (most recent first) for run history context
-  JOURNAL_FILES=$(find "$JOURNAL_DIR" -name '*.md' -type f | sort -r | head -5)
-  if [ -n "$JOURNAL_FILES" ]; then
-    JOURNAL_BLOCK="
-### Recent journal entries (journal/planner/)
-"
-    while IFS= read -r jf; do
-      JOURNAL_BLOCK="${JOURNAL_BLOCK}
-#### $(basename "$jf")
-$(cat "$jf")
-"
-    done <<< "$JOURNAL_FILES"
-  fi
-fi
+# ── Load lessons from .profile repo (pre-session) ────────────────────────
+profile_load_lessons || true
+LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -105,7 +96,11 @@ build_sdk_prompt_footer "
 PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formula below.
 
 ## Project context
-${CONTEXT_BLOCK}${MEMORY_BLOCK}${JOURNAL_BLOCK}
+${CONTEXT_BLOCK}${MEMORY_BLOCK}
+${LESSONS_INJECTION:+## Lessons learned
+${LESSONS_INJECTION}
+
+}
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
@@ -124,6 +119,9 @@ export CLAUDE_MODEL="opus"
 
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# Write journal entry post-session
+profile_write_journal "planner-run" "Planner run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$SCRATCH_FILE"
 log "--- Planner run done ---"

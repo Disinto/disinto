@@ -30,6 +30,7 @@ source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/pr-lifecycle.sh"
 source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
+source "$(dirname "$0")/../lib/formula-session.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -306,6 +307,10 @@ OPEN_ISSUES_SUMMARY=$(forge_api GET "/issues?state=open&labels=backlog&limit=20&
 
 PUSH_INSTRUCTIONS=$(build_phase_protocol_prompt "$BRANCH" "$FORGE_REMOTE")
 
+# Load lessons from .profile repo if available (pre-session)
+profile_load_lessons || true
+LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
+
 if [ "$RECOVERY_MODE" = true ]; then
   GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null \
     | head -20 || echo "(no diff)")
@@ -336,6 +341,10 @@ ${GIT_DIFF_STAT}
 3. Address any pending review comments or CI failures.
 4. Commit and push to \`${BRANCH}\`.
 
+${LESSONS_INJECTION:+## Lessons learned
+${LESSONS_INJECTION}
+
+}
 ${PUSH_INSTRUCTIONS}"
 else
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
@@ -351,6 +360,10 @@ ${OPEN_ISSUES_SUMMARY}
 $(if [ -n "$PRIOR_ART_DIFF" ]; then
   printf '## Prior Art (closed PR — DO NOT start from scratch)\n\nA previous PR attempted this issue but was closed without merging. Reuse as much as possible.\n\n```diff\n%s\n```\n' "$PRIOR_ART_DIFF"
 fi)
+${LESSONS_INJECTION:+## Lessons learned
+${LESSONS_INJECTION}
+
+}
 ## Instructions
 
 1. Read AGENTS.md in this repo for project context and coding conventions.
@@ -535,6 +548,12 @@ if [ "$rc" -eq 0 ]; then
   log "PR #${PR_NUMBER} merged"
   issue_close "$ISSUE"
 
+  # Capture files changed for journal entry (after agent work)
+  FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""
+
+  # Write journal entry post-session (before cleanup)
+  profile_write_journal "$ISSUE" "$ISSUE_TITLE" "merged" "$FILES_CHANGED" || true
+
   # Pull primary branch and push to mirrors
   git -C "$REPO_ROOT" fetch "$FORGE_REMOTE" "$PRIMARY_BRANCH" 2>/dev/null || true
   git -C "$REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
@@ -548,6 +567,14 @@ else
   # Exhausted or unrecoverable failure
   log "PR walk failed: ${_PR_WALK_EXIT_REASON:-unknown}"
   issue_block "$ISSUE" "${_PR_WALK_EXIT_REASON:-agent_failed}"
+
+  # Capture files changed for journal entry (after agent work)
+  FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""
+
+  # Write journal entry post-session (before cleanup)
+  outcome="blocked_${_PR_WALK_EXIT_REASON:-agent_failed}"
+  profile_write_journal "$ISSUE" "$ISSUE_TITLE" "$outcome" "$FILES_CHANGED" || true
+
   CLAIMED=false
 fi
 
