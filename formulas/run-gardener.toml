@@ -1,16 +1,15 @@
 # formulas/run-gardener.toml — Gardener housekeeping formula
 #
 # Defines the gardener's complete run: grooming (Claude session via
-# gardener-run.sh) + blocked-review + AGENTS.md maintenance + final
-# commit-and-pr.
+# gardener-run.sh) + AGENTS.md maintenance + final commit-and-pr.
 #
-# No memory, no journal. The gardener does mechanical housekeeping
-# based on current state — it doesn't need to remember past runs.
+# Gardener has journaling via .profile (issue #97), so it learns from
+# past runs and improves over time.
 #
-# Steps: preflight → grooming → dust-bundling → blocked-review → stale-pr-recycle → agents-update → commit-and-pr
+# Steps: preflight -> grooming -> dust-bundling -> agents-update -> commit-and-pr
 
 name        = "run-gardener"
-description = "Mechanical housekeeping: grooming, blocked review, docs update"
+description = "Mechanical housekeeping: grooming, dust bundling, docs update"
 version     = 1
 
 [context]
@@ -120,15 +119,17 @@ DUST (trivial — single-line edit, rename, comment, style, whitespace):
   of 3+ into one backlog issue.
 
 VAULT (needs human decision or external resource):
-  File a vault procurement item at $OPS_REPO_ROOT/vault/pending/<id>.md:
-    # <What decision or resource is needed>
-    ## What
-    <description>
-    ## Why
-    <which issue this unblocks>
-    ## Unblocks
-    - #NNN — <title>
-  Log: echo "VAULT: filed $OPS_REPO_ROOT/vault/pending/<id>.md for #NNN — <reason>" >> "$RESULT_FILE"
+  File a vault procurement item using vault_request():
+    source "$(dirname "$0")/../lib/vault.sh"
+    TOML_CONTENT="# Vault action: <action_id>
+context = \"<description of what decision/resource is needed>\"
+unblocks = [\"#NNN\"]
+
+[execution]
+# Commands to run after approval
+"
+    PR_NUM=$(vault_request "<action_id>" "$TOML_CONTENT")
+    echo "VAULT: filed PR #${PR_NUM} for #NNN — <reason>" >> "$RESULT_FILE"
 
 CLEAN (only if truly nothing to do):
   echo 'CLEAN' >> "$RESULT_FILE"
@@ -142,25 +143,7 @@ Sibling dependency rule (CRITICAL):
   NEVER add bidirectional ## Dependencies between siblings (creates deadlocks).
   Use ## Related for cross-references: "## Related\n- #NNN (sibling)"
 
-7. Architecture decision alignment check (AD check):
-   For each open issue labeled 'backlog', check whether the issue
-   contradicts any architecture decision listed in the
-   ## Architecture Decisions section of AGENTS.md.
-   Read AGENTS.md and extract the AD table. For each backlog issue,
-   compare the issue title and body against each AD. If an issue
-   clearly violates an AD:
-   a. Write a comment action to the manifest:
-        echo '{"action":"comment","issue":NNN,"body":"Closing: violates AD-NNN (<decision summary>). See AGENTS.md § Architecture Decisions."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-   b. Write a close action to the manifest:
-        echo '{"action":"close","issue":NNN,"reason":"violates AD-NNN"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-   c. Log to the result file:
-        echo "ACTION: closed #NNN — violates AD-NNN" >> "$RESULT_FILE"
-
-   Only close for clear, unambiguous violations. If the issue is
-   borderline or could be interpreted as compatible, leave it open
-   and file a VAULT item for human decision instead.
-
-8. Quality gate — backlog label enforcement:
+6. Quality gate — backlog label enforcement:
    For each open issue labeled 'backlog', verify it has the required
    sections for dev-agent pickup:
    a. Acceptance criteria — body must contain at least one checkbox
@@ -181,28 +164,11 @@ Sibling dependency rule (CRITICAL):
    Well-structured issues (both sections present) are left untouched —
    they are ready for dev-agent pickup.
 
-9. Portfolio lifecycle — maintain ## Addressables and ## Observables in AGENTS.md:
-   Read the current Addressables and Observables tables from AGENTS.md.
-
-   a. ADD: if a recently closed issue shipped a new deployment, listing,
-      package, or external presence not yet in the table, add a row.
-   b. PROMOTE: if an addressable now has measurement wired (an evidence
-      process reads from it), move it to the Observables section.
-   c. REMOVE: if an addressable was decommissioned (vision change
-      invalidated it, service shut down), remove the row and log why.
-   d. FLAG: if an addressable has been live > 2 weeks with Observable? = No
-      and no evidence process is planned, add a comment to the result file:
-        echo "ACTION: flagged addressable '<name>' — live >2 weeks, no observation path" >> "$RESULT_FILE"
-
-   Stage AGENTS.md if changed — the commit-and-pr step handles the actual commit.
-
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
-  2. AD alignment check — close backlog issues that violate architecture decisions
-  3. Quality gate — strip backlog from issues missing acceptance criteria or affected files
-  4. Process tech-debt issues by score (impact/effort)
-  5. Classify remaining items as dust or route to vault
-  6. Portfolio lifecycle — update addressables/observables tables
+  2. Quality gate — strip backlog from issues missing acceptance criteria or affected files
+  3. Process tech-debt issues by score (impact/effort)
+  4. Classify remaining items as dust or route to vault
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.
@@ -257,126 +223,12 @@ session, so changes there would be lost.
 
 5. If no DUST items were emitted and no groups are ripe, skip this step.
 
-CRITICAL: If this step fails, log the failure and move on to blocked-review.
+CRITICAL: If this step fails, log the failure and move on.
 """
 needs = ["grooming"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 4: blocked-review — triage blocked issues
-# ─────────────────────────────────────────────────────────────────────
-
-[[steps]]
-id    = "blocked-review"
-title = "Review issues labeled blocked"
-description = """
-Review all issues labeled 'blocked' and decide their fate.
-(See issue #352 for the blocked label convention.)
-
-1. Fetch all blocked issues:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues?state=open&type=issues&labels=blocked&limit=50"
-
-2. For each blocked issue, read the full body and comments:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues/<number>"
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues/<number>/comments"
-
-3. Check dependencies — extract issue numbers from ## Dependencies /
-   ## Depends on / ## Blocked by sections. For each dependency:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues/<dep_number>"
-   Check if the dependency is now closed.
-
-4. For each blocked issue, choose ONE action:
-
-   UNBLOCK — all dependencies are now closed or the blocking condition resolved:
-   a. Write a remove_label action to the manifest:
-        echo '{"action":"remove_label","issue":NNN,"label":"blocked"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-   b. Write a comment action to the manifest:
-        echo '{"action":"comment","issue":NNN,"body":"Unblocked: <explanation of what resolved the blocker>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-   NEEDS HUMAN — blocking condition is ambiguous, requires architectural
-   decision, or involves external factors:
-   a. Write a comment action to the manifest:
-        echo '{"action":"comment","issue":NNN,"body":"<diagnostic: what you found and what decision is needed>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-   b. Leave the 'blocked' label in place
-
-   CLOSE — issue is stale (blocked 30+ days with no progress on blocker),
-   the blocker is wontfix, or the issue is no longer relevant:
-   a. Write a comment action to the manifest:
-        echo '{"action":"comment","issue":NNN,"body":"Closing: <reason — stale blocker, no longer relevant, etc.>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-   b. Write a close action to the manifest:
-        echo '{"action":"close","issue":NNN,"reason":"<stale blocker / no longer relevant / etc.>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-CRITICAL: If this step fails, log the failure and move on.
-"""
-needs = ["dust-bundling"]
-
-# ─────────────────────────────────────────────────────────────────────
-# Step 5: stale-pr-recycle — recycle stale failed PRs back to backlog
-# ─────────────────────────────────────────────────────────────────────
-
-[[steps]]
-id    = "stale-pr-recycle"
-title = "Recycle stale failed PRs back to backlog"
-description = """
-Detect open PRs where CI has failed and no work has happened in 24+ hours.
-These represent abandoned dev-agent attempts — recycle them so the pipeline
-can retry with a fresh session.
-
-1. Fetch all open PRs:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/pulls?state=open&limit=50"
-
-2. For each PR, check all four conditions before recycling:
-
-   a. CI failed — get the HEAD SHA from the PR's head.sha field, then:
-        curl -sf -H "Authorization: token $FORGE_TOKEN" \
-          "$FORGE_API/commits/<head_sha>/status"
-      Only proceed if the combined state is "failure" or "error".
-      Skip PRs with "success", "pending", or no CI status.
-
-   b. Last push > 24 hours ago — get the commit details:
-        curl -sf -H "Authorization: token $FORGE_TOKEN" \
-          "$FORGE_API/git/commits/<head_sha>"
-      Parse the committer.date field. Only proceed if it is older than:
-        $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-
-   c. Linked issue exists — extract the issue number from the PR body.
-      Look for "Fixes #NNN" or "ixes #NNN" patterns (case-insensitive).
-      If no linked issue found, skip this PR (cannot reset labels).
-
-   d. No active tmux session — check:
-        tmux has-session -t "dev-${PROJECT_NAME}-<issue_number>" 2>/dev/null
-      If a session exists, someone may still be working — skip this PR.
-
-3. For each PR that passes all checks (failed CI, 24+ hours stale,
-   linked issue found, no active session):
-
-   a. Write a comment on the PR explaining the recycle:
-        echo '{"action":"comment","issue":<pr_number>,"body":"Recycling stale CI failure for fresh attempt. Previous PR: #<pr_number>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-   b. Write a close_pr action:
-        echo '{"action":"close_pr","pr":<pr_number>}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-   c. Remove the in-progress label from the linked issue:
-        echo '{"action":"remove_label","issue":<issue_number>,"label":"in-progress"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-   d. Add the backlog label to the linked issue:
-        echo '{"action":"add_label","issue":<issue_number>,"label":"backlog"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-
-   e. Log to result file:
-        echo "ACTION: recycled PR #<pr_number> (linked issue #<issue_number>) — stale CI failure" >> "$RESULT_FILE"
-
-4. If no stale failed PRs found, skip this step.
-
-CRITICAL: If this step fails, log the failure and move on to agents-update.
-"""
-needs = ["blocked-review"]
-
-# ─────────────────────────────────────────────────────────────────────
-# Step 6: agents-update — AGENTS.md watermark staleness + size enforcement
+# Step 4: agents-update — AGENTS.md watermark staleness + size enforcement
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
@@ -497,10 +349,10 @@ needed. You wouldn't dump a 500-page wiki on a new hire's first morning.
 CRITICAL: If this step fails for any reason, log the failure and move on.
 Do NOT let an AGENTS.md failure prevent the commit-and-pr step.
 """
-needs = ["stale-pr-recycle"]
+needs = ["dust-bundling"]
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 7: commit-and-pr — single commit with all file changes
+# Step 5: commit-and-pr — single commit with all file changes
 # ─────────────────────────────────────────────────────────────────────
 
 [[steps]]
@@ -554,16 +406,14 @@ executes them after the PR merges.
         PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
    h. Save PR number for orchestrator tracking:
         echo "$PR_NUMBER" > /tmp/gardener-pr-${PROJECT_NAME}.txt
-   i. Signal the orchestrator to monitor CI:
-        echo "PHASE:awaiting_ci" > "$PHASE_FILE"
-   j. STOP and WAIT. Do NOT return to the primary branch.
-      The orchestrator polls CI, injects results and review feedback.
-      When you receive injected CI or review feedback, follow its
-      instructions, then write PHASE:awaiting_ci and wait again.
+   i. The orchestrator handles CI/review via pr_walk_to_merge.
+      The gardener stays alive to inject CI results and review feedback
+      as they come in, then executes the pending-actions manifest after merge.
 
 4. If no file changes existed (step 2 found nothing):
-     echo "PHASE:done" > "$PHASE_FILE"
+     # Nothing to commit — the gardener has no work to do this run.
+     exit 0
 
-5. If PR creation fails, log the error and write PHASE:failed.
+5. If PR creation fails, log the error and exit.
 """
 needs = ["agents-update"]

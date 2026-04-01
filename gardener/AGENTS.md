@@ -22,7 +22,8 @@ directly from cron like the planner, predictor, and supervisor.
   `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
   `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
   Executes pending-actions manifest after PR merge.
-- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling, blocked-review, agents-update, commit-and-pr
+- `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
+  agents-update, commit-and-pr
 - `gardener/pending-actions.json` — Manifest of deferred repo actions (label changes,
   closures, comments, issue creation). Written during grooming steps, committed to the
   PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
@@ -34,7 +35,7 @@ directly from cron like the planner, predictor, and supervisor.
 **Lifecycle**: gardener-run.sh (cron 0,6,12,18) → `check_active gardener` → lock + memory guard →
 load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
-reviews blocked issues, updates AGENTS.md, commits manifest + docs to PR →
+updates AGENTS.md, commits manifest + docs to PR →
 `PHASE:awaiting_ci` (stays alive) → CI pass → `PHASE:awaiting_review` →
 review feedback → address + re-signal → merge → gardener-run.sh executes
 manifest actions via API → `PHASE:done`. When blocked on external resources
