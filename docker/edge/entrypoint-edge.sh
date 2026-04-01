@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set USER before sourcing env.sh (Alpine doesn't set USER)
+export USER="${USER:-root}"
+
 DISINTO_VERSION="${DISINTO_VERSION:-main}"
 DISINTO_REPO="${FORGE_URL:-http://forgejo:3000}/johba/disinto.git"
 
