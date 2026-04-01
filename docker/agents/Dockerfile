@@ -23,7 +23,7 @@ RUN useradd -m -u 1000 -s /bin/bash agent
 # Copy disinto code into the image
 COPY . /home/agent/disinto
 
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/agents/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Entrypoint runs as root to start the cron daemon;
