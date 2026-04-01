@@ -22,12 +22,13 @@ to detect issues ping-ponging between backlog and underspecified. Issues that
 need human decisions or external resources are filed as vault procurement items
 (`$OPS_REPO_ROOT/vault/pending/*.md`) instead of being escalated. Phase 3
 (file-at-constraints): identify the top 3 unresolved prerequisites that block
-the most downstream objectives — file issues as either `backlog` (code changes,
-dev-agent) or `action` (run existing formula, dispatcher). **Stuck issues
-(detected BOUNCED/LABEL_CHURN) are dispatched to the `groom-backlog` formula
-in breakdown mode instead of being re-promoted** — this breaks the ping-pong
-loop by splitting them into dev-agent-sized sub-issues. **Human-blocked issues
-are routed through the vault** — the planner files an actionable procurement
+the most downstream objectives — file issues using a **template-or-vision gate**:
+read issue templates from `.codeberg/ISSUE_TEMPLATE/*.yaml`, attempt to fill
+template fields (affected_files ≤3, acceptance_criteria ≤5, single clear approach),
+then apply complexity test: if work touches one subsystem with no design forks,
+file as `backlog` using matching template (bug/feature/refactor); otherwise
+label `vision` with problem statement and why it's vision-sized. **Human-blocked
+issues are routed through the vault** — the planner files an actionable procurement
 item (`$OPS_REPO_ROOT/vault/pending/<project>-<slug>.md` with What/Why/Human action/Factory
 will then sections) and marks the prerequisite as blocked-on-vault in the tree.
 Deduplication: checks pending/ + approved/ + fired/ before creating.
@@ -56,9 +57,9 @@ component, not work.
   prediction-triage, update-prerequisite-tree, file-at-constraints,
   journal-and-memory, commit-and-pr) with `needs` dependencies. Claude
   executes all steps in a single interactive session with tool access
-- `formulas/groom-backlog.toml` — Dual-mode formula: grooming (default) or
-  breakdown (dispatched by planner for bounced/stuck issues — splits the issue
-  into dev-agent-sized sub-issues, removes `underspecified` label)
+- `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
+  grooming. (Note: the planner no longer dispatches breakdown mode — complex
+  issues are labeled `vision` instead.)
 - `$OPS_REPO_ROOT/prerequisites.md` — Prerequisite tree: versioned constraint
   map linking VISION.md objectives to their prerequisites. Planner owns the
   tree, humans steer by editing VISION.md. Tree grows organically as the

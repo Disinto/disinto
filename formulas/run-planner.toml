@@ -151,13 +151,10 @@ From the updated tree + graph bottlenecks, identify the top 5 constraints.
 A constraint is an unresolved prerequisite blocking the most downstream objectives.
 Graph bottlenecks (high betweenness centrality) and thin objectives inform ranking.
 
-Stuck issue handling:
-  - BOUNCED/LABEL_CHURN: do NOT re-promote. Dispatch groom-backlog formula instead:
-      tea_file_issue "chore: break down #<N> — bounced <count>x" "<body>" "action"
-  - HUMAN_BLOCKED (needs human decision or external resource): file a vault
-    procurement item instead of skipping. First check for duplicates across ALL
-    vault directories (pending/, approved/, fired/) — if a file with the same
-    slug already exists in any of them, do NOT create a new one.
+HUMAN_BLOCKED handling (needs human decision or external resource):
+  - File a vault procurement item instead of skipping. First check for duplicates
+    across ALL vault directories (pending/, approved/, fired/) — if a file with the
+    same slug already exists in any of them, do NOT create a new one.
     Naming: $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md (e.g. disinto-github-org.md).
     Write with this template:
 
@@ -185,10 +182,37 @@ Stuck issue handling:
     Then mark the prerequisite in the tree as "blocked-on-vault ($OPS_REPO_ROOT/vault/pending/<id>.md)".
     Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
 
-Filing gate (for non-stuck constraints):
-  1. Check if issue already exists (match by #number in tree or title search)
-  2. If no issue, create one with tea_file_issue using the template above
-  3. If issue exists and is open, skip — no duplicates
+Template-or-vision filing gate (for non-stuck constraints):
+  1. Read issue templates from .codeberg/ISSUE_TEMPLATE/*.yaml:
+     - bug.yaml: for broken/incorrect behavior (error in logs, failing test)
+     - feature.yaml: for new capabilities (prerequisite doesn't exist)
+     - refactor.yaml: for restructuring without behavior change
+
+  2. Attempt to fill template fields:
+     - affected_files: list 3 or fewer specific files
+     - acceptance_criteria: write concrete, checkable criteria (max 5)
+     - proposed_solution/approach: is there one clear approach, or design forks?
+
+  3. Complexity test:
+     - If work touches ONE subsystem (3 or fewer files) AND no design forks
+       (only one reasonable approach) AND template fields fill confidently:
+       → File as `backlog` using matching template format
+     - Otherwise → Label `vision` with short body:
+       - Problem statement
+       - Why it's vision-sized
+       - Which objectives it blocks
+       - Include "## Why vision" section explaining complexity
+
+  4. Template selection heuristic:
+     - Bug template: planner identifies something broken (error in logs,
+       incorrect behavior, failing test)
+     - Feature template: new capability needed (prerequisite doesn't exist)
+     - Refactor template: existing code needs restructuring without behavior change
+
+  5. Filing steps:
+     - Check if issue already exists (match by #number in tree or title search)
+     - If no issue, create with tea_file_issue using template format
+     - If issue exists and is open, skip — no duplicates
 
 Priority label sync:
   - Add priority to current top-5 constraint issues (if missing):
@@ -239,7 +263,7 @@ Format:
   1. <prerequisite> — blocks N objectives — #NNN (existing|filed)
 
   ## Stuck issues detected
-  - #NNN: BOUNCED (Nx) — dispatched groom-backlog as #MMM
+  - #NNN: vision-labeled (complexity test failed) — blocked on #NNN
   (or "No stuck issues detected")
 
   ## Vault items filed
