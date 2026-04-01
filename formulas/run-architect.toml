@@ -285,15 +285,15 @@ PATCH /repos/{owner}/{repo}/pulls/{index}
 Body: {"state": "closed"}
 ```
 
-### Merge PR (merge with squash)
+### Merge PR
 ```
-MERGE /repos/{owner}/{repo}/pulls/{index}
-Body: {"merge_base": "main", "method": "merge"}
+POST /repos/{owner}/{repo}/pulls/{index}/merge
+Body: {"Do": "merge"}
 ```
 
-### Post comment on PR
+### Post comment on PR (via issues endpoint)
 ```
-POST /repos/{owner}/{repo}/pulls/{index}/comments
+POST /repos/{owner}/{repo}/issues/{index}/comments
 Body: {"body": "<comment text>"}
 ```
 
