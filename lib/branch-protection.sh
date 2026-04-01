@@ -312,7 +312,7 @@ EOF
     # Get the commit hash of main
     local main_commit
     main_commit=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${api_url}/git/refs/heads/${branch}" 2>/dev/null | jq -r '.object.sha' || echo "")
+      "${api_url}/git/refs/heads/${branch}" 2>/dev/null | jq -r '.[0].object.sha' || echo "")
 
     if [ -n "$main_commit" ]; then
       curl -sf -X POST \
