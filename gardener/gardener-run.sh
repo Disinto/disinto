@@ -64,9 +64,18 @@ check_memory 2000
 
 log "--- Gardener run start ---"
 
+# ── Resolve agent identity for .profile repo ────────────────────────────
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_GARDENER_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_GARDENER_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Load formula + context ───────────────────────────────────────────────
-load_formula "$FACTORY_ROOT/formulas/run-gardener.toml"
+load_formula_or_profile "gardener" "$FACTORY_ROOT/formulas/run-gardener.toml" || exit 1
 build_context_block AGENTS.md
+
+# ── Prepare .profile context (lessons injection) ─────────────────────────
+formula_prepare_profile_context
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -105,7 +114,7 @@ You have full shell access and --dangerously-skip-permissions.
 Fix what you can. File vault items for what you cannot. Do NOT ask permission — act first, report after.
 
 ## Project context
-${CONTEXT_BLOCK}
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Result file
@@ -333,6 +342,9 @@ else
   log "no PR created — gardener run complete"
   rm -f "$SCRATCH_FILE"
 fi
+
+# Write journal entry post-session
+profile_write_journal "gardener-run" "Gardener run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$GARDENER_PR_FILE"
 log "--- Gardener run done ---"

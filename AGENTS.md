@@ -9,6 +9,9 @@ forge, implement them, review PRs, plan from the vision, and keep the system
 healthy — all via cron and `claude -p`. The dispatcher executes formula-based
 operational tasks.
 
+Each agent has a `.profile` repository on Forgejo that stores lessons learned
+from prior sessions, providing continuous improvement across runs.
+
 > **Note:** The vault is being redesigned as a PR-based approval workflow on the
 > ops repo (see issues #73-#77). See [docs/VAULT.md](docs/VAULT.md) for details. Old vault scripts are being removed.
 
@@ -39,15 +42,41 @@ disinto-ops/             (ops repo — {project}-ops)
 │   ├── approved/  approved vault items
 │   ├── fired/     executed vault items
 │   └── rejected/  rejected vault items
-├── journal/
-│   ├── planner/   daily planning logs
-│   └── supervisor/ operational health logs
 ├── knowledge/     shared agent knowledge + best practices
 ├── evidence/      engagement data, experiment results
 ├── portfolio.md   addressables + observables
 ├── prerequisites.md  dependency graph
 └── RESOURCES.md   accounts, tokens (refs), infra inventory
 ```
+
+> **Note:** Journal directories (`journal/planner/` and `journal/supervisor/`) have been removed from the ops repo. Agent journals are now stored in each agent's `.profile` repo on Forgejo.
+
+## Agent .profile Model
+
+Each agent has a `.profile` repository on Forgejo that stores:
+- `formula.toml` — agent-specific formula (optional, falls back to `formulas/<agent>.toml`)
+- `knowledge/lessons-learned.md` — distilled lessons from journal entries
+- `journal/` — session reflection entries (archived after digestion)
+
+### How it works
+
+1. **Pre-session:** The agent calls `formula_prepare_profile_context()` which:
+   - Resolves the agent's Forgejo identity from their token
+   - Clones/pulls the `.profile` repo to a local cache
+   - Loads `knowledge/lessons-learned.md` into `LESSONS_CONTEXT` for prompt injection
+   - Automatically digests journals if >10 undigested entries exist
+
+2. **Prompt injection:** Lessons are injected into the agent prompt:
+   ```
+   ## Lessons learned (from .profile/knowledge/lessons-learned.md)
+   <abstracted lessons from prior sessions>
+   ```
+
+3. **Post-session:** The agent calls `profile_write_journal` which:
+   - Generates a reflection entry about the session
+   - Writes it to `journal/issue-{N}.md`
+   - Commits and pushes to the `.profile` repo
+   - Journals are archived after being digested into lessons-learned.md
 
 > **Terminology note:** "Formulas" in this repo are TOML issue templates in `formulas/` that
 > orchestrate multi-step agent tasks (e.g., `run-gardener.toml`, `run-planner.toml`). This is

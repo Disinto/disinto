@@ -53,12 +53,21 @@ check_memory 2000
 
 log "--- Predictor run start ---"
 
+# ── Resolve agent identity for .profile repo ────────────────────────────
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PREDICTOR_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PREDICTOR_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Load formula + context ───────────────────────────────────────────────
-load_formula "$FACTORY_ROOT/formulas/run-predictor.toml"
+load_formula_or_profile "predictor" "$FACTORY_ROOT/formulas/run-predictor.toml" || exit 1
 build_context_block AGENTS.md ops:RESOURCES.md VISION.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
+
+# ── Prepare .profile context (lessons injection) ─────────────────────────
+formula_prepare_profile_context
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -82,9 +91,10 @@ Use WebSearch for external signal scanning — be targeted (project dependencies
 and tools only, not general news). Limit to 3 web searches per run.
 
 ## Project context
-${CONTEXT_BLOCK}
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${GRAPH_SECTION}
-${SCRATCH_CONTEXT}
+${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
+}
 ## Formula
 ${FORMULA_CONTENT}
 
@@ -97,6 +107,9 @@ formula_worktree_setup "$WORKTREE"
 # ── Run agent ─────────────────────────────────────────────────────────────
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# Write journal entry post-session
+profile_write_journal "predictor-run" "Predictor run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$SCRATCH_FILE"
 log "--- Predictor run done ---"

@@ -27,6 +27,8 @@ source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
+# shellcheck source=../lib/formula-session.sh
+source "$(dirname "$0")/../lib/formula-session.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -54,6 +56,14 @@ trap cleanup EXIT
 # =============================================================================
 if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 102400 ]; then
   mv "$LOGFILE" "$LOGFILE.old"
+fi
+
+# =============================================================================
+# RESOLVE AGENT IDENTITY FOR .PROFILE REPO
+# =============================================================================
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
 fi
 
 # =============================================================================
@@ -181,6 +191,11 @@ else
 fi
 
 # =============================================================================
+# LOAD LESSONS FROM .PROFILE REPO (PRE-SESSION)
+# =============================================================================
+formula_prepare_profile_context
+
+# =============================================================================
 # BUILD PROMPT
 # =============================================================================
 FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
@@ -193,6 +208,7 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
   [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
+  formula_lessons_block
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
     "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
   printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'
@@ -297,5 +313,8 @@ case "$VERDICT" in
     worktree_cleanup "$WORKTREE"
     ;;
 esac
+
+# Write journal entry post-session
+profile_write_journal "review-${PR_NUMBER}" "Review PR #${PR_NUMBER} (${VERDICT})" "${VERDICT,,}" "" || true
 
 log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"

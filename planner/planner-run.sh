@@ -45,12 +45,6 @@ WORKTREE="/tmp/${PROJECT_NAME}-planner-run"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
-# Ensure AGENT_IDENTITY is set for profile functions
-if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PLANNER_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PLANNER_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
-fi
-
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
 acquire_cron_lock "/tmp/planner-run.lock"
@@ -58,8 +52,14 @@ check_memory 2000
 
 log "--- Planner run start ---"
 
+# ── Resolve agent identity for .profile repo ────────────────────────────
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PLANNER_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PLANNER_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Load formula + context ───────────────────────────────────────────────
-load_formula "$FACTORY_ROOT/formulas/run-planner.toml"
+load_formula_or_profile "planner" "$FACTORY_ROOT/formulas/run-planner.toml" || exit 1
 build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
@@ -78,9 +78,8 @@ $(cat "$MEMORY_FILE")
 "
 fi
 
-# ── Load lessons from .profile repo (pre-session) ────────────────────────
-profile_load_lessons || true
-LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
+# ── Prepare .profile context (lessons injection) ─────────────────────────
+formula_prepare_profile_context
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
@@ -96,11 +95,7 @@ build_sdk_prompt_footer "
 PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formula below.
 
 ## Project context
-${CONTEXT_BLOCK}${MEMORY_BLOCK}
-${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-
-}
+${CONTEXT_BLOCK}${MEMORY_BLOCK}$(formula_lessons_block)
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }

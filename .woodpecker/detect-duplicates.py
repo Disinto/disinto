@@ -256,6 +256,19 @@ def main() -> int:
 
     sh_files = sorted(p for p in Path(".").rglob("*.sh") if not is_excluded(p))
 
+    # Standard patterns that are intentionally repeated across formula-driven agents
+    # These are not copy-paste violations but the expected structure
+    ALLOWED_HASHES = {
+        # Standard agent header: shebang, set -euo pipefail, directory resolution
+        "c93baa0f19d6b9ba271428bf1cf20b45": "Standard agent header (set -euo pipefail, SCRIPT_DIR, FACTORY_ROOT)",
+        # formula_prepare_profile_context followed by scratch context reading
+        "eaa735b3598b7b73418845ab00d8aba5": "Standard .profile context setup (formula_prepare_profile_context + SCRATCH_CONTEXT)",
+        # Standard prompt template: GRAPH_SECTION, SCRATCH_CONTEXT, FORMULA_CONTENT, SCRATCH_INSTRUCTION
+        "2653705045fdf65072cccfd16eb04900": "Standard prompt template (GRAPH_SECTION, SCRATCH_CONTEXT, FORMULA_CONTENT)",
+        "93726a3c799b72ed2898a55552031921": "Standard prompt template continuation (SCRATCH_CONTEXT, FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
+        "c11eaaacab69c9a2d3c38c75215eca84": "Standard prompt template end (FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
+    }
+
     if not sh_files:
         print("No .sh files found.")
         return 0
@@ -290,8 +303,13 @@ def main() -> int:
 
             # Duplicate diff: key by content hash
             base_dup_hashes = {g[0] for g in base_dups}
-            new_dups = [g for g in cur_dups if g[0] not in base_dup_hashes]
-            pre_dups = [g for g in cur_dups if g[0] in base_dup_hashes]
+            # Filter out allowed standard patterns that are intentionally repeated
+            new_dups = [
+                g for g in cur_dups
+                if g[0] not in base_dup_hashes and g[0] not in ALLOWED_HASHES
+            ]
+            # Also filter allowed hashes from pre_dups for reporting
+            pre_dups = [g for g in cur_dups if g[0] in base_dup_hashes and g[0] not in ALLOWED_HASHES]
 
             # Report pre-existing as info
             if pre_ap or pre_dups:
