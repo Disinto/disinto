@@ -40,6 +40,8 @@ Usage:
   disinto status                       Show factory status
   disinto secrets <subcommand>         Manage encrypted secrets
   disinto run <action-id>              Run action in ephemeral runner container
+  disinto hire-an-agent <agent-name> <role> [--formula <path>]
+                                     Hire a new agent (create user + .profile repo)
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -48,6 +50,9 @@ Init options:
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --bare               Skip compose generation (bare-metal setup)
   --yes                Skip confirmation prompts
+
+Hire an agent options:
+  --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
 EOF
   exit 1
 }
@@ -2303,17 +2308,288 @@ disinto_shell() {
   docker compose -f "$compose_file" exec agents bash
 }
 
+# ── hire-an-agent command ─────────────────────────────────────────────────────
+
+# Creates a Forgejo user and .profile repo for an agent.
+# Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>]
+disinto_hire_an_agent() {
+  local agent_name="${1:-}"
+  local role="${2:-}"
+  local formula_path=""
+
+  if [ -z "$agent_name" ] || [ -z "$role" ]; then
+    echo "Error: agent-name and role required" >&2
+    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>]" >&2
+    exit 1
+  fi
+  shift 2
+
+  # Parse flags
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --formula)
+        formula_path="$2"
+        shift 2
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  # Default formula path
+  if [ -z "$formula_path" ]; then
+    formula_path="${FACTORY_ROOT}/formulas/${role}.toml"
+  fi
+
+  # Validate formula exists
+  if [ ! -f "$formula_path" ]; then
+    echo "Error: formula not found at ${formula_path}" >&2
+    exit 1
+  fi
+
+  echo "── Hiring agent: ${agent_name} (${role}) ───────────────────────"
+  echo "Formula:   ${formula_path}"
+
+  # Ensure FORGE_TOKEN is set
+  if [ -z "${FORGE_TOKEN:-}" ]; then
+    echo "Error: FORGE_TOKEN not set" >&2
+    exit 1
+  fi
+
+  # Get Forge URL
+  local forge_url="${FORGE_URL:-http://localhost:3000}"
+  echo "Forge:     ${forge_url}"
+
+  # Step 1: Create user via API (skip if exists)
+  echo ""
+  echo "Step 1: Creating user '${agent_name}' (if not exists)..."
+
+  local user_exists=false
+  if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
+    user_exists=true
+    echo "  User '${agent_name}' already exists"
+  else
+    # Create user using admin token
+    local admin_user="disinto-admin"
+    local admin_pass="${_FORGE_ADMIN_PASS:-admin}"
+
+    # Try to get admin token first
+    local admin_token
+    admin_token=$(curl -sf -X POST \
+      -u "${admin_user}:${admin_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" \
+      -d '{"name":"temp-token","scopes":["all"]}' 2>/dev/null \
+      | jq -r '.sha1 // empty') || admin_token=""
+
+    if [ -z "$admin_token" ]; then
+      # Token might already exist — try listing
+      admin_token=$(curl -sf \
+        -u "${admin_user}:${admin_pass}" \
+        "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+        | jq -r '.[0].sha1 // empty') || admin_token=""
+    fi
+
+    if [ -z "$admin_token" ]; then
+      echo "  Warning: could not obtain admin token, trying FORGE_TOKEN..."
+      admin_token="${FORGE_TOKEN}"
+    fi
+
+    # Create the user
+    local user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+    if curl -sf -X POST \
+      -H "Authorization: token ${admin_token}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/admin/users" \
+      -d "{\"username\":\"${agent_name}\",\"password\":\"${user_pass}\",\"email\":\"${agent_name}@${PROJECT_NAME:-disinto}.local\",\"full_name\":\"${agent_name}\",\"active\":true,\"admin\":false,\"must_change_password\":false}" >/dev/null 2>&1; then
+      echo "  Created user '${agent_name}'"
+    else
+      echo "  Warning: failed to create user via admin API" >&2
+      # Try alternative: user might already exist
+      if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
+        user_exists=true
+        echo "  User '${agent_name}' exists (confirmed)"
+      else
+        echo "  Error: failed to create user '${agent_name}'" >&2
+        exit 1
+      fi
+    fi
+  fi
+
+  # Step 2: Create .profile repo on Forgejo
+  echo ""
+  echo "Step 2: Creating '${agent_name}/.profile' repo (if not exists)..."
+
+  local repo_exists=false
+  if curl -sf --max-time 5 "${forge_url}/api/v1/repos/${agent_name}/.profile" >/dev/null 2>&1; then
+    repo_exists=true
+    echo "  Repo '${agent_name}/.profile' already exists"
+  else
+    # Get user token for creating repo
+    local user_token=""
+    if [ "$user_exists" = true ]; then
+      # Try to get token for the new user
+      # Note: user_pass was set in Step 1; for existing users this will fail (unknown password)
+      user_token=$(curl -sf -X POST \
+        -u "${agent_name}:${user_pass}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/users/${agent_name}/tokens" \
+        -d "{\"name\":\".profile-repo-token\",\"scopes\":[\"repository\"]}" 2>/dev/null \
+        | jq -r '.sha1 // empty') || user_token=""
+
+      if [ -z "$user_token" ]; then
+        # Try listing existing tokens
+        user_token=$(curl -sf \
+          -u "${agent_name}:${user_pass}" \
+          "${forge_url}/api/v1/users/${agent_name}/tokens" 2>/dev/null \
+          | jq -r '.[0].sha1 // empty') || user_token=""
+      fi
+    fi
+
+    # Fall back to admin token if user token not available
+    if [ -z "$user_token" ]; then
+      echo "  Using admin token to create repo"
+      user_token="${admin_token:-${FORGE_TOKEN}}"
+    fi
+
+    # Create the repo
+    if curl -sf -X POST \
+      -H "Authorization: token ${user_token}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/user/repos" \
+      -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" >/dev/null 2>&1; then
+      echo "  Created repo '${agent_name}/.profile'"
+    else
+      # Try with org path
+      if curl -sf -X POST \
+        -H "Authorization: token ${user_token}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/orgs/${agent_name}/repos" \
+        -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" >/dev/null 2>&1; then
+        echo "  Created repo '${agent_name}/.profile' (in org)"
+      else
+        echo "  Error: failed to create repo '${agent_name}/.profile'" >&2
+        exit 1
+      fi
+    fi
+  fi
+
+  # Step 3: Clone repo and create initial commit
+  echo ""
+  echo "Step 3: Cloning repo and creating initial commit..."
+
+  local clone_dir="/tmp/.profile-clone-${agent_name}"
+  rm -rf "$clone_dir"
+  mkdir -p "$clone_dir"
+
+  # Build clone URL (unauthenticated version for display)
+  local clone_url="${forge_url}/${agent_name}/.profile.git"
+  local auth_url
+  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://${agent_name}:${user_token:-${FORGE_TOKEN}}@|")
+  clone_url="${auth_url}/.profile.git"
+
+  # Display unauthenticated URL (auth token only in actual git clone command)
+  echo "  Cloning: ${forge_url}/${agent_name}/.profile.git"
+
+  if ! git clone --quiet "$clone_url" "$clone_dir" 2>/dev/null; then
+    # Try without auth (might work for public repos or with FORGE_TOKEN)
+    clone_url="${forge_url}/${agent_name}/.profile.git"
+    if ! git clone --quiet "$clone_url" "$clone_dir" 2>/dev/null; then
+      echo "  Error: failed to clone repo" >&2
+      rm -rf "$clone_dir"
+      exit 1
+    fi
+  fi
+
+  # Configure git
+  git -C "$clone_dir" config user.name "disinto-admin"
+  git -C "$clone_dir" config user.email "disinto-admin@localhost"
+
+  # Create directory structure
+  echo "  Creating directory structure..."
+  mkdir -p "${clone_dir}/journal"
+  mkdir -p "${clone_dir}/knowledge"
+  touch "${clone_dir}/journal/.gitkeep"
+  touch "${clone_dir}/knowledge/.gitkeep"
+
+  # Copy formula
+  echo "  Copying formula..."
+  cp "$formula_path" "${clone_dir}/formula.toml"
+
+  # Create README
+  if [ ! -f "${clone_dir}/README.md" ]; then
+    cat > "${clone_dir}/README.md" <<EOF
+# ${agent_name}'s .profile
+
+Agent profile repository for ${agent_name}.
+
+## Structure
+
+\`\`\`
+${agent_name}/.profile/
+├── formula.toml    # Agent's role formula
+├── journal/        # Issue-by-issue log files
+│   └── .gitkeep
+└── knowledge/      # Shared knowledge and best practices
+    └── .gitkeep
+\`\`\`
+
+## Branch protection
+
+- \`main\`: Admin-only merge for formula changes
+EOF
+  fi
+
+  # Commit and push
+  echo "  Committing and pushing..."
+  git -C "$clone_dir" add -A
+  if ! git -C "$clone_dir" diff --cached --quiet 2>/dev/null; then
+    git -C "$clone_dir" commit -m "chore: initial .profile setup" -q
+    git -C "$clone_dir" push origin main 2>&1 >/dev/null || \
+      git -C "$clone_dir" push origin master 2>&1 >/dev/null || true
+    echo "  Committed: initial .profile setup"
+  else
+    echo "  No changes to commit"
+  fi
+
+  rm -rf "$clone_dir"
+
+  # Step 4: Create state marker
+  echo ""
+  echo "Step 4: Creating state marker..."
+
+  local state_dir="${FACTORY_ROOT}/state"
+  mkdir -p "$state_dir"
+  local state_file="${state_dir}/.${role}-active"
+
+  if [ ! -f "$state_file" ]; then
+    touch "$state_file"
+    echo "  Created: ${state_file}"
+  else
+    echo "  State marker already exists: ${state_file}"
+  fi
+
+  echo ""
+  echo "Done! Agent '${agent_name}' hired for role '${role}'."
+  echo "  User:    ${forge_url}/${agent_name}"
+  echo "  Repo:    ${forge_url}/${agent_name}/.profile"
+  echo "  Formula: ${role}.toml"
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
-  init)      shift; disinto_init "$@" ;;
-  up)        shift; disinto_up "$@" ;;
-  down)      shift; disinto_down "$@" ;;
-  logs)      shift; disinto_logs "$@" ;;
-  shell)     shift; disinto_shell ;;
-  status)    shift; disinto_status "$@" ;;
-  secrets)   shift; disinto_secrets "$@" ;;
-  run) shift; disinto_run "$@" ;;
-  -h|--help) usage ;;
-  *)         usage ;;
+  init)            shift; disinto_init "$@" ;;
+  up)              shift; disinto_up "$@" ;;
+  down)            shift; disinto_down "$@" ;;
+  logs)            shift; disinto_logs "$@" ;;
+  shell)           shift; disinto_shell ;;
+  status)          shift; disinto_status "$@" ;;
+  secrets)         shift; disinto_secrets "$@" ;;
+  run)             shift; disinto_run "$@" ;;
+  hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
+  -h|--help)       usage ;;
+  *)               usage ;;
 esac
