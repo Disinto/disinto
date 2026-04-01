@@ -216,13 +216,89 @@ title = "Answer parsing + sub-issue filing (issue #102)"
 description = """
 This step processes human answers to design questions and files sub-issues.
 
-Actions:
-1. Monitor PR comments for human responses to design questions
-2. Parse answers and extract design decisions
-3. File concrete sub-issues for each accepted design fork path
-4. Close or update the sprint PR based on decisions
+## Preflight: Detect PRs in question phase
 
-Output:
-- Sub-issues filed in disinto repo with proper dependencies
-- Sprint PR updated or closed based on design decisions
+An architect PR is in the question phase if ALL of the following are true:
+- PR is open
+- PR body or sprint spec file contains a `## Design forks` section (added by #101 after ACCEPT)
+- PR has question comments (Q1, Q2, Q3... format)
+
+## Answer parsing
+
+Human comments on the PR use this format:
+```
+Q1: A
+Q2: B
+Q3: A
+```
+
+Parser matches lines starting with `Q` + digit(s) + `:` + space + letter A-D (case insensitive).
+Ignore other content in the comment.
+
+## Processing paths
+
+### All questions answered (every `### Q` heading has a matching `Q<N>: <letter>` comment)
+
+1. Parse each answer (e.g. `Q1: A`, `Q2: C`)
+2. Read the sprint spec from the PR branch
+3. Generate final sub-issues based on answers:
+   - Each sub-issue uses the appropriate issue template (bug/feature/refactor from `.codeberg/ISSUE_TEMPLATE/`)
+   - Fill all template fields:
+     - Problem/motivation (feature) or What's broken (bug/refactor)
+     - Proposed solution (feature) or Approach (refactor) or Steps to reproduce (bug)
+     - Affected files (max 3)
+     - Acceptance criteria (max 5)
+     - Dependencies
+   - File via Forgejo API on the **disinto repo** (not ops repo)
+   - Label as `backlog`
+4. Comment on PR: "Sprint filed: #N, #N, #N"
+5. Merge the PR (sprint spec with answers persists in `ops/sprints/`)
+
+### Some questions answered, not all
+
+1. Acknowledge answers received
+2. Comment listing remaining unanswered questions
+3. Signal PHASE:done (check again next poll)
+
+### No answers yet (questions posted but human hasn't responded)
+
+1. Skip — signal PHASE:done
+
+## Forgejo API for filing issues on disinto repo
+
+All operations use the Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
+
+### Create issue
+```
+POST /repos/{owner}/{repo}/issues
+Body: {
+  "title": "<issue title>",
+  "body": "<issue body with template fields>",
+  "labels": [123],  // backlog label ID
+  "assignees": ["architect-bot"]
+}
+```
+
+### Close PR
+```
+PATCH /repos/{owner}/{repo}/pulls/{index}
+Body: {"state": "closed"}
+```
+
+### Merge PR
+```
+POST /repos/{owner}/{repo}/pulls/{index}/merge
+Body: {"Do": "merge"}
+```
+
+### Post comment on PR (via issues endpoint)
+```
+POST /repos/{owner}/{repo}/issues/{index}/comments
+Body: {"body": "<comment text>"}
+```
+
+### Get label ID
+```
+GET /repos/{owner}/{repo}/labels
+```
 """
