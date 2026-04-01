@@ -2530,15 +2530,24 @@ Agent profile repository for ${agent_name}.
 \`\`\`
 ${agent_name}/.profile/
 ├── formula.toml    # Agent's role formula
-├── journal/        # Issue-by-issue log files
+├── journal/        # Issue-by-issue log files (journal branch)
 │   └── .gitkeep
-└── knowledge/      # Shared knowledge and best practices
-    └── .gitkeep
+├── knowledge/      # Shared knowledge and best practices
+│   └── .gitkeep
+└── README.md
 \`\`\`
+
+## Branches
+
+- \`main\` — Admin-only merge for formula changes (requires 1 approval)
+- \`journal\` — Agent branch for direct journal entries
+  - Agent can push directly to this branch
+  - Formula changes must go through PR to \`main\`
 
 ## Branch protection
 
-- \`main\`: Admin-only merge for formula changes
+- \`main\`: Protected — requires 1 admin approval for merges
+- \`journal\`: Unprotected — agent can push directly
 EOF
   fi
 
@@ -2556,9 +2565,35 @@ EOF
 
   rm -rf "$clone_dir"
 
-  # Step 4: Create state marker
+  # Step 4: Set up branch protection
   echo ""
-  echo "Step 4: Creating state marker..."
+  echo "Step 4: Setting up branch protection..."
+
+  # Source branch-protection.sh helper
+  local bp_script="${FACTORY_ROOT}/lib/branch-protection.sh"
+  if [ -f "$bp_script" ]; then
+    # Source required environment
+    if [ -f "${FACTORY_ROOT}/lib/env.sh" ]; then
+      source "${FACTORY_ROOT}/lib/env.sh"
+    fi
+
+    # Set up branch protection for .profile repo
+    if source "$bp_script" 2>/dev/null && setup_profile_branch_protection "${agent_name}/.profile" "main"; then
+      echo "  Branch protection configured for main branch"
+      echo "  - Requires 1 approval before merge"
+      echo "  - Admin-only merge enforcement"
+      echo "  - Journal branch created for direct agent pushes"
+    else
+      echo "  Warning: could not configure branch protection (Forgejo API may not be available)"
+      echo "  Note: Branch protection can be set up manually later"
+    fi
+  else
+    echo "  Warning: branch-protection.sh not found at ${bp_script}"
+  fi
+
+  # Step 5: Create state marker
+  echo ""
+  echo "Step 5: Creating state marker..."
 
   local state_dir="${FACTORY_ROOT}/state"
   mkdir -p "$state_dir"
