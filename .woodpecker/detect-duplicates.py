@@ -310,13 +310,6 @@ def main() -> int:
             ]
             # Also filter allowed hashes from pre_dups for reporting
             pre_dups = [g for g in cur_dups if g[0] in base_dup_hashes and g[0] not in ALLOWED_HASHES]
-            # Filter out allowed standard patterns that are intentionally repeated
-            new_dups = [
-                g for g in cur_dups
-                if g[0] not in base_dup_hashes and g[0] not in ALLOWED_HASHES
-            ]
-            # Also filter allowed hashes from pre_dups for reporting
-            pre_dups = [g for g in cur_dups if g[0] in base_dup_hashes and g[0] not in ALLOWED_HASHES]
 
             # Report pre-existing as info
             if pre_ap or pre_dups:
