@@ -51,6 +51,84 @@ check_memory() {
   fi
 }
 
+# ── Agent identity resolution ────────────────────────────────────────────
+
+# resolve_agent_identity
+# Resolves the agent identity (user login) from the FORGE_TOKEN.
+# Exports AGENT_IDENTITY (user login string).
+# Returns 0 on success, 1 on failure.
+resolve_agent_identity() {
+  if [ -z "${FORGE_TOKEN:-}" ]; then
+    log "WARNING: FORGE_TOKEN not set, cannot resolve agent identity"
+    return 1
+  fi
+  local forge_url="${FORGE_URL:-http://localhost:3000}"
+  AGENT_IDENTITY=$(curl -sf --max-time 10 \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${forge_url}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null) || true
+  if [ -z "$AGENT_IDENTITY" ]; then
+    log "WARNING: failed to resolve agent identity from FORGE_TOKEN"
+    return 1
+  fi
+  log "Resolved agent identity: ${AGENT_IDENTITY}"
+  return 0
+}
+
+# ── .profile repo management ──────────────────────────────────────────────
+
+# ensure_profile_repo [AGENT_IDENTITY]
+# Clones or pulls the agent's .profile repo to a local cache dir.
+# Requires: FORGE_TOKEN, FORGE_URL.
+# Exports PROFILE_REPO_PATH (local cache path) and PROFILE_FORMULA_PATH.
+# Returns 0 on success, 1 on failure (falls back gracefully).
+ensure_profile_repo() {
+  local agent_identity="${1:-${AGENT_IDENTITY:-}}"
+
+  if [ -z "$agent_identity" ]; then
+    # Try to resolve from FORGE_TOKEN
+    if ! resolve_agent_identity; then
+      log "WARNING: cannot resolve agent identity, skipping .profile repo"
+      return 1
+    fi
+    agent_identity="$AGENT_IDENTITY"
+  fi
+
+  # Define cache directory: /home/agent/data/.profile/{agent-name}
+  PROFILE_REPO_PATH="${HOME:-/home/agent}/data/.profile/${agent_identity}"
+
+  # Build clone URL from FORGE_URL and agent identity
+  local forge_url="${FORGE_URL:-http://localhost:3000}"
+  local auth_url
+  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://$(whoami):${FORGE_TOKEN}@|")
+  local clone_url="${auth_url}/${agent_identity}/.profile.git"
+
+  # Check if already cached and up-to-date
+  if [ -d "${PROFILE_REPO_PATH}/.git" ]; then
+    log "Pulling .profile repo: ${agent_identity}/.profile"
+    if git -C "$PROFILE_REPO_PATH" fetch origin --quiet 2>/dev/null; then
+      git -C "$PROFILE_REPO_PATH" checkout main --quiet 2>/dev/null || \
+      git -C "$PROFILE_REPO_PATH" checkout master --quiet 2>/dev/null || true
+      git -C "$PROFILE_REPO_PATH" pull --ff-only origin main --quiet 2>/dev/null || \
+      git -C "$PROFILE_REPO_PATH" pull --ff-only origin master --quiet 2>/dev/null || true
+      log ".profile repo pulled: ${PROFILE_REPO_PATH}"
+    else
+      log "WARNING: failed to pull .profile repo, using cached version"
+    fi
+  else
+    log "Cloning .profile repo: ${agent_identity}/.profile -> ${PROFILE_REPO_PATH}"
+    if git clone --quiet "$clone_url" "$PROFILE_REPO_PATH" 2>/dev/null; then
+      log ".profile repo cloned: ${PROFILE_REPO_PATH}"
+    else
+      log "WARNING: failed to clone .profile repo ${agent_identity}/.profile — falling back to formulas/"
+      return 1
+    fi
+  fi
+
+  # Set formula path from .profile
+  PROFILE_FORMULA_PATH="${PROFILE_REPO_PATH}/formula.toml"
+  return 0
+}
+
 # ── Formula loading ──────────────────────────────────────────────────────
 
 # load_formula FORMULA_FILE
@@ -63,6 +141,60 @@ load_formula() {
   fi
   # shellcheck disable=SC2034  # consumed by the calling script
   FORMULA_CONTENT=$(cat "$formula_file")
+}
+
+# load_formula_or_profile [ROLE] [FORMULA_FILE]
+# Tries to load formula from .profile repo first, falls back to formulas/<role>.toml.
+# Requires: AGENT_IDENTITY, ensure_profile_repo() available.
+# Exports: FORMULA_CONTENT, FORMULA_SOURCE (either ".profile" or "formulas/").
+# Returns 0 on success, 1 on failure.
+load_formula_or_profile() {
+  local role="${1:-}"
+  local fallback_formula="${2:-}"
+
+  # Try to load from .profile repo
+  if [ -n "$AGENT_IDENTITY" ] && ensure_profile_repo "$AGENT_IDENTITY"; then
+    if [ -f "$PROFILE_FORMULA_PATH" ]; then
+      log "formula source: .profile (${PROFILE_FORMULA_PATH})"
+      # shellcheck disable=SC2034
+      FORMULA_CONTENT="$(cat "$PROFILE_FORMULA_PATH")"
+      FORMULA_SOURCE=".profile"
+      return 0
+    else
+      log "WARNING: .profile repo exists but formula.toml not found at ${PROFILE_FORMULA_PATH}"
+    fi
+  fi
+
+  # Fallback to formulas/<role>.toml
+  if [ -n "$fallback_formula" ]; then
+    if [ -f "$fallback_formula" ]; then
+      log "formula source: formulas/ (fallback) — ${fallback_formula}"
+      # shellcheck disable=SC2034
+      FORMULA_CONTENT="$(cat "$fallback_formula")"
+      FORMULA_SOURCE="formulas/"
+      return 0
+    else
+      log "ERROR: formula not found in .profile and fallback file not found: $fallback_formula"
+      return 1
+    fi
+  fi
+
+  # No fallback specified but role provided — construct fallback path
+  if [ -n "$role" ]; then
+    fallback_formula="${FACTORY_ROOT}/formulas/${role}.toml"
+    if [ -f "$fallback_formula" ]; then
+      log "formula source: formulas/ (fallback) — ${fallback_formula}"
+      # shellcheck disable=SC2034
+      FORMULA_CONTENT="$(cat "$fallback_formula")"
+      # shellcheck disable=SC2034
+      FORMULA_SOURCE="formulas/"
+      return 0
+    fi
+  fi
+
+  # No fallback specified
+  log "ERROR: formula not found in .profile and no fallback specified"
+  return 1
 }
 
 # build_context_block FILE [FILE ...]
@@ -283,8 +415,14 @@ build_graph_section() {
        --project-root "$PROJECT_REPO_ROOT" \
        --output "$report" 2>>"$LOG_FILE"; then
     # shellcheck disable=SC2034
-    GRAPH_SECTION=$(printf '\n## Structural analysis\n```json\n%s\n```\n' \
-      "$(cat "$report")")
+    local report_content
+    report_content="$(cat "$report")"
+    # shellcheck disable=SC2034
+    GRAPH_SECTION="
+## Structural analysis
+\`\`\`json
+${report_content}
+\`\`\`"
     log "graph report generated: $(jq -r '.stats | "\(.nodes) nodes, \(.edges) edges"' "$report")"
   else
     log "WARN: build-graph.py failed — continuing without structural analysis"
