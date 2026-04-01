@@ -129,6 +129,317 @@ ensure_profile_repo() {
   return 0
 }
 
+# _profile_has_repo
+# Checks if the agent has a .profile repo by querying Forgejo API.
+# Returns 0 if repo exists, 1 otherwise.
+_profile_has_repo() {
+  local agent_identity="${1:-${AGENT_IDENTITY:-}}"
+
+  if [ -z "$agent_identity" ]; then
+    if ! resolve_agent_identity; then
+      return 1
+    fi
+    agent_identity="$AGENT_IDENTITY"
+  fi
+
+  local forge_url="${FORGE_URL:-http://localhost:3000}"
+  local api_url="${forge_url}/api/v1/repos/${agent_identity}/.profile"
+
+  # Check if repo exists via API (returns 200 if exists, 404 if not)
+  if curl -sf -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "$api_url" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# _count_undigested_journals
+# Counts journal entries in .profile/journal/ excluding archive/
+# Returns count via stdout.
+_count_undigested_journals() {
+  if [ ! -d "${PROFILE_REPO_PATH:-}/journal" ]; then
+    echo "0"
+    return
+  fi
+  find "${PROFILE_REPO_PATH}/journal" -maxdepth 1 -name "*.md" -type f ! -path "*/archive/*" 2>/dev/null | wc -l
+}
+
+# _profile_digest_journals
+# Runs a claude -p one-shot to digest undigested journals into lessons-learned.md
+# Returns 0 on success, 1 on failure.
+_profile_digest_journals() {
+  local agent_identity="${1:-${AGENT_IDENTITY:-}}"
+  local model="${2:-${CLAUDE_MODEL:-opus}}"
+
+  if [ -z "$agent_identity" ]; then
+    if ! resolve_agent_identity; then
+      return 1
+    fi
+    agent_identity="$AGENT_IDENTITY"
+  fi
+
+  local journal_dir="${PROFILE_REPO_PATH}/journal"
+  local knowledge_dir="${PROFILE_REPO_PATH}/knowledge"
+  local lessons_file="${knowledge_dir}/lessons-learned.md"
+
+  # Collect undigested journal entries
+  local journal_entries=""
+  if [ -d "$journal_dir" ]; then
+    for jf in "$journal_dir"/*.md; do
+      [ -f "$jf" ] || continue
+      # Skip archived entries
+      [[ "$jf" == */archive/* ]] && continue
+      local basename
+      basename=$(basename "$jf")
+      journal_entries="${journal_entries}
+### ${basename}
+$(cat "$jf")
+"
+    done
+  fi
+
+  if [ -z "$journal_entries" ]; then
+    log "profile: no undigested journals to digest"
+    return 0
+  fi
+
+  # Read existing lessons if available
+  local existing_lessons=""
+  if [ -f "$lessons_file" ]; then
+    existing_lessons=$(cat "$lessons_file")
+  fi
+
+  # Build prompt for digestion
+  local digest_prompt="You are digesting journal entries from a developer agent's work sessions.
+
+## Task
+Condense these journal entries into abstract, transferable lessons. Rewrite lessons-learned.md entirely.
+
+## Constraints
+- Hard cap: 2KB maximum
+- Abstract: patterns and heuristics, not specific issues or file paths
+- Transferable: must help with future unseen work, not just recall past work
+- Drop the least transferable lessons if over limit
+
+## Existing lessons-learned.md (if any)
+${existing_lessons:-<none>}
+
+## Journal entries to digest
+${journal_entries}
+
+## Output
+Write the complete, rewritten lessons-learned.md content below. No preamble, no explanation — just the file content."
+
+  # Run claude -p one-shot with same model as agent
+  local output
+  output=$(claude -p "$digest_prompt" \
+    --output-format json \
+    --dangerously-skip-permissions \
+    --max-tokens 1000 \
+    ${model:+--model "$model"} \
+    2>>"$LOGFILE" || echo '{"result":"error"}')
+
+  # Extract content from JSON response
+  local lessons_content
+  lessons_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+
+  if [ -z "$lessons_content" ]; then
+    log "profile: failed to digest journals"
+    return 1
+  fi
+
+  # Ensure knowledge directory exists
+  mkdir -p "$knowledge_dir"
+
+  # Write the lessons file (full rewrite)
+  printf '%s\n' "$lessons_content" > "$lessons_file"
+  log "profile: wrote lessons-learned.md (${#lessons_content} bytes)"
+
+  # Move digested journals to archive (if any were processed)
+  if [ -d "$journal_dir" ]; then
+    mkdir -p "${journal_dir}/archive"
+    local archived=0
+    for jf in "$journal_dir"/*.md; do
+      [ -f "$jf" ] || continue
+      [[ "$jf" == */archive/* ]] && continue
+      local basename
+      basename=$(basename "$jf")
+      mv "$jf" "${journal_dir}/archive/${basename}" 2>/dev/null && archived=$((archived + 1))
+    done
+    if [ "$archived" -gt 0 ]; then
+      log "profile: archived ${archived} journal entries"
+    fi
+  fi
+
+  return 0
+}
+
+# _profile_commit_and_push MESSAGE [FILE ...]
+# Commits and pushes changes to .profile repo.
+_profile_commit_and_push() {
+  local msg="$1"
+  shift
+  local files=("$@")
+
+  if [ ! -d "${PROFILE_REPO_PATH:-}/.git" ]; then
+    return 1
+  fi
+
+  (
+    cd "$PROFILE_REPO_PATH" || return 1
+
+    if [ ${#files[@]} -gt 0 ]; then
+      git add "${files[@]}"
+    else
+      git add -A
+    fi
+
+    if ! git diff --cached --quiet 2>/dev/null; then
+      git config user.name "${AGENT_IDENTITY}" || true
+      git config user.email "${AGENT_IDENTITY}@users.noreply.codeberg.org" || true
+      git commit -m "$msg" --no-verify 2>/dev/null || true
+      git push origin main --quiet 2>/dev/null || git push origin master --quiet 2>/dev/null || true
+    fi
+  )
+}
+
+# profile_load_lessons
+# Pre-session: loads lessons-learned.md into LESSONS_CONTEXT for prompt injection.
+# Lazy digestion: if >10 undigested journals exist, runs claude -p to digest them.
+# Returns 0 on success, 1 if agent has no .profile repo (silent no-op).
+# Requires: ensure_profile_repo() called, AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL, CLAUDE_MODEL.
+# Exports: LESSONS_CONTEXT (the lessons file content, hard-capped at 2KB).
+profile_load_lessons() {
+  # Check if agent has .profile repo
+  if ! _profile_has_repo; then
+    return 0  # Silent no-op
+  fi
+
+  # Pull .profile repo
+  if ! ensure_profile_repo; then
+    return 0  # Silent no-op
+  fi
+
+  # Check journal count for lazy digestion trigger
+  local journal_count
+  journal_count=$(_count_undigested_journals)
+
+  if [ "${journal_count:-0}" -gt 10 ]; then
+    log "profile: digesting ${journal_count} undigested journals"
+    if ! _profile_digest_journals; then
+      log "profile: warning — journal digestion failed"
+    fi
+  fi
+
+  # Read lessons-learned.md (hard cap at 2KB)
+  local lessons_file="${PROFILE_REPO_PATH}/knowledge/lessons-learned.md"
+  LESSONS_CONTEXT=""
+
+  if [ -f "$lessons_file" ]; then
+    local lessons_content
+    lessons_content=$(head -c 2048 "$lessons_file" 2>/dev/null) || lessons_content=""
+    if [ -n "$lessons_content" ]; then
+      # shellcheck disable=SC2034  # exported to caller for prompt injection
+      LESSONS_CONTEXT="## Lessons learned (from .profile/knowledge/lessons-learned.md)
+${lessons_content}"
+      log "profile: loaded lessons-learned.md (${#lessons_content} bytes)"
+    fi
+  fi
+
+  return 0
+}
+
+# profile_write_journal ISSUE_NUM ISSUE_TITLE OUTCOME [FILES_CHANGED]
+# Post-session: writes a reflection journal entry after work completes.
+# Returns 0 on success, 1 on failure.
+# Requires: AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL, CLAUDE_MODEL.
+# Args:
+#   $1 - ISSUE_NUM: The issue number worked on
+#   $2 - ISSUE_TITLE: The issue title
+#   $3 - OUTCOME: Session outcome (merged, blocked, failed, etc.)
+#   $4 - FILES_CHANGED: Optional comma-separated list of files changed
+profile_write_journal() {
+  local issue_num="$1"
+  local issue_title="$2"
+  local outcome="$3"
+  local files_changed="${4:-}"
+
+  # Check if agent has .profile repo
+  if ! _profile_has_repo; then
+    return 0  # Silent no-op
+  fi
+
+  # Pull .profile repo
+  if ! ensure_profile_repo; then
+    return 0  # Silent no-op
+  fi
+
+  # Build session summary
+  local session_summary=""
+  if [ -n "$files_changed" ]; then
+    session_summary="Files changed: ${files_changed}
+"
+  fi
+  session_summary="${session_summary}Outcome: ${outcome}"
+
+  # Build reflection prompt
+  local reflection_prompt="You are reflecting on a development session. Write a concise journal entry about transferable lessons learned.
+
+## Session context
+- Issue: #${issue_num} — ${issue_title}
+- Outcome: ${outcome}
+
+${session_summary}
+
+## Task
+Write a journal entry focused on what you learned that would help you do similar work better next time.
+
+## Constraints
+- Be concise (100-200 words)
+- Focus on transferable lessons, not a summary of what you did
+- Abstract patterns and heuristics, not specific issue/file references
+- One concise entry, not a list
+
+## Output
+Write the journal entry below. Use markdown format."
+
+  # Run claude -p one-shot with same model as agent
+  local output
+  output=$(claude -p "$reflection_prompt" \
+    --output-format json \
+    --dangerously-skip-permissions \
+    --max-tokens 500 \
+    ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
+    2>>"$LOGFILE" || echo '{"result":"error"}')
+
+  # Extract content from JSON response
+  local journal_content
+  journal_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+
+  if [ -z "$journal_content" ]; then
+    log "profile: failed to write journal entry"
+    return 1
+  fi
+
+  # Ensure journal directory exists
+  local journal_dir="${PROFILE_REPO_PATH}/journal"
+  mkdir -p "$journal_dir"
+
+  # Write journal entry (append if exists)
+  local journal_file="${journal_dir}/issue-${issue_num}.md"
+  if [ -f "$journal_file" ]; then
+    printf '\n---\n\n' >> "$journal_file"
+  fi
+  printf '%s\n' "$journal_content" >> "$journal_file"
+  log "profile: wrote journal entry for issue #${issue_num}"
+
+  # Commit and push to .profile repo
+  _profile_commit_and_push "journal: issue #${issue_num} reflection" "journal/issue-${issue_num}.md"
+
+  return 0
+}
+
 # ── Formula loading ──────────────────────────────────────────────────────
 
 # load_formula FORMULA_FILE

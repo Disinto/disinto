@@ -4,7 +4,7 @@
 # planner-run.sh creates a tmux session with Claude (opus) and injects
 # this formula as context, plus the graph report from build-graph.py.
 #
-# Steps: preflight → triage-and-plan → journal-and-commit
+# Steps: preflight → triage-and-plan → commit-ops-changes
 #
 # v4 changes from v3:
 #   - Graph report (orphans, cycles, thin objectives, bottlenecks) replaces
@@ -13,7 +13,8 @@
 #   - 3 steps instead of 6.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
-# All git writes (tree, journal, memory) happen in one commit at the end.
+# All git writes (tree, memory) happen in one commit at the end.
+# Journal writing is delegated to generic profile_write_journal() function.
 
 name        = "run-planner"
 description = "Planner v4: graph-driven planning with tea helpers"
@@ -241,50 +242,13 @@ CRITICAL: If any part of this step fails, log the failure and continue.
 needs = ["preflight"]
 
 [[steps]]
-id    = "journal-and-commit"
-title = "Write tree, journal, optional memory; commit and PR"
+id    = "commit-ops-changes"
+title = "Write tree, memory, and journal; commit and push"
 description = """
 ### 1. Write prerequisite tree
 Write to: $OPS_REPO_ROOT/prerequisites.md
 
-### 2. Write journal entry
-Create/append to: $OPS_REPO_ROOT/journal/planner/$(date -u +%Y-%m-%d).md
-
-Format:
-  # Planner run — YYYY-MM-DD HH:MM UTC
-
-  ## Predictions triaged
-  - #NNN: ACTION — reasoning (or "No unreviewed predictions")
-
-  ## Prerequisite tree updates
-  - Resolved: <list>  - Discovered: <list>  - Proposed: <list>
-
-  ## Top 5 constraints
-  1. <prerequisite> — blocks N objectives — #NNN (existing|filed)
-
-  ## Stuck issues detected
-  - #NNN: vision-labeled (complexity test failed) — blocked on #NNN
-  (or "No stuck issues detected")
-
-  ## Vault items filed
-  - $OPS_REPO_ROOT/vault/pending/<id>.md — <what> — blocks #NNN
-  (or "No vault items filed")
-
-  ## Issues created
-  - #NNN: title — why (or "No new issues")
-
-  ## Priority label changes
-  - Added/removed priority: #NNN (or "No priority changes")
-
-  ## Observations
-  - Key patterns noticed this run
-
-  ## Deferred
-  - Items in tree beyond top 5, why not filed
-
-Keep concise — 30-50 lines max.
-
-### 3. Memory update (every 5th run)
+### 2. Memory update (every 5th run)
 Count "# Planner run —" headers across all journal files.
 Check "<!-- summarized-through-run: N -->" in planner-memory.md.
 If (count - N) >= 5 or planner-memory.md missing, write to:
@@ -292,15 +256,19 @@ If (count - N) >= 5 or planner-memory.md missing, write to:
 Include: run counter marker, date, constraint focus, patterns, direction.
 Keep under 100 lines. Replace entire file.
 
-### 4. Commit ops repo changes
-Commit the ops repo changes (prerequisites, journal, memory, vault items):
+### 3. Commit ops repo changes
+Commit the ops repo changes (prerequisites, memory, vault items):
   cd "$OPS_REPO_ROOT"
-  git add prerequisites.md journal/planner/ knowledge/planner-memory.md vault/pending/
+  git add prerequisites.md knowledge/planner-memory.md vault/pending/
   git add -u
   if ! git diff --cached --quiet; then
     git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
     git push origin "$PRIMARY_BRANCH"
   fi
   cd "$PROJECT_REPO_ROOT"
+
+### 4. Write journal entry (generic)
+The planner-run.sh wrapper will handle journal writing via profile_write_journal()
+after the formula completes. This step is informational only.
 """
 needs = ["triage-and-plan"]
