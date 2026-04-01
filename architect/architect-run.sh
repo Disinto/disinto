@@ -7,11 +7,9 @@
 #
 # Flow:
 #   1. Guards: cron lock, memory check
-#   2. Source lib/env.sh, lib/formula-session.sh
-#   3. Override FORGE_TOKEN with FORGE_ARCHITECT_TOKEN
-#   4. Load formula from formulas/run-architect.toml
-#   5. Build context: VISION.md, AGENTS.md, prerequisite tree from ops repo
-#   6. Call agent_run to execute formula
+#   2. Load formula (formulas/run-architect.toml)
+#   3. Context: VISION.md, AGENTS.md, ops:prerequisites.md, structural graph
+#   4. agent_run(worktree, prompt) → Claude decomposes vision into sprints
 #
 # Usage:
 #   architect-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -48,12 +46,6 @@ WORKTREE="/tmp/${PROJECT_NAME}-architect-run"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 
-# Ensure AGENT_IDENTITY is set for profile functions
-if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_ARCHITECT_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
-fi
-
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active architect
 acquire_cron_lock "/tmp/architect-run.lock"
@@ -63,43 +55,44 @@ log "--- Architect run start ---"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula "$FACTORY_ROOT/formulas/run-architect.toml"
-build_context_block VISION.md AGENTS.md ops:prerequisites.md ops:sprints/.gitkeep
+build_context_block VISION.md AGENTS.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
-
-# ── Ensure ops repo is available ───────────────────────────────────────
-ensure_ops_repo
-
-# ── Load lessons from .profile repo (pre-session) ────────────────────────
-profile_load_lessons || true
-LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
 
 # ── Read scratch file (compaction survival) ───────────────────────────────
 SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
 SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
 
 # ── Build prompt ─────────────────────────────────────────────────────────
-build_sdk_prompt_footer "
-  Relabel:     curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" -X PUT -H 'Content-Type: application/json' '${FORGE_API}/issues/{number}/labels' -d '{\"labels\":[LABEL_ID]}'
-  Comment:     curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" -X POST -H 'Content-Type: application/json' '${FORGE_API}/issues/{number}/comments' -d '{\"body\":\"...\"}'
-  Close:       curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" -X PATCH -H 'Content-Type: application/json' '${FORGE_API}/issues/{number}' -d '{\"state\":\"closed\"}'
-"
+build_sdk_prompt_footer
 
-PROMPT="You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+# Architect prompt: strategic decomposition of vision into sprints
+# See: architect/AGENTS.md for full role description
+# Pattern: heredoc function to avoid inline prompt construction
+# Note: Uses CONTEXT_BLOCK, GRAPH_SECTION, SCRATCH_CONTEXT from formula-session.sh
+# Architecture Decision: AD-003 — The runtime creates and destroys, the formula preserves.
+build_architect_prompt() {
+  cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+
+Your role: strategic decomposition of vision issues into development sprints.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments,
+and file sub-issues after design forks are resolved.
 
 ## Project context
-${CONTEXT_BLOCK}${LESSONS_INJECTION:+## Lessons learned
-${LESSONS_INJECTION}
-}
-${GRAPH_SECTION}${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
-}
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+${SCRATCH_CONTEXT}
 ## Formula
 ${FORMULA_CONTENT}
 
 ${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+}
 
-${PROMPT_FOOTER}"
+PROMPT=$(build_architect_prompt)
 
 # ── Create worktree ──────────────────────────────────────────────────────
 formula_worktree_setup "$WORKTREE"
@@ -109,9 +102,6 @@ export CLAUDE_MODEL="opus"
 
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
-
-# Write journal entry post-session
-profile_write_journal "architect-run" "Architect run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$SCRATCH_FILE"
 log "--- Architect run done ---"
