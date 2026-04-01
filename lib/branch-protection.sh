@@ -10,6 +10,7 @@
 # Functions:
 #   setup_vault_branch_protection — Set up admin-only branch protection for main
 #   verify_branch_protection — Verify protection is configured correctly
+#   setup_profile_branch_protection — Set up admin-only branch protection for .profile repos
 #   remove_branch_protection — Remove branch protection (for cleanup/testing)
 #
 # Branch protection settings:
@@ -198,6 +199,138 @@ verify_branch_protection() {
 }
 
 # -----------------------------------------------------------------------------
+# setup_profile_branch_protection — Set up admin-only branch protection for .profile repos
+#
+# Configures the following protection rules:
+# - Require 1 approval before merge
+# - Restrict merge to admin role (not regular collaborators or bots)
+# - Block direct pushes to main (all changes must go through PR)
+#
+# Also creates a 'journal' branch for direct agent journal pushes
+#
+# Args:
+#   $1 - Repo path in format 'owner/repo' (e.g., 'dev-bot/.profile')
+#   $2 - Branch to protect (default: main)
+#
+# Returns: 0 on success, 1 on failure
+# -----------------------------------------------------------------------------
+setup_profile_branch_protection() {
+  local repo="${1:-}"
+  local branch="${2:-main}"
+
+  if [ -z "$repo" ]; then
+    _bp_log "ERROR: repo path required (format: owner/repo)"
+    return 1
+  fi
+
+  _bp_log "Setting up branch protection for ${branch} on ${repo}"
+
+  local api_url
+  api_url="${FORGE_URL}/api/v1/repos/${repo}"
+
+  # Check if branch exists
+  local branch_exists
+  branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+  if [ "$branch_exists" != "200" ]; then
+    _bp_log "ERROR: Branch ${branch} does not exist on ${repo}"
+    return 1
+  fi
+
+  # Check if protection already exists
+  local protection_exists
+  protection_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api_url}/branches/${branch}/protection" 2>/dev/null || echo "0")
+
+  if [ "$protection_exists" = "200" ]; then
+    _bp_log "Branch protection already exists for ${branch}"
+    _bp_log "Updating existing protection rules"
+  fi
+
+  # Create/update branch protection
+  local protection_json
+  protection_json=$(cat <<EOF
+{
+  "enable_push": false,
+  "enable_force_push": false,
+  "enable_merge_commit": true,
+  "enable_rebase": true,
+  "enable_rebase_merge": true,
+  "required_approvals": 1,
+  "required_signatures": false,
+  "admin_enforced": true,
+  "required_status_checks": false,
+  "required_linear_history": false
+}
+EOF
+)
+
+  local http_code
+  if [ "$protection_exists" = "200" ]; then
+    # Update existing protection
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X PUT \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${api_url}/branches/${branch}/protection" \
+      -d "$protection_json" || echo "0")
+  else
+    # Create new protection
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${api_url}/branches/${branch}/protection" \
+      -d "$protection_json" || echo "0")
+  fi
+
+  if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
+    _bp_log "ERROR: Failed to set up branch protection (HTTP ${http_code})"
+    return 1
+  fi
+
+  _bp_log "Branch protection configured successfully for ${branch}"
+  _bp_log "  - Pushes blocked: true"
+  _bp_log "  - Force pushes blocked: true"
+  _bp_log "  - Required approvals: 1"
+  _bp_log "  - Admin enforced: true"
+
+  # Create journal branch for direct agent journal pushes
+  _bp_log "Creating 'journal' branch for direct agent journal pushes"
+
+  local journal_branch="journal"
+  local journal_exists
+  journal_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api_url}/git/branches/${journal_branch}" 2>/dev/null || echo "0")
+
+  if [ "$journal_exists" != "200" ]; then
+    # Create journal branch from main
+    # Get the commit hash of main
+    local main_commit
+    main_commit=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api_url}/git/refs/heads/${branch}" 2>/dev/null | jq -r '.object.sha' || echo "")
+
+    if [ -n "$main_commit" ]; then
+      curl -sf -X POST \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${api_url}/git/refs" \
+        -d "{\"ref\":\"refs/heads/${journal_branch}\",\"sha\":\"${main_commit}\"}" >/dev/null 2>&1 || {
+        _bp_log "Warning: failed to create journal branch (may already exist)"
+      }
+    fi
+  fi
+
+  _bp_log "Journal branch '${journal_branch}' ready for direct pushes"
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # remove_branch_protection — Remove branch protection (for cleanup/testing)
 #
 # Returns: 0 on success, 1 on failure
@@ -261,6 +394,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     setup)
       setup_vault_branch_protection "${2:-main}"
       ;;
+    setup-profile)
+      if [ -z "${2:-}" ]; then
+        echo "ERROR: repo path required (format: owner/repo)" >&2
+        exit 1
+      fi
+      setup_profile_branch_protection "${2}" "${3:-main}"
+      ;;
     verify)
       verify_branch_protection "${2:-main}"
       ;;
@@ -268,12 +408,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       remove_branch_protection "${2:-main}"
       ;;
     help|*)
-      echo "Usage: $0 {setup|verify|remove} [branch]"
+      echo "Usage: $0 {setup|setup-profile|verify|remove} [args...]"
       echo ""
       echo "Commands:"
-      echo "  setup [branch]  Set up branch protection (default: main)"
-      echo "  verify [branch] Verify branch protection is configured correctly"
-      echo "  remove [branch] Remove branch protection (for cleanup/testing)"
+      echo "  setup [branch]              Set up branch protection on ops repo (default: main)"
+      echo "  setup-profile <repo> [branch] Set up branch protection on .profile repo"
+      echo "  verify [branch]             Verify branch protection is configured correctly"
+      echo "  remove [branch]             Remove branch protection (for cleanup/testing)"
       echo ""
       echo "Required environment variables:"
       echo "  FORGE_TOKEN     Forgejo API token (admin user recommended)"
