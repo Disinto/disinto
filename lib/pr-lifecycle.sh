@@ -349,6 +349,22 @@ pr_is_merged() {
 }
 
 # ---------------------------------------------------------------------------
+# pr_close — Close a PR via forge API.
+# Args: pr_number
+# Returns: 0=closed, 1=error
+# ---------------------------------------------------------------------------
+pr_close() {
+  local pr_num="$1"
+
+  _prl_log "closing PR #${pr_num}"
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/pulls/${pr_num}" \
+    -d '{"state":"closed"}' >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # pr_walk_to_merge — Walk a PR through CI, review, and merge.
 #
 # Requires agent_run() defined by the caller (synchronous Claude invocation).
