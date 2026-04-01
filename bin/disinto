@@ -226,7 +226,9 @@ services:
       - woodpecker
 
   agents:
-    build: ./docker/agents
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
@@ -256,7 +258,9 @@ services:
       - disinto-net
 
   runner:
-    build: ./docker/agents
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
     profiles: ["vault"]
     security_opt:
       - apparmor=unconfined

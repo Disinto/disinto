@@ -7,11 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pre-built binaries (copied from docker/agents/bin/)
 # SOPS — encrypted data decryption tool
-COPY bin/sops /usr/local/bin/sops
+COPY docker/agents/bin/sops /usr/local/bin/sops
 RUN chmod +x /usr/local/bin/sops
 
 # tea CLI — official Gitea/Forgejo CLI for issue/label/comment operations
-COPY bin/tea /usr/local/bin/tea
+COPY docker/agents/bin/tea /usr/local/bin/tea
 RUN chmod +x /usr/local/bin/tea
 
 # Claude CLI is mounted from the host via docker-compose volume.
