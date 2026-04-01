@@ -120,8 +120,9 @@ get_pr_for_file() {
 
   # Step 2: find the merge commit that contains it via ancestry path
   local merge_line
+  # Use --reverse to get the oldest (direct PR merge) first, not the newest
   merge_line=$(git -C "$OPS_REPO_ROOT" log --merges --ancestry-path \
-    "${add_commit}..HEAD" --oneline 2>/dev/null | head -1)
+    --reverse "${add_commit}..HEAD" --oneline 2>/dev/null | head -1)
 
   if [ -z "$merge_line" ]; then
     return 1
