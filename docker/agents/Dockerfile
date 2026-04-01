@@ -24,11 +24,14 @@ RUN curl -sL https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64 -o /usr/local/
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
 
+# Copy disinto code into the image
+COPY . /home/agent/disinto
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Entrypoint runs as root to start the cron daemon;
 # cron jobs execute as the agent user (crontab -u agent).
-WORKDIR /home/agent
+WORKDIR /home/agent/disinto
 
 ENTRYPOINT ["/entrypoint.sh"]
