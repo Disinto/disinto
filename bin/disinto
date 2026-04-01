@@ -948,7 +948,7 @@ setup_ops_repo() {
       curl -sf -X POST \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/users/${human_user}/repos" \
+        "${forge_url}/api/v1/users/johba/repos" \
         -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data\"}" >/dev/null 2>&1 || true
     fi
 
