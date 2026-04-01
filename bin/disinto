@@ -285,6 +285,12 @@ services:
     environment:
       - DISINTO_VERSION=${DISINTO_VERSION:-main}
       - FORGE_URL=http://forgejo:3000
+      - FORGE_REPO=johba/disinto
+      - FORGE_OPS_REPO=johba/disinto-ops
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - OPS_REPO_ROOT=/opt/disinto-ops
+      - PROJECT_REPO_ROOT=/opt/disinto
+      - PRIMARY_BRANCH=main
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

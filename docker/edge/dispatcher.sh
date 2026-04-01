@@ -109,33 +109,34 @@ get_pr_for_file() {
   local file_name
   file_name=$(basename "$file_path")
 
-  # Get recent commits that added this specific file
-  local commits
-  commits=$(git -C "$OPS_REPO_ROOT" log --oneline --diff-filter=A -- "vault/actions/${file_name}" 2>/dev/null | head -20) || true
+  # Step 1: find the commit that added the file
+  local add_commit
+  add_commit=$(git -C "$OPS_REPO_ROOT" log --diff-filter=A --format="%H" \
+    -- "vault/actions/${file_name}" 2>/dev/null | head -1)
 
-  if [ -z "$commits" ]; then
+  if [ -z "$add_commit" ]; then
     return 1
   fi
 
-  # For each commit, check if it's a merge commit from a PR
-  while IFS= read -r commit; do
-    local commit_sha commit_msg
+  # Step 2: find the merge commit that contains it via ancestry path
+  local merge_line
+  # Use --reverse to get the oldest (direct PR merge) first, not the newest
+  merge_line=$(git -C "$OPS_REPO_ROOT" log --merges --ancestry-path \
+    --reverse "${add_commit}..HEAD" --oneline 2>/dev/null | head -1)
 
-    commit_sha=$(echo "$commit" | awk '{print $1}')
-    commit_msg=$(git -C "$OPS_REPO_ROOT" log -1 --format="%B" "$commit_sha" 2>/dev/null) || continue
+  if [ -z "$merge_line" ]; then
+    return 1
+  fi
 
-    # Check if this is a merge commit (has "Merge pull request" in message)
-    if [[ "$commit_msg" =~ "Merge pull request" ]]; then
-      # Extract PR number from merge message (e.g., "Merge pull request #123")
-      local pr_num
-      pr_num=$(echo "$commit_msg" | grep -oP '#\d+' | head -1 | tr -d '#') || true
+  # Step 3: extract PR number from merge commit message
+  # Forgejo format: "Merge pull request 'title' (#N) from branch into main"
+  local pr_num
+  pr_num=$(echo "$merge_line" | grep -oP '#\d+' | head -1 | tr -d '#')
 
-      if [ -n "$pr_num" ]; then
-        echo "$pr_num"
-        return 0
-      fi
-    fi
-  done <<< "$commits"
+  if [ -n "$pr_num" ]; then
+    echo "$pr_num"
+    return 0
+  fi
 
   return 1
 }
@@ -146,8 +147,11 @@ get_pr_for_file() {
 get_pr_merger() {
   local pr_number="$1"
 
+  # Use ops repo API URL for PR lookups (not disinto repo)
+  local ops_api="${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}"
+
   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/pulls/${pr_number}" 2>/dev/null | jq -r '{
+    "${ops_api}/pulls/${pr_number}" 2>/dev/null | jq -r '{
       username: .merge_user?.login // .user?.login,
       merged: .merged,
       merged_at: .merged_at // empty
@@ -290,28 +294,26 @@ launch_runner() {
   local secrets_array
   secrets_array="${VAULT_ACTION_SECRETS:-}"
 
-  if [ -z "$secrets_array" ]; then
-    log "ERROR: Action ${action_id} has no secrets declared"
-    write_result "$action_id" 1 "No secrets declared in TOML"
-    return 1
-  fi
-
   # Build command array (safe from shell injection)
   local -a cmd=(docker compose run --rm runner)
 
-  # Add environment variables for secrets
-  for secret in $secrets_array; do
-    secret=$(echo "$secret" | xargs)
-    if [ -n "$secret" ]; then
-      # Verify secret exists in vault
-      if [ -z "${!secret:-}" ]; then
-        log "ERROR: Secret '${secret}' not found in vault for action ${action_id}"
-        write_result "$action_id" 1 "Secret not found in vault: ${secret}"
-        return 1
+  # Add environment variables for secrets (if any declared)
+  if [ -n "$secrets_array" ]; then
+    for secret in $secrets_array; do
+      secret=$(echo "$secret" | xargs)
+      if [ -n "$secret" ]; then
+        # Verify secret exists in vault
+        if [ -z "${!secret:-}" ]; then
+          log "ERROR: Secret '${secret}' not found in vault for action ${action_id}"
+          write_result "$action_id" 1 "Secret not found in vault: ${secret}"
+          return 1
+        fi
+        cmd+=(-e "$secret")
       fi
-      cmd+=(-e "$secret")
-    fi
-  done
+    done
+  else
+    log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
+  fi
 
   # Add formula and action id as arguments (after service name)
   local formula="${VAULT_ACTION_FORMULA:-}"
