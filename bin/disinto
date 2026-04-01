@@ -665,6 +665,41 @@ setup_forge() {
     _FORGE_ADMIN_PASS="$admin_pass"
   fi
 
+  # Create human user (johba) as site admin if it doesn't exist
+  local human_user="johba"
+  local human_pass
+  human_pass="human-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+
+  if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+    echo "Creating human user: ${human_user}"
+    local create_output
+    if ! create_output=$(_forgejo_exec forgejo admin user create \
+      --admin \
+      --username "${human_user}" \
+      --password "${human_pass}" \
+      --email "johba@disinto.local" \
+      --must-change-password=false 2>&1); then
+      echo "Error: failed to create human user '${human_user}':" >&2
+      echo "  ${create_output}" >&2
+      exit 1
+    fi
+    # Forgejo 11.x ignores --must-change-password=false on create;
+    # explicitly clear the flag so basic-auth token creation works.
+    _forgejo_exec forgejo admin user change-password \
+      --username "${human_user}" \
+      --password "${human_pass}" \
+      --must-change-password=false
+
+    # Verify human user was actually created
+    if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+      echo "Error: human user '${human_user}' not found after creation" >&2
+      exit 1
+    fi
+    echo "  Human user '${human_user}' created as site admin"
+  else
+    echo "Human user: ${human_user} (already exists)"
+  fi
+
   # Get or create admin token
   local admin_token
   admin_token=$(curl -sf -X POST \
@@ -687,6 +722,36 @@ setup_forge() {
     exit 1
   fi
 
+  # Get or create human user token
+  local human_token
+  if curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+    human_token=$(curl -sf -X POST \
+      -u "${human_user}:${human_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${human_user}/tokens" \
+      -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
+      | jq -r '.sha1 // empty') || human_token=""
+
+    if [ -z "$human_token" ]; then
+      # Token might already exist — try listing
+      human_token=$(curl -sf \
+        -u "${human_user}:${human_pass}" \
+        "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
+        | jq -r '.[0].sha1 // empty') || human_token=""
+    fi
+
+    if [ -n "$human_token" ]; then
+      # Store human token in .env
+      if grep -q '^HUMAN_TOKEN=' "$env_file" 2>/dev/null; then
+        sed -i "s|^HUMAN_TOKEN=.*|HUMAN_TOKEN=${human_token}|" "$env_file"
+      else
+        printf 'HUMAN_TOKEN=%s\n' "$human_token" >> "$env_file"
+      fi
+      export HUMAN_TOKEN="$human_token"
+      echo "  Human token saved (HUMAN_TOKEN)"
+    fi
+  fi
+
   # Create bot users and tokens
   # Each agent gets its own Forgejo account for identity and audit trail (#747).
   # Map: bot-username -> env-var-name for the token
@@ -703,7 +768,7 @@ setup_forge() {
   local env_file="${FACTORY_ROOT}/.env"
   local bot_user bot_pass token token_var
 
-  for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
+  for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot architect-bot; do
     bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
     token_var="${bot_token_vars[$bot_user]}"
 
@@ -805,22 +870,49 @@ setup_forge() {
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1; then
-      # Fallback: create under the dev-bot user
+      # Fallback: create under the human user namespace (johba)
       curl -sf -X POST \
-        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/user/repos" \
+        "${forge_url}/api/v1/users/${human_user}/repos" \
         -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1 || true
     fi
 
-    # Add all bot users as collaborators
-    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
+    # Add all bot users as collaborators with appropriate permissions
+    # dev-bot: write (PR creation via lib/vault.sh)
+    # review-bot: read (PR review)
+    # planner-bot: write (prerequisites.md, memory)
+    # gardener-bot: write (backlog grooming)
+    # vault-bot: write (vault items)
+    # supervisor-bot: read (health monitoring)
+    # predictor-bot: read (pattern detection)
+    # architect-bot: write (sprint PRs)
+    local bot_user bot_perm
+    declare -A bot_permissions=(
+      [dev-bot]="write"
+      [review-bot]="read"
+      [planner-bot]="write"
+      [gardener-bot]="write"
+      [vault-bot]="write"
+      [supervisor-bot]="read"
+      [predictor-bot]="read"
+      [architect-bot]="write"
+    )
+    for bot_user in "${!bot_permissions[@]}"; do
+      bot_perm="${bot_permissions[$bot_user]}"
       curl -sf -X PUT \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/repos/${repo_slug}/collaborators/${bot_user}" \
-        -d '{"permission":"write"}' >/dev/null 2>&1 || true
+        -d "{\"permission\":\"${bot_perm}\"}" >/dev/null 2>&1 || true
     done
+
+    # Add disinto-admin as admin collaborator
+    curl -sf -X PUT \
+      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/repos/${repo_slug}/collaborators/disinto-admin" \
+      -d '{"permission":"admin"}' >/dev/null 2>&1 || true
 
     echo "Repo:    ${repo_slug} created on Forgejo"
   else
@@ -846,29 +938,50 @@ setup_ops_repo() {
     "${forge_url}/api/v1/repos/${ops_slug}" >/dev/null 2>&1; then
     echo "Ops repo: ${ops_slug} (already exists on Forgejo)"
   else
-    # Create ops repo under org
+    # Create ops repo under org (or human user if org creation failed)
     if ! curl -sf -X POST \
       -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
-      # Fallback: create under the user
+      # Fallback: create under the human user namespace
       curl -sf -X POST \
-        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/user/repos" \
+        "${forge_url}/api/v1/users/${human_user}/repos" \
         -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data\"}" >/dev/null 2>&1 || true
     fi
 
-    # Add all bot users as collaborators
-    local bot_user
-    for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot; do
+    # Add all bot users as collaborators with appropriate permissions
+    # vault branch protection (#77) requires:
+    # - Admin-only merge to main (enforced by admin_enforced: true)
+    # - Bots can push branches and create PRs, but cannot merge
+    local bot_user bot_perm
+    declare -A bot_permissions=(
+      [dev-bot]="write"
+      [review-bot]="read"
+      [planner-bot]="write"
+      [gardener-bot]="write"
+      [vault-bot]="write"
+      [supervisor-bot]="read"
+      [predictor-bot]="read"
+      [architect-bot]="write"
+    )
+    for bot_user in "${!bot_permissions[@]}"; do
+      bot_perm="${bot_permissions[$bot_user]}"
       curl -sf -X PUT \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/repos/${ops_slug}/collaborators/${bot_user}" \
-        -d '{"permission":"write"}' >/dev/null 2>&1 || true
+        -d "{\"permission\":\"${bot_perm}\"}" >/dev/null 2>&1 || true
     done
+
+    # Add disinto-admin as admin collaborator
+    curl -sf -X PUT \
+      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/repos/${ops_slug}/collaborators/disinto-admin" \
+      -d '{"permission":"admin"}' >/dev/null 2>&1 || true
 
     echo "Ops repo: ${ops_slug} created on Forgejo"
   fi
@@ -1799,6 +1912,20 @@ p.write_text(text)
   local ops_slug="${forge_repo}-ops"
   local ops_root="/home/${USER}/${project_name}-ops"
   setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch"
+
+  # Set up vault branch protection on ops repo (#77)
+  # This ensures admin-only merge to main, blocking bots from merging vault PRs
+  # Use HUMAN_TOKEN (johba) or FORGE_TOKEN (dev-bot) for admin operations
+  export FORGE_OPS_REPO="$ops_slug"
+  # Source env.sh to ensure FORGE_TOKEN is available
+  source "${FACTORY_ROOT}/lib/env.sh"
+  source "${FACTORY_ROOT}/lib/branch-protection.sh"
+  if setup_vault_branch_protection "$branch"; then
+    echo "Branch protection: vault protection configured on ${ops_slug}"
+  else
+    echo "Warning: failed to set up vault branch protection" >&2
+  fi
+  unset FORGE_OPS_REPO
 
   # Generate project TOML (skip if already exists)
   if [ "$toml_exists" = false ]; then
