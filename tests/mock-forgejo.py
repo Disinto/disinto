@@ -409,6 +409,52 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         state["repos"][key] = repo
         json_response(self, 201, repo)
 
+    def handle_POST_users_username_repos(self, query):
+        """POST /api/v1/users/{username}/repos"""
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 5:
+            username = parts[4]
+        else:
+            json_response(self, 400, {"message": "username required"})
+            return
+
+        if username not in state["users"]:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        data = json.loads(body) if body else {}
+
+        repo_name = data.get("name")
+        if not repo_name:
+            json_response(self, 400, {"message": "name is required"})
+            return
+
+        repo_id = next_ids["repos"]
+        next_ids["repos"] += 1
+
+        key = f"{username}/{repo_name}"
+        repo = {
+            "id": repo_id,
+            "full_name": key,
+            "name": repo_name,
+            "owner": {"id": state["users"][username]["id"], "login": username},
+            "empty": not data.get("auto_init", False),
+            "default_branch": data.get("default_branch", "main"),
+            "description": data.get("description", ""),
+            "private": data.get("private", False),
+            "html_url": f"https://example.com/{key}",
+            "ssh_url": f"git@example.com:{key}.git",
+            "clone_url": f"https://example.com/{key}.git",
+            "created_at": "2026-04-01T00:00:00Z",
+        }
+
+        state["repos"][key] = repo
+        json_response(self, 201, repo)
+
     def handle_POST_user_repos(self, query):
         """POST /api/v1/user/repos"""
         require_token(self)
