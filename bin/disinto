@@ -656,7 +656,16 @@ setup_forge() {
   # Create admin user if it doesn't exist
   local admin_user="disinto-admin"
   local admin_pass
-  admin_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+  local env_file="${FACTORY_ROOT}/.env"
+
+  # Re-read persisted admin password if available (#158)
+  if grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
+    admin_pass=$(grep '^FORGE_ADMIN_PASS=' "$env_file" | head -1 | cut -d= -f2-)
+  fi
+  # Generate a fresh password only when none was persisted
+  if [ -z "${admin_pass:-}" ]; then
+    admin_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+  fi
 
   if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
     echo "Creating admin user: ${admin_user}"
@@ -683,9 +692,23 @@ setup_forge() {
       echo "Error: admin user '${admin_user}' not found after creation" >&2
       exit 1
     fi
-    # Preserve password for Woodpecker OAuth2 token generation (#779)
-    _FORGE_ADMIN_PASS="$admin_pass"
+
+    # Persist admin password to .env for idempotent re-runs (#158)
+    if grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
+      sed -i "s|^FORGE_ADMIN_PASS=.*|FORGE_ADMIN_PASS=${admin_pass}|" "$env_file"
+    else
+      printf 'FORGE_ADMIN_PASS=%s\n' "$admin_pass" >> "$env_file"
+    fi
+  else
+    echo "Admin user: ${admin_user} (already exists)"
+    # Reset password to the persisted value so basic-auth works (#158)
+    _forgejo_exec forgejo admin user change-password \
+      --username "${admin_user}" \
+      --password "${admin_pass}" \
+      --must-change-password=false
   fi
+  # Preserve password for Woodpecker OAuth2 token generation (#779)
+  _FORGE_ADMIN_PASS="$admin_pass"
 
   # Create human user (johba) as site admin if it doesn't exist
   local human_user="johba"
@@ -746,7 +769,6 @@ setup_forge() {
 
   # Get or create human user token
   local human_token
-  local env_file="${FACTORY_ROOT}/.env"
   if curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
     human_token=$(curl -sf -X POST \
       -u "${human_user}:${human_pass}" \
