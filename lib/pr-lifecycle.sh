@@ -414,6 +414,23 @@ pr_walk_to_merge() {
       fi
 
       _prl_log "CI failed — invoking agent (attempt ${ci_fix_count}/${max_ci_fixes})"
+
+      # Get CI logs from SQLite database if available
+      local ci_logs=""
+      if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${FACTORY_ROOT:-}" ]; then
+        ci_logs=$(ci_get_logs "$_PR_CI_PIPELINE" 2>/dev/null | tail -50) || ci_logs=""
+      fi
+
+      local logs_section=""
+      if [ -n "$ci_logs" ]; then
+        logs_section="
+CI Log Output (last 50 lines):
+\`\`\`
+${ci_logs}
+\`\`\`
+"
+      fi
+
       agent_run --resume "$session_id" --worktree "$worktree" \
         "CI failed on PR #${pr_num} (attempt ${ci_fix_count}/${max_ci_fixes}).
 
@@ -421,7 +438,7 @@ Pipeline: #${_PR_CI_PIPELINE:-?}
 Failure type: ${_PR_CI_FAILURE_TYPE:-unknown}
 
 Error log:
-${_PR_CI_ERROR_LOG:-No logs available.}
+${_PR_CI_ERROR_LOG:-No logs available.}${logs_section}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}

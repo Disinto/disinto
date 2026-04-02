@@ -11,6 +11,7 @@
 #   disinto status                      Show factory status
 #   disinto secrets <subcommand>        Manage encrypted secrets
 #   disinto run <action-id>              Run action in ephemeral runner container
+#   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -40,6 +41,8 @@ Usage:
   disinto status                       Show factory status
   disinto secrets <subcommand>         Manage encrypted secrets
   disinto run <action-id>              Run action in ephemeral runner container
+  disinto ci-logs <pipeline> [--step <name>]
+                                     Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
   disinto hire-an-agent <agent-name> <role> [--formula <path>]
                                      Hire a new agent (create user + .profile repo)
@@ -54,6 +57,9 @@ Init options:
 
 Hire an agent options:
   --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
+
+CI logs options:
+  --step <name>        Filter logs to a specific step (e.g., smoke-init)
 EOF
   exit 1
 }
@@ -240,11 +246,13 @@ services:
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       - ${HOME}/.ssh:/home/agent/.ssh:ro
       - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - woodpecker-data:/woodpecker-data:ro
     environment:
       FORGE_URL: http://forgejo:3000
       WOODPECKER_SERVER: http://woodpecker:8000
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      WOODPECKER_DATA_DIR: /woodpecker-data
     env_file:
       - .env
     # IMPORTANT: agents get .env only (forge tokens, CI tokens, config).
@@ -2923,6 +2931,59 @@ This PR creates a vault item for the release of version ${version}.
   echo "  4. Restart agent containers"
 }
 
+# ── ci-logs command ──────────────────────────────────────────────────────────
+# Reads CI logs from the Woodpecker SQLite database.
+# Usage: disinto ci-logs <pipeline> [--step <name>]
+disinto_ci_logs() {
+  local pipeline_number="" step_name=""
+
+  if [ $# -lt 1 ]; then
+    echo "Error: pipeline number required" >&2
+    echo "Usage: disinto ci-logs <pipeline> [--step <name>]" >&2
+    exit 1
+  fi
+
+  # Parse arguments
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --step|-s)
+        step_name="$2"
+        shift 2
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [ -z "$pipeline_number" ]; then
+          pipeline_number="$1"
+        else
+          echo "Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$pipeline_number" ] || ! [[ "$pipeline_number" =~ ^[0-9]+$ ]]; then
+    echo "Error: pipeline number must be a positive integer" >&2
+    exit 1
+  fi
+
+  local log_reader="${FACTORY_ROOT}/lib/ci-log-reader.py"
+  if [ ! -f "$log_reader" ]; then
+    echo "Error: ci-log-reader.py not found at $log_reader" >&2
+    exit 1
+  fi
+
+  if [ -n "$step_name" ]; then
+    python3 "$log_reader" "$pipeline_number" --step "$step_name"
+  else
+    python3 "$log_reader" "$pipeline_number"
+  fi
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -2934,6 +2995,7 @@ case "${1:-}" in
   status)          shift; disinto_status "$@" ;;
   secrets)         shift; disinto_secrets "$@" ;;
   run)             shift; disinto_run "$@" ;;
+  ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   -h|--help)       usage ;;

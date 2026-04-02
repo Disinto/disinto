@@ -267,3 +267,42 @@ ci_promote() {
 
   echo "$new_num"
 }
+
+# ci_get_logs <pipeline_number> [--step <step_name>]
+# Reads CI logs from the Woodpecker SQLite database.
+# Requires: WOODPECKER_DATA_DIR env var or mounted volume at /woodpecker-data
+# Returns: 0 on success, 1 on failure. Outputs log text to stdout.
+#
+# Usage:
+#   ci_get_logs 346                  # Get all failed step logs
+#   ci_get_logs 346 --step smoke-init # Get logs for specific step
+ci_get_logs() {
+  local pipeline_number="$1"
+  shift || true
+
+  local step_name=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --step|-s)
+        step_name="$2"
+        shift 2
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  local log_reader="${FACTORY_ROOT:-/home/agent/disinto}/lib/ci-log-reader.py"
+  if [ -f "$log_reader" ]; then
+    if [ -n "$step_name" ]; then
+      python3 "$log_reader" "$pipeline_number" --step "$step_name"
+    else
+      python3 "$log_reader" "$pipeline_number"
+    fi
+  else
+    echo "ERROR: ci-log-reader.py not found at $log_reader" >&2
+    return 1
+  fi
+}
