@@ -563,6 +563,15 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   ISSUE_NUM=$(echo "$BACKLOG_JSON" | jq -r ".[$i].number")
   ISSUE_BODY=$(echo "$BACKLOG_JSON" | jq -r ".[$i].body // \"\"")
 
+  # Check assignee before claiming — skip if assigned to another bot
+  ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${ISSUE_NUM}") || true
+  ASSIGNEE=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+  if [ -n "$ASSIGNEE" ] && [ "$ASSIGNEE" != "$BOT_USER" ]; then
+    log "  #${ISSUE_NUM} assigned to ${ASSIGNEE} — skipping"
+    continue
+  fi
+
   # Formula guard: formula-labeled issues must not be picked up by dev-agent.
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
   SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
