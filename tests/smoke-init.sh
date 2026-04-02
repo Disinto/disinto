@@ -245,6 +245,10 @@ rm -f "${FACTORY_ROOT}/projects/smoke-repo.toml"
 git config --global user.email "smoke@test.local"
 git config --global user.name "Smoke Test"
 
+# Alpine containers don't set USER — lib/env.sh needs it
+USER=$(whoami)
+export USER
+
 export SMOKE_FORGE_URL="$FORGE_URL"
 export FORGE_URL
 
