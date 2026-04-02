@@ -591,6 +591,27 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", 0)
         self.end_headers()
 
+    def handle_GET_repos_owner_repo_collaborators_collaborator(self, query):
+        """GET /api/v1/repos/{owner}/{repo}/collaborators/{collaborator}"""
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 8:
+            owner = parts[4]
+            repo = parts[5]
+            collaborator = parts[7]
+        else:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+
+        key = f"{owner}/{repo}"
+        if key in state["collaborators"] and collaborator in state["collaborators"][key]:
+            self.send_response(204)
+            self.send_header("Content-Length", 0)
+            self.end_headers()
+        else:
+            json_response(self, 404, {"message": "collaborator not found"})
+
     def handle_404(self):
         """Return 404 for unknown routes."""
         json_response(self, 404, {"message": "route not found"})
