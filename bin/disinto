@@ -1920,8 +1920,10 @@ p.write_text(text)
     echo "Repo:    ${repo_root} (existing clone)"
   fi
 
-  # Push to local Forgejo
-  push_to_forge "$repo_root" "$forge_url" "$forge_repo"
+  # Push to local Forgejo (skip if SKIP_PUSH is set)
+  if [ "${SKIP_PUSH:-false}" = "false" ]; then
+    push_to_forge "$repo_root" "$forge_url" "$forge_repo"
+  fi
 
   # Detect primary branch
   if [ -z "$branch" ]; then

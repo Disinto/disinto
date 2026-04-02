@@ -159,6 +159,9 @@ git commit --quiet -m "Initial commit"
 export SMOKE_FORGE_URL="$FORGE_URL"
 export FORGE_URL
 
+# Skip push to mock server (no git support)
+export SKIP_PUSH=true
+
 if bash "${FACTORY_ROOT}/bin/disinto" init \
   "${TEST_SLUG}" \
   --bare --yes \
