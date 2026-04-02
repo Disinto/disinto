@@ -135,6 +135,7 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             # Users patterns
             (r"^users/([^/]+)$", f"handle_{method}_users_username"),
             (r"^users/([^/]+)/tokens$", f"handle_{method}_users_username_tokens"),
+            (r"^users/([^/]+)/repos$", f"handle_{method}_users_username_repos"),
             # Repos patterns
             (r"^repos/([^/]+)/([^/]+)$", f"handle_{method}_repos_owner_repo"),
             (r"^repos/([^/]+)/([^/]+)/labels$", f"handle_{method}_repos_owner_repo_labels"),
@@ -194,7 +195,9 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
     def handle_GET_users_username_repos(self, query):
         """GET /api/v1/users/{username}/repos"""
-        require_token(self)
+        if not require_token(self):
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
 
         parts = self.path.split("/")
         if len(parts) >= 5:
@@ -337,7 +340,9 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
     def handle_GET_orgs(self, query):
         """GET /api/v1/orgs"""
-        require_token(self)
+        if not require_token(self):
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
         json_response(self, 200, list(state["orgs"].values()))
 
     def handle_POST_orgs(self, query):

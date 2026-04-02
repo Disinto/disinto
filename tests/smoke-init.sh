@@ -242,13 +242,11 @@ else
   fail ".env not found"
 fi
 
-# Repo was cloned (or mock created for test)
+# Repo was cloned (mock git repo created before disinto init)
 if [ -d "/tmp/smoke-test-repo/.git" ]; then
   pass "Repo cloned to /tmp/smoke-test-repo"
 else
-  # Mock server doesn't support git operations, create mock .git directory
-  mkdir -p "/tmp/smoke-test-repo/.git"
-  pass "Mock .git directory created (mock server has no git support)"
+  fail "Repo not cloned to /tmp/smoke-test-repo"
 fi
 
 # ── 6. Verify cron setup ────────────────────────────────────────────────────
