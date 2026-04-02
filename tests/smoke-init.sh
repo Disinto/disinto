@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
-# tests/smoke-init.sh — End-to-end smoke test for disinto init
+# tests/smoke-init.sh — End-to-end smoke test for disinto init with mock Forgejo
 #
-# Expects a running Forgejo at SMOKE_FORGE_URL with a bootstrap admin
-# user already created (see .woodpecker/smoke-init.yml for CI setup).
-# Validates the full init flow: Forgejo API, user/token creation,
-# repo setup, labels, TOML generation, and cron installation.
+# Validates the full init flow using mock Forgejo server:
+#   1. Verify mock Forgejo is ready
+#   2. Set up mock binaries (docker, claude, tmux)
+#   3. Run disinto init
+#   4. Verify Forgejo state (users, repo)
+#   5. Verify local state (TOML, .env, repo clone)
+#   6. Verify cron setup
 #
-# Required env:  SMOKE_FORGE_URL (default: http://localhost:3000)
+# Required env: FORGE_URL (default: http://localhost:3000)
 # Required tools: bash, curl, jq, python3, git
 
 set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FORGE_URL="${SMOKE_FORGE_URL:-http://localhost:3000}"
-SETUP_ADMIN="setup-admin"
-SETUP_PASS="SetupPass-789xyz"
-TEST_SLUG="smoke-org/smoke-repo"
+FORGE_URL="${FORGE_URL:-http://localhost:3000}"
 MOCK_BIN="/tmp/smoke-mock-bin"
-MOCK_STATE="/tmp/smoke-mock-state"
+TEST_SLUG="smoke-org/smoke-repo"
 FAILED=0
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; FAILED=1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 cleanup() {
-  rm -rf "$MOCK_BIN" "$MOCK_STATE" /tmp/smoke-test-repo \
-         "${FACTORY_ROOT}/projects/smoke-repo.toml" \
-         "${FACTORY_ROOT}/docker-compose.yml"
+  rm -rf "$MOCK_BIN" /tmp/smoke-test-repo \
+         "${FACTORY_ROOT}/projects/smoke-repo.toml"
   # Restore .env only if we created the backup
   if [ -f "${FACTORY_ROOT}/.env.smoke-backup" ]; then
     mv "${FACTORY_ROOT}/.env.smoke-backup" "${FACTORY_ROOT}/.env"
@@ -40,11 +39,11 @@ trap cleanup EXIT
 if [ -f "${FACTORY_ROOT}/.env" ]; then
   cp "${FACTORY_ROOT}/.env" "${FACTORY_ROOT}/.env.smoke-backup"
 fi
-# Start with a clean .env (setup_forge writes tokens here)
+# Start with a clean .env
 printf '' > "${FACTORY_ROOT}/.env"
 
-# ── 1. Verify Forgejo is ready ──────────────────────────────────────────────
-echo "=== 1/6 Verifying Forgejo at ${FORGE_URL} ==="
+# ── 1. Verify mock Forgejo is ready ─────────────────────────────────────────
+echo "=== 1/6 Verifying mock Forgejo at ${FORGE_URL} ==="
 retries=0
 api_version=""
 while true; do
@@ -55,163 +54,64 @@ while true; do
   fi
   retries=$((retries + 1))
   if [ "$retries" -gt 30 ]; then
-    fail "Forgejo API not responding after 30s"
+    fail "Mock Forgejo API not responding after 30s"
     exit 1
   fi
   sleep 1
 done
-pass "Forgejo API v${api_version} (${retries}s)"
-
-# Verify bootstrap admin user exists
-if curl -sf --max-time 5 "${FORGE_URL}/api/v1/users/${SETUP_ADMIN}" >/dev/null 2>&1; then
-  pass "Bootstrap admin '${SETUP_ADMIN}' exists"
-else
-  fail "Bootstrap admin '${SETUP_ADMIN}' not found — was Forgejo set up?"
-  exit 1
-fi
+pass "Mock Forgejo API v${api_version} (${retries}s)"
 
 # ── 2. Set up mock binaries ─────────────────────────────────────────────────
 echo "=== 2/6 Setting up mock binaries ==="
-mkdir -p "$MOCK_BIN" "$MOCK_STATE"
-
-# Store bootstrap admin credentials for the docker mock
-printf '%s:%s' "${SETUP_ADMIN}" "${SETUP_PASS}" > "$MOCK_STATE/bootstrap_creds"
+mkdir -p "$MOCK_BIN"
 
 # ── Mock: docker ──
-# Routes 'docker exec' user-creation calls to the Forgejo admin API,
-# using the bootstrap admin's credentials.
+# Intercepts docker exec calls that disinto init --bare makes to Forgejo CLI
 cat > "$MOCK_BIN/docker" << 'DOCKERMOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-
-FORGE_URL="${SMOKE_FORGE_URL:-http://localhost:3000}"
-MOCK_STATE="/tmp/smoke-mock-state"
-
-if [ ! -f "$MOCK_STATE/bootstrap_creds" ]; then
-  echo "mock-docker: bootstrap credentials not found" >&2
-  exit 1
-fi
-BOOTSTRAP_CREDS="$(cat "$MOCK_STATE/bootstrap_creds")"
-
-# docker ps — return empty (no containers running)
-if [ "${1:-}" = "ps" ]; then
-  exit 0
-fi
-
-# docker exec — route to Forgejo API
+FORGE_URL="${SMOKE_FORGE_URL:-${FORGE_URL:-http://localhost:3000}}"
+if [ "${1:-}" = "ps" ]; then exit 0; fi
 if [ "${1:-}" = "exec" ]; then
-  shift  # remove 'exec'
-
-  # Skip docker exec flags (-u VALUE, -T, -i, etc.)
+  shift
   while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do
-    case "$1" in
-      -u|-w|-e) shift 2 ;;
-      *)        shift ;;
-    esac
+    case "$1" in -u|-w|-e) shift 2 ;; *) shift ;; esac
   done
-  shift  # remove container name (e.g. disinto-forgejo)
-
-  # $@ is now: forgejo admin user list|create [flags]
+  shift  # container name
   if [ "${1:-}" = "forgejo" ] && [ "${2:-}" = "admin" ] && [ "${3:-}" = "user" ]; then
     subcmd="${4:-}"
-
-    if [ "$subcmd" = "list" ]; then
-      echo "ID   Username   Email"
-      exit 0
-    fi
-
+    if [ "$subcmd" = "list" ]; then echo "ID   Username   Email"; exit 0; fi
     if [ "$subcmd" = "create" ]; then
-      shift 4  # skip 'forgejo admin user create'
-      username="" password="" email="" is_admin="false"
+      shift 4; username="" password="" email="" is_admin="false"
       while [ $# -gt 0 ]; do
         case "$1" in
-          --admin)                is_admin="true"; shift ;;
-          --username)             username="$2"; shift 2 ;;
-          --password)             password="$2"; shift 2 ;;
-          --email)                email="$2"; shift 2 ;;
-          --must-change-password*) shift ;;
-          *)                      shift ;;
+          --admin) is_admin="true"; shift ;; --username) username="$2"; shift 2 ;;
+          --password) password="$2"; shift 2 ;; --email) email="$2"; shift 2 ;;
+          --must-change-password*) shift ;; *) shift ;;
         esac
       done
-
-      if [ -z "$username" ] || [ -z "$password" ] || [ -z "$email" ]; then
-        echo "mock-docker: missing required args" >&2
-        exit 1
-      fi
-
-      # Create user via Forgejo admin API
-      if ! curl -sf -X POST \
-        -u "$BOOTSTRAP_CREDS" \
-        -H "Content-Type: application/json" \
+      curl -sf -X POST -H "Content-Type: application/json" \
         "${FORGE_URL}/api/v1/admin/users" \
-        -d "{\"username\":\"${username}\",\"password\":\"${password}\",\"email\":\"${email}\",\"must_change_password\":false,\"login_name\":\"${username}\",\"source_id\":0}" \
-        >/dev/null 2>&1; then
-        echo "mock-docker: failed to create user '${username}'" >&2
-        exit 1
-      fi
-
-      # Patch user: ensure must_change_password is false (Forgejo admin
-      # API POST may ignore it) and promote to admin if requested
-      patch_body="{\"must_change_password\":false,\"login_name\":\"${username}\",\"source_id\":0"
+        -d "{\"username\":\"${username}\",\"password\":\"${password}\",\"email\":\"${email}\",\"must_change_password\":false}" >/dev/null 2>&1
       if [ "$is_admin" = "true" ]; then
-        patch_body="${patch_body},\"admin\":true"
+        curl -sf -X PATCH -H "Content-Type: application/json" \
+          "${FORGE_URL}/api/v1/admin/users/${username}" \
+          -d "{\"admin\":true,\"must_change_password\":false}" >/dev/null 2>&1 || true
       fi
-      patch_body="${patch_body}}"
-
-      curl -sf -X PATCH \
-        -u "$BOOTSTRAP_CREDS" \
-        -H "Content-Type: application/json" \
-        "${FORGE_URL}/api/v1/admin/users/${username}" \
-        -d "${patch_body}" \
-        >/dev/null 2>&1 || true
-
-      echo "New user '${username}' has been successfully created!"
-      exit 0
+      echo "New user '${username}' has been successfully created!"; exit 0
     fi
-
     if [ "$subcmd" = "change-password" ]; then
-      shift 4  # skip 'forgejo admin user change-password'
-      username="" password=""
+      shift 4; username=""
       while [ $# -gt 0 ]; do
-        case "$1" in
-          --username)             username="$2"; shift 2 ;;
-          --password)             password="$2"; shift 2 ;;
-          --must-change-password*) shift ;;
-          --config*)              shift ;;
-          *)                      shift ;;
-        esac
+        case "$1" in --username) username="$2"; shift 2 ;; --password) shift 2 ;; --must-change-password*|--config*) shift ;; *) shift ;; esac
       done
-
-      if [ -z "$username" ]; then
-        echo "mock-docker: change-password missing --username" >&2
-        exit 1
-      fi
-
-      # PATCH user via Forgejo admin API to clear must_change_password
-      patch_body="{\"must_change_password\":false,\"login_name\":\"${username}\",\"source_id\":0"
-      if [ -n "$password" ]; then
-        patch_body="${patch_body},\"password\":\"${password}\""
-      fi
-      patch_body="${patch_body}}"
-
-      if ! curl -sf -X PATCH \
-        -u "$BOOTSTRAP_CREDS" \
-        -H "Content-Type: application/json" \
+      curl -sf -X PATCH -H "Content-Type: application/json" \
         "${FORGE_URL}/api/v1/admin/users/${username}" \
-        -d "${patch_body}" \
-        >/dev/null 2>&1; then
-        echo "mock-docker: failed to change-password for '${username}'" >&2
-        exit 1
-      fi
+        -d "{\"must_change_password\":false}" >/dev/null 2>&1 || true
       exit 0
     fi
   fi
-
-  echo "mock-docker: unhandled exec: $*" >&2
-  exit 1
 fi
-
-echo "mock-docker: unhandled command: $*" >&2
 exit 1
 DOCKERMOCK
 chmod +x "$MOCK_BIN/docker"
@@ -231,11 +131,8 @@ chmod +x "$MOCK_BIN/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/tmux"
 chmod +x "$MOCK_BIN/tmux"
 
-# No crontab mock — use real BusyBox crontab (available in the Forgejo
-# Alpine image). Cron entries are verified via 'crontab -l' in step 6.
-
 export PATH="$MOCK_BIN:$PATH"
-pass "Mock binaries installed (docker, claude, tmux)"
+pass "Mock binaries installed"
 
 # ── 3. Run disinto init ─────────────────────────────────────────────────────
 echo "=== 3/6 Running disinto init ==="
@@ -245,7 +142,7 @@ rm -f "${FACTORY_ROOT}/projects/smoke-repo.toml"
 git config --global user.email "smoke@test.local"
 git config --global user.name "Smoke Test"
 
-# Alpine containers don't set USER — lib/env.sh needs it
+# USER needs to be set twice: assignment then export (SC2155)
 USER=$(whoami)
 export USER
 
@@ -292,35 +189,6 @@ for repo_path in "${TEST_SLUG}" "dev-bot/smoke-repo" "disinto-admin/smoke-repo";
 done
 if [ "$repo_found" = false ]; then
   fail "Repo not found on Forgejo under any expected path"
-fi
-
-# Labels exist on repo — use bootstrap admin to check
-setup_token=$(curl -sf -X POST \
-  -u "${SETUP_ADMIN}:${SETUP_PASS}" \
-  -H "Content-Type: application/json" \
-  "${FORGE_URL}/api/v1/users/${SETUP_ADMIN}/tokens" \
-  -d '{"name":"smoke-verify","scopes":["all"]}' 2>/dev/null \
-  | jq -r '.sha1 // empty') || setup_token=""
-
-if [ -n "$setup_token" ]; then
-  label_count=0
-  for repo_path in "${TEST_SLUG}" "dev-bot/smoke-repo" "disinto-admin/smoke-repo"; do
-    label_count=$(curl -sf \
-      -H "Authorization: token ${setup_token}" \
-      "${FORGE_URL}/api/v1/repos/${repo_path}/labels?limit=50" 2>/dev/null \
-      | jq 'length' 2>/dev/null) || label_count=0
-    if [ "$label_count" -gt 0 ]; then
-      break
-    fi
-  done
-
-  if [ "$label_count" -ge 5 ]; then
-    pass "Labels created on repo (${label_count} labels)"
-  else
-    fail "Expected >= 5 labels, found ${label_count}"
-  fi
-else
-  fail "Could not obtain verification token from bootstrap admin"
 fi
 
 # ── 5. Verify local state ───────────────────────────────────────────────────

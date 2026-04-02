@@ -606,13 +606,18 @@ def main():
     global SHUTDOWN_REQUESTED
 
     port = int(os.environ.get("MOCK_FORGE_PORT", 3000))
-    server = ThreadingHTTPServer(("0.0.0.0", port), ForgejoHandler)
     try:
-        server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    except OSError:
-        pass  # Not all platforms support this
+        server = ThreadingHTTPServer(("0.0.0.0", port), ForgejoHandler)
+        try:
+            server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass  # Not all platforms support this
+    except OSError as e:
+        print(f"Error: Failed to start server on port {port}: {e}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Mock Forgejo server starting on port {port}", file=sys.stderr)
+    sys.stderr.flush()
 
     def shutdown_handler(signum, frame):
         global SHUTDOWN_REQUESTED

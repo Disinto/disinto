@@ -1,0 +1,17 @@
+when:
+  - event: pull_request
+    path:
+      - "bin/disinto"
+      - "lib/load-project.sh"
+      - "lib/env.sh"
+      - "tests/**"
+      - ".woodpecker/smoke-init.yml"
+
+steps:
+  - name: smoke-init
+    image: python:3-alpine
+    commands:
+      - apk add --no-cache bash curl jq git coreutils
+      - python3 tests/mock-forgejo.py &
+      - sleep 2
+      - bash tests/smoke-init.sh
