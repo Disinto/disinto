@@ -9,7 +9,7 @@
 # 3. Verify TOML arrived via merged PR with admin merger (Forgejo API)
 # 4. Validate TOML using vault-env.sh validator
 # 5. Decrypt .env.vault.enc and extract only declared secrets
-# 6. Launch: docker compose run --rm runner <formula> <action-id>
+# 6. Launch: docker run --rm disinto-agents:latest <formula> <action-id>
 # 7. Write <action-id>.result.json with exit code, timestamp, logs summary
 #
 # Part of #76.
@@ -299,7 +299,16 @@ launch_runner() {
   secrets_array="${VAULT_ACTION_SECRETS:-}"
 
   # Build command array (safe from shell injection)
-  local -a cmd=(docker compose run --rm runner)
+  local -a cmd=(docker run --rm
+    --name "vault-runner-${action_id}"
+    --network disinto_disinto-net
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "FORGE_OPS_REPO=${FORGE_OPS_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH}"
+    -e DISINTO_CONTAINER=1
+  )
 
   # Add environment variables for secrets (if any declared)
   if [ -n "$secrets_array" ]; then
@@ -312,16 +321,17 @@ launch_runner() {
           write_result "$action_id" 1 "Secret not found in vault: ${secret}"
           return 1
         fi
-        cmd+=(-e "$secret")
+        cmd+=(-e "${secret}=${!secret}")
       fi
     done
   else
     log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
   fi
 
-  # Add formula and action id as arguments (after service name)
+  # Add formula and action id as arguments (safe from shell injection)
   local formula="${VAULT_ACTION_FORMULA:-}"
-  cmd+=("$formula" "$action_id")
+  cmd+=(disinto-agents:latest bash -c
+    "cd /home/agent/disinto && bash formulas/${formula}.sh ${action_id}")
 
   # Log command skeleton (hide all -e flags for security)
   local -a log_cmd=()
