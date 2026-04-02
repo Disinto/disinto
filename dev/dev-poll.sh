@@ -339,6 +339,26 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     '.[] | select(.head.ref == $branch) | .number' | head -1) || true
 
   if [ -n "$HAS_PR" ]; then
+    # Check if branch is stale (behind primary branch)
+    BRANCH="fix/issue-${ISSUE_NUM}"
+    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "999")
+    if [ "$AHEAD" -gt 0 ]; then
+      log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
+      # Close the PR via API
+      curl -sf -X PATCH \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/pulls/${HAS_PR}" \
+        -d '{"state":"closed"}' >/dev/null 2>&1 || true
+      # Delete the branch via git push
+      git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
+      # Reset to fresh start on primary branch
+      git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
+      git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
+      # Exit to restart poll cycle (issue will be picked up fresh)
+      exit 0
+    fi
+
     PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${HAS_PR}" | jq -r '.head.sha') || true
     CI_STATE=$(ci_commit_status "$PR_SHA") || true
@@ -562,6 +582,26 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     '.[] | select((.head.ref == $branch) or (.title | contains($num))) | .number' | head -1) || true
 
   if [ -n "$EXISTING_PR" ]; then
+    # Check if branch is stale (behind primary branch)
+    BRANCH="fix/issue-${ISSUE_NUM}"
+    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "999")
+    if [ "$AHEAD" -gt 0 ]; then
+      log "issue #${ISSUE_NUM} PR #${EXISTING_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
+      # Close the PR via API
+      curl -sf -X PATCH \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${API}/pulls/${EXISTING_PR}" \
+        -d '{"state":"closed"}' >/dev/null 2>&1 || true
+      # Delete the branch via git push
+      git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
+      # Reset to fresh start on primary branch
+      git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
+      git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
+      # Continue to find another ready issue
+      continue
+    fi
+
     PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}" | jq -r '.head.sha') || true
     CI_STATE=$(ci_commit_status "$PR_SHA") || true
