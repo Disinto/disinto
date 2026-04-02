@@ -784,6 +784,7 @@ setup_forge() {
     [vault-bot]="FORGE_VAULT_TOKEN"
     [supervisor-bot]="FORGE_SUPERVISOR_TOKEN"
     [predictor-bot]="FORGE_PREDICTOR_TOKEN"
+    [architect-bot]="FORGE_ARCHITECT_TOKEN"
   )
 
   local bot_user bot_pass token token_var
