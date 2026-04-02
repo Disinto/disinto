@@ -131,7 +131,7 @@ get_pr_for_file() {
   # Step 3: extract PR number from merge commit message
   # Forgejo format: "Merge pull request 'title' (#N) from branch into main"
   local pr_num
-  pr_num=$(echo "$merge_line" | grep -oP '#\d+' | head -1 | tr -d '#')
+  pr_num=$(echo "$merge_line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
 
   if [ -n "$pr_num" ]; then
     echo "$pr_num"
