@@ -135,6 +135,7 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             # Users patterns
             (r"^users/([^/]+)$", f"handle_{method}_users_username"),
             (r"^users/([^/]+)/tokens$", f"handle_{method}_users_username_tokens"),
+            (r"^users/([^/]+)/repos$", f"handle_{method}_users_username_repos"),
             # Repos patterns
             (r"^repos/([^/]+)/([^/]+)$", f"handle_{method}_repos_owner_repo"),
             (r"^repos/([^/]+)/([^/]+)/labels$", f"handle_{method}_repos_owner_repo_labels"),
@@ -191,6 +192,27 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             json_response(self, 200, state["users"][username])
         else:
             json_response(self, 404, {"message": "user does not exist"})
+
+    def handle_GET_users_username_repos(self, query):
+        """GET /api/v1/users/{username}/repos"""
+        if not require_token(self):
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+
+        parts = self.path.split("/")
+        if len(parts) >= 5:
+            username = parts[4]
+        else:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        if username not in state["users"]:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        # Return repos owned by this user
+        user_repos = [r for r in state["repos"].values() if r["owner"]["login"] == username]
+        json_response(self, 200, user_repos)
 
     def handle_GET_repos_owner_repo(self, query):
         """GET /api/v1/repos/{owner}/{repo}"""
@@ -270,6 +292,17 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         state["users"][username] = user
         json_response(self, 201, user)
 
+    def handle_GET_users_username_tokens(self, query):
+        """GET /api/v1/users/{username}/tokens"""
+        username = require_token(self)
+        if not username:
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+
+        # Return list of tokens for this user
+        tokens = [t for t in state["tokens"].values() if t.get("username") == username]
+        json_response(self, 200, tokens)
+
     def handle_POST_users_username_tokens(self, query):
         """POST /api/v1/users/{username}/tokens"""
         username = require_basic_auth(self)
@@ -304,6 +337,13 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
         state["tokens"][token_str] = token
         json_response(self, 201, token)
+
+    def handle_GET_orgs(self, query):
+        """GET /api/v1/orgs"""
+        if not require_token(self):
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+        json_response(self, 200, list(state["orgs"].values()))
 
     def handle_POST_orgs(self, query):
         """POST /api/v1/orgs"""
@@ -362,6 +402,52 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             "name": repo_name,
             "owner": {"id": state["orgs"][org]["id"], "login": org},
             "empty": False,
+            "default_branch": data.get("default_branch", "main"),
+            "description": data.get("description", ""),
+            "private": data.get("private", False),
+            "html_url": f"https://example.com/{key}",
+            "ssh_url": f"git@example.com:{key}.git",
+            "clone_url": f"https://example.com/{key}.git",
+            "created_at": "2026-04-01T00:00:00Z",
+        }
+
+        state["repos"][key] = repo
+        json_response(self, 201, repo)
+
+    def handle_POST_users_username_repos(self, query):
+        """POST /api/v1/users/{username}/repos"""
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 5:
+            username = parts[4]
+        else:
+            json_response(self, 400, {"message": "username required"})
+            return
+
+        if username not in state["users"]:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        data = json.loads(body) if body else {}
+
+        repo_name = data.get("name")
+        if not repo_name:
+            json_response(self, 400, {"message": "name is required"})
+            return
+
+        repo_id = next_ids["repos"]
+        next_ids["repos"] += 1
+
+        key = f"{username}/{repo_name}"
+        repo = {
+            "id": repo_id,
+            "full_name": key,
+            "name": repo_name,
+            "owner": {"id": state["users"][username]["id"], "login": username},
+            "empty": not data.get("auto_init", False),
             "default_branch": data.get("default_branch", "main"),
             "description": data.get("description", ""),
             "private": data.get("private", False),
@@ -591,6 +677,27 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", 0)
         self.end_headers()
 
+    def handle_GET_repos_owner_repo_collaborators_collaborator(self, query):
+        """GET /api/v1/repos/{owner}/{repo}/collaborators/{collaborator}"""
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 8:
+            owner = parts[4]
+            repo = parts[5]
+            collaborator = parts[7]
+        else:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+
+        key = f"{owner}/{repo}"
+        if key in state["collaborators"] and collaborator in state["collaborators"][key]:
+            self.send_response(204)
+            self.send_header("Content-Length", 0)
+            self.end_headers()
+        else:
+            json_response(self, 404, {"message": "collaborator not found"})
+
     def handle_404(self):
         """Return 404 for unknown routes."""
         json_response(self, 404, {"message": "route not found"})
@@ -606,13 +713,18 @@ def main():
     global SHUTDOWN_REQUESTED
 
     port = int(os.environ.get("MOCK_FORGE_PORT", 3000))
-    server = ThreadingHTTPServer(("0.0.0.0", port), ForgejoHandler)
     try:
-        server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    except OSError:
-        pass  # Not all platforms support this
+        server = ThreadingHTTPServer(("0.0.0.0", port), ForgejoHandler)
+        try:
+            server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass  # Not all platforms support this
+    except OSError as e:
+        print(f"Error: Failed to start server on port {port}: {e}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Mock Forgejo server starting on port {port}", file=sys.stderr)
+    sys.stderr.flush()
 
     def shutdown_handler(signum, frame):
         global SHUTDOWN_REQUESTED
