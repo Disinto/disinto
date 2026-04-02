@@ -1986,6 +1986,14 @@ p.write_text(text)
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
 
+  # Set up branch protection on project repo (#10)
+  # This enforces PR flow: no direct pushes, 1 approval required, dev-bot can merge after CI
+  if setup_project_branch_protection "$forge_repo" "$branch"; then
+    echo "Branch protection: project protection configured on ${forge_repo}"
+  else
+    echo "Warning: failed to set up project branch protection" >&2
+  fi
+
   # Generate VISION.md template
   generate_vision "$repo_root" "$project_name"
 
