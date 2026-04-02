@@ -192,6 +192,25 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         else:
             json_response(self, 404, {"message": "user does not exist"})
 
+    def handle_GET_users_username_repos(self, query):
+        """GET /api/v1/users/{username}/repos"""
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 5:
+            username = parts[4]
+        else:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        if username not in state["users"]:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        # Return repos owned by this user
+        user_repos = [r for r in state["repos"].values() if r["owner"]["login"] == username]
+        json_response(self, 200, user_repos)
+
     def handle_GET_repos_owner_repo(self, query):
         """GET /api/v1/repos/{owner}/{repo}"""
         parts = self.path.split("/")
