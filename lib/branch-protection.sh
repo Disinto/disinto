@@ -370,6 +370,115 @@ remove_branch_protection() {
 }
 
 # -----------------------------------------------------------------------------
+# setup_project_branch_protection — Set up branch protection for project repos
+#
+# Configures the following protection rules:
+# - Block direct pushes to main (all changes must go through PR)
+# - Require 1 approval before merge
+# - Allow merge only via dev-bot (for auto-merge after review+CI)
+# - Allow review-bot to approve PRs
+#
+# Args:
+#   $1 - Repo path in format 'owner/repo' (e.g., 'johba/disinto')
+#   $2 - Branch to protect (default: main)
+#
+# Returns: 0 on success, 1 on failure
+# -----------------------------------------------------------------------------
+setup_project_branch_protection() {
+  local repo="${1:-}"
+  local branch="${2:-main}"
+
+  if [ -z "$repo" ]; then
+    _bp_log "ERROR: repo path required (format: owner/repo)"
+    return 1
+  fi
+
+  _bp_log "Setting up branch protection for ${branch} on ${repo}"
+
+  local api_url
+  api_url="${FORGE_URL}/api/v1/repos/${repo}"
+
+  # Check if branch exists
+  local branch_exists
+  branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+  if [ "$branch_exists" != "200" ]; then
+    _bp_log "ERROR: Branch ${branch} does not exist on ${repo}"
+    return 1
+  fi
+
+  # Check if protection already exists
+  local protection_exists
+  protection_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api_url}/branches/${branch}/protection" 2>/dev/null || echo "0")
+
+  if [ "$protection_exists" = "200" ]; then
+    _bp_log "Branch protection already exists for ${branch}"
+    _bp_log "Updating existing protection rules"
+  fi
+
+  # Create/update branch protection
+  # Forgejo API for branch protection (factory mode):
+  # - enable_push: false (block direct pushes)
+  # - enable_merge_whitelist: true (only whitelisted users can merge)
+  # - merge_whitelist_usernames: ["dev-bot"] (dev-bot merges after CI)
+  # - required_approvals: 1 (review-bot must approve)
+  local protection_json
+  protection_json=$(cat <<EOF
+{
+  "enable_push": false,
+  "enable_force_push": false,
+  "enable_merge_commit": true,
+  "enable_rebase": true,
+  "enable_rebase_merge": true,
+  "required_approvals": 1,
+  "required_signatures": false,
+  "enable_merge_whitelist": true,
+  "merge_whitelist_usernames": ["dev-bot"],
+  "required_status_checks": false,
+  "required_linear_history": false
+}
+EOF
+)
+
+  local http_code
+  if [ "$protection_exists" = "200" ]; then
+    # Update existing protection
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X PUT \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${api_url}/branches/${branch}/protection" \
+      -d "$protection_json" || echo "0")
+  else
+    # Create new protection
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${api_url}/branches/${branch}/protection" \
+      -d "$protection_json" || echo "0")
+  fi
+
+  if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
+    _bp_log "ERROR: Failed to set up branch protection (HTTP ${http_code})"
+    return 1
+  fi
+
+  _bp_log "Branch protection configured successfully for ${branch}"
+  _bp_log "  - Pushes blocked: true"
+  _bp_log "  - Force pushes blocked: true"
+  _bp_log "  - Required approvals: 1"
+  _bp_log "  - Merge whitelist: dev-bot only"
+  _bp_log "  - review-bot can approve: yes"
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Test mode — run when executed directly
 # -----------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -401,6 +510,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       fi
       setup_profile_branch_protection "${2}" "${3:-main}"
       ;;
+    setup-project)
+      if [ -z "${2:-}" ]; then
+        echo "ERROR: repo path required (format: owner/repo)" >&2
+        exit 1
+      fi
+      setup_project_branch_protection "${2}" "${3:-main}"
+      ;;
     verify)
       verify_branch_protection "${2:-main}"
       ;;
@@ -408,11 +524,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       remove_branch_protection "${2:-main}"
       ;;
     help|*)
-      echo "Usage: $0 {setup|setup-profile|verify|remove} [args...]"
+      echo "Usage: $0 {setup|setup-profile|setup-project|verify|remove} [args...]"
       echo ""
       echo "Commands:"
       echo "  setup [branch]              Set up branch protection on ops repo (default: main)"
       echo "  setup-profile <repo> [branch] Set up branch protection on .profile repo"
+      echo "  setup-project <repo> [branch] Set up branch protection on project repo"
       echo "  verify [branch]             Verify branch protection is configured correctly"
       echo "  remove [branch]             Remove branch protection (for cleanup/testing)"
       echo ""
