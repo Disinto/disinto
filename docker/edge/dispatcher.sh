@@ -298,8 +298,19 @@ launch_runner() {
   local secrets_array
   secrets_array="${VAULT_ACTION_SECRETS:-}"
 
-  # Build secret flags from TOML secrets array
-  local secret_flags=""
+  # Build command array (safe from shell injection)
+  local -a cmd=(docker run --rm
+    --name "vault-runner-${action_id}"
+    --network disinto_disinto-net
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "FORGE_OPS_REPO=${FORGE_OPS_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH}"
+    -e DISINTO_CONTAINER=1
+  )
+
+  # Add environment variables for secrets (if any declared)
   if [ -n "$secrets_array" ]; then
     for secret in $secrets_array; do
       secret=$(echo "$secret" | xargs)
@@ -310,39 +321,43 @@ launch_runner() {
           write_result "$action_id" 1 "Secret not found in vault: ${secret}"
           return 1
         fi
-        secret_flags="${secret_flags} -e ${secret}=${!secret}"
+        cmd+=(-e "${secret}=${!secret}")
       fi
     done
   else
     log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
   fi
 
-  # Build docker run command
-  # Uses the disinto-agents image (same as agent containers)
-  # Mounts Docker socket to spawn sibling containers
-  local docker_cmd="docker run --rm \
-  --name \"vault-runner-${action_id}\" \
-  --network disinto_disinto-net \
-  -e FORGE_URL=\"${FORGE_URL}\" \
-  -e FORGE_TOKEN=\"${FORGE_TOKEN}\" \
-  -e FORGE_REPO=\"${FORGE_REPO}\" \
-  -e FORGE_OPS_REPO=\"${FORGE_OPS_REPO}\" \
-  -e PRIMARY_BRANCH=\"${PRIMARY_BRANCH}\" \
-  -e DISINTO_CONTAINER=1 \
-  ${secret_flags} \
-  disinto-agents:latest \
-  bash -c \"cd /home/agent/disinto && bash formulas/${VAULT_ACTION_FORMULA}.sh ${action_id}\""
+  # Add formula and action id as arguments (safe from shell injection)
+  local formula="${VAULT_ACTION_FORMULA:-}"
+  cmd+=(disinto-agents:latest bash -c
+    "cd /home/agent/disinto && bash formulas/${formula}.sh ${action_id}")
 
-  log "Running: docker run (secrets redacted)"
+  # Log command skeleton (hide all -e flags for security)
+  local -a log_cmd=()
+  local skip_next=0
+  for arg in "${cmd[@]}"; do
+    if [[ $skip_next -eq 1 ]]; then
+      skip_next=0
+      continue
+    fi
+    if [[ "$arg" == "-e" ]]; then
+      log_cmd+=("$arg" "<redacted>")
+      skip_next=1
+    else
+      log_cmd+=("$arg")
+    fi
+  done
+  log "Running: ${log_cmd[*]}"
 
   # Create temp file for logs
   local log_file
   log_file=$(mktemp /tmp/dispatcher-logs-XXXXXX.txt)
   trap 'rm -f "$log_file"' RETURN
 
-  # Execute docker run command
+  # Execute with array expansion (safe from shell injection)
   # Capture stdout and stderr to log file
-  eval "$docker_cmd" > "$log_file" 2>&1
+  "${cmd[@]}" > "$log_file" 2>&1
   local exit_code=$?
 
   # Read logs summary
