@@ -270,6 +270,17 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         state["users"][username] = user
         json_response(self, 201, user)
 
+    def handle_GET_users_username_tokens(self, query):
+        """GET /api/v1/users/{username}/tokens"""
+        username = require_token(self)
+        if not username:
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+
+        # Return list of tokens for this user
+        tokens = [t for t in state["tokens"].values() if t.get("username") == username]
+        json_response(self, 200, tokens)
+
     def handle_POST_users_username_tokens(self, query):
         """POST /api/v1/users/{username}/tokens"""
         username = require_basic_auth(self)
@@ -304,6 +315,11 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
         state["tokens"][token_str] = token
         json_response(self, 201, token)
+
+    def handle_GET_orgs(self, query):
+        """GET /api/v1/orgs"""
+        require_token(self)
+        json_response(self, 200, list(state["orgs"].values()))
 
     def handle_POST_orgs(self, query):
         """POST /api/v1/orgs"""
