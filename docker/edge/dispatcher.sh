@@ -63,8 +63,12 @@ is_user_admin() {
   local username="$1"
   local user_json
 
+  # Use admin token for API check (Forgejo only exposes is_admin: true
+  # when the requesting user is also a site admin)
+  local admin_token="${FORGE_ADMIN_TOKEN:-${FORGE_TOKEN}}"
+
   # Fetch user info from Forgejo API
-  user_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  user_json=$(curl -sf -H "Authorization: token ${admin_token}" \
     "${FORGE_URL}/api/v1/users/${username}" 2>/dev/null) || return 1
 
   # Forgejo uses .is_admin for site-wide admin users

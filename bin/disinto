@@ -296,6 +296,8 @@ services:
       - FORGE_REPO=johba/disinto
       - FORGE_OPS_REPO=johba/disinto-ops
       - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_ADMIN_USERS=${FORGE_ADMIN_USERS:-disinto-admin,johba}
+      - FORGE_ADMIN_TOKEN=${FORGE_ADMIN_TOKEN:-}
       - OPS_REPO_ROOT=/opt/disinto-ops
       - PROJECT_REPO_ROOT=/opt/disinto
       - PRIMARY_BRANCH=main
