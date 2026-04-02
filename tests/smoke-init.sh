@@ -146,6 +146,16 @@ git config --global user.name "Smoke Test"
 USER=$(whoami)
 export USER
 
+# Create mock git repo to avoid clone failure (mock server has no git support)
+mkdir -p "/tmp/smoke-test-repo"
+cd "/tmp/smoke-test-repo"
+git init --quiet
+git config user.email "smoke@test.local"
+git config user.name "Smoke Test"
+echo "# smoke-repo" > README.md
+git add README.md
+git commit --quiet -m "Initial commit"
+
 export SMOKE_FORGE_URL="$FORGE_URL"
 export FORGE_URL
 
