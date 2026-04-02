@@ -41,7 +41,7 @@ REPO_ROOT="${PROJECT_REPO_ROOT}"
 
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
 STATUSFILE="/tmp/dev-agent-status-${PROJECT_NAME:-default}"
-BRANCH="fix/issue-${ISSUE}"
+BRANCH="fix/issue-${ISSUE}"  # Default; will be updated after FORGE_REMOTE is known
 WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
 SID_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.sid"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
@@ -262,6 +262,19 @@ FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\
 FORGE_REMOTE="${FORGE_REMOTE:-origin}"
 export FORGE_REMOTE
 log "forge remote: ${FORGE_REMOTE}"
+
+# Generate unique branch name per attempt to avoid collision with failed attempts
+# Only apply when not in recovery mode (RECOVERY_MODE branch is already set from existing PR)
+# First attempt: fix/issue-N, subsequent: fix/issue-N-1, fix/issue-N-2, etc.
+if [ "$RECOVERY_MODE" = false ]; then
+  # Count only branches matching fix/issue-N, fix/issue-N-1, fix/issue-N-2, etc. (exact prefix match)
+  ATTEMPT=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}" 2>/dev/null | grep -c "refs/heads/fix/issue-${ISSUE}$" || echo 0)
+  ATTEMPT=$((ATTEMPT + $(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}-*" 2>/dev/null | wc -l)))
+  if [ "$ATTEMPT" -gt 0 ]; then
+    BRANCH="fix/issue-${ISSUE}-${ATTEMPT}"
+  fi
+fi
+log "using branch: ${BRANCH}"
 
 if [ "$RECOVERY_MODE" = true ]; then
   if ! worktree_recover "$WORKTREE" "$BRANCH" "$FORGE_REMOTE"; then
@@ -575,11 +588,8 @@ else
   outcome="blocked_${_PR_WALK_EXIT_REASON:-agent_failed}"
   profile_write_journal "$ISSUE" "$ISSUE_TITLE" "$outcome" "$FILES_CHANGED" || true
 
-  # Cleanup on failure: close PR, delete remote branch, clean up worktree
-  if [ -n "$PR_NUMBER" ]; then
-    pr_close "$PR_NUMBER"
-  fi
-  git push "$FORGE_REMOTE" --delete "$BRANCH" 2>/dev/null || true
+  # Cleanup on failure: preserve remote branch and PR for debugging, clean up local worktree
+  # Remote state (PR and branch) stays open for inspection of CI logs and review comments
   worktree_cleanup "$WORKTREE"
   rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
   CLAIMED=false
