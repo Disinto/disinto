@@ -2647,18 +2647,13 @@ disinto_hire_an_agent() {
   local admin_user="disinto-admin"
   admin_pass="${admin_pass:-admin}"
   local admin_token=""
+  local admin_token_name="temp-token-$(date +%s)"
   admin_token=$(curl -sf -X POST \
     -u "${admin_user}:${admin_pass}" \
     -H "Content-Type: application/json" \
     "${forge_url}/api/v1/users/${admin_user}/tokens" \
-    -d '{"name":"temp-token","scopes":["all"]}' 2>/dev/null \
+    -d "{\"name\":\"${admin_token_name}\",\"scopes\":[\"all\"]}" 2>/dev/null \
     | jq -r '.sha1 // empty') || admin_token=""
-  if [ -z "$admin_token" ]; then
-    admin_token=$(curl -sf \
-      -u "${admin_user}:${admin_pass}" \
-      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
-      | jq -r '.[0].sha1 // empty') || admin_token=""
-  fi
   if [ -z "$admin_token" ]; then
     echo "  Warning: could not obtain admin token, trying FORGE_TOKEN..."
     admin_token="${FORGE_TOKEN}"
@@ -2757,7 +2752,7 @@ disinto_hire_an_agent() {
     if [ "$repo_created" = false ]; then
       echo "  Using admin API to create repo in ${agent_name}'s namespace"
       create_output=$(curl -sf -X POST \
-        -H "Authorization: token ${user_token}" \
+        -H "Authorization: token ${admin_token}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/admin/users/${agent_name}/repos" \
         -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
@@ -2783,17 +2778,15 @@ disinto_hire_an_agent() {
   rm -rf "$clone_dir"
   mkdir -p "$clone_dir"
 
-  # Build authenticated clone URL
-  # Use user_token if available, otherwise fall back to FORGE_TOKEN
-  local clone_token="${user_token:-${FORGE_TOKEN}}"
-  if [ -z "$clone_token" ]; then
-    echo "  Error: no authentication token available for cloning" >&2
+  # Build authenticated clone URL using basic auth (user_pass is always set in Step 1)
+  if [ -z "${user_pass:-}" ]; then
+    echo "  Error: no user password available for cloning" >&2
     exit 1
   fi
 
   local clone_url="${forge_url}/${agent_name}/.profile.git"
   local auth_url
-  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://${agent_name}:${clone_token}@|")
+  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://${agent_name}:${user_pass}@|")
   auth_url="${auth_url}/.profile.git"
 
   # Display unauthenticated URL (auth token only in actual git clone command)
