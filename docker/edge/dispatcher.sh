@@ -162,9 +162,79 @@ get_pr_merger() {
     }' || true
 }
 
+# Get PR reviews
+# Usage: get_pr_reviews <pr_number>
+# Returns: JSON array of reviews with reviewer login and state
+get_pr_reviews() {
+  local pr_number="$1"
+
+  # Use ops repo API URL for PR lookups (not disinto repo)
+  local ops_api="${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}"
+
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${ops_api}/pulls/${pr_number}/reviews" 2>/dev/null || true
+}
+
+# Verify vault action was approved by an admin via PR review
+# Usage: verify_admin_approver <pr_number> <action_id>
+# Returns: 0=verified, 1=not verified
+verify_admin_approver() {
+  local pr_number="$1"
+  local action_id="$2"
+
+  # Fetch reviews for this PR
+  local reviews_json
+  reviews_json=$(get_pr_reviews "$pr_number") || {
+    log "WARNING: Could not fetch reviews for PR #${pr_number} — skipping"
+    return 1
+  }
+
+  # Check if there are any reviews
+  local review_count
+  review_count=$(echo "$reviews_json" | jq 'length // 0')
+  if [ "$review_count" -eq 0 ]; then
+    log "WARNING: No reviews found for PR #${pr_number} — rejecting"
+    return 1
+  fi
+
+  # Check each review for admin approval
+  local review
+  while IFS= read -r review; do
+    local reviewer state
+    reviewer=$(echo "$review" | jq -r '.user?.login // empty')
+    state=$(echo "$review" | jq -r '.state // empty')
+
+    # Skip non-APPROVED reviews
+    if [ "$state" != "APPROVED" ]; then
+      continue
+    fi
+
+    # Skip if no reviewer
+    if [ -z "$reviewer" ]; then
+      continue
+    fi
+
+    # Check if reviewer is admin
+    if is_allowed_admin "$reviewer"; then
+      log "Verified: PR #${pr_number} approved by admin '${reviewer}'"
+      return 0
+    fi
+  done < <(echo "$reviews_json" | jq -c '.[]')
+
+  log "WARNING: No admin approval found for PR #${pr_number} — rejecting"
+  return 1
+}
+
 # Verify vault action arrived via admin-merged PR
 # Usage: verify_admin_merged <toml_file>
 # Returns: 0=verified, 1=not verified
+#
+# Verification order (for auto-merge workflow):
+# 1. Check PR reviews for admin APPROVED state (primary check for auto-merge)
+# 2. Fallback: Check if merger is admin (backwards compat for manual merges)
+#
+# This handles the case where auto-merge is performed by a bot (dev-bot)
+# but the actual approval came from an admin reviewer.
 verify_admin_merged() {
   local toml_file="$1"
   local action_id
@@ -179,7 +249,12 @@ verify_admin_merged() {
 
   log "Action ${action_id} arrived via PR #${pr_num}"
 
-  # Get PR merger info
+  # First, try admin approver check (for auto-merge workflow)
+  if verify_admin_approver "$pr_num" "$action_id"; then
+    return 0
+  fi
+
+  # Fallback: Check merger (backwards compatibility for manual merges)
   local merger_json
   merger_json=$(get_pr_merger "$pr_num") || {
     log "WARNING: Could not fetch PR #${pr_num} details — skipping"
@@ -207,7 +282,7 @@ verify_admin_merged() {
     return 1
   fi
 
-  log "Verified: PR #${pr_num} merged by admin '${merger_username}'"
+  log "Verified: PR #${pr_num} merged by admin '${merger_username}' (fallback check)"
   return 0
 }
 
