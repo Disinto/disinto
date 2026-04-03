@@ -2980,7 +2980,7 @@ This PR creates a vault item for the release of version ${version}.
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/merge" \
-    -d '{"Do":"merge","merge_when_checks_succeed":false}' >/dev/null 2>&1 || {
+    -d '{"Do":"merge","merge_when_checks_succeed":true}' >/dev/null 2>&1 || {
     echo "Warning: failed to enable auto-merge (may already be enabled or not supported)" >&2
   }
 

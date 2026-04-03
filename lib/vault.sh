@@ -193,7 +193,7 @@ before execution. See the TOML file for details."
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${ops_api}/pulls/${pr_num}/merge" \
-    -d '{"Do":"merge","merge_when_checks_succeed":false}' >/dev/null 2>&1 || {
+    -d '{"Do":"merge","merge_when_checks_succeed":true}' >/dev/null 2>&1 || {
     _vault_log "Warning: failed to enable auto-merge (may already be enabled or not supported)"
   }
 
