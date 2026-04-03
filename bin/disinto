@@ -915,12 +915,29 @@ setup_forge() {
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1; then
-      # Fallback: create under the human user namespace (johba)
-      curl -sf -X POST \
-        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
-        -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/users/${human_user}/repos" \
-        -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1 || true
+      # Fallback: create under the human user namespace using admin endpoint
+      if [ -n "${admin_token:-}" ]; then
+        if ! curl -sf -X POST \
+          -H "Authorization: token ${admin_token}" \
+          -H "Content-Type: application/json" \
+          "${forge_url}/api/v1/admin/users/${org_name}/repos" \
+          -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1; then
+          echo "Error: failed to create repo '${repo_slug}' on Forgejo (admin endpoint)" >&2
+          exit 1
+        fi
+      elif [ -n "${HUMAN_TOKEN:-}" ]; then
+        if ! curl -sf -X POST \
+          -H "Authorization: token ${HUMAN_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${forge_url}/api/v1/user/repos" \
+          -d "{\"name\":\"${repo_name}\",\"auto_init\":false,\"default_branch\":\"main\"}" >/dev/null 2>&1; then
+          echo "Error: failed to create repo '${repo_slug}' on Forgejo (user endpoint)" >&2
+          exit 1
+        fi
+      else
+        echo "Error: failed to create repo '${repo_slug}' — no admin or human token available" >&2
+        exit 1
+      fi
     fi
 
     # Add all bot users as collaborators with appropriate permissions
