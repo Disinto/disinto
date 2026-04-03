@@ -20,8 +20,7 @@ log() {
 install_project_crons() {
   local cron_lines="DISINTO_CONTAINER=1
 USER=agent
-FORGE_URL=http://forgejo:3000
-PROJECT_REPO_ROOT=/home/agent/repos/${pname}"
+FORGE_URL=http://forgejo:3000"
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
     local pname
@@ -32,6 +31,7 @@ with open(sys.argv[1], 'rb') as f:
 " "$toml" 2>/dev/null) || continue
 
     cron_lines="${cron_lines}
+PROJECT_REPO_ROOT=/home/agent/repos/${pname}
 # disinto: ${pname}
 2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
 4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
