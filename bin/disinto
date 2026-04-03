@@ -2974,12 +2974,22 @@ This PR creates a vault item for the release of version ${version}.
 
   local pr_url="${FORGE_URL}/${FORGE_OPS_REPO}/pulls/${pr_number}"
 
+  # Enable auto-merge on the PR — Forgejo will auto-merge after approval
+  _vault_log "Enabling auto-merge for PR #${pr_number}"
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/merge" \
+    -d '{"Do":"merge","merge_when_checks_succeed":false}' >/dev/null 2>&1 || {
+    echo "Warning: failed to enable auto-merge (may already be enabled or not supported)" >&2
+  }
+
   echo ""
   echo "Release PR created: ${pr_url}"
   echo ""
   echo "Next steps:"
   echo "  1. Review the PR"
-  echo "  2. Approve and merge (requires 2 reviewers for vault items)"
+  echo "  2. Approve the PR (auto-merge will trigger after approval)"
   echo "  3. The vault runner will execute the release formula"
   echo ""
   echo "After merge, the release will:"

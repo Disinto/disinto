@@ -33,9 +33,11 @@ The `main` branch on the ops repo (`johba/disinto-ops`) is protected via Forgejo
    - Title: `vault: <action-id>`
    - Labels: `vault`, `pending-approval`
    - File: `vault/actions/<action-id>.toml`
+   - **Auto-merge enabled** — Forgejo will auto-merge after approval
 4. **Approval** — Admin user reviews and approves the PR
-5. **Execution** — Dispatcher (issue #76) polls for approved vault PRs and executes them
-6. **Cleanup** — Executed vault items are moved to `fired/` (via PR)
+5. **Auto-merge** — Forgejo automatically merges the PR once required approvals are met
+6. **Execution** — Dispatcher (issue #76) polls for merged vault PRs and executes them
+7. **Cleanup** — Executed vault items are moved to `fired/` (via PR)
 
 ## Bot Account Behavior
 
@@ -43,6 +45,7 @@ Bot accounts (dev-bot, review-bot, vault-bot, etc.) **cannot merge vault PRs** e
 
 - Only human admins can approve sensitive vault actions
 - Bot accounts can only create vault PRs, not execute them
+- Bot accounts cannot self-approve vault PRs (Forgejo prevents this automatically)
 - Manual admin review is always required for privileged operations
 
 ## Setup

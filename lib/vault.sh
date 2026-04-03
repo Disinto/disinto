@@ -187,6 +187,16 @@ before execution. See the TOML file for details."
     return 1
   }
 
+  # Enable auto-merge on the PR — Forgejo will auto-merge after approval
+  _vault_log "Enabling auto-merge for PR #${pr_num}"
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${ops_api}/pulls/${pr_num}/merge" \
+    -d '{"Do":"merge","merge_when_checks_succeed":false}' >/dev/null 2>&1 || {
+    _vault_log "Warning: failed to enable auto-merge (may already be enabled or not supported)"
+  }
+
   # Add labels to PR (vault, pending-approval)
   _vault_log "PR #${pr_num} created, adding labels"
 
