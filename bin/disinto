@@ -2889,6 +2889,12 @@ disinto_release() {
     exit 1
   fi
 
+  # Load project config to get FORGE_OPS_REPO
+  local project_toml="${FACTORY_ROOT}/projects/${PROJECT_NAME}.toml"
+  if [ -n "${PROJECT_NAME:-}" ] && [ -f "$project_toml" ]; then
+    source "${FACTORY_ROOT}/lib/load-project.sh" "$project_toml"
+  fi
+
   # Check formula exists
   if [ ! -f "$formula_path" ]; then
     echo "Error: release formula not found at ${formula_path}" >&2
@@ -2956,7 +2962,7 @@ This PR creates a vault item for the release of version ${version}.
   pr_response=$(curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_URL}/api/v1/repos/${PROJECT_REPO}/pulls" \
+    "${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}/pulls" \
     -d "{\"title\":\"${pr_title}\",\"head\":\"${branch_name}\",\"base\":\"main\",\"body\":\"$(echo "$pr_body" | sed ':a;N;$!ba;s/\n/\\n/g')\"}" 2>/dev/null) || {
     echo "Error: failed to create PR" >&2
     echo "Response: ${pr_response}" >&2
@@ -2966,7 +2972,7 @@ This PR creates a vault item for the release of version ${version}.
   local pr_number
   pr_number=$(echo "$pr_response" | jq -r '.number')
 
-  local pr_url="${FORGE_URL}/${PROJECT_REPO}/pulls/${pr_number}"
+  local pr_url="${FORGE_URL}/${FORGE_OPS_REPO}/pulls/${pr_number}"
 
   echo ""
   echo "Release PR created: ${pr_url}"
