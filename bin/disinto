@@ -1528,10 +1528,12 @@ create_woodpecker_oauth() {
 
   # Store Woodpecker forge config in .env
   # WP_FORGEJO_CLIENT/SECRET match the docker-compose.yml variable references
+  # WOODPECKER_HOST must be host-accessible URL to match OAuth2 redirect_uri
   local env_file="${FACTORY_ROOT}/.env"
   local wp_vars=(
     "WOODPECKER_FORGEJO=true"
     "WOODPECKER_FORGEJO_URL=${forge_url}"
+    "WOODPECKER_HOST=http://localhost:8000"
   )
   if [ -n "${client_id:-}" ]; then
     wp_vars+=("WP_FORGEJO_CLIENT=${client_id}")
