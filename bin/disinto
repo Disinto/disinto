@@ -2943,12 +2943,14 @@ This PR creates a vault item for the release of version ${version}.
 3. The vault runner will execute the release formula
 "
 
-  # Create branch
+  # Create branch from clean main
   cd "$ops_root"
-  git checkout -B "$branch_name" 2>/dev/null || git checkout "$branch_name"
+  git checkout main
+  git pull origin main
+  git checkout -B "$branch_name" main
 
-  # Add and commit
-  git add -A
+  # Add and commit only the vault TOML file
+  git add "vault/actions/${id}.toml"
   git commit -m "$pr_title" -m "$pr_body" 2>/dev/null || true
 
   # Push branch
