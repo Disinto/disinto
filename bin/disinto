@@ -2892,9 +2892,18 @@ disinto_release() {
   fi
 
   # Load project config to get FORGE_OPS_REPO
-  local project_toml="${FACTORY_ROOT}/projects/${PROJECT_NAME}.toml"
-  if [ -n "${PROJECT_NAME:-}" ] && [ -f "$project_toml" ]; then
-    source "${FACTORY_ROOT}/lib/load-project.sh" "$project_toml"
+  if [ -z "${PROJECT_NAME:-}" ]; then
+    # PROJECT_NAME is unset - detect project TOML from projects/ directory
+    local found_toml
+    found_toml=$(find "${FACTORY_ROOT}/projects" -maxdepth 1 -name "*.toml" ! -name "*.example" 2>/dev/null | head -1)
+    if [ -n "$found_toml" ]; then
+      source "${FACTORY_ROOT}/lib/load-project.sh" "$found_toml"
+    fi
+  else
+    local project_toml="${FACTORY_ROOT}/projects/${PROJECT_NAME}.toml"
+    if [ -f "$project_toml" ]; then
+      source "${FACTORY_ROOT}/lib/load-project.sh" "$project_toml"
+    fi
   fi
 
   # Check formula exists
