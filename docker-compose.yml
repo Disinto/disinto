@@ -3,7 +3,7 @@ version: "3.8"
 services:
   agents:
     build:
-      context: ../
+      context: .
       dockerfile: docker/agents/Dockerfile
     image: disinto/agents:latest
     container_name: disinto-agents
@@ -21,7 +21,7 @@ services:
 
   agents-llama:
     build:
-      context: ../
+      context: .
       dockerfile: docker/agents/Dockerfile
     image: disinto/agents-llama:latest
     container_name: disinto-agents-llama
@@ -52,8 +52,3 @@ services:
       - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
     ports:
       - "3000:3000"
-
-volumes:
-  data-agents:
-  data-llama:
-  data-forgejo:

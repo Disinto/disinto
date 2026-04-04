@@ -302,7 +302,6 @@ def main() -> int:
         "f08a7139db9c96cd3526549c499c0332": "install_project_crons function in entrypoints (window f08a7139)",
         "f0917809bdf28ff93fff0749e7e7fea0": "install_project_crons function in entrypoints (window f0917809)",
         "f0e4101f9b90c2fa921e088057a96db7": "install_project_crons function in entrypoints (window f0e4101f)",
-        "e8e65ccfd5e5f5a5b5c5d5e5f5a5b5c5": "install_project_crons function in entrypoints (window 34)",
     }
 
     if not sh_files:
