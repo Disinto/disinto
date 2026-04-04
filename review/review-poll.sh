@@ -166,6 +166,20 @@ while IFS= read -r line; do
 
   log "  #${PR_NUM} needs review (CI=success, SHA=${PR_SHA:0:7})"
 
+  # Circuit breaker: count existing review-error comments for this SHA
+  ERROR_COMMENTS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API_BASE}/issues/${PR_NUM}/comments" | \
+    jq --arg sha "$PR_SHA" \
+    '[.[] | select(.body | contains("<!-- review-error: " + $sha + " -->"))] | length')
+
+  if [ "${ERROR_COMMENTS:-0}" -ge 3 ]; then
+    log "  #${PR_NUM} blocked: ${ERROR_COMMENTS} consecutive error comments for ${PR_SHA:0:7}, skipping"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+
+  log "  #${PR_NUM} error check: ${ERROR_COMMENTS:-0} prior error(s) for ${PR_SHA:0:7}"
+
   if "${SCRIPT_DIR}/review-pr.sh" "$PR_NUM" 2>&1; then
     REVIEWED=$((REVIEWED + 1))
   else
