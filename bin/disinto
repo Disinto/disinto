@@ -2655,8 +2655,16 @@ disinto_hire_an_agent() {
     -d "{\"name\":\"${admin_token_name}\",\"scopes\":[\"all\"]}" 2>/dev/null \
     | jq -r '.sha1 // empty') || admin_token=""
   if [ -z "$admin_token" ]; then
-    echo "  Warning: could not obtain admin token, trying FORGE_TOKEN..."
-    admin_token="${FORGE_TOKEN}"
+    # Token might already exist — try listing
+    admin_token=$(curl -sf \
+      -u "${admin_user}:${admin_pass}" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+      | jq -r '.[0].sha1 // empty') || admin_token=""
+  fi
+  if [ -z "$admin_token" ]; then
+    echo "Error: failed to obtain admin API token" >&2
+    echo "  Cannot proceed without admin privileges" >&2
+    exit 1
   fi
 
   if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
@@ -2664,8 +2672,9 @@ disinto_hire_an_agent() {
     echo "  User '${agent_name}' already exists"
     # Reset user password so we can get a token (#184)
     user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+    # Reset password using basic auth (admin token fallback would poison subsequent calls)
     if curl -sf -X PATCH \
-      -H "Authorization: token ${admin_token}" \
+      -u "${admin_user}:${admin_pass}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/admin/users/${agent_name}" \
       -d "{\"password\":\"${user_pass}\"}" >/dev/null 2>&1; then
@@ -2674,11 +2683,11 @@ disinto_hire_an_agent() {
       echo "  Warning: could not reset password for existing user" >&2
     fi
   else
-    # Create user using admin token (admin_token already obtained above)
+    # Create user using basic auth (admin token fallback would poison subsequent calls)
     # Create the user
     user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
     if curl -sf -X POST \
-      -H "Authorization: token ${admin_token}" \
+      -u "${admin_user}:${admin_pass}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/admin/users" \
       -d "{\"username\":\"${agent_name}\",\"password\":\"${user_pass}\",\"email\":\"${agent_name}@${PROJECT_NAME:-disinto}.local\",\"full_name\":\"${agent_name}\",\"active\":true,\"admin\":false,\"must_change_password\":false}" >/dev/null 2>&1; then
@@ -2723,12 +2732,6 @@ disinto_hire_an_agent() {
         | jq -r '.[0].sha1 // empty') || user_token=""
     fi
 
-    # Fall back to admin token if user token not available
-    if [ -z "$user_token" ]; then
-      echo "  Using admin token to create repo"
-      user_token="${admin_token:-${FORGE_TOKEN}}"
-    fi
-
     # Create the repo using the user's namespace (user/repos with user_token creates in that user's namespace)
     # or use admin API to create in specific user's namespace
     local repo_created=false
@@ -2752,7 +2755,7 @@ disinto_hire_an_agent() {
     if [ "$repo_created" = false ]; then
       echo "  Using admin API to create repo in ${agent_name}'s namespace"
       create_output=$(curl -sf -X POST \
-        -H "Authorization: token ${admin_token}" \
+        -u "${admin_user}:${admin_pass}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/admin/users/${agent_name}/repos" \
         -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
