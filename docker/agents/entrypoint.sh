@@ -21,6 +21,14 @@ install_project_crons() {
   local cron_lines="DISINTO_CONTAINER=1
 USER=agent
 FORGE_URL=http://forgejo:3000"
+
+  # Parse DISINTO_AGENTS env var (default: all agents)
+  # Expected format: comma-separated list like "review,gardener" or "dev"
+  local agents_to_run="review,dev,gardener"
+  if [ -n "${DISINTO_AGENTS:-}" ]; then
+    agents_to_run="$DISINTO_AGENTS"
+  fi
+
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
     local pname
@@ -32,15 +40,30 @@ with open(sys.argv[1], 'rb') as f:
 
     cron_lines="${cron_lines}
 PROJECT_REPO_ROOT=/home/agent/repos/${pname}
-# disinto: ${pname}
-2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
-4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1
+# disinto: ${pname}"
+
+    # Add review-poll only if review agent is configured
+    if echo "$agents_to_run" | grep -qw "review"; then
+      cron_lines="${cron_lines}
+2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
+    fi
+
+    # Add dev-poll only if dev agent is configured
+    if echo "$agents_to_run" | grep -qw "dev"; then
+      cron_lines="${cron_lines}
+4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
+    fi
+
+    # Add gardener-run only if gardener agent is configured
+    if echo "$agents_to_run" | grep -qw "gardener"; then
+      cron_lines="${cron_lines}
 0 0,6,12,18 * * * cd ${DISINTO_DIR} && bash gardener/gardener-run.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
+    fi
   done
 
   if [ -n "$cron_lines" ]; then
     printf '%s\n' "$cron_lines" | crontab -u agent -
-    log "Installed crontab for agent user"
+    log "Installed crontab for agent user (agents: ${agents_to_run})"
   else
     log "No project TOMLs found — crontab empty"
   fi

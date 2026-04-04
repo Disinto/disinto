@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  agents:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents:latest
+    container_name: disinto-agents
+    volumes:
+      - ./data/agents:/home/agent/data
+      - ./disinto:/home/agent/disinto:ro
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+    environment:
+      - DISINTO_AGENTS=review,gardener
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_URL=http://forgejo:3000
+    depends_on:
+      - forgejo
+
+  agents-llama:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents-llama:latest
+    container_name: disinto-agents-llama
+    volumes:
+      - ./data/llama:/home/agent/data
+      - ./disinto:/home/agent/disinto:ro
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+    environment:
+      - DISINTO_AGENTS=dev
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_URL=http://forgejo:3000
+      - PROJECT_TOML=projects/disinto.toml
+      - FORGE_REPO=johba/disinto
+    depends_on:
+      - forgejo
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:1
+    container_name: disinto-forgejo
+    volumes:
+      - ./data/forgejo:/var/lib/forgejo
+    environment:
+      - FORGEJO__database__DB_TYPE=sqlite3
+      - FORGEJO__service__REGISTER_EMAIL_CONFIRMATION=false
+      - FORGEJO__service__ENABLE_NOTIFY_MAIL=false
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+      - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
+    ports:
+      - "3000:3000"
