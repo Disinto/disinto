@@ -267,6 +267,28 @@ def main() -> int:
         "2653705045fdf65072cccfd16eb04900": "Standard prompt template (GRAPH_SECTION, SCRATCH_CONTEXT, FORMULA_CONTENT)",
         "93726a3c799b72ed2898a55552031921": "Standard prompt template continuation (SCRATCH_CONTEXT, FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
         "c11eaaacab69c9a2d3c38c75215eca84": "Standard prompt template end (FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
+        # install_project_crons function in entrypoint.sh and entrypoint-llama.sh (intentional duplicate)
+        "d389fe80bcfc1571e398009b042ce0a5": "install_project_crons function in entrypoints (window 1)",
+        "92cca4075f2e98108a9a1c8009a9a584": "install_project_crons function in entrypoints (window 2)",
+        "9571ac33388933d02fbe612eea27af5b": "install_project_crons function in entrypoints (window 3)",
+        "2d806e0f07881b4e7b6b05eae0286caa": "install_project_crons function in entrypoints (window 4)",
+        "80bdff63e54b4a260043d264b83d8eb0": "install_project_crons function in entrypoints (window 5)",
+        "f0e4101f9b90c2fa921e088057a96db7": "install_project_crons function in entrypoints (window 6)",
+        "c566639b237036a7a385982274d3d271": "install_project_crons function in entrypoints (window 7)",
+        "a222b73bcd6a57adb2315726e81ab6cf": "install_project_crons function in entrypoints (window 8)",
+        "04143957d4c63e8a16ac28bddaff589b": "install_project_crons function in entrypoints (window 9)",
+        "076a19221cde674b2fce20a17292fa78": "install_project_crons function in entrypoints (window 10)",
+        "f7fa9ff817004265b73bac50f6673dab": "install_project_crons function in entrypoints (window 11)",
+        "dc1558fdf58c907ca9417b2ef97d5145": "install_project_crons function in entrypoints (window 12)",
+        "d93d2c7f5711ac4f4bafe93993b1db02": "install_project_crons function in entrypoints (window 13)",
+        "4061aa91dabce2371c87c850fe1c081c": "install_project_crons function in entrypoints (window 14)",
+        "8dd5c935fc96313a70354136b4e0c6f3": "install_project_crons function in entrypoints (window 15)",
+        "5230752db7cbfaa56ba272a8ce2b4285": "install_project_crons function in entrypoints (window 16)",
+        "8dc4e402762b8248fb00c98bcd8e7f67": "install_project_crons function in entrypoints (window 17)",
+        "95b8a191bda7b09dcc45bbb5d1ba2cc5": "install_project_crons function in entrypoints (window 18)",
+        "bb2226470ad66c945b09d9ee609b8542": "install_project_crons function in entrypoints (window 19)",
+        "7ac64ec03e93bf47e8914c14ae4eeabd": "install_project_crons function in entrypoints (window 20)",
+        "252a071cb94a5adb7b14e4d4d33fe575": "install_project_crons function in entrypoints (window 21)",
     }
 
     if not sh_files:
