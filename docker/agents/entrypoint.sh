@@ -71,6 +71,9 @@ PROJECT_REPO_ROOT=/home/agent/repos/${pname}
 
 log "Agent container starting"
 
+# Set USER for scripts that source lib/env.sh (e.g., OPS_REPO_ROOT default)
+export USER=agent
+
 # Verify Claude CLI is available (expected via volume mount from host).
 if ! command -v claude &>/dev/null; then
   log "FATAL: claude CLI not found in PATH."
