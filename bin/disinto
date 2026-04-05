@@ -1367,6 +1367,9 @@ create_labels() {
     ["underspecified"]="#fbca04"
     ["vision"]="#0e8a16"
     ["action"]="#1d76db"
+    ["prediction/unreviewed"]="#a2eeef"
+    ["prediction/dismissed"]="#d73a4a"
+    ["prediction/actioned"]="#28a745"
   )
 
   echo "Creating labels on ${repo}..."
@@ -1379,7 +1382,7 @@ create_labels() {
     | grep -o '"name":"[^"]*"' | cut -d'"' -f4) || existing=""
 
   local name color
-  for name in backlog in-progress blocked tech-debt underspecified vision action; do
+  for name in backlog in-progress blocked tech-debt underspecified vision action prediction/unreviewed prediction/dismissed prediction/actioned; do
     if echo "$existing" | grep -qx "$name"; then
       echo "  . ${name} (already exists)"
       continue
