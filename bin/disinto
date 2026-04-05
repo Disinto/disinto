@@ -28,6 +28,16 @@ source "${FACTORY_ROOT}/lib/env.sh"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# Execute a command in the Forgejo container (for admin operations)
+_forgejo_exec() {
+  local use_bare="${DISINTO_BARE:-false}"
+  if [ "$use_bare" = true ]; then
+    docker exec -u git disinto-forgejo "$@"
+  else
+    docker compose -f "${FACTORY_ROOT}/docker-compose.yml" exec -T -u git forgejo "$@"
+  fi
+}
+
 usage() {
   cat <<EOF
 disinto — autonomous code factory CLI
@@ -568,15 +578,6 @@ setup_forge() {
 
   echo ""
   echo "── Forge setup ────────────────────────────────────────"
-
-  # Helper: run a command inside the Forgejo container
-  _forgejo_exec() {
-    if [ "$use_bare" = true ]; then
-      docker exec -u git disinto-forgejo "$@"
-    else
-      docker compose -f "${FACTORY_ROOT}/docker-compose.yml" exec -T -u git forgejo "$@"
-    fi
-  }
 
   # Check if Forgejo is already running
   if curl -sf --max-time 5 "${forge_url}/api/v1/version" >/dev/null 2>&1; then
@@ -2672,12 +2673,11 @@ disinto_hire_an_agent() {
     echo "  User '${agent_name}' already exists"
     # Reset user password so we can get a token (#184)
     user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
-    # Reset password using basic auth (admin token fallback would poison subsequent calls)
-    if curl -sf -X PATCH \
-      -u "${admin_user}:${admin_pass}" \
-      -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/admin/users/${agent_name}" \
-      -d "{\"password\":\"${user_pass}\",\"must_change_password\":false}" >/dev/null 2>&1; then
+    # Use Forgejo CLI to reset password (API PATCH ignores must_change_password in Forgejo 11.x)
+    if _forgejo_exec forgejo admin user change-password \
+      --username "${agent_name}" \
+      --password "${user_pass}" \
+      --must-change-password=false >/dev/null 2>&1; then
       echo "  Reset password for existing user '${agent_name}'"
     else
       echo "  Warning: could not reset password for existing user" >&2
