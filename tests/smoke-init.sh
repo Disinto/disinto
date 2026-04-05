@@ -15,7 +15,8 @@
 set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FORGE_URL="${FORGE_URL:-http://localhost:3000}"
+# Always use localhost for mock Forgejo (in case FORGE_URL is set from docker-compose)
+export FORGE_URL="http://localhost:3000"
 MOCK_BIN="/tmp/smoke-mock-bin"
 TEST_SLUG="smoke-org/smoke-repo"
 FAILED=0

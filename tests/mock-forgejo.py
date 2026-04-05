@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock Forgejo API server for CI smoke tests.
 
-Implements 15 Forgejo API endpoints that disinto init calls.
+Implements 16 Forgejo API endpoints that disinto init calls.
 State stored in-memory (dicts), responds instantly.
 """
 
@@ -149,6 +149,7 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             # Admin patterns
             (r"^admin/users$", f"handle_{method}_admin_users"),
             (r"^admin/users/([^/]+)$", f"handle_{method}_admin_users_username"),
+            (r"^admin/users/([^/]+)/repos$", f"handle_{method}_admin_users_username_repos"),
             # Org patterns
             (r"^orgs$", f"handle_{method}_orgs"),
         ]
@@ -294,7 +295,10 @@ class ForgejoHandler(BaseHTTPRequestHandler):
 
     def handle_GET_users_username_tokens(self, query):
         """GET /api/v1/users/{username}/tokens"""
+        # Support both token auth (for listing own tokens) and basic auth (for admin listing)
         username = require_token(self)
+        if not username:
+            username = require_basic_auth(self)
         if not username:
             json_response(self, 401, {"message": "invalid authentication"})
             return
@@ -447,6 +451,55 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             "full_name": key,
             "name": repo_name,
             "owner": {"id": state["users"][username]["id"], "login": username},
+            "empty": not data.get("auto_init", False),
+            "default_branch": data.get("default_branch", "main"),
+            "description": data.get("description", ""),
+            "private": data.get("private", False),
+            "html_url": f"https://example.com/{key}",
+            "ssh_url": f"git@example.com:{key}.git",
+            "clone_url": f"https://example.com/{key}.git",
+            "created_at": "2026-04-01T00:00:00Z",
+        }
+
+        state["repos"][key] = repo
+        json_response(self, 201, repo)
+
+    def handle_POST_admin_users_username_repos(self, query):
+        """POST /api/v1/admin/users/{username}/repos
+        Admin API to create a repo under a specific user namespace.
+        This allows creating repos in any user's namespace when authenticated as admin.
+        """
+        require_token(self)
+
+        parts = self.path.split("/")
+        if len(parts) >= 6:
+            target_user = parts[4]
+        else:
+            json_response(self, 400, {"message": "username required"})
+            return
+
+        if target_user not in state["users"]:
+            json_response(self, 404, {"message": "user not found"})
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        data = json.loads(body) if body else {}
+
+        repo_name = data.get("name")
+        if not repo_name:
+            json_response(self, 400, {"message": "name is required"})
+            return
+
+        repo_id = next_ids["repos"]
+        next_ids["repos"] += 1
+
+        key = f"{target_user}/{repo_name}"
+        repo = {
+            "id": repo_id,
+            "full_name": key,
+            "name": repo_name,
+            "owner": {"id": state["users"][target_user]["id"], "login": target_user},
             "empty": not data.get("auto_init", False),
             "default_branch": data.get("default_branch", "main"),
             "description": data.get("description", ""),
