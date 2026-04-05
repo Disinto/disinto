@@ -12,6 +12,7 @@ steps:
     image: python:3-alpine
     commands:
       - apk add --no-cache bash curl jq git coreutils
-      - python3 tests/mock-forgejo.py &
+      - python3 tests/mock-forgejo.py & echo $! > /tmp/mock-forgejo.pid
       - sleep 2
       - bash tests/smoke-init.sh
+      - kill $(cat /tmp/mock-forgejo.pid) 2>/dev/null || true

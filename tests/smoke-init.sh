@@ -24,6 +24,8 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; FAILED=1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 cleanup() {
+  # Kill any leftover mock-forgejo.py processes by name
+  pkill -f "mock-forgejo.py" 2>/dev/null || true
   rm -rf "$MOCK_BIN" /tmp/smoke-test-repo \
          "${FACTORY_ROOT}/projects/smoke-repo.toml"
   # Restore .env only if we created the backup
