@@ -1,4 +1,4 @@
-<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
+<!-- last-reviewed: 33eb565d7e0c5b7e0159e1720ba7f79126a7e25e -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -53,35 +53,9 @@ disinto-ops/             (ops repo — {project}-ops)
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo that stores:
-- `formula.toml` — agent-specific formula (optional, falls back to `formulas/<agent>.toml`)
-- `knowledge/lessons-learned.md` — distilled lessons from journal entries
-- `journal/` — session reflection entries (archived after digestion)
+Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/profile.sh`.
 
-### How it works
-
-1. **Pre-session:** The agent calls `formula_prepare_profile_context()` which:
-   - Resolves the agent's Forgejo identity from their token
-   - Clones/pulls the `.profile` repo to a local cache
-   - Loads `knowledge/lessons-learned.md` into `LESSONS_CONTEXT` for prompt injection
-   - Automatically digests journals if >10 undigested entries exist
-
-2. **Prompt injection:** Lessons are injected into the agent prompt:
-   ```
-   ## Lessons learned (from .profile/knowledge/lessons-learned.md)
-   <abstracted lessons from prior sessions>
-   ```
-
-3. **Post-session:** The agent calls `profile_write_journal` which:
-   - Generates a reflection entry about the session
-   - Writes it to `journal/issue-{N}.md`
-   - Commits and pushes to the `.profile` repo
-   - Journals are archived after being digested into lessons-learned.md
-
-> **Terminology note:** "Formulas" in this repo are TOML issue templates in `formulas/` that
-> orchestrate multi-step agent tasks (e.g., `run-gardener.toml`, `run-planner.toml`). This is
-> distinct from "processes" described in `docs/EVIDENCE-ARCHITECTURE.md`, which are measurement
-> and mutation pipelines that read external platforms and write structured evidence to git.
+> **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
 ## Tech stack
 

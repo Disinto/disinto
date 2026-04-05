@@ -1,4 +1,4 @@
-<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
+<!-- last-reviewed: 33eb565d7e0c5b7e0159e1720ba7f79126a7e25e -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
@@ -65,7 +65,7 @@ component, not work.
   tree, humans steer by editing VISION.md. Tree grows organically as the
   planner discovers new prerequisites during runs
 - `$OPS_REPO_ROOT/knowledge/planner-memory.md` — Persistent memory across runs (in ops repo)
-- `$OPS_REPO_ROOT/journal/planner/*.md` — Daily raw logs from each planner run (in ops repo)
+
 
 **Constraint focus**: The planner uses Theory of Constraints to avoid premature
 issue filing. Only the top 3 unresolved prerequisites that block the most
