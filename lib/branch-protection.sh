@@ -51,14 +51,30 @@ setup_vault_branch_protection() {
 
   _bp_log "Setting up branch protection for ${branch} on ${FORGE_OPS_REPO}"
 
-  # Check if branch exists
-  local branch_exists
-  branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+  # Check if branch exists with retry loop (handles race condition after initial push)
+  local branch_exists="0"
+  local max_attempts=3
+  local attempt=1
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+    if [ "$branch_exists" = "200" ]; then
+      _bp_log "Branch ${branch} exists on ${FORGE_OPS_REPO}"
+      break
+    fi
+
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
+      sleep 2
+    fi
+    attempt=$((attempt + 1))
+  done
 
   if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist"
+    _bp_log "ERROR: Branch ${branch} does not exist on ${FORGE_OPS_REPO} after ${max_attempts} attempts"
     return 1
   fi
 
@@ -228,14 +244,30 @@ setup_profile_branch_protection() {
   local api_url
   api_url="${FORGE_URL}/api/v1/repos/${repo}"
 
-  # Check if branch exists
-  local branch_exists
-  branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+  # Check if branch exists with retry loop (handles race condition after initial push)
+  local branch_exists="0"
+  local max_attempts=3
+  local attempt=1
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+    if [ "$branch_exists" = "200" ]; then
+      _bp_log "Branch ${branch} exists on ${repo}"
+      break
+    fi
+
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
+      sleep 2
+    fi
+    attempt=$((attempt + 1))
+  done
 
   if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist on ${repo}"
+    _bp_log "ERROR: Branch ${branch} does not exist on ${repo} after ${max_attempts} attempts"
     return 1
   fi
 
@@ -398,14 +430,30 @@ setup_project_branch_protection() {
   local api_url
   api_url="${FORGE_URL}/api/v1/repos/${repo}"
 
-  # Check if branch exists
-  local branch_exists
-  branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+  # Check if branch exists with retry loop (handles race condition after initial push)
+  local branch_exists="0"
+  local max_attempts=3
+  local attempt=1
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+    if [ "$branch_exists" = "200" ]; then
+      _bp_log "Branch ${branch} exists on ${repo}"
+      break
+    fi
+
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
+      sleep 2
+    fi
+    attempt=$((attempt + 1))
+  done
 
   if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist on ${repo}"
+    _bp_log "ERROR: Branch ${branch} does not exist on ${repo} after ${max_attempts} attempts"
     return 1
   fi
 
