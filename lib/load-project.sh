@@ -100,6 +100,8 @@ export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
 if [ -n "$FORGE_REPO" ]; then
   export FORGE_API="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
   export FORGE_WEB="${FORGE_URL}/${FORGE_REPO}"
+  # Extract repo owner (first path segment of owner/repo)
+  export FORGE_REPO_OWNER="${FORGE_REPO%%/*}"
 fi
 # Backwards-compat aliases
 export CODEBERG_REPO="${FORGE_REPO}"
