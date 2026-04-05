@@ -227,7 +227,8 @@ forge_api_all() {
   page=1
   while true; do
     page_items=$(forge_api GET "${path_prefix}${sep}limit=50&page=${page}")
-    count=$(printf '%s' "$page_items" | jq 'length')
+    count=$(printf '%s' "$page_items" | jq 'length' 2>/dev/null) || count=0
+    [ -z "$count" ] && count=0
     [ "$count" -eq 0 ] && break
     all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
     [ "$count" -lt 50 ] && break
