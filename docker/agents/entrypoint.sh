@@ -24,6 +24,8 @@ FORGE_URL=http://forgejo:3000"
 
   # Parse DISINTO_AGENTS env var (default: all agents)
   # Expected format: comma-separated list like "review,gardener" or "dev"
+  # Note: supervisor is NOT installed here — it runs on the host, not in container.
+  # Supervisor requires host-level Docker access and pgrep, which the container lacks.
   local agents_to_run="review,dev,gardener"
   if [ -n "${DISINTO_AGENTS:-}" ]; then
     agents_to_run="$DISINTO_AGENTS"
