@@ -95,6 +95,76 @@ is_blocked() {
 }
 
 # =============================================================================
+# STALENESS DETECTION FOR IN-PROGRESS ISSUES
+# =============================================================================
+
+# Check if a tmux session for a specific issue is alive
+# Args: project_name issue_number
+# Returns: 0 if session is alive, 1 if not
+session_is_alive() {
+  local project="$1" issue="$2"
+  local session="dev-${project}-${issue}"
+  tmux has-session -t "$session" 2>/dev/null
+}
+
+# Check if there's an open PR for a specific issue
+# Args: project_name issue_number
+# Returns: 0 if open PR exists, 1 if not
+open_pr_exists() {
+  local project="$1" issue="$2"
+  local branch="fix/issue-${issue}"
+  local pr_num
+
+  pr_num=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/pulls?state=open&limit=20" | \
+    jq -r --arg branch "$branch" \
+    '.[] | select(.head.ref == $branch) | .number' | head -1) || true
+
+  [ -n "$pr_num" ]
+}
+
+# Relabel a stale in-progress issue to blocked with diagnostic comment
+# Args: issue_number reason
+# Uses shared helpers from lib/issue-lifecycle.sh
+relabel_stale_issue() {
+  local issue="$1" reason="$2"
+
+  log "relabeling stale in-progress issue #${issue} to blocked: ${reason}"
+
+  # Remove in-progress label
+  local ip_id
+  ip_id=$(_ilc_in_progress_id)
+  if [ -n "$ip_id" ]; then
+    curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${issue}/labels/${ip_id}" >/dev/null 2>&1 || true
+  fi
+
+  # Add blocked label
+  local bk_id
+  bk_id=$(_ilc_blocked_id)
+  if [ -n "$bk_id" ]; then
+    curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${issue}/labels" \
+      -d "{\"labels\":[${bk_id}]}" >/dev/null 2>&1 || true
+  fi
+
+  # Post diagnostic comment using shared helper
+  local comment_body
+  comment_body=$(
+    printf '### Stale in-progress issue detected\n\n'
+    printf '| Field | Value |\n|---|---|\n'
+    printf '| Detection reason | `%s` |\n' "$reason"
+    printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '\n**Status:** This issue was labeled `in-progress` but no active tmux session exists.\n'
+    printf '**Action required:** A maintainer should triage this issue.\n'
+  )
+  _ilc_post_comment "$issue" "$comment_body"
+
+  _ilc_log "stale issue #${issue} relabeled to blocked: ${reason}"
+}
+
+# =============================================================================
 # HELPER: handle CI-exhaustion check/block (DRY for 3 call sites)
 # Sets CI_FIX_ATTEMPTS for caller use. Returns 0 if exhausted, 1 if not.
 # Uses issue_block() from lib/issue-lifecycle.sh for blocking.
@@ -319,6 +389,25 @@ ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
 ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
+
+  # Staleness check: if no tmux session and no open PR, the issue is stale
+  SESSION_ALIVE=false
+  OPEN_PR=false
+  if tmux has-session -t "dev-${PROJECT_NAME}-${ISSUE_NUM}" 2>/dev/null; then
+    SESSION_ALIVE=true
+  fi
+  if curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/pulls?state=open&limit=20" | \
+    jq -e --arg branch "fix/issue-${ISSUE_NUM}" \
+    '.[] | select(.head.ref == $branch)' >/dev/null 2>&1; then
+    OPEN_PR=true
+  fi
+
+  if [ "$SESSION_ALIVE" = false ] && [ "$OPEN_PR" = false ]; then
+    log "issue #${ISSUE_NUM} is stale (no active tmux session, no open PR) — relabeling to blocked"
+    relabel_stale_issue "$ISSUE_NUM" "no_active_session_no_open_pr"
+    exit 0
+  fi
 
   # Formula guard: formula-labeled issues should not be worked on by dev-agent.
   # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
