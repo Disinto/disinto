@@ -2677,7 +2677,6 @@ disinto_hire_an_agent() {
   echo ""
   echo "Step 1: Creating user '${agent_name}' (if not exists)..."
 
-  local user_exists=false
   local user_pass=""
   local admin_pass=""
 
@@ -2691,7 +2690,8 @@ disinto_hire_an_agent() {
   local admin_user="disinto-admin"
   admin_pass="${admin_pass:-admin}"
   local admin_token=""
-  local admin_token_name="temp-token-$(date +%s)"
+  local admin_token_name
+  admin_token_name="temp-token-$(date +%s)"
   admin_token=$(curl -sf -X POST \
     -u "${admin_user}:${admin_pass}" \
     -H "Content-Type: application/json" \
@@ -2712,7 +2712,6 @@ disinto_hire_an_agent() {
   fi
 
   if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
-    user_exists=true
     echo "  User '${agent_name}' already exists"
     # Reset user password so we can get a token (#184)
     user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
@@ -2739,7 +2738,6 @@ disinto_hire_an_agent() {
       echo "  Warning: failed to create user via admin API" >&2
       # Try alternative: user might already exist
       if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
-        user_exists=true
         echo "  User '${agent_name}' exists (confirmed)"
       else
         echo "  Error: failed to create user '${agent_name}'" >&2
@@ -2797,9 +2795,7 @@ disinto_hire_an_agent() {
   echo ""
   echo "Step 2: Creating '${agent_name}/.profile' repo (if not exists)..."
 
-  local repo_exists=false
   if curl -sf --max-time 5 "${forge_url}/api/v1/repos/${agent_name}/.profile" >/dev/null 2>&1; then
-    repo_exists=true
     echo "  Repo '${agent_name}/.profile' already exists"
   else
     # Create the repo using the admin API to ensure it's created in the agent's namespace.
@@ -2906,8 +2902,8 @@ EOF
   git -C "$clone_dir" add -A
   if ! git -C "$clone_dir" diff --cached --quiet 2>/dev/null; then
     git -C "$clone_dir" commit -m "chore: initial .profile setup" -q
-    git -C "$clone_dir" push origin main 2>&1 >/dev/null || \
-      git -C "$clone_dir" push origin master 2>&1 >/dev/null || true
+    git -C "$clone_dir" push origin main >/dev/null 2>&1 || \
+      git -C "$clone_dir" push origin master >/dev/null 2>&1 || true
     echo "  Committed: initial .profile setup"
   else
     echo "  No changes to commit"
