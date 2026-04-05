@@ -2602,9 +2602,12 @@ disinto_hire_an_agent() {
     esac
   done
 
-  # Default formula path
+  # Default formula path — try both naming conventions
   if [ -z "$formula_path" ]; then
     formula_path="${FACTORY_ROOT}/formulas/${role}.toml"
+    if [ ! -f "$formula_path" ]; then
+      formula_path="${FACTORY_ROOT}/formulas/run-${role}.toml"
+    fi
   fi
 
   # Validate formula exists
