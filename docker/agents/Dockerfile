@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age shellcheck \
+    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age shellcheck procps \
     && pip3 install --break-system-packages networkx \
     && rm -rf /var/lib/apt/lists/*
 
