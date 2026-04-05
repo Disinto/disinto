@@ -162,6 +162,27 @@ issue_release() {
 }
 
 # ---------------------------------------------------------------------------
+# _ilc_post_comment — Post a comment to an issue (internal helper)
+# Args: issue_number body_text
+# Uses a temp file to avoid large inline strings.
+# ---------------------------------------------------------------------------
+_ilc_post_comment() {
+  local issue="$1" body="$2"
+
+  local tmpfile tmpjson
+  tmpfile=$(mktemp /tmp/ilc-comment-XXXXXX.md)
+  tmpjson="${tmpfile}.json"
+  printf '%s' "$body" > "$tmpfile"
+  jq -Rs '{body:.}' < "$tmpfile" > "$tmpjson"
+  curl -sf -o /dev/null -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}/comments" \
+    --data-binary @"$tmpjson" 2>/dev/null || true
+  rm -f "$tmpfile" "$tmpjson"
+}
+
+# ---------------------------------------------------------------------------
 # issue_block — add "blocked" label, post diagnostic comment, remove in-progress.
 # Args: issue_number reason [result_text]
 # The result_text (e.g. tmux pane capture) is redacted for secrets before posting.
@@ -187,14 +208,9 @@ issue_block() {
     fi
   } > "$tmpfile"
 
-  # Post comment
-  jq -Rs '{body:.}' < "$tmpfile" > "${tmpfile}.json"
-  curl -sf -o /dev/null -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}/comments" \
-    --data-binary @"${tmpfile}.json" 2>/dev/null || true
-  rm -f "$tmpfile" "${tmpfile}.json"
+  # Post comment using shared helper
+  _ilc_post_comment "$issue" "$(cat "$tmpfile")"
+  rm -f "$tmpfile"
 
   # Remove in-progress, add blocked
   local ip_id bk_id
