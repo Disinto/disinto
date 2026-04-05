@@ -21,7 +21,7 @@ See `README.md` for the full architecture and `disinto-factory/SKILL.md` for set
 
 ```
 disinto/                 (code repo)
-├── dev/           dev-poll.sh, dev-agent.sh, phase-handler.sh — issue implementation
+├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — direct cron executor for run-gardener formula
 ├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
@@ -31,7 +31,7 @@ disinto/                 (code repo)
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
-├── lib/           env.sh, agent-session.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, build-graph.py
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)

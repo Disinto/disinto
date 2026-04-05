@@ -14,9 +14,8 @@ in-progress issues are also picked up. The direct-merge scan runs before the loc
 check so approved PRs get merged even while a dev-agent session is active.
 
 **Key files**:
-- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress` with no active tmux session and no open PR — removes `in-progress`, adds `blocked` with a human-triage comment (requires maintainer review before re-queuing).
+- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress` with no open PR — removes `in-progress`, adds `blocked` with a human-triage comment (requires maintainer review before re-queuing).
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
-- `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`. `do_merge()` detects already-merged PRs on HTTP 405 (race with dev-poll's pre-lock scan) and returns success instead of escalating. Sources `lib/mirrors.sh` and calls `mirror_push()` after every successful merge.
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
@@ -33,7 +32,7 @@ check so approved PRs get merged even while a dev-agent session is active.
 
 **Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
 
-**Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → tmux `dev-{project}-{issue}` → phase file
+**Lifecycle**: dev-poll.sh (`check_active dev`) → dev-agent.sh → tmux session → phase file
 drives CI/review loop → merge + `mirror_push()` → close issue. On respawn after
 `PHASE:escalate`, the stale phase file is cleared first so the session starts
 clean; the reinject prompt tells Claude not to re-escalate for the same reason.

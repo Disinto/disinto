@@ -6,8 +6,6 @@
 #   2. Every custom function called by agent scripts is defined in lib/ or the script itself
 #
 # Fast (<10s): no network, no tmux, no Claude needed.
-# Would have caught: kill_tmux_session (renamed), create_agent_session (missing),
-#                    read_phase (missing from dev-agent.sh scope)
 
 set -euo pipefail
 
@@ -95,13 +93,12 @@ echo "=== 2/2  Function resolution ==="
 #
 # Included — these are inline-sourced by agent scripts:
 #   lib/env.sh              — sourced by every agent (log, forge_api, etc.)
-#   lib/agent-session.sh    — sourced by orchestrators (create_agent_session, monitor_phase_loop, etc.)
 #   lib/agent-sdk.sh        — sourced by SDK agents (agent_run, agent_recover_session)
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
 #   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
-#   lib/secret-scan.sh      — sourced by file-action-issue.sh, phase-handler.sh (scan_for_secrets, redact_secrets)
-#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, run_formula_and_monitor, etc.)
+#   lib/secret-scan.sh      — sourced by file-action-issue.sh (scan_for_secrets, redact_secrets)
+#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, check_memory, etc.)
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
 #   lib/guard.sh            — sourced by all cron entry points (check_active)
 #   lib/issue-lifecycle.sh  — sourced by agents for issue claim/release/block/deps
@@ -116,7 +113,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-session.sh lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
+  for f in lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
     if [ -f "$f" ]; then get_fns "$f"; fi
   done | sort -u
 )
@@ -180,13 +177,12 @@ check_script() {
 # These are already in LIB_FUNS (their definitions are available to agents),
 # but this verifies calls *within* each lib file are also resolvable.
 check_script lib/env.sh              lib/mirrors.sh
-check_script lib/agent-session.sh
 check_script lib/agent-sdk.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
 check_script lib/file-action-issue.sh   lib/secret-scan.sh
 check_script lib/tea-helpers.sh         lib/secret-scan.sh
-check_script lib/formula-session.sh     lib/agent-session.sh
+check_script lib/formula-session.sh
 check_script lib/load-project.sh
 check_script lib/mirrors.sh              lib/env.sh
 check_script lib/guard.sh
@@ -199,15 +195,13 @@ check_script lib/ci-debug.sh
 check_script lib/parse-deps.sh
 
 # Agent scripts — list cross-sourced files where function scope flows across files.
-# phase-handler.sh defines default callback stubs; sourcing agents may override.
 check_script dev/dev-agent.sh
-check_script dev/phase-handler.sh      lib/secret-scan.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh
 check_script review/review-pr.sh         lib/agent-sdk.sh
 check_script review/review-poll.sh
-check_script planner/planner-run.sh      lib/agent-session.sh lib/formula-session.sh
+check_script planner/planner-run.sh      lib/formula-session.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
 check_script supervisor/supervisor-run.sh

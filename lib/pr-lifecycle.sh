@@ -524,8 +524,7 @@ Commit, rebase on ${PRIMARY_BRANCH}, and push:
 # build_phase_protocol_prompt — Generate push/commit instructions for Claude.
 #
 # For the synchronous agent_run architecture: tells Claude how to commit and
-# push (no phase files). For the tmux session architecture, use the
-# build_phase_protocol_prompt in dev/phase-handler.sh instead.
+# push (no phase files).
 #
 # Args: branch [remote]
 # Stdout: instruction text
