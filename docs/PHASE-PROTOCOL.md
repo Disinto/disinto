@@ -92,10 +92,9 @@ PHASE:failed          → label issue blocked, post diagnostic comment
 
 ### `idle_prompt` exit reason
 
-`monitor_phase_loop` (in `lib/agent-session.sh`) can exit with
-`_MONITOR_LOOP_EXIT=idle_prompt`. This happens when Claude returns to the
-interactive prompt (`❯`) for **3 consecutive polls** without writing any phase
-signal to the phase file.
+The phase monitor can exit with `_MONITOR_LOOP_EXIT=idle_prompt`. This happens
+when Claude returns to the interactive prompt (`❯`) for **3 consecutive polls**
+without writing any phase signal to the phase file.
 
 **Trigger conditions:**
 - The phase file is empty (no phase has ever been written), **and**
@@ -111,14 +110,13 @@ signal to the phase file.
    callback without the phase file actually containing that value.
 
 **Agent requirements:**
-- **Callback (`_on_phase_change` / `formula_phase_callback`):** Must handle
-  `PHASE:failed` defensively — the session is already dead, so any tmux
-  send-keys or session-dependent logic must be skipped or guarded.
+- **Callback:** Must handle `PHASE:failed` defensively — the session is already
+  dead, so any tmux send-keys or session-dependent logic must be skipped or
+  guarded.
 - **Post-loop exit handler (`case $_MONITOR_LOOP_EXIT`):** Must include an
   `idle_prompt)` branch. Typical actions: log the event, clean up temp files,
   and (for agents that use escalation) write an escalation entry or notify via
-  vault/forge. See `dev/dev-agent.sh` and
-  `gardener/gardener-agent.sh` for reference implementations.
+  vault/forge. See `dev/dev-agent.sh` for reference implementations.
 
 ## Crash Recovery
 
