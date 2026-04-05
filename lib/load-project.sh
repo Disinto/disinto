@@ -83,7 +83,7 @@ if mirrors:
 # Export parsed variables.
 # Inside the agents container (DISINTO_CONTAINER=1), compose already sets the
 # correct FORGE_URL (http://forgejo:3000) and path vars for the container
-# environment.  The TOML carries host-perspective values (localhost, /home/johba/…)
+# environment.  The TOML carries host-perspective values (localhost, /home/admin/…)
 # that would break container API calls and path resolution.  Skip overriding
 # any env var that is already set when running inside the container.
 while IFS='=' read -r _key _val; do
@@ -100,6 +100,8 @@ export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
 if [ -n "$FORGE_REPO" ]; then
   export FORGE_API="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
   export FORGE_WEB="${FORGE_URL}/${FORGE_REPO}"
+  # Extract repo owner (first path segment of owner/repo)
+  export FORGE_REPO_OWNER="${FORGE_REPO%%/*}"
 fi
 # Backwards-compat aliases
 export CODEBERG_REPO="${FORGE_REPO}"

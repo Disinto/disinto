@@ -5,7 +5,7 @@ set -euo pipefail
 export USER="${USER:-root}"
 
 DISINTO_VERSION="${DISINTO_VERSION:-main}"
-DISINTO_REPO="${FORGE_URL:-http://forgejo:3000}/johba/disinto.git"
+DISINTO_REPO="${FORGE_URL:-http://forgejo:3000}/${FORGE_REPO:-disinto-admin/disinto}.git"
 
 # Shallow clone at the pinned version
 if [ ! -d /opt/disinto/.git ]; then
