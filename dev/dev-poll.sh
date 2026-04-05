@@ -371,6 +371,9 @@ if [ -f "$LOCKFILE" ]; then
   rm -f "$LOCKFILE"
 fi
 
+# --- Fetch origin refs before any stale branch checks ---
+git fetch origin --prune 2>/dev/null || true
+
 # --- Memory guard ---
 memory_guard 2000
 
@@ -430,7 +433,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   if [ -n "$HAS_PR" ]; then
     # Check if branch is stale (behind primary branch)
     BRANCH="fix/issue-${ISSUE_NUM}"
-    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "999")
+    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
     if [ "$AHEAD" -gt 0 ]; then
       log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
       # Close the PR via API
@@ -682,7 +685,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   if [ -n "$EXISTING_PR" ]; then
     # Check if branch is stale (behind primary branch)
     BRANCH="fix/issue-${ISSUE_NUM}"
-    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "999")
+    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
     if [ "$AHEAD" -gt 0 ]; then
       log "issue #${ISSUE_NUM} PR #${EXISTING_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
       # Close the PR via API
