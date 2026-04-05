@@ -1440,6 +1440,35 @@ EOF
   echo "  Commit this to your repo when ready"
 }
 
+# Copy issue templates from templates/ to target project repo.
+copy_issue_templates() {
+  local repo_root="$1"
+  local template_dir="${FACTORY_ROOT}/templates"
+  local target_dir="${repo_root}/.forgejo/ISSUE_TEMPLATE"
+
+  # Skip if templates directory doesn't exist
+  if [ ! -d "$template_dir" ]; then
+    return
+  fi
+
+  # Create target directory
+  mkdir -p "$target_dir"
+
+  # Copy each template file if it doesn't already exist
+  for template in "$template_dir"/*; do
+    [ -f "$template" ] || continue
+    local filename
+    filename=$(basename "$template")
+    local target_path="${target_dir}/${filename}"
+    if [ ! -f "$target_path" ]; then
+      cp "$template" "$target_path"
+      echo "Copied:  ${target_path}"
+    else
+      echo "Skipped: ${target_path} (already exists)"
+    fi
+  done
+}
+
 # Generate and optionally install cron entries for the project agents.
 install_cron() {
   local name="$1" toml="$2" auto_yes="$3" bare="${4:-false}"
@@ -2049,6 +2078,9 @@ p.write_text(text)
 
   # Generate template deployment pipeline configs in project repo
   generate_deploy_pipelines "$repo_root" "$project_name"
+
+  # Copy issue templates to target project
+  copy_issue_templates "$repo_root"
 
   # Install cron jobs
   install_cron "$project_name" "$toml_path" "$auto_yes" "$bare"
