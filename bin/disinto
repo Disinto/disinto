@@ -2677,7 +2677,7 @@ disinto_hire_an_agent() {
       -u "${admin_user}:${admin_pass}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/admin/users/${agent_name}" \
-      -d "{\"password\":\"${user_pass}\"}" >/dev/null 2>&1; then
+      -d "{\"password\":\"${user_pass}\",\"must_change_password\":false}" >/dev/null 2>&1; then
       echo "  Reset password for existing user '${agent_name}'"
     else
       echo "  Warning: could not reset password for existing user" >&2
