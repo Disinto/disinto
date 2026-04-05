@@ -1007,13 +1007,15 @@ setup_ops_repo() {
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
-      # Fallback: create under the repo owner namespace (FORGE_REPO owner)
-      local repo_owner="${FORGE_REPO%%/*}"
+      # Fallback: use admin API to create repo under the target namespace.
+      # POST /api/v1/users/{username}/repos creates under the authenticated user,
+      # not under {username}. The admin API POST /api/v1/admin/users/{username}/repos
+      # explicitly creates in the target user's namespace regardless of who is authed.
       curl -sf -X POST \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/users/${repo_owner}/repos" \
-        -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data\"}" >/dev/null 2>&1 || true
+        "${forge_url}/api/v1/admin/users/${org_name}/repos" \
+        -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1 || true
     fi
 
     # Add all bot users as collaborators with appropriate permissions
@@ -1980,7 +1982,9 @@ p.write_text(text)
   echo "Branch:  ${branch}"
 
   # Set up {project}-ops repo (#757)
-  local ops_slug="${forge_repo}-ops"
+  # Always use disinto-admin as the ops repo owner — forge_repo owner may be
+  # the calling user (e.g. johba) but the ops repo belongs to disinto-admin.
+  local ops_slug="disinto-admin/${project_name}-ops"
   local ops_root="/home/${USER}/${project_name}-ops"
   setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch"
 

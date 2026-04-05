@@ -5,7 +5,7 @@
 
 name            = "disinto"
 repo            = "johba/disinto"
-ops_repo        = "johba/disinto-ops"
+ops_repo        = "disinto-admin/disinto-ops"
 forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/dark-factory"
 ops_repo_root   = "/home/YOU/disinto-ops"
