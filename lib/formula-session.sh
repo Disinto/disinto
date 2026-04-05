@@ -44,6 +44,11 @@ acquire_cron_lock() {
 # Exits 0 (skip) if available memory is below MIN_MB (default 2000).
 check_memory() {
   local min_mb="${1:-2000}"
+  # Graceful fallback if free command is not available (procps not installed)
+  if ! command -v free &>/dev/null; then
+    log "run: free not found, skipping memory check"
+    return 0
+  fi
   local avail_mb
   avail_mb=$(free -m | awk '/Mem:/{print $7}')
   if [ "${avail_mb:-0}" -lt "$min_mb" ]; then
