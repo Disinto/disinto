@@ -53,9 +53,18 @@ check_memory 2000
 
 log "--- Architect run start ---"
 
+# ── Resolve agent identity for .profile repo ────────────────────────────
+if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
+  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_ARCHITECT_TOKEN}" \
+    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+fi
+
 # ── Load formula + context ───────────────────────────────────────────────
-load_formula "$FACTORY_ROOT/formulas/run-architect.toml"
+load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || exit 1
 build_context_block VISION.md AGENTS.md ops:prerequisites.md
+
+# ── Prepare .profile context (lessons injection) ─────────────────────────
+formula_prepare_profile_context
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
@@ -84,6 +93,7 @@ and file sub-issues after design forks are resolved.
 ${CONTEXT_BLOCK}
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT}
+$(formula_lessons_block)
 ## Formula
 ${FORMULA_CONTENT}
 
@@ -104,4 +114,8 @@ agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 rm -f "$SCRATCH_FILE"
+
+# Write journal entry post-session
+profile_write_journal "architect-run" "Architect run $(date -u +%Y-%m-%d)" "complete" "" || true
+
 log "--- Architect run done ---"
