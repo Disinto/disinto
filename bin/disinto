@@ -2717,59 +2717,21 @@ disinto_hire_an_agent() {
     repo_exists=true
     echo "  Repo '${agent_name}/.profile' already exists"
   else
-    # Get user token for creating repo
-    # Always try to get token using user_pass (set in Step 1 for new users, reset for existing)
-    local user_token=""
-    user_token=$(curl -sf -X POST \
-      -u "${agent_name}:${user_pass}" \
-      -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/users/${agent_name}/tokens" \
-      -d "{\"name\":\".profile-repo-token\",\"scopes\":[\"repository\"]}" 2>/dev/null \
-      | jq -r '.sha1 // empty') || user_token=""
-
-    if [ -z "$user_token" ]; then
-      # Try listing existing tokens
-      user_token=$(curl -sf \
-        -u "${agent_name}:${user_pass}" \
-        "${forge_url}/api/v1/users/${agent_name}/tokens" 2>/dev/null \
-        | jq -r '.[0].sha1 // empty') || user_token=""
-    fi
-
-    # Create the repo using the user's namespace (user/repos with user_token creates in that user's namespace)
-    # or use admin API to create in specific user's namespace
-    local repo_created=false
+    # Create the repo using the admin API to ensure it's created in the agent's namespace.
+    # Using POST /api/v1/user/repos with a user token would create the repo under the
+    # authenticated user, which could be wrong if the token belongs to a different user.
+    # The admin API POST /api/v1/admin/users/{username}/repos explicitly creates in the
+    # specified user's namespace.
     local create_output
+    create_output=$(curl -sf -X POST \
+      -u "${admin_user}:${admin_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/admin/users/${agent_name}/repos" \
+      -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
 
-    if [ -n "$user_token" ]; then
-      # Try creating as the agent user (user token creates in that user's namespace)
-      create_output=$(curl -sf -X POST \
-        -H "Authorization: token ${user_token}" \
-        -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/user/repos" \
-        -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
-
-      if echo "$create_output" | grep -q '"id":\|[0-9]'; then
-        repo_created=true
-        echo "  Created repo '${agent_name}/.profile'"
-      fi
-    fi
-
-    # If user token failed or wasn't available, use admin API to create in agent's namespace
-    if [ "$repo_created" = false ]; then
-      echo "  Using admin API to create repo in ${agent_name}'s namespace"
-      create_output=$(curl -sf -X POST \
-        -u "${admin_user}:${admin_pass}" \
-        -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/admin/users/${agent_name}/repos" \
-        -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
-
-      if echo "$create_output" | grep -q '"id":\|[0-9]'; then
-        repo_created=true
-        echo "  Created repo '${agent_name}/.profile' (via admin API)"
-      fi
-    fi
-
-    if [ "$repo_created" = false ]; then
+    if echo "$create_output" | grep -q '"id":\|[0-9]'; then
+      echo "  Created repo '${agent_name}/.profile' (via admin API)"
+    else
       echo "  Error: failed to create repo '${agent_name}/.profile'" >&2
       echo "  Response: ${create_output}" >&2
       exit 1
