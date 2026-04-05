@@ -2712,6 +2712,51 @@ disinto_hire_an_agent() {
     fi
   fi
 
+  # Step 1.5: Generate Forge token for the new/existing user
+  echo ""
+  echo "Step 1.5: Generating Forge token for '${agent_name}'..."
+
+  # Convert role to uppercase token variable name (e.g., architect -> FORGE_ARCHITECT_TOKEN)
+  local role_upper
+  role_upper=$(echo "$role" | tr '[:lower:]' '[:upper:]')
+  local token_var="FORGE_${role_upper}_TOKEN"
+
+  # Generate token using the user's password (basic auth)
+  local agent_token=""
+  agent_token=$(curl -sf -X POST \
+    -u "${agent_name}:${user_pass}" \
+    -H "Content-Type: application/json" \
+    "${forge_url}/api/v1/users/${agent_name}/tokens" \
+    -d "{\"name\":\"disinto-${agent_name}-token\",\"scopes\":[\"all\"]}" 2>/dev/null \
+    | jq -r '.sha1 // empty') || agent_token=""
+
+  if [ -z "$agent_token" ]; then
+    # Token name collision — create with timestamp suffix
+    agent_token=$(curl -sf -X POST \
+      -u "${agent_name}:${user_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${agent_name}/tokens" \
+      -d "{\"name\":\"disinto-${agent_name}-$(date +%s)\",\"scopes\":[\"all\"]}" 2>/dev/null \
+      | jq -r '.sha1 // empty') || agent_token=""
+  fi
+
+  if [ -z "$agent_token" ]; then
+    echo "  Warning: failed to create API token for '${agent_name}'" >&2
+  else
+    # Store token in .env under the role-specific variable name
+    if grep -q "^${token_var}=" "$env_file" 2>/dev/null; then
+      # Use sed with alternative delimiter and proper escaping for special chars in token
+      local escaped_token
+      escaped_token=$(printf '%s\n' "$agent_token" | sed 's/[&/\]/\\&/g')
+      sed -i "s|^${token_var}=.*|${token_var}=${escaped_token}|" "$env_file"
+      echo "  ${agent_name} token updated (${token_var})"
+    else
+      printf '%s=%s\n' "$token_var" "$agent_token" >> "$env_file"
+      echo "  ${agent_name} token saved (${token_var})"
+    fi
+    export "${token_var}=${agent_token}"
+  fi
+
   # Step 2: Create .profile repo on Forgejo
   echo ""
   echo "Step 2: Creating '${agent_name}/.profile' repo (if not exists)..."
