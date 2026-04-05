@@ -159,7 +159,7 @@ get_pr_merger() {
       username: .merge_user?.login // .user?.login,
       merged: .merged,
       merged_at: .merged_at // empty
-    }' || true
+    }'
 }
 
 # Get PR reviews
@@ -172,7 +172,7 @@ get_pr_reviews() {
   local ops_api="${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}"
 
   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${ops_api}/pulls/${pr_number}/reviews" 2>/dev/null || true
+    "${ops_api}/pulls/${pr_number}/reviews" 2>/dev/null
 }
 
 # Verify vault action was approved by an admin via PR review
