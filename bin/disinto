@@ -1455,7 +1455,7 @@ copy_issue_templates() {
   mkdir -p "$target_dir"
 
   # Copy each template file if it doesn't already exist
-  for template in "$template_dir"/*; do
+  for template in "$template_dir"/issue/*; do
     [ -f "$template" ] || continue
     local filename
     filename=$(basename "$template")
