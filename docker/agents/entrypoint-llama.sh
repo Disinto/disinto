@@ -24,7 +24,7 @@ if [ ! -d "${PROJECT_REPO_ROOT}/.git" ]; then
   log "Cloning repo..."
   mkdir -p "$(dirname "$PROJECT_REPO_ROOT")"
   chown -R agent:agent /home/agent/repos 2>/dev/null || true
-  su -s /bin/bash agent -c "git clone http://dev-bot:${FORGE_TOKEN}@forgejo:3000/${FORGE_REPO:-johba/disinto}.git ${PROJECT_REPO_ROOT}"
+  su -s /bin/bash agent -c "git clone http://dev-bot:${FORGE_TOKEN}@forgejo:3000/${FORGE_REPO:-disinto-admin/disinto}.git ${PROJECT_REPO_ROOT}"
   log "Repo cloned"
 fi
 

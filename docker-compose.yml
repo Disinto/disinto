@@ -35,7 +35,7 @@ services:
       - FORGE_TOKEN=${FORGE_TOKEN:-}
       - FORGE_URL=http://forgejo:3000
       - PROJECT_TOML=projects/disinto.toml
-      - FORGE_REPO=johba/disinto
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
     depends_on:
       - forgejo
 

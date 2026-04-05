@@ -379,7 +379,7 @@ remove_branch_protection() {
 # - Allow review-bot to approve PRs
 #
 # Args:
-#   $1 - Repo path in format 'owner/repo' (e.g., 'johba/disinto')
+#   $1 - Repo path in format 'owner/repo' (e.g., 'disinto-admin/disinto')
 #   $2 - Branch to protect (default: main)
 #
 # Returns: 0 on success, 1 on failure
@@ -536,7 +536,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       echo "Required environment variables:"
       echo "  FORGE_TOKEN     Forgejo API token (admin user recommended)"
       echo "  FORGE_URL       Forgejo instance URL (e.g., https://codeberg.org)"
-      echo "  FORGE_OPS_REPO  Ops repo in format owner/repo (e.g., johba/disinto-ops)"
+      echo "  FORGE_OPS_REPO  Ops repo in format owner/repo (e.g., disinto-admin/disinto-ops)"
       exit 0
       ;;
   esac

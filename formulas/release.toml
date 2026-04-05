@@ -58,7 +58,7 @@ Validate release prerequisites before proceeding.
 
 7. Check if tag already exists on Forgejo:
    - curl -sf -H "Authorization: token $FORGE_TOKEN" \
-   -   "$FORGE_URL/api/v1/repos/johba/disinto/git/tags/$RELEASE_VERSION"
+   -   "$FORGE_URL/api/v1/repos/$FORGE_REPO/git/tags/$RELEASE_VERSION"
    - If exists, exit with error
 
 8. Export RELEASE_VERSION for subsequent steps:
@@ -77,14 +77,14 @@ Create the release tag on Forgejo main via the Forgejo API.
 
 1. Get current HEAD SHA of main:
    - curl -sf -H "Authorization: token $FORGE_TOKEN" \
-   -   "$FORGE_URL/api/v1/repos/johba/disinto/branches/$PRIMARY_BRANCH"
+   -   "$FORGE_URL/api/v1/repos/$FORGE_REPO/branches/$PRIMARY_BRANCH"
    - Parse sha field from response
 
 2. Create tag via Forgejo API:
    - curl -sf -X POST \
    -   -H "Authorization: token $FORGE_TOKEN" \
    -   -H "Content-Type: application/json" \
-   -   "$FORGE_URL/api/v1/repos/johba/disinto/tags" \
+   -   "$FORGE_URL/api/v1/repos/$FORGE_REPO/tags" \
    -   -d "{\"tag\":\"$RELEASE_VERSION\",\"target\":\"$HEAD_SHA\",\"message\":\"Release $RELEASE_VERSION\"}"
    - Parse response for success
 
@@ -106,8 +106,8 @@ description = """
 Push the newly created tag to all configured mirrors.
 
 1. Add mirror remotes if not already present:
-   - Codeberg: git remote add codeberg git@codeberg.org:johba/disinto.git
-   - GitHub: git remote add github git@github.com:disinto/disinto.git
+   - Codeberg: git remote add codeberg git@codeberg.org:${FORGE_REPO_OWNER}/${PROJECT_NAME}.git
+   - GitHub: git remote add github git@github.com:disinto/${PROJECT_NAME}.git
    - Check with: git remote -v
 
 2. Push tag to Codeberg:
@@ -120,9 +120,9 @@ Push the newly created tag to all configured mirrors.
 
 4. Verify tags exist on mirrors:
    - curl -sf -H "Authorization: token $GITHUB_TOKEN" \
-   -   "https://api.github.com/repos/disinto/disinto/tags/$RELEASE_VERSION"
+   -   "https://api.github.com/repos/disinto/${PROJECT_NAME}/tags/$RELEASE_VERSION"
    - curl -sf -H "Authorization: token $FORGE_TOKEN" \
-   -   "$FORGE_URL/api/v1/repos/johba/disinto/git/tags/$RELEASE_VERSION"
+   -   "$FORGE_URL/api/v1/repos/$FORGE_REPO/git/tags/$RELEASE_VERSION"
 
 5. Log success:
    - echo "Tag $RELEASE_VERSION pushed to mirrors"
@@ -227,7 +227,7 @@ Write the release result to a file for tracking.
    - {
    -   "version": "$RELEASE_VERSION",
    -   "image_id": "$IMAGE_ID",
-   -   "forgejo_tag_url": "$FORGE_URL/johba/disinto/src/$RELEASE_VERSION",
+   -   "forgejo_tag_url": "$FORGE_URL/$FORGE_REPO/src/$RELEASE_VERSION",
    -   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
    -   "status": "success"
    - }

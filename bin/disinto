@@ -303,10 +303,10 @@ services:
     environment:
       - DISINTO_VERSION=${DISINTO_VERSION:-main}
       - FORGE_URL=http://forgejo:3000
-      - FORGE_REPO=johba/disinto
-      - FORGE_OPS_REPO=johba/disinto-ops
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - FORGE_OPS_REPO=${FORGE_OPS_REPO:-disinto-admin/disinto-ops}
       - FORGE_TOKEN=${FORGE_TOKEN:-}
-      - FORGE_ADMIN_USERS=${FORGE_ADMIN_USERS:-disinto-admin,johba}
+      - FORGE_ADMIN_USERS=${FORGE_ADMIN_USERS:-disinto-admin}
       - FORGE_ADMIN_TOKEN=${FORGE_ADMIN_TOKEN:-}
       - OPS_REPO_ROOT=/opt/disinto-ops
       - PROJECT_REPO_ROOT=/opt/disinto
@@ -711,10 +711,10 @@ setup_forge() {
   # Preserve password for Woodpecker OAuth2 token generation (#779)
   _FORGE_ADMIN_PASS="$admin_pass"
 
-  # Create human user (johba) as site admin if it doesn't exist
-  local human_user="johba"
+  # Create human user (disinto-admin) as site admin if it doesn't exist
+  local human_user="disinto-admin"
   local human_pass
-  human_pass="human-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+  human_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
 
   if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
     echo "Creating human user: ${human_user}"
@@ -723,7 +723,7 @@ setup_forge() {
       --admin \
       --username "${human_user}" \
       --password "${human_pass}" \
-      --email "johba@disinto.local" \
+      --email "admin@disinto.local" \
       --must-change-password=false 2>&1); then
       echo "Error: failed to create human user '${human_user}':" >&2
       echo "  ${create_output}" >&2
@@ -1007,11 +1007,12 @@ setup_ops_repo() {
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
-      # Fallback: create under the human user namespace
+      # Fallback: create under the repo owner namespace (FORGE_REPO owner)
+      local repo_owner="${FORGE_REPO%%/*}"
       curl -sf -X POST \
         -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/users/johba/repos" \
+        "${forge_url}/api/v1/users/${repo_owner}/repos" \
         -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data\"}" >/dev/null 2>&1 || true
     fi
 
@@ -1985,7 +1986,7 @@ p.write_text(text)
 
   # Set up vault branch protection on ops repo (#77)
   # This ensures admin-only merge to main, blocking bots from merging vault PRs
-  # Use HUMAN_TOKEN (johba) or FORGE_TOKEN (dev-bot) for admin operations
+  # Use HUMAN_TOKEN (disinto-admin) or FORGE_TOKEN (dev-bot) for admin operations
   export FORGE_OPS_REPO="$ops_slug"
   # Source env.sh to ensure FORGE_TOKEN is available
   source "${FACTORY_ROOT}/lib/env.sh"
