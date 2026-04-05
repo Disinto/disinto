@@ -2790,7 +2790,7 @@ disinto_hire_an_agent() {
   local clone_url="${forge_url}/${agent_name}/.profile.git"
   local auth_url
   auth_url=$(printf '%s' "$forge_url" | sed "s|://|://${agent_name}:${user_pass}@|")
-  auth_url="${auth_url}/.profile.git"
+  auth_url="${auth_url}/${agent_name}/.profile.git"
 
   # Display unauthenticated URL (auth token only in actual git clone command)
   echo "  Cloning: ${forge_url}/${agent_name}/.profile.git"
