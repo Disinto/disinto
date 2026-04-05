@@ -45,7 +45,7 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 # shellcheck source=../lib/pr-lifecycle.sh
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
 
-LOG_FILE="$SCRIPT_DIR/gardener.log"
+LOG_FILE="${DISINTO_LOG_DIR}/gardener/gardener.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh

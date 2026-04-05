@@ -13,7 +13,7 @@ FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
   DISINTO_DATA_DIR="${HOME}/data"
   DISINTO_LOG_DIR="${DISINTO_DATA_DIR}/logs"
-  mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics}
+  mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics,gardener}
 else
   DISINTO_LOG_DIR="${FACTORY_ROOT}"
 fi
