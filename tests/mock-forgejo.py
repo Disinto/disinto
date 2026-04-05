@@ -135,6 +135,7 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             # Users patterns
             (r"^users/([^/]+)$", f"handle_{method}_users_username"),
             (r"^users/([^/]+)/tokens$", f"handle_{method}_users_username_tokens"),
+            (r"^users/([^/]+)/tokens/([^/]+)$", f"handle_{method}_users_username_tokens_token_id"),
             (r"^users/([^/]+)/repos$", f"handle_{method}_users_username_repos"),
             # Repos patterns
             (r"^repos/([^/]+)/([^/]+)$", f"handle_{method}_repos_owner_repo"),
@@ -306,6 +307,38 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         # Return list of tokens for this user
         tokens = [t for t in state["tokens"].values() if t.get("username") == username]
         json_response(self, 200, tokens)
+
+    def handle_DELETE_users_username_tokens_token_id(self, query):
+        """DELETE /api/v1/users/{username}/tokens/{id}"""
+        # Support both token auth and basic auth
+        username = require_token(self)
+        if not username:
+            username = require_basic_auth(self)
+        if not username:
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+
+        parts = self.path.split("/")
+        if len(parts) >= 8:
+            token_id_str = parts[7]
+        else:
+            json_response(self, 404, {"message": "token not found"})
+            return
+
+        # Find and delete token by ID
+        deleted = False
+        for tok_sha1, tok in list(state["tokens"].items()):
+            if tok.get("id") == int(token_id_str) and tok.get("username") == username:
+                del state["tokens"][tok_sha1]
+                deleted = True
+                break
+
+        if deleted:
+            self.send_response(204)
+            self.send_header("Content-Length", 0)
+            self.end_headers()
+        else:
+            json_response(self, 404, {"message": "token not found"})
 
     def handle_POST_users_username_tokens(self, query):
         """POST /api/v1/users/{username}/tokens"""

@@ -875,9 +875,10 @@ setup_forge() {
     # Generate token via API (basic auth as the bot user — Forgejo requires
     # basic auth on POST /users/{username}/tokens, token auth is rejected)
     # First, try to delete existing tokens to avoid name collision
+    # Use bot user's own Basic Auth (we just set the password above)
     local existing_token_ids
     existing_token_ids=$(curl -sf \
-      -H "Authorization: token ${admin_token}" \
+      -u "${bot_user}:${bot_pass}" \
       "${forge_url}/api/v1/users/${bot_user}/tokens" 2>/dev/null \
       | jq -r '.[].id // empty' 2>/dev/null) || existing_token_ids=""
 
@@ -885,7 +886,7 @@ setup_forge() {
     if [ -n "$existing_token_ids" ]; then
       while IFS= read -r tid; do
         [ -n "$tid" ] && curl -sf -X DELETE \
-          -H "Authorization: token ${admin_token}" \
+          -u "${bot_user}:${bot_pass}" \
           "${forge_url}/api/v1/users/${bot_user}/tokens/${tid}" >/dev/null 2>&1 || true
       done <<< "$existing_token_ids"
     fi
@@ -1071,7 +1072,7 @@ setup_ops_repo() {
         actual_ops_slug="${org_name}/${ops_name}"
         echo "Ops repo: ${actual_ops_slug} created on Forgejo (via admin API)"
       else
-        echo "Error: failed to create ops repo '${actual_ops_slug}' (HTTP ${http_code})" >&2
+        echo "Error: failed to create ops repo '${org_name}/${ops_name}' (HTTP ${http_code})" >&2
         return 1
       fi
     fi

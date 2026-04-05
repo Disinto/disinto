@@ -175,6 +175,18 @@ else
   fail "disinto init exited non-zero"
 fi
 
+# ── Idempotency test: run init again ───────────────────────────────────────
+echo "=== Idempotency test: running disinto init again ==="
+if bash "${FACTORY_ROOT}/bin/disinto" init \
+  "${TEST_SLUG}" \
+  --bare --yes \
+  --forge-url "$FORGE_URL" \
+  --repo-root "/tmp/smoke-test-repo"; then
+  pass "disinto init (re-run) completed successfully"
+else
+  fail "disinto init (re-run) exited non-zero"
+fi
+
 # ── 4. Verify Forgejo state ─────────────────────────────────────────────────
 echo "=== 4/6 Verifying Forgejo state ==="
 
