@@ -76,6 +76,23 @@ Pre-checks (bash, zero tokens — detect problems before invoking Claude):
 6. Tech-debt promotion: list all tech-debt labeled issues — goal is to
    process them all (promote to backlog or classify as dust).
 
+7. Bug-report detection: for each open unlabeled issue (no backlog, no
+   bug-report, no in-progress, no blocked, no underspecified, no vision,
+   no tech-debt), check whether it describes a user-facing bug with
+   reproduction steps. Criteria — ALL must be true:
+   a. Body describes broken behavior (something that should work but
+      doesn't), NOT a feature request or enhancement
+   b. Body contains steps to reproduce (numbered list, "steps to
+      reproduce" heading, or clear sequence of actions that trigger the bug)
+   c. Issue is not already labeled
+
+   If all criteria match, write an add_label action to the manifest:
+     echo '{"action":"add_label","issue":NNN,"label":"bug-report"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+     echo "ACTION: labeled #NNN as bug-report — <reason>" >> "$RESULT_FILE"
+
+   Do NOT also add the backlog label — bug-report is a separate triage
+   track that feeds into reproduction automation.
+
 For each issue, choose ONE action and write to result file:
 
 ACTION (substantial — promote, close duplicate, add acceptance criteria):
@@ -167,8 +184,9 @@ Sibling dependency rule (CRITICAL):
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
   2. Quality gate — strip backlog from issues missing acceptance criteria or affected files
-  3. Process tech-debt issues by score (impact/effort)
-  4. Classify remaining items as dust or route to vault
+  3. Bug-report detection — label qualifying issues before other classification
+  4. Process tech-debt issues by score (impact/effort)
+  5. Classify remaining items as dust or route to vault
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.
