@@ -1,22 +1,17 @@
 [
   {
-    "action": "edit_body",
-    "issue": 189,
-    "body": "Flagged by AI reviewer in PR #188.\n\n## Problem\n\nBoth `get_pr_merger` and `get_pr_reviews` end with `|| true`, meaning they always return exit code 0. The callers pattern-match on the exit code:\n\n```bash\nreviews_json=$(get_pr_reviews \"$pr_number\") || {\n  log \"WARNING: Could not fetch reviews...\"\n  return 1\n}\n```\n\nBecause the function always succeeds, this `|| { ... }` block is unreachable dead code. If the underlying `curl` call fails, `reviews_json` is empty. The subsequent `jq 'length // 0'` on empty input produces empty output; `[ \"\" -eq 0 ]` then throws a bash integer error instead of the intended warning log. The fallback to the merger check still occurs, but via an uncontrolled error path.\n\nSame pre-existing issue in `get_pr_merger`.\n\n## Fix\n\nRemove `|| true` from both helpers so curl failures propagate, letting the `|| { log ...; return 1; }` handlers fire correctly.\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] `get_pr_merger` does not end with `|| true`\n- [ ] `get_pr_reviews` does not end with `|| true`\n- [ ] When curl fails inside `get_pr_merger`, the caller `|| { ... }` error handler fires\n- [ ] When curl fails inside `get_pr_reviews`, the caller `|| { ... }` error handler fires\n- [ ] ShellCheck passes on `docker/edge/dispatcher.sh`\n\n## Affected files\n\n- `docker/edge/dispatcher.sh` — `get_pr_merger()` and `get_pr_reviews()` functions\n"
+    "action": "remove_label",
+    "issue": 240,
+    "label": "blocked"
   },
   {
     "action": "add_label",
-    "issue": 189,
+    "issue": 240,
     "label": "backlog"
   },
   {
-    "action": "edit_body",
-    "issue": 9,
-    "body": "## Problem\n\nThe Forgejo instance runs inside a Docker volume (`disinto_forgejo-data`). If the containers or volumes are destroyed, all issues, PRs, review comments, and project history are lost. Git repo data survives on mirrors (Codeberg, GitHub), but the issue tracker does not.\n\n## Design\n\nAdd a periodic `forgejo dump` to export the Forgejo database (issues, users, PRs, comments, labels) to a compressed archive. Store the backup in the ops repo or a dedicated backup location.\n\n### Considerations\n\n- `forgejo dump` produces a zip with the database, repos, and config\n- Only the database portion is critical (repos are mirrored elsewhere)\n- Could run as a cron job inside the agents container, or as a supervisor health check\n- Backup destination options: ops repo, host filesystem, or object storage\n- Retention policy: keep N most recent dumps\n\n## Why not mirror issues to external forges?\n\nThe factory uses a single internal Forgejo API regardless of where mirrors go (Codeberg, GitHub, or both). Keeping one API surface is simpler than adapting to multiple external forge APIs.\n\n## Acceptance criteria\n\n- [ ] A cron job or supervisor health check runs `forgejo dump` periodically (daily or configurable)\n- [ ] Backup archive is stored in a persistent location outside the Docker volume (ops repo or host filesystem)\n- [ ] A retention policy keeps at most N recent backups and removes older ones\n- [ ] The backup mechanism is documented in AGENTS.md or README.md\n- [ ] Failure to backup is logged and does not crash the supervisor\n\n## Affected files\n\n- `supervisor/supervisor-run.sh` or `supervisor/preflight.sh` — add backup health check or cron trigger\n- `disinto-factory/SKILL.md` or `README.md` — document backup configuration\n"
-  },
-  {
-    "action": "add_label",
-    "issue": 9,
-    "label": "backlog"
+    "action": "comment",
+    "issue": 240,
+    "body": "Gardener: PR #242 was closed without merging (implementation was empty). Re-queuing this issue for dev-agent pickup. The fix is well-scoped and blocks #239."
   }
 ]
