@@ -46,9 +46,11 @@ agent_run() {
   [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
 
   local run_dir="${worktree_dir:-$(pwd)}"
+  local lock_file="${HOME}/.claude/session.lock"
+  mkdir -p "$(dirname "$lock_file")"
   local output
   log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
-  output=$(cd "$run_dir" && timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") || true
+  output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") || true
 
   # Extract and persist session_id
   local new_sid
@@ -76,7 +78,7 @@ agent_run() {
         # Nudge: there are uncommitted changes
         local nudge="You stopped but did not push any code. You have uncommitted changes. Commit them and push."
         log "agent_run: nudging (uncommitted changes)"
-        output=$(cd "$run_dir" && timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
+        output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
         new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
         if [ -n "$new_sid" ]; then
           _AGENT_SESSION_ID="$new_sid"
