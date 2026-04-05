@@ -1,4 +1,4 @@
-<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
+<!-- last-reviewed: 33eb565d7e0c5b7e0159e1720ba7f79126a7e25e -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -31,7 +31,6 @@ runs directly from cron like the planner and predictor.
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
-- `$OPS_REPO_ROOT/journal/supervisor/*.md` — Daily health logs from each supervisor run
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 - `supervisor/supervisor-poll.sh` — Legacy bash orchestrator (superseded by

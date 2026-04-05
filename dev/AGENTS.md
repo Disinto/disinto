@@ -1,4 +1,4 @@
-<!-- last-reviewed: f32707ba659de278a3af434e3549fb8a8dce9d3a -->
+<!-- last-reviewed: 33eb565d7e0c5b7e0159e1720ba7f79126a7e25e -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -14,7 +14,7 @@ in-progress issues are also picked up. The direct-merge scan runs before the loc
 check so approved PRs get merged even while a dev-agent session is active.
 
 **Key files**:
-- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed` (replaced `prediction/backlog` — that label no longer exists)
+- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start).
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
 - `dev/phase-handler.sh` — Phase callback functions: `post_refusal_comment()`, `_on_phase_change()`, `build_phase_protocol_prompt()`. `do_merge()` detects already-merged PRs on HTTP 405 (race with dev-poll's pre-lock scan) and returns success instead of escalating. Sources `lib/mirrors.sh` and calls `mirror_push()` after every successful merge.
 - `dev/phase-test.sh` — Integration test for the phase protocol
