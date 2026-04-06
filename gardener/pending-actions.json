@@ -1,17 +1,22 @@
 [
   {
-    "action": "remove_label",
-    "issue": 240,
-    "label": "blocked"
+    "action": "edit_body",
+    "issue": 288,
+    "body": "Flagged by AI reviewer in PR #287.\n\n## Problem\n\n`review/review-pr.sh` fetches the PR head branch using hardcoded `origin` at two locations (lines 134 and 165):\n\n```bash\ngit fetch origin \"$PR_HEAD\"\n```\n\nThis is the same class of bug fixed for cron agents in #278. If the project repo is checked out with a different remote name (e.g. `codeberg`, `forge`), the review agent will silently fail to fetch the PR branch, potentially reviewing a stale or wrong commit.\n\n## Fix\n\nCall `resolve_forge_remote` early in `review-pr.sh` (same pattern as cron agents) and replace hardcoded `origin` with `${FORGE_REMOTE}`.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `review/review-pr.sh` (lines ~134, ~165)\n- `lib/mirrors.sh` (for `resolve_forge_remote` reference if needed)\n\n## Acceptance criteria\n- [ ] `resolve_forge_remote` is called early in `review/review-pr.sh` to set `FORGE_REMOTE`\n- [ ] Hardcoded `origin` at both fetch locations replaced with `${FORGE_REMOTE}`\n- [ ] ShellCheck passes on the modified file\n- [ ] Mirrors the same fix pattern used for cron agents in #278\n"
   },
   {
     "action": "add_label",
-    "issue": 240,
+    "issue": 288,
     "label": "backlog"
   },
   {
-    "action": "comment",
-    "issue": 240,
-    "body": "Gardener: PR #242 was closed without merging (implementation was empty). Re-queuing this issue for dev-agent pickup. The fix is well-scoped and blocks #239."
+    "action": "edit_body",
+    "issue": 275,
+    "body": "Flagged by AI reviewer in PR #274.\n\n## Problem\n\nIn `bin/disinto` `setup_forge()`, the admin token was fixed (PR #274) to delete-then-recreate so the sha1 is captured. However the human token fallback at lines 791–797 still uses the old broken pattern:\n\n```sh\nhuman_token=$(curl -sf \\n  -u \"${human_user}:${human_pass}\" \\n  \"${forge_url}/api/v1/users/${human_user}/tokens\" 2>/dev/null \\n  | jq -r '.[0].sha1 // empty') || human_token=\"\"\n```\n\nForge/Forgejo does **not** return `sha1` in token list responses — only at creation time. So on a re-run when `disinto-human-token` already exists, the create call returns 409 (token name collision), the fallback listing returns an empty sha1, and `HUMAN_TOKEN` is silently not saved/updated.\n\n## Fix\n\nApply the same delete-then-recreate pattern used for the admin token in PR #274: look up the token by name, delete it if it exists, then create fresh.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `bin/disinto` (lines ~791–797, inside `setup_forge()`)\n\n## Acceptance criteria\n- [ ] Human token creation uses delete-then-recreate pattern (same as admin token in PR #274)\n- [ ] Re-running `disinto init` on an existing box correctly saves `HUMAN_TOKEN` (no silent empty)\n- [ ] No 409 collision on token name re-use\n- [ ] ShellCheck passes on the modified file\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 275,
+    "label": "backlog"
   }
 ]

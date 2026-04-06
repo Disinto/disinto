@@ -1,4 +1,4 @@
-<!-- last-reviewed: auto-generated -->
+<!-- last-reviewed: 8d321681213a455ed01eefc13ccbd9af7daae453 -->
 # Architect — Agent Instructions
 
 ## What this agent is
