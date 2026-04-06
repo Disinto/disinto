@@ -43,7 +43,6 @@ _ilc_log() {
 
 # ---------------------------------------------------------------------------
 # Label ID caching — lookup once per name, cache in globals.
-# Pattern follows ci-helpers.sh (ensure_blocked_label_id).
 # ---------------------------------------------------------------------------
 declare -A _ILC_LABEL_IDS
 _ILC_LABEL_IDS["backlog"]=""
