@@ -55,6 +55,9 @@ check_memory 2000
 
 log "--- Supervisor run start ---"
 
+# ── Resolve forge remote for git operations ─────────────────────────────
+resolve_forge_remote
+
 # ── Housekeeping: clean up stale crashed worktrees (>24h) ────────────────
 cleanup_stale_crashed_worktrees 24
 

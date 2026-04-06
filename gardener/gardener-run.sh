@@ -64,6 +64,9 @@ check_memory 2000
 
 log "--- Gardener run start ---"
 
+# ── Resolve forge remote for git operations ─────────────────────────────
+resolve_forge_remote
+
 # ── Resolve agent identity for .profile repo ────────────────────────────
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_GARDENER_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_GARDENER_TOKEN}" \
@@ -128,9 +131,9 @@ ${PROMPT_FOOTER}"
 
 # ── Create worktree ──────────────────────────────────────────────────────
 cd "$PROJECT_REPO_ROOT"
-git fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+git fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
 worktree_cleanup "$WORKTREE"
-git worktree add "$WORKTREE" "origin/${PRIMARY_BRANCH}" --detach 2>/dev/null
+git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null
 
 cleanup() {
   worktree_cleanup "$WORKTREE"
@@ -328,9 +331,9 @@ if [ -n "$PR_NUMBER" ]; then
 
   if [ "$_PR_WALK_EXIT_REASON" = "merged" ]; then
     # Post-merge: pull primary, mirror push, execute manifest
-    git -C "$PROJECT_REPO_ROOT" fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
     git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
-    git -C "$PROJECT_REPO_ROOT" pull --ff-only origin "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" pull --ff-only "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
     mirror_push
     _gardener_execute_manifest
     rm -f "$SCRATCH_FILE"

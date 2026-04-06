@@ -53,6 +53,9 @@ check_memory 2000
 
 log "--- Predictor run start ---"
 
+# ── Resolve forge remote for git operations ─────────────────────────────
+resolve_forge_remote
+
 # ── Resolve agent identity for .profile repo ────────────────────────────
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PREDICTOR_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PREDICTOR_TOKEN}" \
