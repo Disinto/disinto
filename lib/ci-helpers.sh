@@ -7,27 +7,6 @@ set -euo pipefail
 # ci_commit_status() / ci_pipeline_number() require: woodpecker_api(), forge_api() (from env.sh)
 # classify_pipeline_failure() requires: woodpecker_api() (defined in env.sh)
 
-# ensure_blocked_label_id — look up (or create) the "blocked" label, print its ID.
-# Caches the result in _BLOCKED_LABEL_ID to avoid repeated API calls.
-# Requires: FORGE_TOKEN, FORGE_API (from env.sh), forge_api()
-ensure_blocked_label_id() {
-  if [ -n "${_BLOCKED_LABEL_ID:-}" ]; then
-    printf '%s' "$_BLOCKED_LABEL_ID"
-    return 0
-  fi
-  _BLOCKED_LABEL_ID=$(forge_api GET "/labels" 2>/dev/null \
-    | jq -r '.[] | select(.name == "blocked") | .id' 2>/dev/null || true)
-  if [ -z "$_BLOCKED_LABEL_ID" ]; then
-    _BLOCKED_LABEL_ID=$(curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/labels" \
-      -d '{"name":"blocked","color":"#e11d48"}' 2>/dev/null \
-      | jq -r '.id // empty' 2>/dev/null || true)
-  fi
-  printf '%s' "$_BLOCKED_LABEL_ID"
-}
-
 # ensure_priority_label — look up (or create) the "priority" label, print its ID.
 # Caches the result in _PRIORITY_LABEL_ID to avoid repeated API calls.
 # Requires: FORGE_TOKEN, FORGE_API (from env.sh), forge_api()
