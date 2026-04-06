@@ -474,11 +474,7 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
           _PR_WALK_EXIT_REASON="merged"
           return 0
         fi
-        if [ "$rc" -eq 2 ]; then
-          _PR_WALK_EXIT_REASON="merge_blocked"
-          return 1
-        fi
-        # Merge failed (conflict) — ask agent to rebase
+        # Merge failed (conflict or HTTP 405) — ask agent to rebase
         _prl_log "merge failed — invoking agent to rebase"
         agent_run --resume "$session_id" --worktree "$worktree" \
           "PR #${pr_num} approved but merge failed: ${_PR_MERGE_ERROR:-unknown}
