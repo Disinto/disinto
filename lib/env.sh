@@ -77,16 +77,11 @@ if [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
   source "${FACTORY_ROOT}/lib/load-project.sh" "$PROJECT_TOML"
 fi
 
-# Forge token: new FORGE_TOKEN > legacy CODEBERG_TOKEN
-if [ -z "${FORGE_TOKEN:-}" ]; then
-  FORGE_TOKEN="${CODEBERG_TOKEN:-}"
-fi
-export FORGE_TOKEN
-export CODEBERG_TOKEN="${FORGE_TOKEN}"  # backwards compat
+# Forge token
+export FORGE_TOKEN="${FORGE_TOKEN:-}"
 
-# Review bot token: FORGE_REVIEW_TOKEN > legacy REVIEW_BOT_TOKEN
+# Review bot token
 export FORGE_REVIEW_TOKEN="${FORGE_REVIEW_TOKEN:-${REVIEW_BOT_TOKEN:-}}"
-export REVIEW_BOT_TOKEN="${FORGE_REVIEW_TOKEN}"  # backwards compat
 
 # Per-agent tokens (#747): each agent gets its own Forgejo identity.
 # Falls back to FORGE_TOKEN for backwards compat with single-token setups.
@@ -97,18 +92,14 @@ export FORGE_SUPERVISOR_TOKEN="${FORGE_SUPERVISOR_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_PREDICTOR_TOKEN="${FORGE_PREDICTOR_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_ARCHITECT_TOKEN="${FORGE_ARCHITECT_TOKEN:-${FORGE_TOKEN}}"
 
-# Bot usernames filter: FORGE_BOT_USERNAMES > legacy CODEBERG_BOT_USERNAMES
-export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-${CODEBERG_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot,architect-bot}}"
-export CODEBERG_BOT_USERNAMES="${FORGE_BOT_USERNAMES}"  # backwards compat
+# Bot usernames filter
+export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot,architect-bot}"
 
-# Project config (FORGE_* preferred, CODEBERG_* fallback)
-export FORGE_REPO="${FORGE_REPO:-${CODEBERG_REPO:-}}"
-export CODEBERG_REPO="${FORGE_REPO}"  # backwards compat
+# Project config
+export FORGE_REPO="${FORGE_REPO:-}"
 export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
 export FORGE_API="${FORGE_API:-${FORGE_URL}/api/v1/repos/${FORGE_REPO}}"
 export FORGE_WEB="${FORGE_WEB:-${FORGE_URL}/${FORGE_REPO}}"
-export CODEBERG_API="${FORGE_API}"  # backwards compat
-export CODEBERG_WEB="${FORGE_WEB}"  # backwards compat
 # tea CLI login name: derived from FORGE_URL (codeberg vs local forgejo)
 if [ -z "${TEA_LOGIN:-}" ]; then
   case "${FORGE_URL}" in
@@ -209,8 +200,6 @@ forge_api() {
     -H "Content-Type: application/json" \
     "${FORGE_API}${path}" "$@"
 }
-# Backwards-compat alias
-codeberg_api() { forge_api "$@"; }
 
 # Paginate a Forge API GET endpoint and return all items as a merged JSON array.
 # Usage: forge_api_all /path             (no existing query params)
