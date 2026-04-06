@@ -86,9 +86,49 @@ Pre-checks (bash, zero tokens — detect problems before invoking Claude):
       reproduce" heading, or clear sequence of actions that trigger the bug)
    c. Issue is not already labeled
 
-   If all criteria match, write an add_label action to the manifest:
-     echo '{"action":"add_label","issue":NNN,"label":"bug-report"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
-     echo "ACTION: labeled #NNN as bug-report — <reason>" >> "$RESULT_FILE"
+   If all criteria match, enrich the issue body and write the manifest actions:
+
+   Body enrichment (CRITICAL — turns raw reports into actionable investigation briefs):
+   Before writing the add_label action, construct an enriched body by appending
+   these sections to the original issue body:
+
+   a. ``## What was reported``
+      One or two sentence summary of the user's claim. Distill the broken
+      behavior concisely — what the user expected vs. what actually happened.
+
+   b. ``## Known context``
+      What can be inferred from the codebase without running anything:
+      - Which contracts/components/files are involved (use AGENTS.md layout
+        and file paths mentioned in the issue or body)
+      - What the expected behavior should be (from VISION.md, docs, code)
+      - Any recent changes to involved components:
+          git log --oneline -5 -- <paths>
+      - Related issues or prior fixes (cross-reference by number if known)
+
+   c. ``## Reproduction plan``
+      Concrete steps for a reproduce-agent or human. Be specific:
+      - Which environment to use (e.g. "start fresh stack with
+        \`./scripts/dev.sh restart --full\`")
+      - Which transactions or actions to execute (with \`cast\` commands,
+        API calls, or UI navigation steps where applicable)
+      - What state to check after each step (contract reads, API queries,
+        UI observations, log output)
+
+   d. ``## What needs verification``
+      Checkboxes distinguishing known facts from unknowns:
+      - ``- [ ]`` Does the reported behavior actually occur? (reproduce)
+      - ``- [ ]`` Is <component X> behaving as expected? (check state)
+      - ``- [ ]`` Is the data flow correct from <A> to <B>? (trace)
+      Tailor these to the specific bug — three to five items covering the
+      key unknowns a reproduce-agent must resolve.
+
+   e. Construct full new body = original body text + appended sections.
+      Write an edit_body action BEFORE the add_label action:
+        echo '{"action":"edit_body","issue":NNN,"body":"<full new body>"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   f. Write the add_label action:
+        echo '{"action":"add_label","issue":NNN,"label":"bug-report"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+        echo "ACTION: labeled #NNN as bug-report — <reason>" >> "$RESULT_FILE"
 
    Do NOT also add the backlog label — bug-report is a separate triage
    track that feeds into reproduction automation.
