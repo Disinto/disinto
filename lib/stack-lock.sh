@@ -65,8 +65,8 @@ stack_lock_check() {
   fi
 
   local holder heartbeat
-  holder=$(python3 -c "import sys,json; d=json.load(open('$lock_file')); print(d.get('holder','unknown'))" 2>/dev/null || echo "unknown")
-  heartbeat=$(python3 -c "import sys,json; d=json.load(open('$lock_file')); print(d.get('heartbeat',''))" 2>/dev/null || echo "")
+  holder=$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(d.get("holder","unknown"))' "$lock_file" 2>/dev/null || echo "unknown")
+  heartbeat=$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(d.get("heartbeat",""))' "$lock_file" 2>/dev/null || echo "")
 
   if [ -z "$heartbeat" ]; then
     echo "stale:${holder}"
@@ -107,7 +107,7 @@ stack_lock_acquire() {
 
     case "$status" in
       free)
-        # Attempt atomic write using a temp file + mv
+        # Write to temp file then rename to avoid partial reads by other processes
         local tmp_lock
         tmp_lock=$(mktemp "${STACK_LOCK_DIR}/.lock-tmp-XXXXXX")
         local now
@@ -156,11 +156,11 @@ stack_lock_heartbeat() {
   [ -f "$lock_file" ] || return 0
 
   local current_holder
-  current_holder=$(python3 -c "import sys,json; d=json.load(open('$lock_file')); print(d.get('holder',''))" 2>/dev/null || echo "")
+  current_holder=$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(d.get("holder",""))' "$lock_file" 2>/dev/null || echo "")
   [ "$current_holder" = "$holder" ] || return 0
 
   local since
-  since=$(python3 -c "import sys,json; d=json.load(open('$lock_file')); print(d.get('since',''))" 2>/dev/null || echo "")
+  since=$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(d.get("since",""))' "$lock_file" 2>/dev/null || echo "")
   local now
   now=$(_stack_lock_now)
 
@@ -185,7 +185,7 @@ stack_lock_release() {
 
   if [ -n "$holder" ]; then
     local current_holder
-    current_holder=$(python3 -c "import sys,json; d=json.load(open('$lock_file')); print(d.get('holder',''))" 2>/dev/null || echo "")
+    current_holder=$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(d.get("holder",""))' "$lock_file" 2>/dev/null || echo "")
     if [ "$current_holder" != "$holder" ]; then
       echo "[stack-lock] refusing to release: lock held by '${current_holder}', not '${holder}'" >&2
       return 1
