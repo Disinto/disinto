@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8d321681213a455ed01eefc13ccbd9af7daae453 -->
+<!-- last-reviewed: f10cdf2c9e44c32308c7ea74fcc3139407703e59 -->
 # Review Agent
 
 **Role**: AI-powered PR review — post structured findings and formal
@@ -10,7 +10,7 @@ spawns `review-pr.sh <pr-number>`.
 
 **Key files**:
 - `review/review-poll.sh` — Cron scheduler: finds unreviewed PRs with passing CI. Sources `lib/guard.sh` and calls `check_active reviewer` — skips if `$FACTORY_ROOT/state/.reviewer-active` is absent. **Circuit breaker**: counts existing `<!-- review-error: <sha> -->` comments; skips a PR if ≥3 consecutive errors for the same HEAD SHA (prevents flooding on repeated review failures).
-- `review/review-pr.sh` — Creates/reuses a tmux session (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output, posts markdown review + formal forge review, auto-creates follow-up issues for pre-existing tech debt. Before starting the session, runs `lib/build-graph.py --changed-files <PR files>` and appends the JSON structural analysis (affected objectives, orphaned prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review proceeds without it.
+- `review/review-pr.sh` — Creates/reuses a tmux session (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output, posts markdown review + formal forge review, auto-creates follow-up issues for pre-existing tech debt. Calls `resolve_forge_remote()` at startup to determine the correct git remote name (avoids hardcoded 'origin'). Before starting the session, runs `lib/build-graph.py --changed-files <PR files>` and appends the JSON structural analysis (affected objectives, orphaned prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review proceeds without it.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN` — Dev-agent token (must not be the same account as FORGE_REVIEW_TOKEN)
