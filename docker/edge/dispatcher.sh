@@ -533,6 +533,7 @@ dispatch_reproduce() {
   local -a cmd=(docker run --rm
     --name "disinto-reproduce-${issue_number}"
     --network host
+    --security-opt apparmor=unconfined
     -v /var/run/docker.sock:/var/run/docker.sock
     -v agent-data:/home/agent/data
     -v project-repos:/home/agent/repos
