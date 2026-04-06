@@ -57,10 +57,7 @@ log "--- Predictor run start ---"
 resolve_forge_remote
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
-if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PREDICTOR_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PREDICTOR_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
-fi
+resolve_agent_identity || true
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula_or_profile "predictor" "$FACTORY_ROOT/formulas/run-predictor.toml" || exit 1

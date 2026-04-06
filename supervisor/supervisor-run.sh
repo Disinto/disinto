@@ -62,10 +62,7 @@ resolve_forge_remote
 cleanup_stale_crashed_worktrees 24
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
-if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_SUPERVISOR_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_SUPERVISOR_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
-fi
+resolve_agent_identity || true
 
 # ── Collect pre-flight metrics ────────────────────────────────────────────
 log "Running preflight.sh"
