@@ -1468,6 +1468,9 @@ create_labels() {
     ["prediction/dismissed"]="#d73a4a"
     ["prediction/actioned"]="#28a745"
     ["bug-report"]="#e11d48"
+    ["needs-triage"]="#f9d0c4"
+    ["reproduced"]="#0e8a16"
+    ["cannot-reproduce"]="#cccccc"
   )
 
   echo "Creating labels on ${repo}..."
@@ -1481,7 +1484,7 @@ create_labels() {
 
   local name color
   local created=0 skipped=0 failed=0
-  for name in backlog in-progress blocked tech-debt underspecified vision action bug-report prediction/unreviewed prediction/dismissed prediction/actioned; do
+  for name in backlog in-progress blocked tech-debt underspecified vision action bug-report prediction/unreviewed prediction/dismissed prediction/actioned needs-triage reproduced cannot-reproduce; do
     if echo "$existing" | grep -qx "$name"; then
       echo "  . ${name} (already exists)"
       skipped=$((skipped + 1))
