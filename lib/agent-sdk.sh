@@ -48,9 +48,17 @@ agent_run() {
   local run_dir="${worktree_dir:-$(pwd)}"
   local lock_file="${HOME}/.claude/session.lock"
   mkdir -p "$(dirname "$lock_file")"
-  local output
+  local output rc
   log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
-  output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") || true
+  output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") && rc=0 || rc=$?
+  if [ "$rc" -eq 124 ]; then
+    log "agent_run: timeout after ${CLAUDE_TIMEOUT:-7200}s"
+  elif [ "$rc" -ne 0 ]; then
+    log "agent_run: claude exited with code $rc"
+  fi
+  if [ -z "$output" ]; then
+    log "agent_run: empty output (claude may have crashed or failed)"
+  fi
 
   # Extract and persist session_id
   local new_sid
@@ -68,7 +76,7 @@ agent_run() {
 
   # Nudge: if the model stopped without pushing, resume with encouragement.
   # Some models emit end_turn prematurely when confused. A nudge often unsticks them.
-  if [ -n "$_AGENT_SESSION_ID" ]; then
+  if [ -n "$_AGENT_SESSION_ID" ] && [ -n "$output" ]; then
     local has_changes
     has_changes=$(cd "$run_dir" && git status --porcelain 2>/dev/null | head -1) || true
     local has_pushed
@@ -78,7 +86,13 @@ agent_run() {
         # Nudge: there are uncommitted changes
         local nudge="You stopped but did not push any code. You have uncommitted changes. Commit them and push."
         log "agent_run: nudging (uncommitted changes)"
-        output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
+        local nudge_rc
+        output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
+        if [ "$nudge_rc" -eq 124 ]; then
+          log "agent_run: nudge timeout after ${CLAUDE_TIMEOUT:-7200}s"
+        elif [ "$nudge_rc" -ne 0 ]; then
+          log "agent_run: nudge claude exited with code $nudge_rc"
+        fi
         new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
         if [ -n "$new_sid" ]; then
           _AGENT_SESSION_ID="$new_sid"
