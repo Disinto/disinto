@@ -98,20 +98,11 @@ is_blocked() {
 # STALENESS DETECTION FOR IN-PROGRESS ISSUES
 # =============================================================================
 
-# Check if a tmux session for a specific issue is alive
-# Args: project_name issue_number
-# Returns: 0 if session is alive, 1 if not
-session_is_alive() {
-  local project="$1" issue="$2"
-  local session="dev-${project}-${issue}"
-  tmux has-session -t "$session" 2>/dev/null
-}
-
 # Check if there's an open PR for a specific issue
-# Args: project_name issue_number
+# Args: issue_number
 # Returns: 0 if open PR exists, 1 if not
 open_pr_exists() {
-  local project="$1" issue="$2"
+  local issue="$1"
   local branch="fix/issue-${issue}"
   local pr_num
 
@@ -152,12 +143,13 @@ relabel_stale_issue() {
   # Post diagnostic comment using shared helper
   local comment_body
   comment_body=$(
-    printf '### Stale in-progress issue detected\n\n'
-    printf '| Field | Value |\n|---|---|\n'
+    printf '%s\n\n' '### Stale in-progress issue detected'
+    printf '%s\n' '| Field | Value |'
+    printf '%s\n' '|---|---|'
     printf '| Detection reason | `%s` |\n' "$reason"
     printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '\n**Status:** This issue was labeled `in-progress` but no active tmux session exists.\n'
-    printf '**Action required:** A maintainer should triage this issue.\n'
+    printf '%s\n' '**Status:** This issue was labeled `in-progress` but has no assignee, no open PR, and no agent lock file.'
+    printf '%s\n' '**Action required:** A maintainer should triage this issue.'
   )
   _ilc_post_comment "$issue" "$comment_body"
 
@@ -393,12 +385,8 @@ ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
 
-  # Staleness check: if no tmux session and no open PR, the issue is stale
-  SESSION_ALIVE=false
+  # Staleness check: if no assignee, no open PR, and no agent lock, the issue is stale
   OPEN_PR=false
-  if tmux has-session -t "dev-${PROJECT_NAME}-${ISSUE_NUM}" 2>/dev/null; then
-    SESSION_ALIVE=true
-  fi
   if curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
     jq -e --arg branch "fix/issue-${ISSUE_NUM}" \
@@ -406,9 +394,23 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     OPEN_PR=true
   fi
 
-  if [ "$SESSION_ALIVE" = false ] && [ "$OPEN_PR" = false ]; then
-    log "issue #${ISSUE_NUM} is stale (no active tmux session, no open PR) — relabeling to blocked"
-    relabel_stale_issue "$ISSUE_NUM" "no_active_session_no_open_pr"
+  # Check if issue has an assignee — if so, trust that agent is working on it
+  assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
+  if [ -n "$assignee" ]; then
+    log "issue #${ISSUE_NUM} assigned to ${assignee} — trusting active work"
+    exit 0
+  fi
+
+  # Check for dev-agent lock file (agent may be running in another container)
+  LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
+  if [ -f "$LOCK_FILE" ]; then
+    log "issue #${ISSUE_NUM} has agent lock file — trusting active work"
+    exit 0
+  fi
+
+  if [ "$OPEN_PR" = false ]; then
+    log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
+    relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
     exit 0
   fi
 
