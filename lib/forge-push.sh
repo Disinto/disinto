@@ -16,6 +16,7 @@
 # =============================================================================
 set -euo pipefail
 
+# Assert required globals are set before using this module.
 _assert_forge_push_globals() {
   local missing=()
   [ -z "${FORGE_URL:-}" ]      && missing+=("FORGE_URL")
@@ -27,7 +28,6 @@ _assert_forge_push_globals() {
     exit 1
   fi
 }
-_assert_forge_push_globals
 
 # Push local clone to the Forgejo remote.
 push_to_forge() {
