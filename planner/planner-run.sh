@@ -48,7 +48,7 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
 acquire_cron_lock "/tmp/planner-run.lock"
-check_memory 2000
+memory_guard 2000
 
 log "--- Planner run start ---"
 

@@ -6,7 +6,6 @@
 #
 # Functions:
 #   acquire_cron_lock   LOCK_FILE          — PID lock with stale cleanup
-#   check_memory        [MIN_MB]           — skip if available RAM too low
 #   load_formula        FORMULA_FILE       — sets FORMULA_CONTENT
 #   build_context_block FILE [FILE ...]    — sets CONTEXT_BLOCK
 #   build_prompt_footer [EXTRA_API_LINES]  — sets PROMPT_FOOTER (API ref + env)
@@ -49,23 +48,6 @@ acquire_cron_lock() {
   fi
   echo $$ > "$_CRON_LOCK_FILE"
   trap 'rm -f "$_CRON_LOCK_FILE"' EXIT
-}
-
-# check_memory [MIN_MB]
-# Exits 0 (skip) if available memory is below MIN_MB (default 2000).
-check_memory() {
-  local min_mb="${1:-2000}"
-  # Graceful fallback if free command is not available (procps not installed)
-  if ! command -v free &>/dev/null; then
-    log "run: free not found, skipping memory check"
-    return 0
-  fi
-  local avail_mb
-  avail_mb=$(free -m | awk '/Mem:/{print $7}')
-  if [ "${avail_mb:-0}" -lt "$min_mb" ]; then
-    log "run: skipping — only ${avail_mb}MB available (need ${min_mb})"
-    exit 0
-  fi
 }
 
 # ── Agent identity resolution ────────────────────────────────────────────
@@ -168,7 +150,7 @@ ensure_profile_repo() {
 # Checks if the agent has a .profile repo by querying Forgejo API.
 # Returns 0 if repo exists, 1 otherwise.
 _profile_has_repo() {
-  local agent_identity="${1:-${AGENT_IDENTITY:-}}"
+  local agent_identity="${AGENT_IDENTITY:-}"
 
   if [ -z "$agent_identity" ]; then
     if ! resolve_agent_identity; then
@@ -204,8 +186,8 @@ _count_undigested_journals() {
 # Runs a claude -p one-shot to digest undigested journals into lessons-learned.md
 # Returns 0 on success, 1 on failure.
 _profile_digest_journals() {
-  local agent_identity="${1:-${AGENT_IDENTITY:-}}"
-  local model="${2:-${CLAUDE_MODEL:-opus}}"
+  local agent_identity="${AGENT_IDENTITY:-}"
+  local model="${CLAUDE_MODEL:-opus}"
 
   if [ -z "$agent_identity" ]; then
     if ! resolve_agent_identity; then
