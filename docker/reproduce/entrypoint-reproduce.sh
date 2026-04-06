@@ -188,37 +188,55 @@ ${ISSUE_TITLE}
 ## Issue body
 ${ISSUE_BODY}
 
-## Your task
+## Your task — PRIMARY GOAL FIRST
 
-1. **Reproduce the bug** — Use Playwright to navigate the application and follow the reproduction steps from the issue. Take screenshots at each key step and save them to: ${SCREENSHOT_PREFIX}-step-N.png
+This agent has ONE primary job and ONE secondary, minor job. Follow this ORDER:
 
-2. **Determine outcome** — Did the bug reproduce?
-   - YES: Proceed to step 3
-   - NO: Write OUTCOME=cannot-reproduce and skip to step 5
+### PRIMARY: Can the bug be reproduced? (60% of your turns)
 
-3. **Check logs** — Run: docker compose -f ${PROJECT_REPO_ROOT}/docker-compose.yml logs --tail=200
-   Look for: stack traces, error messages, wrong addresses, missing config, HTTP error codes.
+This is the EXIT GATE. Answer YES or NO before doing anything else.
 
-4. **Assess root cause** — Based on logs + browser observations:
-   - FOUND: Write OUTCOME=reproduced and ROOT_CAUSE=<one-line summary>
-   - INCONCLUSIVE: Write OUTCOME=needs-triage
+1. Read the issue, understand the claimed behavior
+2. Navigate the app via Playwright, follow the reported steps
+3. Observe: does the symptom match the report?
+4. Take screenshots as evidence (save to: ${SCREENSHOT_PREFIX}-step-N.png)
+5. Conclude: **reproduced** or **cannot reproduce**
 
-5. **Write findings** — Write a markdown report to: /tmp/reproduce-findings-${ISSUE_NUMBER}.md
+If **cannot reproduce** → Write OUTCOME=cannot-reproduce, write findings, DONE. EXIT.
+If **inconclusive** (timeout, env issues, app not reachable) → Write OUTCOME=needs-triage with reason, write findings, DONE. EXIT.
+If **reproduced** → Continue to secondary check.
+
+### SECONDARY (minor): Is the cause obvious? (40% of your turns, only if reproduced)
+
+Only after reproduction is confirmed. Quick check only — do not go deep.
+
+1. Check container logs: docker compose -f ${PROJECT_REPO_ROOT}/docker-compose.yml logs --tail=200
+   Look for: stack traces, error messages, wrong addresses, missing config, parse errors
+2. Check browser console output captured during reproduction
+3. If the cause JUMPS OUT (clear error, obvious misconfiguration) → note it
+
+If **obvious cause** → Write OUTCOME=reproduced and ROOT_CAUSE=<one-line summary>
+If **not obvious** → Write OUTCOME=reproduced (no ROOT_CAUSE line)
+
+## Output files
+
+1. **Findings report** — Write to: /tmp/reproduce-findings-${ISSUE_NUMBER}.md
    Include:
    - Steps you followed
    - What you observed (screenshots referenced by path)
    - Log excerpts (truncated to relevant lines)
-   - OUTCOME line (one of: reproduced, cannot-reproduce, needs-triage)
-   - ROOT_CAUSE line (if outcome is reproduced)
+   - OUTCOME line: OUTCOME=reproduced OR OUTCOME=cannot-reproduce OR OUTCOME=needs-triage
+   - ROOT_CAUSE line (ONLY if cause is obvious): ROOT_CAUSE=<one-line summary>
 
-6. **Write outcome file** — Write ONLY the outcome word to: /tmp/reproduce-outcome-${ISSUE_NUMBER}.txt
-   (one of: reproduced, cannot-reproduce, needs-triage)
+2. **Outcome file** — Write to: /tmp/reproduce-outcome-${ISSUE_NUMBER}.txt
+   Write ONLY the outcome word: reproduced OR cannot-reproduce OR needs-triage
 
 ## Notes
 - The application is accessible at localhost (network_mode: host)
 - Take screenshots liberally — they are evidence
 - If the app is not running or not reachable, write outcome: cannot-reproduce with reason "stack not reachable"
 - Timeout: ${FORMULA_TIMEOUT_MINUTES} minutes total
+- EXIT gates are enforced — do not continue to secondary check if primary result is NO or inconclusive
 
 Begin now.
 PROMPT
@@ -334,20 +352,73 @@ _post_comment() {
 # Apply labels and post findings
 # ---------------------------------------------------------------------------
 
+# Exit gate logic:
+#   1. Can I reproduce it? → NO → rejected/blocked → EXIT
+#                          → YES → continue
+#   2. Is the cause obvious? → YES → backlog issue for dev → EXIT
+#                            → NO → in-triage → EXIT
+#
+# Label combinations (on the ORIGINAL issue):
+#   - Reproduced + obvious cause: reproduced (custom status) → backlog issue created
+#   - Reproduced + cause unclear: in-triage → Triage-agent
+#   - Cannot reproduce: rejected → Human review
+#   - Inconclusive (timeout/error): blocked → Gardener/human
+#
+# The newly created fix issue (when cause is obvious) gets backlog label
+# so dev-poll will pick it up for implementation.
+
 # Remove bug-report label (we are resolving it)
 BUG_REPORT_ID=$(_label_id "bug-report" "#e4e669")
 _remove_label "$ISSUE_NUMBER" "$BUG_REPORT_ID"
 
+# Determine outcome and apply appropriate labels
+LABEL_NAME=""
+LABEL_COLOR=""
+COMMENT_HEADER=""
+CREATE_BACKLOG_ISSUE=false
+
 case "$OUTCOME" in
   reproduced)
-    LABEL_NAME="reproduced"
-    LABEL_COLOR="#0075ca"
-    COMMENT_HEADER="## Reproduce-agent: **Reproduced** :white_check_mark:"
-
-    # Create a backlog issue for the triage/dev agents
+    # Check if root cause is obvious (ROOT_CAUSE is set and non-trivial)
     ROOT_CAUSE=$(grep -m1 "^ROOT_CAUSE=" "/tmp/reproduce-findings-${ISSUE_NUMBER}.md" 2>/dev/null \
-      | sed 's/^ROOT_CAUSE=//' || echo "See findings on issue #${ISSUE_NUMBER}")
-    BACKLOG_BODY="## Summary
+      | sed 's/^ROOT_CAUSE=//' || echo "")
+    if [ -n "$ROOT_CAUSE" ] && [ "$ROOT_CAUSE" != "See findings on issue #${ISSUE_NUMBER}" ]; then
+      # Obvious cause → add reproduced status label, create backlog issue for dev-agent
+      LABEL_NAME="reproduced"
+      LABEL_COLOR="#0075ca"
+      COMMENT_HEADER="## Reproduce-agent: **Reproduced with obvious cause** :white_check_mark: :zap:"
+      CREATE_BACKLOG_ISSUE=true
+    else
+      # Cause unclear → in-triage → Triage-agent
+      LABEL_NAME="in-triage"
+      LABEL_COLOR="#d93f0b"
+      COMMENT_HEADER="## Reproduce-agent: **Reproduced, cause unclear** :white_check_mark: :mag:"
+    fi
+    ;;
+
+  cannot-reproduce)
+    # Cannot reproduce → rejected → Human review
+    LABEL_NAME="rejected"
+    LABEL_COLOR="#e4e669"
+    COMMENT_HEADER="## Reproduce-agent: **Cannot reproduce** :x:"
+    ;;
+
+  needs-triage)
+    # Inconclusive (timeout, env issues) → blocked → Gardener/human
+    LABEL_NAME="blocked"
+    LABEL_COLOR="#e11d48"
+    COMMENT_HEADER="## Reproduce-agent: **Inconclusive, blocked** :construction:"
+    ;;
+esac
+
+# Apply the outcome label
+OUTCOME_LABEL_ID=$(_label_id "$LABEL_NAME" "$LABEL_COLOR")
+_add_label "$ISSUE_NUMBER" "$OUTCOME_LABEL_ID"
+log "Applied label '${LABEL_NAME}' to issue #${ISSUE_NUMBER}"
+
+# If obvious cause, create backlog issue for dev-agent
+if [ "$CREATE_BACKLOG_ISSUE" = true ]; then
+  BACKLOG_BODY="## Summary
 Bug reproduced from issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}
 
 Root cause (quick log analysis): ${ROOT_CAUSE}
@@ -362,34 +433,17 @@ Root cause (quick log analysis): ${ROOT_CAUSE}
 - [ ] Root cause confirmed and fixed
 - [ ] Issue #${ISSUE_NUMBER} no longer reproducible"
 
-    log "Creating backlog issue for reproduced bug..."
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues" \
-      -d "$(jq -nc \
-        --arg t "fix: $(echo "$ISSUE_TITLE" | sed 's/^bug:/fix:/' | sed 's/^feat:/fix:/')" \
-        --arg b "$BACKLOG_BODY" \
-        '{title:$t, body:$b}')" >/dev/null 2>&1 || \
-      log "WARNING: failed to create backlog issue"
-    ;;
-
-  cannot-reproduce)
-    LABEL_NAME="cannot-reproduce"
-    LABEL_COLOR="#e4e669"
-    COMMENT_HEADER="## Reproduce-agent: **Cannot reproduce** :x:"
-    ;;
-
-  needs-triage)
-    LABEL_NAME="needs-triage"
-    LABEL_COLOR="#d93f0b"
-    COMMENT_HEADER="## Reproduce-agent: **Needs triage** :mag:"
-    ;;
-esac
-
-OUTCOME_LABEL_ID=$(_label_id "$LABEL_NAME" "$LABEL_COLOR")
-_add_label "$ISSUE_NUMBER" "$OUTCOME_LABEL_ID"
-log "Applied label '${LABEL_NAME}' to issue #${ISSUE_NUMBER}"
+  log "Creating backlog issue for reproduced bug with obvious cause..."
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues" \
+    -d "$(jq -nc \
+      --arg t "fix: $(echo "$ISSUE_TITLE" | sed 's/^bug:/fix:/' | sed 's/^feat:/fix:/')" \
+      --arg b "$BACKLOG_BODY" \
+      '{title:$t, body:$b, labels:[{"name":"backlog"}]}' 2>/dev/null)" >/dev/null 2>&1 || \
+    log "WARNING: failed to create backlog issue"
+fi
 
 COMMENT_BODY="${COMMENT_HEADER}
 

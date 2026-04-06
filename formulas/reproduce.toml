@@ -10,9 +10,17 @@
 # tools: MCP servers to pass to claude via --mcp-server flags.
 #
 # timeout_minutes: hard upper bound on the Claude session.
+#
+# Exit gate logic:
+#   1. Can I reproduce it? → NO → rejected/blocked → EXIT
+#                          → YES → continue
+#   2. Is the cause obvious? → YES → in-progress + backlog issue → EXIT
+#                            → NO → in-triage → EXIT
+#
+# Turn budget: 60% on step 1 (reproduction), 40% on step 2 (cause check).
 
 name            = "reproduce"
-description     = "Navigate the app via Playwright, reproduce a bug-report issue, and do a quick log-based root cause check"
+description     = "Primary: reproduce the bug. Secondary: check if cause is obvious. Exit gates enforced."
 version         = 1
 
 # Set stack_script to the restart command for local stacks.
