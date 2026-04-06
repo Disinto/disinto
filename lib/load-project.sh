@@ -10,7 +10,6 @@
 #   PROJECT_CONTAINERS, CHECK_PRS, CHECK_DEV_AGENT,
 #   CHECK_PIPELINE_STALL, CI_STALE_MINUTES,
 #   MIRROR_NAMES, MIRROR_URLS, MIRROR_<NAME> (per configured mirror)
-#   (plus backwards-compat aliases: CODEBERG_REPO, CODEBERG_API, CODEBERG_WEB)
 #
 # If no argument given, does nothing (allows poll scripts to work with
 # plain .env fallback for backwards compatibility).
@@ -103,10 +102,6 @@ if [ -n "$FORGE_REPO" ]; then
   # Extract repo owner (first path segment of owner/repo)
   export FORGE_REPO_OWNER="${FORGE_REPO%%/*}"
 fi
-# Backwards-compat aliases
-export CODEBERG_REPO="${FORGE_REPO}"
-export CODEBERG_API="${FORGE_API:-}"
-export CODEBERG_WEB="${FORGE_WEB:-}"
 
 # Derive PROJECT_REPO_ROOT if not explicitly set
 if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
