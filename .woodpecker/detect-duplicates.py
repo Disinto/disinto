@@ -305,6 +305,9 @@ def main() -> int:
         # Structural end-of-while-loop+case pattern: `return 1 ;; esac done }`
         # Appears in stack_lock_acquire (lib/stack-lock.sh) and lib/pr-lifecycle.sh
         "29d4f34b703f44699237713cc8d8065b": "Structural end-of-while-loop+case (return 1, esac, done, closing brace)",
+        # Forgejo org-creation API call pattern shared between forge-setup.sh and ops-setup.sh
+        # Extracted from bin/disinto (not a .sh file, excluded from prior scans) into lib/forge-setup.sh
+        "059b11945140c172465f9126b829ed7f": "Forgejo org-creation curl pattern (forge-setup.sh + ops-setup.sh)",
     }
 
     if not sh_files:
