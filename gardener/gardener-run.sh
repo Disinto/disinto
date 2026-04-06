@@ -130,16 +130,7 @@ ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Create worktree ──────────────────────────────────────────────────────
-cd "$PROJECT_REPO_ROOT"
-git fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
-worktree_cleanup "$WORKTREE"
-git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null
-
-cleanup() {
-  worktree_cleanup "$WORKTREE"
-  rm -f "$GARDENER_PR_FILE"
-}
-trap cleanup EXIT
+formula_worktree_setup "$WORKTREE"
 
 # ── Post-merge manifest execution ────────────────────────────────────────
 # Reads gardener/pending-actions.json and executes each action via API.
