@@ -756,7 +756,19 @@ setup_forge() {
     echo "Human user: ${human_user} (already exists)"
   fi
 
-  # Get or create admin token
+  # Delete existing admin token if present (token sha1 is only returned at creation time)
+  local existing_token_id
+  existing_token_id=$(curl -sf \
+    -u "${admin_user}:${admin_pass}" \
+    "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+    | jq -r '.[] | select(.name == "disinto-admin-token") | .id') || existing_token_id=""
+  if [ -n "$existing_token_id" ]; then
+    curl -sf -X DELETE \
+      -u "${admin_user}:${admin_pass}" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens/${existing_token_id}" >/dev/null 2>&1 || true
+  fi
+
+  # Create admin token (fresh, so sha1 is returned)
   local admin_token
   admin_token=$(curl -sf -X POST \
     -u "${admin_user}:${admin_pass}" \
@@ -764,14 +776,6 @@ setup_forge() {
     "${forge_url}/api/v1/users/${admin_user}/tokens" \
     -d '{"name":"disinto-admin-token","scopes":["all"]}' 2>/dev/null \
     | jq -r '.sha1 // empty') || admin_token=""
-
-  if [ -z "$admin_token" ]; then
-    # Token might already exist — try listing
-    admin_token=$(curl -sf \
-      -u "${admin_user}:${admin_pass}" \
-      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
-      | jq -r '.[0].sha1 // empty') || admin_token=""
-  fi
 
   if [ -z "$admin_token" ]; then
     echo "Error: failed to obtain admin API token" >&2
