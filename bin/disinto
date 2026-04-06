@@ -785,20 +785,25 @@ setup_forge() {
   # Get or create human user token
   local human_token
   if curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+    # Delete existing human token if present (token sha1 is only returned at creation time)
+    local existing_human_token_id
+    existing_human_token_id=$(curl -sf \
+      -u "${human_user}:${human_pass}" \
+      "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
+      | jq -r '.[] | select(.name == "disinto-human-token") | .id') || existing_human_token_id=""
+    if [ -n "$existing_human_token_id" ]; then
+      curl -sf -X DELETE \
+        -u "${human_user}:${human_pass}" \
+        "${forge_url}/api/v1/users/${human_user}/tokens/${existing_human_token_id}" >/dev/null 2>&1 || true
+    fi
+
+    # Create human token (fresh, so sha1 is returned)
     human_token=$(curl -sf -X POST \
       -u "${human_user}:${human_pass}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/users/${human_user}/tokens" \
       -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
       | jq -r '.sha1 // empty') || human_token=""
-
-    if [ -z "$human_token" ]; then
-      # Token might already exist — try listing
-      human_token=$(curl -sf \
-        -u "${human_user}:${human_pass}" \
-        "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
-        | jq -r '.[0].sha1 // empty') || human_token=""
-    fi
 
     if [ -n "$human_token" ]; then
       # Store human token in .env
