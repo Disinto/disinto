@@ -708,11 +708,15 @@ setup_forge() {
     fi
   else
     echo "Admin user: ${admin_user} (already exists)"
-    # Reset password to the persisted value so basic-auth works (#158)
-    _forgejo_exec forgejo admin user change-password \
-      --username "${admin_user}" \
-      --password "${admin_pass}" \
-      --must-change-password=false
+    # Only reset password if basic auth fails (#158, #267)
+    # Forgejo 11.x may ignore --must-change-password=false, blocking token creation
+    if ! curl -sf --max-time 5 -u "${admin_user}:${admin_pass}" \
+        "${forge_url}/api/v1/user" >/dev/null 2>&1; then
+      _forgejo_exec forgejo admin user change-password \
+        --username "${admin_user}" \
+        --password "${admin_pass}" \
+        --must-change-password=false
+    fi
   fi
   # Preserve password for Woodpecker OAuth2 token generation (#779)
   _FORGE_ADMIN_PASS="$admin_pass"
