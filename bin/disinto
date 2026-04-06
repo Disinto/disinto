@@ -1216,6 +1216,9 @@ OPSEOF
       fi
     fi
   fi
+
+  # Export resolved slug for the caller to write back to the project TOML
+  _ACTUAL_OPS_SLUG="${actual_ops_slug}"
 }
 
 # Push local clone to the Forgejo remote.
@@ -2143,6 +2146,24 @@ p.write_text(text)
 
     generate_toml "$toml_path" "$project_name" "$forge_repo" "$repo_root" "$branch" "$ci_id" "$forge_url"
     echo "Created: ${toml_path}"
+  fi
+
+  # Update ops_repo in TOML with the resolved actual ops slug.
+  # Uses in-place substitution to prevent duplicate keys on repeated init runs.
+  # If the key is missing (manually created TOML), it is inserted after the repo line.
+  if [ -n "${_ACTUAL_OPS_SLUG:-}" ] && [ -f "$toml_path" ]; then
+    python3 -c "
+import sys, re, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+new_val = 'ops_repo        = \"' + sys.argv[2] + '\"'
+if re.search(r'^ops_repo\s*=', text, re.MULTILINE):
+    text = re.sub(r'^ops_repo\s*=\s*.*\$', new_val, text, flags=re.MULTILINE)
+else:
+    text = re.sub(r'^(repo\s*=\s*\"[^\"]*\")', r'\1\n' + new_val, text, flags=re.MULTILINE)
+p.write_text(text)
+" "$toml_path" "${_ACTUAL_OPS_SLUG}"
+    echo "Updated: ops_repo in ${toml_path}"
   fi
 
   # Create OAuth2 app on Forgejo for Woodpecker (before compose up)
