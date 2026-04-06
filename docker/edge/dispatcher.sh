@@ -452,6 +452,129 @@ launch_runner() {
 }
 
 # -----------------------------------------------------------------------------
+# Reproduce dispatch — launch sidecar for bug-report issues
+# -----------------------------------------------------------------------------
+
+# Check if a reproduce run is already in-flight for a given issue.
+# Uses a simple pid-file in /tmp so we don't double-launch per dispatcher cycle.
+_reproduce_lockfile() {
+  local issue="$1"
+  echo "/tmp/reproduce-inflight-${issue}.pid"
+}
+
+is_reproduce_running() {
+  local issue="$1"
+  local pidfile
+  pidfile=$(_reproduce_lockfile "$issue")
+  [ -f "$pidfile" ] || return 1
+  local pid
+  pid=$(cat "$pidfile" 2>/dev/null || echo "")
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Fetch open issues labelled bug-report that have no outcome label yet.
+# Returns a newline-separated list of "issue_number:project_toml" pairs.
+fetch_reproduce_candidates() {
+  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  [ -n "${FORGE_URL:-}" ]   || return 0
+  [ -n "${FORGE_REPO:-}" ]  || return 0
+
+  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+
+  local issues_json
+  issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
+
+  # Filter out issues that already carry an outcome label.
+  # Write JSON to a temp file so python3 can read from stdin (heredoc) and
+  # still receive the JSON as an argument (avoids SC2259: pipe vs heredoc).
+  local tmpjson
+  tmpjson=$(mktemp)
+  echo "$issues_json" > "$tmpjson"
+  python3 - "$tmpjson" <<'PYEOF'
+import sys, json
+data = json.load(open(sys.argv[1]))
+skip = {"reproduced", "cannot-reproduce", "needs-triage"}
+for issue in data:
+    labels = {l["name"] for l in (issue.get("labels") or [])}
+    if labels & skip:
+        continue
+    print(issue["number"])
+PYEOF
+  rm -f "$tmpjson"
+}
+
+# Launch one reproduce container per candidate issue.
+# project_toml is resolved from FACTORY_ROOT/projects/*.toml (first match).
+dispatch_reproduce() {
+  local issue_number="$1"
+
+  if is_reproduce_running "$issue_number"; then
+    log "Reproduce already running for issue #${issue_number}, skipping"
+    return 0
+  fi
+
+  # Find first project TOML available (same convention as dev-poll)
+  local project_toml=""
+  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+    [ -f "$toml" ] && { project_toml="$toml"; break; }
+  done
+
+  if [ -z "$project_toml" ]; then
+    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping reproduce for #${issue_number}"
+    return 0
+  fi
+
+  log "Dispatching reproduce-agent for issue #${issue_number} (project: ${project_toml})"
+
+  # Build docker run command using array (safe from injection)
+  local -a cmd=(docker run --rm
+    --name "disinto-reproduce-${issue_number}"
+    --network host
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v agent-data:/home/agent/data
+    -v project-repos:/home/agent/repos
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
+    -e DISINTO_CONTAINER=1
+  )
+
+  # Pass through ANTHROPIC_API_KEY if set
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  fi
+
+  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${runtime_home}/.claude" ]; then
+    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  fi
+  if [ -d "${runtime_home}/.ssh" ]; then
+    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+  fi
+  # Mount claude CLI binary if present on host
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
+  fi
+
+  # Mount the project TOML into the container at a stable path
+  local container_toml="/home/agent/project.toml"
+  cmd+=(-v "${project_toml}:${container_toml}:ro")
+
+  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
+
+  # Launch in background; write pid-file so we don't double-launch
+  "${cmd[@]}" &
+  local bg_pid=$!
+  echo "$bg_pid" > "$(_reproduce_lockfile "$issue_number")"
+  log "Reproduce container launched (pid ${bg_pid}) for issue #${issue_number}"
+}
+
+# -----------------------------------------------------------------------------
 # Main dispatcher loop
 # -----------------------------------------------------------------------------
 
@@ -500,6 +623,16 @@ main() {
       # Launch runner for this action
       launch_runner "$toml_file" || true
     done
+
+    # Reproduce dispatch: check for bug-report issues needing reproduction
+    local candidate_issues
+    candidate_issues=$(fetch_reproduce_candidates) || true
+    if [ -n "$candidate_issues" ]; then
+      while IFS= read -r issue_num; do
+        [ -n "$issue_num" ] || continue
+        dispatch_reproduce "$issue_num" || true
+      done <<< "$candidate_issues"
+    fi
 
     # Wait before next poll
     sleep 60
