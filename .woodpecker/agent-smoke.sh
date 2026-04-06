@@ -19,12 +19,16 @@ FAILED=0
 # Uses awk instead of grep -Eo for busybox/Alpine compatibility (#296).
 get_fns() {
   local f="$1"
-  # BRE mode (no -E).  Use [(][)] for literal parens — unambiguous across
-  # GNU grep and BusyBox grep (some BusyBox builds treat bare () as grouping
-  # even in BRE).  BRE one-or-more via [X][X]* instead of +.
-  grep '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_][a-zA-Z0-9_]*[[:space:]]*[(][)]' "$f" 2>/dev/null \
-    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*[(][)].*$//' \
-    | sort -u || true
+  # Pure-awk implementation: avoids grep/sed cross-platform differences
+  # (BusyBox grep BRE quirks, sed ; separator issues on Alpine).
+  awk '
+    /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_][a-zA-Z0-9_]*[[:space:]]*[(][)]/ {
+      line = $0
+      gsub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]*[(].*/, "", line)
+      print line
+    }
+  ' "$f" 2>/dev/null | sort -u || true
 }
 
 # Extract call-position identifiers that look like custom function calls:
