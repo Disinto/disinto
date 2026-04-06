@@ -91,6 +91,24 @@ resolve_agent_identity() {
   return 0
 }
 
+# ── Forge remote resolution ──────────────────────────────────────────────
+
+# resolve_forge_remote
+# Resolves FORGE_REMOTE by matching FORGE_URL hostname against git remotes.
+# Falls back to "origin" if no match found.
+# Requires: FORGE_URL, git repo with remotes configured.
+# Exports: FORGE_REMOTE (always set).
+resolve_forge_remote() {
+  # Extract hostname from FORGE_URL (e.g., https://codeberg.org/user/repo -> codeberg.org)
+  _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||; s|:.*||')
+  # Find git remote whose push URL matches the forge host
+  FORGE_REMOTE=$(git remote -v | awk -v host="$_forge_host" '$2 ~ host && /\(push\)/ {print $1; exit}')
+  # Fallback to origin if no match found
+  FORGE_REMOTE="${FORGE_REMOTE:-origin}"
+  export FORGE_REMOTE
+  log "forge remote: ${FORGE_REMOTE}"
+}
+
 # ── .profile repo management ──────────────────────────────────────────────
 
 # ensure_profile_repo [AGENT_IDENTITY]
@@ -711,13 +729,14 @@ build_sdk_prompt_footer() {
 # Creates an isolated worktree for synchronous formula execution.
 # Fetches primary branch, cleans stale worktree, creates new one, and
 # sets an EXIT trap for cleanup.
-# Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH.
+# Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH, FORGE_REMOTE.
+# Ensure resolve_forge_remote() is called before this function.
 formula_worktree_setup() {
   local worktree="$1"
   cd "$PROJECT_REPO_ROOT" || return
-  git fetch origin "$PRIMARY_BRANCH" 2>/dev/null || true
+  git fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
   worktree_cleanup "$worktree"
-  git worktree add "$worktree" "origin/${PRIMARY_BRANCH}" --detach 2>/dev/null
+  git worktree add "$worktree" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null
   # shellcheck disable=SC2064  # expand worktree now, not at trap time
   trap "worktree_cleanup '$worktree'" EXIT
 }

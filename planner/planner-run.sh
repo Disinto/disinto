@@ -52,6 +52,9 @@ check_memory 2000
 
 log "--- Planner run start ---"
 
+# ── Resolve forge remote for git operations ─────────────────────────────
+resolve_forge_remote
+
 # ── Resolve agent identity for .profile repo ────────────────────────────
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_PLANNER_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_PLANNER_TOKEN}" \
