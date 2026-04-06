@@ -61,10 +61,7 @@ fi
 # =============================================================================
 # RESOLVE AGENT IDENTITY FOR .PROFILE REPO
 # =============================================================================
-if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
-fi
+resolve_agent_identity || true
 
 # =============================================================================
 # MEMORY GUARD
