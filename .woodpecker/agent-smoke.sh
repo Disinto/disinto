@@ -23,7 +23,7 @@ get_fns() {
   # GNU grep and BusyBox grep (some BusyBox builds treat bare () as grouping
   # even in BRE).  BRE one-or-more via [X][X]* instead of +.
   grep '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_][a-zA-Z0-9_]*[[:space:]]*[(][)]' "$f" 2>/dev/null \
-    | sed 's/^[[:space:]]*//; s/[[:space:]]*[(][)].*$//' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*[(][)].*$//' \
     | sort -u || true
 }
 
