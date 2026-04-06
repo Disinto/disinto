@@ -98,6 +98,9 @@ while true; do
 
   su -s /bin/bash agent -c "
     export FORGE_TOKEN='${FORGE_TOKEN}'
+    export ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY:-}'
+    export ANTHROPIC_BASE_URL='${ANTHROPIC_BASE_URL:-}'
+    export CLAUDE_CONFIG_DIR='${CLAUDE_CONFIG_DIR:-}'
     cd /home/agent/disinto && \
     bash dev/dev-poll.sh ${PROJECT_TOML:-projects/disinto.toml}
   " >> "$LOG_DIR/llama-loop.log" 2>&1 || true
