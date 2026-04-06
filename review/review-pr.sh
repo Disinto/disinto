@@ -59,6 +59,11 @@ if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt 10
 fi
 
 # =============================================================================
+# RESOLVE FORGE REMOTE FOR GIT OPERATIONS
+# =============================================================================
+resolve_forge_remote
+
+# =============================================================================
 # RESOLVE AGENT IDENTITY FOR .PROFILE REPO
 # =============================================================================
 resolve_agent_identity || true
@@ -128,7 +133,7 @@ PREV_REV=$(printf '%s' "$ALL_COMMENTS" | jq -r --arg s "$PR_SHA" \
 if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
   PREV_BODY=$(printf '%s' "$PREV_REV" | jq -r '.body')
   PREV_SHA=$(printf '%s' "$PREV_BODY" | grep -oP '<!-- reviewed: \K[a-f0-9]+' | head -1)
-  cd "${PROJECT_REPO_ROOT}"; git fetch origin "$PR_HEAD" 2>/dev/null || true
+  cd "${PROJECT_REPO_ROOT}"; git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>/dev/null || true
   INCR=$(git diff "${PREV_SHA}..${PR_SHA}" 2>/dev/null | head -c "$MAX_DIFF") || true
   if [ -n "$INCR" ]; then
     IS_RE_REVIEW=true; log "re-review: previous at ${PREV_SHA:0:7}"
@@ -159,7 +164,7 @@ DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes
 # WORKTREE SETUP
 # =============================================================================
 cd "${PROJECT_REPO_ROOT}"
-git fetch origin "$PR_HEAD" 2>/dev/null || true
+git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>/dev/null || true
 
 if [ -d "$WORKTREE" ]; then
   cd "$WORKTREE"; git checkout --detach "$PR_SHA" 2>/dev/null || {
