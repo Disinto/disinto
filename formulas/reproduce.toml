@@ -1,0 +1,23 @@
+# formulas/reproduce.toml — Reproduce-agent formula
+#
+# Declares the reproduce-agent's runtime parameters.
+# The dispatcher reads this to configure the sidecar container.
+#
+# stack_script: path (relative to PROJECT_REPO_ROOT) of the script used to
+# restart/rebuild the project stack before reproduction.  Omit (or leave
+# blank) to connect to an existing staging environment instead.
+#
+# tools: MCP servers to pass to claude via --mcp-server flags.
+#
+# timeout_minutes: hard upper bound on the Claude session.
+
+name            = "reproduce"
+description     = "Navigate the app via Playwright, reproduce a bug-report issue, and do a quick log-based root cause check"
+version         = 1
+
+# Set stack_script to the restart command for local stacks.
+# Leave empty ("") to target an existing staging environment.
+stack_script    = ""
+
+tools           = ["playwright"]
+timeout_minutes = 15
