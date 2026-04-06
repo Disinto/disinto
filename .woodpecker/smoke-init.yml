@@ -4,6 +4,7 @@ when:
       - "bin/disinto"
       - "lib/load-project.sh"
       - "lib/env.sh"
+      - "lib/generators.sh"
       - "tests/**"
       - ".woodpecker/smoke-init.yml"
 

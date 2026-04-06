@@ -308,6 +308,13 @@ def main() -> int:
         # Forgejo org-creation API call pattern shared between forge-setup.sh and ops-setup.sh
         # Extracted from bin/disinto (not a .sh file, excluded from prior scans) into lib/forge-setup.sh
         "059b11945140c172465f9126b829ed7f": "Forgejo org-creation curl pattern (forge-setup.sh + ops-setup.sh)",
+        # Docker compose environment block for agents service (generators.sh + hire-agent.sh)
+        # Intentional duplicate - both generate the same docker-compose.yml template
+        "8066210169a462fe565f18b6a26a57e0": "Docker compose environment block (generators.sh + hire-agent.sh)",
+        "fd978fcd726696e0f280eba2c5198d50": "Docker compose environment block continuation (generators.sh + hire-agent.sh)",
+        "e2760ccc2d4b993a3685bd8991594eb2": "Docker compose env_file + depends_on block (generators.sh + hire-agent.sh)",
+        # The hash shown in output is 161a80f7 - need to match exactly what the script finds
+        "161a80f7296d6e9d45895607b7f5b9c9": "Docker compose env_file + depends_on block (generators.sh + hire-agent.sh)",
     }
 
     if not sh_files:
