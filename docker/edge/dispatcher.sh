@@ -554,6 +554,9 @@ dispatch_reproduce() {
   if [ -d "${runtime_home}/.claude" ]; then
     cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
   fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
   if [ -d "${runtime_home}/.ssh" ]; then
     cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
   fi
