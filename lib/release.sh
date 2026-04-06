@@ -36,6 +36,8 @@ _assert_release_globals() {
 }
 
 disinto_release() {
+  _assert_release_globals
+
   local version="${1:-}"
   local formula_path="${FACTORY_ROOT}/formulas/release.toml"
 
@@ -115,11 +117,11 @@ This PR creates a vault item for the release of version ${version}.
 3. The vault runner will execute the release formula
 "
 
-  # Create branch from clean main
+  # Create branch from clean primary branch
   cd "$ops_root"
-  git checkout main
-  git pull origin main
-  git checkout -B "$branch_name" main
+  git checkout "$PRIMARY_BRANCH"
+  git pull origin "$PRIMARY_BRANCH"
+  git checkout -B "$branch_name" "$PRIMARY_BRANCH"
 
   # Add and commit only the vault TOML file
   git add "vault/actions/${id}.toml"
@@ -137,7 +139,7 @@ This PR creates a vault item for the release of version ${version}.
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}/pulls" \
-    -d "{\"title\":\"${pr_title}\",\"head\":\"${branch_name}\",\"base\":\"main\",\"body\":\"$(echo "$pr_body" | sed ':a;N;$!ba;s/\n/\\n/g')\"}" 2>/dev/null) || {
+    -d "{\"title\":\"${pr_title}\",\"head\":\"${branch_name}\",\"base\":\"${PRIMARY_BRANCH}\",\"body\":\"$(echo "$pr_body" | sed ':a;N;$!ba;s/\n/\\n/g')\"}" 2>/dev/null) || {
     echo "Error: failed to create PR" >&2
     echo "Response: ${pr_response}" >&2
     exit 1
