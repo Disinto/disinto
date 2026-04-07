@@ -28,6 +28,15 @@ if [ ! -d "${PROJECT_REPO_ROOT}/.git" ]; then
   log "Repo cloned"
 fi
 
+# Reset base repo to origin/main to avoid divergence warnings
+su -s /bin/bash agent -c "
+  cd '/home/agent/repos/disinto'
+  git fetch origin main
+  git checkout main 2>/dev/null || true
+  git reset --hard origin/main
+"
+log "Base repo reset to origin/main"
+
 log "Entering poll loop (interval: ${POLL_INTERVAL:-300}s)"
 
 while true; do
