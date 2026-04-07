@@ -1,4 +1,4 @@
-<!-- last-reviewed: f10cdf2c9e44c32308c7ea74fcc3139407703e59 -->
+<!-- last-reviewed: 5c76d4beb0f1dd75a22be81154c3a9b016a96ddf -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -31,7 +31,7 @@ disinto/                 (code repo)
 │                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
-├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, build-graph.py
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
@@ -121,6 +121,8 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `bug-report` | Issue describes user-facing broken behavior with reproduction steps. Separate triage track for reproduction automation. | Gardener (bug-report detection in grooming) |
+| `in-triage` | Bug reproduced but root cause not obvious — triage agent investigates. Set alongside `bug-report`. | reproduce-agent (when reproduction succeeds but cause unclear) |
+| `rejected` | Issue formally rejected — cannot reproduce, out of scope, or invalid. | reproduce-agent, humans |
 | `vision` | Goal anchors — high-level objectives from VISION.md. | Planner, humans |
 | `prediction/unreviewed` | Unprocessed prediction filed by predictor. | predictor-run.sh |
 | `prediction/dismissed` | Prediction triaged as DISMISS — planner disagrees, closed with reason. | Planner (triage-predictions step) |
