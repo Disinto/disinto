@@ -1,4 +1,4 @@
-<!-- last-reviewed: f10cdf2c9e44c32308c7ea74fcc3139407703e59 -->
+<!-- last-reviewed: 5c76d4beb0f1dd75a22be81154c3a9b016a96ddf -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -14,7 +14,7 @@ in-progress issues are also picked up. The direct-merge scan runs before the loc
 check so approved PRs get merged even while a dev-agent session is active.
 
 **Key files**:
-- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress` with no open PR — removes `in-progress`, adds `blocked` with a human-triage comment (requires maintainer review before re-queuing).
+- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`. If an issue has no assignee, no open PR, and no agent lock file — removes `in-progress`, adds `blocked` with a human-triage comment. If the issue has an assignee, trusts active work and skips (agent may be running in another container).
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
 - `dev/phase-test.sh` — Integration test for the phase protocol
 

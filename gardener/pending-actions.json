@@ -1,12 +1,12 @@
 [
   {
-    "action": "add_label",
-    "issue": 298,
-    "label": "in-progress"
+    "action": "edit_body",
+    "issue": 323,
+    "body": "Flagged by AI reviewer in PR #322.\n\n## Problem\n`disinto_release()` calls `cd \"$ops_root\"` (line 121) without a subshell. This permanently changes the working directory of the calling shell session after the function returns. If any code runs after `disinto release` in the same session it will be in the wrong directory.\n\n## Fix\nWrap the git operations in a subshell: `(cd \"$ops_root\" && git checkout ...)` or use `pushd`/`popd`.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `lib/release.sh` (line 121 — the `cd \"$ops_root\"` call)\n\n## Acceptance criteria\n- [ ] `disinto_release()` does not permanently change the CWD of the calling shell\n- [ ] Git operations on ops_root are wrapped in a subshell or use pushd/popd\n- [ ] ShellCheck passes on `lib/release.sh`\n- [ ] Existing release functionality is preserved\n"
   },
   {
-    "action": "remove_label",
-    "issue": 298,
+    "action": "add_label",
+    "issue": 323,
     "label": "backlog"
   }
 ]
