@@ -1,7 +1,9 @@
-# formulas/triage.toml — Triage-agent formula
+# formulas/triage.toml — Triage-agent formula (generic template)
 #
-# Declares the triage-agent's runtime parameters.
-# The dispatcher reads this to configure the sidecar container.
+# This is the base template for triage investigations.
+# Project-specific formulas (e.g. formulas/triage-harb.toml) extend this by
+# overriding the fields in the [project] section and providing stack-specific
+# step descriptions.
 #
 # Triggered by: bug-report + in-triage label combination.
 # Set by the reproduce-agent when:
@@ -9,38 +11,245 @@
 #   - Quick log analysis did not reveal an obvious root cause
 #   - Reproduce-agent documented all steps taken and logs examined
 #
-# What it does:
-#   1. Reads reproduce-agent findings from issue comments (do not repeat work)
-#   2. Deep-traces the data flow from symptom to source:
-#        UI component → composable → API/GraphQL → indexer → chain
-#      - Compare what the code expects vs what APIs actually return
-#      - Create a throwaway branch, add debug instrumentation (console.log, verbose logging)
-#      - Restart services, re-run reproduction, observe new output
-#      - Delete throwaway branch when done
-#   3. Decomposes all root causes (may be 1 or multiple compounding):
-#      - For each root cause, create a separate backlog issue with:
-#          * Which cause it is (1 of N)
-#          * Specific code path and fix suggestion
-#          * Depends-on: #X if causes are layered
-#   4. Updates original issue:
-#      - Posts summary: "Found N root causes, tracked as #X, #Y, #Z"
-#      - Replaces in-triage with in-progress
+# Steps:
+#   1. read-findings   — parse issue comments for prior reproduce-agent evidence
+#   2. trace-data-flow — follow symptom through UI → API → backend → data store
+#   3. instrumentation — throwaway branch, add logging, restart, observe
+#   4. decompose       — file backlog issues for each root cause
+#   5. link-back       — update original issue, swap in-triage → in-progress
+#   6. cleanup         — delete throwaway debug branch
+#
+# Best practices:
+#   - Start from reproduce-agent findings; do not repeat their work
+#   - Budget: 70% tracing data flow, 30% instrumented re-runs
+#   - Multiple causes: check if layered (Depends-on) or independent (Related)
+#   - Always delete the throwaway debug branch before finishing
+#   - If inconclusive after full turn budget: leave in-triage, post what was
+#     tried, do NOT relabel — supervisor handles stale triage sessions
+#
+# Project-specific formulas extend this template by defining:
+#   - stack_script: how to start/stop the project stack
+#   - [project].data_flow: layer names (e.g. "chain → indexer → GraphQL → UI")
+#   - [project].api_endpoints: which APIs/services to inspect
+#   - [project].stack_lock: stack lock configuration
+#   - Per-step description overrides with project-specific commands
 #
 # No hard timeout — runs until Claude hits its turn limit.
 # Stack lock held for full run (triage is rare; blocking CI is acceptable).
-#
-# stack_script: path (relative to PROJECT_REPO_ROOT) of the script used to
-# restart/rebuild the project stack.  Leave empty ("") to connect to an
-# existing staging environment instead.
-#
-# tools: MCP servers to pass to claude via --mcp-server flags.
 
 name            = "triage"
 description     = "Deep root cause analysis: trace data flow, add debug instrumentation, decompose causes into backlog issues."
-version         = 1
+version         = 2
 
 # Set stack_script to the restart command for local stacks.
-# Leave empty ("") to target an existing staging environment.
+# Leave empty ("") to connect to an existing staging environment.
 stack_script    = ""
 
 tools           = ["playwright"]
+
+# ---------------------------------------------------------------------------
+# Project-specific extension fields.
+# Override these in formulas/triage-<project>.toml.
+# ---------------------------------------------------------------------------
+[project]
+# Human-readable layer names for the data-flow trace (generic default).
+# Example project override: "chain → indexer → GraphQL → UI"
+data_flow       = "UI → API → backend → data store"
+
+# Comma-separated list of API endpoints or services to inspect.
+# Example: "GraphQL /graphql, REST /api/v1, RPC ws://localhost:8545"
+api_endpoints   = ""
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+
+[[steps]]
+id    = "read-findings"
+title = "Read reproduce-agent findings"
+description = """
+Before doing anything else, parse all prior evidence from the issue comments.
+
+1. Fetch the issue body and all comments:
+     curl -sf "${FORGE_API}/issues/${ISSUE_NUMBER}" | jq -r '.body'
+     curl -sf "${FORGE_API}/issues/${ISSUE_NUMBER}/comments" | jq -r '.[].body'
+
+2. Identify the reproduce-agent comment (look for sections like
+   "Reproduction steps", "Logs examined", "What was tried").
+
+3. Extract and note:
+   - The exact symptom (error message, unexpected value, visual regression)
+   - Steps that reliably trigger the bug
+   - Log lines or API responses already captured
+   - Any hypotheses the reproduce-agent already ruled out
+
+Do NOT repeat work the reproduce-agent already did. Your job starts where
+theirs ended. If no reproduce-agent comment is found, note it and proceed
+with fresh investigation using the issue body only.
+"""
+
+[[steps]]
+id    = "trace-data-flow"
+title = "Trace data flow from symptom to source"
+description = """
+Systematically follow the symptom backwards through each layer of the stack.
+Spend ~70% of your total turn budget here before moving to instrumentation.
+
+Generic layer traversal (adapt to the project's actual stack):
+  UI → API → backend → data store
+
+For each layer boundary:
+  1. What does the upstream layer send?
+  2. What does the downstream layer expect?
+  3. Is there a mismatch? If yes — is this the root cause or a symptom?
+
+Tracing checklist:
+  a. Start at the layer closest to the visible symptom.
+  b. Read the relevant source files — do not guess data shapes.
+  c. Cross-reference API contracts: compare what the code sends vs what it
+     should send according to schemas, type definitions, or documentation.
+  d. Check recent git history on suspicious files:
+       git log --oneline -20 -- <file>
+  e. Search for related issues or TODOs in the code:
+       grep -r "TODO\|FIXME\|HACK" -- <relevant directory>
+
+Capture for each layer:
+  - The data shape flowing in and out (field names, types, nullability)
+  - Whether the layer's behavior matches its documented contract
+  - Any discrepancy found
+
+If a clear root cause becomes obvious during tracing, note it and continue
+checking whether additional causes exist downstream.
+"""
+needs = ["read-findings"]
+
+[[steps]]
+id    = "instrumentation"
+title = "Add debug instrumentation on a throwaway branch"
+description = """
+Use ~30% of your total turn budget here. Only instrument after tracing has
+identified the most likely failure points — do not instrument blindly.
+
+1. Create a throwaway debug branch (NEVER commit this to main):
+     cd "$PROJECT_REPO_ROOT"
+     git checkout -b debug/triage-${ISSUE_NUMBER}
+
+2. Add targeted logging at the layer boundaries identified during tracing:
+   - Console.log / structured log statements around the suspicious code path
+   - Log the actual values flowing through: inputs, outputs, intermediate state
+   - Add verbose mode flags if the stack supports them
+   - Keep instrumentation minimal — only what confirms or refutes the hypothesis
+
+3. Restart the stack using the configured script (if set):
+     ${stack_script:-"# No stack_script configured — restart manually or connect to staging"}
+
+4. Re-run the reproduction steps from the reproduce-agent findings.
+
+5. Observe and capture new output:
+   - Paste relevant log lines into your working notes
+   - Note whether the observed values match or contradict the hypothesis
+
+6. If the first instrumentation pass is inconclusive, iterate:
+   - Narrow the scope to the next most suspicious boundary
+   - Re-instrument, restart, re-run
+   - Maximum 2-3 instrumentation rounds before declaring inconclusive
+
+Do NOT push the debug branch. It will be deleted in the cleanup step.
+"""
+needs = ["trace-data-flow"]
+
+[[steps]]
+id    = "decompose"
+title = "Decompose root causes into backlog issues"
+description = """
+After tracing and instrumentation, articulate each distinct root cause.
+
+For each root cause found:
+
+1. Determine the relationship to other causes:
+   - Layered (one causes another) → use Depends-on in the issue body
+   - Independent (separate code paths fail independently) → use Related
+
+2. Create a backlog issue for each root cause:
+     curl -sf -X POST "${FORGE_API}/issues" \\
+       -d '{
+         "title": "fix: <specific description of root cause N>",
+         "body": "## Root cause\\n<exact code path, file:line>\\n\\n## Fix suggestion\\n<recommended approach>\\n\\n## Context\\nDecomposed from #${ISSUE_NUMBER} (cause N of M)\\n\\n## Dependencies\\n<#X if this depends on another cause being fixed first>",
+         "labels": ["backlog"]
+       }'
+
+3. Note the newly created issue numbers.
+
+If only one root cause is found, still create a single backlog issue with
+the specific code location and fix suggestion.
+
+If the investigation is inconclusive (no clear root cause found), skip this
+step and proceed directly to link-back with the inconclusive outcome.
+"""
+needs = ["instrumentation"]
+
+[[steps]]
+id    = "link-back"
+title = "Update original issue and relabel"
+description = """
+Post a summary comment on the original issue and update its labels.
+
+### If root causes were found (conclusive):
+
+Post a comment:
+  "## Triage findings
+
+  Found N root cause(s):
+  - #X — <one-line description> (cause 1 of N)
+  - #Y — <one-line description> (cause 2 of N, depends on #X)
+
+  Data flow traced: <layer where the bug originates>
+  Instrumentation: <key log output that confirmed the cause>
+
+  Next step: backlog issues above will be implemented in dependency order."
+
+Then swap labels:
+  - Remove: in-triage
+  - Add: in-progress
+
+### If investigation was inconclusive (turn budget exhausted):
+
+Post a comment:
+  "## Triage — inconclusive
+
+  Traced: <layers checked>
+  Tried: <instrumentation attempts and what they showed>
+  Hypothesis: <best guess at cause, if any>
+
+  No definitive root cause identified. Leaving in-triage for supervisor
+  to handle as a stale triage session."
+
+Do NOT relabel. Leave in-triage. The supervisor monitors stale triage
+sessions and will escalate or reassign.
+"""
+needs = ["decompose"]
+
+[[steps]]
+id    = "cleanup"
+title = "Delete throwaway debug branch"
+description = """
+Always delete the debug branch, even if the investigation was inconclusive.
+
+1. Switch back to the main branch:
+     cd "$PROJECT_REPO_ROOT"
+     git checkout "$PRIMARY_BRANCH"
+
+2. Delete the local debug branch:
+     git branch -D debug/triage-${ISSUE_NUMBER}
+
+3. Confirm no remote was pushed (if accidentally pushed, delete it too):
+     git push origin --delete debug/triage-${ISSUE_NUMBER} 2>/dev/null || true
+
+4. Verify the worktree is clean:
+     git status
+     git worktree list
+
+A clean repo is a prerequisite for the next dev-agent run. Never leave
+debug branches behind — they accumulate and pollute the branch list.
+"""
+needs = ["link-back"]
