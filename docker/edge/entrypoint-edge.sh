@@ -4,12 +4,13 @@ set -euo pipefail
 # Set USER before sourcing env.sh (Alpine doesn't set USER)
 export USER="${USER:-root}"
 
-DISINTO_VERSION="${DISINTO_VERSION:-main}"
-DISINTO_REPO="${FORGE_URL:-http://forgejo:3000}/${FORGE_REPO:-disinto-admin/disinto}.git"
+FORGE_URL="${FORGE_URL:-http://forgejo:3000}"
+FORGE_REPO="${FORGE_REPO:-disinto-admin/disinto}"
 
-# Shallow clone at the pinned version
+# Shallow clone at the pinned version (inject token to support auth-required Forgejo)
 if [ ! -d /opt/disinto/.git ]; then
-  git clone --depth 1 --branch "$DISINTO_VERSION" "$DISINTO_REPO" /opt/disinto
+  _auth_url=$(printf '%s' "$FORGE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+  git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${_auth_url}/${FORGE_REPO}.git" /opt/disinto
 fi
 
 # Start dispatcher in background
