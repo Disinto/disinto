@@ -100,6 +100,38 @@ fi
 
 install_project_crons
 
+# Configure git credential helper for password-based HTTP auth.
+# Forgejo 11.x rejects API tokens for git push (#361); password auth works.
+# This ensures all git operations (clone, fetch, push) from worktrees use
+# password auth without needing tokens embedded in remote URLs.
+if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+  _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+  _forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
+  # Determine the bot username from FORGE_TOKEN identity (or default to dev-bot)
+  _bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || _bot_user=""
+  _bot_user="${_bot_user:-dev-bot}"
+
+  # Write a static credential helper script (git credential protocol)
+  cat > /home/agent/.git-credentials-helper <<CREDEOF
+#!/bin/sh
+# Auto-generated git credential helper for Forgejo password auth (#361)
+# Only respond to "get" action; ignore "store" and "erase".
+[ "\$1" = "get" ] || exit 0
+# Read and discard stdin (git sends protocol/host info)
+cat >/dev/null
+echo "protocol=${_forge_proto}"
+echo "host=${_forge_host}"
+echo "username=${_bot_user}"
+echo "password=${FORGE_PASS}"
+CREDEOF
+  chmod 755 /home/agent/.git-credentials-helper
+  chown agent:agent /home/agent/.git-credentials-helper
+
+  su -s /bin/bash agent -c "git config --global credential.helper '/home/agent/.git-credentials-helper'"
+  log "Git credential helper configured for ${_bot_user}@${_forge_host} (password auth)"
+fi
+
 # Configure tea CLI login for forge operations (runs as agent user).
 # tea stores config in ~/.config/tea/ — persistent across container restarts
 # only if that directory is on a mounted volume.

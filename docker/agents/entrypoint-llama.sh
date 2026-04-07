@@ -24,7 +24,8 @@ if [ ! -d "${PROJECT_REPO_ROOT}/.git" ]; then
   log "Cloning repo..."
   mkdir -p "$(dirname "$PROJECT_REPO_ROOT")"
   chown -R agent:agent /home/agent/repos 2>/dev/null || true
-  su -s /bin/bash agent -c "git clone http://dev-bot:${FORGE_TOKEN}@forgejo:3000/${FORGE_REPO:-disinto-admin/disinto}.git ${PROJECT_REPO_ROOT}"
+  # Use password auth for git HTTP — Forgejo 11.x rejects API tokens for push (#361)
+  su -s /bin/bash agent -c "git clone http://dev-bot:${FORGE_PASS:-${FORGE_TOKEN}}@forgejo:3000/${FORGE_REPO:-disinto-admin/disinto}.git ${PROJECT_REPO_ROOT}"
   log "Repo cloned"
 fi
 
