@@ -79,6 +79,7 @@ services:
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_DATABASE_DRIVER: sqlite3
       WOODPECKER_DATABASE_DATASOURCE: /var/lib/woodpecker/woodpecker.sqlite
+      WOODPECKER_ENVIRONMENT: "FORGE_TOKEN:${FORGE_TOKEN}"
     depends_on:
       - forgejo
     networks:
