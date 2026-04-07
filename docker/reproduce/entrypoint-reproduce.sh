@@ -23,16 +23,35 @@
 set -euo pipefail
 
 DISINTO_DIR="${DISINTO_DIR:-/home/agent/disinto}"
-REPRODUCE_FORMULA="${DISINTO_DIR}/formulas/reproduce.toml"
+
+# Select formula based on DISINTO_FORMULA env var (set by dispatcher)
+case "${DISINTO_FORMULA:-reproduce}" in
+  triage)
+    ACTIVE_FORMULA="${DISINTO_DIR}/formulas/triage.toml"
+    ;;
+  *)
+    ACTIVE_FORMULA="${DISINTO_DIR}/formulas/reproduce.toml"
+    ;;
+esac
+
 REPRODUCE_TIMEOUT="${REPRODUCE_TIMEOUT_MINUTES:-15}"
 LOGFILE="/home/agent/data/logs/reproduce.log"
 SCREENSHOT_DIR="/home/agent/data/screenshots"
 
 # ---------------------------------------------------------------------------
+# Determine agent type early for log prefix
+# ---------------------------------------------------------------------------
+if [ "${DISINTO_FORMULA:-reproduce}" = "triage" ]; then
+  AGENT_TYPE="triage"
+else
+  AGENT_TYPE="reproduce"
+fi
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 log() {
-  printf '[%s] reproduce: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$AGENT_TYPE" "$*" | tee -a "$LOGFILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -75,7 +94,11 @@ export PROJECT_NAME
 
 PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
 
-log "Starting reproduce-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
+if [ "$AGENT_TYPE" = "triage" ]; then
+  log "Starting triage-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
+else
+  log "Starting reproduce-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
+fi
 
 # ---------------------------------------------------------------------------
 # Verify claude CLI is available (mounted from host)
@@ -99,20 +122,20 @@ LOCK_HOLDER="reproduce-agent-${ISSUE_NUMBER}"
 FORMULA_STACK_SCRIPT=""
 FORMULA_TIMEOUT_MINUTES="${REPRODUCE_TIMEOUT}"
 
-if [ -f "$REPRODUCE_FORMULA" ]; then
+if [ -f "$ACTIVE_FORMULA" ]; then
   FORMULA_STACK_SCRIPT=$(python3 -c "
 import sys, tomllib
 with open(sys.argv[1], 'rb') as f:
     d = tomllib.load(f)
 print(d.get('stack_script', ''))
-" "$REPRODUCE_FORMULA" 2>/dev/null || echo "")
+" "$ACTIVE_FORMULA" 2>/dev/null || echo "")
 
   _tm=$(python3 -c "
 import sys, tomllib
 with open(sys.argv[1], 'rb') as f:
     d = tomllib.load(f)
 print(d.get('timeout_minutes', '${REPRODUCE_TIMEOUT}'))
-" "$REPRODUCE_FORMULA" 2>/dev/null || echo "${REPRODUCE_TIMEOUT}")
+" "$ACTIVE_FORMULA" 2>/dev/null || echo "${REPRODUCE_TIMEOUT}")
   FORMULA_TIMEOUT_MINUTES="$_tm"
 fi
 
@@ -184,12 +207,202 @@ elif [ -n "$FORMULA_STACK_SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Build Claude prompt for reproduction
+# Build Claude prompt based on agent type
 # ---------------------------------------------------------------------------
 TIMESTAMP=$(date -u '+%Y%m%d-%H%M%S')
 SCREENSHOT_PREFIX="${SCREENSHOT_DIR}/issue-${ISSUE_NUMBER}-${TIMESTAMP}"
 
-CLAUDE_PROMPT=$(cat <<PROMPT
+if [ "$AGENT_TYPE" = "triage" ]; then
+  # Triage-agent prompt: deep root cause analysis after reproduce-agent findings
+  CLAUDE_PROMPT=$(cat <<PROMPT
+You are the triage-agent. Your task is to perform deep root cause analysis on issue #${ISSUE_NUMBER} after the reproduce-agent has confirmed the bug.
+
+## Issue title
+${ISSUE_TITLE}
+
+## Issue body
+${ISSUE_BODY}
+
+## Your task — 6-step triage workflow
+
+You have a defined 6-step workflow to follow. Budget your turns: ~70% on tracing, ~30% on instrumentation.
+
+### Step 1: Read reproduce-agent findings
+Before doing anything else, parse all prior evidence from the issue comments.
+
+1. Fetch the issue body and all comments:
+     curl -sf -H "Authorization: token \${FORGE_TOKEN}" \
+       "\${FORGE_API}/issues/\${ISSUE_NUMBER}" | jq -r '.body'
+     curl -sf -H "Authorization: token \${FORGE_TOKEN}" \
+       "\${FORGE_API}/issues/\${ISSUE_NUMBER}/comments" | jq -r '.[].body'
+
+2. Identify the reproduce-agent comment (look for sections like
+   "Reproduction steps", "Logs examined", "What was tried").
+
+3. Extract and note:
+   - The exact symptom (error message, unexpected value, visual regression)
+   - Steps that reliably trigger the bug
+   - Log lines or API responses already captured
+   - Any hypotheses the reproduce-agent already ruled out
+
+Do NOT repeat work the reproduce-agent already did. Your job starts where
+theirs ended. If no reproduce-agent comment is found, note it and proceed
+with fresh investigation using the issue body only.
+
+### Step 2: Trace data flow from symptom to source
+Systematically follow the symptom backwards through each layer of the stack.
+
+Generic layer traversal: UI → API → backend → data store
+
+For each layer boundary:
+  1. What does the upstream layer send?
+  2. What does the downstream layer expect?
+  3. Is there a mismatch? If yes — is this the root cause or a symptom?
+
+Tracing checklist:
+  a. Start at the layer closest to the visible symptom.
+  b. Read the relevant source files — do not guess data shapes.
+  c. Cross-reference API contracts: compare what the code sends vs what it
+     should send according to schemas, type definitions, or documentation.
+  d. Check recent git history on suspicious files:
+       git log --oneline -20 -- <file>
+  e. Search for related issues or TODOs in the code:
+       grep -r "TODO\|FIXME\|HACK" -- <relevant directory>
+
+Capture for each layer:
+  - The data shape flowing in and out (field names, types, nullability)
+  - Whether the layer's behavior matches its documented contract
+  - Any discrepancy found
+
+If a clear root cause becomes obvious during tracing, note it and continue
+checking whether additional causes exist downstream.
+
+### Step 3: Add debug instrumentation on a throwaway branch
+Use ~30% of your total turn budget here. Only instrument after tracing has
+identified the most likely failure points — do not instrument blindly.
+
+1. Create a throwaway debug branch (NEVER commit this to main):
+     cd "\$PROJECT_REPO_ROOT"
+     git checkout -b debug/triage-\${ISSUE_NUMBER}
+
+2. Add targeted logging at the layer boundaries identified during tracing:
+   - Console.log / structured log statements around the suspicious code path
+   - Log the actual values flowing through: inputs, outputs, intermediate state
+   - Add verbose mode flags if the stack supports them
+   - Keep instrumentation minimal — only what confirms or refutes the hypothesis
+
+3. Restart the stack using the configured script (if set):
+     \${stack_script:-"# No stack_script configured — restart manually or connect to staging"}
+
+4. Re-run the reproduction steps from the reproduce-agent findings.
+
+5. Observe and capture new output:
+   - Paste relevant log lines into your working notes
+   - Note whether the observed values match or contradict the hypothesis
+
+6. If the first instrumentation pass is inconclusive, iterate:
+   - Narrow the scope to the next most suspicious boundary
+   - Re-instrument, restart, re-run
+   - Maximum 2-3 instrumentation rounds before declaring inconclusive
+
+Do NOT push the debug branch. It will be deleted in the cleanup step.
+
+### Step 4: Decompose root causes into backlog issues
+After tracing and instrumentation, articulate each distinct root cause.
+
+For each root cause found:
+
+1. Determine the relationship to other causes:
+   - Layered (one causes another) → use Depends-on in the issue body
+   - Independent (separate code paths fail independently) → use Related
+
+2. Create a backlog issue for each root cause:
+     curl -sf -X POST "\${FORGE_API}/issues" \\
+       -H "Authorization: token \${FORGE_TOKEN}" \\
+       -H "Content-Type: application/json" \\
+       -d '{
+         "title": "fix: <specific description of root cause N>",
+         "body": "## Root cause\\n<exact code path, file:line>\\n\\n## Fix suggestion\\n<recommended approach>\\n\\n## Context\\nDecomposed from #\${ISSUE_NUMBER} (cause N of M)\\n\\n## Dependencies\\n<#X if this depends on another cause being fixed first>",
+         "labels": ["backlog"]
+       }'
+
+3. Note the newly created issue numbers.
+
+If only one root cause is found, still create a single backlog issue with
+the specific code location and fix suggestion.
+
+If the investigation is inconclusive (no clear root cause found), skip this
+step and proceed directly to link-back with the inconclusive outcome.
+
+### Step 5: Update original issue and relabel
+Post a summary comment on the original issue and update its labels.
+
+#### If root causes were found (conclusive):
+
+Post a comment:
+  "## Triage findings
+
+  Found N root cause(s):
+  - #X — <one-line description> (cause 1 of N)
+  - #Y — <one-line description> (cause 2 of N, depends on #X)
+
+  Data flow traced: <layer where the bug originates>
+  Instrumentation: <key log output that confirmed the cause>
+
+  Next step: backlog issues above will be implemented in dependency order."
+
+Then swap labels:
+  - Remove: in-triage
+  - Add: in-progress
+
+#### If investigation was inconclusive (turn budget exhausted):
+
+Post a comment:
+  "## Triage — inconclusive
+
+  Traced: <layers checked>
+  Tried: <instrumentation attempts and what they showed>
+  Hypothesis: <best guess at cause, if any>
+
+  No definitive root cause identified. Leaving in-triage for supervisor
+  to handle as a stale triage session."
+
+Do NOT relabel. Leave in-triage. The supervisor monitors stale triage
+sessions and will escalate or reassign.
+
+### Step 6: Delete throwaway debug branch
+Always delete the debug branch, even if the investigation was inconclusive.
+
+1. Switch back to the main branch:
+     cd "\$PROJECT_REPO_ROOT"
+     git checkout "\$PRIMARY_BRANCH"
+
+2. Delete the local debug branch:
+     git branch -D debug/triage-\${ISSUE_NUMBER}
+
+3. Confirm no remote was pushed (if accidentally pushed, delete it too):
+     git push origin --delete debug/triage-\${ISSUE_NUMBER} 2>/dev/null || true
+
+4. Verify the worktree is clean:
+     git status
+     git worktree list
+
+A clean repo is a prerequisite for the next dev-agent run. Never leave
+debug branches behind — they accumulate and pollute the branch list.
+
+## Notes
+- The application is accessible at localhost (network_mode: host)
+- Budget: 70% tracing data flow, 30% instrumented re-runs
+- Timeout: \${FORMULA_TIMEOUT_MINUTES} minutes total (or until turn limit)
+- Stack lock is held for the full run
+- If stack_script is empty, connect to existing staging environment
+
+Begin now.
+PROMPT
+  )
+else
+  # Reproduce-agent prompt: reproduce the bug and report findings
+  CLAUDE_PROMPT=$(cat <<PROMPT
 You are the reproduce-agent. Your task is to reproduce the bug described in issue #${ISSUE_NUMBER} and report your findings.
 
 ## Issue title
@@ -250,12 +463,17 @@ If **not obvious** → Write OUTCOME=reproduced (no ROOT_CAUSE line)
 
 Begin now.
 PROMPT
-)
+  )
+fi
 
 # ---------------------------------------------------------------------------
 # Run Claude with Playwright MCP
 # ---------------------------------------------------------------------------
-log "Starting Claude reproduction session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+if [ "$AGENT_TYPE" = "triage" ]; then
+  log "Starting triage-agent session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+else
+  log "Starting Claude reproduction session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+fi
 
 CLAUDE_EXIT=0
 timeout "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" \
@@ -296,7 +514,11 @@ FINDINGS=""
 if [ -f "/tmp/reproduce-findings-${ISSUE_NUMBER}.md" ]; then
   FINDINGS=$(cat "/tmp/reproduce-findings-${ISSUE_NUMBER}.md")
 else
-  FINDINGS="Reproduce-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+  if [ "$AGENT_TYPE" = "triage" ]; then
+    FINDINGS="Triage-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+  else
+    FINDINGS="Reproduce-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -381,6 +603,13 @@ _post_comment() {
 BUG_REPORT_ID=$(_label_id "bug-report" "#e4e669")
 _remove_label "$ISSUE_NUMBER" "$BUG_REPORT_ID"
 
+# Determine agent name for comments (based on AGENT_TYPE set at script start)
+if [ "$AGENT_TYPE" = "triage" ]; then
+  AGENT_NAME="Triage-agent"
+else
+  AGENT_NAME="Reproduce-agent"
+fi
+
 # Determine outcome and apply appropriate labels
 LABEL_NAME=""
 LABEL_COLOR=""
@@ -396,13 +625,13 @@ case "$OUTCOME" in
       # Obvious cause → add reproduced status label, create backlog issue for dev-agent
       LABEL_NAME="reproduced"
       LABEL_COLOR="#0075ca"
-      COMMENT_HEADER="## Reproduce-agent: **Reproduced with obvious cause** :white_check_mark: :zap:"
+      COMMENT_HEADER="## ${AGENT_NAME}: **Reproduced with obvious cause** :white_check_mark: :zap:"
       CREATE_BACKLOG_ISSUE=true
     else
       # Cause unclear → in-triage → Triage-agent
       LABEL_NAME="in-triage"
       LABEL_COLOR="#d93f0b"
-      COMMENT_HEADER="## Reproduce-agent: **Reproduced, cause unclear** :white_check_mark: :mag:"
+      COMMENT_HEADER="## ${AGENT_NAME}: **Reproduced, cause unclear** :white_check_mark: :mag:"
     fi
     ;;
 
@@ -410,14 +639,14 @@ case "$OUTCOME" in
     # Cannot reproduce → rejected → Human review
     LABEL_NAME="rejected"
     LABEL_COLOR="#e4e669"
-    COMMENT_HEADER="## Reproduce-agent: **Cannot reproduce** :x:"
+    COMMENT_HEADER="## ${AGENT_NAME}: **Cannot reproduce** :x:"
     ;;
 
   needs-triage)
     # Inconclusive (timeout, env issues) → blocked → Gardener/human
     LABEL_NAME="blocked"
     LABEL_COLOR="#e11d48"
-    COMMENT_HEADER="## Reproduce-agent: **Inconclusive, blocked** :construction:"
+    COMMENT_HEADER="## ${AGENT_NAME}: **Inconclusive, blocked** :construction:"
     ;;
 esac
 
@@ -460,9 +689,9 @@ COMMENT_BODY="${COMMENT_HEADER}
 ${FINDINGS}${SCREENSHOT_LIST}
 
 ---
-*Reproduce-agent run at $(date -u '+%Y-%m-%d %H:%M:%S UTC') — project: ${PROJECT_NAME}*"
+*${AGENT_NAME} run at $(date -u '+%Y-%m-%d %H:%M:%S UTC') — project: ${PROJECT_NAME}*"
 
 _post_comment "$ISSUE_NUMBER" "$COMMENT_BODY"
 log "Posted findings to issue #${ISSUE_NUMBER}"
 
-log "Reproduce-agent done. Outcome: ${OUTCOME}"
+log "${AGENT_NAME} done. Outcome: ${OUTCOME}"
