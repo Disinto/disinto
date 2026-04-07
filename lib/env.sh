@@ -13,7 +13,7 @@ FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
   DISINTO_DATA_DIR="${HOME}/data"
   DISINTO_LOG_DIR="${DISINTO_DATA_DIR}/logs"
-  mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics,gardener}
+  mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics,gardener,planner,predictor,architect,dispatcher}
 else
   DISINTO_LOG_DIR="${FACTORY_ROOT}"
 fi
@@ -138,8 +138,12 @@ unset CLAWHUB_TOKEN 2>/dev/null || true
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
 # Shared log helper
+# Usage: log "message"
+# Output: [2026-04-03T14:00:00Z] agent: message
+# Where agent is set via LOG_AGENT variable (defaults to caller's context)
 log() {
-  printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
+  local agent="${LOG_AGENT:-agent}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*"
 }
 
 # =============================================================================

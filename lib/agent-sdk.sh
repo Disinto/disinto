@@ -52,12 +52,16 @@ agent_run() {
   log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
   output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") && rc=0 || rc=$?
   if [ "$rc" -eq 124 ]; then
-    log "agent_run: timeout after ${CLAUDE_TIMEOUT:-7200}s"
+    log "agent_run: timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $rc)"
   elif [ "$rc" -ne 0 ]; then
     log "agent_run: claude exited with code $rc"
+    # Log last 3 lines of output for diagnostics
+    if [ -n "$output" ]; then
+      log "agent_run: last output lines: $(echo "$output" | tail -3)"
+    fi
   fi
   if [ -z "$output" ]; then
-    log "agent_run: empty output (claude may have crashed or failed)"
+    log "agent_run: empty output (claude may have crashed or failed, exit code: $rc)"
   fi
 
   # Extract and persist session_id
@@ -89,9 +93,13 @@ agent_run() {
         local nudge_rc
         output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
         if [ "$nudge_rc" -eq 124 ]; then
-          log "agent_run: nudge timeout after ${CLAUDE_TIMEOUT:-7200}s"
+          log "agent_run: nudge timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $nudge_rc)"
         elif [ "$nudge_rc" -ne 0 ]; then
           log "agent_run: nudge claude exited with code $nudge_rc"
+          # Log last 3 lines of output for diagnostics
+          if [ -n "$output" ]; then
+            log "agent_run: nudge last output lines: $(echo "$output" | tail -3)"
+          fi
         fi
         new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
         if [ -n "$new_sid" ]; then

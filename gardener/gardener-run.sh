@@ -55,7 +55,9 @@ RESULT_FILE="/tmp/gardener-result-${PROJECT_NAME}.txt"
 GARDENER_PR_FILE="/tmp/gardener-pr-${PROJECT_NAME}.txt"
 WORKTREE="/tmp/${PROJECT_NAME}-gardener-run"
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
+# Override LOG_AGENT for consistent agent identification
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
+LOG_AGENT="gardener"
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active gardener
@@ -156,19 +158,21 @@ _gardener_execute_manifest() {
 
     case "$action" in
       add_label)
-        local label label_id
+        local label label_id http_code resp
         label=$(jq -r ".[$i].label" "$manifest_file")
         label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${FORGE_API}/labels" | jq -r --arg n "$label" \
           '.[] | select(.name == $n) | .id') || true
         if [ -n "$label_id" ]; then
-          if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+          resp=$(curl -sf -w "\n%{http_code}" -X POST -H "Authorization: token ${FORGE_TOKEN}" \
                -H 'Content-Type: application/json' \
                "${FORGE_API}/issues/${issue}/labels" \
-               -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1; then
+               -d "{\"labels\":[${label_id}]}" 2>/dev/null) || true
+          http_code=$(echo "$resp" | tail -1)
+          if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
             log "manifest: add_label '${label}' to #${issue}"
           else
-            log "manifest: FAILED add_label '${label}' to #${issue}"
+            log "manifest: FAILED add_label '${label}' to #${issue}: HTTP ${http_code}"
           fi
         else
           log "manifest: FAILED add_label — label '${label}' not found"
@@ -176,17 +180,19 @@ _gardener_execute_manifest() {
         ;;
 
       remove_label)
-        local label label_id
+        local label label_id http_code resp
         label=$(jq -r ".[$i].label" "$manifest_file")
         label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${FORGE_API}/labels" | jq -r --arg n "$label" \
           '.[] | select(.name == $n) | .id') || true
         if [ -n "$label_id" ]; then
-          if curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-               "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1; then
+          resp=$(curl -sf -w "\n%{http_code}" -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+               "${FORGE_API}/issues/${issue}/labels/${label_id}" 2>/dev/null) || true
+          http_code=$(echo "$resp" | tail -1)
+          if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
             log "manifest: remove_label '${label}' from #${issue}"
           else
-            log "manifest: FAILED remove_label '${label}' from #${issue}"
+            log "manifest: FAILED remove_label '${label}' from #${issue}: HTTP ${http_code}"
           fi
         else
           log "manifest: FAILED remove_label — label '${label}' not found"
@@ -194,34 +200,38 @@ _gardener_execute_manifest() {
         ;;
 
       close)
-        local reason
+        local reason http_code resp
         reason=$(jq -r ".[$i].reason // empty" "$manifest_file")
-        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
+        resp=$(curl -sf -w "\n%{http_code}" -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
              "${FORGE_API}/issues/${issue}" \
-             -d '{"state":"closed"}' >/dev/null 2>&1; then
+             -d '{"state":"closed"}' 2>/dev/null) || true
+        http_code=$(echo "$resp" | tail -1)
+        if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
           log "manifest: closed #${issue} (${reason})"
         else
-          log "manifest: FAILED close #${issue}"
+          log "manifest: FAILED close #${issue}: HTTP ${http_code}"
         fi
         ;;
 
       comment)
-        local body escaped_body
+        local body escaped_body http_code resp
         body=$(jq -r ".[$i].body" "$manifest_file")
         escaped_body=$(printf '%s' "$body" | jq -Rs '.')
-        if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+        resp=$(curl -sf -w "\n%{http_code}" -X POST -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
              "${FORGE_API}/issues/${issue}/comments" \
-             -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
+             -d "{\"body\":${escaped_body}}" 2>/dev/null) || true
+        http_code=$(echo "$resp" | tail -1)
+        if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
           log "manifest: commented on #${issue}"
         else
-          log "manifest: FAILED comment on #${issue}"
+          log "manifest: FAILED comment on #${issue}: HTTP ${http_code}"
         fi
         ;;
 
       create_issue)
-        local title body labels escaped_title escaped_body label_ids
+        local title body labels escaped_title escaped_body label_ids http_code resp
         title=$(jq -r ".[$i].title" "$manifest_file")
         body=$(jq -r ".[$i].body" "$manifest_file")
         labels=$(jq -r ".[$i].labels // [] | .[]" "$manifest_file")
@@ -241,40 +251,46 @@ _gardener_execute_manifest() {
           done <<< "$labels"
           [ -n "$ids_json" ] && label_ids="[${ids_json}]"
         fi
-        if curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+        resp=$(curl -sf -w "\n%{http_code}" -X POST -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
              "${FORGE_API}/issues" \
-             -d "{\"title\":${escaped_title},\"body\":${escaped_body},\"labels\":${label_ids}}" >/dev/null 2>&1; then
+             -d "{\"title\":${escaped_title},\"body\":${escaped_body},\"labels\":${label_ids}}" 2>/dev/null) || true
+        http_code=$(echo "$resp" | tail -1)
+        if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
           log "manifest: created issue '${title}'"
         else
-          log "manifest: FAILED create_issue '${title}'"
+          log "manifest: FAILED create_issue '${title}': HTTP ${http_code}"
         fi
         ;;
 
       edit_body)
-        local body escaped_body
+        local body escaped_body http_code resp
         body=$(jq -r ".[$i].body" "$manifest_file")
         escaped_body=$(printf '%s' "$body" | jq -Rs '.')
-        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
+        resp=$(curl -sf -w "\n%{http_code}" -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
              "${FORGE_API}/issues/${issue}" \
-             -d "{\"body\":${escaped_body}}" >/dev/null 2>&1; then
+             -d "{\"body\":${escaped_body}}" 2>/dev/null) || true
+        http_code=$(echo "$resp" | tail -1)
+        if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
           log "manifest: edited body of #${issue}"
         else
-          log "manifest: FAILED edit_body #${issue}"
+          log "manifest: FAILED edit_body #${issue}: HTTP ${http_code}"
         fi
         ;;
 
       close_pr)
-        local pr
+        local pr http_code resp
         pr=$(jq -r ".[$i].pr" "$manifest_file")
-        if curl -sf -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
+        resp=$(curl -sf -w "\n%{http_code}" -X PATCH -H "Authorization: token ${FORGE_TOKEN}" \
              -H 'Content-Type: application/json' \
              "${FORGE_API}/pulls/${pr}" \
-             -d '{"state":"closed"}' >/dev/null 2>&1; then
+             -d '{"state":"closed"}' 2>/dev/null) || true
+        http_code=$(echo "$resp" | tail -1)
+        if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
           log "manifest: closed PR #${pr}"
         else
-          log "manifest: FAILED close_pr #${pr}"
+          log "manifest: FAILED close_pr #${pr}: HTTP ${http_code}"
         fi
         ;;
 

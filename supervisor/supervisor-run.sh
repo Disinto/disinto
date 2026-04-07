@@ -46,7 +46,16 @@ SID_FILE="/tmp/supervisor-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/supervisor-${PROJECT_NAME}-scratch.md"
 WORKTREE="/tmp/${PROJECT_NAME}-supervisor-run"
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
+# Override LOG_AGENT for consistent agent identification
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
+LOG_AGENT="supervisor"
+
+# Override log() to append to supervisor-specific log file
+# shellcheck disable=SC2034
+log() {
+  local agent="${LOG_AGENT:-supervisor}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
+}
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active supervisor
@@ -67,10 +76,15 @@ resolve_agent_identity || true
 # ── Collect pre-flight metrics ────────────────────────────────────────────
 log "Running preflight.sh"
 PREFLIGHT_OUTPUT=""
+PREFLIGHT_RC=0
 if PREFLIGHT_OUTPUT=$(bash "$SCRIPT_DIR/preflight.sh" "$PROJECT_TOML" 2>&1); then
   log "Preflight collected ($(echo "$PREFLIGHT_OUTPUT" | wc -l) lines)"
 else
-  log "WARNING: preflight.sh failed, continuing with partial data"
+  PREFLIGHT_RC=$?
+  log "WARNING: preflight.sh failed (exit code $PREFLIGHT_RC), continuing with partial data"
+  if [ -n "$PREFLIGHT_OUTPUT" ]; then
+    log "Preflight error: $(echo "$PREFLIGHT_OUTPUT" | tail -3)"
+  fi
 fi
 
 # ── Load formula + context ───────────────────────────────────────────────
