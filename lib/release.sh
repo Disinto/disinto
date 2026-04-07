@@ -118,20 +118,22 @@ This PR creates a vault item for the release of version ${version}.
 "
 
   # Create branch from clean primary branch
-  cd "$ops_root"
-  git checkout "$PRIMARY_BRANCH"
-  git pull origin "$PRIMARY_BRANCH"
-  git checkout -B "$branch_name" "$PRIMARY_BRANCH"
+  (
+    cd "$ops_root"
+    git checkout "$PRIMARY_BRANCH"
+    git pull origin "$PRIMARY_BRANCH"
+    git checkout -B "$branch_name" "$PRIMARY_BRANCH"
 
-  # Add and commit only the vault TOML file
-  git add "vault/actions/${id}.toml"
-  git commit -m "$pr_title" -m "$pr_body" 2>/dev/null || true
+    # Add and commit only the vault TOML file
+    git add "vault/actions/${id}.toml"
+    git commit -m "$pr_title" -m "$pr_body" 2>/dev/null || true
 
-  # Push branch
-  git push -u origin "$branch_name" 2>/dev/null || {
-    echo "Error: failed to push branch" >&2
-    exit 1
-  }
+    # Push branch
+    git push -u origin "$branch_name" 2>/dev/null || {
+      echo "Error: failed to push branch" >&2
+      exit 1
+    }
+  )
 
   # Create PR
   local pr_response
