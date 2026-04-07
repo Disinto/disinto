@@ -30,11 +30,11 @@ fi
 
 # Reset base repo to origin/main to avoid divergence warnings
 su -s /bin/bash agent -c "
-  cd '/home/agent/repos/disinto'
+  cd \"${PROJECT_REPO_ROOT}\"
   git fetch origin main
   git checkout main 2>/dev/null || true
   git reset --hard origin/main
-"
+" || true
 log "Base repo reset to origin/main"
 
 log "Entering poll loop (interval: ${POLL_INTERVAL:-300}s)"
