@@ -48,6 +48,7 @@ while true; do
 
   su -s /bin/bash agent -c "
     export FORGE_TOKEN='${FORGE_TOKEN}'
+    export FORGE_TOKEN_OVERRIDE='${FORGE_TOKEN_OVERRIDE:-}'
     export ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY:-}'
     export ANTHROPIC_BASE_URL='${ANTHROPIC_BASE_URL:-}'
     export CLAUDE_CONFIG_DIR='${CLAUDE_CONFIG_DIR:-}'

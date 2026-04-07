@@ -64,6 +64,13 @@ elif [ -f "$FACTORY_ROOT/.env" ]; then
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
 fi
 
+# Allow per-container token override (#375): .env sets the default FORGE_TOKEN
+# (dev-bot), then FORGE_TOKEN_OVERRIDE replaces it for containers that need a
+# different Forgejo identity (e.g. dev-qwen).
+if [ -n "${FORGE_TOKEN_OVERRIDE:-}" ]; then
+  export FORGE_TOKEN="$FORGE_TOKEN_OVERRIDE"
+fi
+
 # PATH: foundry, node, system
 export PATH="${HOME}/.local/bin:${HOME}/.foundry/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 export HOME="${HOME:-/home/debian}"
