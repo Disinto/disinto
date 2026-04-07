@@ -1,0 +1,46 @@
+# formulas/triage.toml — Triage-agent formula
+#
+# Declares the triage-agent's runtime parameters.
+# The dispatcher reads this to configure the sidecar container.
+#
+# Triggered by: bug-report + in-triage label combination.
+# Set by the reproduce-agent when:
+#   - Bug was confirmed (reproduced)
+#   - Quick log analysis did not reveal an obvious root cause
+#   - Reproduce-agent documented all steps taken and logs examined
+#
+# What it does:
+#   1. Reads reproduce-agent findings from issue comments (do not repeat work)
+#   2. Deep-traces the data flow from symptom to source:
+#        UI component → composable → API/GraphQL → indexer → chain
+#      - Compare what the code expects vs what APIs actually return
+#      - Create a throwaway branch, add debug instrumentation (console.log, verbose logging)
+#      - Restart services, re-run reproduction, observe new output
+#      - Delete throwaway branch when done
+#   3. Decomposes all root causes (may be 1 or multiple compounding):
+#      - For each root cause, create a separate backlog issue with:
+#          * Which cause it is (1 of N)
+#          * Specific code path and fix suggestion
+#          * Depends-on: #X if causes are layered
+#   4. Updates original issue:
+#      - Posts summary: "Found N root causes, tracked as #X, #Y, #Z"
+#      - Replaces in-triage with in-progress
+#
+# No hard timeout — runs until Claude hits its turn limit.
+# Stack lock held for full run (triage is rare; blocking CI is acceptable).
+#
+# stack_script: path (relative to PROJECT_REPO_ROOT) of the script used to
+# restart/rebuild the project stack.  Leave empty ("") to connect to an
+# existing staging environment instead.
+#
+# tools: MCP servers to pass to claude via --mcp-server flags.
+
+name            = "triage"
+description     = "Deep root cause analysis: trace data flow, add debug instrumentation, decompose causes into backlog issues."
+version         = 1
+
+# Set stack_script to the restart command for local stacks.
+# Leave empty ("") to target an existing staging environment.
+stack_script    = ""
+
+tools           = ["playwright"]
