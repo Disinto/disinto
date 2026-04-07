@@ -42,6 +42,11 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
+# Resolve current agent identity once at startup — cache for all assignee checks
+BOT_USER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${API%%/repos*}/user" | jq -r '.login') || BOT_USER=""
+log "running as agent: ${BOT_USER}"
+
 # =============================================================================
 # CI FIX TRACKER: per-PR counter to avoid infinite respawn loops (max 3)
 # =============================================================================
@@ -340,6 +345,16 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
 
   if [ "${PL_HAS_APPROVE:-0}" -gt 0 ]; then
+    # Check if issue is assigned to this agent — only merge own PRs
+    if [ "$PL_ISSUE" -gt 0 ]; then
+      PR_ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${API}/issues/${PL_ISSUE}") || true
+      PR_ISSUE_ASSIGNEE=$(echo "$PR_ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+      if [ -n "$PR_ISSUE_ASSIGNEE" ] && [ "$PR_ISSUE_ASSIGNEE" != "$BOT_USER" ]; then
+        log "PR #${PL_PR_NUM} (issue #${PL_ISSUE}) assigned to ${PR_ISSUE_ASSIGNEE} — skipping merge (not mine)"
+        continue
+      fi
+    fi
     if try_direct_merge "$PL_PR_NUM" "$PL_ISSUE"; then
       PL_MERGED_ANY=true
     fi
@@ -373,10 +388,6 @@ memory_guard 2000
 # PRIORITY 1: orphaned in-progress issues
 # =============================================================================
 log "checking for in-progress issues"
-
-# Get current bot identity for assignee checks
-BOT_USER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API%%/repos*}/user" | jq -r '.login') || BOT_USER=""
 
 ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=in-progress&limit=10&type=issues")
