@@ -18,7 +18,8 @@ log() {
 
 # Build crontab from project TOMLs and install for the agent user.
 install_project_crons() {
-  local cron_lines="DISINTO_CONTAINER=1
+  local cron_lines="PATH=/usr/local/bin:/usr/bin:/bin
+DISINTO_CONTAINER=1
 USER=agent
 FORGE_URL=http://forgejo:3000"
 
