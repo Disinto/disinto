@@ -1,2 +1,4 @@
 # Active-state files are runtime state, not committed
 .*-active
+# Supervisor is always active in the edge container — committed guard file
+!.supervisor-active

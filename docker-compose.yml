@@ -56,6 +56,30 @@ services:
     env_file:
       - .env
 
+  edge:
+    build:
+      context: docker/edge
+      dockerfile: Dockerfile
+    image: disinto/edge:latest
+    container_name: disinto-edge
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/johba/.local/share/claude/versions/2.1.84:/usr/local/bin/claude:ro
+      - ${HOME}/.claude.json:/root/.claude.json:ro
+      - ${HOME}/.claude:/root/.claude:ro
+      - disinto-logs:/opt/disinto-logs
+    environment:
+      - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_MODEL=claude-sonnet-4-6
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_URL=http://forgejo:3000
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - forgejo
+
   forgejo:
     image: codeberg.org/forgejo/forgejo:1
     container_name: disinto-forgejo
@@ -69,3 +93,6 @@ services:
       - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
     ports:
       - "3000:3000"
+
+volumes:
+  disinto-logs:
