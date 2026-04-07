@@ -234,6 +234,10 @@ Post a comment:
 
 Do NOT relabel. Leave in-triage. The supervisor monitors stale triage
 sessions and will escalate or reassign.
+
+**CRITICAL: Write outcome file** — Always write the outcome to the outcome file:
+  - If root causes found (conclusive): echo "reproduced" > /tmp/triage-outcome-${ISSUE_NUMBER}.txt
+  - If inconclusive: echo "needs-triage" > /tmp/triage-outcome-${ISSUE_NUMBER}.txt
 """
 needs = ["decompose"]
 
