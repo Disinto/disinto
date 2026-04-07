@@ -183,7 +183,7 @@ For each root cause found:
        -d '{
          "title": "fix: <specific description of root cause N>",
          "body": "## Root cause\\n<exact code path, file:line>\\n\\n## Fix suggestion\\n<recommended approach>\\n\\n## Context\\nDecomposed from #${ISSUE_NUMBER} (cause N of M)\\n\\n## Dependencies\\n<#X if this depends on another cause being fixed first>",
-         "labels": ["backlog"]
+         "labels": [{"name": "backlog"}]
        }'
 
 3. Note the newly created issue numbers.
