@@ -43,7 +43,8 @@ _generate_compose_impl() {
 
 services:
   forgejo:
-    image: codeberg.org/forgejo/forgejo:11.0
+    image: codeberg.org/forgejo/forgejo:1
+    container_name: disinto-forgejo
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
@@ -61,6 +62,7 @@ services:
 
   woodpecker:
     image: woodpeckerci/woodpecker-server:v3
+    container_name: disinto-woodpecker
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
@@ -87,6 +89,7 @@ services:
 
   woodpecker-agent:
     image: woodpeckerci/woodpecker-agent:v3
+    container_name: disinto-woodpecker-agent
     restart: unless-stopped
     network_mode: host
     privileged: true
@@ -106,6 +109,7 @@ services:
     build:
       context: .
       dockerfile: docker/agents/Dockerfile
+    container_name: disinto-agents
     restart: unless-stopped
     security_opt:
       - apparmor=unconfined
@@ -158,6 +162,7 @@ services:
   # Serves on ports 80/443, routes based on path
   edge:
     build: ./docker/edge
+    container_name: disinto-edge
     ports:
       - "80:80"
       - "443:443"
@@ -234,9 +239,9 @@ COMPOSEEOF
   # Patch the forgejo port mapping into the file if non-default
   if [ "$forge_port" != "3000" ]; then
     # Add port mapping to forgejo service so it's reachable from host during init
-    sed -i "/image: codeberg\.org\/forgejo\/forgejo:11\.0/a\\    ports:\\n      - \"${forge_port}:3000\"" "$compose_file"
+    sed -i "/image: codeberg\.org\/forgejo\/forgejo:1/a\\    ports:\\n      - \"${forge_port}:3000\"" "$compose_file"
   else
-    sed -i "/image: codeberg\.org\/forgejo\/forgejo:11\.0/a\\    ports:\\n      - \"3000:3000\"" "$compose_file"
+    sed -i "/image: codeberg\.org\/forgejo\/forgejo:1/a\\    ports:\\n      - \"3000:3000\"" "$compose_file"
   fi
 
   echo "Created: ${compose_file}"
