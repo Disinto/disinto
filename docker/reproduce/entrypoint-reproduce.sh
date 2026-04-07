@@ -140,7 +140,6 @@ log "Issue: ${ISSUE_TITLE}"
 # ---------------------------------------------------------------------------
 log "Acquiring stack lock for project ${PROJECT_NAME}..."
 stack_lock_acquire "$LOCK_HOLDER" "$PROJECT_NAME" 900
-trap 'stack_lock_release "$PROJECT_NAME" "$LOCK_HOLDER"; log "Stack lock released (trap)"' EXIT
 log "Stack lock acquired."
 
 # ---------------------------------------------------------------------------
@@ -154,7 +153,18 @@ heartbeat_loop() {
 }
 heartbeat_loop &
 HEARTBEAT_PID=$!
-trap 'kill "$HEARTBEAT_PID" 2>/dev/null; stack_lock_release "$PROJECT_NAME" "$LOCK_HOLDER"; log "Stack lock released (trap)"' EXIT
+
+# ---------------------------------------------------------------------------
+# Debug branch cleanup trap (for triage-agent throwaway branches)
+# ---------------------------------------------------------------------------
+DEBUG_BRANCH="triage-debug-${ISSUE_NUMBER}"
+
+# Combined EXIT trap: heartbeat kill + stack lock release + debug branch cleanup
+trap 'kill "$HEARTBEAT_PID" 2>/dev/null || true
+  stack_lock_release "$PROJECT_NAME" "$LOCK_HOLDER" || true
+  git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+  git -C "$PROJECT_REPO_ROOT" branch -D "$DEBUG_BRANCH" 2>/dev/null || true
+  log "Cleanup completed (trap)"' EXIT
 
 # ---------------------------------------------------------------------------
 # Boot the project stack if formula declares stack_script
