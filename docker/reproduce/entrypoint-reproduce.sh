@@ -523,8 +523,23 @@ fi
 # Read outcome
 # ---------------------------------------------------------------------------
 OUTCOME="needs-triage"
+OUTCOME_FILE=""
+OUTCOME_FOUND=false
+
+# Check reproduce-agent outcome file first
 if [ -f "/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt" ]; then
-  _raw=$(tr -d '[:space:]' < "/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt" | tr '[:upper:]' '[:lower:]')
+  OUTCOME_FILE="/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt"
+  OUTCOME_FOUND=true
+fi
+
+# For triage agent, also check triage-specific outcome file
+if [ "$AGENT_TYPE" = "triage" ] && [ -f "/tmp/triage-outcome-${ISSUE_NUMBER}.txt" ]; then
+  OUTCOME_FILE="/tmp/triage-outcome-${ISSUE_NUMBER}.txt"
+  OUTCOME_FOUND=true
+fi
+
+if [ "$OUTCOME_FOUND" = true ]; then
+  _raw=$(tr -d '[:space:]' < "$OUTCOME_FILE" | tr '[:upper:]' '[:lower:]')
   case "$_raw" in
     reproduced|cannot-reproduce|needs-triage)
       OUTCOME="$_raw"
@@ -534,7 +549,29 @@ if [ -f "/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt" ]; then
       ;;
   esac
 else
-  log "WARNING: outcome file not found — defaulting to needs-triage"
+  # For triage agent, detect success by checking Claude output for:
+  # 1. Triage findings comment indicating root causes were found
+  # 2. Sub-issues created during triage
+  if [ "$AGENT_TYPE" = "triage" ]; then
+    CLAUDE_OUTPUT="/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt"
+
+    # Check for triage findings comment with root causes found
+    if grep -q "## Triage findings" "$CLAUDE_OUTPUT" 2>/dev/null && \
+       grep -q "Found [0-9]* root cause(s)" "$CLAUDE_OUTPUT" 2>/dev/null; then
+      log "Triage success detected: findings comment with root causes found"
+      OUTCOME="reproduced"
+      OUTCOME_FOUND=true
+    # Check for created sub-issues during triage
+    elif grep -qE "(Created|created) issue #[0-9]+|(Created|created) #[0-9]+|harb#[0-9]+" "$CLAUDE_OUTPUT" 2>/dev/null; then
+      log "Triage success detected: sub-issues created"
+      OUTCOME="reproduced"
+      OUTCOME_FOUND=true
+    else
+      log "WARNING: outcome file not found and no triage success indicators — defaulting to needs-triage"
+    fi
+  else
+    log "WARNING: outcome file not found — defaulting to needs-triage"
+  fi
 fi
 
 log "Outcome: ${OUTCOME}"
