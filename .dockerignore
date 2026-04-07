@@ -1,0 +1,20 @@
+# Secrets — prevent .env files from being baked into the image
+.env
+.env.enc
+.env.vault
+.env.vault.enc
+
+# Version control — .git is huge and not needed in image
+.git
+
+# Archives — not needed at runtime
+*.tar.gz
+
+# Prometheus data — large, ephemeral data
+prometheus-data/
+
+# Compose files — only needed at runtime via volume mount
+docker-compose.yml
+
+# Project TOML files — gitignored anyway, won't be in build context
+projects/*.toml
