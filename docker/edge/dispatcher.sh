@@ -496,7 +496,7 @@ fetch_reproduce_candidates() {
   python3 - "$tmpjson" <<'PYEOF'
 import sys, json
 data = json.load(open(sys.argv[1]))
-skip = {"reproduced", "cannot-reproduce", "needs-triage"}
+skip = {"in-progress", "in-triage", "rejected", "blocked"}
 for issue in data:
     labels = {l["name"] for l in (issue.get("labels") or [])}
     if labels & skip:
