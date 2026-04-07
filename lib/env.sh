@@ -21,14 +21,13 @@ export DISINTO_LOG_DIR
 
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env.
 # Always source .env — cron jobs inside the container do NOT inherit compose
-# env vars (FORGE_TOKEN, etc.). Compose-injected vars (like FORGE_URL) are
-# already set and won't be clobbered since env.sh uses ${VAR:-default} patterns
-# for derived values. FORGE_URL from .env (localhost:3000) is overridden below
-# by the compose-injected value when running via docker exec.
+# env vars (FORGE_TOKEN, etc.). Only FORGE_URL is preserved across .env
+# sourcing because compose injects http://forgejo:3000 while .env has
+# http://localhost:3000. FORGE_TOKEN is NOT preserved so that refreshed
+# tokens in .env take effect immediately in running containers.
 if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   set -a
   _saved_forge_url="${FORGE_URL:-}"
-  _saved_forge_token="${FORGE_TOKEN:-}"
   # Use temp file + validate dotenv format before sourcing (avoids eval injection)
   # SOPS -d automatically verifies MAC/GCM authentication tag during decryption
   _tmpenv=$(mktemp) || { echo "Error: failed to create temp file for .env.enc" >&2; exit 1; }
@@ -55,17 +54,14 @@ if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
   rm -f "$_tmpenv"
   set +a
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
-  [ -n "$_saved_forge_token" ] && export FORGE_TOKEN="$_saved_forge_token"
 elif [ -f "$FACTORY_ROOT/.env" ]; then
   # Preserve compose-injected FORGE_URL (localhost in .env != forgejo in Docker)
   _saved_forge_url="${FORGE_URL:-}"
-  _saved_forge_token="${FORGE_TOKEN:-}"
   set -a
   # shellcheck source=/dev/null
   source "$FACTORY_ROOT/.env"
   set +a
   [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
-  [ -n "$_saved_forge_token" ] && export FORGE_TOKEN="$_saved_forge_token"
 fi
 
 # PATH: foundry, node, system
