@@ -38,7 +38,7 @@ source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
-LOG_FILE="$SCRIPT_DIR/supervisor.log"
+LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
