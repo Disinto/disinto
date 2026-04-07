@@ -294,8 +294,21 @@ setup_forge() {
     [predictor-bot]="FORGE_PREDICTOR_TOKEN"
     [architect-bot]="FORGE_ARCHITECT_TOKEN"
   )
+  # Map: bot-username -> env-var-name for the password
+  # Forgejo 11.x API tokens don't work for git HTTP push (#361).
+  # Store passwords so agents can use password auth for git operations.
+  local -A bot_pass_vars=(
+    [dev-bot]="FORGE_PASS"
+    [review-bot]="FORGE_REVIEW_PASS"
+    [planner-bot]="FORGE_PLANNER_PASS"
+    [gardener-bot]="FORGE_GARDENER_PASS"
+    [vault-bot]="FORGE_VAULT_PASS"
+    [supervisor-bot]="FORGE_SUPERVISOR_PASS"
+    [predictor-bot]="FORGE_PREDICTOR_PASS"
+    [architect-bot]="FORGE_ARCHITECT_PASS"
+  )
 
-  local bot_user bot_pass token token_var
+  local bot_user bot_pass token token_var pass_var
 
   for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot architect-bot; do
     bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
@@ -388,6 +401,17 @@ setup_forge() {
     fi
     export "${token_var}=${token}"
     echo "  ${bot_user} token generated and saved (${token_var})"
+
+    # Store password in .env for git HTTP push (#361)
+    # Forgejo 11.x API tokens don't work for git push; password auth does.
+    pass_var="${bot_pass_vars[$bot_user]}"
+    if grep -q "^${pass_var}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${pass_var}=.*|${pass_var}=${bot_pass}|" "$env_file"
+    else
+      printf '%s=%s\n' "$pass_var" "$bot_pass" >> "$env_file"
+    fi
+    export "${pass_var}=${bot_pass}"
+    echo "  ${bot_user} password saved (${pass_var})"
 
     # Backwards-compat aliases for dev-bot and review-bot
     if [ "$bot_user" = "dev-bot" ]; then
