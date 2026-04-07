@@ -1,4 +1,4 @@
-<!-- last-reviewed: fcd892dce054eeb5dfdd01d578e4b0eec4a78c9b -->
+<!-- last-reviewed: 8f58f834d5670101399c3fc7db0ff7a0b6c76234 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -28,7 +28,6 @@ disinto/                 (code repo)
 ├── planner/       planner-run.sh — direct cron executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
 │                  preflight.sh — pre-flight data collection for supervisor formula
-│                  supervisor-poll.sh — legacy bash orchestrator (superseded)
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 ├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py
