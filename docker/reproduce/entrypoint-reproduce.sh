@@ -323,7 +323,7 @@ For each root cause found:
        -d '{
          "title": "fix: <specific description of root cause N>",
          "body": "## Root cause\\n<exact code path, file:line>\\n\\n## Fix suggestion\\n<recommended approach>\\n\\n## Context\\nDecomposed from #\${ISSUE_NUMBER} (cause N of M)\\n\\n## Dependencies\\n<#X if this depends on another cause being fixed first>",
-         "labels": ["backlog"]
+         "labels": [{"name": "backlog"}]
        }'
 
 3. Note the newly created issue numbers.
@@ -485,6 +485,38 @@ timeout "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" \
 
 if [ $CLAUDE_EXIT -eq 124 ]; then
   log "WARNING: Claude session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
+fi
+
+# ---------------------------------------------------------------------------
+# Triage post-processing: enforce backlog label on created issues
+# ---------------------------------------------------------------------------
+# The triage agent may create sub-issues for root causes. Ensure they have
+# the backlog label so dev-agent picks them up. Parse Claude output for
+# newly created issue numbers and add the backlog label.
+if [ "$AGENT_TYPE" = "triage" ]; then
+  log "Triage post-processing: checking for created issues to label..."
+
+  # Extract issue numbers from Claude output that were created during triage.
+  # Match unambiguous creation patterns: "Created issue #123", "Created #123",
+  # or "harb#123". Do NOT match bare #123 which would capture references in
+  # the triage summary (e.g., "Decomposed from #5", "cause 1 of 2", etc.).
+  CREATED_ISSUES=$(grep -oE '(Created|created) issue #[0-9]+|(Created|created) #[0-9]+|harb#[0-9]+' \
+    "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null | \
+    grep -oE '[0-9]+' | sort -u | head -10)
+
+  if [ -n "$CREATED_ISSUES" ]; then
+    # Get backlog label ID
+    BACKLOG_ID=$(_label_id "backlog" "#fef2c0")
+
+    if [ -z "$BACKLOG_ID" ]; then
+      log "WARNING: could not get backlog label ID — skipping label enforcement"
+    else
+      for issue_num in $CREATED_ISSUES; do
+        _add_label "$issue_num" "$BACKLOG_ID"
+        log "Added backlog label to created issue #${issue_num}"
+      done
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
