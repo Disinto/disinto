@@ -60,6 +60,10 @@ data_flow       = "UI → API → backend → data store"
 # Example: "GraphQL /graphql, REST /api/v1, RPC ws://localhost:8545"
 api_endpoints   = ""
 
+# Stack lock configuration (leave empty for default behavior).
+# Example: "full" to hold a full stack lock during triage.
+stack_lock      = ""
+
 # ---------------------------------------------------------------------------
 # Steps
 # ---------------------------------------------------------------------------
@@ -71,8 +75,10 @@ description = """
 Before doing anything else, parse all prior evidence from the issue comments.
 
 1. Fetch the issue body and all comments:
-     curl -sf "${FORGE_API}/issues/${ISSUE_NUMBER}" | jq -r '.body'
-     curl -sf "${FORGE_API}/issues/${ISSUE_NUMBER}/comments" | jq -r '.[].body'
+     curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+       "${FORGE_API}/issues/${ISSUE_NUMBER}" | jq -r '.body'
+     curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+       "${FORGE_API}/issues/${ISSUE_NUMBER}/comments" | jq -r '.[].body'
 
 2. Identify the reproduce-agent comment (look for sections like
    "Reproduction steps", "Logs examined", "What was tried").
@@ -172,6 +178,8 @@ For each root cause found:
 
 2. Create a backlog issue for each root cause:
      curl -sf -X POST "${FORGE_API}/issues" \\
+       -H "Authorization: token ${FORGE_TOKEN}" \\
+       -H "Content-Type: application/json" \\
        -d '{
          "title": "fix: <specific description of root cause N>",
          "body": "## Root cause\\n<exact code path, file:line>\\n\\n## Fix suggestion\\n<recommended approach>\\n\\n## Context\\nDecomposed from #${ISSUE_NUMBER} (cause N of M)\\n\\n## Dependencies\\n<#X if this depends on another cause being fixed first>",
