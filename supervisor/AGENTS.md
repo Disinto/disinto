@@ -9,19 +9,17 @@ resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` runs every 20 min via cron. Sources `lib/guard.sh`
 and calls `check_active supervisor` first — skips if
-`$FACTORY_ROOT/state/.supervisor-active` is absent. Then creates a tmux session
-with `claude --model sonnet`, injects `formulas/run-supervisor.toml` with
-pre-collected metrics as context, monitors the phase file, and cleans up on
-completion or timeout (20 min max session). No action issues — the supervisor
-runs directly from cron like the planner and predictor.
+`$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p`
+via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with
+pre-collected metrics as context, and cleans up on completion or timeout (20 min max session).
+No action issues — the supervisor runs directly from cron like the planner and predictor.
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
-  runs preflight.sh, sources disinto project config, creates tmux session, injects
-  formula prompt with metrics, monitors phase file, handles crash recovery via
-  `run_formula_and_monitor`
+  runs preflight.sh, sources disinto project config, runs claude -p via agent-sdk.sh,
+  injects formula prompt with metrics, handles crash recovery
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
-  load), Docker status, active tmux sessions + phase files, lock files, agent log
+  load), Docker status, active sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
   issues. Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
@@ -33,8 +31,6 @@ runs directly from cron like the planner and predictor.
   Claude evaluates all metrics and takes actions in a single interactive session
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
-- `supervisor/supervisor-poll.sh` — Legacy bash orchestrator (superseded by
-  supervisor-run.sh + formula)
 
 **Alert priorities**: P0 (memory crisis), P1 (disk), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
@@ -45,5 +41,5 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
 **Lifecycle**: supervisor-run.sh (cron */20) → lock + memory guard → run
-preflight.sh (collect metrics) → load formula + context → create tmux
-session → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.
+preflight.sh (collect metrics) → load formula + context → run claude -p via agent-sdk.sh
+→ Claude assesses health, auto-fixes, writes journal → `PHASE:done`.

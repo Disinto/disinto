@@ -1,7 +1,7 @@
 # formulas/run-supervisor.toml — Supervisor formula (health monitoring + remediation)
 #
 # Executed by supervisor/supervisor-run.sh via cron (every 20 minutes).
-# supervisor-run.sh creates a tmux session with Claude (sonnet) and injects
+# supervisor-run.sh runs claude -p via agent-sdk.sh and injects
 # this formula with pre-collected metrics as context.
 #
 # Steps: preflight → health-assessment → decide-actions → report → journal
@@ -137,14 +137,15 @@ For each finding from the health assessment, decide and execute an action.
 
 **P3 Stale PRs (CI done >20min, no push since):**
   Do NOT read dev-poll.sh, push branches, attempt merges, or investigate pipeline code.
-  Instead, nudge the dev-agent via tmux injection if a session is alive:
-    # Find the dev session for this issue
-    SESSION=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "dev-.*-${ISSUE_NUM}" | head -1)
-    if [ -n "$SESSION" ]; then
-      # Inject a nudge into the dev-agent session
-      tmux send-keys -t "$SESSION" "# [supervisor] PR stale >20min — CI finished, please push or update" Enter
-    fi
-  If no active tmux session exists, note it in the journal for the next dev-poll cycle.
+  Instead, file a vault item for the dev-agent to pick up:
+    Write $OPS_REPO_ROOT/vault/pending/stale-pr-${ISSUE_NUM}.md:
+      # Stale PR: ${PR_TITLE}
+      ## What
+      CI finished >20min ago but no git push has been made to the PR branch.
+      ## Why
+      P3 — Factory degraded: PRs should be pushed within 20min of CI completion.
+      ## Unblocks
+      - Factory health: dev-agent will push the branch and continue the workflow
   Do NOT file vault items for stale PRs unless they remain stale for >3 consecutive runs.
 
 ### Cannot auto-fix → file vault item
@@ -251,7 +252,6 @@ knowledge file in the ops repo:
 Knowledge files: memory.md, disk.md, ci.md, forge.md, dev-agent.md,
 review-agent.md, git.md.
 
-After writing the journal, write the phase signal:
-  echo 'PHASE:done' > "$PHASE_FILE"
+After writing the journal, the agent session completes automatically.
 """
 needs = ["report"]
