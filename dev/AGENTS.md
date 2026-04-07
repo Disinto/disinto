@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8f58f834d5670101399c3fc7db0ff7a0b6c76234 -->
+<!-- last-reviewed: ac2beac361503c8712ecfc72be0401b5968cce4e -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -14,7 +14,7 @@ in-progress issues are also picked up. The direct-merge scan runs before the loc
 check so approved PRs get merged even while a dev-agent session is active.
 
 **Key files**:
-- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`. If an issue has no assignee, no open PR, and no agent lock file — removes `in-progress`, adds `blocked` with a human-triage comment. If the issue has an assignee, trusts active work and skips (agent may be running in another container).
+- `dev/dev-poll.sh` — Cron scheduler: finds next ready issue, handles merge/rebase of approved PRs, tracks CI fix attempts. Formula guard skips issues labeled `formula`, `prediction/dismissed`, or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming — skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start). **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`. If the issue is assigned to `$BOT_USER` (this agent), sets `BLOCKED_BY_INPROGRESS=true` — my thread is busy. If assigned to another agent, logs and falls through (does not block). If no assignee, no open PR, and no agent lock file — removes `in-progress`, adds `blocked` with a human-triage comment. **Per-agent open-PR gate**: before starting new work, filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents' PRs do not block this agent's pipeline (#358, #369).
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
