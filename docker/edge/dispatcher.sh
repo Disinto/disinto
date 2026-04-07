@@ -47,9 +47,14 @@ VAULT_ENV="${SCRIPT_ROOT}/../vault/vault-env.sh"
 # Comma-separated list of Forgejo usernames with admin role
 ADMIN_USERS="${FORGE_ADMIN_USERS:-vault-bot,admin}"
 
-# Log function
+# Persistent log file for dispatcher
+DISPATCHER_LOG_FILE="${DISINTO_LOG_DIR:-/tmp}/dispatcher/dispatcher.log"
+mkdir -p "$(dirname "$DISPATCHER_LOG_FILE")"
+
+# Log function with standardized format
 log() {
-  printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*"
+  local agent="${LOG_AGENT:-dispatcher}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$DISPATCHER_LOG_FILE"
 }
 
 # -----------------------------------------------------------------------------

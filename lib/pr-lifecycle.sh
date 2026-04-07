@@ -357,11 +357,18 @@ pr_close() {
   local pr_num="$1"
 
   _prl_log "closing PR #${pr_num}"
-  curl -sf -X PATCH \
+  local resp http_code
+  resp=$(curl -sf -w "\n%{http_code}" -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_API}/pulls/${pr_num}" \
-    -d '{"state":"closed"}' >/dev/null 2>&1 || true
+    -d '{"state":"closed"}' 2>/dev/null) || true
+  http_code=$(printf '%s\n' "$resp" | tail -1)
+  if [ "$http_code" != "200" ] && [ "$http_code" != "204" ]; then
+    _prl_log "pr_close FAILED: HTTP ${http_code} for PR #${pr_num}"
+    return 1
+  fi
+  _prl_log "PR #${pr_num} closed"
 }
 
 # ---------------------------------------------------------------------------
@@ -398,11 +405,18 @@ pr_walk_to_merge() {
       if [ "${_PR_CI_FAILURE_TYPE:-}" = "infra" ] && [ "$ci_retry_count" -lt 1 ]; then
         ci_retry_count=$((ci_retry_count + 1))
         _prl_log "infra failure — retriggering CI (retry ${ci_retry_count})"
+        local rebase_output rebase_rc
         ( cd "$worktree" && \
           git commit --allow-empty -m "ci: retrigger after infra failure" --no-verify && \
           git fetch "$remote" "${PRIMARY_BRANCH}" 2>/dev/null && \
           git rebase "${remote}/${PRIMARY_BRANCH}" && \
-          git push --force-with-lease "$remote" HEAD ) 2>&1 | tail -5 || true
+          git push --force-with-lease "$remote" HEAD ) > /tmp/rebase-output-$$ 2>&1
+        rebase_rc=$?
+        rebase_output=$(cat /tmp/rebase-output-$$)
+        rm -f /tmp/rebase-output-$$
+        if [ "$rebase_rc" -ne 0 ]; then
+          _prl_log "rebase/push failed (exit code $rebase_rc): $(echo "$rebase_output" | tail -5)"
+        fi
         continue
       fi
 

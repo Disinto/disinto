@@ -23,8 +23,15 @@ LOGFILE="${DISINTO_LOG_DIR}/review/review-poll.log"
 MAX_REVIEWS=3
 REVIEW_IDLE_TIMEOUT=14400  # 4h: kill review session if idle
 
+# Override LOG_AGENT for consistent agent identification
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
+LOG_AGENT="review"
+
+# Override log() to append to review-specific log file
+# shellcheck disable=SC2034
 log() {
-  printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
+  local agent="${LOG_AGENT:-review}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOGFILE"
 }
 
 # Log rotation
@@ -126,10 +133,11 @@ if [ -n "$REVIEW_SIDS" ]; then
 
     log "  #${pr_num} re-review: new commits (${reviewed_sha:0:7}→${current_sha:0:7})"
 
-    if "${SCRIPT_DIR}/review-pr.sh" "$pr_num" 2>&1; then
+    review_output=$("${SCRIPT_DIR}/review-pr.sh" "$pr_num" 2>&1) && review_rc=0 || review_rc=$?
+    if [ "$review_rc" -eq 0 ]; then
       REVIEWED=$((REVIEWED + 1))
     else
-      log "  #${pr_num} re-review failed"
+      log "  #${pr_num} re-review failed (exit code $review_rc): $(echo "$review_output" | tail -3)"
     fi
 
     [ "$REVIEWED" -lt "$MAX_REVIEWS" ] || break
@@ -180,10 +188,11 @@ while IFS= read -r line; do
 
   log "  #${PR_NUM} error check: ${ERROR_COMMENTS:-0} prior error(s) for ${PR_SHA:0:7}"
 
-  if "${SCRIPT_DIR}/review-pr.sh" "$PR_NUM" 2>&1; then
+  review_output=$("${SCRIPT_DIR}/review-pr.sh" "$PR_NUM" 2>&1) && review_rc=0 || review_rc=$?
+  if [ "$review_rc" -eq 0 ]; then
     REVIEWED=$((REVIEWED + 1))
   else
-    log "  #${PR_NUM} review failed"
+    log "  #${PR_NUM} review failed (exit code $review_rc): $(echo "$review_output" | tail -3)"
   fi
 
   if [ "$REVIEWED" -ge "$MAX_REVIEWS" ]; then

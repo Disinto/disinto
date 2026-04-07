@@ -36,7 +36,7 @@ source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
-LOG_FILE="$SCRIPT_DIR/predictor.log"
+LOG_FILE="${DISINTO_LOG_DIR}/predictor/predictor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -44,7 +44,16 @@ SID_FILE="/tmp/predictor-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/predictor-${PROJECT_NAME}-scratch.md"
 WORKTREE="/tmp/${PROJECT_NAME}-predictor-run"
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
+# Override LOG_AGENT for consistent agent identification
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
+LOG_AGENT="predictor"
+
+# Override log() to append to predictor-specific log file
+# shellcheck disable=SC2034
+log() {
+  local agent="${LOG_AGENT:-predictor}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
+}
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active predictor

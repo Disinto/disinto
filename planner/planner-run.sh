@@ -35,7 +35,7 @@ source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
-LOG_FILE="$SCRIPT_DIR/planner.log"
+LOG_FILE="${DISINTO_LOG_DIR}/planner/planner.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -43,7 +43,16 @@ SID_FILE="/tmp/planner-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/planner-${PROJECT_NAME}-scratch.md"
 WORKTREE="/tmp/${PROJECT_NAME}-planner-run"
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%S)Z] $*" >> "$LOG_FILE"; }
+# Override LOG_AGENT for consistent agent identification
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
+LOG_AGENT="planner"
+
+# Override log() to append to planner-specific log file
+# shellcheck disable=SC2034
+log() {
+  local agent="${LOG_AGENT:-planner}"
+  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
+}
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
