@@ -64,7 +64,7 @@ services:
     container_name: disinto-edge
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /home/johba/.local/share/claude/versions/2.1.84:/usr/local/bin/claude:ro
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
       - ${HOME}/.claude.json:/root/.claude.json:ro
       - ${HOME}/.claude:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
@@ -74,6 +74,7 @@ services:
       - CLAUDE_MODEL=claude-sonnet-4-6
       - FORGE_TOKEN=${FORGE_TOKEN:-}
       - FORGE_URL=http://forgejo:3000
+      - DISINTO_CONTAINER=1
     ports:
       - "80:80"
       - "443:443"
