@@ -784,9 +784,32 @@ done
 
 # Single-threaded per project: if any issue has an open PR waiting for review/CI,
 # don't start new work — let the pipeline drain first
+# But only block on PRs assigned to this agent (per-agent logic from #358)
 if [ -n "$READY_ISSUE" ] && [ -n "${WAITING_PRS:-}" ]; then
-  log "holding #${READY_ISSUE} — waiting for open PR(s) to land first: ${WAITING_PRS}"
-  exit 0
+  # Filter to only this agent's waiting PRs
+  MY_WAITING_PRS=""
+  for pr_num in $(echo "$WAITING_PRS" | tr ',' ' '); do
+    pr_num="${pr_num#\#}"  # Remove leading #
+    # Check if this PR's issue is assigned to this agent
+    pr_info=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/pulls/${pr_num}" 2>/dev/null) || true
+    pr_branch=$(echo "$pr_info" | jq -r '.head.ref') || true
+    issue_num=$(echo "$pr_branch" | grep -oP '(?<=fix/issue-)\d+' || true)
+    if [ -z "$issue_num" ]; then
+      continue
+    fi
+    issue_assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${issue_num}" 2>/dev/null | jq -r '.assignee.login // ""') || true
+    if [ -n "$issue_assignee" ] && [ "$issue_assignee" = "$BOT_USER" ]; then
+      MY_WAITING_PRS="${MY_WAITING_PRS:-}${MY_WAITING_PRS:+, }#${pr_num}"
+    fi
+  done
+
+  if [ -n "$MY_WAITING_PRS" ]; then
+    log "holding #${READY_ISSUE} — waiting for my open PR(s) to land first: ${MY_WAITING_PRS}"
+    exit 0
+  fi
+  log "other agents' PRs waiting: ${WAITING_PRS} — proceeding with #${READY_ISSUE}"
 fi
 
 if [ -z "$READY_ISSUE" ]; then
