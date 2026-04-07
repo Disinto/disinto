@@ -253,7 +253,6 @@ Write the complete, rewritten lessons-learned.md content below. No preamble, no 
   output=$(claude -p "$digest_prompt" \
     --output-format json \
     --dangerously-skip-permissions \
-    --max-tokens 1000 \
     ${model:+--model "$model"} \
     2>>"$LOGFILE" || echo '{"result":"error"}')
 
@@ -448,7 +447,6 @@ Write the journal entry below. Use markdown format."
   output=$(claude -p "$reflection_prompt" \
     --output-format json \
     --dangerously-skip-permissions \
-    --max-tokens 500 \
     ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
     2>>"$LOGFILE" || echo '{"result":"error"}')
 
