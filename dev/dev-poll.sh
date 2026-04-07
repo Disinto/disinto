@@ -382,6 +382,7 @@ ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/issues?state=open&labels=in-progress&limit=10&type=issues")
 
 ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
+BLOCKED_BY_INPROGRESS=false
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
 
@@ -394,138 +395,159 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     OPEN_PR=true
   fi
 
-  # Check if issue has an assignee — if so, trust that agent is working on it
+  # Check if issue has an assignee — only block on issues assigned to this agent
   assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
   if [ -n "$assignee" ]; then
-    log "issue #${ISSUE_NUM} assigned to ${assignee} — trusting active work"
-    exit 0
-  fi
-
-  # Check for dev-agent lock file (agent may be running in another container)
-  LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
-  if [ -f "$LOCK_FILE" ]; then
-    log "issue #${ISSUE_NUM} has agent lock file — trusting active work"
-    exit 0
-  fi
-
-  if [ "$OPEN_PR" = false ]; then
-    log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
-    relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
-    exit 0
-  fi
-
-  # Formula guard: formula-labeled issues should not be worked on by dev-agent.
-  # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
-  ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
-  SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
-  if [ -n "$SKIP_LABEL" ]; then
-    log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
-    IP_ID=$(_ilc_in_progress_id)
-    curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
-    exit 0
-  fi
-
-  # Check if there's already an open PR for this issue
-  HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=open&limit=20" | \
-    jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
-    '.[] | select(.head.ref == $branch) | .number' | head -1) || true
-
-  if [ -n "$HAS_PR" ]; then
-    # Check if branch is stale (behind primary branch)
-    BRANCH="fix/issue-${ISSUE_NUM}"
-    AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
-    if [ "$AHEAD" -gt 0 ]; then
-      log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
-      # Close the PR via API
-      curl -sf -X PATCH \
-        -H "Authorization: token ${FORGE_TOKEN}" \
-        -H "Content-Type: application/json" \
-        "${API}/pulls/${HAS_PR}" \
-        -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      # Delete the branch via git push
-      git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
-      # Reset to fresh start on primary branch
-      git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
-      git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
-      # Exit to restart poll cycle (issue will be picked up fresh)
-      exit 0
-    fi
-
-    PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls/${HAS_PR}" | jq -r '.head.sha') || true
-    CI_STATE=$(ci_commit_status "$PR_SHA") || true
-
-    # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
-    if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$HAS_PR"; then
-      CI_STATE="success"
-      log "PR #${HAS_PR} has no code files — treating CI as passed"
-    fi
-
-    # Check formal reviews (single fetch to avoid race window)
-    REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/pulls/${HAS_PR}/reviews") || true
-    HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
-      jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
-    HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
-      jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
-
-    if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      if try_direct_merge "$HAS_PR" "$ISSUE_NUM"; then
-        exit 0
-      fi
-      # Direct merge failed (conflicts?) — fall back to dev-agent
-      log "falling back to dev-agent for PR #${HAS_PR} merge"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
-      exit 0
-
-    # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
-    # pending/unknown. Definitive CI failure is handled by the elif below.
-    elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-      log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-      log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
-      exit 0
-
-    elif ci_failed "$CI_STATE"; then
-      if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM" "check_only"; then
-        # Fall through to backlog scan instead of exit
-        :
-      else
-        # Increment at actual launch time (not on guard-hit paths)
-        if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
-          exit 0  # exhausted between check and launch
-        fi
-        log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
-        nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-        log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
-        exit 0
-      fi
-
+    if [ "$assignee" = "$BOT_USER" ]; then
+      log "issue #${ISSUE_NUM} assigned to me — my thread is busy"
+      BLOCKED_BY_INPROGRESS=true
     else
-      log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
-      exit 0
+      log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
+      # Issue assigned to another agent — don't block, fall through to backlog
     fi
-  else
-    # Check assignee before adopting orphaned issue
-    ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${ISSUE_NUM}") || true
-    ASSIGNEE=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+  fi
 
-    if [ -n "$ASSIGNEE" ] && [ "$ASSIGNEE" != "$BOT_USER" ]; then
-      log "issue #${ISSUE_NUM} assigned to ${ASSIGNEE} — skipping (not orphaned)"
-      # Remove in-progress label since this agent isn't working on it
-      IP_ID=$(_ilc_in_progress_id)
-      curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-        "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
-      exit 0
+  # Only proceed with in-progress checks if not blocked by another agent
+  if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+    # Check for dev-agent lock file (agent may be running in another container)
+    LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
+    if [ -f "$LOCK_FILE" ]; then
+      log "issue #${ISSUE_NUM} has agent lock file — trusting active work"
+      BLOCKED_BY_INPROGRESS=true
     fi
 
-    log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-    log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+    if [ "$OPEN_PR" = false ] && [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+      log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
+      relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
+      BLOCKED_BY_INPROGRESS=true
+    fi
+
+    # Formula guard: formula-labeled issues should not be worked on by dev-agent.
+    # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
+    if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+      ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
+      SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
+      if [ -n "$SKIP_LABEL" ]; then
+        log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
+        IP_ID=$(_ilc_in_progress_id)
+        curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+          "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
+        BLOCKED_BY_INPROGRESS=true
+      fi
+    fi
+
+    # Check if there's already an open PR for this issue
+    if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+      HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${API}/pulls?state=open&limit=20" | \
+        jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
+        '.[] | select(.head.ref == $branch) | .number' | head -1) || true
+
+      if [ -n "$HAS_PR" ]; then
+        # Check if branch is stale (behind primary branch)
+        BRANCH="fix/issue-${ISSUE_NUM}"
+        AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
+        if [ "$AHEAD" -gt 0 ]; then
+          log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
+          # Close the PR via API
+          curl -sf -X PATCH \
+            -H "Authorization: token ${FORGE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${API}/pulls/${HAS_PR}" \
+            -d '{"state":"closed"}' >/dev/null 2>&1 || true
+          # Delete the branch via git push
+          git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
+          # Reset to fresh start on primary branch
+          git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
+          git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH}" 2>/dev/null || true
+          BLOCKED_BY_INPROGRESS=true
+        fi
+
+        # Only process PR if not abandoned (stale branch check above)
+        if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+          PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+            "${API}/pulls/${HAS_PR}" | jq -r '.head.sha') || true
+          CI_STATE=$(ci_commit_status "$PR_SHA") || true
+
+          # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed
+          if ! ci_passed "$CI_STATE" && ! ci_required_for_pr "$HAS_PR"; then
+            CI_STATE="success"
+            log "PR #${HAS_PR} has no code files — treating CI as passed"
+          fi
+
+          # Check formal reviews (single fetch to avoid race window)
+          REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+            "${API}/pulls/${HAS_PR}/reviews") || true
+          HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
+            jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
+          HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
+            jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+
+          if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
+            if try_direct_merge "$HAS_PR" "$ISSUE_NUM"; then
+              BLOCKED_BY_INPROGRESS=true
+            else
+              # Direct merge failed (conflicts?) — fall back to dev-agent
+              log "falling back to dev-agent for PR #${HAS_PR} merge"
+              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
+              BLOCKED_BY_INPROGRESS=true
+            fi
+
+          # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
+          # pending/unknown. Definitive CI failure is handled by the elif below.
+          elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
+            log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
+            nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+            log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+            BLOCKED_BY_INPROGRESS=true
+
+          elif ci_failed "$CI_STATE"; then
+            if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM" "check_only"; then
+              # Fall through to backlog scan instead of exit
+              :
+            else
+              # Increment at actual launch time (not on guard-hit paths)
+              if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
+                BLOCKED_BY_INPROGRESS=true  # exhausted between check and launch
+              else
+                log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
+                nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+                log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
+                BLOCKED_BY_INPROGRESS=true
+              fi
+            fi
+
+          else
+            log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
+            BLOCKED_BY_INPROGRESS=true
+          fi
+        fi
+      else
+        # Check assignee before adopting orphaned issue
+        ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${API}/issues/${ISSUE_NUM}") || true
+        ASSIGNEE=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+
+        if [ -n "$ASSIGNEE" ] && [ "$ASSIGNEE" != "$BOT_USER" ]; then
+          log "issue #${ISSUE_NUM} assigned to ${ASSIGNEE} — skipping (not orphaned)"
+          # Remove in-progress label since this agent isn't working on it
+          IP_ID=$(_ilc_in_progress_id)
+          curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+            "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
+          # Don't block — fall through to backlog
+        else
+          log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
+          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+          BLOCKED_BY_INPROGRESS=true
+        fi
+      fi
+    fi
+  fi
+
+  # If blocked by in-progress work, exit now
+  if [ "$BLOCKED_BY_INPROGRESS" = true ]; then
     exit 0
   fi
 fi
