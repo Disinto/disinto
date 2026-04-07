@@ -579,6 +579,131 @@ dispatch_reproduce() {
 }
 
 # -----------------------------------------------------------------------------
+# Triage dispatch — launch sidecar for bug-report + in-triage issues
+# -----------------------------------------------------------------------------
+
+# Check if a triage run is already in-flight for a given issue.
+_triage_lockfile() {
+  local issue="$1"
+  echo "/tmp/triage-inflight-${issue}.pid"
+}
+
+is_triage_running() {
+  local issue="$1"
+  local pidfile
+  pidfile=$(_triage_lockfile "$issue")
+  [ -f "$pidfile" ] || return 1
+  local pid
+  pid=$(cat "$pidfile" 2>/dev/null || echo "")
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Fetch open issues labelled both bug-report and in-triage.
+# Returns a newline-separated list of issue numbers.
+fetch_triage_candidates() {
+  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  [ -n "${FORGE_URL:-}" ]   || return 0
+  [ -n "${FORGE_REPO:-}" ]  || return 0
+
+  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+
+  local issues_json
+  issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
+
+  # Filter to issues that carry BOTH bug-report AND in-triage labels.
+  local tmpjson
+  tmpjson=$(mktemp)
+  echo "$issues_json" > "$tmpjson"
+  python3 - "$tmpjson" <<'PYEOF'
+import sys, json
+data = json.load(open(sys.argv[1]))
+for issue in data:
+    labels = {l["name"] for l in (issue.get("labels") or [])}
+    if "bug-report" in labels and "in-triage" in labels:
+        print(issue["number"])
+PYEOF
+  rm -f "$tmpjson"
+}
+
+# Launch one triage container per candidate issue.
+# Uses the same disinto-reproduce:latest image as the reproduce-agent,
+# selecting the triage formula via DISINTO_FORMULA env var.
+# Stack lock is held for the full run (no timeout).
+dispatch_triage() {
+  local issue_number="$1"
+
+  if is_triage_running "$issue_number"; then
+    log "Triage already running for issue #${issue_number}, skipping"
+    return 0
+  fi
+
+  # Find first project TOML available (same convention as dev-poll)
+  local project_toml=""
+  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+    [ -f "$toml" ] && { project_toml="$toml"; break; }
+  done
+
+  if [ -z "$project_toml" ]; then
+    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping triage for #${issue_number}"
+    return 0
+  fi
+
+  log "Dispatching triage-agent for issue #${issue_number} (project: ${project_toml})"
+
+  # Build docker run command using array (safe from injection)
+  local -a cmd=(docker run --rm
+    --name "disinto-triage-${issue_number}"
+    --network host
+    --security-opt apparmor=unconfined
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v agent-data:/home/agent/data
+    -v project-repos:/home/agent/repos
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
+    -e DISINTO_CONTAINER=1
+    -e DISINTO_FORMULA=triage
+  )
+
+  # Pass through ANTHROPIC_API_KEY if set
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  fi
+
+  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${runtime_home}/.claude" ]; then
+    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
+  if [ -d "${runtime_home}/.ssh" ]; then
+    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+  fi
+  # Mount claude CLI binary if present on host
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
+  fi
+
+  # Mount the project TOML into the container at a stable path
+  local container_toml="/home/agent/project.toml"
+  cmd+=(-v "${project_toml}:${container_toml}:ro")
+
+  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
+
+  # Launch in background; write pid-file so we don't double-launch
+  "${cmd[@]}" &
+  local bg_pid=$!
+  echo "$bg_pid" > "$(_triage_lockfile "$issue_number")"
+  log "Triage container launched (pid ${bg_pid}) for issue #${issue_number}"
+}
+
+# -----------------------------------------------------------------------------
 # Main dispatcher loop
 # -----------------------------------------------------------------------------
 
@@ -636,6 +761,16 @@ main() {
         [ -n "$issue_num" ] || continue
         dispatch_reproduce "$issue_num" || true
       done <<< "$candidate_issues"
+    fi
+
+    # Triage dispatch: check for bug-report + in-triage issues needing deep analysis
+    local triage_issues
+    triage_issues=$(fetch_triage_candidates) || true
+    if [ -n "$triage_issues" ]; then
+      while IFS= read -r issue_num; do
+        [ -n "$issue_num" ] || continue
+        dispatch_triage "$issue_num" || true
+      done <<< "$triage_issues"
     fi
 
     # Wait before next poll
