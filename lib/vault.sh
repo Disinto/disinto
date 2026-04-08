@@ -173,7 +173,13 @@ vault_request() {
   # For low-tier actions, commit directly to ops main using FORGE_ADMIN_TOKEN
   if [ "$vault_tier" = "low" ]; then
     _vault_log "low-tier — committed directly to ops main"
-    _vault_commit_direct "$ops_api" "$tmp_toml" "${action_id}"
+    # Add dispatch_mode field to indicate direct commit (no PR)
+    local direct_toml
+    direct_toml=$(mktemp /tmp/vault-direct-XXXXXX.toml)
+    trap 'rm -f "$tmp_toml" "$direct_toml"' RETURN
+    # Prepend dispatch_mode = "direct" to the TOML
+    printf 'dispatch_mode = "direct"\n%s\n' "$toml_content" > "$direct_toml"
+    _vault_commit_direct "$ops_api" "$direct_toml" "${action_id}"
     return 0
   fi
 

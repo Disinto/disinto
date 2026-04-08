@@ -73,7 +73,7 @@ validate_vault_action() {
   local unknown_fields
   unknown_fields=$(echo "$toml_content" | grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\s*=' | sed -E 's/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=.*/\1/' | sort -u | while read -r field; do
     case "$field" in
-      id|formula|context|secrets|model|tools|timeout_minutes) ;;
+      id|formula|context|secrets|model|tools|timeout_minutes|dispatch_mode) ;;
       *) echo "$field" ;;
     esac
   done)
