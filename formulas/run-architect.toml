@@ -169,7 +169,7 @@ If step 2 (research/pitch) produced a pitch and no PR exists yet:
 
 3. Create PR on ops repo via Forgejo API:
    - Title: `architect: <sprint summary>`
-   - Body: pitch content (what it enables, complexity, risks, cost)
+   - Body: **plain markdown text** from the scratch file (pitch content with sections: What this enables, Complexity, Risks, Cost, Recommendation). Preserve newlines as-is — do NOT JSON-encode the body.
    - Base branch: primary branch (main/master)
    - Head branch: architect/<sprint-slug>
    - Footer: "Reply `ACCEPT` to proceed with design questions, or `REJECT: <reason>` to decline."
@@ -195,8 +195,14 @@ Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-co
 ### Create PR
 ```
 POST /repos/{owner}/{repo}/pulls
-Body: {"title": "architect: <sprint summary>", "body": "<pitch-content>", "head": "architect/<sprint-slug>", "base": "main"}
+Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head": "architect/<sprint-slug>", "base": "main"}
 ```
+
+**Important: PR body format**
+- The `body` field must contain **plain markdown text** (the raw content from the scratch file)
+- Do NOT JSON-encode or escape the body — pass it as a JSON string value
+- Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
+- Example: if the sprint pitch contains `## What this enables`, the PR body should render this as a markdown heading, not as literal `## What this enables` text
 
 ### Close PR
 ```
