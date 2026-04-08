@@ -58,11 +58,11 @@ disinto-ops/             (ops repo — {project}-ops)
 └── RESOURCES.md   accounts, tokens (refs), infra inventory
 ```
 
-> **Note:** Journal directories (`journal/planner/` and `journal/supervisor/`) have been removed from the ops repo. Agent journals are now stored in each agent's `.profile` repo on Forgejo.
+> **Note:** Journal directories (`journal/planner/` and `journal/supervisor/`) still exist in the ops repo. Agent journals are now stored in each agent's `.profile` repo on Forgejo.
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/profile.sh`.
+Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/formula-session.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
