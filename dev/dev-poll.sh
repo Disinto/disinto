@@ -508,10 +508,20 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           # Do NOT gate REQUEST_CHANGES on ci_passed: act immediately even if CI is
           # pending/unknown. Definitive CI failure is handled by the elif below.
           elif [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-            log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
-            nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-            log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
-            BLOCKED_BY_INPROGRESS=true
+            # Check if issue is assigned to this agent — skip if assigned to another bot
+            ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+              "${API}/issues/${ISSUE_NUM}") || true
+            assignee=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+            if [ -n "$assignee" ] && [ "$assignee" != "$BOT_USER" ]; then
+              log "issue #${ISSUE_NUM} PR #${HAS_PR} REQUEST_CHANGES but assigned to ${assignee} — skipping"
+              # Don't block — fall through to backlog
+              BLOCKED_BY_INPROGRESS=false
+            else
+              log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
+              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+              BLOCKED_BY_INPROGRESS=true
+            fi
 
           elif ci_failed "$CI_STATE"; then
             if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM" "check_only"; then
@@ -628,6 +638,14 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
 
   # Stuck: REQUEST_CHANGES or CI failure -> spawn agent
   if [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
+    # Check if issue is assigned to this agent — skip if assigned to another bot
+    ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${STUCK_ISSUE}") || true
+    assignee=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+    if [ -n "$assignee" ] && [ "$assignee" != "$BOT_USER" ]; then
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) REQUEST_CHANGES but assigned to ${assignee} — skipping"
+      continue  # skip this PR, check next stuck PR or fall through to backlog
+    fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
     nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
