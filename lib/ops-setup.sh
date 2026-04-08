@@ -158,8 +158,16 @@ setup_ops_repo() {
   mkdir -p "${ops_root}/vault/rejected"
   mkdir -p "${ops_root}/knowledge"
   mkdir -p "${ops_root}/evidence/engagement"
+  mkdir -p "${ops_root}/evidence/red-team"
+  mkdir -p "${ops_root}/evidence/holdout"
+  mkdir -p "${ops_root}/evidence/evolution"
+  mkdir -p "${ops_root}/evidence/user-test"
   mkdir -p "${ops_root}/sprints"
   [ -f "${ops_root}/sprints/.gitkeep" ] || { touch "${ops_root}/sprints/.gitkeep"; seeded=true; }
+  [ -f "${ops_root}/evidence/red-team/.gitkeep" ] || { touch "${ops_root}/evidence/red-team/.gitkeep"; seeded=true; }
+  [ -f "${ops_root}/evidence/holdout/.gitkeep" ] || { touch "${ops_root}/evidence/holdout/.gitkeep"; seeded=true; }
+  [ -f "${ops_root}/evidence/evolution/.gitkeep" ] || { touch "${ops_root}/evidence/evolution/.gitkeep"; seeded=true; }
+  [ -f "${ops_root}/evidence/user-test/.gitkeep" ] || { touch "${ops_root}/evidence/user-test/.gitkeep"; seeded=true; }
 
   if [ ! -f "${ops_root}/README.md" ]; then
     cat > "${ops_root}/README.md" <<OPSEOF
