@@ -7,10 +7,13 @@
 # Usage: classify.sh <formula-name> [blast_radius_override]
 # Output: prints "low", "medium", or "high" to stdout; exits 0
 #
-# shellcheck source=vault-env.sh
+# Source lib/env.sh directly (not vault-env.sh) to avoid circular dependency:
+# vault-env.sh calls classify.sh, so classify.sh must not source vault-env.sh.
+# The only variable needed here is OPS_REPO_ROOT, which comes from lib/env.sh.
+# shellcheck source=../lib/env.sh
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vault-env.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 
 formula="${1:-}"
 override="${2:-}"
@@ -31,8 +34,10 @@ policy_file="${OPS_REPO_ROOT}/vault/policy.toml"
 
 if [ -f "$policy_file" ]; then
   # Parse: look for `formula_name = "tier"` under [tiers]
+  # Escape regex metacharacters in formula name for safe grep
+  escaped_formula=$(printf '%s' "$formula" | sed 's/[].[*^$\\]/\\&/g')
   tier=$(sed -n '/^\[tiers\]/,/^\[/{/^\[tiers\]/d;/^\[/d;p}' "$policy_file" \
-    | grep -E "^${formula}[[:space:]]*=" \
+    | grep -E "^${escaped_formula}[[:space:]]*=" \
     | sed -E 's/^[^=]+=[[:space:]]*"([^"]+)".*/\1/' \
     | head -n1)
 
