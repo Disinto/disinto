@@ -20,48 +20,47 @@ fi
 export DISINTO_LOG_DIR
 
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env.
-# Always source .env — cron jobs inside the container do NOT inherit compose
-# env vars (FORGE_TOKEN, etc.). Only FORGE_URL is preserved across .env
-# sourcing because compose injects http://forgejo:3000 while .env has
-# http://localhost:3000. FORGE_TOKEN is NOT preserved so that refreshed
-# tokens in .env take effect immediately in running containers.
-if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
-  set -a
-  _saved_forge_url="${FORGE_URL:-}"
-  # Use temp file + validate dotenv format before sourcing (avoids eval injection)
-  # SOPS -d automatically verifies MAC/GCM authentication tag during decryption
-  _tmpenv=$(mktemp) || { echo "Error: failed to create temp file for .env.enc" >&2; exit 1; }
-  if ! sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" > "$_tmpenv" 2>/dev/null; then
-    echo "Error: failed to decrypt .env.enc — decryption failed, possible corruption" >&2
+# Inside containers (DISINTO_CONTAINER=1), compose environment is the source of truth.
+# On bare metal, .env/.env.enc is sourced to provide default values.
+if [ "${DISINTO_CONTAINER:-}" != "1" ]; then
+  if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
+    set -a
+    _saved_forge_url="${FORGE_URL:-}"
+    # Use temp file + validate dotenv format before sourcing (avoids eval injection)
+    # SOPS -d automatically verifies MAC/GCM authentication tag during decryption
+    _tmpenv=$(mktemp) || { echo "Error: failed to create temp file for .env.enc" >&2; exit 1; }
+    if ! sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" > "$_tmpenv" 2>/dev/null; then
+      echo "Error: failed to decrypt .env.enc — decryption failed, possible corruption" >&2
+      rm -f "$_tmpenv"
+      exit 1
+    fi
+    # Validate: non-empty, non-comment lines must match KEY=value pattern
+    # Filter out blank lines and comments before validation
+    _validated=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$_tmpenv" 2>/dev/null || true)
+    if [ -n "$_validated" ]; then
+      # Write validated content to a second temp file and source it
+      _validated_env=$(mktemp)
+      printf '%s\n' "$_validated" > "$_validated_env"
+      # shellcheck source=/dev/null
+      source "$_validated_env"
+      rm -f "$_validated_env"
+    else
+      echo "Error: .env.enc decryption output failed format validation" >&2
+      rm -f "$_tmpenv"
+      exit 1
+    fi
     rm -f "$_tmpenv"
-    exit 1
-  fi
-  # Validate: non-empty, non-comment lines must match KEY=value pattern
-  # Filter out blank lines and comments before validation
-  _validated=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$_tmpenv" 2>/dev/null || true)
-  if [ -n "$_validated" ]; then
-    # Write validated content to a second temp file and source it
-    _validated_env=$(mktemp)
-    printf '%s\n' "$_validated" > "$_validated_env"
+    set +a
+    [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
+  elif [ -f "$FACTORY_ROOT/.env" ]; then
+    # Preserve compose-injected FORGE_URL (localhost in .env != forgejo in Docker)
+    _saved_forge_url="${FORGE_URL:-}"
+    set -a
     # shellcheck source=/dev/null
-    source "$_validated_env"
-    rm -f "$_validated_env"
-  else
-    echo "Error: .env.enc decryption output failed format validation" >&2
-    rm -f "$_tmpenv"
-    exit 1
+    source "$FACTORY_ROOT/.env"
+    set +a
+    [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
   fi
-  rm -f "$_tmpenv"
-  set +a
-  [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
-elif [ -f "$FACTORY_ROOT/.env" ]; then
-  # Preserve compose-injected FORGE_URL (localhost in .env != forgejo in Docker)
-  _saved_forge_url="${FORGE_URL:-}"
-  set -a
-  # shellcheck source=/dev/null
-  source "$FACTORY_ROOT/.env"
-  set +a
-  [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
 fi
 
 # Allow per-container token override (#375): .env sets the default FORGE_TOKEN
