@@ -158,6 +158,8 @@ setup_ops_repo() {
   mkdir -p "${ops_root}/vault/rejected"
   mkdir -p "${ops_root}/knowledge"
   mkdir -p "${ops_root}/evidence/engagement"
+  mkdir -p "${ops_root}/sprints"
+  [ -f "${ops_root}/sprints/.gitkeep" ] || { touch "${ops_root}/sprints/.gitkeep"; seeded=true; }
 
   if [ ! -f "${ops_root}/README.md" ]; then
     cat > "${ops_root}/README.md" <<OPSEOF
@@ -174,6 +176,7 @@ ${ops_name}/
 │   ├── approved/         # approved vault items
 │   ├── fired/            # executed vault items
 │   └── rejected/         # rejected vault items
+├── sprints/              # sprint specs written by architect agent
 ├── knowledge/            # shared agent knowledge and best practices
 ├── evidence/             # engagement data, experiment results
 ├── portfolio.md          # addressables + observables
