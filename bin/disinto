@@ -25,7 +25,7 @@ set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "${FACTORY_ROOT}/lib/env.sh"
-source "${FACTORY_ROOT}/lib/ops-setup.sh"
+source "${FACTORY_ROOT}/lib/ops-setup.sh"  # setup_ops_repo, migrate_ops_repo
 source "${FACTORY_ROOT}/lib/hire-agent.sh"
 source "${FACTORY_ROOT}/lib/forge-setup.sh"
 source "${FACTORY_ROOT}/lib/generators.sh"
@@ -661,6 +661,10 @@ p.write_text(text)
   local ops_slug="disinto-admin/${project_name}-ops"
   local ops_root="/home/${USER}/${project_name}-ops"
   setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch"
+
+  # Migrate ops repo to canonical structure (seed missing directories/files)
+  # This brings pre-#407 deployments up to date with the canonical structure
+  migrate_ops_repo "$ops_root" "$branch"
 
   # Set up vault branch protection on ops repo (#77)
   # This ensures admin-only merge to main, blocking bots from merging vault PRs

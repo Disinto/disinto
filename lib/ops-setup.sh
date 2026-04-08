@@ -14,9 +14,12 @@
 #     - Clone or initialize ops repo locally
 #     - Seed directory structure (vault, knowledge, evidence)
 #     - Export _ACTUAL_OPS_SLUG for caller to use
+#   migrate_ops_repo <ops_root> [primary_branch]
+#     - Seed missing directories/files on existing ops repos (idempotent)
+#     - Creates .gitkeep files and template content for canonical structure
 #
 # Globals modified:
-#   _ACTUAL_OPS_SLUG - resolved ops repo slug after function completes
+#   _ACTUAL_OPS_SLUG - resolved ops repo slug after setup_ops_repo completes
 
 set -euo pipefail
 
@@ -233,4 +236,123 @@ OPSEOF
 
   # Export resolved slug for the caller to write back to the project TOML
   _ACTUAL_OPS_SLUG="${actual_ops_slug}"
+}
+
+# migrate_ops_repo — Seed missing ops repo directories and files on existing deployments
+#
+# This function is idempotent — safe to run on every container start.
+# It checks for missing directories/files and creates them with .gitkeep files
+# or template content as appropriate.
+#
+# Called from entrypoint.sh after setup_ops_repo() to bring pre-#407 deployments
+# up to date with the canonical ops repo structure.
+migrate_ops_repo() {
+  local ops_root="${1:-}"
+  local primary_branch="${2:-main}"
+
+  # Validate ops_root argument
+  if [ -z "$ops_root" ]; then
+    # Try to determine ops_root from environment or project config
+    if [ -n "${OPS_REPO_ROOT:-}" ]; then
+      ops_root="${OPS_REPO_ROOT}"
+    elif [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
+      source "$(dirname "$0")/load-project.sh" "$PROJECT_TOML"
+      ops_root="${OPS_REPO_ROOT:-}"
+    fi
+  fi
+
+  # Skip if we still don't have an ops root
+  if [ -z "$ops_root" ]; then
+    echo "migrate_ops_repo: skipping — no ops repo root determined"
+    return 0
+  fi
+
+  # Verify it's a git repo
+  if [ ! -d "${ops_root}/.git" ]; then
+    echo "migrate_ops_repo: skipping — ${ops_root} is not a git repo"
+    return 0
+  fi
+
+  echo ""
+  echo "── Ops repo migration ───────────────────────────────────"
+  echo "Checking ${ops_root} for missing directories and files..."
+
+  local migrated=false
+
+  # Canonical ops repo structure (post #407)
+  # Directories to ensure exist with .gitkeep files
+  local -a dir_keepfiles=(
+    "${ops_root}/vault/pending/.gitkeep"
+    "${ops_root}/vault/approved/.gitkeep"
+    "${ops_root}/vault/fired/.gitkeep"
+    "${ops_root}/vault/rejected/.gitkeep"
+    "${ops_root}/knowledge/.gitkeep"
+    "${ops_root}/evidence/engagement/.gitkeep"
+    "${ops_root}/evidence/red-team/.gitkeep"
+    "${ops_root}/evidence/holdout/.gitkeep"
+    "${ops_root}/evidence/evolution/.gitkeep"
+    "${ops_root}/evidence/user-test/.gitkeep"
+    "${ops_root}/sprints/.gitkeep"
+  )
+
+  # Create missing directories and .gitkeep files
+  for keepfile in "${dir_keepfiles[@]}"; do
+    local dir
+    dir=$(dirname "$keepfile")
+    if [ ! -f "$keepfile" ]; then
+      mkdir -p "$dir"
+      touch "$keepfile"
+      echo "  + Created: ${keepfile}"
+      migrated=true
+    fi
+  done
+
+  # Template files to create if missing (starter content)
+  local -a template_files=(
+    "${ops_root}/portfolio.md"
+    "${ops_root}/prerequisites.md"
+    "${ops_root}/RESOURCES.md"
+  )
+
+  for tfile in "${template_files[@]}"; do
+    if [ ! -f "$tfile" ]; then
+      local title
+      title=$(basename "$tfile" | sed 's/\.md$//; s/_/ /g' | sed 's/\b\(.\)/\u\1/g')
+      {
+        echo "# ${title}"
+        echo ""
+        echo "## Overview"
+        echo ""
+        echo "<!-- Add content here -->"
+      } > "$tfile"
+      echo "  + Created: ${tfile}"
+      migrated=true
+    fi
+  done
+
+  # Commit and push changes if any were made
+  if [ "$migrated" = true ]; then
+    # Auto-configure repo-local git identity if missing
+    if [ -z "$(git -C "$ops_root" config user.name 2>/dev/null)" ]; then
+      git -C "$ops_root" config user.name "disinto-admin"
+    fi
+    if [ -z "$(git -C "$ops_root" config user.email 2>/dev/null)" ]; then
+      git -C "$ops_root" config user.email "disinto-admin@localhost"
+    fi
+
+    git -C "$ops_root" add -A
+    if ! git -C "$ops_root" diff --cached --quiet 2>/dev/null; then
+      git -C "$ops_root" commit -m "chore: migrate ops repo structure to canonical layout" -q
+      # Push if remote exists
+      if git -C "$ops_root" remote get-url origin >/dev/null 2>&1; then
+        if git -C "$ops_root" push origin "${primary_branch}" -q 2>/dev/null; then
+          echo "Migrated:  ops repo structure updated and pushed"
+        else
+          echo "Warning: failed to push migration to ops repo" >&2
+        fi
+      fi
+    fi
+  else
+    echo "  (all directories and files already present)"
+  fi
 }
