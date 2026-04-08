@@ -35,6 +35,10 @@ git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
 
 # --- Config ---
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
+
+# Change to project repo early — required before any git commands
+# (factory root is not a git repo after image rebuild)
+cd "${PROJECT_REPO_ROOT}"
 FORCE="${2:-}"
 API="${FORGE_API}"
 LOGFILE="${DISINTO_LOG_DIR}/review/review.log"
@@ -163,12 +167,11 @@ DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes
 # =============================================================================
 # WORKTREE SETUP
 # =============================================================================
-cd "${PROJECT_REPO_ROOT}"
 git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>/dev/null || true
 
 if [ -d "$WORKTREE" ]; then
   cd "$WORKTREE"; git checkout --detach "$PR_SHA" 2>/dev/null || {
-    cd "${PROJECT_REPO_ROOT}"; worktree_cleanup "$WORKTREE"
+    worktree_cleanup "$WORKTREE"
     git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; }
 else
   git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null
