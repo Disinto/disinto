@@ -493,6 +493,133 @@ if [ $CLAUDE_EXIT -eq 124 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Verification helpers — bug-report lifecycle
+# ---------------------------------------------------------------------------
+
+# Check if an issue is a parent with sub-issues (identified by sub-issues
+# whose body contains "Decomposed from #N" where N is the parent's number).
+# Returns: 0 if parent with sub-issues found, 1 otherwise
+# Sets: _PARENT_SUB_ISSUES (space-separated list of sub-issue numbers)
+_is_parent_issue() {
+  local parent_num="$1"
+  _PARENT_SUB_ISSUES=""
+
+  # Fetch all issues (open and closed) to find sub-issues
+  local all_issues_json
+  all_issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
+
+  # Find issues whose body contains "Decomposed from #<parent_num>"
+  local sub_issues
+  sub_issues=$(python3 -c '
+import sys, json
+parent_num = sys.argv[1]
+data = json.load(open("/dev/stdin"))
+sub_issues = []
+for issue in data:
+    body = issue.get("body") or ""
+    if f"Decomposed from #{parent_num}" in body:
+        sub_issues.append(str(issue["number"]))
+print(" ".join(sub_issues))
+' "$parent_num" < <(echo "$all_issues_json")) || return 1
+
+  if [ -n "$sub_issues" ]; then
+    _PARENT_SUB_ISSUES="$sub_issues"
+    return 0
+  fi
+  return 1
+}
+
+# Check if all sub-issues of a parent are closed.
+# Requires: _PARENT_SUB_ISSUES to be set
+# Returns: 0 if all closed, 1 if any still open
+_are_all_sub_issues_closed() {
+  if [ -z "${_PARENT_SUB_ISSUES:-}" ]; then
+    return 1
+  fi
+
+  for sub_num in $_PARENT_SUB_ISSUES; do
+    local sub_state
+    sub_state=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.state // "unknown"') || {
+      log "WARNING: could not fetch state of sub-issue #${sub_num}"
+      return 1
+    }
+    if [ "$sub_state" != "closed" ]; then
+      log "Sub-issue #${sub_num} is not closed (state: ${sub_state})"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Get sub-issue details for comment
+# Returns: formatted list of sub-issues
+_get_sub_issue_list() {
+  local result=""
+  for sub_num in $_PARENT_SUB_ISSUES; do
+    local sub_title
+    sub_title=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.title // "unknown"') || {
+      sub_title="unknown"
+    }
+    result="${result}- #${sub_num} ${sub_title}"$'\n'
+  done
+  printf '%s' "$result"
+}
+
+# ---------------------------------------------------------------------------
+# Label helpers
+# ---------------------------------------------------------------------------
+_label_id() {
+  local name="$1" color="$2"
+  local id
+  id=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/labels" 2>/dev/null \
+    | jq -r --arg n "$name" '.[] | select(.name == $n) | .id' 2>/dev/null || echo "")
+  if [ -z "$id" ]; then
+    id=$(curl -sf -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_API}/labels" \
+      -d "{\"name\":\"${name}\",\"color\":\"${color}\"}" 2>/dev/null \
+      | jq -r '.id // empty' 2>/dev/null || echo "")
+  fi
+  echo "$id"
+}
+
+_add_label() {
+  local issue="$1" label_id="$2"
+  [ -z "$label_id" ] && return 0
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}/labels" \
+    -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1 || true
+}
+
+_remove_label() {
+  local issue="$1" label_id="$2"
+  [ -z "$label_id" ] && return 0
+  curl -sf -X DELETE \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1 || true
+}
+
+_post_comment() {
+  local issue="$1" body="$2"
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}/comments" \
+    -d "$(jq -nc --arg b "$body" '{body:$b}')" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # Triage post-processing: enforce backlog label on created issues
 # ---------------------------------------------------------------------------
 # The triage agent may create sub-issues for root causes. Ensure they have
@@ -792,133 +919,6 @@ if find "$(dirname "${SCREENSHOT_PREFIX}")" -name "$(basename "${SCREENSHOT_PREF
     SCREENSHOT_LIST="${SCREENSHOT_LIST}- \`$(basename "$f")\`\n"
   done
 fi
-
-# ---------------------------------------------------------------------------
-# Verification helpers — bug-report lifecycle
-# ---------------------------------------------------------------------------
-
-# Check if an issue is a parent with sub-issues (identified by sub-issues
-# whose body contains "Decomposed from #N" where N is the parent's number).
-# Returns: 0 if parent with sub-issues found, 1 otherwise
-# Sets: _PARENT_SUB_ISSUES (space-separated list of sub-issue numbers)
-_is_parent_issue() {
-  local parent_num="$1"
-  _PARENT_SUB_ISSUES=""
-
-  # Fetch all issues (open and closed) to find sub-issues
-  local all_issues_json
-  all_issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
-
-  # Find issues whose body contains "Decomposed from #<parent_num>"
-  local sub_issues
-  sub_issues=$(python3 -c '
-import sys, json
-parent_num = sys.argv[1]
-data = json.load(open("/dev/stdin"))
-sub_issues = []
-for issue in data:
-    body = issue.get("body") or ""
-    if f"Decomposed from #{parent_num}" in body:
-        sub_issues.append(str(issue["number"]))
-print(" ".join(sub_issues))
-' "$parent_num" < <(echo "$all_issues_json")) || return 1
-
-  if [ -n "$sub_issues" ]; then
-    _PARENT_SUB_ISSUES="$sub_issues"
-    return 0
-  fi
-  return 1
-}
-
-# Check if all sub-issues of a parent are closed.
-# Requires: _PARENT_SUB_ISSUES to be set
-# Returns: 0 if all closed, 1 if any still open
-_are_all_sub_issues_closed() {
-  if [ -z "${_PARENT_SUB_ISSUES:-}" ]; then
-    return 1
-  fi
-
-  for sub_num in $_PARENT_SUB_ISSUES; do
-    local sub_state
-    sub_state=$(curl -sf \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.state // "unknown"') || {
-      log "WARNING: could not fetch state of sub-issue #${sub_num}"
-      return 1
-    }
-    if [ "$sub_state" != "closed" ]; then
-      log "Sub-issue #${sub_num} is not closed (state: ${sub_state})"
-      return 1
-    fi
-  done
-  return 0
-}
-
-# Get sub-issue details for comment
-# Returns: formatted list of sub-issues
-_get_sub_issue_list() {
-  local result=""
-  for sub_num in $_PARENT_SUB_ISSUES; do
-    local sub_title
-    sub_title=$(curl -sf \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.title // "unknown"') || {
-      sub_title="unknown"
-    }
-    result="${result}- #${sub_num} ${sub_title}"$'\n'
-  done
-  printf '%s' "$result"
-}
-
-# ---------------------------------------------------------------------------
-# Label helpers
-# ---------------------------------------------------------------------------
-_label_id() {
-  local name="$1" color="$2"
-  local id
-  id=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/labels" 2>/dev/null \
-    | jq -r --arg n "$name" '.[] | select(.name == $n) | .id' 2>/dev/null || echo "")
-  if [ -z "$id" ]; then
-    id=$(curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/labels" \
-      -d "{\"name\":\"${name}\",\"color\":\"${color}\"}" 2>/dev/null \
-      | jq -r '.id // empty' 2>/dev/null || echo "")
-  fi
-  echo "$id"
-}
-
-_add_label() {
-  local issue="$1" label_id="$2"
-  [ -z "$label_id" ] && return 0
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}/labels" \
-    -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1 || true
-}
-
-_remove_label() {
-  local issue="$1" label_id="$2"
-  [ -z "$label_id" ] && return 0
-  curl -sf -X DELETE \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1 || true
-}
-
-_post_comment() {
-  local issue="$1" body="$2"
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}/comments" \
-    -d "$(jq -nc --arg b "$body" '{body:$b}')" >/dev/null 2>&1 || true
-}
 
 # ---------------------------------------------------------------------------
 # Apply labels and post findings
