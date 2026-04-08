@@ -7,11 +7,12 @@ set -euo pipefail
 # poll scripts.  All Docker Compose env vars are inherited (PATH, FORGE_TOKEN,
 # ANTHROPIC_API_KEY, etc.).
 #
-# AGENT_ROLES env var controls which scripts run: "review,dev,gardener"
-# (default: all three). Uses while-true loop with staggered intervals:
+# AGENT_ROLES env var controls which scripts run: "review,dev,gardener,architect"
+# (default: all four). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
 #   - gardener: every 6 hours (72 iterations * 5 min)
+#   - architect: every 6 hours (same as gardener)
 
 DISINTO_DIR="/home/agent/disinto"
 LOGFILE="/home/agent/data/agent-entrypoint.log"
@@ -27,9 +28,9 @@ init_state_dir() {
   local state_dir="${DISINTO_DIR}/state"
   mkdir -p "$state_dir"
   # Create empty state files so check_active guards work
-  touch "$state_dir/.dev-active"
-  touch "$state_dir/.reviewer-active"
-  touch "$state_dir/.gardener-active"
+  for agent in dev reviewer gardener architect planner predictor; do
+    touch "$state_dir/.${agent}-active" 2>/dev/null || true
+  done
   chown -R agent:agent "$state_dir"
   log "Initialized state directory"
 }
@@ -124,7 +125,7 @@ init_state_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener}"
+AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)
@@ -167,6 +168,16 @@ while true; do
       if [ $((gardener_iteration % gardener_interval)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
         log "Running gardener (iteration ${iteration}, 6-hour interval) for ${toml}"
         gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 || true
+      fi
+    fi
+
+    # Architect (every 6 hours, same schedule as gardener)
+    if [[ ",${AGENT_ROLES}," == *",architect,"* ]]; then
+      architect_iteration=$((iteration * POLL_INTERVAL))
+      architect_interval=$((6 * 60 * 60))  # 6 hours in seconds
+      if [ $((architect_iteration % architect_interval)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
+        log "Running architect (iteration ${iteration}, 6-hour interval) for ${toml}"
+        gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 || true
       fi
     fi
   done
