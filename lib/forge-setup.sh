@@ -421,6 +421,38 @@ setup_forge() {
     fi
   done
 
+  # Create .profile repos for all bot users (if they don't already exist)
+  # This runs the same logic as hire-an-agent Step 2-3 for idempotent setup
+  echo ""
+  echo "── Setting up .profile repos ────────────────────────────"
+
+  local -a bot_users=(dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot architect-bot)
+  local bot_user
+
+  for bot_user in "${bot_users[@]}"; do
+    # Check if .profile repo already exists
+    if curl -sf --max-time 5 "${forge_url}/api/v1/repos/${bot_user}/.profile" >/dev/null 2>&1; then
+      echo "  ${bot_user}/.profile already exists"
+      continue
+    fi
+
+    echo "Creating ${bot_user}/.profile repo..."
+
+    # Create the repo using the admin API to ensure it's created in the bot user's namespace
+    local create_output
+    create_output=$(curl -sf -X POST \
+      -u "${admin_user}:${admin_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/admin/users/${bot_user}/repos" \
+      -d "{\"name\":\".profile\",\"description\":\"${bot_user}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true
+
+    if echo "$create_output" | grep -q '"id":\|[0-9]'; then
+      echo "  Created ${bot_user}/.profile (via admin API)"
+    else
+      echo "  Warning: failed to create ${bot_user}/.profile: ${create_output}" >&2
+    fi
+  done
+
   # Store FORGE_URL in .env if not already present
   if ! grep -q '^FORGE_URL=' "$env_file" 2>/dev/null; then
     printf 'FORGE_URL=%s\n' "$forge_url" >> "$env_file"
