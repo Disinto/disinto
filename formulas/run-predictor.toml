@@ -128,13 +128,11 @@ For each weakness you identify, choose one:
   Vault dispatch (requires lib/vault.sh):
     source "$PROJECT_REPO_ROOT/lib/vault.sh"
 
-    TOML_CONTENT="# Vault action: predict-<prediction_number>-<formula>
-context = \"Test prediction #<prediction_number>: <theory summary>\"
-unblocks = [\"#<prediction_number>\"]
-
-[execution]
+    TOML_CONTENT="id = \"predict-<prediction_number>-<formula>\"
+context = \"Test prediction #<prediction_number>: <theory summary> — focus: <specific test>\"
 formula = \"<formula-name>\"
-focus = \"<specific test>\"
+secrets = []
+# Unblocks: #<prediction_number>
 # Expected evidence: evidence/<dir>/<date>-<name>.json
 "
     PR_NUM=$(vault_request "predict-<prediction_number>-<formula>" "$TOML_CONTENT")
