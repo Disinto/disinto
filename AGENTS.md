@@ -1,4 +1,4 @@
-<!-- last-reviewed: ebadff09a1ce3c0140e4975985d383136a9a5504 -->
+<!-- last-reviewed: 60086973550d5f6a7ea0774efee5614da6b0de9f -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -6,7 +6,7 @@
 Disinto is an autonomous code factory. It manages ten agents (dev, review,
 gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
 dispatcher) that pick up issues from forge, implement them, review PRs, plan
-from the vision, and keep the system healthy — all via cron and `claude -p`.
+from the vision, and keep the system healthy — all via a polling loop and `claude -p`.
 The dispatcher executes formula-based operational tasks.
 
 Each agent has a `.profile` repository on Forgejo that stores lessons learned
@@ -41,7 +41,16 @@ disinto/                 (code repo)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints for reproduce, triage, and edge dispatcher agents
-└── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+├── site/          disinto.ai website content
+├── tests/         Test files (mock-forgejo.py, smoke-init.sh)
+├── templates/     Issue templates
+├── bin/           The `disinto` CLI script
+├── disinto-factory/  Setup documentation and skill
+├── state/         Runtime state
+├── .woodpecker/   Woodpecker CI pipeline configs
+├── VISION.md      High-level project vision
+└── CLAUDE.md      Claude Code project instructions
 
 disinto-ops/             (ops repo — {project}-ops)
 ├── vault/
@@ -184,11 +193,11 @@ Humans write these. Agents read and enforce them.
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system runs from cron, not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
+| AD-001 | Nervous system runs from a polling loop, not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
 | AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
-| AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (both SOPS-encrypted). Referenced as `$VAR_NAME`. Runner gets only vault secrets; agents get only agent secrets. |
+| AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (SOPS-encrypted when available; plaintext `.env`/`.env.vault` fallback supported). Referenced as `$VAR_NAME`. Runner gets only vault secrets; agents get only agent secrets. |
 | AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `.env.vault.enc` and are injected into the ephemeral runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. (Vault redesign in progress: PR-based approval on ops repo, see #73-#77) |
 
 **Who enforces what:**
