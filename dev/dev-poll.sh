@@ -410,8 +410,32 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
   if [ -n "$assignee" ]; then
     if [ "$assignee" = "$BOT_USER" ]; then
-      log "issue #${ISSUE_NUM} assigned to me — my thread is busy"
-      BLOCKED_BY_INPROGRESS=true
+      # Check if my PR has review feedback to address before exiting
+      HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${API}/pulls?state=open&limit=20" | \
+        jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
+        '.[] | select(.head.ref == $branch) | .number' | head -1) || true
+
+      if [ -n "$HAS_PR" ]; then
+        # Check for REQUEST_CHANGES review feedback
+        REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${API}/pulls/${HAS_PR}/reviews") || true
+        HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
+          jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+
+        if [ "${HAS_CHANGES:-0}" -gt 0 ]; then
+          log "issue #${ISSUE_NUM} has review feedback — spawning agent"
+          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+          BLOCKED_BY_INPROGRESS=true
+        else
+          log "issue #${ISSUE_NUM} assigned to me — my thread is busy"
+          BLOCKED_BY_INPROGRESS=true
+        fi
+      else
+        log "issue #${ISSUE_NUM} assigned to me — my thread is busy"
+        BLOCKED_BY_INPROGRESS=true
+      fi
     else
       log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
       # Issue assigned to another agent — don't block, fall through to backlog
