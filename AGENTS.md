@@ -3,11 +3,11 @@
 
 ## What this repo is
 
-Disinto is an autonomous code factory. It manages seven agents (dev, review,
-gardener, supervisor, planner, predictor, architect) that pick up issues from
-forge, implement them, review PRs, plan from the vision, and keep the system
-healthy — all via cron and `claude -p`. The dispatcher executes formula-based
-operational tasks.
+Disinto is an autonomous code factory. It manages ten agents (dev, review,
+gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
+dispatcher) that pick up issues from forge, implement them, review PRs, plan
+from the vision, and keep the system healthy — all via cron and `claude -p`.
+The dispatcher executes formula-based operational tasks.
 
 Each agent has a `.profile` repository on Forgejo that stores lessons learned
 from prior sessions, providing continuous improvement across runs.
@@ -33,6 +33,7 @@ disinto/                 (code repo)
 ├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
+├── docker/        Dockerfiles and entrypoints for reproduce, triage, and edge dispatcher agents
 └── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 
 disinto-ops/             (ops repo — {project}-ops)
@@ -97,6 +98,9 @@ bash dev/phase-test.sh
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
 | Architect | `architect/` | Strategic decomposition | [architect/AGENTS.md](architect/AGENTS.md) |
+| Reproduce | `docker/reproduce/` | Bug reproduction using Playwright MCP | `formulas/reproduce.toml` |
+| Triage | `docker/reproduce/` | Deep root cause analysis | `formulas/triage.toml` |
+| Edge dispatcher | `docker/edge/` | Polls ops repo for vault actions, executes via Claude sessions | `docker/edge/dispatcher.sh` |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 > See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow details.
@@ -126,6 +130,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | `prediction/unreviewed` | Unprocessed prediction filed by predictor. | predictor-run.sh |
 | `prediction/dismissed` | Prediction triaged as DISMISS — planner disagrees, closed with reason. | Planner (triage-predictions step) |
 | `prediction/actioned` | Prediction promoted or dismissed by planner. | Planner (triage-predictions step) |
+| `formula` | Issue is a formula-based operational task. Dev-poll skips these; dispatcher handles them. | Dispatcher (when dispatching formula tasks) |
 
 ### Dependency conventions
 
