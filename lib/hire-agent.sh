@@ -421,7 +421,8 @@ services:
       WOODPECKER_DATA_DIR: /woodpecker-data
       ANTHROPIC_BASE_URL: ${local_model}
       ANTHROPIC_API_KEY: sk-no-key-required
-      FORGE_TOKEN_OVERRIDE: \$FORGE_TOKEN
+      FORGE_TOKEN: \$FORGE_TOKEN
+      AGENT_ROLES: dev
       CLAUDE_CONFIG_DIR: /home/agent/.claude
       POLL_INTERVAL: ${interval}
     env_file:
@@ -429,7 +430,6 @@ services:
     depends_on:
       - forgejo
       - woodpecker
-    entrypoint: ["/home/agent/entrypoint-llama.sh"]
 
 volumes:
   agent-data-llama:
