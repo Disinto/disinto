@@ -221,12 +221,65 @@ Sibling dependency rule (CRITICAL):
    Well-structured issues (both sections present) are left untouched —
    they are ready for dev-agent pickup.
 
+8. Bug-report lifecycle — auto-close resolved parent issues:
+   For each open issue, check whether it is a parent that was decomposed
+   into sub-issues. A parent is identified by having OTHER issues whose
+   body contains "Decomposed from #N" where N is the parent's number.
+
+   Algorithm:
+   a. From the open issues fetched in step 1, collect all issue numbers.
+   b. For each open issue number N, search ALL issues (open AND closed)
+      for bodies containing "Decomposed from #N":
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues?state=all&type=issues&limit=50" \
+        | jq -r --argjson n N \
+          '[.[] | select(.body != null) | select(.body | test("Decomposed from #" + ($n | tostring) + "\\b"))] | length'
+      If zero sub-issues found, skip — this is not a decomposed parent.
+
+   c. If sub-issues exist, check whether ALL of them are closed:
+        curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues?state=all&type=issues&limit=50" \
+        | jq -r --argjson n N \
+          '[.[] | select(.body != null) | select(.body | test("Decomposed from #" + ($n | tostring) + "\\b"))]
+           | {total: length, closed: [.[] | select(.state == "closed")] | length}
+           | .total == .closed'
+      If the result is "false", some sub-issues are still open — skip.
+
+   d. If ALL sub-issues are closed, collect sub-issue numbers and titles:
+        SUB_ISSUES=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+          "$FORGE_API/issues?state=all&type=issues&limit=50" \
+        | jq -r --argjson n N \
+          '[.[] | select(.body != null) | select(.body | test("Decomposed from #" + ($n | tostring) + "\\b"))]
+           | .[] | "- #\(.number) \(.title)"')
+
+   e. Write a comment action listing the resolved sub-issues.
+      Use jq to build valid JSON (sub-issue titles may contain quotes/backslashes,
+      and SUB_ISSUES is multiline — raw interpolation would break JSONL):
+        COMMENT_BODY=$(printf 'All sub-issues have been resolved:\n%s\n\nClosing this parent issue as all decomposed work is complete.' "$SUB_ISSUES")
+        jq -n --argjson issue N --arg body "$COMMENT_BODY" \
+          '{action:"comment", issue: $issue, body: $body}' \
+          >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   f. Write a close action:
+        jq -n --argjson issue N \
+          '{action:"close", issue: $issue, reason: "all sub-issues resolved"}' \
+          >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+
+   g. Log the action:
+        echo "ACTION: closed #N — all sub-issues resolved" >> "$RESULT_FILE"
+
+   Edge cases:
+   - Already closed parent: skipped (only open issues are processed)
+   - No sub-issues found: skipped (not a decomposed issue)
+   - Multi-cause bugs: stays open until ALL sub-issues are closed
+
 Processing order:
   1. Handle PRIORITY_blockers_starving_factory first — promote or resolve
   2. Quality gate — strip backlog from issues missing acceptance criteria or affected files
   3. Bug-report detection — label qualifying issues before other classification
-  4. Process tech-debt issues by score (impact/effort)
-  5. Classify remaining items as dust or route to vault
+  4. Bug-report lifecycle — close parents whose sub-issues are all resolved
+  5. Process tech-debt issues by score (impact/effort)
+  6. Classify remaining items as dust or route to vault
 
 Do NOT bundle dust yourself — the dust-bundling step handles accumulation,
 dedup, TTL expiry, and bundling into backlog issues.
