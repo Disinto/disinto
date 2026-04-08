@@ -1,0 +1,30 @@
+# vault/policy.toml — Blast-radius tier classification for formulas
+#
+# Each formula maps to a tier: "low", "medium", or "high".
+# Unknown formulas default to "high" (default-deny).
+#
+# This file is a template. `disinto init` copies it to
+# $OPS_REPO_ROOT/vault/policy.toml where operators can override tiers
+# per-deployment without a disinto PR.
+
+[tiers]
+# Read-only / internal bookkeeping — no external side-effects
+groom-backlog       = "low"
+triage              = "low"
+reproduce           = "low"
+review-pr           = "low"
+
+# Create issues, PRs, or internal plans — visible but reversible
+dev                 = "medium"
+run-planner         = "medium"
+run-gardener        = "medium"
+run-predictor       = "medium"
+run-supervisor      = "medium"
+run-architect       = "medium"
+upgrade-dependency  = "medium"
+
+# External-facing or irreversible operations
+run-publish-site    = "high"
+run-rent-a-human    = "high"
+add-rpc-method      = "high"
+release             = "high"

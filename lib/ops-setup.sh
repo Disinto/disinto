@@ -205,6 +205,16 @@ OPSEOF
     seeded=true
   fi
 
+  # Copy vault policy.toml template if not already present
+  if [ ! -f "${ops_root}/vault/policy.toml" ]; then
+    local policy_src="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/vault/policy.toml"
+    if [ -f "$policy_src" ]; then
+      cp "$policy_src" "${ops_root}/vault/policy.toml"
+      echo "  + Copied vault/policy.toml template"
+      seeded=true
+    fi
+  fi
+
   # Create stub files if they don't exist
   [ -f "${ops_root}/portfolio.md" ] || { echo "# Portfolio" > "${ops_root}/portfolio.md"; seeded=true; }
   [ -f "${ops_root}/prerequisites.md" ] || { echo "# Prerequisite Tree" > "${ops_root}/prerequisites.md"; seeded=true; }
