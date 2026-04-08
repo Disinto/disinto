@@ -11,6 +11,14 @@ FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
 # Vault redesign in progress (PR-based approval workflow)
 # This file is kept for shared env setup; scripts being replaced by #73
 
+# Blast-radius classification — set VAULT_TIER if a formula is known
+# Callers may set VAULT_ACTION_FORMULA before sourcing, or pass it later.
+if [ -n "${VAULT_ACTION_FORMULA:-}" ]; then
+  VAULT_TIER=$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/classify.sh" \
+    "$VAULT_ACTION_FORMULA" "${VAULT_BLAST_RADIUS_OVERRIDE:-}")
+  export VAULT_TIER
+fi
+
 # =============================================================================
 # VAULT ACTION VALIDATION
 # =============================================================================
