@@ -244,6 +244,17 @@ title = "Answer parsing + sub-issue filing (issue #102)"
 description = """
 This step processes human answers to design questions and files sub-issues.
 
+## Session resumption
+
+When processing answers, the architect resumes the session from the research/questions
+run (step 2) to preserve codebase context. This ensures Claude has full understanding
+of dispatcher.sh, vault.sh, branch-protection.sh, and all formulas when filing
+sub-issues, resulting in more specific file references and implementation details.
+
+The session ID is persisted to `$SID_FILE` after the research/questions run. On
+answer_parsing runs, if the PR is in the questions phase, the session is resumed
+instead of starting fresh.
+
 ## Preflight: Detect PRs in question phase
 
 An architect PR is in the question phase if ALL of the following are true:

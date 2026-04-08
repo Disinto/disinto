@@ -119,10 +119,75 @@ PROMPT=$(build_architect_prompt)
 # ── Create worktree ──────────────────────────────────────────────────────
 formula_worktree_setup "$WORKTREE"
 
+# ── Detect if PR is in questions-awaiting-answers phase ──────────────────
+# A PR is in the questions phase if it has a `## Design forks` section and
+# question comments. We check this to decide whether to resume the session
+# from the research/questions run (preserves codebase context for answer parsing).
+detect_questions_phase() {
+  local pr_number=""
+  local pr_body=""
+
+  # Get open architect PRs on ops repo
+  local ops_repo="${OPS_REPO_ROOT:-/home/agent/data/ops}"
+  if [ ! -d "${ops_repo}/.git" ]; then
+    return 1
+  fi
+
+  # Use Forgejo API to find open architect PRs
+  local response
+  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
+
+  # Check each open PR for architect markers
+  pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
+
+  if [ -z "$pr_number" ]; then
+    return 1
+  fi
+
+  # Fetch PR body
+  pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
+
+  # Check for `## Design forks` section (added by #101 after ACCEPT)
+  if ! printf '%s' "$pr_body" | grep -q "## Design forks"; then
+    return 1
+  fi
+
+  # Check for question comments (Q1:, Q2:, etc.)
+  # Use jq to extract body text before grepping (handles JSON escaping properly)
+  local comments
+  comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
+
+  if ! printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
+    return 1
+  fi
+
+  # PR is in questions phase
+  log "Detected PR #${pr_number} in questions-awaiting-answers phase"
+  return 0
+}
+
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="sonnet"
 
-agent_run --worktree "$WORKTREE" "$PROMPT"
+# Determine whether to resume session:
+# - If answers detected (PR in questions phase), resume prior session to preserve
+#   codebase context from research/questions run
+# - Otherwise, start fresh (new pitch or PR not in questions phase)
+RESUME_ARGS=()
+if detect_questions_phase && [ -f "$SID_FILE" ]; then
+  RESUME_SESSION=$(cat "$SID_FILE")
+  RESUME_ARGS=(--resume "$RESUME_SESSION")
+  log "Resuming session from questions phase run: ${RESUME_SESSION:0:12}..."
+elif ! detect_questions_phase; then
+  log "PR not in questions phase — starting fresh session"
+elif [ ! -f "$SID_FILE" ]; then
+  log "No session ID found for questions phase — starting fresh session"
+fi
+
+agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 rm -f "$SCRATCH_FILE"
