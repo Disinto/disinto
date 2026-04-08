@@ -40,6 +40,60 @@ _vault_ops_api() {
 }
 
 # -----------------------------------------------------------------------------
+# _vault_commit_direct — Commit low-tier action directly to ops main
+# Args: ops_api tmp_toml_file action_id
+# Uses FORGE_ADMIN_TOKEN to bypass PR workflow
+# -----------------------------------------------------------------------------
+_vault_commit_direct() {
+  local ops_api="$1"
+  local tmp_toml="$2"
+  local action_id="$3"
+  local file_path="vault/actions/${action_id}.toml"
+
+  # Use FORGE_ADMIN_TOKEN for direct commit (vault-bot identity)
+  local admin_token="${FORGE_ADMIN_TOKEN:-${FORGE_TOKEN}}"
+  if [ -z "$admin_token" ]; then
+    echo "ERROR: FORGE_ADMIN_TOKEN is required for low-tier commits" >&2
+    return 1
+  fi
+
+  # Get main branch SHA
+  local main_sha
+  main_sha=$(curl -sf -H "Authorization: token ${admin_token}" \
+    "${ops_api}/git/branches/${PRIMARY_BRANCH:-main}" 2>/dev/null | \
+    jq -r '.commit.id // empty' || true)
+
+  if [ -z "$main_sha" ]; then
+    main_sha=$(curl -sf -H "Authorization: token ${admin_token}" \
+      "${ops_api}/git/refs/heads/${PRIMARY_BRANCH:-main}" 2>/dev/null | \
+      jq -r '.object.sha // empty' || true)
+  fi
+
+  if [ -z "$main_sha" ]; then
+    echo "ERROR: could not get main branch SHA" >&2
+    return 1
+  fi
+
+  _vault_log "Committing ${file_path} directly to ${PRIMARY_BRANCH:-main}"
+
+  # Encode TOML content as base64
+  local encoded_content
+  encoded_content=$(base64 -w 0 < "$tmp_toml")
+
+  # Commit directly to main branch using Forgejo content API
+  if ! curl -sf -X PUT \
+    -H "Authorization: token ${admin_token}" \
+    -H "Content-Type: application/json" \
+    "${ops_api}/contents/${file_path}" \
+    -d "{\"message\":\"vault: add ${action_id} (low-tier)\",\"branch\":\"${PRIMARY_BRANCH:-main}\",\"content\":\"${encoded_content}\",\"committer\":{\"name\":\"vault-bot\",\"email\":\"vault-bot@${FORGE_REPO}\"},\"overwrite\":true}" >/dev/null 2>&1; then
+    echo "ERROR: failed to write ${file_path} to ${PRIMARY_BRANCH:-main}" >&2
+    return 1
+  fi
+
+  _vault_log "Direct commit successful for ${action_id}"
+}
+
+# -----------------------------------------------------------------------------
 # vault_request — Create a vault PR or return existing one
 # Args: action_id toml_content
 # Stdout: PR number
@@ -58,6 +112,9 @@ vault_request() {
     echo "ERROR: toml_content is required" >&2
     return 1
   fi
+
+  # Get admin token for API calls (FORGE_ADMIN_TOKEN for low-tier, FORGE_TOKEN otherwise)
+  local admin_token="${FORGE_ADMIN_TOKEN:-${FORGE_TOKEN}}"
 
   # Check if PR already exists for this action
   local existing_pr
@@ -99,7 +156,28 @@ vault_request() {
     return 1
   fi
 
-  # Extract values for PR creation
+  # Get ops repo API URL
+  local ops_api
+  ops_api="$(_vault_ops_api)"
+
+  # Classify the action to determine if PR bypass is allowed
+  local classify_script="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/vault/classify.sh"
+  local vault_tier
+  vault_tier=$("$classify_script" "${VAULT_ACTION_FORMULA:-}" "${VAULT_BLAST_RADIUS_OVERRIDE:-}") || {
+    # Classification failed, default to high tier (require PR)
+    vault_tier="high"
+    _vault_log "Warning: classification failed, defaulting to high tier"
+  }
+  export VAULT_TIER="${vault_tier}"
+
+  # For low-tier actions, commit directly to ops main using FORGE_ADMIN_TOKEN
+  if [ "$vault_tier" = "low" ]; then
+    _vault_log "low-tier — committed directly to ops main"
+    _vault_commit_direct "$ops_api" "$tmp_toml" "${action_id}"
+    return 0
+  fi
+
+  # Extract values for PR creation (medium/high tier)
   local pr_title pr_body
   pr_title="vault: ${action_id}"
   pr_body="Vault action: ${action_id}
@@ -113,16 +191,12 @@ Secrets: ${VAULT_ACTION_SECRETS:-}
 This vault action has been created by an agent and requires admin approval
 before execution. See the TOML file for details."
 
-  # Get ops repo API URL
-  local ops_api
-  ops_api="$(_vault_ops_api)"
-
   # Create branch
   local branch="vault/${action_id}"
   local branch_exists
 
   branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${admin_token}" \
     "${ops_api}/git/branches/${branch}" 2>/dev/null || echo "0")
 
   if [ "$branch_exists" != "200" ]; then
@@ -131,13 +205,13 @@ before execution. See the TOML file for details."
 
     # Get the commit SHA of main branch
     local main_sha
-    main_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    main_sha=$(curl -sf -H "Authorization: token ${admin_token}" \
       "${ops_api}/git/branches/${PRIMARY_BRANCH:-main}" 2>/dev/null | \
       jq -r '.commit.id // empty' || true)
 
     if [ -z "$main_sha" ]; then
       # Fallback: get from refs
-      main_sha=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      main_sha=$(curl -sf -H "Authorization: token ${admin_token}" \
         "${ops_api}/git/refs/heads/${PRIMARY_BRANCH:-main}" 2>/dev/null | \
         jq -r '.object.sha // empty' || true)
     fi
@@ -149,7 +223,7 @@ before execution. See the TOML file for details."
 
     # Create the branch
     if ! curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${ops_api}/git/branches" \
       -d "{\"ref\":\"${branch}\",\"sha\":\"${main_sha}\"}" >/dev/null 2>&1; then
@@ -170,7 +244,7 @@ before execution. See the TOML file for details."
 
   # Upload file using Forgejo content API
   if ! curl -sf -X PUT \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${admin_token}" \
     -H "Content-Type: application/json" \
     "${ops_api}/contents/${file_path}" \
     -d "{\"message\":\"vault: add ${action_id}\",\"branch\":\"${branch}\",\"content\":\"${encoded_content}\",\"committer\":{\"name\":\"vault-bot\",\"email\":\"vault-bot@${FORGE_REPO}\"},\"overwrite\":true}" >/dev/null 2>&1; then
@@ -190,7 +264,7 @@ before execution. See the TOML file for details."
   # Enable auto-merge on the PR — Forgejo will auto-merge after approval
   _vault_log "Enabling auto-merge for PR #${pr_num}"
   curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${admin_token}" \
     -H "Content-Type: application/json" \
     "${ops_api}/pulls/${pr_num}/merge" \
     -d '{"Do":"merge","merge_when_checks_succeed":true}' >/dev/null 2>&1 || {
@@ -202,18 +276,18 @@ before execution. See the TOML file for details."
 
   # Get label IDs
   local vault_label_id pending_label_id
-  vault_label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  vault_label_id=$(curl -sf -H "Authorization: token ${admin_token}" \
     "${ops_api}/labels" 2>/dev/null | \
     jq -r --arg n "vault" '.[] | select(.name == $n) | .id // empty' || true)
 
-  pending_label_id=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  pending_label_id=$(curl -sf -H "Authorization: token ${admin_token}" \
     "${ops_api}/labels" 2>/dev/null | \
     jq -r --arg n "pending-approval" '.[] | select(.name == $n) | .id // empty' || true)
 
   # Add labels if they exist
   if [ -n "$vault_label_id" ]; then
     curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${ops_api}/issues/${pr_num}/labels" \
       -d "[{\"id\":${vault_label_id}}]" >/dev/null 2>&1 || true
@@ -221,7 +295,7 @@ before execution. See the TOML file for details."
 
   if [ -n "$pending_label_id" ]; then
     curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${ops_api}/issues/${pr_num}/labels" \
       -d "[{\"id\":${pending_label_id}}]" >/dev/null 2>&1 || true
