@@ -46,10 +46,31 @@ Output:
 
 When open architect PRs exist on the ops repo:
 
-1. Fetch comments on each open architect PR via Forgejo API
-2. Look for human response:
+1. Check for human response — reviews first, then comments.
 
-   **ACCEPT** (case insensitive): Human wants to proceed
+   **Step 1 — Check PR reviews (Forgejo review UI):**
+   Fetch reviews via Forgejo API:
+   ```
+   GET /repos/{owner}/{repo}/pulls/{index}/reviews
+   ```
+   Scan the response array for reviews with non-bot authors:
+   - `state: "APPROVED"` → treat as **ACCEPT**. If the review has a non-empty `body`,
+     use it as context (e.g. "ACCEPT — focus on option B for Q1").
+   - `state: "REQUEST_CHANGES"` → treat as **REJECT** with the review `body` as the reason.
+   - Other states (COMMENT, PENDING) → ignore, not a decision.
+
+   If multiple reviews exist, use the most recent one (last in array).
+
+   **Step 2 — Check PR comments (fallback for backwards compat):**
+   Fetch comments on each open architect PR via Forgejo API.
+   Scan for ACCEPT/REJECT text as described below.
+
+   **Precedence:** If both a review decision and a comment decision exist,
+   the review takes precedence.
+
+2. Act on the human response:
+
+   **ACCEPT** (case insensitive, from review APPROVED or comment text): Human wants to proceed
    - Architect does deep research for design forks (same as #100 research but now identifying decision points)
    - Formulates multiple-choice questions (Q1, Q2, Q3...)
    - Updates the sprint spec file on the PR branch:
@@ -58,7 +79,8 @@ When open architect PRs exist on the ops repo:
    - Comments on the PR with the questions formatted as multiple choice
    - Signal PHASE:done (answer processing is #102)
 
-   **REJECT: <reason>** (case insensitive, reason after colon):
+   **REJECT: <reason>** (case insensitive, from review REQUEST_CHANGES or comment text;
+   for reviews the reason is the review body, for comments the reason follows the colon):
    - Journal the rejection reason via profile_write_journal (if .profile exists)
      — the architect learns what pitches fail
    - Close the PR via Forgejo API (do not merge — rejected pitches do not persist in sprints/)
