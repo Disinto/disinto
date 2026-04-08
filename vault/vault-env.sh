@@ -7,6 +7,11 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/env.sh"
 # Use vault-bot's own Forgejo identity
 FORGE_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
+export FORGE_TOKEN
+
+# Export FORGE_ADMIN_TOKEN for direct commits (low-tier bypass)
+# This token is used to commit directly to ops main without PR workflow
+export FORGE_ADMIN_TOKEN="${FORGE_ADMIN_TOKEN:-}"
 
 # Vault redesign in progress (PR-based approval workflow)
 # This file is kept for shared env setup; scripts being replaced by #73
