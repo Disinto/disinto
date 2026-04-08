@@ -21,6 +21,7 @@ secrets = ["CLAWHUB_TOKEN"]
 model = "sonnet"
 tools = ["clawhub"]
 timeout_minutes = 30
+blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium"|"high")
 ```
 
 ## Field Specifications
@@ -41,6 +42,7 @@ timeout_minutes = 30
 | `model` | string | `sonnet` | Override the default Claude model for this action |
 | `tools` | array of strings | `[]` | MCP tools to enable during execution |
 | `timeout_minutes` | integer | `60` | Maximum execution time in minutes |
+| `blast_radius` | string | _(from policy.toml)_ | Override blast-radius tier for this invocation. Valid values: `"low"`, `"medium"`, `"high"`. See [docs/BLAST-RADIUS.md](../docs/BLAST-RADIUS.md) |
 
 ## Secret Names
 
