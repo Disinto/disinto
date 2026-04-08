@@ -36,8 +36,9 @@ if [ -f "$policy_file" ]; then
   # Parse: look for `formula_name = "tier"` under [tiers]
   # Escape regex metacharacters in formula name for safe grep
   escaped_formula=$(printf '%s' "$formula" | sed 's/[].[*^$\\]/\\&/g')
+  # grep may find no match (exit 1); guard with || true to avoid pipefail abort
   tier=$(sed -n '/^\[tiers\]/,/^\[/{/^\[tiers\]/d;/^\[/d;p}' "$policy_file" \
-    | grep -E "^${escaped_formula}[[:space:]]*=" \
+    | { grep -E "^${escaped_formula}[[:space:]]*=" || true; } \
     | sed -E 's/^[^=]+=[[:space:]]*"([^"]+)".*/\1/' \
     | head -n1)
 
