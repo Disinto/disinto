@@ -6,7 +6,7 @@
 Disinto is an autonomous code factory. It manages ten agents (dev, review,
 gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
 dispatcher) that pick up issues from forge, implement them, review PRs, plan
-from the vision, and keep the system healthy — all via a polling loop and `claude -p`.
+from the vision, and keep the system healthy — all via cron (bare-metal) or a polling loop (Docker) and `claude -p`.
 The dispatcher executes formula-based operational tasks.
 
 Each agent has a `.profile` repository on Forgejo that stores lessons learned
@@ -193,7 +193,7 @@ Humans write these. Agents read and enforce them.
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system runs from a polling loop, not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
+| AD-001 | Nervous system runs from cron (bare-metal) or a polling loop (Docker), not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
 | AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
