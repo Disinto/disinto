@@ -1,7 +1,1 @@
-[
-  {
-    "action": "edit_body",
-    "issue": 356,
-    "body": "## Problem\n\nThe entrypoint hardcodes `REPRODUCE_FORMULA` to `formulas/reproduce.toml` (line 26) and never checks the `DISINTO_FORMULA` environment variable passed by the dispatcher for triage runs.\n\nThe dispatcher sets `-e DISINTO_FORMULA=triage` for triage dispatch, but the entrypoint ignores it — always running the reproduce formula.\n\n## Fix\n\nAt line 26, select the formula based on `DISINTO_FORMULA`:\n\n```bash\ncase \"${DISINTO_FORMULA:-reproduce}\" in\n  triage)\n    ACTIVE_FORMULA=\"${DISINTO_DIR}/formulas/triage.toml\"\n    ;;\n  *)\n    ACTIVE_FORMULA=\"${DISINTO_DIR}/formulas/reproduce.toml\"\n    ;;\nesac\n```\n\nThen use `ACTIVE_FORMULA` everywhere `REPRODUCE_FORMULA` is currently used.\n\nAlso update log messages to reflect which formula is running (\"Starting triage-agent\" vs \"Starting reproduce-agent\").\n\n## Affected files\n\n- `docker/reproduce/entrypoint-reproduce.sh` — line 26 and all references to REPRODUCE_FORMULA\n\n## Acceptance criteria\n\n- [ ] `DISINTO_FORMULA=triage` selects `formulas/triage.toml` in the entrypoint\n- [ ] `DISINTO_FORMULA=reproduce` (or unset) still runs `formulas/reproduce.toml`\n- [ ] Log messages reflect which formula is active (\"Starting triage-agent\" / \"Starting reproduce-agent\")\n- [ ] All `REPRODUCE_FORMULA` references replaced with `ACTIVE_FORMULA`\n"
-  }
-]
+[]
