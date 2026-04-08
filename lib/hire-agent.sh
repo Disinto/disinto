@@ -415,18 +415,25 @@ services:
       - \$HOME/.config/sops/age:/home/agent/.config/sops/age:ro
     environment:
       FORGE_URL: http://forgejo:3000
-      WOODPECKER_SERVER: http://woodpecker:8000
+      FORGE_TOKEN: ${FORGE_TOKEN_DEVQWEN:-}
+      FORGE_SUPERVISOR_TOKEN: ${FORGE_SUPERVISOR_TOKEN:-}
+      FORGE_PREDICTOR_TOKEN: ${FORGE_PREDICTOR_TOKEN:-}
+      FORGE_ARCHITECT_TOKEN: ${FORGE_ARCHITECT_TOKEN:-}
+      FORGE_VAULT_TOKEN: ${FORGE_VAULT_TOKEN:-}
+      FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${local_model}
+      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
-      ANTHROPIC_BASE_URL: ${local_model}
-      ANTHROPIC_API_KEY: sk-no-key-required
-      FORGE_TOKEN: \$FORGE_TOKEN
       AGENT_ROLES: dev
       CLAUDE_CONFIG_DIR: /home/agent/.claude
       POLL_INTERVAL: ${interval}
-    env_file:
-      - .env
     depends_on:
       - forgejo
       - woodpecker

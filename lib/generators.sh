@@ -124,13 +124,24 @@ services:
       - woodpecker-data:/woodpecker-data:ro
     environment:
       FORGE_URL: http://forgejo:3000
-      WOODPECKER_SERVER: http://woodpecker:8000
+      FORGE_TOKEN: ${FORGE_TOKEN:-}
+      FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
+      FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
+      FORGE_GARDENER_TOKEN: ${FORGE_GARDENER_TOKEN:-}
+      FORGE_VAULT_TOKEN: ${FORGE_VAULT_TOKEN:-}
+      FORGE_SUPERVISOR_TOKEN: ${FORGE_SUPERVISOR_TOKEN:-}
+      FORGE_PREDICTOR_TOKEN: ${FORGE_PREDICTOR_TOKEN:-}
+      FORGE_ARCHITECT_TOKEN: ${FORGE_ARCHITECT_TOKEN:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
-    env_file:
-      - .env
-    # IMPORTANT: agents get .env only (forge tokens, CI tokens, config).
+    # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # .env.vault.enc and are NEVER injected here — only the runner
     # container receives them at fire time (AD-006, #745).
