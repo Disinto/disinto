@@ -411,14 +411,11 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     "${API}/issues/${ISSUE_NUM}" | jq -r '[.labels[].name] | join(",")')
   if echo "$issue_labels" | grep -q "vision"; then
     log "issue #${ISSUE_NUM} has 'vision' label — skipping stale detection (managed by architect)"
-    # Skip remaining in-progress checks for vision issues
-    unset ISSUE_NUM
+    BLOCKED_BY_INPROGRESS=true
   fi
 
-  # Only proceed with in-progress checks if not a vision issue
-  if [ -n "${ISSUE_NUM:-}" ]; then
-    # Check if issue has an assignee — only block on issues assigned to this agent
-    assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
+  # Check if issue has an assignee — only block on issues assigned to this agent
+  assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
   if [ -n "$assignee" ]; then
     if [ "$assignee" = "$BOT_USER" ]; then
       # Check if my PR has review feedback to address before exiting
@@ -451,7 +448,6 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
       # Issue assigned to another agent — don't block, fall through to backlog
     fi
-  fi
   fi
 
   # Only proceed with in-progress checks if not blocked by another agent
