@@ -4,10 +4,14 @@
 # issues into development sprints.
 #
 # This formula orchestrates the architect agent's workflow:
-#   Step 1: Preflight — validate prerequisites and identify target issue
-#   Step 2: Research + pitch — analyze codebase and write sprint pitch
-#   Step 3: Sprint PR creation with questions (issue #101)
+#   Step 1: Preflight — validate prerequisites, handle existing PRs, select up to 3 target issues
+#   Step 2: Research + pitch — analyze codebase and write sprint pitch (loop over selected issues)
+#   Step 3: Sprint PR creation with questions (issue #101) (one PR per pitch)
 #   Step 4: Answer parsing + sub-issue filing (issue #102)
+#
+# The architect pitches up to 3 sprints per run when multiple vision issues
+# exist. Existing PRs (accept/reject) are handled first, then new pitches
+# are created with remaining budget. Max 3 open architect PRs at any time.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
 
@@ -23,23 +27,43 @@ files = ["VISION.md", "AGENTS.md"]
 
 [[steps]]
 id    = "preflight"
-title = "Preflight: validate prerequisites and identify target vision issue"
+title = "Preflight: validate prerequisites, handle existing PRs, select up to 3 target issues"
 description = """
-This step performs preflight checks and identifies the most unblocking vision issue.
+This step performs preflight checks, handles existing architect PRs, and selects
+up to 3 vision issues for pitching.
 
 Actions:
 1. Pull latest code from both disinto repo and ops repo
 2. Read prerequisite tree from $OPS_REPO_ROOT/prerequisites.md
 3. Fetch open issues labeled 'vision' from Forgejo API
 4. Check for open architect PRs on ops repo (handled by #101/#102)
-5. If open architect PRs exist, handle accept/reject responses (see Capability B below)
-6. If no vision issues, signal PHASE:done
+5. If open architect PRs exist, handle accept/reject responses FIRST (see Capability B below)
+6. After handling existing PRs, count remaining open architect PRs
+7. Select up to (3 - open_architect_pr_count) vision issues for new pitches
+8. If no vision issues, signal PHASE:done
+
+## Multi-pitch selection (up to 3 per run)
+
+After handling existing PRs (accept/reject/answer parsing), determine how many
+new pitches can be created:
+
+  pitch_budget = 3 - <number of open architect PRs remaining after handling>
+
+For each available pitch slot:
+1. From the vision issues list, skip any issue that already has an open architect PR
+   (match by checking if any open architect PR body references the vision issue number)
+2. Skip any issue that already has the `in-progress` label
+3. From remaining candidates, pick the most unblocking issue first (fewest open
+   dependencies, or earliest created if tied)
+4. Add to ARCHITECT_TARGET_ISSUES array
 
 Skip conditions:
 - If no vision issues are found, signal PHASE:done
+- If pitch_budget <= 0 (already 3 open architect PRs), skip pitching — only handle existing PRs
+- If all vision issues already have open architect PRs, signal PHASE:done
 
 Output:
-- Sets ARCHITECT_TARGET_ISSUE to the issue number of the selected vision issue
+- Sets ARCHITECT_TARGET_ISSUES as a JSON array of issue numbers to pitch (up to 3)
 - Exports VISION_ISSUES as a JSON array of issue objects
 
 ## Capability B: Handle accept/reject on existing pitch PRs
@@ -98,10 +122,12 @@ close PR, delete branch). No SSH.
 
 [[steps]]
 id    = "research_pitch"
-title = "Research + pitch: analyze codebase and write sprint pitch"
+title = "Research + pitch: analyze codebase and write sprint pitches (loop over selected issues)"
 description = """
-This step performs deep codebase research and writes a sprint pitch for the
-selected vision issue.
+This step performs deep codebase research and writes a sprint pitch for EACH
+vision issue in ARCHITECT_TARGET_ISSUES.
+
+For each issue in ARCHITECT_TARGET_ISSUES, perform the following:
 
 Actions:
 
@@ -116,7 +142,8 @@ Actions:
    - What are the risks (breaking changes, security implications, integration complexity)?
    - Is this mostly gluecode or greenfield?
 
-3. Write sprint pitch to scratch file for PR creation step (#101):
+3. Write sprint pitch to a per-issue scratch file for PR creation step (#101):
+   - File path: /tmp/architect-{project}-scratch-{issue_number}.md
 
 # Sprint pitch: <name>
 
@@ -147,19 +174,22 @@ IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
 decision for the human. Questions come only after acceptance.
 
 Output:
-- Writes sprint pitch to $SCRATCH_FILE (/tmp/architect-{project}-scratch.md)
-- The pitch serves as input for sprint PR creation step (#101)
+- Writes one scratch file per vision issue: /tmp/architect-{project}-scratch-{issue_number}.md
+- Each pitch serves as input for sprint PR creation step (#101)
+- If ARCHITECT_TARGET_ISSUES is empty (budget exhausted or no candidates), skip this step
 """
 
 [[steps]]
 id    = "sprint_pr_creation"
 title = "Sprint PR creation with questions (issue #101)"
 description = """
-This step creates a PR on the ops repo with the sprint proposal when no PR exists yet.
+This step creates a PR on the ops repo for EACH sprint pitch produced in step 2.
+One PR per vision issue — loop over all scratch files.
 
-## Capability A: Create pitch PR (from research output)
+## Capability A: Create pitch PRs (from research output)
 
-If step 2 (research/pitch) produced a pitch and no PR exists yet:
+For each vision issue in ARCHITECT_TARGET_ISSUES that produced a scratch file
+(/tmp/architect-{project}-scratch-{issue_number}.md):
 
 1. Create branch `architect/<sprint-slug>` on ops repo via Forgejo API
    - Sprint slug: lowercase, hyphenated version of sprint name
@@ -205,7 +235,7 @@ If step 2 (research/pitch) produced a pitch and no PR exists yet:
      Body: `{"labels": [<in-progress-label-id>]}`
    - This makes the vision issue visible as actively worked on
 
-5. Signal PHASE:done
+5. After creating all PRs, signal PHASE:done
 
 ## Forgejo API Reference
 
