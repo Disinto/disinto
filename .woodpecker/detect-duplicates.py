@@ -281,6 +281,17 @@ def main() -> int:
         "161a80f7296d6e9d45895607b7f5b9c9": "Docker compose env_file + depends_on block (generators.sh + hire-agent.sh) - old",
         # New hash after explicit environment fix (#381)
         "83fa229b86a7fdcb1d3591ab8e718f9d": "Docker compose explicit environment block (generators.sh + hire-agent.sh) - #381",
+        # Verification mode helper functions - intentionally duplicated in dispatcher and entrypoint
+        # These functions check if bug-report parent issues have all sub-issues closed
+        "b783d403276f78b49ad35840845126a1": "Verification helper: sub_issues variable declaration",
+        "4b19b9a1bdfbc62f003fc237ed270ed9": "Verification helper: python3 -c invocation",
+        "cc1d0a9f85dfe0cc32e9ef6361cb8c3a": "Verification helper: Python imports and args",
+        "768926748b811ebd30f215f57db5de40": "Verification helper: json.load from /dev/stdin",
+        "4c58586a30bcf6b009c02010ed8f6256": "Verification helper: sub_issues list initialization",
+        "53ea3d6359f51d622467bd77b079cc88": "Verification helper: iterate issues in data",
+        "21aec56a99d5252b23fb9a38b895e8e8": "Verification helper: check body for Decomposed from pattern",
+        "60ea98b3604557d539193b2a6624e232": "Verification helper: append sub-issue number",
+        "9f6ae8e7811575b964279d8820494eb0": "Verification helper: for loop done pattern",
     }
 
     if not sh_files:

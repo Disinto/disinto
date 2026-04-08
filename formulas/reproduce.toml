@@ -11,13 +11,19 @@
 #
 # timeout_minutes: hard upper bound on the Claude session.
 #
-# Exit gate logic:
+# Exit gate logic (standard mode):
 #   1. Can I reproduce it? → NO → rejected/blocked → EXIT
 #                          → YES → continue
 #   2. Is the cause obvious? → YES → in-progress + backlog issue → EXIT
 #                            → NO → in-triage → EXIT
 #
-# Turn budget: 60% on step 1 (reproduction), 40% on step 2 (cause check).
+# Exit gate logic (verification mode):
+#   Triggered when all sub-issues of a parent bug-report are closed.
+#   1. Bug fixed → comment "verified fixed", remove in-progress, close issue
+#   2. Bug persists → comment "still reproduces", add in-triage, re-enter triage
+#
+# Turn budget (standard mode): 60% on step 1 (reproduction), 40% on step 2 (cause check).
+# Turn budget (verification mode): 100% on re-running reproduction steps.
 
 name            = "reproduce"
 description     = "Primary: reproduce the bug. Secondary: check if cause is obvious. Exit gates enforced."

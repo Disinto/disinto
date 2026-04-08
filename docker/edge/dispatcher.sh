@@ -709,6 +709,207 @@ dispatch_triage() {
 }
 
 # -----------------------------------------------------------------------------
+# Verification dispatch — launch sidecar for bug-report parents with all deps closed
+# -----------------------------------------------------------------------------
+
+# Check if a verification run is already in-flight for a given issue.
+_verify_lockfile() {
+  local issue="$1"
+  echo "/tmp/verify-inflight-${issue}.pid"
+}
+
+is_verify_running() {
+  local issue="$1"
+  local pidfile
+  pidfile=$(_verify_lockfile "$issue")
+  [ -f "$pidfile" ] || return 1
+  local pid
+  pid=$(cat "$pidfile" 2>/dev/null || echo "")
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Check if an issue is a parent with sub-issues (identified by sub-issues
+# whose body contains "Decomposed from #N" where N is the parent's number).
+# Returns: 0 if parent with sub-issues found, 1 otherwise
+_is_parent_issue() {
+  local parent_num="$1"
+
+  # Fetch all issues (open and closed) to find sub-issues
+  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+  local all_issues_json
+  all_issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
+
+  # Find issues whose body contains "Decomposed from #<parent_num>"
+  local sub_issues
+  sub_issues=$(python3 -c '
+import sys, json
+parent_num = sys.argv[1]
+data = json.load(open("/dev/stdin"))
+sub_issues = []
+for issue in data:
+    body = issue.get("body") or ""
+    if f"Decomposed from #{parent_num}" in body:
+        sub_issues.append(str(issue["number"]))
+print(" ".join(sub_issues))
+' "$parent_num" < <(echo "$all_issues_json")) || return 1
+
+  [ -n "$sub_issues" ]
+}
+
+# Check if all sub-issues of a parent are closed.
+# Returns: 0 if all closed, 1 if any still open
+_are_all_sub_issues_closed() {
+  local parent_num="$1"
+
+  # Fetch all issues (open and closed) to find sub-issues
+  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+  local all_issues_json
+  all_issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
+
+  # Find issues whose body contains "Decomposed from #<parent_num>"
+  local sub_issues
+  sub_issues=$(python3 -c '
+import sys, json
+parent_num = sys.argv[1]
+data = json.load(open("/dev/stdin"))
+sub_issues = []
+for issue in data:
+    body = issue.get("body") or ""
+    if f"Decomposed from #{parent_num}" in body:
+        sub_issues.append(str(issue["number"]))
+print(" ".join(sub_issues))
+' "$parent_num" < <(echo "$all_issues_json")) || return 1
+
+  [ -z "$sub_issues" ] && return 1
+
+  # Check if all sub-issues are closed
+  for sub_num in $sub_issues; do
+    local sub_state
+    sub_state=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api}/issues/${sub_num}" 2>/dev/null | jq -r '.state // "unknown"') || return 1
+    if [ "$sub_state" != "closed" ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Fetch open bug-report + in-progress issues whose sub-issues are all closed.
+# Returns a newline-separated list of issue numbers ready for verification.
+fetch_verification_candidates() {
+  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  [ -n "${FORGE_URL:-}" ]   || return 0
+  [ -n "${FORGE_REPO:-}" ]  || return 0
+
+  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+
+  # Fetch open bug-report + in-progress issues
+  local issues_json
+  issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
+
+  # Filter to issues that also have in-progress label and have all sub-issues closed
+  local tmpjson
+  tmpjson=$(mktemp)
+  echo "$issues_json" > "$tmpjson"
+  python3 - "$tmpjson" "$api" "${FORGE_TOKEN}" <<'PYEOF'
+import sys, json
+api_base = sys.argv[2]
+token = sys.argv[3]
+data = json.load(open(sys.argv[1]))
+
+for issue in data:
+    labels = {l["name"] for l in (issue.get("labels") or [])}
+    # Must have BOTH bug-report AND in-progress labels
+    if "bug-report" not in labels or "in-progress" not in labels:
+        continue
+    print(issue["number"])
+PYEOF
+  rm -f "$tmpjson"
+}
+
+# Launch one verification container per candidate issue.
+# Uses the same disinto-reproduce:latest image as the reproduce-agent,
+# selecting the verify formula via DISINTO_FORMULA env var.
+dispatch_verify() {
+  local issue_number="$1"
+
+  if is_verify_running "$issue_number"; then
+    log "Verification already running for issue #${issue_number}, skipping"
+    return 0
+  fi
+
+  # Find first project TOML available (same convention as dev-poll)
+  local project_toml=""
+  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+    [ -f "$toml" ] && { project_toml="$toml"; break; }
+  done
+
+  if [ -z "$project_toml" ]; then
+    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping verification for #${issue_number}"
+    return 0
+  fi
+
+  log "Dispatching verification-agent for issue #${issue_number} (project: ${project_toml})"
+
+  # Build docker run command using array (safe from injection)
+  local -a cmd=(docker run --rm
+    --name "disinto-verify-${issue_number}"
+    --network host
+    --security-opt apparmor=unconfined
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v agent-data:/home/agent/data
+    -v project-repos:/home/agent/repos
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
+    -e DISINTO_CONTAINER=1
+    -e DISINTO_FORMULA=verify
+  )
+
+  # Pass through ANTHROPIC_API_KEY if set
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  fi
+
+  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${runtime_home}/.claude" ]; then
+    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
+  if [ -d "${runtime_home}/.ssh" ]; then
+    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+  fi
+  # Mount claude CLI binary if present on host
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
+  fi
+
+  # Mount the project TOML into the container at a stable path
+  local container_toml="/home/agent/project.toml"
+  cmd+=(-v "${project_toml}:${container_toml}:ro")
+
+  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
+
+  # Launch in background; write pid-file so we don't double-launch
+  "${cmd[@]}" &
+  local bg_pid=$!
+  echo "$bg_pid" > "$(_verify_lockfile "$issue_number")"
+  log "Verification container launched (pid ${bg_pid}) for issue #${issue_number}"
+}
+
+# -----------------------------------------------------------------------------
 # Main dispatcher loop
 # -----------------------------------------------------------------------------
 
@@ -776,6 +977,22 @@ main() {
         [ -n "$issue_num" ] || continue
         dispatch_triage "$issue_num" || true
       done <<< "$triage_issues"
+    fi
+
+    # Verification dispatch: check for bug-report + in-progress issues whose sub-issues are all closed
+    # These are parents whose fixes have merged and need verification
+    local verify_issues
+    verify_issues=$(fetch_verification_candidates) || true
+    if [ -n "$verify_issues" ]; then
+      while IFS= read -r issue_num; do
+        [ -n "$issue_num" ] || continue
+        # Double-check: this issue must have all sub-issues closed before dispatching
+        if _are_all_sub_issues_closed "$issue_num"; then
+          dispatch_verify "$issue_num" || true
+        else
+          log "Issue #${issue_num} has open sub-issues — skipping verification"
+        fi
+      done <<< "$verify_issues"
     fi
 
     # Wait before next poll
