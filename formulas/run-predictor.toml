@@ -119,27 +119,24 @@ For each weakness you identify, choose one:
     **Suggested action:** <what the planner should consider>
 
 **EXPLOIT** — high confidence, have a theory you can test:
-  File a prediction/unreviewed issue AND an action issue that dispatches
-  a formula to generate evidence.
+  File a prediction/unreviewed issue AND a vault PR that dispatches
+  a formula to generate evidence (AD-006: external actions go through vault).
 
-  The prediction explains the theory. The action generates the proof.
-  When the planner runs next, evidence is already there.
+  The prediction explains the theory. The vault PR triggers the proof
+  after human approval. When the planner runs next, evidence is already there.
 
-  Action issue body format (label: action):
-    Dispatched by predictor to test theory in #<prediction_number>.
+  Vault dispatch (requires lib/vault.sh):
+    source "$PROJECT_REPO_ROOT/lib/vault.sh"
 
-    ## Task
-    Run <formula name> with focus on <specific test>.
-
-    ## Expected evidence
-    Results in evidence/<dir>/<date>-<name>.json
-
-    ## Acceptance criteria
-    - [ ] Formula ran to completion
-    - [ ] Evidence file written with structured results
-
-    ## Affected files
-    - evidence/<dir>/
+    TOML_CONTENT="id = \"predict-<prediction_number>-<formula>\"
+context = \"Test prediction #<prediction_number>: <theory summary> — focus: <specific test>\"
+formula = \"<formula-name>\"
+secrets = []
+# Unblocks: #<prediction_number>
+# Expected evidence: evidence/<dir>/<date>-<name>.json
+"
+    PR_NUM=$(vault_request "predict-<prediction_number>-<formula>" "$TOML_CONTENT")
+    echo "Vault PR #${PR_NUM} filed to test prediction #<prediction_number>"
 
   Available formulas (check $PROJECT_REPO_ROOT/formulas/*.toml for current list):
     cat "$PROJECT_REPO_ROOT/formulas/"*.toml | grep '^name' | head -10
@@ -156,10 +153,10 @@ tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
      tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
        --title "<title>" --body "<body>" --labels "prediction/unreviewed"
 
-2. File action dispatches (if exploiting):
-     tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
-       --title "action: test prediction #NNN — <formula> <focus>" \
-       --body "<body>" --labels "action"
+2. Dispatch formula via vault (if exploiting):
+     source "$PROJECT_REPO_ROOT/lib/vault.sh"
+     PR_NUM=$(vault_request "predict-NNN-<formula>" "$TOML_CONTENT")
+     # See EXPLOIT section above for TOML_CONTENT format
 
 3. Close superseded predictions:
      tea issues close <number> --login "$TEA_LOGIN" --repo "$FORGE_REPO"
@@ -173,11 +170,11 @@ tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
 
 ## Rules
 
-- Max 5 actions total (predictions + action dispatches combined)
-- Each exploit counts as 2 (prediction + action dispatch)
+- Max 5 actions total (predictions + vault dispatches combined)
+- Each exploit counts as 2 (prediction + vault dispatch)
 - So: 5 explores, or 2 exploits + 1 explore, or 1 exploit + 3 explores
 - Never re-file a dismissed prediction without new evidence
-- Action issues must reference existing formulas — don't invent formulas
+- Vault dispatches must reference existing formulas — don't invent formulas
 - Be specific: name the file, the metric, the threshold, the formula
 - If no weaknesses found, file nothing — that's a strong signal the project is healthy
 
