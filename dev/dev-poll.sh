@@ -406,6 +406,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     OPEN_PR=true
   fi
 
+  # Skip vision-labeled issues — they are managed by architect agent, not dev-poll
+  issue_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${ISSUE_NUM}" | jq -r '[.labels[].name] | join(",")')
+  if echo "$issue_labels" | grep -q "vision"; then
+    log "issue #${ISSUE_NUM} has 'vision' label — skipping stale detection (managed by architect)"
+    BLOCKED_BY_INPROGRESS=true
+  fi
+
   # Check if issue has an assignee — only block on issues assigned to this agent
   assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
   if [ -n "$assignee" ]; then
