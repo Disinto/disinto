@@ -252,14 +252,21 @@ Sibling dependency rule (CRITICAL):
           '[.[] | select(.body != null) | select(.body | test("Decomposed from #" + ($n | tostring) + "\\b"))]
            | .[] | "- #\(.number) \(.title)"')
 
-   e. Write a comment action listing the resolved sub-issues:
-        echo '{"action":"comment","issue":N,"body":"All sub-issues have been resolved:\n'"$SUB_ISSUES"'\n\nClosing this parent issue as all decomposed work is complete."}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+   e. Write a comment action listing the resolved sub-issues.
+      Use jq to build valid JSON (sub-issue titles may contain quotes/backslashes,
+      and SUB_ISSUES is multiline — raw interpolation would break JSONL):
+        COMMENT_BODY=$(printf 'All sub-issues have been resolved:\n%s\n\nClosing this parent issue as all decomposed work is complete.' "$SUB_ISSUES")
+        jq -n --argjson issue N --arg body "$COMMENT_BODY" \
+          '{action:"comment", issue: $issue, body: $body}' \
+          >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
 
    f. Write a close action:
-        echo '{"action":"close","issue":N,"reason":"all sub-issues resolved"}' >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
+        jq -n --argjson issue N \
+          '{action:"close", issue: $issue, reason: "all sub-issues resolved"}' \
+          >> "$PROJECT_REPO_ROOT/gardener/pending-actions.jsonl"
 
    g. Log the action:
-        echo "ACTION: closed #N — all sub-issues resolved: $SUB_ISSUES" >> "$RESULT_FILE"
+        echo "ACTION: closed #N — all sub-issues resolved" >> "$RESULT_FILE"
 
    Edge cases:
    - Already closed parent: skipped (only open issues are processed)
