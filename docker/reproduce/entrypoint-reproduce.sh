@@ -29,6 +29,9 @@ case "${DISINTO_FORMULA:-reproduce}" in
   triage)
     ACTIVE_FORMULA="${DISINTO_DIR}/formulas/triage.toml"
     ;;
+  verify)
+    ACTIVE_FORMULA="${DISINTO_DIR}/formulas/reproduce.toml"
+    ;;
   *)
     ACTIVE_FORMULA="${DISINTO_DIR}/formulas/reproduce.toml"
     ;;
@@ -43,6 +46,8 @@ SCREENSHOT_DIR="/home/agent/data/screenshots"
 # ---------------------------------------------------------------------------
 if [ "${DISINTO_FORMULA:-reproduce}" = "triage" ]; then
   AGENT_TYPE="triage"
+elif [ "${DISINTO_FORMULA:-reproduce}" = "verify" ]; then
+  AGENT_TYPE="verify"
 else
   AGENT_TYPE="reproduce"
 fi
@@ -577,6 +582,193 @@ fi
 log "Outcome: ${OUTCOME}"
 
 # ---------------------------------------------------------------------------
+# Verification mode: check if this is a parent issue whose sub-issues are all closed
+# If so, re-run reproduction to verify the bug is fixed
+# ---------------------------------------------------------------------------
+if [ "$AGENT_TYPE" = "verify" ]; then
+  log "Verification mode: checking for sub-issues of parent issue #${ISSUE_NUMBER}"
+
+  # Check if this issue is a parent with sub-issues
+  if _is_parent_issue "$ISSUE_NUMBER"; then
+    log "Found ${#_PARENT_SUB_ISSUES[@]} sub-issue(s) for parent #${ISSUE_NUMBER}"
+
+    # Check if all sub-issues are closed
+    if _are_all_sub_issues_closed; then
+      log "All sub-issues are closed — triggering verification reproduction"
+
+      # Re-run the reproduction to check if bug is fixed
+      log "Running verification reproduction..."
+
+      # Build Claude prompt for verification mode
+      SUB_ISSUE_LIST=$(_get_sub_issue_list)
+      CLAUDE_PROMPT=$(cat <<PROMPT
+You are the reproduce-agent running in **verification mode**. Your task is to re-run the reproduction steps from the original bug report to verify that the bug has been fixed after all sub-issues were resolved.
+
+## Issue title
+${ISSUE_TITLE}
+
+## Issue body
+${ISSUE_BODY}
+
+## Context
+This issue was decomposed into the following sub-issues that have all been resolved:
+${SUB_ISSUE_LIST}
+
+All sub-issues have been closed, indicating that fixes have been merged. Your task is to verify that the original bug is now fixed.
+
+## Your task
+1. Follow the reproduction steps from the original issue body
+2. Execute each step carefully and observe the current behavior
+3. Take screenshots as evidence (save to: ${SCREENSHOT_PREFIX}-step-N.png)
+4. Determine if the bug is **fixed** (no longer reproduces) or **still present**
+
+## Output files
+
+1. **Findings report** — Write to: /tmp/reproduce-findings-${ISSUE_NUMBER}.md
+   Include:
+   - Steps you followed
+   - What you observed (screenshots referenced by path)
+   - OUTCOME line: OUTCOME=verified-fixed OR OUTCOME=still-reproduces
+
+2. **Outcome file** — Write to: /tmp/reproduce-outcome-${ISSUE_NUMBER}.txt
+   Write ONLY the outcome word: verified-fixed OR still-reproduces
+
+## Notes
+- The application is accessible at localhost (network_mode: host)
+- Take screenshots liberally — they are evidence
+- If the app is not running or not reachable, write outcome: still-reproduces with reason "stack not reachable"
+- Timeout: ${FORMULA_TIMEOUT_MINUTES} minutes total
+
+Begin now.
+PROMPT
+      )
+
+      # Run Claude for verification
+      log "Starting Claude verification session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+
+      CLAUDE_EXIT=0
+      timeout "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" \
+        claude -p "$CLAUDE_PROMPT" \
+          --mcp-server playwright \
+          --output-format text \
+          --max-turns 40 \
+        > "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>&1 || CLAUDE_EXIT=$?
+
+      if [ $CLAUDE_EXIT -eq 124 ]; then
+        log "WARNING: Claude verification session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
+      fi
+
+      # Read verification outcome
+      VERIFY_OUTCOME="still-reproduces"
+      if [ -f "/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt" ]; then
+        _raw=$(tr -d '[:space:]' < "/tmp/reproduce-outcome-${ISSUE_NUMBER}.txt" | tr '[:upper:]' '[:lower:]')
+        case "$_raw" in
+          verified-fixed|still-reproduces)
+            VERIFY_OUTCOME="$_raw"
+            ;;
+          *)
+            log "WARNING: unexpected verification outcome '${_raw}' — defaulting to still-reproduces"
+            ;;
+        esac
+      fi
+
+      log "Verification outcome: ${VERIFY_OUTCOME}"
+
+      # Read findings
+      VERIFY_FINDINGS=""
+      if [ -f "/tmp/reproduce-findings-${ISSUE_NUMBER}.md" ]; then
+        VERIFY_FINDINGS=$(cat "/tmp/reproduce-findings-${ISSUE_NUMBER}.md")
+      else
+        VERIFY_FINDINGS="Verification-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+      fi
+
+      # Collect screenshot paths
+      VERIFY_SCREENSHOT_LIST=""
+      if find "$(dirname "${SCREENSHOT_PREFIX}")" -name "$(basename "${SCREENSHOT_PREFIX}")-*.png" -maxdepth 1 2>/dev/null | grep -q .; then
+        VERIFY_SCREENSHOT_LIST="\n\n**Screenshots taken:**\n"
+        for f in "${SCREENSHOT_PREFIX}"-*.png; do
+          VERIFY_SCREENSHOT_LIST="${VERIFY_SCREENSHOT_LIST}- \`$(basename "$f")\`\n"
+        done
+      fi
+
+      # Process verification result
+      if [ "$VERIFY_OUTCOME" = "verified-fixed" ]; then
+        # Bug is fixed — comment, remove in-progress, close the issue
+        AGENT_NAME="Verification-agent"
+        COMMENT_HEADER="## ${AGENT_NAME}: **Verified fixed** :white_check_mark: :tada:"
+
+        COMMENT_BODY="${COMMENT_HEADER}
+
+The bug described in this issue has been **verified as fixed** after all sub-issues were resolved.
+
+**Resolved sub-issues:**
+${SUB_ISSUE_LIST}
+
+**Verification result:** The reproduction steps no longer trigger the bug.
+
+${VERIFY_FINDINGS}${VERIFY_SCREENSHOT_LIST}
+
+---
+*${AGENT_NAME} verification run at $(date -u '+%Y-%m-%d %H:%M:%S UTC') — project: ${PROJECT_NAME}*
+
+Closing this issue as the bug has been verified fixed."
+
+        _post_comment "$ISSUE_NUMBER" "$COMMENT_BODY"
+        log "Posted verification comment to issue #${ISSUE_NUMBER}"
+
+        # Remove in-progress label
+        IN_PROGRESS_ID=$(_label_id "in-progress" "#1d76db")
+        _remove_label "$ISSUE_NUMBER" "$IN_PROGRESS_ID"
+
+        # Close the issue
+        curl -sf -X PATCH \
+          -H "Authorization: token ${FORGE_TOKEN}" \
+          -H "Content-Type: application/json" \
+          "${FORGE_API}/issues/${ISSUE_NUMBER}" \
+          -d '{"state":"closed"}' >/dev/null 2>&1 || true
+        log "Closed issue #${ISSUE_NUMBER} — bug verified fixed"
+      else
+        # Bug still reproduces — comment, keep in-progress, trigger new triage
+        AGENT_NAME="Verification-agent"
+        COMMENT_HEADER="## ${AGENT_NAME}: **Still reproduces after fixes** :x:"
+
+        COMMENT_BODY="${COMMENT_HEADER}
+
+The bug described in this issue **still reproduces** after all sub-issues were resolved.
+
+**Resolved sub-issues:**
+${SUB_ISSUE_LIST}
+
+**Verification result:** The reproduction steps still trigger the bug. Additional investigation needed.
+
+${VERIFY_FINDINGS}${VERIFY_SCREENSHOT_LIST}
+
+---
+*${AGENT_NAME} verification run at $(date -u '+%Y-%m-%d %H:%M:%S UTC') — project: ${PROJECT_NAME}*
+
+This issue will be re-entered into triage for further investigation."
+
+        _post_comment "$ISSUE_NUMBER" "$COMMENT_BODY"
+        log "Posted verification comment to issue #${ISSUE_NUMBER}"
+
+        # Re-trigger triage by adding in-triage label
+        IN_TRIAGE_ID=$(_label_id "in-triage" "#d93f0b")
+        _add_label "$ISSUE_NUMBER" "$IN_TRIAGE_ID"
+        log "Re-triggered triage for issue #${ISSUE_NUMBER} — bug still reproduces"
+      fi
+
+      # Exit after verification
+      log "Verification complete. Outcome: ${VERIFY_OUTCOME}"
+      exit 0
+    else
+      log "Not all sub-issues are closed yet — skipping verification"
+    fi
+  else
+    log "Issue #${ISSUE_NUMBER} is not a parent with tracked sub-issues — running standard reproduction"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Read findings
 # ---------------------------------------------------------------------------
 FINDINGS=""
@@ -600,6 +792,85 @@ if find "$(dirname "${SCREENSHOT_PREFIX}")" -name "$(basename "${SCREENSHOT_PREF
     SCREENSHOT_LIST="${SCREENSHOT_LIST}- \`$(basename "$f")\`\n"
   done
 fi
+
+# ---------------------------------------------------------------------------
+# Verification helpers — bug-report lifecycle
+# ---------------------------------------------------------------------------
+
+# Check if an issue is a parent with sub-issues (identified by sub-issues
+# whose body contains "Decomposed from #N" where N is the parent's number).
+# Returns: 0 if parent with sub-issues found, 1 otherwise
+# Sets: _PARENT_SUB_ISSUES (space-separated list of sub-issue numbers)
+_is_parent_issue() {
+  local parent_num="$1"
+  _PARENT_SUB_ISSUES=""
+
+  # Fetch all issues (open and closed) to find sub-issues
+  local all_issues_json
+  all_issues_json=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
+
+  # Find issues whose body contains "Decomposed from #<parent_num>"
+  local sub_issues
+  sub_issues=$(python3 -c '
+import sys, json
+parent_num = sys.argv[1]
+data = json.load(open("/dev/stdin"))
+sub_issues = []
+for issue in data:
+    body = issue.get("body") or ""
+    if f"Decomposed from #{parent_num}" in body:
+        sub_issues.append(str(issue["number"]))
+print(" ".join(sub_issues))
+' "$parent_num" < <(echo "$all_issues_json")) || return 1
+
+  if [ -n "$sub_issues" ]; then
+    _PARENT_SUB_ISSUES="$sub_issues"
+    return 0
+  fi
+  return 1
+}
+
+# Check if all sub-issues of a parent are closed.
+# Requires: _PARENT_SUB_ISSUES to be set
+# Returns: 0 if all closed, 1 if any still open
+_are_all_sub_issues_closed() {
+  if [ -z "${_PARENT_SUB_ISSUES:-}" ]; then
+    return 1
+  fi
+
+  for sub_num in $_PARENT_SUB_ISSUES; do
+    local sub_state
+    sub_state=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.state // "unknown"') || {
+      log "WARNING: could not fetch state of sub-issue #${sub_num}"
+      return 1
+    }
+    if [ "$sub_state" != "closed" ]; then
+      log "Sub-issue #${sub_num} is not closed (state: ${sub_state})"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Get sub-issue details for comment
+# Returns: formatted list of sub-issues
+_get_sub_issue_list() {
+  local result=""
+  for sub_num in $_PARENT_SUB_ISSUES; do
+    local sub_title
+    sub_title=$(curl -sf \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${sub_num}" 2>/dev/null | jq -r '.title // "unknown"') || {
+      sub_title="unknown"
+    }
+    result="${result}- #${sub_num} ${sub_title}"$'\n'
+  done
+  printf '%s' "$result"
+}
 
 # ---------------------------------------------------------------------------
 # Label helpers
