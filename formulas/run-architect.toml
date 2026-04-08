@@ -85,6 +85,9 @@ When open architect PRs exist on the ops repo:
      — the architect learns what pitches fail
    - Close the PR via Forgejo API (do not merge — rejected pitches do not persist in sprints/)
    - Remove the branch via Forgejo API
+   - Remove `in-progress` label from the vision issue on the disinto repo:
+     - Look up the `in-progress` label ID via `GET /repos/{owner}/{repo}/labels`
+     - Remove the label via `DELETE /repos/{owner}/{repo}/issues/{vision_issue_number}/labels/{label_id}`
    - Signal PHASE:done
 
    **No response yet**: skip silently, signal PHASE:done
@@ -196,7 +199,13 @@ If step 2 (research/pitch) produced a pitch and no PR exists yet:
    - Head branch: architect/<sprint-slug>
    - Footer: "Reply `ACCEPT` to proceed with design questions, or `REJECT: <reason>` to decline."
 
-4. Signal PHASE:done
+4. Add `in-progress` label to the vision issue on the disinto repo:
+   - Look up the `in-progress` label ID via `GET /repos/{owner}/{repo}/labels`
+   - Add the label via `POST /repos/{owner}/{repo}/issues/{vision_issue_number}/labels`
+     Body: `{"labels": [<in-progress-label-id>]}`
+   - This makes the vision issue visible as actively worked on
+
+5. Signal PHASE:done
 
 ## Forgejo API Reference
 
@@ -235,6 +244,22 @@ Body: {"state": "closed"}
 ### Delete branch
 ```
 DELETE /repos/{owner}/{repo}/git/branches/<branch-name>
+```
+
+### Get labels (look up label IDs by name)
+```
+GET /repos/{owner}/{repo}/labels
+```
+
+### Add label to issue (for in-progress on vision issue)
+```
+POST /repos/{owner}/{repo}/issues/{index}/labels
+Body: {"labels": [<label-id>]}
+```
+
+### Remove label from issue (for in-progress removal on REJECT)
+```
+DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label-id}
 ```
 """
 
@@ -280,7 +305,11 @@ Ignore other content in the comment.
 
 1. Parse each answer (e.g. `Q1: A`, `Q2: C`)
 2. Read the sprint spec from the PR branch
-3. Generate final sub-issues based on answers:
+3. Look up the `backlog` label ID on the disinto repo:
+   - `GET /repos/{owner}/{repo}/labels` — find the label with `name: "backlog"` and note its `id`
+   - This ID is required for the issue creation API call below
+
+4. Generate final sub-issues based on answers:
    - Each sub-issue uses the appropriate issue template (bug/feature/refactor from `.codeberg/ISSUE_TEMPLATE/`)
    - Fill all template fields:
      - Problem/motivation (feature) or What's broken (bug/refactor)
@@ -289,9 +318,10 @@ Ignore other content in the comment.
      - Acceptance criteria (max 5)
      - Dependencies
    - File via Forgejo API on the **disinto repo** (not ops repo)
-   - Label as `backlog`
-4. Comment on PR: "Sprint filed: #N, #N, #N"
-5. Merge the PR (sprint spec with answers persists in `ops/sprints/`)
+   - **MUST include `"labels": [<backlog-label-id>]`** in the create-issue request body
+     so dev-poll picks them up
+5. Comment on PR: "Sprint filed: #N, #N, #N"
+6. Merge the PR (sprint spec with answers persists in `ops/sprints/`)
 
 ### Some questions answered, not all
 
@@ -307,14 +337,13 @@ Ignore other content in the comment.
 
 All operations use the Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
 
-### Create issue
+### Create issue (with backlog label — required)
 ```
 POST /repos/{owner}/{repo}/issues
 Body: {
   "title": "<issue title>",
   "body": "<issue body with template fields>",
-  "labels": [123],  // backlog label ID
-  "assignees": ["architect-bot"]
+  "labels": [<backlog-label-id>]
 }
 ```
 
@@ -336,8 +365,19 @@ POST /repos/{owner}/{repo}/issues/{index}/comments
 Body: {"body": "<comment text>"}
 ```
 
-### Get label ID
+### Get labels (look up label IDs by name)
 ```
 GET /repos/{owner}/{repo}/labels
+```
+
+### Add label to issue
+```
+POST /repos/{owner}/{repo}/issues/{index}/labels
+Body: {"labels": [<label-id>]}
+```
+
+### Remove label from issue
+```
+DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label-id}
 ```
 """
