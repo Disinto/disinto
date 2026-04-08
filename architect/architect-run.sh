@@ -42,6 +42,7 @@ LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 SID_FILE="/tmp/architect-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/architect-${PROJECT_NAME}-scratch.md"
+SCRATCH_FILE_PREFIX="/tmp/architect-${PROJECT_NAME}-scratch"
 WORKTREE="/tmp/${PROJECT_NAME}-architect-run"
 
 # Override LOG_AGENT for consistent agent identification
@@ -190,7 +191,9 @@ fi
 agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
+# Clean up scratch files (legacy single file + per-issue files)
 rm -f "$SCRATCH_FILE"
+rm -f "${SCRATCH_FILE_PREFIX}"-*.md
 
 # Write journal entry post-session
 profile_write_journal "architect-run" "Architect run $(date -u +%Y-%m-%d)" "complete" "" || true
