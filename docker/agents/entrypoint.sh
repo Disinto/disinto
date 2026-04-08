@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# entrypoint.sh — Start agent container with cron in foreground
+# entrypoint.sh — Start agent container with polling loop
 #
-# Runs as root inside the container.  Installs crontab entries for the
-# agent user from project TOMLs, then starts cron in the foreground.
-# All cron jobs execute as the agent user (UID 1000).
+# Runs as root inside the container.  Drops to agent user via gosu for all
+# poll scripts.  All Docker Compose env vars are inherited (PATH, FORGE_TOKEN,
+# ANTHROPIC_API_KEY, etc.).
+#
+# AGENT_ROLES env var controls which scripts run: "review,dev,gardener"
+# (default: all three). Uses while-true loop with staggered intervals:
+#   - review-poll: every 5 minutes (offset by 0s)
+#   - dev-poll: every 5 minutes (offset by 2 minutes)
+#   - gardener: every 6 hours (72 iterations * 5 min)
 
 DISINTO_DIR="/home/agent/disinto"
 LOGFILE="/home/agent/data/agent-entrypoint.log"
@@ -16,59 +22,69 @@ log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }
 
-# Build crontab from project TOMLs and install for the agent user.
-install_project_crons() {
-  local cron_lines="PATH=/usr/local/bin:/usr/bin:/bin
-DISINTO_CONTAINER=1
-USER=agent
-FORGE_URL=http://forgejo:3000"
+# Initialize state directory and files if they don't exist
+init_state_dir() {
+  local state_dir="${DISINTO_DIR}/state"
+  mkdir -p "$state_dir"
+  # Create empty state files so check_active guards work
+  touch "$state_dir/.dev-active"
+  touch "$state_dir/.reviewer-active"
+  touch "$state_dir/.gardener-active"
+  chown -R agent:agent "$state_dir"
+  log "Initialized state directory"
+}
 
-  # Parse DISINTO_AGENTS env var (default: all agents)
-  # Expected format: comma-separated list like "review,gardener" or "dev"
-  # Note: supervisor is NOT installed here — it runs on the host, not in container.
-  # Supervisor requires host-level Docker access and pgrep, which the container lacks.
-  local agents_to_run="review,dev,gardener"
-  if [ -n "${DISINTO_AGENTS:-}" ]; then
-    agents_to_run="$DISINTO_AGENTS"
+# Configure git credential helper for password-based HTTP auth.
+# Forgejo 11.x rejects API tokens for git push (#361); password auth works.
+# This ensures all git operations (clone, fetch, push) from worktrees use
+# password auth without needing tokens embedded in remote URLs.
+configure_git_creds() {
+  if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+    _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+    _forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
+    # Determine the bot username from FORGE_TOKEN identity (or default to dev-bot)
+    _bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || _bot_user=""
+    _bot_user="${_bot_user:-dev-bot}"
+
+    # Write a static credential helper script (git credential protocol)
+    cat > /home/agent/.git-credentials-helper <<CREDEOF
+#!/bin/sh
+# Auto-generated git credential helper for Forgejo password auth (#361)
+# Only respond to "get" action; ignore "store" and "erase".
+[ "\$1" = "get" ] || exit 0
+# Read and discard stdin (git sends protocol/host info)
+cat >/dev/null
+echo "protocol=${_forge_proto}"
+echo "host=${_forge_host}"
+echo "username=${_bot_user}"
+echo "password=${FORGE_PASS}"
+CREDEOF
+    chmod 755 /home/agent/.git-credentials-helper
+    chown agent:agent /home/agent/.git-credentials-helper
+
+    gosu agent bash -c "git config --global credential.helper '/home/agent/.git-credentials-helper'"
+    log "Git credential helper configured for ${_bot_user}@${_forge_host} (password auth)"
   fi
+}
 
-  for toml in "${DISINTO_DIR}"/projects/*.toml; do
-    [ -f "$toml" ] || continue
-    local pname
-    pname=$(python3 -c "
-import sys, tomllib
-with open(sys.argv[1], 'rb') as f:
-    print(tomllib.load(f)['name'])
-" "$toml" 2>/dev/null) || continue
-
-    cron_lines="${cron_lines}
-PROJECT_REPO_ROOT=/home/agent/repos/${pname}
-# disinto: ${pname}"
-
-    # Add review-poll only if review agent is configured
-    if echo "$agents_to_run" | grep -qw "review"; then
-      cron_lines="${cron_lines}
-2,7,12,17,22,27,32,37,42,47,52,57 * * * * ${DISINTO_DIR}/review/review-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
-    fi
-
-    # Add dev-poll only if dev agent is configured
-    if echo "$agents_to_run" | grep -qw "dev"; then
-      cron_lines="${cron_lines}
-4,9,14,19,24,29,34,39,44,49,54,59 * * * * ${DISINTO_DIR}/dev/dev-poll.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
-    fi
-
-    # Add gardener-run only if gardener agent is configured
-    if echo "$agents_to_run" | grep -qw "gardener"; then
-      cron_lines="${cron_lines}
-0 0,6,12,18 * * * cd ${DISINTO_DIR} && bash gardener/gardener-run.sh ${toml} >>/home/agent/data/logs/cron.log 2>&1"
-    fi
-  done
-
-  if [ -n "$cron_lines" ]; then
-    printf '%s\n' "$cron_lines" | crontab -u agent -
-    log "Installed crontab for agent user (agents: ${agents_to_run})"
+# Configure tea CLI login for forge operations (runs as agent user).
+# tea stores config in ~/.config/tea/ — persistent across container restarts
+# only if that directory is on a mounted volume.
+configure_tea_login() {
+  if command -v tea &>/dev/null && [ -n "${FORGE_TOKEN:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+    local_tea_login="forgejo"
+    case "$FORGE_URL" in
+      *codeberg.org*) local_tea_login="codeberg" ;;
+    esac
+    gosu agent bash -c "tea login add \
+      --name '${local_tea_login}' \
+      --url '${FORGE_URL}' \
+      --token '${FORGE_TOKEN}' \
+      --no-version-check 2>/dev/null || true"
+    log "tea login configured: ${local_tea_login} → ${FORGE_URL}"
   else
-    log "No project TOMLs found — crontab empty"
+    log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
   fi
 }
 
@@ -99,58 +115,61 @@ else
   log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
 fi
 
-install_project_crons
+# Configure git and tea once at startup (as root, then drop to agent)
+configure_git_creds
+configure_tea_login
 
-# Configure git credential helper for password-based HTTP auth.
-# Forgejo 11.x rejects API tokens for git push (#361); password auth works.
-# This ensures all git operations (clone, fetch, push) from worktrees use
-# password auth without needing tokens embedded in remote URLs.
-if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
-  _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
-  _forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
-  # Determine the bot username from FORGE_TOKEN identity (or default to dev-bot)
-  _bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || _bot_user=""
-  _bot_user="${_bot_user:-dev-bot}"
+# Initialize state directory for check_active guards
+init_state_dir
 
-  # Write a static credential helper script (git credential protocol)
-  cat > /home/agent/.git-credentials-helper <<CREDEOF
-#!/bin/sh
-# Auto-generated git credential helper for Forgejo password auth (#361)
-# Only respond to "get" action; ignore "store" and "erase".
-[ "\$1" = "get" ] || exit 0
-# Read and discard stdin (git sends protocol/host info)
-cat >/dev/null
-echo "protocol=${_forge_proto}"
-echo "host=${_forge_host}"
-echo "username=${_bot_user}"
-echo "password=${FORGE_PASS}"
-CREDEOF
-  chmod 755 /home/agent/.git-credentials-helper
-  chown agent:agent /home/agent/.git-credentials-helper
+# Parse AGENT_ROLES env var (default: all agents)
+# Expected format: comma-separated list like "review,dev,gardener"
+AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener}"
+log "Agent roles configured: ${AGENT_ROLES}"
 
-  su -s /bin/bash agent -c "git config --global credential.helper '/home/agent/.git-credentials-helper'"
-  log "Git credential helper configured for ${_bot_user}@${_forge_host} (password auth)"
-fi
+# Poll interval in seconds (5 minutes default)
+POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
-# Configure tea CLI login for forge operations (runs as agent user).
-# tea stores config in ~/.config/tea/ — persistent across container restarts
-# only if that directory is on a mounted volume.
-if command -v tea &>/dev/null && [ -n "${FORGE_TOKEN:-}" ] && [ -n "${FORGE_URL:-}" ]; then
-  local_tea_login="forgejo"
-  case "$FORGE_URL" in
-    *codeberg.org*) local_tea_login="codeberg" ;;
-  esac
-  su -s /bin/bash agent -c "tea login add \
-    --name '${local_tea_login}' \
-    --url '${FORGE_URL}' \
-    --token '${FORGE_TOKEN}' \
-    --no-version-check 2>/dev/null || true"
-  log "tea login configured: ${local_tea_login} → ${FORGE_URL}"
-else
-  log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
-fi
+log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
 
-# Run cron in the foreground.  Cron jobs execute as the agent user.
-log "Starting cron daemon"
-exec cron -f
+# Main polling loop using iteration counter for gardener scheduling
+iteration=0
+while true; do
+  iteration=$((iteration + 1))
+  now=$(date +%s)
+
+  # Stale .sid cleanup — needed for agents that don't support --resume
+  # Run this as the agent user
+  gosu agent bash -c "rm -f /tmp/dev-session-*.sid /tmp/review-session-*.sid 2>/dev/null || true"
+
+  # Poll each project TOML
+  for toml in "${DISINTO_DIR}"/projects/*.toml; do
+    [ -f "$toml" ] || continue
+    log "Processing project TOML: ${toml}"
+
+    # Review poll (every iteration)
+    if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
+      log "Running review-poll (iteration ${iteration}) for ${toml}"
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/review-poll.log" 2>&1 || true
+    fi
+
+    # Dev poll (every iteration)
+    if [[ ",${AGENT_ROLES}," == *",dev,"* ]]; then
+      log "Running dev-poll (iteration ${iteration}) for ${toml}"
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/dev-poll.log" 2>&1 || true
+    fi
+
+    # Gardener (every 6 hours = 72 iterations * 5 min = 21600 seconds)
+    # Run at iteration multiples of 72 (72, 144, 216, ...)
+    if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
+      gardener_iteration=$((iteration * POLL_INTERVAL))
+      gardener_interval=$((6 * 60 * 60))  # 6 hours in seconds
+      if [ $((gardener_iteration % gardener_interval)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
+        log "Running gardener (iteration ${iteration}, 6-hour interval) for ${toml}"
+        gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 || true
+      fi
+    fi
+  done
+
+  sleep "${POLL_INTERVAL}"
+done

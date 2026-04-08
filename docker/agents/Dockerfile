@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux cron python3 python3-pip openssh-client ca-certificates age shellcheck procps \
+    bash curl git jq tmux python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu \
     && pip3 install --break-system-packages networkx \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,8 +26,8 @@ COPY . /home/agent/disinto
 COPY docker/agents/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Entrypoint runs as root to start the cron daemon;
-# cron jobs execute as the agent user (crontab -u agent).
+# Entrypoint runs polling loop directly, dropping to agent user via gosu.
+# All scripts execute as the agent user (UID 1000) while preserving env vars.
 WORKDIR /home/agent/disinto
 
 ENTRYPOINT ["/entrypoint.sh"]
