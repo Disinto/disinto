@@ -303,7 +303,7 @@ is_action_completed() {
 
 # Validate a vault action TOML file
 # Usage: validate_action <toml_file>
-# Sets: VAULT_ACTION_ID, VAULT_ACTION_FORMULA, VAULT_ACTION_CONTEXT, VAULT_ACTION_SECRETS
+# Sets: VAULT_ACTION_ID, VAULT_ACTION_FORMULA, VAULT_ACTION_CONTEXT, VAULT_ACTION_SECRETS, VAULT_DISPATCH_MODE
 validate_action() {
   local toml_file="$1"
 
@@ -323,6 +323,26 @@ validate_action() {
   fi
 
   return 0
+}
+
+# Extract dispatch_mode from TOML file
+# Usage: get_dispatch_mode <toml_file>
+# Returns: "direct" for direct-commit, "pr" for PR-merged, or empty if not specified
+get_dispatch_mode() {
+  local toml_file="$1"
+  local toml_content dispatch_mode
+
+  toml_content=$(cat "$toml_file")
+
+  # Extract dispatch_mode field if present
+  dispatch_mode=$(echo "$toml_content" | grep -E '^dispatch_mode\s*=' | sed -E 's/^dispatch_mode\s*=\s*"(.*)"/\1/' | tr -d '\r')
+
+  if [ -n "$dispatch_mode" ]; then
+    echo "$dispatch_mode"
+  else
+    # Default to "pr" for backward compatibility (PR-based workflow)
+    echo "pr"
+  fi
 }
 
 # Write result file for an action
@@ -367,11 +387,21 @@ launch_runner() {
     return 1
   fi
 
-  # Verify admin merge
-  if ! verify_admin_merged "$toml_file"; then
-    log "ERROR: Admin merge verification failed for ${action_id}"
-    write_result "$action_id" 1 "Admin merge verification failed: see logs above"
-    return 1
+  # Check dispatch mode to determine if admin verification is needed
+  local dispatch_mode
+  dispatch_mode=$(get_dispatch_mode "$toml_file")
+
+  if [ "$dispatch_mode" = "direct" ]; then
+    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — skipping admin merge verification (direct commit)"
+  else
+    # Verify admin merge for PR-based actions
+    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — verifying admin merge"
+    if ! verify_admin_merged "$toml_file"; then
+      log "ERROR: Admin merge verification failed for ${action_id}"
+      write_result "$action_id" 1 "Admin merge verification failed: see logs above"
+      return 1
+    fi
+    log "Action ${action_id}: admin merge verified"
   fi
 
   # Extract secrets from validated action
