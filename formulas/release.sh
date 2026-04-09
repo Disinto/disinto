@@ -163,7 +163,7 @@ fi
 
 log "Step 4/6: Building agents Docker image"
 
-cd "$FACTORY_ROOT/.." || exit 1
+cd "$FACTORY_ROOT" || exit 1
 docker compose build --no-cache agents 2>&1 | tail -5
 log "Image built"
 

@@ -411,7 +411,13 @@ launch_runner() {
   # Build docker compose run command (delegates to compose runner service)
   # The runner service definition handles image, network, volumes, and base env.
   # The dispatcher only adds declared secrets and the ops repo mount.
-  local -a cmd=(docker compose run --rm)
+  #
+  # The edge container has docker-compose.yml mounted at /opt/docker-compose.yml.
+  # --project-directory tells docker compose to resolve relative paths (volumes,
+  # env_file) against the HOST project root so the Docker daemon finds them.
+  local compose_file="${COMPOSE_FILE:-/opt/docker-compose.yml}"
+  local project_dir="${HOST_PROJECT_DIR:-.}"
+  local -a cmd=(docker compose -f "$compose_file" --project-directory "$project_dir" run --rm)
 
   # Add environment variables for secrets (if any declared)
   if [ -n "$secrets_array" ]; then
