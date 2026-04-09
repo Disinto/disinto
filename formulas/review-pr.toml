@@ -61,6 +61,25 @@ Do NOT flag:
 - Things that look wrong but actually work — verify by reading the code first
 - Files that were truncated from the diff (the orchestrator notes truncation)
 
+## 3b. Architecture and documentation consistency
+
+For each BEHAVIORAL change in the diff (not pure bug fixes or formatting):
+
+1. Identify what behavior changed (e.g., scheduling mechanism, auth flow,
+   container lifecycle, secret handling)
+2. Search AGENTS.md for claims about that behavior:
+     grep -n '<keyword>' AGENTS.md
+   Also check docs/ and any per-directory AGENTS.md files.
+3. Search for Architecture Decision references (AD-001 through AD-006):
+     grep -n 'AD-0' AGENTS.md
+   Read each AD and check if the PR's changes contradict it.
+4. If the PR changes behavior described in AGENTS.md or contradicts an AD
+   but does NOT update the documentation in the same PR:
+   REQUEST_CHANGES — require the documentation update in the same PR.
+
+This check is SKIPPED for pure bug fixes where the intended behavior is
+unchanged (the code was wrong, not the documentation).
+
 ## 4. Vault item quality (conditional)
 
 If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these
@@ -177,8 +196,16 @@ tech-debt issues via API so they are tracked separately:
     -H "Content-Type: application/json" "$FORGE_API/issues" \
     -d '{"title":"...","body":"Flagged by AI reviewer in PR #NNN.\n\n## Problem\n...\n\n---\n*Auto-created from AI review*","labels":[TECH_DEBT_ID]}'
 
-Only create follow-ups for clear, actionable tech debt. Do not create
-issues for minor style nits or speculative improvements.
+File a tech-debt issue for every finding rated **medium** or higher that
+is pre-existing (not introduced by this PR). Also file for **low** findings
+that represent correctness risks (dead code that masks bugs, misleading
+documentation, unguarded variables under set -u).
+
+Do NOT file for: style preferences, naming opinions, missing comments,
+or speculative improvements with no concrete failure mode.
+
+When in doubt, file. A closed-as-wontfix tech-debt issue costs nothing;
+an unfiled bug costs a future debugging session.
 
 ## 8. Verdict
 
@@ -190,6 +217,11 @@ Choose one:
 Bias toward APPROVE for small, correct changes. Use REQUEST_CHANGES only
 for actual problems (bugs, security issues, broken functionality, missing
 required behavior). Use DISCUSS sparingly.
+
+Note: The bias toward APPROVE applies to code correctness and style decisions.
+It does NOT apply to documentation consistency (step 3b) or tech-debt filing
+(step 7) — those are separate concerns that should be handled regardless of
+the change's correctness.
 
 ## 9. Output
 
