@@ -146,30 +146,46 @@ while true; do
   gosu agent bash -c "rm -f /tmp/dev-session-*.sid /tmp/review-session-*.sid 2>/dev/null || true"
 
   # Poll each project TOML
+  # Fast agents (review-poll, dev-poll) run in background so they don't block
+  # each other.  Slow agents (gardener, architect, planner, predictor) also run
+  # in background but are guarded by pgrep so only one instance runs at a time.
+  # The flock on session.lock already serializes claude -p calls.
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
     log "Processing project TOML: ${toml}"
 
+    # --- Fast agents: run in background, wait before slow agents ---
+
     # Review poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
       log "Running review-poll (iteration ${iteration}) for ${toml}"
-      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/review-poll.log" 2>&1 || true
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/review-poll.log" 2>&1 &
     fi
+
+    sleep 2  # stagger fast polls
 
     # Dev poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",dev,"* ]]; then
       log "Running dev-poll (iteration ${iteration}) for ${toml}"
-      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/dev-poll.log" 2>&1 || true
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/dev-poll.log" 2>&1 &
     fi
 
+    # Wait for fast polls to finish before launching slow agents
+    wait
+
+    # --- Slow agents: run in background with pgrep guard ---
+
     # Gardener (every 6 hours = 72 iterations * 5 min = 21600 seconds)
-    # Run at iteration multiples of 72 (72, 144, 216, ...)
     if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
       gardener_iteration=$((iteration * POLL_INTERVAL))
       gardener_interval=$((6 * 60 * 60))  # 6 hours in seconds
       if [ $((gardener_iteration % gardener_interval)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
-        log "Running gardener (iteration ${iteration}, 6-hour interval) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 || true
+        if ! pgrep -f "gardener-run.sh" >/dev/null; then
+          log "Running gardener (iteration ${iteration}, 6-hour interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 &
+        else
+          log "Skipping gardener — already running"
+        fi
       fi
     fi
 
@@ -178,8 +194,12 @@ while true; do
       architect_iteration=$((iteration * POLL_INTERVAL))
       architect_interval=$((6 * 60 * 60))  # 6 hours in seconds
       if [ $((architect_iteration % architect_interval)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
-        log "Running architect (iteration ${iteration}, 6-hour interval) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 || true
+        if ! pgrep -f "architect-run.sh" >/dev/null; then
+          log "Running architect (iteration ${iteration}, 6-hour interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 &
+        else
+          log "Skipping architect — already running"
+        fi
       fi
     fi
 
@@ -188,8 +208,12 @@ while true; do
       planner_iteration=$((iteration * POLL_INTERVAL))
       planner_interval=$((12 * 60 * 60))  # 12 hours in seconds
       if [ $((planner_iteration % planner_interval)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
-        log "Running planner (iteration ${iteration}, 12-hour interval) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/planner.log" 2>&1 || true
+        if ! pgrep -f "planner-run.sh" >/dev/null; then
+          log "Running planner (iteration ${iteration}, 12-hour interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/planner.log" 2>&1 &
+        else
+          log "Skipping planner — already running"
+        fi
       fi
     fi
 
@@ -198,8 +222,12 @@ while true; do
       predictor_iteration=$((iteration * POLL_INTERVAL))
       predictor_interval=$((24 * 60 * 60))  # 24 hours in seconds
       if [ $((predictor_iteration % predictor_interval)) -eq 0 ] && [ "$now" -ge "$predictor_iteration" ]; then
-        log "Running predictor (iteration ${iteration}, 24-hour interval) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/predictor.log" 2>&1 || true
+        if ! pgrep -f "predictor-run.sh" >/dev/null; then
+          log "Running predictor (iteration ${iteration}, 24-hour interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/predictor.log" 2>&1 &
+        else
+          log "Skipping predictor — already running"
+        fi
       fi
     fi
   done
