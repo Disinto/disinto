@@ -7,9 +7,15 @@
 #
 # Flow:
 #   1. Guards: cron lock, memory check
-#   2. Load formula (formulas/run-architect.toml)
-#   3. Context: VISION.md, AGENTS.md, ops:prerequisites.md, structural graph
-#   4. agent_run(worktree, prompt) → Claude decomposes vision into sprints
+#   2. Precondition checks: skip if no work (no vision issues, no responses)
+#   3. Load formula (formulas/run-architect.toml)
+#   4. Context: VISION.md, AGENTS.md, ops:prerequisites.md, structural graph
+#   5. agent_run(worktree, prompt) → Claude decomposes vision into sprints
+#
+# Precondition checks (bash before model):
+#   - Skip if no vision issues AND no open architect PRs
+#   - Skip if 3+ architect PRs open AND no ACCEPT/REJECT responses to process
+#   - Only invoke model when there's actual work: new pitches or response processing
 #
 # Usage:
 #   architect-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -169,6 +175,44 @@ detect_questions_phase() {
   log "Detected PR #${pr_number} in questions-awaiting-answers phase"
   return 0
 }
+
+# ── Precondition checks in bash before invoking the model ─────────────────
+
+# Check 1: Skip if no vision issues exist and no open architect PRs to handle
+vision_count=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+  "$FORGE_API/issues?labels=vision&state=open&limit=1" 2>/dev/null | jq length) || vision_count=0
+if [ "${vision_count:-0}" -eq 0 ]; then
+  # Check for open architect PRs that need handling (ACCEPT/REJECT responses)
+  open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+  if [ "${open_arch_prs:-0}" -eq 0 ]; then
+    log "no vision issues and no open architect PRs — skipping"
+    exit 0
+  fi
+fi
+
+# Check 2: Skip if already at max open pitches (3), unless there are responses to process
+open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+  "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+if [ "${open_arch_prs:-0}" -ge 3 ]; then
+  # Check if any open architect PRs have ACCEPT/REJECT responses that need processing
+  has_responses=false
+  pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+  for pr_num in $pr_numbers; do
+    comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+    if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
+      has_responses=true
+      break
+    fi
+  done
+  if [ "$has_responses" = false ]; then
+    log "already 3 open architect PRs with no responses to process — skipping"
+    exit 0
+  fi
+  log "3 open architect PRs found but responses detected — processing"
+fi
 
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="sonnet"
