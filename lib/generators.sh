@@ -93,6 +93,8 @@ services:
     restart: unless-stopped
     network_mode: host
     privileged: true
+    security_opt:
+      - apparmor=unconfined
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -174,6 +176,8 @@ services:
   edge:
     build: ./docker/edge
     container_name: disinto-edge
+    security_opt:
+      - apparmor=unconfined
     ports:
       - "80:80"
       - "443:443"
@@ -204,6 +208,8 @@ services:
   staging:
     image: caddy:alpine
     command: ["caddy", "file-server", "--root", "/srv/site"]
+    security_opt:
+      - apparmor=unconfined
     volumes:
       - ./docker:/srv/site:ro
     networks:
