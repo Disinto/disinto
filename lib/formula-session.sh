@@ -463,16 +463,15 @@ Write the journal entry below. Use markdown format."
   local journal_dir="${PROFILE_REPO_PATH}/journal"
   mkdir -p "$journal_dir"
 
-  # Write journal entry (append if exists)
-  local journal_file="${journal_dir}/issue-${issue_num}.md"
-  if [ -f "$journal_file" ]; then
-    printf '\n---\n\n' >> "$journal_file"
-  fi
+  # Write journal entry with timestamped filename for accumulation
+  local ts
+  ts=$(date -u +%Y%m%d-%H%M%S)
+  local journal_file="${journal_dir}/issue-${issue_num}-${ts}.md"
   printf '%s\n' "$journal_content" >> "$journal_file"
-  log "profile: wrote journal entry for issue #${issue_num}"
+  log "profile: wrote journal entry for issue #${issue_num} (${ts})"
 
   # Commit and push to .profile repo
-  _profile_commit_and_push "journal: issue #${issue_num} reflection" "journal/issue-${issue_num}.md"
+  _profile_commit_and_push "journal: issue #${issue_num} reflection (${ts})" "journal/issue-${issue_num}-${ts}.md"
 
   return 0
 }
