@@ -105,12 +105,14 @@ build_sdk_prompt_footer
 
 # ── Design phase: bash-driven review detection ────────────────────────────
 # Fetch PR reviews from Forgejo API (deterministic, not model-dependent).
-# Returns: decision (ACCEPT|REJECT|NONE), human_guidance, pr_number
+# Sets global output variables (not stdout — guidance text is often multiline):
+#   REVIEW_DECISION  — ACCEPT|REJECT|NONE
+#   REVIEW_GUIDANCE  — human guidance text (review body or comment text)
 # Args: pr_number
 fetch_pr_review_decision() {
   local pr_num="$1"
-  local decision="NONE"
-  local guidance=""
+  REVIEW_DECISION="NONE"
+  REVIEW_GUIDANCE=""
 
   # Step 1: Check PR reviews (Forgejo review UI) — takes precedence
   local reviews_json
@@ -131,14 +133,12 @@ fetch_pr_review_decision() {
   ' 2>/dev/null) || review_body=""
 
   if [ "$review_decision" = "APPROVED" ]; then
-    decision="ACCEPT"
-    guidance="$review_body"
-    printf '%s\t%s' "$decision" "$guidance"
+    REVIEW_DECISION="ACCEPT"
+    REVIEW_GUIDANCE="$review_body"
     return 0
   elif [ "$review_decision" = "REQUEST_CHANGES" ]; then
-    decision="REJECT"
-    guidance="$review_body"
-    printf '%s\t%s' "$decision" "$guidance"
+    REVIEW_DECISION="REJECT"
+    REVIEW_GUIDANCE="$review_body"
     return 0
   fi
 
@@ -155,23 +155,21 @@ fetch_pr_review_decision() {
 
   if [ -n "$comment_body" ]; then
     if printf '%s' "$comment_body" | grep -qiE '^\s*ACCEPT'; then
-      decision="ACCEPT"
+      REVIEW_DECISION="ACCEPT"
       # Extract guidance text after ACCEPT (e.g., "ACCEPT — use SSH approach" → "use SSH approach")
-      guidance=$(printf '%s' "$comment_body" | sed -n 's/^[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][[:space:]]*[—:–-]*[[:space:]]*//p' | head -1)
+      REVIEW_GUIDANCE=$(printf '%s' "$comment_body" | sed -n 's/^[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][[:space:]]*[—:–-]*[[:space:]]*//p' | head -1)
       # If guidance is empty on first line, use rest of comment
-      if [ -z "$guidance" ]; then
-        guidance=$(printf '%s' "$comment_body" | tail -n +2)
+      if [ -z "$REVIEW_GUIDANCE" ]; then
+        REVIEW_GUIDANCE=$(printf '%s' "$comment_body" | tail -n +2)
       fi
     elif printf '%s' "$comment_body" | grep -qiE '^\s*REJECT'; then
-      decision="REJECT"
-      guidance=$(printf '%s' "$comment_body" | sed -n 's/^[[:space:]]*[Rr][Ee][Jj][Ee][Cc][Tt][[:space:]]*[—:–-]*[[:space:]]*//p' | head -1)
-      if [ -z "$guidance" ]; then
-        guidance=$(printf '%s' "$comment_body" | tail -n +2)
+      REVIEW_DECISION="REJECT"
+      REVIEW_GUIDANCE=$(printf '%s' "$comment_body" | sed -n 's/^[[:space:]]*[Rr][Ee][Jj][Ee][Cc][Tt][[:space:]]*[—:–-]*[[:space:]]*//p' | head -1)
+      if [ -z "$REVIEW_GUIDANCE" ]; then
+        REVIEW_GUIDANCE=$(printf '%s' "$comment_body" | tail -n +2)
       fi
     fi
   fi
-
-  printf '%s\t%s' "$decision" "$guidance"
 }
 
 # Handle REJECT entirely in bash — no model invocation needed.
@@ -436,9 +434,10 @@ ${PROMPT_FOOTER}"
   fi
 
   # Second check: fetch review decision (ACCEPT/REJECT/NONE)
-  review_result=$(fetch_pr_review_decision "$pr_num")
-  decision=$(printf '%s' "$review_result" | cut -f1)
-  guidance=$(printf '%s' "$review_result" | cut -f2-)
+  # Sets REVIEW_DECISION and REVIEW_GUIDANCE global variables
+  fetch_pr_review_decision "$pr_num"
+  decision="$REVIEW_DECISION"
+  guidance="$REVIEW_GUIDANCE"
 
   case "$decision" in
     REJECT)
@@ -491,7 +490,11 @@ $(formula_lessons_block)
    - Add '## Design forks' section with fork options
    - Add '## Proposed sub-issues' section with concrete issues per fork path
    - Use Forgejo API: PUT ${FORGE_API}/repos/${FORGE_OPS_REPO}/contents/<path> with branch ${pr_branch}
-6. Comment on PR #${pr_num} with the questions formatted as multiple choice:
+6. Update the PR body to include the Design forks section (required for answer detection):
+   - PATCH ${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}
+   - Body: {\"body\": \"<existing PR body + Design forks section>\"}
+   - The PR body MUST contain '## Design forks' after this step
+7. Comment on PR #${pr_num} with the questions formatted as multiple choice:
    - POST ${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments
 
 ${SCRATCH_INSTRUCTION}
