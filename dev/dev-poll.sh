@@ -114,10 +114,12 @@ in_progress_recently_added() {
 
   now=$(date +%s)
 
-  # Query issue timeline for the most recent in-progress label event
+  # Query issue timeline for the most recent in-progress label event.
+  # Forgejo serializes CommentType as an integer, not a string —
+  # CommentTypeLabel is 7 in the Gitea/Forgejo enum.
   label_ts=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${issue}/timeline" | \
-    jq -r '[.[] | select(.type == "label") | select(.label.name == "in-progress")] | last | .created_at // empty') || true
+    jq -r '[.[] | select(.type == 7) | select(.label.name == "in-progress")] | last | .created_at // empty') || true
 
   if [ -z "$label_ts" ]; then
     return 1  # no label event found — not recently added
