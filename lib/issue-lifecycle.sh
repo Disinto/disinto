@@ -102,7 +102,9 @@ issue_claim() {
     return 1
   fi
 
-  # Assign to self (Forgejo rejects if already assigned differently)
+  # Assign to self BEFORE adding in-progress label (issue #471).
+  # This ordering ensures the assignee is set by the time other pollers
+  # see the in-progress label, reducing the stale-detection race window.
   curl -sf -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \

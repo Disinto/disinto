@@ -103,6 +103,39 @@ is_blocked() {
 # STALENESS DETECTION FOR IN-PROGRESS ISSUES
 # =============================================================================
 
+# Check if in-progress label was added recently (within grace period).
+# Prevents race where a poller marks an issue as stale before the claiming
+# agent's assign + label sequence has fully propagated. See issue #471.
+# Args: issue_number [grace_seconds]
+# Returns: 0 if recently added (within grace period), 1 if not
+in_progress_recently_added() {
+  local issue="$1" grace="${2:-60}"
+  local now label_ts delta
+
+  now=$(date +%s)
+
+  # Query issue timeline for the most recent in-progress label event.
+  # Forgejo serializes CommentType as an integer, not a string —
+  # CommentTypeLabel is 7 in the Gitea/Forgejo enum.
+  label_ts=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${issue}/timeline" | \
+    jq -r '[.[] | select(.type == 7) | select(.label.name == "in-progress")] | last | .created_at // empty') || true
+
+  if [ -z "$label_ts" ]; then
+    return 1  # no label event found — not recently added
+  fi
+
+  # Convert ISO timestamp to epoch and compare
+  local label_epoch
+  label_epoch=$(date -d "$label_ts" +%s 2>/dev/null || echo 0)
+  delta=$(( now - label_epoch ))
+
+  if [ "$delta" -lt "$grace" ]; then
+    return 0  # within grace period
+  fi
+  return 1
+}
+
 # Check if there's an open PR for a specific issue
 # Args: issue_number
 # Returns: 0 if open PR exists, 1 if not
@@ -460,9 +493,15 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     fi
 
     if [ "$OPEN_PR" = false ] && [ "$BLOCKED_BY_INPROGRESS" = false ]; then
-      log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
-      relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
-      BLOCKED_BY_INPROGRESS=true
+      # Grace period: skip if in-progress label was added <60s ago (issue #471)
+      if in_progress_recently_added "$ISSUE_NUM" 60; then
+        log "issue #${ISSUE_NUM} in-progress label added <60s ago — skipping stale detection (grace period)"
+        BLOCKED_BY_INPROGRESS=true
+      else
+        log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
+        relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
+        BLOCKED_BY_INPROGRESS=true
+      fi
     fi
 
     # Formula guard: formula-labeled issues should not be worked on by dev-agent.
