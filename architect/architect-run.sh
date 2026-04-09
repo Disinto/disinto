@@ -91,12 +91,461 @@ load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" 
 build_context_block VISION.md AGENTS.md ops:prerequisites.md
 
 # ── Prepare .profile context (lessons injection) ─────────────────────────
-SCRATCH_CONTEXT=$(build_scratch_context)
-GRAPH_SECTION=$(build_graph_section)
-GUIDANCE_BLOCK=$(build_guidance_block)
-FORMULA_CONTENT=$(build_formula_content)
-PROMPT_FOOTER=$(build_prompt_footer)
-SCRATCH_INSTRUCTION=$(build_scratch_instruction)
+formula_prepare_profile_context
+
+# ── Build structural analysis graph ──────────────────────────────────────
+build_graph_section
+
+# ── Read scratch file (compaction survival) ───────────────────────────────
+SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
+SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
+
+# ── Build prompt ─────────────────────────────────────────────────────────
+build_sdk_prompt_footer
+
+# Architect prompt: strategic decomposition of vision into sprints
+# See: architect/AGENTS.md for full role description
+# Pattern: heredoc function to avoid inline prompt construction
+# Note: Uses CONTEXT_BLOCK, GRAPH_SECTION, SCRATCH_CONTEXT from formula-session.sh
+# Architecture Decision: AD-003 — The runtime creates and destroys, the formula preserves.
+build_architect_prompt() {
+  cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+
+Your role: strategic decomposition of vision issues into development sprints.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments,
+and file sub-issues after design forks are resolved.
+
+## Project context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+${SCRATCH_CONTEXT}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+}
+
+PROMPT=$(build_architect_prompt)
+
+# ── Create worktree ──────────────────────────────────────────────────────
+formula_worktree_setup "$WORKTREE"
+
+# ── Detect if PR is in questions-awaiting-answers phase ──────────────────
+# A PR is in the questions phase if it has a `## Design forks` section and
+# question comments. We check this to decide whether to resume the session
+# from the research/questions run (preserves codebase context for answer parsing).
+detect_questions_phase() {
+  local pr_number=""
+  local pr_body=""
+
+  # Get open architect PRs on ops repo
+  local ops_repo="${OPS_REPO_ROOT:-/home/agent/data/ops}"
+  if [ ! -d "${ops_repo}/.git" ]; then
+    return 1
+  fi
+
+  # Use Forgejo API to find open architect PRs
+  local response
+  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
+
+  # Check each open PR for architect markers
+  pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
+
+  if [ -z "$pr_number" ]; then
+    return 1
+  fi
+
+  # Fetch PR body
+  pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
+
+  # Check for `## Design forks` section (added by #101 after ACCEPT)
+  if ! printf '%s' "$pr_body" | grep -q "## Design forks"; then
+    return 1
+  fi
+
+  # Check for question comments (Q1:, Q2:, etc.)
+  # Use jq to extract body text before grepping (handles JSON escaping properly)
+  local comments
+  comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
+
+  if ! printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
+    return 1
+  fi
+
+  # PR is in questions phase
+  log "Detected PR #${pr_number} in questions-awaiting-answers phase"
+  return 0
+}
+
+# ── Sub-issue existence check ────────────────────────────────────────────
+# Check if a vision issue already has sub-issues filed from it.
+# Returns 0 if sub-issues exist and are open, 1 otherwise.
+# Args: vision_issue_number
+has_open_subissues() {
+  local vision_issue="$1"
+  local subissue_count=0
+
+  # Search for issues whose body contains 'Decomposed from #N' pattern
+  # Fetch all open issues with bodies in one API call (avoids N+1 calls)
+  local issues_json
+  issues_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?state=open&limit=100" 2>/dev/null) || return 1
+
+  # Check each issue for the decomposition pattern using jq to extract bodies
+  subissue_count=$(printf '%s' "$issues_json" | jq -r --arg vid "$vision_issue" '
+    [.[] | select(.number != $vid) | select(.body // "" | contains("Decomposed from #" + $vid))] | length
+  ' 2>/dev/null) || subissue_count=0
+
+  if [ "$subissue_count" -gt 0 ]; then
+    log "Vision issue #${vision_issue} has ${subissue_count} open sub-issue(s) — skipping"
+    return 0  # Has open sub-issues
+  fi
+
+  log "Vision issue #${vision_issue} has no open sub-issues"
+  return 1  # No open sub-issues
+}
+
+# ── Merged sprint PR check ───────────────────────────────────────────────
+# Check if a vision issue already has a merged sprint PR on the ops repo.
+# Returns 0 if a merged sprint PR exists, 1 otherwise.
+# Args: vision_issue_number
+has_merged_sprint_pr() {
+  local vision_issue="$1"
+
+  # Get closed PRs from ops repo
+  local prs_json
+  prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || return 1
+
+  # Check each closed PR for architect markers and vision issue reference
+  local pr_numbers
+  pr_numbers=$(printf '%s' "$prs_json" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null) || return 1
+
+  local pr_num
+  while IFS= read -r pr_num; do
+    [ -z "$pr_num" ] && continue
+
+    # Get PR details including merged status
+    local pr_details
+    pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
+
+    # Check if PR is actually merged (not just closed)
+    local is_merged
+    is_merged=$(printf '%s' "$pr_details" | jq -r '.merged // false') || continue
+
+    if [ "$is_merged" != "true" ]; then
+      continue
+    fi
+
+    # Get PR body and check for vision issue reference
+    local pr_body
+    pr_body=$(printf '%s' "$pr_details" | jq -r '.body // ""') || continue
+
+    # Check if PR body references the vision issue number
+    # Look for patterns like "#N" where N is the vision issue number
+    if printf '%s' "$pr_body" | grep -qE "(#|refs|references)[[:space:]]*#${vision_issue}|#${vision_issue}[^0-9]|#${vision_issue}$"; then
+      log "Found merged sprint PR #${pr_num} referencing vision issue #${vision_issue} — skipping"
+      return 0  # Has merged sprint PR
+    fi
+  done <<< "$pr_numbers"
+
+  log "Vision issue #${vision_issue} has no merged sprint PR"
+  return 1  # No merged sprint PR
+}
+
+# ── Helper: Fetch all open vision issues from Forgejo API ─────────────────
+# Returns: JSON array of vision issue objects
+fetch_vision_issues() {
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?labels=vision&state=open&limit=100" 2>/dev/null || echo '[]'
+}
+
+# ── Helper: Fetch open architect PRs from ops repo Forgejo API ───────────
+# Returns: JSON array of architect PR objects
+fetch_open_architect_prs() {
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
+}
+
+# ── Helper: Get vision issue body by number ──────────────────────────────
+# Args: issue_number
+# Returns: issue body text
+get_vision_issue_body() {
+  local issue_num="$1"
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue_num}" 2>/dev/null | jq -r '.body // ""'
+}
+
+# ── Helper: Get vision issue title by number ─────────────────────────────
+# Args: issue_number
+# Returns: issue title
+get_vision_issue_title() {
+  local issue_num="$1"
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue_num}" 2>/dev/null | jq -r '.title // ""'
+}
+
+# ── Helper: Create a sprint pitch via stateless claude -p call ───────────
+# The model NEVER calls Forgejo API. It only reads context and generates pitch.
+# Args: vision_issue_number vision_issue_title vision_issue_body
+# Returns: pitch markdown to stdout
+#
+# This is a stateless invocation: the model has no memory between calls.
+# All state management (which issues to pitch, dedup logic, etc.) happens in bash.
+generate_pitch() {
+  local issue_num="$1"
+  local issue_title="$2"
+  local issue_body="$3"
+
+  # Build context block with vision issue details
+  local pitch_context
+  pitch_context="
+## Vision Issue #${issue_num}
+### Title
+${issue_title}
+
+### Description
+${issue_body}
+
+## Project Context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+"
+
+  # Prompt: model generates pitch markdown only, no API calls
+  local pitch_prompt="You are the architect agent for ${FORGE_REPO}. Write a sprint pitch for the vision issue above.
+
+Instructions:
+1. Output ONLY the pitch markdown (no explanations, no preamble, no postscript)
+2. Use this exact format:
+
+# Sprint: <sprint-name>
+
+## Vision issues
+- #${issue_num} — ${issue_title}
+
+## What this enables
+<what the project can do after this sprint that it can't do now>
+
+## What exists today
+<current state — infrastructure, interfaces, code that can be reused>
+
+## Complexity
+<number of files/subsystems, estimated sub-issues>
+<gluecode vs greenfield ratio>
+
+## Risks
+<what could go wrong, what breaks if this is done badly>
+
+## Cost — new infra to maintain
+<what ongoing maintenance burden does this sprint add>
+<new services, cron jobs, formulas, agent roles>
+
+## Recommendation
+<architect's assessment: worth it / defer / alternative approach>
+
+IMPORTANT: Do NOT include design forks or questions. This is a go/no-go pitch.
+
+---
+
+${pitch_context}
+"
+
+  # Execute stateless claude -p call
+  local pitch_output
+  pitch_output=$(agent_run -p "$pitch_prompt" --output-format json --dangerously-skip-permissions --max-turns 200 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
+
+  # Extract pitch content from JSON response
+  local pitch
+  pitch=$(printf '%s' "$pitch_output" | jq -r '.content // empty' 2>/dev/null) || pitch=""
+
+  if [ -z "$pitch" ]; then
+    log "WARNING: empty pitch generated for vision issue #${issue_num}"
+    return 1
+  fi
+
+  # Output pitch to stdout for caller to use
+  printf '%s' "$pitch"
+}
+
+# ── Helper: Create PR on ops repo via Forgejo API ────────────────────────
+# Args: sprint_title sprint_body branch_name
+# Returns: PR number on success, empty on failure
+create_sprint_pr() {
+  local sprint_title="$1"
+  local sprint_body="$2"
+  local branch_name="$3"
+
+  # Create branch on ops repo
+  if ! curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/branches" \
+    -d "{\"new_branch_name\": \"${branch_name}\", \"old_branch_name\": \"${PRIMARY_BRANCH:-main}\"}" >/dev/null 2>&1; then
+    log "WARNING: failed to create branch ${branch_name}"
+    return 1
+  fi
+
+  # Extract sprint name from title for filename
+  local sprint_name
+  sprint_name=$(printf '%s' "$sprint_title" | sed 's/^architect: *//; s/ *$//')
+  local sprint_slug
+  sprint_slug=$(printf '%s' "$sprint_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/--*/-/g')
+
+  # Prepare sprint spec content
+  local sprint_spec="# Sprint: ${sprint_name}
+
+${sprint_body}
+"
+  # Base64 encode the content
+  local sprint_spec_b64
+  sprint_spec_b64=$(printf '%s' "$sprint_spec" | base64 -w 0)
+
+  # Write sprint spec file to branch
+  if ! curl -sf -X PUT \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/contents/sprints/${sprint_slug}.md" \
+    -d "{\"message\": \"sprint: add ${sprint_slug}.md\", \"content\": \"${sprint_spec_b64}\", \"branch\": \"${branch_name}\"}" >/dev/null 2>&1; then
+    log "WARNING: failed to write sprint spec file"
+    return 1
+  fi
+
+  # Create PR - use jq to build JSON payload safely (prevents injection from markdown)
+  local pr_payload
+  pr_payload=$(jq -n \
+    --arg title "$sprint_title" \
+    --arg body "$sprint_body" \
+    --arg head "$branch_name" \
+    --arg base "${PRIMARY_BRANCH:-main}" \
+    '{title: $title, body: $body, head: $head, base: $base}')
+
+  local pr_response
+  pr_response=$(curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls" \
+    -d "$pr_payload" 2>/dev/null) || return 1
+
+  # Extract PR number
+  local pr_number
+  pr_number=$(printf '%s' "$pr_response" | jq -r '.number // empty')
+
+  log "Created sprint PR #${pr_number}: ${sprint_title}"
+  printf '%s' "$pr_number"
+}
+
+# ── Helper: Post footer comment on PR ────────────────────────────────────
+# Args: pr_number
+post_pr_footer() {
+  local pr_number="$1"
+  local footer="Reply \`ACCEPT\` to proceed with design questions, or \`REJECT: <reason>\` to decline."
+
+  if curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" \
+    -d "{\"body\": \"${footer}\"}" >/dev/null 2>&1; then
+    log "Posted footer comment on PR #${pr_number}"
+    return 0
+  else
+    log "WARNING: failed to post footer comment on PR #${pr_number}"
+    return 1
+  fi
+}
+
+# ── Helper: Add in-progress label to vision issue ────────────────────────
+# Args: vision_issue_number
+add_inprogress_label() {
+  local issue_num="$1"
+
+  # Get label ID for 'in-progress'
+  local labels_json
+  labels_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/labels" 2>/dev/null) || return 1
+
+  local inprogress_label_id
+  inprogress_label_id=$(printf '%s' "$labels_json" | jq -r --arg label "in-progress" '.[] | select(.name == $label) | .id' 2>/dev/null) || true
+
+  if [ -z "$inprogress_label_id" ]; then
+    log "WARNING: in-progress label not found"
+    return 1
+  fi
+
+  # Add label to issue
+  if curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/repos/${FORGE_REPO}/issues/${issue_num}/labels" \
+    -d "{\"labels\": [${inprogress_label_id}]}" >/dev/null 2>&1; then
+    log "Added in-progress label to vision issue #${issue_num}"
+    return 0
+  else
+    log "WARNING: failed to add in-progress label to vision issue #${issue_num}"
+    return 1
+  fi
+}
+
+# ── Precondition checks in bash before invoking the model ─────────────────
+
+# Check 1: Skip if no vision issues exist and no open architect PRs to handle
+vision_count=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+  "$FORGE_API/issues?labels=vision&state=open&limit=1" 2>/dev/null | jq length) || vision_count=0
+if [ "${vision_count:-0}" -eq 0 ]; then
+  # Check for open architect PRs that need handling (ACCEPT/REJECT responses)
+  open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+  if [ "${open_arch_prs:-0}" -eq 0 ]; then
+    log "no vision issues and no open architect PRs — skipping"
+    exit 0
+  fi
+fi
+
+# Check 2: Skip if already at max open pitches (3), unless there are responses to process
+open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+  "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+if [ "${open_arch_prs:-0}" -ge 3 ]; then
+  # Check if any open architect PRs have ACCEPT/REJECT responses that need processing
+  has_responses=false
+  pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+  for pr_num in $pr_numbers; do
+    comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+    if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
+      has_responses=true
+      break
+    fi
+  done
+  if [ "$has_responses" = false ]; then
+    log "already 3 open architect PRs with no responses to process — skipping"
+    exit 0
+  fi
+  log "3 open architect PRs found but responses detected — processing"
+  # Track that we have responses to process (even if pitch_budget=0)
+  has_responses_to_process=true
+fi
+
+# ── Bash-driven state management: Select vision issues for pitching ───────
+# This logic is also documented in formulas/run-architect.toml preflight step
+
+# Fetch all data from Forgejo API upfront (bash handles state, not model)
+vision_issues_json=$(fetch_vision_issues)
+open_arch_prs_json=$(fetch_open_architect_prs)
 
 # Build list of vision issues that already have open architect PRs
 declare -A _arch_vision_issues_with_open_prs
@@ -166,40 +615,126 @@ while IFS= read -r vision_issue; do
   log "Selected vision issue #${vision_issue} for pitching"
 done <<< "$vision_issue_nums"
 
-# If no issues selected and no responses processed, signal done
+# If no issues selected, decide whether to exit or process responses
 if [ ${#ARCHITECT_TARGET_ISSUES[@]} -eq 0 ]; then
-  if [ "$processed_responses" = true ]; then
-    log "No new pitches needed — responses already processed"
+  if [ "${has_responses_to_process:-false}" = "true" ]; then
+    log "No new pitches needed — responses to process"
+    # Fall through to response processing block below
   else
     log "No vision issues available for pitching (all have open PRs, sub-issues, or merged sprint PRs) — signaling PHASE:done"
-  fi
-  # Signal PHASE:done by writing to phase file if it exists
-  if [ -f "/tmp/architect-${PROJECT_NAME}.phase" ]; then
-    echo "PHASE:done" > "/tmp/architect-${PROJECT_NAME}.phase"
-  fi
-  if [ ${#ARCHITECT_TARGET_ISSUES[@]} -eq 0 ] && [ "$processed_responses" = false ]; then
-    exit 0
-  fi
-  # If responses were processed but no pitches, still clean up and exit
-  if [ ${#ARCHITECT_TARGET_ISSUES[@]} -eq 0 ]; then
-    rm -f "$SCRATCH_FILE"
-    rm -f "${SCRATCH_FILE_PREFIX}"-*.md
-    profile_write_journal "architect-run" "Architect run $(date -u +%Y-%m-%d)" "complete" "" || true
-    log "--- Architect run done ---"
+    # Signal PHASE:done by writing to phase file if it exists
+    if [ -f "/tmp/architect-${PROJECT_NAME}.phase" ]; then
+      echo "PHASE:done" > "/tmp/architect-${PROJECT_NAME}.phase"
+    fi
     exit 0
   fi
 fi
 
 log "Selected ${#ARCHITECT_TARGET_ISSUES[@]} vision issue(s) for pitching: ${ARCHITECT_TARGET_ISSUES[*]}"
 
-#   5. Stateless pitch generation: for each selected issue:
-#      - Fetch issue body from Forgejo API (bash)
-#      - Invoke claude -p with issue body + context (stateless, no API calls)
-#      - Create PR with pitch content (bash)
-#      - Post footer comment (bash)
-#   6. Response processing: handle ACCEPT/REJECT on existing PRs
+# ── Stateless pitch generation and PR creation (bash-driven, no model API calls) ──
+# For each target issue:
+#   1. Fetch issue body from Forgejo API (bash)
+#   2. Invoke claude -p with issue body + context (stateless, no API calls)
+#   3. Create PR with pitch content (bash)
+#   4. Post footer comment (bash)
 
-# Clean up scratch files (legacy single file + per-issue files)
+pitch_count=0
+for vision_issue in "${ARCHITECT_TARGET_ISSUES[@]}"; do
+  log "Processing vision issue #${vision_issue}"
+
+  # Fetch vision issue details from Forgejo API (bash, not model)
+  issue_title=$(get_vision_issue_title "$vision_issue")
+  issue_body=$(get_vision_issue_body "$vision_issue")
+
+  if [ -z "$issue_title" ] || [ -z "$issue_body" ]; then
+    log "WARNING: failed to fetch vision issue #${vision_issue} details"
+    continue
+  fi
+
+  # Generate pitch via stateless claude -p call (model has no API access)
+  log "Generating pitch for vision issue #${vision_issue}"
+  pitch=$(generate_pitch "$vision_issue" "$issue_title" "$issue_body") || true
+
+  if [ -z "$pitch" ]; then
+    log "WARNING: failed to generate pitch for vision issue #${vision_issue}"
+    continue
+  fi
+
+  # Create sprint PR (bash, not model)
+  # Use issue number in branch name to avoid collisions across runs
+  branch_name="architect/sprint-vision-${vision_issue}"
+  pr_number=$(create_sprint_pr "architect: ${issue_title}" "$pitch" "$branch_name")
+
+  if [ -z "$pr_number" ]; then
+    log "WARNING: failed to create PR for vision issue #${vision_issue}"
+    continue
+  fi
+
+  # Post footer comment
+  post_pr_footer "$pr_number"
+
+  # Add in-progress label to vision issue
+  add_inprogress_label "$vision_issue"
+
+  pitch_count=$((pitch_count + 1))
+  log "Completed pitch for vision issue #${vision_issue} — PR #${pr_number}"
+done
+
+log "Generated ${pitch_count} sprint pitch(es)"
+
+# ── Run agent for response processing if needed ───────────────────────────
+# Always process ACCEPT/REJECT responses when present, regardless of new pitches
+if [ "${has_responses_to_process:-false}" = "true" ]; then
+  log "Processing ACCEPT/REJECT responses on existing PRs"
+
+  # Check if any PRs have responses that need agent handling
+  needs_agent=false
+  pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+
+  for pr_num in $pr_numbers; do
+    # Check for ACCEPT/REJECT in comments
+    comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+
+    # Check for review decisions (higher precedence)
+    reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews=""
+
+    # Check for ACCEPT (APPROVED review or ACCEPT comment)
+    if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
+      log "PR #${pr_num} has APPROVED review — needs agent handling"
+      needs_agent=true
+    elif printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qiE '^[^:]+: *ACCEPT'; then
+      log "PR #${pr_num} has ACCEPT comment — needs agent handling"
+      needs_agent=true
+    elif printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qiE '^[^:]+: *REJECT:'; then
+      log "PR #${pr_num} has REJECT comment — needs agent handling"
+      needs_agent=true
+    fi
+  done
+
+  # Run agent only if there are responses to process
+  if [ "$needs_agent" = "true" ]; then
+    # Determine whether to resume session
+    RESUME_ARGS=()
+    if detect_questions_phase && [ -f "$SID_FILE" ]; then
+      RESUME_SESSION=$(cat "$SID_FILE")
+      RESUME_ARGS=(--resume "$RESUME_SESSION")
+      log "Resuming session from questions phase run: ${RESUME_SESSION:0:12}..."
+    elif ! detect_questions_phase; then
+      log "PR not in questions phase — starting fresh session"
+    elif [ ! -f "$SID_FILE" ]; then
+      log "No session ID found for questions phase — starting fresh session"
+    fi
+
+    agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT"
+    log "agent_run complete"
+  fi
+fi
+
+# ── Clean up scratch files (legacy single file + per-issue files) ──────────
 rm -f "$SCRATCH_FILE"
 rm -f "${SCRATCH_FILE_PREFIX}"-*.md
 
