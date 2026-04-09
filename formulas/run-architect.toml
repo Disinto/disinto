@@ -3,18 +3,26 @@
 # Executed by architect-run.sh via cron — strategic decomposition of vision
 # issues into development sprints.
 #
-# This formula orchestrates the architect agent's pitching workflow:
-#   Step 1: Preflight — validate prerequisites, select up to 3 target issues
-#   Step 2: Research + pitch — analyze codebase and write sprint pitch (loop over selected issues)
-#   Step 3: Sprint PR creation (one PR per pitch)
+# This formula orchestrates the architect agent's workflow:
+#   Step 1: Preflight — bash handles state management:
+#            - Fetch open vision issues from Forgejo API
+#            - Fetch open architect PRs on ops repo
+#            - Fetch merged architect PRs (already pitched visions)
+#            - Filter: remove visions with open PRs, merged sprints, or sub-issues
+#            - Select up to 3 remaining vision issues for pitching
+#   Step 2: Stateless pitch generation — for each selected issue:
+#            - Invoke claude -p with: vision issue body + codebase context
+#            - Model NEVER calls Forgejo API — only generates pitch markdown
+#            - Bash creates the ops PR with pitch content
+#            - Bash posts the ACCEPT/REJECT footer comment
+#   Step 3: Sprint PR creation with questions (issue #101) (one PR per pitch)
+#   Step 4: Answer parsing + sub-issue filing (issue #102)
 #
-# Design phase (ACCEPT/REJECT handling, questions, answer processing) is
-# orchestrated by bash in architect-run.sh — not by this formula.
-# See architect-run.sh for the bash-driven state machine:
-#   - Bash reads reviews API for ACCEPT/REJECT detection (deterministic)
-#   - REJECT handled entirely in bash (close PR, delete branch, journal)
-#   - ACCEPT: bash invokes model with human guidance injected
-#   - Answers: bash resumes saved session with answers injected
+# Architecture:
+# - Bash script (architect-run.sh) handles ALL state management
+# - Model calls are stateless — no Forgejo API access, no memory between calls
+# - Dedup is automatic via bash filters (no journal-based memory needed)
+# - Max 3 open architect PRs at any time
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
 
@@ -30,19 +38,32 @@ files = ["VISION.md", "AGENTS.md"]
 
 [[steps]]
 id    = "preflight"
-title = "Preflight: validate prerequisites, select up to 3 target issues"
+title = "Preflight: bash-driven state management and issue selection"
 description = """
-This step is performed by bash in architect-run.sh before the model is invoked.
+This step performs preflight checks and selects up to 3 vision issues for pitching.
+IMPORTANT: All state management is handled by bash (architect-run.sh), NOT the model.
 
-Bash handles:
-1. Pull latest code from both disinto repo and ops repo
-2. Read prerequisite tree from $OPS_REPO_ROOT/prerequisites.md
-3. Fetch open issues labeled 'vision' from Forgejo API
-4. Check for open architect PRs on ops repo
-5. Process existing PRs via bash-driven design phase (ACCEPT/REJECT/answers)
-6. After handling existing PRs, count remaining open architect PRs
-7. Select up to (3 - open_architect_pr_count) vision issues for new pitches
-8. If no vision issues, signal PHASE:done
+Architecture Decision: Bash-driven orchestration with stateless model calls
+- The model NEVER calls Forgejo API during pitching
+- Bash fetches all data from Forgejo API (vision issues, open PRs, merged PRs)
+- Bash filters and deduplicates (no model-level dedup or journal-based memory)
+- For each selected issue, bash invokes stateless claude -p (model only generates pitch)
+- Bash creates PRs and posts footer comments (no model API access)
+
+Bash Actions (in architect-run.sh):
+1. Fetch open vision issues from Forgejo API: GET /repos/{owner}/{repo}/issues?labels=vision&state=open
+2. Fetch open architect PRs from ops repo: GET /repos/{owner}/{repo}/pulls?state=open
+3. Fetch merged sprint PRs: GET /repos/{owner}/{repo}/pulls?state=closed (filter merged=true)
+4. Filter out visions that:
+   - Already have open architect PRs (check PR body for issue number reference)
+   - Have in-progress label
+   - Have open sub-issues (check for 'Decomposed from #N' pattern)
+   - Have merged sprint PRs (decomposition already done)
+5. Select up to (3 - open_architect_pr_count) remaining vision issues
+6. If no issues remain AND no responses to process, signal PHASE:done
+
+If open architect PRs exist, handle accept/reject responses FIRST (see Capability B below).
+After handling existing PRs, count remaining open architect PRs and calculate pitch_budget.
 
 ## Multi-pitch selection (up to 3 per run)
 
@@ -71,82 +92,36 @@ Output:
 
 [[steps]]
 id    = "research_pitch"
-title = "Research + pitch: analyze codebase and write sprint pitches (loop over selected issues)"
+title = "Stateless pitch generation: model generates content, bash creates PRs"
 description = """
-This step performs deep codebase research and writes a sprint pitch for EACH
-vision issue in ARCHITECT_TARGET_ISSUES.
+IMPORTANT: This step is executed by bash (architect-run.sh) via stateless claude -p calls.
+The model NEVER calls Forgejo API — it only reads context and generates pitch markdown.
 
-For each issue in ARCHITECT_TARGET_ISSUES, perform the following:
+Architecture:
+- Bash orchestrates the loop over ARCHITECT_TARGET_ISSUES
+- For each issue: bash fetches issue body from Forgejo API, then invokes stateless claude -p
+- Model receives: vision issue body + codebase context (VISION.md, AGENTS.md, prerequisites.md)
+- Model outputs: sprint pitch markdown ONLY (no API calls, no side effects)
+- Bash creates the PR and posts the ACCEPT/REJECT footer comment
 
-Actions:
+For each issue in ARCHITECT_TARGET_ISSUES, bash performs:
 
-1. Read the codebase deeply:
-   - Read all files mentioned in the issue body
-   - Search for existing interfaces that could be reused
-   - Check what infrastructure already exists
+1. Fetch vision issue details from Forgejo API:
+   - GET /repos/{owner}/{repo}/issues/{issue_number}
+   - Extract: title, body
 
-2. Assess complexity and cost:
-   - How many files/subsystems are touched?
-   - What new infrastructure would need to be maintained after this sprint?
-   - What are the risks (breaking changes, security implications, integration complexity)?
-   - Is this mostly gluecode or greenfield?
+2. Invoke stateless claude -p with prompt:
+   "Write a sprint pitch for this vision issue. Output only the pitch markdown."
+   Context provided:
+   - Vision issue #N: <title>
+   - Vision issue body
+   - Project context (VISION.md, AGENTS.md)
+   - Codebase context (prerequisites.md, graph section)
+   - Formula content
 
-3. Write sprint pitch to a per-issue scratch file for PR creation step:
-   - File path: /tmp/architect-{project}-scratch-{issue_number}.md
+3. Model generates pitch markdown (NO API CALLS):
 
-# Sprint pitch: <name>
-
-## Vision issues
-- #N — <title>
-
-## What this enables
-<what the project can do after this sprint that it can't do now>
-
-## What exists today
-<current state — infrastructure, interfaces, code that can be reused>
-
-## Complexity
-<number of files, subsystems, estimated sub-issues>
-<gluecode vs greenfield ratio>
-
-## Risks
-<what could go wrong, what breaks if this is done badly>
-
-## Cost — new infra to maintain
-<what ongoing maintenance burden does this sprint add>
-<new services, cron jobs, formulas, agent roles>
-
-## Recommendation
-<architect's assessment: worth it / defer / alternative approach>
-
-IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
-decision for the human. Questions come only after acceptance.
-
-Output:
-- Writes one scratch file per vision issue: /tmp/architect-{project}-scratch-{issue_number}.md
-- Each pitch serves as input for sprint PR creation step
-- If ARCHITECT_TARGET_ISSUES is empty (budget exhausted or no candidates), skip this step
-"""
-
-[[steps]]
-id    = "sprint_pr_creation"
-title = "Sprint PR creation (one PR per pitch)"
-description = """
-This step creates a PR on the ops repo for EACH sprint pitch produced in step 2.
-One PR per vision issue — loop over all scratch files.
-
-## Create pitch PRs (from research output)
-
-For each vision issue in ARCHITECT_TARGET_ISSUES that produced a scratch file
-(/tmp/architect-{project}-scratch-{issue_number}.md):
-
-1. Create branch `architect/<sprint-slug>` on ops repo via Forgejo API
-   - Sprint slug: lowercase, hyphenated version of sprint name
-   - Use Forgejo API: POST /repos/{owner}/{repo}/git/branches
-
-2. Write sprint spec file to sprints/<sprint-slug>.md on the new branch:
-
-# Sprint: <name>
+# Sprint: <sprint-name>
 
 ## Vision issues
 - #N — <title>
@@ -171,19 +146,86 @@ For each vision issue in ARCHITECT_TARGET_ISSUES that produced a scratch file
 ## Recommendation
 <architect's assessment: worth it / defer / alternative approach>
 
-3. Create PR on ops repo via Forgejo API:
-   - Title: `architect: <sprint summary>`
-   - Body: **plain markdown text** from the scratch file (pitch content with sections: What this enables, Complexity, Risks, Cost, Recommendation). Preserve newlines as-is — do NOT JSON-encode the body.
-   - Base branch: primary branch (main/master)
-   - Head branch: architect/<sprint-slug>
-   - Footer: "Reply `ACCEPT` to proceed with design questions, or `REJECT: <reason>` to decline."
+IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
+decision for the human. Questions come only after acceptance.
 
-4. Add `in-progress` label to the vision issue on the disinto repo:
-   - Look up the `in-progress` label ID via `GET /repos/{owner}/{repo}/labels`
-   - Add the label via `POST /repos/{owner}/{repo}/issues/{vision_issue_number}/labels`
-     Body: `{"labels": [<in-progress-label-id>]}`
+4. Bash creates PR:
+   - Create branch: architect/sprint-{pitch-number}
+   - Write sprint spec to sprints/{sprint-slug}.md
+   - Create PR with pitch content as body
+   - Post footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
+   - Add in-progress label to vision issue
 
-5. After creating all PRs, signal PHASE:done
+Output:
+- One PR per vision issue (up to 3 per run)
+- Each PR contains the pitch markdown
+- If ARCHITECT_TARGET_ISSUES is empty, skip this step
+"""
+
+[[steps]]
+id    = "sprint_pr_creation"
+title = "Sprint PR creation with questions (issue #101) — handled by bash"
+description = """
+IMPORTANT: PR creation is handled by bash (architect-run.sh) during the pitch step.
+This step is for documentation only — the actual PR creation happens in research_pitch.
+
+Architecture:
+- Bash creates PRs during stateless pitch generation (step 2)
+- Model has no role in PR creation — no Forgejo API access
+- This step describes the PR format for reference
+
+PR Format (created by bash):
+
+1. Branch: architect/sprint-{pitch-number}
+
+2. Sprint spec file: sprints/{sprint-slug}.md
+   Contains the pitch markdown from the model.
+
+3. PR via Forgejo API:
+   - Title: architect: <sprint summary>
+   - Body: plain markdown text from model output
+   - Base: main (or PRIMARY_BRANCH)
+   - Head: architect/sprint-{pitch-number}
+   - Footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
+
+4. Add in-progress label to vision issue:
+   - Look up label ID: GET /repos/{owner}/{repo}/labels
+   - Add label: POST /repos/{owner}/{repo}/issues/{issue_number}/labels
+
+After creating all PRs, signal PHASE:done.
+
+## Forgejo API Reference
+
+All operations use the Forgejo API with Authorization: token ${FORGE_TOKEN} header.
+
+### Create branch
+```
+POST /repos/{owner}/{repo}/branches
+Body: {"new_branch_name": "architect/<sprint-slug>", "old_branch_name": "main"}
+```
+
+### Create/update file
+```
+PUT /repos/{owner}/{repo}/contents/<path>
+Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-content>", "branch": "architect/<sprint-slug>"}
+```
+
+### Create PR
+```
+POST /repos/{owner}/{repo}/pulls
+Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head": "architect/<sprint-slug>", "base": "main"}
+```
+
+**Important: PR body format**
+- The body field must contain plain markdown text (the raw content from the model)
+- Do NOT JSON-encode or escape the body — pass it as a JSON string value
+- Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
+
+### Add label to issue
+```
+POST /repos/{owner}/{repo}/issues/{index}/labels
+Body: {"labels": [<label-id>]}
+```
 
 ## Forgejo API Reference
 
