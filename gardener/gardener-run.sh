@@ -54,6 +54,7 @@ SCRATCH_FILE="/tmp/gardener-${PROJECT_NAME}-scratch.md"
 RESULT_FILE="/tmp/gardener-result-${PROJECT_NAME}.txt"
 GARDENER_PR_FILE="/tmp/gardener-pr-${PROJECT_NAME}.txt"
 WORKTREE="/tmp/${PROJECT_NAME}-gardener-run"
+LAST_SHA_FILE="${DISINTO_DATA_DIR}/gardener-last-sha.txt"
 
 # Override LOG_AGENT for consistent agent identification
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
@@ -65,6 +66,24 @@ acquire_cron_lock "/tmp/gardener-run.lock"
 memory_guard 2000
 
 log "--- Gardener run start ---"
+
+# ── Precondition checks: skip if nothing to do ────────────────────────────
+# Check for new commits since last run
+CURRENT_SHA=$(git -C "$FACTORY_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+LAST_SHA=$(cat "$LAST_SHA_FILE" 2>/dev/null || echo "")
+
+# Check for open issues needing grooming
+backlog_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues?labels=backlog&state=open&limit=1" 2>/dev/null | jq length) || backlog_count=0
+tech_debt_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues?labels=tech-debt&state=open&limit=1" 2>/dev/null | jq length) || tech_debt_count=0
+
+if [ "$CURRENT_SHA" = "$LAST_SHA" ] && [ "${backlog_count:-0}" -eq 0 ] && [ "${tech_debt_count:-0}" -eq 0 ]; then
+  log "no new commits and no issues to groom — skipping"
+  exit 0
+fi
+
+log "current sha: ${CURRENT_SHA:0:8}..., backlog issues: ${backlog_count}, tech-debt issues: ${tech_debt_count}"
 
 # ── Resolve forge remote for git operations ─────────────────────────────
 resolve_forge_remote
@@ -354,4 +373,8 @@ fi
 profile_write_journal "gardener-run" "Gardener run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 rm -f "$GARDENER_PR_FILE"
+
+# Persist last-seen SHA for next run comparison
+echo "$CURRENT_SHA" > "$LAST_SHA_FILE"
+
 log "--- Gardener run done ---"
