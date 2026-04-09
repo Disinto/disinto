@@ -69,6 +69,10 @@ CREDEOF
     gosu agent bash -c "git config --global credential.helper '/home/agent/.git-credentials-helper'"
     log "Git credential helper configured for ${_bot_user}@${_forge_host} (password auth)"
   fi
+
+  # Set safe.directory to work around dubious ownership after container restart
+  # (https://github.com/disinto-admin/disinto/issues/517)
+  gosu agent bash -c "git config --global --add safe.directory '*'"
 }
 
 # Configure tea CLI login for forge operations (runs as agent user).
