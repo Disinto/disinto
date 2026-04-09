@@ -344,13 +344,12 @@ needs = ["grooming"]
 
 [[steps]]
 id    = "agents-update"
-title = "Check AGENTS.md watermarks, update stale files, enforce size limit"
+title = "Check AGENTS.md watermarks, discover structural changes, update stale files"
 description = """
-Check all AGENTS.md files for staleness, update any that are outdated, and
-enforce the ~200-line size limit via progressive disclosure splitting.
-This keeps documentation fresh — runs 2x/day so drift stays small.
+Maintain all AGENTS.md files by detecting structural drift since the last
+review. Uses git history as the source of truth — not vibes.
 
-## Part A: Watermark staleness check and update
+## Part A: Discover what changed
 
 1. Read the HEAD SHA from preflight:
      HEAD_SHA=$(cat /tmp/gardener-head-sha)
@@ -360,102 +359,72 @@ This keeps documentation fresh — runs 2x/day so drift stays small.
 
 3. For each file, read the watermark from line 1:
      <!-- last-reviewed: <sha> -->
+   If no watermark exists, treat the file as fully stale (review everything).
 
 4. Check for changes since the watermark:
      git log --oneline <watermark>..HEAD -- <directory>
    If zero changes, the file is current — skip it.
 
-5. For stale files:
-   - Read the AGENTS.md and the source files in that directory
-   - Update the documentation to reflect code changes since the watermark
-   - Set the watermark to the HEAD SHA from the preflight step
-   - Conventions: architecture and WHY not implementation details
+5. For each stale file, run a STRUCTURAL DIFF — this is the core of the step:
 
-## Part B: Size limit enforcement (progressive disclosure split)
+   a. FILE INVENTORY: list files at watermark vs HEAD for this directory:
+        git ls-tree -r --name-only <watermark> -- <directory>
+        git ls-tree -r --name-only HEAD -- <directory>
+      Diff the two lists. Categorize:
+        - NEW files: in HEAD but not in watermark
+        - DELETED files: in watermark but not in HEAD
+        - Check AGENTS.md layout section: does it list each current file?
+          Files present in the directory but absent from the layout = GAPS.
+          Files listed in the layout but missing from the directory = LIES.
 
-After all updates are done, count lines in the root AGENTS.md:
+   b. REFERENCE VALIDATION: extract every file path, function name, and
+      shell variable referenced in the AGENTS.md. For each:
+        - File paths: verify the file exists (ls or git ls-tree HEAD)
+        - Function names: grep for the definition in the codebase
+        - Script names: verify they exist where claimed
+      Any reference that fails validation is a LIE — flag it for correction.
+
+   c. SEMANTIC CHANGES: for files that existed at both watermark and HEAD,
+      check if they changed meaningfully:
+        git diff <watermark>..HEAD -- <directory>/*.sh <directory>/*.py <directory>/*.toml
+      Look for: new exported functions, removed functions, renamed files,
+      changed CLI flags, new environment variables, new configuration.
+      Ignore: internal refactors, comment changes, formatting.
+
+6. For each stale file, apply corrections:
+   - Add NEW files to the layout section
+   - Remove DELETED files from the layout section
+   - Fix every LIE found in reference validation
+   - Add notes about significant SEMANTIC CHANGES
+   - Set the watermark to HEAD_SHA
+   - Conventions: document architecture and WHY, not implementation details
+
+## Part B: Size limit enforcement
+
+After all updates, count lines in the root AGENTS.md:
      wc -l < "$PROJECT_REPO_ROOT/AGENTS.md"
 
-If the root AGENTS.md exceeds 200 lines, perform a progressive disclosure
-split. The principle: agent reads the map, drills into detail only when
-needed. You wouldn't dump a 500-page wiki on a new hire's first morning.
+If it exceeds 200 lines, split verbose sections into per-directory files
+using progressive disclosure:
 
-6. Identify per-directory sections to extract. Each agent section under
-   "## Agents" (e.g. "### Dev (`dev/`)", "### Review (`review/`)") and
-   each helper section (e.g. "### Shared helpers (`lib/`)") is a candidate.
-   Also extract verbose subsections like "## Issue lifecycle and label
-   conventions" and "## Phase-Signaling Protocol" into docs/ or the
-   relevant directory.
+7. Identify sections that can be extracted to per-directory files.
+   Keep the root AGENTS.md as a table of contents — brief overview,
+   directory layout, summary tables with links to detail files.
 
-7. For each section to extract, create a `{dir}/AGENTS.md` file with:
+8. For each extracted section, create a `{dir}/AGENTS.md` with:
    - Line 1: watermark <!-- last-reviewed: <HEAD_SHA> -->
-   - The full section content (role, trigger, key files, env vars, lifecycle)
-   - Keep the same markdown structure and detail level
+   - The full section content, preserving structure and detail
 
-   Example for dev/:
-   ```
-   <!-- last-reviewed: abc123 -->
-   # Dev Agent
+9. Replace extracted sections in root with concise summaries + links.
 
-   **Role**: Implement issues autonomously ...
-   **Trigger**: dev-poll.sh runs every 10 min ...
-   **Key files**: ...
-   **Environment variables consumed**: ...
-   **Lifecycle**: ...
-   ```
-
-8. Replace extracted sections in the root AGENTS.md with a concise
-   directory map table. The root file keeps ONLY:
-   - Watermark (line 1)
-   - ## What this repo is (brief overview)
-   - ## Directory layout (existing tree)
-   - ## Tech stack
-   - ## Coding conventions
-   - ## How to lint and test
-   - ## Agents — replaced with a summary table pointing to per-dir files:
-
-     ## Agents
-
-     | Agent | Directory | Role | Guide |
-     |-------|-----------|------|-------|
-     | Dev | dev/ | Issue implementation | [dev/AGENTS.md](dev/AGENTS.md) |
-     | Review | review/ | PR review | [review/AGENTS.md](review/AGENTS.md) |
-     | Gardener | gardener/ | Backlog grooming | [gardener/AGENTS.md](gardener/AGENTS.md) |
-     | ... | ... | ... | ... |
-
-   - ## Shared helpers — replaced with a brief pointer:
-     "See [lib/AGENTS.md](lib/AGENTS.md) for the full helper reference."
-     Keep the summary table if it fits, or move it to lib/AGENTS.md.
-
-   - ## Issue lifecycle and label conventions — keep a brief summary
-     (labels table + dependency convention) or move verbose parts to
-     docs/PHASE-PROTOCOL.md
-
-   - ## Architecture Decisions — keep in root (humans write, agents enforce)
-
-   - ## Phase-Signaling Protocol — keep a brief summary with pointer:
-     "See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the full spec."
-
-9. Verify the root AGENTS.md is now under 200 lines:
-     LINE_COUNT=$(wc -l < "$PROJECT_REPO_ROOT/AGENTS.md")
-     if [ "$LINE_COUNT" -gt 200 ]; then
-       echo "WARNING: root AGENTS.md still $LINE_COUNT lines after split"
-     fi
-   If still over 200, trim further — move more detail into per-directory
-   files. The root should read like a table of contents, not an encyclopedia.
-
-10. Each new per-directory AGENTS.md must have a watermark on line 1.
-    The gardener maintains freshness for ALL AGENTS.md files — root and
-    per-directory — using the same watermark mechanism from Part A.
+10. Verify root is under 200 lines. If still over, extract more.
 
 ## Staging
 
-11. Stage ALL AGENTS.md files you created or changed — do NOT commit yet.
-    All git writes happen in the commit-and-pr step at the end:
+11. Stage all AGENTS.md files created or changed:
       find . -name "AGENTS.md" -not -path "./.git/*" -exec git add {} +
 
-12. If no AGENTS.md files need updating AND root is under 200 lines,
-    skip this step entirely.
+12. If no files need updating AND root is under 200 lines, skip entirely.
 
 CRITICAL: If this step fails for any reason, log the failure and move on.
 Do NOT let an AGENTS.md failure prevent the commit-and-pr step.
