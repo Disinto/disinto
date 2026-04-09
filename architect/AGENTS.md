@@ -35,38 +35,34 @@ the steps for:
 - Pitch: creating structured sprint PRs
 - Sub-issue filing: creating concrete implementation issues
 
-## Bash-driven design phase
+## Bash-driven orchestration
 
-The design phase (ACCEPT → research → questions → answers → sub-issues) is
-orchestrated by bash in `architect-run.sh`, not by the formula. This ensures:
+Bash in `architect-run.sh` handles state detection and orchestration:
 
 - **Deterministic state detection**: Bash reads the Forgejo reviews API to detect
   ACCEPT/REJECT decisions — no model-dependent API parsing
 - **Human guidance injection**: Review body text from ACCEPT reviews is injected
   directly into the research prompt as context
-- **Stateful session resumption**: When answers arrive on a subsequent run, the
-  saved Claude session is resumed (`--resume session_id`), preserving full
-  codebase context from the research phase
-- **REJECT without model**: Rejections are handled entirely in bash (close PR,
-  delete branch, remove in-progress label, journal) — no model invocation needed
+- **Response processing**: When ACCEPT/REJECT responses are detected, bash invokes
+  the agent with appropriate context (session resumed for questions phase)
 
-### State transitions (bash-driven)
+### State transitions
 
 ```
-New vision issue → pitch PR (model)
+New vision issue → pitch PR (model generates pitch, bash creates PR)
   ↓
-ACCEPT review → research + questions (model, session saved)
+ACCEPT review → research + questions (model, session saved to $SID_FILE)
   ↓
-Answers received → sub-issue filing (model, session resumed)
+Answers received → sub-issue filing (model, session resumed via --resume)
   ↓
-REJECT review → close PR + journal (bash only)
+REJECT review → close PR + journal (model processes rejection, bash merges PR)
 ```
 
-### Per-PR session files
+### Session management
 
-Session IDs are saved per-PR in `/tmp/architect-sessions-{project}/pr-{number}.sid`.
-This allows multiple architect PRs to be in different design phases simultaneously,
-each with its own resumable session context.
+The agent maintains a global session file at `/tmp/architect-session-{project}.sid`.
+When processing responses, bash checks if the PR is in the questions phase and
+resumes the session using `--resume session_id` to preserve codebase context.
 
 ## Execution
 
@@ -77,9 +73,20 @@ Run via `architect/architect-run.sh`, which:
 - Uses FORGE_ARCHITECT_TOKEN for authentication
 - Processes existing architect PRs via bash-driven design phase
 - Loads the formula and builds context from VISION.md, AGENTS.md, and ops repo
-- Executes the formula via `agent_run` for new pitches
+- Bash orchestrates state management:
+  - Fetches open vision issues, open architect PRs, and merged sprint PRs from Forgejo API
+  - Filters out visions already with open PRs, in-progress label, sub-issues, or merged sprint PRs
+  - Selects up to `pitch_budget` (3 - open architect PRs) remaining vision issues
+  - For each selected issue, invokes stateless `claude -p` with issue body + context
+  - Creates PRs directly from pitch content (no scratch files)
+- Agent is invoked only for response processing (ACCEPT/REJECT handling)
 
-**Multi-sprint pitching**: The architect pitches up to 3 sprints per run. The pitch budget is `3 − <open architect PRs>`. After handling existing PRs (accept/reject/answer parsing), the architect selects up to `pitch_budget` vision issues (skipping any already with an open architect PR or `in-progress` label), then writes one per-issue scratch file (`/tmp/architect-{project}-scratch-{issue_number}.md`) and creates one sprint PR per scratch file.
+**Multi-sprint pitching**: The architect pitches up to 3 sprints per run. Bash handles all state management:
+- Fetches Forgejo API data (vision issues, open PRs, merged PRs)
+- Filters and deduplicates (no model-level dedup or journal-based memory)
+- For each selected vision issue, bash invokes stateless `claude -p` to generate pitch markdown
+- Bash creates the PR with pitch content and posts ACCEPT/REJECT footer comment
+- Branch names use issue number (architect/sprint-vision-{issue_number}) to avoid collisions
 
 ## Cron
 
