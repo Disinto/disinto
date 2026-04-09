@@ -11,7 +11,7 @@ converses with humans through PR comments.
 
 - **Input**: Vision issues from VISION.md, prerequisite tree from ops repo
 - **Output**: Sprint proposals as PRs on the ops repo, sub-issue files
-- **Mechanism**: Formula-driven execution via `formulas/run-architect.toml`
+- **Mechanism**: Bash-driven orchestration in `architect-run.sh`, pitching formula via `formulas/run-architect.toml`
 - **Identity**: `architect-bot` on Forgejo
 
 ## Responsibilities
@@ -29,12 +29,44 @@ converses with humans through PR comments.
 
 ## Formula
 
-The architect is driven by `formulas/run-architect.toml`. This formula defines
+The architect pitching is driven by `formulas/run-architect.toml`. This formula defines
 the steps for:
 - Research: analyzing vision items and prerequisite tree
-- Design: identifying implementation approaches and forks
-- Sprint proposal: creating structured sprint PRs
+- Pitch: creating structured sprint PRs
 - Sub-issue filing: creating concrete implementation issues
+
+## Bash-driven design phase
+
+The design phase (ACCEPT → research → questions → answers → sub-issues) is
+orchestrated by bash in `architect-run.sh`, not by the formula. This ensures:
+
+- **Deterministic state detection**: Bash reads the Forgejo reviews API to detect
+  ACCEPT/REJECT decisions — no model-dependent API parsing
+- **Human guidance injection**: Review body text from ACCEPT reviews is injected
+  directly into the research prompt as context
+- **Stateful session resumption**: When answers arrive on a subsequent run, the
+  saved Claude session is resumed (`--resume session_id`), preserving full
+  codebase context from the research phase
+- **REJECT without model**: Rejections are handled entirely in bash (close PR,
+  delete branch, remove in-progress label, journal) — no model invocation needed
+
+### State transitions (bash-driven)
+
+```
+New vision issue → pitch PR (model)
+  ↓
+ACCEPT review → research + questions (model, session saved)
+  ↓
+Answers received → sub-issue filing (model, session resumed)
+  ↓
+REJECT review → close PR + journal (bash only)
+```
+
+### Per-PR session files
+
+Session IDs are saved per-PR in `/tmp/architect-sessions-{project}/pr-{number}.sid`.
+This allows multiple architect PRs to be in different design phases simultaneously,
+each with its own resumable session context.
 
 ## Execution
 
@@ -43,12 +75,11 @@ Run via `architect/architect-run.sh`, which:
 - Cleans up per-issue scratch files from previous runs (`/tmp/architect-{project}-scratch-*.md`)
 - Sources shared libraries (env.sh, formula-session.sh)
 - Uses FORGE_ARCHITECT_TOKEN for authentication
+- Processes existing architect PRs via bash-driven design phase
 - Loads the formula and builds context from VISION.md, AGENTS.md, and ops repo
-- Executes the formula via `agent_run`
+- Executes the formula via `agent_run` for new pitches
 
 **Multi-sprint pitching**: The architect pitches up to 3 sprints per run. The pitch budget is `3 − <open architect PRs>`. After handling existing PRs (accept/reject/answer parsing), the architect selects up to `pitch_budget` vision issues (skipping any already with an open architect PR or `in-progress` label), then writes one per-issue scratch file (`/tmp/architect-{project}-scratch-{issue_number}.md`) and creates one sprint PR per scratch file.
-
-**Session resumption (answer_parsing)**: When processing human answers on a PR in the `questions` phase (PR body has `## Design forks` + question comments), `architect-run.sh` resumes the prior Claude session (from `SID_FILE`) rather than starting fresh. This preserves deep codebase understanding from the research phase so sub-issues include specific file references.
 
 ## Cron
 
@@ -68,3 +99,4 @@ empty file not created, just document it).
 - #100: Architect formula — research + design fork identification
 - #101: Architect formula — sprint PR creation with questions
 - #102: Architect formula — answer parsing + sub-issue filing
+- #491: Refactor — bash-driven design phase with stateful session resumption
