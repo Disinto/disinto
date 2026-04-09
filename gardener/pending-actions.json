@@ -1,12 +1,17 @@
 [
   {
-    "action": "edit_body",
-    "issue": 454,
-    "body": "Flagged by AI reviewer in PR #453.\n\n## Problem\n\n`vault/vault-env.sh` `validate_vault_action` (line 70-73) validates field names against an allowlist that does NOT include `blast_radius`:\n\n```\nid|formula|context|secrets|model|tools|timeout_minutes\n```\n\nIf an operator adds `blast_radius = \"low\"` to a vault action TOML (as documented in `vault/SCHEMA.md` and supported by `vault/classify.sh`), the validator rejects it with \"ERROR: Unknown fields in TOML: blast_radius\". The feature is documented and implemented but cannot be exercised without triggering a validation error.\n\n## Fix\n\nAdd `blast_radius` to the allowed fields list in `validate_vault_action` in `vault/vault-env.sh`.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n\n- `vault/vault-env.sh` (line 76 — `id|formula|context|secrets|model|tools|timeout_minutes|dispatch_mode` allowlist)\n\n## Acceptance criteria\n\n- [ ] `blast_radius` is added to the allowed fields list in `validate_vault_action` in `vault/vault-env.sh`\n- [ ] A vault action TOML containing `blast_radius = \"low\"` passes `validate_vault_action` without error\n- [ ] A vault action TOML containing an unrecognised field (e.g. `bogus_field = \"x\"`) still fails validation\n- [ ] `vault/validate.sh` and existing tests continue to pass after the change"
+    "action": "comment",
+    "issue": 446,
+    "body": "Closing as resolved: sub-issues #442, #443, #444, #445 are all closed. The gardener formula now includes an `agents-update` step that checks watermarks and keeps AGENTS.md files current. The last gardener run (commit faaaeb0) confirmed the step is working — all per-directory AGENTS.md files were updated."
   },
   {
-    "action": "add_label",
-    "issue": 454,
-    "label": "backlog"
+    "action": "close",
+    "issue": 446,
+    "reason": "resolved: sub-issues fixed and gardener agents-update step is operational"
+  },
+  {
+    "action": "remove_label",
+    "issue": 419,
+    "label": "blocked"
   }
 ]
