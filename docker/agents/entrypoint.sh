@@ -135,13 +135,6 @@ POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
 
-# Override PROJECT_REPO_ROOT for container environment
-# Host TOMLs may have paths like /home/johba/harb but container uses /home/agent/repos/harb
-if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${PROJECT_NAME:-}" ]; then
-  export PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
-  log "Overriding PROJECT_REPO_ROOT to ${PROJECT_REPO_ROOT} for container"
-fi
-
 # Main polling loop using iteration counter for gardener scheduling
 iteration=0
 while true; do
