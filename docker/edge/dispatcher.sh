@@ -462,7 +462,7 @@ launch_runner() {
 
   # Create temp file for logs
   local log_file
-  log_file=$(mktemp /tmp/dispatcher-logs-XXXXXX.txt)
+  log_file=$(mktemp /tmp/dispatcher-logs-XXXXXX)
   trap 'rm -f "$log_file"' RETURN
 
   # Execute with array expansion (safe from shell injection)
