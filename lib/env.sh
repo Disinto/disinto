@@ -249,13 +249,13 @@ woodpecker_api() {
   fi
 
   curl -sfL \
-    -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
-    "${WOODPECKER_SERVER}/api${path}" "$@"
+    -H "Authorization: Bearer ${WOODPECKER_TOKEN:-}" \
+    "${WOODPECKER_SERVER:-}/api${path}" "$@"
 }
 
 # Woodpecker DB query helper
 wpdb() {
-  PGPASSWORD="${WOODPECKER_DB_PASSWORD}" psql \
+  PGPASSWORD="${WOODPECKER_DB_PASSWORD:-}" psql \
     -U "${WOODPECKER_DB_USER:-woodpecker}" \
     -h "${WOODPECKER_DB_HOST:-127.0.0.1}" \
     -d "${WOODPECKER_DB_NAME:-woodpecker}" \
