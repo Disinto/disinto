@@ -7,12 +7,14 @@ set -euo pipefail
 # poll scripts.  All Docker Compose env vars are inherited (PATH, FORGE_TOKEN,
 # ANTHROPIC_API_KEY, etc.).
 #
-# AGENT_ROLES env var controls which scripts run: "review,dev,gardener,architect"
-# (default: all four). Uses while-true loop with staggered intervals:
+# AGENT_ROLES env var controls which scripts run: "review,dev,gardener,architect,planner,predictor"
+# (default: all six). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
 #   - gardener: every 6 hours (72 iterations * 5 min)
 #   - architect: every 6 hours (same as gardener)
+#   - planner: every 12 hours (144 iterations * 5 min)
+#   - predictor: every 24 hours (288 iterations * 5 min)
 
 DISINTO_DIR="/home/agent/disinto"
 LOGFILE="/home/agent/data/agent-entrypoint.log"
@@ -125,13 +127,20 @@ init_state_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect}"
+AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
+
+# Override PROJECT_REPO_ROOT for container environment
+# Host TOMLs may have paths like /home/johba/harb but container uses /home/agent/repos/harb
+if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${PROJECT_NAME:-}" ]; then
+  export PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
+  log "Overriding PROJECT_REPO_ROOT to ${PROJECT_REPO_ROOT} for container"
+fi
 
 # Main polling loop using iteration counter for gardener scheduling
 iteration=0
@@ -178,6 +187,26 @@ while true; do
       if [ $((architect_iteration % architect_interval)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
         log "Running architect (iteration ${iteration}, 6-hour interval) for ${toml}"
         gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 || true
+      fi
+    fi
+
+    # Planner (every 12 hours = 144 iterations * 5 min = 43200 seconds)
+    if [[ ",${AGENT_ROLES}," == *",planner,"* ]]; then
+      planner_iteration=$((iteration * POLL_INTERVAL))
+      planner_interval=$((12 * 60 * 60))  # 12 hours in seconds
+      if [ $((planner_iteration % planner_interval)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
+        log "Running planner (iteration ${iteration}, 12-hour interval) for ${toml}"
+        gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/planner.log" 2>&1 || true
+      fi
+    fi
+
+    # Predictor (every 24 hours = 288 iterations * 5 min = 86400 seconds)
+    if [[ ",${AGENT_ROLES}," == *",predictor,"* ]]; then
+      predictor_iteration=$((iteration * POLL_INTERVAL))
+      predictor_interval=$((24 * 60 * 60))  # 24 hours in seconds
+      if [ $((predictor_iteration % predictor_interval)) -eq 0 ] && [ "$now" -ge "$predictor_iteration" ]; then
+        log "Running predictor (iteration ${iteration}, 24-hour interval) for ${toml}"
+        gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/predictor.log" 2>&1 || true
       fi
     fi
   done
