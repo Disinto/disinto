@@ -515,29 +515,29 @@ if [ "${vision_count:-0}" -eq 0 ]; then
   fi
 fi
 
-# Check 2: Skip if already at max open pitches (3), unless there are responses to process
+# Check 2: Scan for ACCEPT/REJECT responses on open architect PRs (unconditional)
+# This ensures responses are processed regardless of open_arch_prs count
+has_responses_to_process=false
+pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+  "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+for pr_num in $pr_numbers; do
+  comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+  if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
+    has_responses_to_process=true
+    break
+  fi
+done
+
+# Check 2 (continued): Skip if already at max open pitches (3), unless there are responses to process
 open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
   "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
 if [ "${open_arch_prs:-0}" -ge 3 ]; then
-  # Check if any open architect PRs have ACCEPT/REJECT responses that need processing
-  has_responses=false
-  pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
-  for pr_num in $pr_numbers; do
-    comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
-    if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
-      has_responses=true
-      break
-    fi
-  done
-  if [ "$has_responses" = false ]; then
+  if [ "$has_responses_to_process" = false ]; then
     log "already 3 open architect PRs with no responses to process — skipping"
     exit 0
   fi
   log "3 open architect PRs found but responses detected — processing"
-  # Track that we have responses to process (even if pitch_budget=0)
-  has_responses_to_process=true
 fi
 
 # ── Bash-driven state management: Select vision issues for pitching ───────
