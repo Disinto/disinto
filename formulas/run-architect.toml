@@ -78,8 +78,9 @@ When open architect PRs exist on the ops repo:
    GET /repos/{owner}/{repo}/pulls/{index}/reviews
    ```
    Scan the response array for reviews with non-bot authors:
-   - `state: "APPROVED"` → treat as **ACCEPT**. If the review has a non-empty `body`,
-     use it as context (e.g. "ACCEPT — focus on option B for Q1").
+   - `state: "APPROVED"` → treat as **ACCEPT**. Save the review `body` field as
+     human guidance text — it often contains critical architectural constraints
+     (e.g. "the caddy is on another host, use a dispatchable container with SSH key as secret").
    - `state: "REQUEST_CHANGES"` → treat as **REJECT** with the review `body` as the reason.
    - Other states (COMMENT, PENDING) → ignore, not a decision.
 
@@ -95,7 +96,19 @@ When open architect PRs exist on the ops repo:
 2. Act on the human response:
 
    **ACCEPT** (case insensitive, from review APPROVED or comment text): Human wants to proceed
-   - Architect does deep research for design forks (same as #100 research but now identifying decision points)
+   - Extract the human guidance text:
+     - From review APPROVED: use the review `body` field (may be empty)
+     - From comment: use any text after ACCEPT (e.g. "ACCEPT — use SSH approach" → "use SSH approach")
+   - Architect does deep research for design forks (same as #100 research but now identifying decision points).
+     If human guidance text is non-empty, prepend it to the research context:
+
+       ## Human guidance (from sprint PR review)
+       <the extracted review body or comment text>
+
+     The architect MUST factor this guidance into design fork identification
+     and question formulation — e.g. if the human specifies an approach,
+     that approach should be the default fork, and questions should refine
+     it rather than re-evaluate it.
    - Formulates multiple-choice questions (Q1, Q2, Q3...)
    - Updates the sprint spec file on the PR branch:
      - Adds `## Design forks` section with fork options
