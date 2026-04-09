@@ -66,6 +66,27 @@ services:
     depends_on:
       - forgejo
 
+  runner:
+    image: disinto/agents:latest
+    profiles: ["runner"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - ${HOME}/.claude:/home/agent/.claude
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+    entrypoint: ["bash", "/home/agent/disinto/docker/runner/entrypoint-runner.sh"]
+    environment:
+      - DISINTO_CONTAINER=1
+      - FORGE_URL=${FORGE_URL:-}
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - FORGE_OPS_REPO=${FORGE_OPS_REPO:-}
+      - PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-}
+    networks:
+      - default
+
   reproduce:
     build:
       context: .
@@ -95,6 +116,7 @@ services:
       - ${HOME}/.claude.json:/root/.claude.json:ro
       - ${HOME}/.claude:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
+      - ./docker-compose.yml:/opt/docker-compose.yml:ro
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -102,6 +124,7 @@ services:
       - FORGE_TOKEN=${FORGE_TOKEN:-}
       - FORGE_URL=http://forgejo:3000
       - DISINTO_CONTAINER=1
+      - HOST_PROJECT_DIR=${HOST_PROJECT_DIR:-.}
     ports:
       - "80:80"
       - "443:443"
