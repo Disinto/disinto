@@ -55,6 +55,9 @@ context=$(grep -E '^context\s*=' "$action_toml" \
 
 log "Action: ${action_id}, formula: ${formula}, context: ${context:-<none>}"
 
+# Export action TOML path so formula scripts can use it directly
+export VAULT_ACTION_TOML="$action_toml"
+
 # ── Dispatch: .sh (mechanical) vs .toml (Claude reasoning) ──────────────
 
 formula_sh="${FACTORY_ROOT}/formulas/${formula}.sh"

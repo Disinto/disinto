@@ -30,6 +30,7 @@ log() {
 }
 
 # ── Argument parsing ─────────────────────────────────────────────────────
+# VAULT_ACTION_TOML is exported by the runner entrypoint (entrypoint-runner.sh)
 
 action_id="${1:-}"
 if [ -z "$action_id" ]; then
@@ -37,7 +38,7 @@ if [ -z "$action_id" ]; then
   exit 1
 fi
 
-action_toml="${OPS_REPO_ROOT}/vault/actions/${action_id}.toml"
+action_toml="${VAULT_ACTION_TOML:-${OPS_REPO_ROOT}/vault/actions/${action_id}.toml}"
 if [ ! -f "$action_toml" ]; then
   log "ERROR: vault action TOML not found: ${action_toml}"
   exit 1
