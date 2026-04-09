@@ -3,21 +3,24 @@
 # Executed by architect-run.sh via cron — strategic decomposition of vision
 # issues into development sprints.
 #
-# This formula orchestrates the architect agent's workflow:
-#   Step 1: Preflight — validate prerequisites, handle existing PRs, select up to 3 target issues
+# This formula orchestrates the architect agent's pitching workflow:
+#   Step 1: Preflight — validate prerequisites, select up to 3 target issues
 #   Step 2: Research + pitch — analyze codebase and write sprint pitch (loop over selected issues)
-#   Step 3: Sprint PR creation with questions (issue #101) (one PR per pitch)
-#   Step 4: Answer parsing + sub-issue filing (issue #102)
+#   Step 3: Sprint PR creation (one PR per pitch)
 #
-# The architect pitches up to 3 sprints per run when multiple vision issues
-# exist. Existing PRs (accept/reject) are handled first, then new pitches
-# are created with remaining budget. Max 3 open architect PRs at any time.
+# Design phase (ACCEPT/REJECT handling, questions, answer processing) is
+# orchestrated by bash in architect-run.sh — not by this formula.
+# See architect-run.sh for the bash-driven state machine:
+#   - Bash reads reviews API for ACCEPT/REJECT detection (deterministic)
+#   - REJECT handled entirely in bash (close PR, delete branch, journal)
+#   - ACCEPT: bash invokes model with human guidance injected
+#   - Answers: bash resumes saved session with answers injected
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
 
 name        = "run-architect"
 description = "Architect: strategic decomposition of vision into sprints"
-version     = 1
+version     = 2
 model       = "opus"
 
 [context]
@@ -27,140 +30,43 @@ files = ["VISION.md", "AGENTS.md"]
 
 [[steps]]
 id    = "preflight"
-title = "Preflight: validate prerequisites, handle existing PRs, select up to 3 target issues"
+title = "Preflight: validate prerequisites, select up to 3 target issues"
 description = """
-This step performs preflight checks, handles existing architect PRs, and selects
-up to 3 vision issues for pitching.
+This step is performed by bash in architect-run.sh before the model is invoked.
 
-Actions:
+Bash handles:
 1. Pull latest code from both disinto repo and ops repo
 2. Read prerequisite tree from $OPS_REPO_ROOT/prerequisites.md
 3. Fetch open issues labeled 'vision' from Forgejo API
-4. Check for open architect PRs on ops repo (handled by #101/#102)
-5. If open architect PRs exist, handle accept/reject responses FIRST (see Capability B below)
+4. Check for open architect PRs on ops repo
+5. Process existing PRs via bash-driven design phase (ACCEPT/REJECT/answers)
 6. After handling existing PRs, count remaining open architect PRs
 7. Select up to (3 - open_architect_pr_count) vision issues for new pitches
 8. If no vision issues, signal PHASE:done
 
 ## Multi-pitch selection (up to 3 per run)
 
-After handling existing PRs (accept/reject/answer parsing), determine how many
-new pitches can be created:
+After handling existing PRs, determine how many new pitches can be created:
 
   pitch_budget = 3 - <number of open architect PRs remaining after handling>
 
 For each available pitch slot:
 1. From the vision issues list, skip any issue that already has an open architect PR
-   (match by checking if any open architect PR body references the vision issue number)
 2. Skip any issue that already has the `in-progress` label
-3. Check for existing sub-issues filed from this vision issue (see Sub-issue existence check below)
-4. Check for merged sprint PRs referencing this vision issue (see Merged sprint PR check below)
-5. From remaining candidates, pick the most unblocking issue first (fewest open
-   dependencies, or earliest created if tied)
+3. Check for existing sub-issues filed from this vision issue
+4. Check for merged sprint PRs referencing this vision issue
+5. From remaining candidates, pick the most unblocking issue first
 6. Add to ARCHITECT_TARGET_ISSUES array
-
-### Sub-issue existence check
-
-Before selecting a vision issue for pitching, check if it already has sub-issues:
-
-1. Search for issues whose body contains 'Decomposed from #N' where N is the vision issue number
-2. Also check for issues filed by architect-bot that reference the vision issue number
-3. If any sub-issues are open (state != 'closed'), skip this vision issue — it's already being worked on
-4. If all sub-issues are closed, the vision issue may be ready for a new sprint (next phase)
-
-API calls:
-- GET /repos/{owner}/{repo}/issues?labels=vision&state=open — fetch vision issues
-- GET /repos/{owner}/{repo}/issues — search all issues for 'Decomposed from #N' pattern
-- Check each issue's state field to determine if open or closed
-
-### Merged sprint PR check
-
-Before selecting a vision issue for pitching, check for merged architect PRs:
-
-1. Search for merged PRs on the ops repo where the body references the vision issue number
-2. Use: GET /repos/{owner}/{repo}/pulls?state=closed (then filter for merged ones)
-3. If a merged PR references the vision issue, decomposition already happened — skip this vision issue
-
-API calls:
-- GET /repos/{owner}/{repo}/pulls?state=closed — fetch closed PRs from ops repo
-- Check PR body for references to the vision issue number (e.g., "refs #N" or "#N")
 
 Skip conditions:
 - If no vision issues are found, signal PHASE:done
-- If pitch_budget <= 0 (already 3 open architect PRs), skip pitching — only handle existing PRs
+- If pitch_budget <= 0 (already 3 open architect PRs), skip pitching
 - If all vision issues already have open architect PRs, signal PHASE:done
-- If all vision issues have open sub-issues, skip pitching — decomposition already in progress
-- If all vision issues have merged sprint PRs, skip pitching — decomposition already completed
+- If all vision issues have open sub-issues, skip pitching
+- If all vision issues have merged sprint PRs, skip pitching
 
 Output:
 - Sets ARCHITECT_TARGET_ISSUES as a JSON array of issue numbers to pitch (up to 3)
-- Exports VISION_ISSUES as a JSON array of issue objects
-
-## Capability B: Handle accept/reject on existing pitch PRs
-
-When open architect PRs exist on the ops repo:
-
-1. Check for human response — reviews first, then comments.
-
-   **Step 1 — Check PR reviews (Forgejo review UI):**
-   Fetch reviews via Forgejo API:
-   ```
-   GET /repos/{owner}/{repo}/pulls/{index}/reviews
-   ```
-   Scan the response array for reviews with non-bot authors:
-   - `state: "APPROVED"` → treat as **ACCEPT**. Save the review `body` field as
-     human guidance text — it often contains critical architectural constraints
-     (e.g. "the caddy is on another host, use a dispatchable container with SSH key as secret").
-   - `state: "REQUEST_CHANGES"` → treat as **REJECT** with the review `body` as the reason.
-   - Other states (COMMENT, PENDING) → ignore, not a decision.
-
-   If multiple reviews exist, use the most recent one (last in array).
-
-   **Step 2 — Check PR comments (fallback for backwards compat):**
-   Fetch comments on each open architect PR via Forgejo API.
-   Scan for ACCEPT/REJECT text as described below.
-
-   **Precedence:** If both a review decision and a comment decision exist,
-   the review takes precedence.
-
-2. Act on the human response:
-
-   **ACCEPT** (case insensitive, from review APPROVED or comment text): Human wants to proceed
-   - Extract the human guidance text:
-     - From review APPROVED: use the review `body` field (may be empty)
-     - From comment: use any text after ACCEPT (e.g. "ACCEPT — use SSH approach" → "use SSH approach")
-   - Architect does deep research for design forks (same as #100 research but now identifying decision points).
-     If human guidance text is non-empty, prepend it to the research context:
-
-       ## Human guidance (from sprint PR review)
-       <the extracted review body or comment text>
-
-     The architect MUST factor this guidance into design fork identification
-     and question formulation — e.g. if the human specifies an approach,
-     that approach should be the default fork, and questions should refine
-     it rather than re-evaluate it.
-   - Formulates multiple-choice questions (Q1, Q2, Q3...)
-   - Updates the sprint spec file on the PR branch:
-     - Adds `## Design forks` section with fork options
-     - Adds `## Proposed sub-issues` section with concrete issues per fork path
-   - Comments on the PR with the questions formatted as multiple choice
-   - Signal PHASE:done (answer processing is #102)
-
-   **REJECT: <reason>** (case insensitive, from review REQUEST_CHANGES or comment text;
-   for reviews the reason is the review body, for comments the reason follows the colon):
-   - Journal the rejection reason via profile_write_journal (if .profile exists)
-     — the architect learns what pitches fail
-   - Close the PR via Forgejo API (do not merge — rejected pitches do not persist in sprints/)
-   - Remove the branch via Forgejo API
-   - Remove `in-progress` label from the vision issue on the disinto repo:
-     - Look up the `in-progress` label ID via `GET /repos/{owner}/{repo}/labels`
-     - Remove the label via `DELETE /repos/{owner}/{repo}/issues/{vision_issue_number}/labels/{label_id}`
-   - Signal PHASE:done
-
-   **No response yet**: skip silently, signal PHASE:done
-
-All git operations use the Forgejo API (create branch, write/update file, create PR,
-close PR, delete branch). No SSH.
 """
 
 [[steps]]
@@ -185,7 +91,7 @@ Actions:
    - What are the risks (breaking changes, security implications, integration complexity)?
    - Is this mostly gluecode or greenfield?
 
-3. Write sprint pitch to a per-issue scratch file for PR creation step (#101):
+3. Write sprint pitch to a per-issue scratch file for PR creation step:
    - File path: /tmp/architect-{project}-scratch-{issue_number}.md
 
 # Sprint pitch: <name>
@@ -218,18 +124,18 @@ decision for the human. Questions come only after acceptance.
 
 Output:
 - Writes one scratch file per vision issue: /tmp/architect-{project}-scratch-{issue_number}.md
-- Each pitch serves as input for sprint PR creation step (#101)
+- Each pitch serves as input for sprint PR creation step
 - If ARCHITECT_TARGET_ISSUES is empty (budget exhausted or no candidates), skip this step
 """
 
 [[steps]]
 id    = "sprint_pr_creation"
-title = "Sprint PR creation with questions (issue #101)"
+title = "Sprint PR creation (one PR per pitch)"
 description = """
 This step creates a PR on the ops repo for EACH sprint pitch produced in step 2.
 One PR per vision issue — loop over all scratch files.
 
-## Capability A: Create pitch PRs (from research output)
+## Create pitch PRs (from research output)
 
 For each vision issue in ARCHITECT_TARGET_ISSUES that produced a scratch file
 (/tmp/architect-{project}-scratch-{issue_number}.md):
@@ -276,7 +182,6 @@ For each vision issue in ARCHITECT_TARGET_ISSUES that produced a scratch file
    - Look up the `in-progress` label ID via `GET /repos/{owner}/{repo}/labels`
    - Add the label via `POST /repos/{owner}/{repo}/issues/{vision_issue_number}/labels`
      Body: `{"labels": [<in-progress-label-id>]}`
-   - This makes the vision issue visible as actively worked on
 
 5. After creating all PRs, signal PHASE:done
 
@@ -306,7 +211,6 @@ Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head"
 - The `body` field must contain **plain markdown text** (the raw content from the scratch file)
 - Do NOT JSON-encode or escape the body — pass it as a JSON string value
 - Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
-- Example: if the sprint pitch contains `## What this enables`, the PR body should render this as a markdown heading, not as literal `## What this enables` text
 
 ### Close PR
 ```
@@ -331,125 +235,6 @@ Body: {"labels": [<label-id>]}
 ```
 
 ### Remove label from issue (for in-progress removal on REJECT)
-```
-DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label-id}
-```
-"""
-
-[[steps]]
-id    = "answer_parsing"
-title = "Answer parsing + sub-issue filing (issue #102)"
-description = """
-This step processes human answers to design questions and files sub-issues.
-
-## Session resumption
-
-When processing answers, the architect resumes the session from the research/questions
-run (step 2) to preserve codebase context. This ensures Claude has full understanding
-of dispatcher.sh, vault.sh, branch-protection.sh, and all formulas when filing
-sub-issues, resulting in more specific file references and implementation details.
-
-The session ID is persisted to `$SID_FILE` after the research/questions run. On
-answer_parsing runs, if the PR is in the questions phase, the session is resumed
-instead of starting fresh.
-
-## Preflight: Detect PRs in question phase
-
-An architect PR is in the question phase if ALL of the following are true:
-- PR is open
-- PR body or sprint spec file contains a `## Design forks` section (added by #101 after ACCEPT)
-- PR has question comments (Q1, Q2, Q3... format)
-
-## Answer parsing
-
-Human comments on the PR use this format:
-```
-Q1: A
-Q2: B
-Q3: A
-```
-
-Parser matches lines starting with `Q` + digit(s) + `:` + space + letter A-D (case insensitive).
-Ignore other content in the comment.
-
-## Processing paths
-
-### All questions answered (every `### Q` heading has a matching `Q<N>: <letter>` comment)
-
-1. Parse each answer (e.g. `Q1: A`, `Q2: C`)
-2. Read the sprint spec from the PR branch
-3. Look up the `backlog` label ID on the disinto repo:
-   - `GET /repos/{owner}/{repo}/labels` — find the label with `name: "backlog"` and note its `id`
-   - This ID is required for the issue creation API call below
-
-4. Generate final sub-issues based on answers:
-   - Each sub-issue uses the appropriate issue template (bug/feature/refactor from `.codeberg/ISSUE_TEMPLATE/`)
-   - Fill all template fields:
-     - Problem/motivation (feature) or What's broken (bug/refactor)
-     - Proposed solution (feature) or Approach (refactor) or Steps to reproduce (bug)
-     - Affected files (max 3)
-     - Acceptance criteria (max 5)
-     - Dependencies
-   - File via Forgejo API on the **disinto repo** (not ops repo)
-   - **MUST include `"labels": [<backlog-label-id>]`** in the create-issue request body
-     so dev-poll picks them up
-5. Comment on PR: "Sprint filed: #N, #N, #N"
-6. Merge the PR (sprint spec with answers persists in `ops/sprints/`)
-
-### Some questions answered, not all
-
-1. Acknowledge answers received
-2. Comment listing remaining unanswered questions
-3. Signal PHASE:done (check again next poll)
-
-### No answers yet (questions posted but human hasn't responded)
-
-1. Skip — signal PHASE:done
-
-## Forgejo API for filing issues on disinto repo
-
-All operations use the Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
-
-### Create issue (with backlog label — required)
-```
-POST /repos/{owner}/{repo}/issues
-Body: {
-  "title": "<issue title>",
-  "body": "<issue body with template fields>",
-  "labels": [<backlog-label-id>]
-}
-```
-
-### Close PR
-```
-PATCH /repos/{owner}/{repo}/pulls/{index}
-Body: {"state": "closed"}
-```
-
-### Merge PR
-```
-POST /repos/{owner}/{repo}/pulls/{index}/merge
-Body: {"Do": "merge"}
-```
-
-### Post comment on PR (via issues endpoint)
-```
-POST /repos/{owner}/{repo}/issues/{index}/comments
-Body: {"body": "<comment text>"}
-```
-
-### Get labels (look up label IDs by name)
-```
-GET /repos/{owner}/{repo}/labels
-```
-
-### Add label to issue
-```
-POST /repos/{owner}/{repo}/issues/{index}/labels
-Body: {"labels": [<label-id>]}
-```
-
-### Remove label from issue
 ```
 DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label-id}
 ```
