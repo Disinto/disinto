@@ -1,4 +1,4 @@
-<!-- last-reviewed: 60086973550d5f6a7ea0774efee5614da6b0de9f -->
+<!-- last-reviewed: d5e63a801ed48f9bd54c77e4915bc076b7490958 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -66,8 +66,6 @@ disinto-ops/             (ops repo — {project}-ops)
 ├── prerequisites.md  dependency graph
 └── RESOURCES.md   accounts, tokens (refs), infra inventory
 ```
-
-> **Note:** Journal directories (`journal/planner/` and `journal/supervisor/`) still exist in the ops repo. Agent journals are now stored in each agent's `.profile` repo on Forgejo.
 
 ## Agent .profile Model
 
@@ -152,23 +150,13 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 
 ### Dependency conventions
 
-Issues declare dependencies in their body using a `## Dependencies` or
-`## Depends on` section listing `#N` references. The dev-poll scheduler uses
-`lib/parse-deps.sh` to extract these and only picks issues whose dependencies
-are all closed.
-
-### Single-threaded pipeline
-
-Each project processes one issue at a time. Dev-poll will not start new work
-while an open PR is waiting for CI or review. This keeps context clear and
-prevents merge conflicts between concurrent changes.
+Issues declare dependencies via `## Dependencies` / `## Depends on` sections listing `#N` refs. `lib/parse-deps.sh` extracts these; dev-poll only picks issues whose deps are all closed. See AD-002 for single-threaded pipeline rules.
 
 ---
 
-## Addressables
+## Addressables and Observables
 
-Concrete artifacts the factory has produced or is building. The gardener
-maintains this table during grooming — see `formulas/run-gardener.toml`.
+Concrete artifacts the factory has produced or is building. Observables have measurement wired — the gardener promotes addressables once an evidence process is connected.
 
 | Artifact | Location | Observable? |
 |----------|----------|-------------|
@@ -176,14 +164,6 @@ maintains this table during grooming — see `formulas/run-gardener.toml`.
 | Repo     | codeberg.org/johba/disinto | Partial |
 | Skill    | ClawHub (in progress) | No |
 | GitHub org | github.com/Disinto | No |
-
-## Observables
-
-Addressables with measurement wired — the factory can read structured
-feedback from these. The gardener promotes addressables here once an
-evidence process is connected.
-
-None yet.
 
 ---
 

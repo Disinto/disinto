@@ -1,4 +1,4 @@
-<!-- last-reviewed: ebadff09a1ce3c0140e4975985d383136a9a5504 -->
+<!-- last-reviewed: d5e63a801ed48f9bd54c77e4915bc076b7490958 -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -40,10 +40,15 @@ the steps for:
 
 Run via `architect/architect-run.sh`, which:
 - Acquires a cron lock and checks available memory
+- Cleans up per-issue scratch files from previous runs (`/tmp/architect-{project}-scratch-*.md`)
 - Sources shared libraries (env.sh, formula-session.sh)
 - Uses FORGE_ARCHITECT_TOKEN for authentication
 - Loads the formula and builds context from VISION.md, AGENTS.md, and ops repo
 - Executes the formula via `agent_run`
+
+**Multi-sprint pitching**: The architect pitches up to 3 sprints per run. The pitch budget is `3 − <open architect PRs>`. After handling existing PRs (accept/reject/answer parsing), the architect selects up to `pitch_budget` vision issues (skipping any already with an open architect PR or `in-progress` label), then writes one per-issue scratch file (`/tmp/architect-{project}-scratch-{issue_number}.md`) and creates one sprint PR per scratch file.
+
+**Session resumption (answer_parsing)**: When processing human answers on a PR in the `questions` phase (PR body has `## Design forks` + question comments), `architect-run.sh` resumes the prior Claude session (from `SID_FILE`) rather than starting fresh. This preserves deep codebase understanding from the research phase so sub-issues include specific file references.
 
 ## Cron
 
