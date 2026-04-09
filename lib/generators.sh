@@ -26,6 +26,146 @@ PROJECT_NAME="${PROJECT_NAME:-project}"
 # PRIMARY_BRANCH defaults to main (env.sh may have set it to 'master')
 PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
 
+# Parse project TOML for local-model agents and emit compose services.
+# Writes service definitions to stdout; caller handles insertion into compose file.
+_generate_local_model_services() {
+  local compose_file="$1"
+  local projects_dir="${FACTORY_ROOT}/projects"
+  local temp_file
+  temp_file=$(mktemp)
+  local has_services=false
+  local all_vols=""
+
+  # Find all project TOML files and extract [agents.*] sections
+  for toml in "${projects_dir}"/*.toml; do
+    [ -f "$toml" ] || continue
+
+    # Parse [agents.*] sections using Python - output YAML-compatible format
+    while IFS='=' read -r key value; do
+      case "$key" in
+        NAME) service_name="$value" ;;
+        BASE_URL) base_url="$value" ;;
+        MODEL) model="$value" ;;
+        ROLES) roles="$value" ;;
+        API_KEY) api_key="$value" ;;
+        FORGE_USER) forge_user="$value" ;;
+        COMPACT_PCT) compact_pct="$value" ;;
+        ---)
+          if [ -n "$service_name" ] && [ -n "$base_url" ]; then
+            cat >> "$temp_file" <<EOF
+
+  agents-${service_name}:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    container_name: disinto-agents-${service_name}
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - agents-${service_name}-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+    environment:
+      FORGE_URL: http://forgejo:3000
+      FORGE_TOKEN: \${FORGE_TOKEN:-}
+      FORGE_REVIEW_TOKEN: \${FORGE_REVIEW_TOKEN:-}
+      FORGE_BOT_USERNAMES: \${FORGE_BOT_USERNAMES:-}
+      AGENT_ROLES: "${roles}"
+      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
+      ANTHROPIC_BASE_URL: "${base_url}"
+      ANTHROPIC_API_KEY: "${api_key}"
+      CLAUDE_MODEL: "${model}"
+      CLAUDE_CONFIG_DIR: /home/agent/.claude-${service_name}
+      CLAUDE_CREDENTIALS_DIR: /home/agent/.claude-${service_name}/credentials
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "${compact_pct}"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+      DISINTO_CONTAINER: "1"
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      WOODPECKER_DATA_DIR: /woodpecker-data
+      FORGE_BOT_USER_${service_name^^}: "${forge_user}"
+    depends_on:
+      - forgejo
+      - woodpecker
+    networks:
+      - disinto-net
+    profiles: ["agents-${service_name}"]
+
+EOF
+            has_services=true
+          fi
+          # Collect volume name for later
+          local vol_name="  agents-${service_name}-data:"
+          if [ -n "$all_vols" ]; then
+            all_vols="${all_vols}
+${vol_name}"
+          else
+            all_vols="${vol_name}"
+          fi
+          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct=""
+          ;;
+      esac
+    done < <(python3 -c '
+import sys, tomllib, json, re
+
+with open(sys.argv[1], "rb") as f:
+    cfg = tomllib.load(f)
+
+agents = cfg.get("agents", {})
+for name, config in agents.items():
+    if not isinstance(config, dict):
+        continue
+
+    base_url = config.get("base_url", "")
+    model = config.get("model", "")
+    if not base_url or not model:
+        continue
+
+    roles = config.get("roles", ["dev"])
+    roles_str = " ".join(roles) if isinstance(roles, list) else roles
+    api_key = config.get("api_key", "sk-no-key-required")
+    forge_user = config.get("forge_user", f"{name}-bot")
+    compact_pct = config.get("compact_pct", 60)
+
+    safe_name = name.lower()
+    safe_name = re.sub(r"[^a-z0-9]", "-", safe_name)
+
+    # Output as simple key=value lines
+    print(f"NAME={safe_name}")
+    print(f"BASE_URL={base_url}")
+    print(f"MODEL={model}")
+    print(f"ROLES={roles_str}")
+    print(f"API_KEY={api_key}")
+    print(f"FORGE_USER={forge_user}")
+    print(f"COMPACT_PCT={compact_pct}")
+    print("---")
+' "$toml" 2>/dev/null)
+  done
+
+  if [ "$has_services" = true ]; then
+    # Insert the services before the volumes section
+    local temp_compose
+    temp_compose=$(mktemp)
+    # Get everything before volumes:
+    sed -n '1,/^volumes:/p' "$compose_file" | sed '$d' > "$temp_compose"
+    # Add the services
+    cat "$temp_file" >> "$temp_compose"
+    # Add the volumes section and everything after
+    sed -n '/^volumes:/,$p' "$compose_file" >> "$temp_compose"
+
+    # Add local-model volumes to the volumes section
+    if [ -n "$all_vols" ]; then
+      # Find the volumes section and add the new volumes
+      sed -i "/^volumes:/{n;:a;n;/^[a-z]/!{s/$/\n$all_vols/;b};ba}" "$temp_compose"
+    fi
+
+    mv "$temp_compose" "$compose_file"
+  fi
+
+  rm -f "$temp_file"
+}
+
 # Generate docker-compose.yml in the factory root.
 _generate_compose_impl() {
   local forge_port="${1:-3000}"
@@ -264,6 +404,9 @@ COMPOSEEOF
   else
     sed -i "/image: codeberg\.org\/forgejo\/forgejo:11\.0/a\\    ports:\\n      - \"3000:3000\"" "$compose_file"
   fi
+
+  # Append local-model agent services if any are configured
+  _generate_local_model_services "$compose_file"
 
   echo "Created: ${compose_file}"
 }

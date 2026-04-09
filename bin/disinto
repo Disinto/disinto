@@ -359,6 +359,18 @@ check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = false
 
+# Local-model agents (optional) — configure to use llama-server or similar
+# for local LLM inference. Each agent gets its own container with isolated
+# credentials and configuration.
+#
+# [agents.llama]
+#   base_url = "http://10.10.10.1:8081"
+#   model = "unsloth/Qwen3.5-35B-A3B"
+#   api_key = "sk-no-key-required"
+#   roles = ["dev"]
+#   forge_user = "dev-qwen"
+#   compact_pct = 60
+
 # [mirrors]
 # github   = "git@github.com:user/repo.git"
 # codeberg = "git@codeberg.org:user/repo.git"
