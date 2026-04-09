@@ -29,7 +29,7 @@ fi
 # =============================================================================
 
 # Allowed secret names - must match keys in .env.vault.enc
-VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN"
+VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN CODEBERG_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN"
 
 # Validate a vault action TOML file
 # Usage: validate_vault_action <path-to-toml>
@@ -99,9 +99,9 @@ validate_vault_action() {
     return 1
   fi
 
-  # Validate formula exists in formulas/
-  if [ ! -f "$formulas_dir/${formula}.toml" ]; then
-    echo "ERROR: Formula not found: $formula" >&2
+  # Validate formula exists in formulas/ (.toml for Claude reasoning, .sh for mechanical)
+  if [ ! -f "$formulas_dir/${formula}.toml" ] && [ ! -f "$formulas_dir/${formula}.sh" ]; then
+    echo "ERROR: Formula not found: $formula (checked .toml and .sh)" >&2
     return 1
   fi
 

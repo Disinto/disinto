@@ -408,17 +408,10 @@ launch_runner() {
   local secrets_array
   secrets_array="${VAULT_ACTION_SECRETS:-}"
 
-  # Build command array (safe from shell injection)
-  local -a cmd=(docker run --rm
-    --name "vault-runner-${action_id}"
-    --network disinto_disinto-net
-    -e "FORGE_URL=${FORGE_URL}"
-    -e "FORGE_TOKEN=${FORGE_TOKEN}"
-    -e "FORGE_REPO=${FORGE_REPO}"
-    -e "FORGE_OPS_REPO=${FORGE_OPS_REPO}"
-    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH}"
-    -e DISINTO_CONTAINER=1
-  )
+  # Build docker compose run command (delegates to compose runner service)
+  # The runner service definition handles image, network, volumes, and base env.
+  # The dispatcher only adds declared secrets and the ops repo mount.
+  local -a cmd=(docker compose run --rm)
 
   # Add environment variables for secrets (if any declared)
   if [ -n "$secrets_array" ]; then
@@ -438,27 +431,13 @@ launch_runner() {
     log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
   fi
 
-  # Add formula and action id as arguments (safe from shell injection)
-  local formula="${VAULT_ACTION_FORMULA:-}"
-  cmd+=(disinto-agents:latest bash -c
-    "cd /home/agent/disinto && bash formulas/${formula}.sh ${action_id}")
+  # Mount the ops repo so the runner entrypoint can read the action TOML
+  cmd+=(-v "${OPS_REPO_ROOT}:/home/agent/ops:ro")
 
-  # Log command skeleton (hide all -e flags for security)
-  local -a log_cmd=()
-  local skip_next=0
-  for arg in "${cmd[@]}"; do
-    if [[ $skip_next -eq 1 ]]; then
-      skip_next=0
-      continue
-    fi
-    if [[ "$arg" == "-e" ]]; then
-      log_cmd+=("$arg" "<redacted>")
-      skip_next=1
-    else
-      log_cmd+=("$arg")
-    fi
-  done
-  log "Running: ${log_cmd[*]}"
+  # Service name and action-id argument
+  cmd+=(runner "$action_id")
+
+  log "Running: docker compose run --rm runner ${action_id} (secrets: ${secrets_array:-none})"
 
   # Create temp file for logs
   local log_file
