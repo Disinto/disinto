@@ -1,4 +1,4 @@
-<!-- last-reviewed: b79484d5810abfcac48fb5eb0259242cdd250060 -->
+<!-- last-reviewed: 7069b729f77de1687aeeac327e44098a608cf567 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -9,7 +9,10 @@ Claude to fix what it can; files vault items for what it cannot.
 
 **Trigger**: `gardener-run.sh` runs 4x/day via cron. Sources `lib/guard.sh` and
 calls `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active`
-is absent. Then creates a tmux session with `claude --model sonnet`, injects
+is absent. **Early-exit optimization**: if no issues, PRs, or repo files have
+changed since the last run (checked via Forgejo API and `git diff`), the model
+is not invoked — the run exits immediately (no tmux session, no tokens consumed).
+Otherwise, creates a tmux session with `claude --model sonnet`, injects
 `formulas/run-gardener.toml` as context, monitors the phase file, and cleans up
 on completion or timeout (2h max session). No action issues — the gardener runs
 directly from cron like the planner, predictor, and supervisor.

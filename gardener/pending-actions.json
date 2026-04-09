@@ -1,17 +1,47 @@
 [
   {
-    "action": "comment",
-    "issue": 446,
-    "body": "Closing as resolved: sub-issues #442, #443, #444, #445 are all closed. The gardener formula now includes an `agents-update` step that checks watermarks and keeps AGENTS.md files current. The last gardener run (commit faaaeb0) confirmed the step is working — all per-directory AGENTS.md files were updated."
+    "action": "close",
+    "issue": 419,
+    "reason": "Vision goal complete — all sub-issues #437-#454 closed, vault blast-radius redesign delivered"
   },
   {
     "action": "close",
-    "issue": 446,
-    "reason": "resolved: sub-issues fixed and gardener agents-update step is operational"
+    "issue": 494,
+    "reason": "Resolved by PRs #502 and #503 (both merged) — repo_root workaround removed, container paths derived at runtime"
   },
   {
-    "action": "remove_label",
-    "issue": 419,
-    "label": "blocked"
+    "action": "close",
+    "issue": 477,
+    "reason": "Obsolete — #379 (while-true loop) was deployed on 2026-04-08; env.sh container guard is now correct behavior, no revert needed"
+  },
+  {
+    "action": "edit_body",
+    "issue": 498,
+    "body": "Flagged by AI reviewer in PR #496.\n\n## Problem\n\n`has_responses_to_process` is only set to `true` inside the `open_arch_prs >= 3` gate in `architect/architect-run.sh` (line 543). When fewer than 3 architect PRs are open, ACCEPT/REJECT responses on existing PRs are never processed — the response-processing block at line 687 defaults to `false` and is skipped entirely.\n\nThis means that if a user ACCEPTs or REJECTs a pitch while the open PR count is below 3, the architect agent will never handle the response.\n\n## Fix\n\nSet `has_responses_to_process` (or an equivalent guard) unconditionally by scanning open PRs for ACCEPT/REJECT responses, not only when the 3-PR cap is hit.\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] `has_responses_to_process` is computed by scanning open architect PRs for ACCEPT/REJECT responses regardless of `open_arch_prs` count\n- [ ] When a user posts ACCEPT or REJECT on an architect PR and open PR count < 3, the response is processed in the same run\n- [ ] Existing behavior when `open_arch_prs >= 3` is unchanged\n- [ ] ShellCheck passes on modified files\n\n## Affected files\n\n- `architect/architect-run.sh` (lines ~543 and ~687 — response-processing gate)"
+  },
+  {
+    "action": "add_label",
+    "issue": 498,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 499,
+    "body": "Flagged by AI reviewer in PR #496.\n\n## Problem\n\nIn `architect/architect-run.sh` line 203, the `has_open_subissues` function compares `.number` (a JSON integer) against `$vid` (a bash string via `--arg`). In jq, `42 != \"42\"` evaluates to true (different types are never equal), so the self-exclusion filter never fires. In practice this is low-risk since vision issues don't contain 'Decomposed from #N' in their own bodies, but the self-exclusion logic is silently broken.\n\n## Fix\n\nCast the string to a number in jq: `select(.number != ($vid | tonumber))`\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] `has_open_subissues` self-exclusion filter correctly excludes the vision issue itself using `($vid | tonumber)` cast\n- [ ] A vision issue does not appear in its own subissue list\n- [ ] ShellCheck passes on modified files\n\n## Affected files\n\n- `architect/architect-run.sh` (line ~203 — `has_open_subissues` jq filter)"
+  },
+  {
+    "action": "add_label",
+    "issue": 499,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 471,
+    "body": "## Bug description\n\nWhen dev-bot picks a backlog issue and launches dev-agent.sh, a second dev-poll instance (dev-qwen) can race ahead and mark the issue as stale/blocked before dev-agent.sh finishes claiming it.\n\n## Reproduction\n\nObserved on issues #443 and #445 (2026-04-08):\n\n**#443 timeline:**\n- `20:39:03` — dev-bot removes `backlog`, adds `in-progress` (via dev-poll backlog pickup)\n- `20:39:04` — dev-qwen removes `in-progress`, adds `blocked` with reason `no_assignee_no_open_pr_no_lock`\n- `20:40:11` — dev-bot pushes commit (dev-agent was actually working the whole time)\n- `20:44:02` — PR merged, issue closed\n\n**#445 timeline:**\n- `20:54:03` — dev-bot adds `in-progress`\n- `20:54:06` — dev-qwen marks `blocked` (3 seconds later)\n- `20:55:13` — dev-bot pushes commit\n- `21:09:03` — PR merged, issue closed\n\nIn both cases, the work completed successfully despite being labeled blocked.\n\n## Root cause\n\n`issue_claim()` in `lib/issue-lifecycle.sh` performs three sequential API calls:\n1. PATCH assignee\n2. POST in-progress label\n3. DELETE backlog label\n\nMeanwhile, dev-poll on another agent (dev-qwen) runs its orphan scan, sees the issue labeled `in-progress` but with no assignee set yet (assign PATCH hasn't landed or was read stale), no open PR, and no lock file. It concludes the issue is stale and relabels to `blocked`.\n\nThe race window is ~1-3 seconds between in-progress being set and the assignee being visible to other pollers.\n\n## Impact\n\n- Issues get spuriously labeled `blocked` with a misleading stale diagnostic comment\n- dev-agent continues working anyway (it already has the issue number), so the blocked label is just noise\n- But it could confuse the gardener or humans reading the issue timeline\n- If another dev-poll instance picks up the blocked issue for recovery before the original agent finishes, it could cause duplicate work\n\n## Possible fixes\n\n1. **Assign before labeling**: In `issue_claim()`, set the assignee first, then add in-progress. This way, by the time in-progress is visible, the assignee is already set.\n2. **Grace period in stale detection**: Skip issues whose in-progress label was added less than N seconds ago (check label event timestamp via timeline API).\n3. **Lock file before label**: Write the agent lock file (`/tmp/dev-impl-summary-...`) at the start of dev-agent.sh before calling `issue_claim()`, so the stale detector sees the lock.\n4. **Atomic claim check**: dev-poll should re-check assignee after a short delay before declaring stale, to allow for API propagation.\n\n## Acceptance criteria\n\n- [ ] Stale detection in dev-poll does not mark an issue as blocked within the first 60 seconds of the in-progress label being applied\n- [ ] `issue_claim()` assigns the issue before adding the in-progress label (or equivalent fix is implemented)\n- [ ] No spurious `blocked` labels appear on issues that are actively being worked (verified by log inspection or integration test)\n- [ ] ShellCheck passes on modified files\n\n## Affected files\n\n- `lib/issue-lifecycle.sh` — `issue_claim()` function (assignee + label ordering)\n- `dev/dev-poll.sh` — orphan/stale detection logic"
+  },
+  {
+    "action": "add_label",
+    "issue": 471,
+    "label": "backlog"
   }
 ]
