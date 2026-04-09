@@ -125,4 +125,43 @@ if [ -z "${FORGE_OPS_REPO:-}" ] && [ -n "${FORGE_REPO:-}" ]; then
   export FORGE_OPS_REPO="${FORGE_REPO}-ops"
 fi
 
+# Parse [agents.*] sections for local-model agents
+# Exports AGENT_<NAME>_BASE_URL, AGENT_<NAME>_MODEL, AGENT_<NAME>_API_KEY,
+# AGENT_<NAME>_ROLES, AGENT_<NAME>_FORGE_USER, AGENT_<NAME>_COMPACT_PCT
+if command -v python3 &>/dev/null; then
+  _AGENT_VARS=$(python3 -c "
+import sys, tomllib
+
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+
+agents = cfg.get('agents', {})
+for name, config in agents.items():
+    if not isinstance(config, dict):
+        continue
+    # Emit variables in uppercase with the agent name
+    if 'base_url' in config:
+        print(f'AGENT_{name.upper()}_BASE_URL={config[\"base_url\"]}')
+    if 'model' in config:
+        print(f'AGENT_{name.upper()}_MODEL={config[\"model\"]}')
+    if 'api_key' in config:
+        print(f'AGENT_{name.upper()}_API_KEY={config[\"api_key\"]}')
+    if 'roles' in config:
+        roles = ' '.join(config['roles']) if isinstance(config['roles'], list) else config['roles']
+        print(f'AGENT_{name.upper()}_ROLES={roles}')
+    if 'forge_user' in config:
+        print(f'AGENT_{name.upper()}_FORGE_USER={config[\"forge_user\"]}')
+    if 'compact_pct' in config:
+        print(f'AGENT_{name.upper()}_COMPACT_PCT={config[\"compact_pct\"]}')
+" "$_PROJECT_TOML" 2>/dev/null) || true
+
+  if [ -n "$_AGENT_VARS" ]; then
+    while IFS='=' read -r _key _val; do
+      [ -z "$_key" ] && continue
+      export "$_key=$_val"
+    done <<< "$_AGENT_VARS"
+  fi
+  unset _AGENT_VARS
+fi
+
 unset _PROJECT_TOML _PROJECT_VARS _key _val
