@@ -113,6 +113,13 @@ if [ -z "${OPS_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
   export OPS_REPO_ROOT="/home/${USER}/${PROJECT_NAME}-ops"
 fi
 
+# Inside the container, always derive repo paths from PROJECT_NAME — the TOML
+# carries host-perspective paths that do not exist in the container filesystem.
+if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${PROJECT_NAME:-}" ]; then
+  export PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
+  export OPS_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}-ops"
+fi
+
 # Derive FORGE_OPS_REPO if not explicitly set
 if [ -z "${FORGE_OPS_REPO:-}" ] && [ -n "${FORGE_REPO:-}" ]; then
   export FORGE_OPS_REPO="${FORGE_REPO}-ops"
