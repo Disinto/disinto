@@ -200,7 +200,7 @@ has_open_subissues() {
 
   # Check each issue for the decomposition pattern using jq to extract bodies
   subissue_count=$(printf '%s' "$issues_json" | jq -r --arg vid "$vision_issue" '
-    [.[] | select(.number != $vid) | select(.body // "" | contains("Decomposed from #" + $vid))] | length
+    [.[] | select(.number != ($vid | tonumber)) | select(.body // "" | contains("Decomposed from #" + $vid))] | length
   ' 2>/dev/null) || subissue_count=0
 
   if [ "$subissue_count" -gt 0 ]; then
