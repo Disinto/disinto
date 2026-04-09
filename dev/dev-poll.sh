@@ -479,6 +479,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       fi
     else
       log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
+      BLOCKED_BY_INPROGRESS=true
       # Issue assigned to another agent — don't block, fall through to backlog
     fi
   fi
