@@ -208,7 +208,7 @@ check_script review/review-poll.sh
 check_script planner/planner-run.sh      lib/formula-session.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
-check_script supervisor/supervisor-run.sh
+check_script supervisor/supervisor-run.sh  lib/formula-session.sh
 check_script supervisor/preflight.sh
 check_script predictor/predictor-run.sh
 check_script architect/architect-run.sh

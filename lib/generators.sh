@@ -241,6 +241,10 @@ networks:
     driver: bridge
 COMPOSEEOF
 
+  # Patch PROJECT_REPO_ROOT — interpolate PROJECT_NAME at generation time
+  # (Docker Compose cannot resolve it; it's a shell variable, not a .env var)
+  sed -i "s|\${PROJECT_NAME:-project}|${PROJECT_NAME}|g" "$compose_file"
+
   # Patch the Claude CLI binary path — resolve from host PATH at init time.
   local claude_bin
   claude_bin="$(command -v claude 2>/dev/null || true)"
