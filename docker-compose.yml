@@ -135,7 +135,7 @@ services:
     image: codeberg.org/forgejo/forgejo:1
     container_name: disinto-forgejo
     volumes:
-      - ./data/forgejo:/var/lib/forgejo
+      - ./data/forgejo:/data
     environment:
       - FORGEJO__database__DB_TYPE=sqlite3
       - FORGEJO__service__REGISTER_EMAIL_CONFIRMATION=false
