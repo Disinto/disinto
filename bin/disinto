@@ -708,7 +708,7 @@ p.write_text(text)
   if setup_vault_branch_protection "$branch"; then
     echo "Branch protection: vault protection configured on ${ops_slug}"
   else
-    echo "Warning: failed to set up vault branch protection" >&2
+    echo "ERROR: failed to set up vault branch protection — security rules not applied" >&2
   fi
   unset FORGE_OPS_REPO
 
@@ -769,7 +769,7 @@ p.write_text(text)
   if setup_project_branch_protection "$forge_repo" "$branch"; then
     echo "Branch protection: project protection configured on ${forge_repo}"
   else
-    echo "Warning: failed to set up project branch protection" >&2
+    echo "ERROR: failed to set up project branch protection — security rules not applied" >&2
   fi
 
   # Generate VISION.md template
