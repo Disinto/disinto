@@ -45,9 +45,9 @@ _install_cron_impl() {
 
   # Bare mode: crontab is required on the host
   if ! command -v crontab &>/dev/null; then
-    echo "Error: crontab not found (required for bare-metal mode)" >&2
+    echo "Warning: crontab not found (required for bare-metal scheduling)" >&2
     echo "  Install: apt install cron  /  brew install cron" >&2
-    exit 1
+    return 1
   fi
 
   # Use absolute path for the TOML in cron entries

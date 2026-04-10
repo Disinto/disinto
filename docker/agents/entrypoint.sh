@@ -125,9 +125,95 @@ else
   log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
 fi
 
+# Bootstrap ops repos for each project TOML (#586).
+# In compose mode the ops repo lives on a Docker named volume at
+# /home/agent/repos/<project>-ops.  If init ran migrate_ops_repo on the host
+# the container never saw those changes.  This function clones from forgejo
+# when the repo is missing, or configures the remote and pulls when it exists
+# but has no remote (orphaned local-only checkout).
+bootstrap_ops_repos() {
+  local repos_dir="/home/agent/repos"
+  mkdir -p "$repos_dir"
+  chown agent:agent "$repos_dir"
+
+  for toml in "${DISINTO_DIR}"/projects/*.toml; do
+    [ -f "$toml" ] || continue
+
+    # Extract project name, ops repo slug, repo slug, and primary branch from TOML
+    local project_name ops_slug primary_branch
+    local _toml_vals
+    _toml_vals=$(python3 -c "
+import tomllib, sys
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+print(cfg.get('name', ''))
+print(cfg.get('ops_repo', ''))
+print(cfg.get('repo', ''))
+print(cfg.get('primary_branch', 'main'))
+" "$toml" 2>/dev/null || true)
+
+    project_name=$(sed -n '1p' <<< "$_toml_vals")
+    [ -n "$project_name" ] || continue
+    ops_slug=$(sed -n '2p' <<< "$_toml_vals")
+    local repo_slug
+    repo_slug=$(sed -n '3p' <<< "$_toml_vals")
+    primary_branch=$(sed -n '4p' <<< "$_toml_vals")
+    primary_branch="${primary_branch:-main}"
+
+    # Fall back to convention if ops_repo not in TOML
+    if [ -z "$ops_slug" ]; then
+      if [ -n "$repo_slug" ]; then
+        ops_slug="${repo_slug}-ops"
+      else
+        ops_slug="disinto-admin/${project_name}-ops"
+      fi
+    fi
+
+    local ops_root="${repos_dir}/${project_name}-ops"
+    local remote_url="${FORGE_URL}/${ops_slug}.git"
+
+    if [ ! -d "${ops_root}/.git" ]; then
+      # Clone ops repo from forgejo
+      log "Ops bootstrap: cloning ${ops_slug} -> ${ops_root}"
+      if gosu agent git clone --quiet "$remote_url" "$ops_root" 2>/dev/null; then
+        log "Ops bootstrap: ${ops_slug} cloned successfully"
+      else
+        # Remote may not exist yet (first run before init); create empty repo
+        log "Ops bootstrap: clone failed for ${ops_slug} — initializing empty repo"
+        gosu agent bash -c "
+          mkdir -p '${ops_root}' && \
+          git -C '${ops_root}' init --initial-branch='${primary_branch}' -q && \
+          git -C '${ops_root}' remote add origin '${remote_url}'
+        "
+      fi
+    else
+      # Repo exists — ensure remote is configured and pull latest
+      local current_remote
+      current_remote=$(git -C "$ops_root" remote get-url origin 2>/dev/null || true)
+      if [ -z "$current_remote" ]; then
+        log "Ops bootstrap: adding missing remote to ${ops_root}"
+        gosu agent git -C "$ops_root" remote add origin "$remote_url"
+      elif [ "$current_remote" != "$remote_url" ]; then
+        log "Ops bootstrap: fixing remote URL in ${ops_root}"
+        gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
+      fi
+      # Pull latest from forgejo to pick up any host-side migrations
+      log "Ops bootstrap: pulling latest for ${project_name}-ops"
+      gosu agent bash -c "
+        cd '${ops_root}' && \
+        git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+        git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+      " || log "Ops bootstrap: pull failed for ${ops_slug} (remote may not exist yet)"
+    fi
+  done
+}
+
 # Configure git and tea once at startup (as root, then drop to agent)
 configure_git_creds
 configure_tea_login
+
+# Bootstrap ops repos from forgejo into container volumes (#586)
+bootstrap_ops_repos
 
 # Initialize state directory for check_active guards
 init_state_dir
