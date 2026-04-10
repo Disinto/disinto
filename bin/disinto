@@ -69,6 +69,7 @@ Init options:
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --bare               Skip compose generation (bare-metal setup)
   --yes                Skip confirmation prompts
+  --rotate-tokens      Force regeneration of all bot tokens/passwords (idempotent by default)
 
 Hire an agent options:
   --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
@@ -551,15 +552,16 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false
   while [ $# -gt 0 ]; do
     case "$1" in
-      --branch)    branch="$2"; shift 2 ;;
-      --repo-root) repo_root="$2"; shift 2 ;;
-      --ci-id)     ci_id="$2"; shift 2 ;;
-      --forge-url) forge_url_flag="$2"; shift 2 ;;
-      --bare)      bare=true; shift ;;
-      --yes)       auto_yes=true; shift ;;
+      --branch)        branch="$2"; shift 2 ;;
+      --repo-root)     repo_root="$2"; shift 2 ;;
+      --ci-id)         ci_id="$2"; shift 2 ;;
+      --forge-url)     forge_url_flag="$2"; shift 2 ;;
+      --bare)          bare=true; shift ;;
+      --yes)           auto_yes=true; shift ;;
+      --rotate-tokens) rotate_tokens=true; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
@@ -651,7 +653,12 @@ p.write_text(text)
   fi
 
   # Set up local Forgejo instance (provision if needed, create users/tokens/repo)
-  setup_forge "$forge_url" "$forge_repo"
+  if [ "$rotate_tokens" = true ]; then
+    echo "Note: Forcing token rotation (tokens/passwords will be regenerated)"
+    setup_forge --rotate-tokens "$forge_url" "$forge_repo"
+  else
+    setup_forge "$forge_url" "$forge_repo"
+  fi
 
   # Preflight: verify factory requirements
   preflight_check "$forge_repo" "$forge_url"

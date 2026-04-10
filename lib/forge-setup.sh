@@ -38,10 +38,33 @@ _forgejo_exec() {
   fi
 }
 
+# Check if a token already exists in .env (for idempotency)
+# Returns 0 if token exists, 1 if it doesn't
+_token_exists_in_env() {
+  local token_var="$1"
+  local env_file="$2"
+  grep -q "^${token_var}=" "$env_file" 2>/dev/null
+}
+
+# Check if a password already exists in .env (for idempotency)
+# Returns 0 if password exists, 1 if it doesn't
+_pass_exists_in_env() {
+  local pass_var="$1"
+  local env_file="$2"
+  grep -q "^${pass_var}=" "$env_file" 2>/dev/null
+}
+
 # Provision or connect to a local Forgejo instance.
 # Creates admin + bot users, generates API tokens, stores in .env.
 # When $DISINTO_BARE is set, uses standalone docker run; otherwise uses compose.
+# Usage: setup_forge [--rotate-tokens] <forge_url> <repo_slug>
 setup_forge() {
+  local rotate_tokens=false
+  # Parse optional --rotate-tokens flag
+  if [ "$1" = "--rotate-tokens" ]; then
+    rotate_tokens=true
+    shift
+  fi
   local forge_url="$1"
   local repo_slug="$2"
   local use_bare="${DISINTO_BARE:-false}"
@@ -319,10 +342,22 @@ setup_forge() {
   local bot_user bot_pass token token_var pass_var
 
   for bot_user in dev-bot review-bot planner-bot gardener-bot vault-bot supervisor-bot predictor-bot architect-bot; do
-    bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
     token_var="${bot_token_vars[$bot_user]}"
+    pass_var="${bot_pass_vars[$bot_user]}"
 
-    # Check if bot user exists
+    # Check if token already exists in .env
+    local token_exists=false
+    if _token_exists_in_env "$token_var" "$env_file"; then
+      token_exists=true
+    fi
+
+    # Check if password already exists in .env
+    local pass_exists=false
+    if _pass_exists_in_env "$pass_var" "$env_file"; then
+      pass_exists=true
+    fi
+
+    # Check if bot user exists on Forgejo
     local user_exists=false
     if curl -sf --max-time 5 \
       -H "Authorization: token ${admin_token}" \
@@ -330,7 +365,25 @@ setup_forge() {
       user_exists=true
     fi
 
+    # Skip token/password regeneration if both exist in .env and not forcing rotation
+    if [ "$token_exists" = true ] && [ "$pass_exists" = true ] && [ "$rotate_tokens" = false ]; then
+      echo "  ${bot_user} token and password preserved (use --rotate-tokens to force)"
+      # Still export the existing token for use within this run
+      local existing_token existing_pass
+      existing_token=$(grep "^${token_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      existing_pass=$(grep "^${pass_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      export "${token_var}=${existing_token}"
+      export "${pass_var}=${existing_pass}"
+      continue
+    fi
+
+    # Generate new credentials if:
+    # - Token doesn't exist (first run)
+    # - Password doesn't exist (first run)
+    # - --rotate-tokens flag is set (explicit rotation)
     if [ "$user_exists" = false ]; then
+      # User doesn't exist - create it
+      bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
       echo "Creating bot user: ${bot_user}"
       local create_output
       if ! create_output=$(_forgejo_exec forgejo admin user create \
@@ -358,16 +411,22 @@ setup_forge() {
       fi
       echo "  ${bot_user} user created"
     else
-      echo "  ${bot_user} user exists (resetting password for token generation)"
-      # User exists but may not have a known password.
-      # Use admin API to reset the password so we can generate a new token.
-      _forgejo_exec forgejo admin user change-password \
-        --username "${bot_user}" \
-        --password "${bot_pass}" \
-        --must-change-password=false || {
-        echo "Error: failed to reset password for existing bot user '${bot_user}'" >&2
-        exit 1
-      }
+      # User exists - reset password if needed
+      echo "  ${bot_user} user exists"
+      if [ "$rotate_tokens" = true ] || [ "$pass_exists" = false ]; then
+        bot_pass="bot-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+        _forgejo_exec forgejo admin user change-password \
+          --username "${bot_user}" \
+          --password "${bot_pass}" \
+          --must-change-password=false || {
+          echo "Error: failed to reset password for existing bot user '${bot_user}'" >&2
+          exit 1
+        }
+        echo "  ${bot_user} password reset for token generation"
+      else
+        # Password exists, get it from .env
+        bot_pass=$(grep "^${pass_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      fi
     fi
 
     # Generate token via API (basic auth as the bot user — Forgejo requires
@@ -412,7 +471,6 @@ setup_forge() {
 
     # Store password in .env for git HTTP push (#361)
     # Forgejo 11.x API tokens don't work for git push; password auth does.
-    pass_var="${bot_pass_vars[$bot_user]}"
     if grep -q "^${pass_var}=" "$env_file" 2>/dev/null; then
       sed -i "s|^${pass_var}=.*|${pass_var}=${bot_pass}|" "$env_file"
     else
@@ -439,7 +497,19 @@ setup_forge() {
     llama_token_var="${llama_token_vars[$llama_user]}"
     llama_pass_var="${llama_pass_vars[$llama_user]}"
 
-    # Check if llama bot user exists
+    # Check if token already exists in .env
+    local token_exists=false
+    if _token_exists_in_env "$llama_token_var" "$env_file"; then
+      token_exists=true
+    fi
+
+    # Check if password already exists in .env
+    local pass_exists=false
+    if _pass_exists_in_env "$llama_pass_var" "$env_file"; then
+      pass_exists=true
+    fi
+
+    # Check if llama bot user exists on Forgejo
     local llama_user_exists=false
     if curl -sf --max-time 5 \
       -H "Authorization: token ${admin_token}" \
@@ -447,10 +517,26 @@ setup_forge() {
       llama_user_exists=true
     fi
 
+    # Skip token/password regeneration if both exist in .env and not forcing rotation
+    if [ "$token_exists" = true ] && [ "$pass_exists" = true ] && [ "$rotate_tokens" = false ]; then
+      echo "  ${llama_user} token and password preserved (use --rotate-tokens to force)"
+      # Still export the existing token for use within this run
+      local existing_token existing_pass
+      existing_token=$(grep "^${llama_token_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      existing_pass=$(grep "^${llama_pass_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      export "${llama_token_var}=${existing_token}"
+      export "${llama_pass_var}=${existing_pass}"
+      continue
+    fi
+
+    # Generate new credentials if:
+    # - Token doesn't exist (first run)
+    # - Password doesn't exist (first run)
+    # - --rotate-tokens flag is set (explicit rotation)
     if [ "$llama_user_exists" = false ]; then
-      echo "Creating llama bot user: ${llama_user}"
-      # Generate a unique password for this user
+      # User doesn't exist - create it
       llama_pass="llama-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+      echo "Creating llama bot user: ${llama_user}"
       local create_output
       if ! create_output=$(_forgejo_exec forgejo admin user create \
         --username "${llama_user}" \
@@ -477,17 +563,22 @@ setup_forge() {
       fi
       echo "  ${llama_user} user created"
     else
-      echo "  ${llama_user} user exists (resetting password for token generation)"
-      # User exists but may not have a known password.
-      # Use admin API to reset the password so we can generate a new token.
-      llama_pass="llama-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
-      _forgejo_exec forgejo admin user change-password \
-        --username "${llama_user}" \
-        --password "${llama_pass}" \
-        --must-change-password=false || {
-        echo "Error: failed to reset password for existing llama bot user '${llama_user}'" >&2
-        exit 1
-      }
+      # User exists - reset password if needed
+      echo "  ${llama_user} user exists"
+      if [ "$rotate_tokens" = true ] || [ "$pass_exists" = false ]; then
+        llama_pass="llama-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+        _forgejo_exec forgejo admin user change-password \
+          --username "${llama_user}" \
+          --password "${llama_pass}" \
+          --must-change-password=false || {
+          echo "Error: failed to reset password for existing llama bot user '${llama_user}'" >&2
+          exit 1
+        }
+        echo "  ${llama_user} password reset for token generation"
+      else
+        # Password exists, get it from .env
+        llama_pass=$(grep "^${llama_pass_var}=" "$env_file" | head -1 | cut -d= -f2-)
+      fi
     fi
 
     # Generate token via API (basic auth as the llama user)
