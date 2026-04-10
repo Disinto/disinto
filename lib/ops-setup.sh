@@ -315,30 +315,37 @@ migrate_ops_repo() {
   echo "── Ops repo migration ───────────────────────────────────"
   echo "Checking ${ops_root} for missing directories and files..."
 
+  # Change to ops_root directory to ensure all git operations use the correct repo
+  # This prevents "fatal: not in a git directory" errors from stray git commands
+  local orig_dir
+  orig_dir=$(pwd)
+  cd "$ops_root" || {
+    echo "Error: failed to change to ${ops_root}" >&2
+    return 1
+  }
+
   local migrated=false
 
   # Canonical ops repo structure (post #407)
   # Directories to ensure exist with .gitkeep files
   local -a dir_keepfiles=(
-    "${ops_root}/vault/pending/.gitkeep"
-    "${ops_root}/vault/approved/.gitkeep"
-    "${ops_root}/vault/fired/.gitkeep"
-    "${ops_root}/vault/rejected/.gitkeep"
-    "${ops_root}/knowledge/.gitkeep"
-    "${ops_root}/evidence/engagement/.gitkeep"
-    "${ops_root}/evidence/red-team/.gitkeep"
-    "${ops_root}/evidence/holdout/.gitkeep"
-    "${ops_root}/evidence/evolution/.gitkeep"
-    "${ops_root}/evidence/user-test/.gitkeep"
-    "${ops_root}/sprints/.gitkeep"
+    "vault/pending/.gitkeep"
+    "vault/approved/.gitkeep"
+    "vault/fired/.gitkeep"
+    "vault/rejected/.gitkeep"
+    "knowledge/.gitkeep"
+    "evidence/engagement/.gitkeep"
+    "evidence/red-team/.gitkeep"
+    "evidence/holdout/.gitkeep"
+    "evidence/evolution/.gitkeep"
+    "evidence/user-test/.gitkeep"
+    "sprints/.gitkeep"
   )
 
   # Create missing directories and .gitkeep files
   for keepfile in "${dir_keepfiles[@]}"; do
-    local dir
-    dir=$(dirname "$keepfile")
     if [ ! -f "$keepfile" ]; then
-      mkdir -p "$dir"
+      mkdir -p "$(dirname "$keepfile")"
       touch "$keepfile"
       echo "  + Created: ${keepfile}"
       migrated=true
@@ -347,9 +354,9 @@ migrate_ops_repo() {
 
   # Template files to create if missing (starter content)
   local -a template_files=(
-    "${ops_root}/portfolio.md"
-    "${ops_root}/prerequisites.md"
-    "${ops_root}/RESOURCES.md"
+    "portfolio.md"
+    "prerequisites.md"
+    "RESOURCES.md"
   )
 
   for tfile in "${template_files[@]}"; do
@@ -371,26 +378,33 @@ migrate_ops_repo() {
   # Commit and push changes if any were made
   if [ "$migrated" = true ]; then
     # Auto-configure repo-local git identity if missing
-    if [ -z "$(git -C "$ops_root" config user.name 2>/dev/null)" ]; then
-      git -C "$ops_root" config user.name "disinto-admin"
+    if [ -z "$(git config user.name 2>/dev/null)" ]; then
+      git config user.name "disinto-admin"
     fi
-    if [ -z "$(git -C "$ops_root" config user.email 2>/dev/null)" ]; then
-      git -C "$ops_root" config user.email "disinto-admin@localhost"
+    if [ -z "$(git config user.email 2>/dev/null)" ]; then
+      git config user.email "disinto-admin@localhost"
     fi
 
-    git -C "$ops_root" add -A
-    if ! git -C "$ops_root" diff --cached --quiet 2>/dev/null; then
-      git -C "$ops_root" commit -m "chore: migrate ops repo structure to canonical layout" -q
+    git add -A
+    if ! git diff --cached --quiet 2>/dev/null; then
+      if ! git commit -m "chore: migrate ops repo structure to canonical layout" -q; then
+        echo "Error: failed to commit migration changes" >&2
+        cd "$orig_dir"
+        return 1
+      fi
       # Push if remote exists
-      if git -C "$ops_root" remote get-url origin >/dev/null 2>&1; then
-        if git -C "$ops_root" push origin "${primary_branch}" -q 2>/dev/null; then
-          echo "Migrated:  ops repo structure updated and pushed"
-        else
+      if git remote get-url origin >/dev/null 2>&1; then
+        if ! git push origin "${primary_branch}" -q 2>/dev/null; then
           echo "Warning: failed to push migration to ops repo" >&2
+        else
+          echo "Migrated:  ops repo structure updated and pushed"
         fi
       fi
     fi
   else
     echo "  (all directories and files already present)"
   fi
+
+  # Return to original directory
+  cd "$orig_dir"
 }
