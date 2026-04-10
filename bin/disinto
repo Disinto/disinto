@@ -54,6 +54,12 @@ Usage:
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo)
   disinto agent <subcommand>           Manage agent state (enable/disable)
+  disinto edge <verb> [options]        Manage edge tunnel registrations
+
+Edge subcommands:
+  register [project]    Register a new tunnel (generates keypair if needed)
+  deregister <project>  Remove a tunnel registration
+  status                Show registered tunnels
 
 Agent subcommands:
   disable <agent>      Remove state file to disable agent
@@ -1613,6 +1619,232 @@ EOF
   esac
 }
 
+# ── edge command ──────────────────────────────────────────────────────────────
+# Manage edge tunnel registrations (reverse SSH tunnels to edge hosts)
+# Usage: disinto edge <verb> [options]
+#   register [project]    Register a new tunnel (generates keypair if needed)
+#   deregister <project>  Remove a tunnel registration
+#   status                Show registered tunnels
+disinto_edge() {
+  local subcmd="${1:-}"
+  local EDGE_HOST="${EDGE_HOST:-}"
+  local env_file="${FACTORY_ROOT}/.env"
+
+  # Determine edge host (flag > env var > default)
+  local edge_host="${EDGE_HOST:-edge.disinto.ai}"
+  shift || true
+
+  case "$subcmd" in
+    register)
+      local project="${1:-}"
+      local env_file="${FACTORY_ROOT}/.env"
+
+      # Parse flags
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --edge-host)
+            edge_host="$2"
+            shift 2
+            ;;
+          *)
+            if [ -z "$project" ]; then
+              project="$1"
+            fi
+            shift
+            ;;
+        esac
+      done
+
+      if [ -z "$project" ]; then
+        echo "Error: project name required" >&2
+        echo "Usage: disinto edge register [project] [--edge-host <fqdn>]" >&2
+        exit 1
+      fi
+
+      # Validate project name
+      if ! [[ "$project" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: invalid project name (use alphanumeric, hyphens, underscores)" >&2
+        exit 1
+      fi
+
+      # Determine edge host (flag > env > default)
+      if [ -z "$edge_host" ]; then
+        edge_host="${EDGE_HOST:-edge.disinto.ai}"
+      fi
+
+      # Check for tunnel keypair
+      local secrets_dir="${FACTORY_ROOT}/secrets"
+      local tunnel_key="${secrets_dir}/tunnel_key"
+      local tunnel_pubkey="${tunnel_key}.pub"
+
+      if [ ! -f "$tunnel_pubkey" ]; then
+        echo "Generating tunnel keypair..."
+        mkdir -p "$secrets_dir"
+        chmod 700 "$secrets_dir"
+        ssh-keygen -t ed25519 -f "$tunnel_key" -N "" -C "edge-tunnel@${project}" 2>/dev/null
+        chmod 600 "$tunnel_key" "$tunnel_pubkey"
+        echo "Generated: ${tunnel_pubkey}"
+      fi
+
+      # Read pubkey (single line, remove trailing newline)
+      local pubkey
+      pubkey=$(tr -d '\n' < "$tunnel_pubkey")
+
+      # SSH to edge host and register
+      echo "Registering tunnel for ${project} on ${edge_host}..."
+      local response
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
+        "disinto-register@${edge_host}" \
+        "register ${project} ${pubkey}" 2>&1) || {
+        echo "Error: failed to register tunnel" >&2
+        echo "Response: ${response}" >&2
+        exit 1
+      }
+
+      # Parse response and write to .env
+      local port fqdn
+      port=$(echo "$response" | jq -r '.port // empty' 2>/dev/null) || port=""
+      fqdn=$(echo "$response" | jq -r '.fqdn // empty' 2>/dev/null) || fqdn=""
+
+      if [ -z "$port" ] || [ -z "$fqdn" ]; then
+        echo "Error: invalid response from edge host" >&2
+        echo "Response: ${response}" >&2
+        exit 1
+      fi
+
+      # Write to .env (replace existing entries to avoid duplicates)
+      local tmp_env
+      tmp_env=$(mktemp)
+      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      mv "$tmp_env" "$env_file"
+      echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
+      echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
+      echo "EDGE_TUNNEL_FQDN=${fqdn}" >> "$env_file"
+
+      echo "Registered: ${project}"
+      echo "  Port:    ${port}"
+      echo "  FQDN:    ${fqdn}"
+      echo "  Saved to: ${env_file}"
+      ;;
+
+    deregister)
+      local project="${1:-}"
+
+      # Parse flags
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --edge-host)
+            edge_host="$2"
+            shift 2
+            ;;
+          *)
+            if [ -z "$project" ]; then
+              project="$1"
+            fi
+            shift
+            ;;
+        esac
+      done
+
+      if [ -z "$project" ]; then
+        echo "Error: project name required" >&2
+        echo "Usage: disinto edge deregister <project> [--edge-host <fqdn>]" >&2
+        exit 1
+      fi
+
+      # Determine edge host
+      if [ -z "$edge_host" ]; then
+        edge_host="${EDGE_HOST:-edge.disinto.ai}"
+      fi
+
+      # SSH to edge host and deregister
+      echo "Deregistering tunnel for ${project} on ${edge_host}..."
+      local response
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
+        "disinto-register@${edge_host}" \
+        "deregister ${project}" 2>&1) || {
+        echo "Error: failed to deregister tunnel" >&2
+        echo "Response: ${response}" >&2
+        exit 1
+      }
+
+      # Remove from .env if present
+      if [ -f "$env_file" ]; then
+        local tmp_env
+        tmp_env=$(mktemp)
+        grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+        mv "$tmp_env" "$env_file"
+      fi
+
+      echo "Deregistered: ${project}"
+      ;;
+
+    status)
+      # Parse flags
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --edge-host)
+            edge_host="$2"
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+
+      # Determine edge host
+      if [ -z "$edge_host" ]; then
+        edge_host="${EDGE_HOST:-edge.disinto.ai}"
+      fi
+
+      # SSH to edge host and get status
+      echo "Checking tunnel status on ${edge_host}..."
+      local response
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
+        "disinto-register@${edge_host}" \
+        "list" 2>&1) || {
+        echo "Error: failed to get status" >&2
+        echo "Response: ${response}" >&2
+        exit 1
+      }
+
+      # Parse and display
+      local tunnels
+      tunnels=$(echo "$response" | jq -r '.tunnels // [] | length' 2>/dev/null) || tunnels="0"
+
+      if [ "$tunnels" = "0" ]; then
+        echo "No tunnels registered"
+      else
+        echo "Registered tunnels:"
+        echo "$response" | jq -r '.tunnels[] | "  \(.name): port=\(.port) fqdn=\(.fqdn)"'
+      fi
+      ;;
+
+    *)
+      cat <<EOF >&2
+Usage: disinto edge <verb> [options]
+
+Manage edge tunnel registrations:
+
+  register [project]    Register a new tunnel (generates keypair if needed)
+  deregister <project>  Remove a tunnel registration
+  status                Show registered tunnels
+
+Options:
+  --edge-host <fqdn>    Edge host FQDN (default: edge.disinto.ai or EDGE_HOST env)
+
+Examples:
+  disinto edge register myproject
+  disinto edge register myproject --edge-host custom.example.com
+  disinto edge deregister myproject
+  disinto edge status
+EOF
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -1628,6 +1860,7 @@ case "${1:-}" in
   release)         shift; disinto_release "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   agent)           shift; disinto_agent "$@" ;;
+  edge)            shift; disinto_edge "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
