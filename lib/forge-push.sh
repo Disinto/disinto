@@ -7,7 +7,6 @@
 # Globals expected:
 #   FORGE_URL    - Forge instance URL (e.g. http://localhost:3000)
 #   FORGE_TOKEN  - API token for Forge operations (used for API verification)
-#   FORGE_PASS   - Bot password for git HTTP push (#361: tokens rejected by Forgejo 11.x)
 #   FACTORY_ROOT - Root of the disinto factory
 #   PRIMARY_BRANCH - Primary branch name (e.g. main)
 #
@@ -21,7 +20,6 @@ set -euo pipefail
 _assert_forge_push_globals() {
   local missing=()
   [ -z "${FORGE_URL:-}" ]      && missing+=("FORGE_URL")
-  [ -z "${FORGE_PASS:-}" ]     && missing+=("FORGE_PASS")
   [ -z "${FORGE_TOKEN:-}" ]    && missing+=("FORGE_TOKEN")
   [ -z "${FACTORY_ROOT:-}" ]   && missing+=("FACTORY_ROOT")
   [ -z "${PRIMARY_BRANCH:-}" ] && missing+=("PRIMARY_BRANCH")
@@ -35,17 +33,11 @@ _assert_forge_push_globals() {
 push_to_forge() {
   local repo_root="$1" forge_url="$2" repo_slug="$3"
 
-  # Build authenticated remote URL: http://dev-bot:<password>@host:port/org/repo.git
-  # Forgejo 11.x rejects API tokens for git HTTP push (#361); password auth works.
-  if [ -z "${FORGE_PASS:-}" ]; then
-    echo "Error: FORGE_PASS not set — cannot push to Forgejo (see #361)" >&2
-    return 1
-  fi
-  local auth_url
-  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://dev-bot:${FORGE_PASS}@|")
-  local remote_url="${auth_url}/${repo_slug}.git"
-  # Display URL without token
-  local display_url="${forge_url}/${repo_slug}.git"
+  # Use clean URL — credential helper supplies auth (#604).
+  # Forgejo 11.x rejects API tokens for git HTTP push (#361); password auth works
+  # via the credential helper configured in configure_git_creds().
+  local remote_url="${forge_url}/${repo_slug}.git"
+  local display_url="$remote_url"
 
   # Always set the remote URL to ensure credentials are current
   if git -C "$repo_root" remote get-url forgejo >/dev/null 2>&1; then
