@@ -110,7 +110,7 @@ _generate_local_model_services() {
     volumes:
       - agents-${service_name}-data:/home/agent/data
       - project-repos:/home/agent/repos
-      - \${HOME}/.claude:/home/agent/.claude
+      - \${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:\${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - \${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       - \${HOME}/.ssh:/home/agent/.ssh:ro
@@ -127,8 +127,8 @@ _generate_local_model_services() {
       ANTHROPIC_BASE_URL: "${base_url}"
       ANTHROPIC_API_KEY: "${api_key}"
       CLAUDE_MODEL: "${model}"
-      CLAUDE_CONFIG_DIR: /home/agent/.claude-${service_name}
-      CLAUDE_CREDENTIALS_DIR: /home/agent/.claude-${service_name}/credentials
+      CLAUDE_CONFIG_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      CLAUDE_CREDENTIALS_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
       CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "${compact_pct}"
       CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
       CLAUDE_CODE_ENABLE_TELEMETRY: "0"
@@ -321,7 +321,7 @@ services:
     volumes:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
-      - ${HOME}/.claude:/home/agent/.claude
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       - ${HOME}/.ssh:/home/agent/.ssh:ro
@@ -351,6 +351,7 @@ services:
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # .env.vault.enc and are NEVER injected here — only the runner
@@ -370,10 +371,13 @@ services:
       - apparmor=unconfined
     volumes:
       - agent-data:/home/agent/data
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
     environment:
       FORGE_URL: http://forgejo:3000
       DISINTO_CONTAINER: "1"
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
     # Vault redesign in progress (PR-based approval, see #73-#77)
     # This container is being replaced — entrypoint will be updated in follow-up
     networks:
@@ -401,6 +405,7 @@ services:
       - OPS_REPO_ROOT=/opt/disinto-ops
       - PROJECT_REPO_ROOT=/opt/disinto
       - PRIMARY_BRANCH=main
+      - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       # Reverse tunnel (optional — set by `disinto edge register`, see #622)
       - EDGE_TUNNEL_HOST=${EDGE_TUNNEL_HOST:-}
       - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
@@ -411,6 +416,8 @@ services:
       - caddy_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
     depends_on:
       - forgejo
       - woodpecker
