@@ -122,7 +122,8 @@ PAGES=$(printf '%s\n' "$PARSED" | jq -c '
 ')
 
 TOTAL_REQUESTS=$(printf '%s\n' "$PARSED" | wc -l | tr -d ' ')
-PAGE_VIEWS=$(printf '%s\n' "$PAGES" | grep -c . || echo 0)
+PAGE_VIEWS=$(printf '%s\n' "$PAGES" | grep -c . || true)
+PAGE_VIEWS="${PAGE_VIEWS:-0}"
 UNIQUE_VISITORS=$(printf '%s\n' "$PAGES" | jq -r '.ip' | sort -u | wc -l | tr -d ' ')
 
 # Top pages by hit count
