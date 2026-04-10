@@ -72,7 +72,7 @@ setup_ops_repo() {
       ns_type="org"
     fi
 
-    local create_endpoint=""
+    local create_endpoint="" via_msg=""
     if [ "$ns_type" = "org" ]; then
       # Org namespace — use org API
       create_endpoint="/api/v1/orgs/${org_name}/repos"
@@ -85,6 +85,7 @@ setup_ops_repo() {
     else
       # User namespace — use admin API (requires admin token)
       create_endpoint="/api/v1/admin/users/${org_name}/repos"
+      via_msg=" (via admin API)"
     fi
 
     if curl -sf -X POST \
@@ -93,8 +94,6 @@ setup_ops_repo() {
       "${forge_url}${create_endpoint}" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
       actual_ops_slug="${org_name}/${ops_name}"
-      local via_msg=""
-      [ "$ns_type" = "user" ] && via_msg=" (via admin API)"
       echo "Ops repo: ${actual_ops_slug} created on Forgejo${via_msg}"
     else
       http_code=$(curl -s -o /dev/null -w "%{http_code}" \
