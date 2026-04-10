@@ -28,7 +28,8 @@ cleanup() {
   # Kill any leftover mock-forgejo.py processes by name
   pkill -f "mock-forgejo.py" 2>/dev/null || true
   rm -rf "$MOCK_BIN" /tmp/smoke-test-repo \
-         "${FACTORY_ROOT}/projects/smoke-repo.toml"
+         "${FACTORY_ROOT}/projects/smoke-repo.toml" \
+         /tmp/smoke-claude-shared /tmp/smoke-home-claude
   # Restore .env only if we created the backup
   if [ -f "${FACTORY_ROOT}/.env.smoke-backup" ]; then
     mv "${FACTORY_ROOT}/.env.smoke-backup" "${FACTORY_ROOT}/.env"
@@ -285,6 +286,96 @@ else
     pass "No crontab entries (expected in non-bare mode)"
   fi
 fi
+
+# ── 7. Verify CLAUDE_CONFIG_DIR setup ─────────────────────────────────────
+echo "=== 7/7 Verifying CLAUDE_CONFIG_DIR setup ==="
+
+# .env should contain CLAUDE_SHARED_DIR and CLAUDE_CONFIG_DIR
+if grep -q '^CLAUDE_SHARED_DIR=' "$env_file"; then
+  pass ".env contains CLAUDE_SHARED_DIR"
+else
+  fail ".env missing CLAUDE_SHARED_DIR"
+fi
+if grep -q '^CLAUDE_CONFIG_DIR=' "$env_file"; then
+  pass ".env contains CLAUDE_CONFIG_DIR"
+else
+  fail ".env missing CLAUDE_CONFIG_DIR"
+fi
+
+# Test migration path with a temporary HOME
+echo "--- Testing claude config migration ---"
+ORIG_HOME="$HOME"
+ORIG_CLAUDE_SHARED_DIR="${CLAUDE_SHARED_DIR:-}"
+ORIG_CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
+
+export HOME="/tmp/smoke-home-claude"
+export CLAUDE_SHARED_DIR="/tmp/smoke-claude-shared"
+export CLAUDE_CONFIG_DIR="${CLAUDE_SHARED_DIR}/config"
+mkdir -p "$HOME"
+
+# Source claude-config.sh for setup_claude_config_dir
+source "${FACTORY_ROOT}/lib/claude-config.sh"
+
+# Sub-test 1: fresh install (no ~/.claude, no config dir)
+rm -rf "$HOME/.claude" "$CLAUDE_SHARED_DIR"
+setup_claude_config_dir "true"
+if [ -d "$CLAUDE_CONFIG_DIR" ]; then
+  pass "Fresh install: CLAUDE_CONFIG_DIR created"
+else
+  fail "Fresh install: CLAUDE_CONFIG_DIR not created"
+fi
+if [ -L "$HOME/.claude" ]; then
+  pass "Fresh install: ~/.claude symlink created"
+else
+  fail "Fresh install: ~/.claude symlink not created"
+fi
+
+# Sub-test 2: migration (pre-existing ~/.claude with content)
+rm -rf "$HOME/.claude" "$CLAUDE_SHARED_DIR"
+mkdir -p "$HOME/.claude"
+echo "test-token" > "$HOME/.claude/credentials.json"
+setup_claude_config_dir "true"
+if [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ]; then
+  pass "Migration: credentials.json moved to CLAUDE_CONFIG_DIR"
+else
+  fail "Migration: credentials.json not found in CLAUDE_CONFIG_DIR"
+fi
+if [ -L "$HOME/.claude" ]; then
+  link_target=$(readlink -f "$HOME/.claude")
+  config_real=$(readlink -f "$CLAUDE_CONFIG_DIR")
+  if [ "$link_target" = "$config_real" ]; then
+    pass "Migration: ~/.claude is symlink to CLAUDE_CONFIG_DIR"
+  else
+    fail "Migration: ~/.claude symlink points to wrong target"
+  fi
+else
+  fail "Migration: ~/.claude is not a symlink"
+fi
+
+# Sub-test 3: idempotency (re-run after migration)
+setup_claude_config_dir "true"
+if [ -L "$HOME/.claude" ] && [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ]; then
+  pass "Idempotency: re-run is a no-op"
+else
+  fail "Idempotency: re-run broke the layout"
+fi
+
+# Sub-test 4: both non-empty — must abort
+rm -rf "$HOME/.claude" "$CLAUDE_SHARED_DIR"
+mkdir -p "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
+echo "home-data" > "$HOME/.claude/home.txt"
+echo "config-data" > "$CLAUDE_CONFIG_DIR/config.txt"
+if setup_claude_config_dir "true" 2>/dev/null; then
+  fail "Both non-empty: should have aborted but didn't"
+else
+  pass "Both non-empty: correctly aborted"
+fi
+
+# Restore
+export HOME="$ORIG_HOME"
+export CLAUDE_SHARED_DIR="$ORIG_CLAUDE_SHARED_DIR"
+export CLAUDE_CONFIG_DIR="$ORIG_CLAUDE_CONFIG_DIR"
+rm -rf /tmp/smoke-claude-shared /tmp/smoke-home-claude
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
