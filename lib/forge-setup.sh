@@ -50,7 +50,7 @@ setup_forge() {
   echo "── Forge setup ────────────────────────────────────────"
 
   # Check if Forgejo is already running
-  if curl -sf --max-time 5 "${forge_url}/api/v1/version" >/dev/null 2>&1; then
+  if curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/version" >/dev/null 2>&1; then
     echo "Forgejo:  ${forge_url} (already running)"
   else
     echo "Forgejo not reachable at ${forge_url}"
@@ -94,7 +94,7 @@ setup_forge() {
     # Wait for Forgejo to become healthy
     echo -n "Waiting for Forgejo to start"
     local retries=0
-    while ! curl -sf --max-time 3 "${forge_url}/api/v1/version" >/dev/null 2>&1; do
+    while ! curl -sf --max-time 3 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/version" >/dev/null 2>&1; do
       retries=$((retries + 1))
       if [ "$retries" -gt 60 ]; then
         echo ""
