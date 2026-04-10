@@ -21,22 +21,29 @@ Point it at a git repo with a Woodpecker CI pipeline and it will pick up issues,
 ## Architecture
 
 ```
-cron (*/10) ──→ supervisor-poll.sh    ← supervisor (bash checks, zero tokens)
-                 ├── all clear? → exit 0
-                 └── problem? → claude -p (diagnose, fix, or escalate)
+entrypoint.sh (while-true polling loop, 5 min base interval)
+ │
+ ├── every 5 min ──→ review-poll.sh   ← finds unreviewed PRs, spawns review
+ │                    └── review-pr.sh  ← claude -p: review → approve/request changes
+ │
+ ├── every 5 min ──→ dev-poll.sh      ← pulls ready issues, spawns dev-agent
+ │                    └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
+ │
+ ├── every 6h ────→ gardener-run.sh   ← backlog grooming (duplicates, stale, tech-debt)
+ │                   └── claude -p: triage → promote/close/escalate
+ │
+ ├── every 6h ────→ architect-run.sh  ← strategic decomposition of vision into sprints
+ │
+ ├── every 12h ───→ planner-run.sh    ← gap-analyse VISION.md, create backlog issues
+ │                   └── claude -p: update AGENTS.md → create issues
+ │
+ └── every 24h ───→ predictor-run.sh  ← infrastructure pattern detection
 
-cron (*/10) ──→ dev-poll.sh        ← pulls ready issues, spawns dev-agent
-                 └── dev-agent.sh   ← claude -p: implement → PR → CI → review → merge
-
-cron (*/10) ──→ review-poll.sh     ← finds unreviewed PRs, spawns review
-                 └── review-pr.sh   ← claude -p: review → approve/request changes
-
-cron (daily) ──→ gardener-poll.sh  ← backlog grooming (duplicates, stale, tech-debt)
-                  └── claude -p: triage → promote/close/escalate
-
-cron (weekly) ──→ planner-poll.sh  ← gap-analyse VISION.md, create backlog issues
-                   └── claude -p: update AGENTS.md → create issues
-
+entrypoint-edge.sh (edge container)
+ ├── dispatcher.sh                    ← polls ops repo for vault actions
+ └── every 20 min → supervisor-run.sh ← health checks (bash checks, zero tokens)
+                     ├── all clear? → exit 0
+                     └── problem? → claude -p (diagnose, fix, or escalate)
 ```
 
 ## Prerequisites
@@ -86,17 +93,11 @@ CLAUDE_TIMEOUT=7200         # max seconds per Claude invocation (default: 2h)
 ```
 
 ```bash
-# 3. Install cron (staggered to avoid overlap)
-crontab -e
-# Add:
-#   0,10,20,30,40,50 * * * * /path/to/disinto/supervisor/supervisor-poll.sh
-#   3,13,23,33,43,53 * * * * /path/to/disinto/review/review-poll.sh
-#   6,16,26,36,46,56 * * * * /path/to/disinto/dev/dev-poll.sh
-#   15 8 * * *                /path/to/disinto/gardener/gardener-poll.sh
-#   0 9 * * 1                 /path/to/disinto/planner/planner-poll.sh
+# 3. Start the agent and edge containers
+docker compose up -d
 
-# 4. Verify
-bash supervisor/supervisor-poll.sh   # should log "all clear"
+# 4. Verify the entrypoint loop is running
+docker exec disinto-agents-1 tail -f /home/agent/data/agent-entrypoint.log
 ```
 
 ## Directory Structure
@@ -109,16 +110,16 @@ disinto/
 │   ├── env.sh              # Shared: load .env, PATH, API helpers
 │   └── ci-debug.sh         # Woodpecker CI log/failure helper
 ├── dev/
-│   ├── dev-poll.sh       # Cron entry: find ready issues
+│   ├── dev-poll.sh       # Poll: find ready issues
 │   └── dev-agent.sh      # Implementation agent (claude -p)
 ├── review/
-│   ├── review-poll.sh    # Cron entry: find unreviewed PRs
+│   ├── review-poll.sh    # Poll: find unreviewed PRs
 │   └── review-pr.sh      # Review agent (claude -p)
 ├── gardener/
-│   ├── gardener-poll.sh  # Cron entry: backlog grooming
+│   ├── gardener-run.sh   # Executor: backlog grooming
 │   └── best-practices.md # Gardener knowledge base
 ├── planner/
-│   ├── planner-poll.sh   # Cron entry: weekly vision gap analysis
+│   ├── planner-run.sh    # Executor: vision gap analysis
 │   └── (formula-driven)  # run-planner.toml executed by dispatcher
 ├── vault/
 │   └── vault-env.sh      # Shared env setup (vault redesign in progress, see #73-#77)
@@ -141,11 +142,11 @@ disinto/
 
 | Agent | Trigger | Job |
 |-------|---------|-----|
-| **Supervisor** | Every 10 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
-| **Dev** | Every 10 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
-| **Review** | Every 10 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
-| **Gardener** | Daily | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
-| **Planner** | Weekly | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
+| **Supervisor** | Every 20 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
+| **Dev** | Every 5 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
+| **Review** | Every 5 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
+| **Gardener** | Every 6h | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
+| **Planner** | Every 12h | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 > See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow and branch protection details.

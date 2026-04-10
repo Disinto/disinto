@@ -57,8 +57,8 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 # Token generated?
 grep WOODPECKER_TOKEN .env | grep -v "^$" && echo "OK" || echo "MISSING — see references/troubleshooting.md"
 
-# Agent cron active?
-docker exec -u agent disinto-agents-1 crontab -l -u agent
+# Agent entrypoint loop running?
+docker exec disinto-agents-1 tail -5 /home/agent/data/agent-entrypoint.log
 
 # Agent can reach Forgejo?
 docker exec disinto-agents-1 bash -c "source /home/agent/disinto/.env && curl -sf http://forgejo:3000/api/v1/version | jq .version"
@@ -174,7 +174,7 @@ Use labels:
 
 ### 7. Watch it work
 
-The dev-agent polls every 5 minutes. Trigger manually to see it immediately:
+The dev-agent runs every 5 minutes via the entrypoint polling loop. Trigger manually to see it immediately:
 ```bash
 source .env
 export PROJECT_TOML=projects/<name>.toml

@@ -20,7 +20,7 @@ You are helping the user set up and operate a **disinto autonomous code factory*
 - The factory uses a single internal Forgejo as its forge, regardless of where mirrors go
 - Dev-agent uses `claude -p` for one-shot implementation sessions
 - Mirror pushes happen automatically after every merge
-- Cron schedule: dev-poll every 5min, review-poll every 5min, gardener 4x/day
+- Polling loop in `docker/agents/entrypoint.sh`: dev-poll/review-poll every 5m, gardener/architect every 6h, planner every 12h, predictor every 24h
 
 ## References
 

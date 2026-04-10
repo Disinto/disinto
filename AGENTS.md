@@ -6,7 +6,7 @@
 Disinto is an autonomous code factory. It manages ten agents (dev, review,
 gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
 dispatcher) that pick up issues from forge, implement them, review PRs, plan
-from the vision, and keep the system healthy — all via cron (bare-metal) or a polling loop (Docker) and `claude -p`.
+from the vision, and keep the system healthy — all via a polling loop (`docker/agents/entrypoint.sh`) and `claude -p`.
 The dispatcher executes formula-based operational tasks.
 
 Each agent has a `.profile` repository on Forgejo that stores lessons learned
@@ -23,12 +23,12 @@ See `README.md` for the full architecture and `disinto-factory/SKILL.md` for set
 disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-run.sh — direct cron executor for run-gardener formula
+├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
 │                  best-practices.md — gardener best-practice reference
 │                  pending-actions.json — queued gardener actions
-├── predictor/     predictor-run.sh — daily cron executor for run-predictor formula
-├── planner/       planner-run.sh — direct cron executor for run-planner formula
-├── supervisor/    supervisor-run.sh — formula-driven health monitoring (cron wrapper)
+├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
+├── planner/       planner-run.sh — polling-loop executor for run-planner formula
+├── supervisor/    supervisor-run.sh — formula-driven health monitoring (polling-loop executor)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
@@ -173,7 +173,7 @@ Humans write these. Agents read and enforce them.
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system runs from cron (bare-metal) or a polling loop (Docker), not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
+| AD-001 | Nervous system runs from a polling loop (`docker/agents/entrypoint.sh`), not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
 | AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
