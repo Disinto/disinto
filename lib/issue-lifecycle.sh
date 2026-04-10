@@ -80,6 +80,27 @@ _ilc_in_progress_id()  { _ilc_ensure_label_id "in-progress" "#1d76db"; }
 _ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
 
 # ---------------------------------------------------------------------------
+# Labels that indicate an issue belongs to a non-dev agent workflow.
+# Any issue carrying one of these should NOT be touched by dev-poll's
+# stale-detection or orphan-recovery logic.  See issue #608.
+# ---------------------------------------------------------------------------
+_ILC_NON_DEV_LABELS="bug-report vision in-triage prediction/unreviewed prediction/dismissed action formula"
+
+# issue_is_dev_claimable COMMA_SEPARATED_LABELS
+# Returns 0 if the issue's labels are compatible with dev-agent ownership,
+# 1 if any non-dev label is present (meaning another agent owns this issue).
+issue_is_dev_claimable() {
+  local labels="$1"
+  local lbl
+  for lbl in $_ILC_NON_DEV_LABELS; do
+    if echo ",$labels," | grep -qF ",$lbl,"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # issue_claim — assign issue to bot, add "in-progress" label, remove "backlog".
 # Args: issue_number
 # Returns: 0 on success, 1 if already assigned to another agent
