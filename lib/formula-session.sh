@@ -28,7 +28,10 @@
 #   ops_commit_and_push MESSAGE [FILES]    — commit/push to ops repo
 #   cleanup_stale_crashed_worktrees [HOURS] — thin wrapper around worktree_cleanup_stale
 #
-# Requires: lib/env.sh, lib/worktree.sh sourced first for shared helpers.
+# Requires: lib/env.sh, lib/worktree.sh, lib/agent-sdk.sh sourced first for shared helpers.
+
+# Source agent-sdk for claude_run_with_watchdog watchdog helper
+source "$(dirname "${BASH_SOURCE[0]}")/agent-sdk.sh"
 
 # ── Run guards ───────────────────────────────────────────────────────────
 
@@ -248,7 +251,7 @@ Write the complete, rewritten lessons-learned.md content below. No preamble, no 
 
   # Run claude -p one-shot with same model as agent
   local output
-  output=$(claude -p "$digest_prompt" \
+  output=$(claude_run_with_watchdog claude -p "$digest_prompt" \
     --output-format json \
     --dangerously-skip-permissions \
     ${model:+--model "$model"} \
@@ -442,7 +445,7 @@ Write the journal entry below. Use markdown format."
 
   # Run claude -p one-shot with same model as agent
   local output
-  output=$(claude -p "$reflection_prompt" \
+  output=$(claude_run_with_watchdog claude -p "$reflection_prompt" \
     --output-format json \
     --dangerously-skip-permissions \
     ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
