@@ -34,6 +34,7 @@ check_pipeline_stall = false
 #   roles = ["dev"]
 #   forge_user = "dev-qwen"
 #   compact_pct = 60
+#   poll_interval = 60
 
 # [mirrors]
 # github   = "git@github.com:johba/disinto.git"

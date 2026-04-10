@@ -50,6 +50,7 @@ _generate_local_model_services() {
         API_KEY) api_key="$value" ;;
         FORGE_USER) forge_user="$value" ;;
         COMPACT_PCT) compact_pct="$value" ;;
+        POLL_INTERVAL) poll_interval_val="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
             cat >> "$temp_file" <<EOF
@@ -85,6 +86,7 @@ _generate_local_model_services() {
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
       FORGE_BOT_USER_${service_name^^}: "${forge_user}"
+      POLL_INTERVAL: "${poll_interval_val}"
     depends_on:
       - forgejo
       - woodpecker
@@ -103,7 +105,7 @@ ${vol_name}"
           else
             all_vols="${vol_name}"
           fi
-          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct=""
+          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val=""
           ;;
       esac
     done < <(python3 -c '
@@ -127,6 +129,7 @@ for name, config in agents.items():
     api_key = config.get("api_key", "sk-no-key-required")
     forge_user = config.get("forge_user", f"{name}-bot")
     compact_pct = config.get("compact_pct", 60)
+    poll_interval = config.get("poll_interval", 60)
 
     safe_name = name.lower()
     safe_name = re.sub(r"[^a-z0-9]", "-", safe_name)
@@ -139,6 +142,7 @@ for name, config in agents.items():
     print(f"API_KEY={api_key}")
     print(f"FORGE_USER={forge_user}")
     print(f"COMPACT_PCT={compact_pct}")
+    print(f"POLL_INTERVAL={poll_interval}")
     print("---")
 ' "$toml" 2>/dev/null)
   done
