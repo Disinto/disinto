@@ -14,8 +14,11 @@ id = "publish-skill-20260331"
 formula = "clawhub-publish"
 context = "SKILL.md bumped to 0.3.0"
 
-# Required secrets to inject
+# Required secrets to inject (env vars)
 secrets = ["CLAWHUB_TOKEN"]
+
+# Optional file-based credential mounts
+mounts = ["ssh"]
 
 # Optional
 model = "sonnet"
@@ -39,6 +42,7 @@ blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `mounts` | array of strings | `[]` | Well-known mount aliases for file-based credentials. The dispatcher maps each alias to a read-only volume flag |
 | `model` | string | `sonnet` | Override the default Claude model for this action |
 | `tools` | array of strings | `[]` | MCP tools to enable during execution |
 | `timeout_minutes` | integer | `60` | Maximum execution time in minutes |
@@ -52,6 +56,16 @@ Common secret names:
 - `CLAWHUB_TOKEN` - Token for ClawHub skill publishing
 - `GITHUB_TOKEN` - GitHub API token for repository operations
 - `DEPLOY_KEY` - Infrastructure deployment key
+
+## Mount Aliases
+
+Mount aliases map to read-only volume flags passed to the runner container:
+
+| Alias | Maps to |
+|-------|---------|
+| `ssh` | `-v ${HOME}/.ssh:/home/agent/.ssh:ro` |
+| `gpg` | `-v ${HOME}/.gnupg:/home/agent/.gnupg:ro` |
+| `sops` | `-v ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro` |
 
 ## Validation Rules
 

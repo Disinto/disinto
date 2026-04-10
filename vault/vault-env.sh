@@ -31,6 +31,9 @@ fi
 # Allowed secret names - must match keys in .env.vault.enc
 VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN CODEBERG_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN"
 
+# Allowed mount aliases — well-known file-based credential directories
+VAULT_ALLOWED_MOUNTS="ssh gpg sops"
+
 # Validate a vault action TOML file
 # Usage: validate_vault_action <path-to-toml>
 # Returns: 0 if valid, 1 if invalid
@@ -69,11 +72,16 @@ validate_vault_action() {
   secrets_line=$(echo "$toml_content" | grep -E '^secrets\s*=' | tr -d '\r')
   secrets_array=$(echo "$secrets_line" | sed -E 's/^secrets\s*=\s*\[(.*)\]/\1/' | tr -d '[]"' | tr ',' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
+  # Extract mounts array (optional)
+  local mounts_line mounts_array
+  mounts_line=$(echo "$toml_content" | grep -E '^mounts\s*=' | tr -d '\r') || true
+  mounts_array=$(echo "$mounts_line" | sed -E 's/^mounts\s*=\s*\[(.*)\]/\1/' | tr -d '[]"' | tr ',' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || true
+
   # Check for unknown fields (any top-level key not in allowed list)
   local unknown_fields
   unknown_fields=$(echo "$toml_content" | grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\s*=' | sed -E 's/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=.*/\1/' | sort -u | while read -r field; do
     case "$field" in
-      id|formula|context|secrets|model|tools|timeout_minutes|dispatch_mode|blast_radius) ;;
+      id|formula|context|secrets|mounts|model|tools|timeout_minutes|dispatch_mode|blast_radius) ;;
       *) echo "$field" ;;
     esac
   done)
@@ -122,6 +130,19 @@ validate_vault_action() {
     fi
   done
 
+  # Validate each mount alias is in the allowlist
+  if [ -n "$mounts_array" ]; then
+    for mount in $mounts_array; do
+      mount=$(echo "$mount" | tr -d '"' | xargs)  # trim whitespace and quotes
+      if [ -n "$mount" ]; then
+        if ! echo " $VAULT_ALLOWED_MOUNTS " | grep -q " $mount "; then
+          echo "ERROR: Unknown mount alias (not in allowlist): $mount" >&2
+          return 1
+        fi
+      fi
+    done
+  fi
+
   # Validate optional fields if present
   # model
   if echo "$toml_content" | grep -qE '^model\s*='; then
@@ -158,10 +179,12 @@ validate_vault_action() {
   export VAULT_ACTION_FORMULA="$formula"
   export VAULT_ACTION_CONTEXT="$context"
   export VAULT_ACTION_SECRETS="$secrets_array"
+  export VAULT_ACTION_MOUNTS="${mounts_array:-}"
 
   log "VAULT_ACTION_ID=$VAULT_ACTION_ID"
   log "VAULT_ACTION_FORMULA=$VAULT_ACTION_FORMULA"
   log "VAULT_ACTION_SECRETS=$VAULT_ACTION_SECRETS"
+  log "VAULT_ACTION_MOUNTS=${VAULT_ACTION_MOUNTS:-none}"
 
   return 0
 }
