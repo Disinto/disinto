@@ -139,40 +139,29 @@ bootstrap_ops_repos() {
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
 
-    # Extract project name and ops repo slug from TOML
+    # Extract project name, ops repo slug, repo slug, and primary branch from TOML
     local project_name ops_slug primary_branch
-    project_name=$(python3 -c "
+    local _toml_vals
+    _toml_vals=$(python3 -c "
 import tomllib, sys
 with open(sys.argv[1], 'rb') as f:
     cfg = tomllib.load(f)
 print(cfg.get('name', ''))
-" "$toml" 2>/dev/null || true)
-    [ -n "$project_name" ] || continue
-
-    ops_slug=$(python3 -c "
-import tomllib, sys
-with open(sys.argv[1], 'rb') as f:
-    cfg = tomllib.load(f)
 print(cfg.get('ops_repo', ''))
-" "$toml" 2>/dev/null || true)
-
-    primary_branch=$(python3 -c "
-import tomllib, sys
-with open(sys.argv[1], 'rb') as f:
-    cfg = tomllib.load(f)
+print(cfg.get('repo', ''))
 print(cfg.get('primary_branch', 'main'))
 " "$toml" 2>/dev/null || true)
+
+    project_name=$(sed -n '1p' <<< "$_toml_vals")
+    [ -n "$project_name" ] || continue
+    ops_slug=$(sed -n '2p' <<< "$_toml_vals")
+    local repo_slug
+    repo_slug=$(sed -n '3p' <<< "$_toml_vals")
+    primary_branch=$(sed -n '4p' <<< "$_toml_vals")
     primary_branch="${primary_branch:-main}"
 
     # Fall back to convention if ops_repo not in TOML
     if [ -z "$ops_slug" ]; then
-      local repo_slug
-      repo_slug=$(python3 -c "
-import tomllib, sys
-with open(sys.argv[1], 'rb') as f:
-    cfg = tomllib.load(f)
-print(cfg.get('repo', ''))
-" "$toml" 2>/dev/null || true)
       if [ -n "$repo_slug" ]; then
         ops_slug="${repo_slug}-ops"
       else
