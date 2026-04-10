@@ -113,8 +113,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/local/bin/claude:/usr/local/bin/claude:ro
-      - ${HOME}/.claude.json:/root/.claude.json:ro
-      - ${HOME}/.claude:/root/.claude:ro
+      - ${HOME}/.claude:/home/agent/.claude
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - disinto-logs:/opt/disinto-logs
       - ./docker-compose.yml:/opt/docker-compose.yml:ro
     environment:

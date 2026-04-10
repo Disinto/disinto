@@ -42,6 +42,12 @@ if [ ! -d /opt/disinto/.git ]; then
   git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${_auth_url}/${FORGE_REPO}.git" /opt/disinto
 fi
 
+# Set HOME so that claude OAuth credentials and session.lock are found at the
+# same in-container path as in disinto-agents (/home/agent/.claude), which makes
+# flock cross-serialize across containers on the same host inode.
+export HOME=/home/agent
+mkdir -p "$HOME"
+
 # Start dispatcher in background
 bash /opt/disinto/docker/edge/dispatcher.sh &
 
