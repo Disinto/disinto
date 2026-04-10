@@ -18,7 +18,12 @@ git stash                           # save any local fixes
 git merge devbox/main
 ```
 
-If merge conflicts on `docker-compose.yml`: delete it and regenerate in step 3.
+## Note: docker-compose.yml is generator-only
+
+The `docker-compose.yml` file is now generated exclusively by `bin/disinto init`.
+The tracked file has been removed. If you have a local `docker-compose.yml` from
+before this change, it is now "yours" and won't be touched by future updates.
+To pick up generator improvements, delete the existing file and run `bin/disinto init`.
 
 ## Step 2: Preserve local config
 
@@ -31,9 +36,9 @@ cp projects/harb.toml projects/harb.toml.backup
 cp docker-compose.override.yml docker-compose.override.yml.backup 2>/dev/null
 ```
 
-## Step 3: Regenerate docker-compose.yml (if needed)
+## Step 3: Regenerate docker-compose.yml
 
-Only needed if `generate_compose()` changed or the compose was deleted.
+If `generate_compose()` changed or you need a fresh compose file:
 
 ```bash
 rm docker-compose.yml
@@ -47,41 +52,15 @@ init errors out.
 
 ### Known post-regeneration fixes (until #429 lands)
 
-The generated compose has several issues on LXD deployments:
+Most generator issues have been fixed. The following items no longer apply:
 
-**1. AppArmor (#492)** — Add to ALL services:
-```bash
-sed -i '/^  forgejo:/a\    security_opt:\n      - apparmor=unconfined' docker-compose.yml
-sed -i '/^  agents:/a\    security_opt:\n      - apparmor=unconfined' docker-compose.yml
-# repeat for: agents-llama, edge, woodpecker, woodpecker-agent, staging, reproduce
-```
+- **AppArmor (#492)** — Fixed: all services now have `apparmor=unconfined`
+- **Forgejo image tag (#493)** — Fixed: generator uses `forgejo:11.0`
+- **Agent credential mounts (#495)** — Fixed: `.claude`, `.claude.json`, `.ssh`, and `project-repos` volumes are auto-generated
+- **Repo path (#494)** — Not applicable: `projects/*.toml` files are gitignored and preserved
 
-**2. Forgejo image tag (#493)**:
-```bash
-sed -i 's|forgejo/forgejo:.*|forgejo/forgejo:11.0|' docker-compose.yml
-```
-
-**3. Agent credential mounts (#495)** — Add to agents volumes:
-```yaml
-- ${HOME}/.claude:/home/agent/.claude
-- ${HOME}/.claude.json:/home/agent/.claude.json:ro
-- ${HOME}/.ssh:/home/agent/.ssh:ro
-- project-repos:/home/agent/repos
-```
-
-**4. Repo path (#494)** — Fix `projects/harb.toml` if init overwrote it:
-```bash
-sed -i 's|repo_root.*=.*"/home/johba/harb"|repo_root       = "/home/agent/repos/harb"|' projects/harb.toml
-sed -i 's|ops_repo_root.*=.*"/home/johba/harb-ops"|ops_repo_root   = "/home/agent/repos/harb-ops"|' projects/harb.toml
-```
-
-**5. Add missing volumes** to the `volumes:` section at the bottom:
-```yaml
-volumes:
-  project-repos:
-  project-repos-llama:
-  disinto-logs:
-```
+If you need to add custom volumes, edit the generated `docker-compose.yml` directly.
+It will not be overwritten by future `init` runs (the generator skips existing files).
 
 ## Step 4: Rebuild and restart
 
