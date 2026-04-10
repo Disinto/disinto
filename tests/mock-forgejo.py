@@ -505,8 +505,9 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         require_token(self)
 
         parts = self.path.split("/")
-        if len(parts) >= 6:
-            target_user = parts[4]
+        # /api/v1/admin/users/{username}/repos → parts[5] is the username
+        if len(parts) >= 7:
+            target_user = parts[5]
         else:
             json_response(self, 400, {"message": "username required"})
             return

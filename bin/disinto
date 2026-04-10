@@ -698,36 +698,6 @@ p.write_text(text)
   # This brings pre-#407 deployments up to date with the canonical structure
   migrate_ops_repo "$ops_root" "$branch"
 
-  # In compose mode, sync the migration into running agents containers (#586).
-  # migrate_ops_repo pushes to forgejo, so we pull inside each container
-  # that has the ops repo on a Docker named volume.
-  if is_compose_mode; then
-    local container
-    for container in $(docker compose -f "${FACTORY_ROOT}/docker-compose.yml" \
-        ps --format '{{.Names}}' 2>/dev/null || true); do
-      # Only target agents containers (disinto-agents, disinto-agents-llama, etc.)
-      case "$container" in
-        *agents*) ;;
-        *) continue ;;
-      esac
-      local container_ops="/home/agent/repos/${project_name}-ops"
-      if docker exec "$container" test -d "${container_ops}/.git" 2>/dev/null; then
-        # Ensure remote is configured, then pull
-        echo "Syncing ops repo migration into container: ${container}"
-        docker exec -u agent "$container" bash -c "
-          cd '${container_ops}' || exit 0
-          if ! git remote get-url origin >/dev/null 2>&1; then
-            git remote add origin 'http://forgejo:3000/${ops_slug}.git'
-          fi
-          git fetch origin '${branch}' --quiet 2>/dev/null || true
-          git reset --hard 'origin/${branch}' --quiet 2>/dev/null || true
-        " 2>/dev/null || echo "  (container ${container} not reachable — will sync on next startup)"
-      else
-        echo "  Container ${container}: ops repo not yet cloned — will bootstrap on next startup"
-      fi
-    done
-  fi
-
   # Set up vault branch protection on ops repo (#77)
   # This ensures admin-only merge to main, blocking bots from merging vault PRs
   # Use HUMAN_TOKEN (disinto-admin) or FORGE_TOKEN (dev-bot) for admin operations
