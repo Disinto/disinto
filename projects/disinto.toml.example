@@ -27,6 +27,11 @@ check_pipeline_stall = false
 # for local LLM inference. Each agent gets its own container with isolated
 # credentials and configuration.
 #
+# When enabled, `disinto init` automatically:
+#   1. Creates a Forgejo bot user matching agents.llama.forge_user
+#   2. Generates FORGE_TOKEN_<BOT> and FORGE_PASS_<BOT> (stored in .env.enc)
+#   3. Adds the bot user as a write collaborator on the project repo
+#
 # [agents.llama]
 #   base_url = "http://10.10.10.1:8081"
 #   model = "unsloth/Qwen3.5-35B-A3B"

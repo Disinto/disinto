@@ -43,7 +43,8 @@ services:
       - /usr/local/bin/claude:/usr/local/bin/claude:ro
     environment:
       - FORGE_URL=http://forgejo:3000
-      - FORGE_TOKEN=${FORGE_TOKEN_DEVQWEN:-}
+      - FORGE_TOKEN=${FORGE_TOKEN_LLAMA:-}
+      - FORGE_PASS=${FORGE_PASS_LLAMA:-}
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - FORGE_PREDICTOR_TOKEN=${FORGE_PREDICTOR_TOKEN:-}
       - FORGE_ARCHITECT_TOKEN=${FORGE_ARCHITECT_TOKEN:-}
