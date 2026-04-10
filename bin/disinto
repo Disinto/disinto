@@ -53,6 +53,14 @@ Usage:
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo)
+  disinto agent <subcommand>           Manage agent state (enable/disable)
+
+Agent subcommands:
+  disable <agent>      Remove state file to disable agent
+  enable <agent>       Create state file to enable agent
+  disable --all        Disable all agents
+  enable --all         Enable all agents
+  status               Show which agents are enabled/disabled
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -1374,6 +1382,142 @@ disinto_ci_logs() {
   fi
 }
 
+# ── agent command ─────────────────────────────────────────────────────────────
+# Manage agent state files (enable/disable agents)
+# Usage: disinto agent <subcommand> [agent-name]
+#   disable <agent>      Remove state file to disable agent
+#   enable <agent>       Create state file to enable agent
+#   disable --all        Disable all agents
+#   enable --all         Enable all agents
+#   status               Show enabled/disabled agents
+disinto_agent() {
+  local subcmd="${1:-}"
+  local state_dir="${FACTORY_ROOT}/state"
+  local all_agents=("dev" "reviewer" "gardener" "architect" "planner" "predictor")
+
+  # Ensure state directory exists
+  mkdir -p "$state_dir"
+
+  case "$subcmd" in
+    disable)
+      local agent="${2:-}"
+      if [ -z "$agent" ]; then
+        echo "Error: agent name required" >&2
+        echo "Usage: disinto agent disable <agent-name>" >&2
+        echo "       disinto agent disable --all" >&2
+        exit 1
+      fi
+      if [ "$agent" = "--all" ]; then
+        echo "Disabling all agents..."
+        for a in "${all_agents[@]}"; do
+          local state_file="${state_dir}/.${a}-active"
+          if [ -f "$state_file" ]; then
+            rm -f "$state_file"
+            echo "  Disabled: ${a}"
+          else
+            echo "  Already disabled: ${a}"
+          fi
+        done
+      else
+        # Validate agent name
+        local valid=false
+        for a in "${all_agents[@]}"; do
+          if [ "$a" = "$agent" ]; then
+            valid=true
+            break
+          fi
+        done
+        if [ "$valid" = false ]; then
+          echo "Error: unknown agent '${agent}'" >&2
+          echo "Valid agents: ${all_agents[*]}" >&2
+          exit 1
+        fi
+        local state_file="${state_dir}/.${agent}-active"
+        if [ -f "$state_file" ]; then
+          rm -f "$state_file"
+          echo "Disabled: ${agent}"
+        else
+          echo "Already disabled: ${agent}"
+        fi
+      fi
+      ;;
+    enable)
+      local agent="${2:-}"
+      if [ -z "$agent" ]; then
+        echo "Error: agent name required" >&2
+        echo "Usage: disinto agent enable <agent-name>" >&2
+        echo "       disinto agent enable --all" >&2
+        exit 1
+      fi
+      if [ "$agent" = "--all" ]; then
+        echo "Enabling all agents..."
+        for a in "${all_agents[@]}"; do
+          local state_file="${state_dir}/.${a}-active"
+          if [ -f "$state_file" ]; then
+            echo "  Already enabled: ${a}"
+          else
+            touch "$state_file"
+            echo "  Enabled: ${a}"
+          fi
+        done
+      else
+        # Validate agent name
+        local valid=false
+        for a in "${all_agents[@]}"; do
+          if [ "$a" = "$agent" ]; then
+            valid=true
+            break
+          fi
+        done
+        if [ "$valid" = false ]; then
+          echo "Error: unknown agent '${agent}'" >&2
+          echo "Valid agents: ${all_agents[*]}" >&2
+          exit 1
+        fi
+        local state_file="${state_dir}/.${agent}-active"
+        if [ -f "$state_file" ]; then
+          echo "Already enabled: ${agent}"
+        else
+          touch "$state_file"
+          echo "Enabled: ${agent}"
+        fi
+      fi
+      ;;
+    status)
+      echo "Agent Status"
+      echo "============"
+      printf "%-12s %s\n" "AGENT" "STATUS"
+      printf "%-12s %s\n" "------" "------"
+      for a in "${all_agents[@]}"; do
+        local state_file="${state_dir}/.${a}-active"
+        local status
+        if [ -f "$state_file" ]; then
+          status="enabled"
+        else
+          status="disabled"
+        fi
+        printf "%-12s %s\n" "$a" "$status"
+      done
+      ;;
+    *)
+      cat <<EOF >&2
+Usage: disinto agent <subcommand>
+
+Manage agent state files (enable/disable agents):
+
+  disable <agent>      Remove state file to disable agent
+  enable <agent>       Create state file to enable agent
+  disable --all        Disable all agents
+  enable --all         Enable all agents
+  status               Show which agents are enabled/disabled
+
+Valid agents: dev, reviewer, gardener, architect, planner, predictor
+EOF
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -1388,6 +1532,7 @@ case "${1:-}" in
   ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
+  agent)           shift; disinto_agent "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
