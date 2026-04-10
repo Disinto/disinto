@@ -48,15 +48,23 @@ fi
 export HOME=/home/agent
 mkdir -p "$HOME"
 
+# Ensure log directory exists
+mkdir -p /opt/disinto-logs
+
 # Start dispatcher in background
 bash /opt/disinto/docker/edge/dispatcher.sh &
 
 # Start supervisor loop in background
 PROJECT_TOML="${PROJECT_TOML:-projects/disinto.toml}"
-while true; do
+(while true; do
   bash /opt/disinto/supervisor/supervisor-run.sh "/opt/disinto/${PROJECT_TOML}" 2>&1 | tee -a /opt/disinto-logs/supervisor.log || true
   sleep 1200  # 20 minutes
-done &
+done) &
 
-# Caddy as main process
-exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+# Caddy as main process — run in foreground via wait so background jobs survive
+# (exec replaces the shell, which can orphan backgrounded subshells)
+caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+
+# Exit when any child dies (caddy crash → container restart via docker compose)
+wait -n
+exit 1
