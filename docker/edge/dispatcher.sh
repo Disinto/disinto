@@ -443,8 +443,9 @@ launch_runner() {
     cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
   fi
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${runtime_home}/.claude" ]; then
-    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
   fi
   if [ -f "${runtime_home}/.claude.json" ]; then
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
@@ -626,10 +627,11 @@ dispatch_reproduce() {
     cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
   fi
 
-  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${runtime_home}/.claude" ]; then
-    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
   fi
   if [ -f "${runtime_home}/.claude.json" ]; then
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
@@ -751,10 +753,11 @@ dispatch_triage() {
     cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
   fi
 
-  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${runtime_home}/.claude" ]; then
-    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
   fi
   if [ -f "${runtime_home}/.claude.json" ]; then
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
@@ -952,10 +955,11 @@ dispatch_verify() {
     cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
   fi
 
-  # Mount ~/.claude and ~/.ssh from the runtime user's home if available
+  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${runtime_home}/.claude" ]; then
-    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
   fi
   if [ -f "${runtime_home}/.claude.json" ]; then
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
