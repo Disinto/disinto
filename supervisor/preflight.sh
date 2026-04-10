@@ -214,7 +214,9 @@ echo ""
 
 echo "## Pending Vault Items"
 _found_vault=false
-for _vf in "${OPS_REPO_ROOT}/vault/pending/"*.md; do
+# Use OPS_VAULT_ROOT if set (from supervisor-run.sh degraded mode detection), otherwise default to OPS_REPO_ROOT
+_va_root="${OPS_VAULT_ROOT:-${OPS_REPO_ROOT}/vault/pending}"
+for _vf in "${_va_root}"/*.md; do
   [ -f "$_vf" ] || continue
   _found_vault=true
   _vtitle=$(grep -m1 '^# ' "$_vf" | sed 's/^# //' || basename "$_vf")
