@@ -417,6 +417,7 @@ EOF
     local model="${model_name:-local-model}"
 
     # Write [agents.<name>] section to the project TOML
+    local interval="${poll_interval:-60}"
     echo "  Writing [agents.${section_name}] to ${toml_file}..."
     python3 -c '
 import sys, re, pathlib
@@ -427,7 +428,7 @@ base_url = sys.argv[3]
 model = sys.argv[4]
 agent_name = sys.argv[5]
 role = sys.argv[6]
-compact_pct = sys.argv[7]
+poll_interval = sys.argv[7]
 
 p = pathlib.Path(toml_path)
 text = p.read_text()
@@ -440,7 +441,8 @@ model = "{model}"
 api_key = "sk-no-key-required"
 roles = ["{role}"]
 forge_user = "{agent_name}"
-compact_pct = {compact_pct}
+compact_pct = 60
+poll_interval = {poll_interval}
 """
 
 # Check if section already exists and replace it
@@ -463,7 +465,7 @@ else:
         text = text.rstrip() + "\n" + new_section
 
 p.write_text(text)
-' "$toml_file" "$section_name" "$local_model" "$model" "$agent_name" "$role" "${poll_interval:-60}"
+' "$toml_file" "$section_name" "$local_model" "$model" "$agent_name" "$role" "$interval"
 
     echo "  Agent config written to TOML"
 
