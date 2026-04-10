@@ -117,7 +117,7 @@ services:
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - disinto-logs:/opt/disinto-logs
       - ./docker-compose.yml:/opt/docker-compose.yml:ro
-      - ./projects:/opt/disinto/projects:ro
+      - ./projects:/opt/disinto-projects:ro
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -126,6 +126,7 @@ services:
       - FORGE_URL=http://forgejo:3000
       - DISINTO_CONTAINER=1
       - HOST_PROJECT_DIR=${HOST_PROJECT_DIR:-.}
+      - PROJECTS_DIR=/opt/disinto-projects
     ports:
       - "80:80"
       - "443:443"

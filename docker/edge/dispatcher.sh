@@ -22,6 +22,11 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Source shared environment
 source "${SCRIPT_ROOT}/../lib/env.sh"
 
+# Project TOML location: prefer mounted path, fall back to cloned path
+# Edge container mounts ./projects to /opt/disinto-projects;
+# the shallow clone only has .toml.example files.
+PROJECTS_DIR="${PROJECTS_DIR:-${FACTORY_ROOT:-/opt/disinto}-projects}"
+
 # Load vault secrets after env.sh (env.sh unsets them for agent security)
 # Vault secrets must be available to the dispatcher
 if [ -f "$FACTORY_ROOT/.env.vault.enc" ] && command -v sops &>/dev/null; then
@@ -590,12 +595,12 @@ dispatch_reproduce() {
 
   # Find first project TOML available (same convention as dev-poll)
   local project_toml=""
-  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+  for toml in "$PROJECTS_DIR"/*.toml; do
     [ -f "$toml" ] && { project_toml="$toml"; break; }
   done
 
   if [ -z "$project_toml" ]; then
-    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping reproduce for #${issue_number}"
+    log "WARNING: no project TOML found under ${PROJECTS_DIR}/ — skipping reproduce for #${issue_number}"
     return 0
   fi
 
@@ -714,12 +719,12 @@ dispatch_triage() {
 
   # Find first project TOML available (same convention as dev-poll)
   local project_toml=""
-  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+  for toml in "$PROJECTS_DIR"/*.toml; do
     [ -f "$toml" ] && { project_toml="$toml"; break; }
   done
 
   if [ -z "$project_toml" ]; then
-    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping triage for #${issue_number}"
+    log "WARNING: no project TOML found under ${PROJECTS_DIR}/ — skipping triage for #${issue_number}"
     return 0
   fi
 
@@ -915,12 +920,12 @@ dispatch_verify() {
 
   # Find first project TOML available (same convention as dev-poll)
   local project_toml=""
-  for toml in "${FACTORY_ROOT}"/projects/*.toml; do
+  for toml in "$PROJECTS_DIR"/*.toml; do
     [ -f "$toml" ] && { project_toml="$toml"; break; }
   done
 
   if [ -z "$project_toml" ]; then
-    log "WARNING: no project TOML found under ${FACTORY_ROOT}/projects/ — skipping verification for #${issue_number}"
+    log "WARNING: no project TOML found under ${PROJECTS_DIR}/ — skipping verification for #${issue_number}"
     return 0
   fi
 
