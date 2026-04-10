@@ -169,6 +169,19 @@ description = """
 IMPORTANT: PR creation is handled by bash (architect-run.sh) during the pitch step.
 This step is for documentation only — the actual PR creation happens in research_pitch.
 
+## Approved PR → Initial design questions (issue #570)
+
+When a sprint pitch PR receives an APPROVED review but has no `## Design forks`
+section and no Q1:, Q2: comments yet, the architect enters a new state:
+
+1. detect_approved_pending_questions() identifies this state
+2. A fresh agent session starts with a special prompt
+3. The agent reads the approved pitch, posts initial design questions (Q1:, Q2:, etc.)
+4. The agent adds a `## Design forks` section to the PR body
+5. The PR transitions into the questions phase, where the existing Q&A loop takes over
+
+This ensures approved PRs don't sit indefinitely without design conversation.
+
 Architecture:
 - Bash creates PRs during stateless pitch generation (step 2)
 - Model has no role in PR creation — no Forgejo API access

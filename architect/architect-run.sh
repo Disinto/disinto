@@ -129,7 +129,88 @@ ${PROMPT_FOOTER}
 _PROMPT_EOF_
 }
 
-PROMPT=$(build_architect_prompt)
+# ── Build prompt for specific session mode ───────────────────────────────
+# Args: session_mode (pitch / questions_phase / start_questions)
+# Returns: prompt text via stdout
+build_architect_prompt_for_mode() {
+  local session_mode="$1"
+
+  case "$session_mode" in
+    "start_questions")
+      cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+
+Your role: strategic decomposition of vision issues into development sprints.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments,
+and file sub-issues after design forks are resolved.
+
+## CURRENT STATE: Approved PR awaiting initial design questions
+
+A sprint pitch PR has been approved by the human (via APPROVED review), but the
+design conversation has not yet started. Your task is to:
+
+1. Read the approved sprint pitch from the PR body
+2. Identify the key design decisions that need human input
+3. Post initial design questions (Q1:, Q2:, etc.) as comments on the PR
+4. Add a `## Design forks` section to the PR body documenting the design decisions
+5. File sub-issues for each design fork path if applicable
+
+This is NOT a pitch phase — the pitch is already approved. This is the START
+of the design Q&A phase.
+
+## Project context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+${SCRATCH_CONTEXT}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+      ;;
+    "questions_phase")
+      cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+
+Your role: strategic decomposition of vision issues into development sprints.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments,
+and file sub-issues after design forks are resolved.
+
+## CURRENT STATE: Design Q&A in progress
+
+A sprint pitch PR is in the questions phase:
+- The PR has a `## Design forks` section
+- Initial questions (Q1:, Q2:, etc.) have been posted
+- Humans may have posted answers or follow-up questions
+
+Your task is to:
+1. Read the existing questions and the PR body
+2. Read human answers from PR comments
+3. Parse the answers and determine next steps
+4. Post follow-up questions if needed (Q3:, Q4:, etc.)
+5. If all design forks are resolved, file sub-issues for each path
+6. Update the `## Design forks` section as you progress
+
+## Project context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+${SCRATCH_CONTEXT}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+      ;;
+    "pitch"|*)
+      # Default: pitch new sprints (original behavior)
+      build_architect_prompt
+      ;;
+  esac
+}
 
 # ── Create worktree ──────────────────────────────────────────────────────
 formula_worktree_setup "$WORKTREE"
@@ -181,6 +262,71 @@ detect_questions_phase() {
 
   # PR is in questions phase
   log "Detected PR #${pr_number} in questions-awaiting-answers phase"
+  return 0
+}
+
+# ── Detect if PR is approved and awaiting initial design questions ────────
+# A PR is in this state when:
+# - It's an open architect PR on ops repo
+# - It has an APPROVED review (from human acceptance)
+# - It has NO `## Design forks` section yet
+# - It has NO Q1:, Q2:, etc. comments yet
+# This means the human accepted the pitch and we need to start the design
+# conversation by posting initial questions and adding the Design forks section.
+detect_approved_pending_questions() {
+  local pr_number=""
+  local pr_body=""
+
+  # Get open architect PRs on ops repo
+  local ops_repo="${OPS_REPO_ROOT:-/home/agent/data/ops}"
+  if [ ! -d "${ops_repo}/.git" ]; then
+    return 1
+  fi
+
+  # Use Forgejo API to find open architect PRs
+  local response
+  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
+
+  # Check each open PR for architect markers
+  pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
+
+  if [ -z "$pr_number" ]; then
+    return 1
+  fi
+
+  # Fetch PR body
+  pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
+
+  # Check for APPROVED review
+  local reviews
+  reviews=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
+
+  if ! printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
+    return 1
+  fi
+
+  # Check that PR does NOT have `## Design forks` section yet
+  # (we're in the "start questions" phase, not "process answers" phase)
+  if printf '%s' "$pr_body" | grep -q "## Design forks"; then
+    # Has design forks section — this is either in questions phase or past it
+    return 1
+  fi
+
+  # Check that PR has NO question comments yet (Q1:, Q2:, etc.)
+  local comments
+  comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
+
+  if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
+    # Has question comments — this is either in questions phase or past it
+    return 1
+  fi
+
+  # PR is approved and awaiting initial design questions
+  log "Detected PR #${pr_number} approved and awaiting initial design questions"
   return 0
 }
 
@@ -717,19 +863,32 @@ if [ "${has_responses_to_process:-false}" = "true" ]; then
 
   # Run agent only if there are responses to process
   if [ "$needs_agent" = "true" ]; then
-    # Determine whether to resume session
+    # Determine session handling based on PR state
     RESUME_ARGS=()
-    if detect_questions_phase && [ -f "$SID_FILE" ]; then
-      RESUME_SESSION=$(cat "$SID_FILE")
-      RESUME_ARGS=(--resume "$RESUME_SESSION")
-      log "Resuming session from questions phase run: ${RESUME_SESSION:0:12}..."
-    elif ! detect_questions_phase; then
+    SESSION_MODE="fresh"
+
+    if detect_questions_phase; then
+      # PR is in questions-awaiting-answers phase — resume from that session
+      if [ -f "$SID_FILE" ]; then
+        RESUME_SESSION=$(cat "$SID_FILE")
+        RESUME_ARGS=(--resume "$RESUME_SESSION")
+        SESSION_MODE="questions_phase"
+        log "PR in questions-awaiting-answers phase — resuming session: ${RESUME_SESSION:0:12}..."
+      else
+        log "PR in questions phase but no session file — starting fresh session"
+      fi
+    elif detect_approved_pending_questions; then
+      # PR is approved but awaiting initial design questions — start fresh with special prompt
+      SESSION_MODE="start_questions"
+      log "PR approved and awaiting initial design questions — starting fresh session"
+    else
       log "PR not in questions phase — starting fresh session"
-    elif [ ! -f "$SID_FILE" ]; then
-      log "No session ID found for questions phase — starting fresh session"
     fi
 
-    agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT"
+    # Build prompt with appropriate mode
+    PROMPT_FOR_MODE=$(build_architect_prompt_for_mode "$SESSION_MODE")
+
+    agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT_FOR_MODE"
     log "agent_run complete"
   fi
 fi
