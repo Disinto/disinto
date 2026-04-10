@@ -27,6 +27,7 @@ services:
       - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
+      - DISINTO_CONTAINER=1
       - DISINTO_AGENTS=review,gardener
     depends_on:
       - forgejo
@@ -59,6 +60,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
+      - DISINTO_CONTAINER=1
       - DISINTO_AGENTS=dev
       - PROJECT_TOML=projects/disinto.toml
       - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
