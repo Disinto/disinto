@@ -15,7 +15,7 @@
 # Volumes expected:
 #   /home/agent/data          — agent-data volume (stack-lock files go here)
 #   /home/agent/repos         — project-repos volume
-#   /home/agent/.claude       — host ~/.claude (OAuth credentials)
+#   $CLAUDE_CONFIG_DIR        — shared Claude config dir (OAuth credentials)
 #   /home/agent/.ssh          — host ~/.ssh (read-only)
 #   /usr/local/bin/claude     — host claude CLI binary (read-only)
 #   /var/run/docker.sock      — host docker socket

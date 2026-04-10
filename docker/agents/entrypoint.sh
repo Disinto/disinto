@@ -98,8 +98,8 @@ log "Claude CLI: $(claude --version 2>&1 || true)"
 # auth method is active so operators can debug 401s.
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   log "Auth: ANTHROPIC_API_KEY is set — using API key (no OAuth rotation)"
-elif [ -f /home/agent/.claude/credentials.json ]; then
-  log "Auth: OAuth credentials mounted from host (~/.claude)"
+elif [ -f "${CLAUDE_CONFIG_DIR:-/home/agent/.claude}/credentials.json" ]; then
+  log "Auth: OAuth credentials mounted from host (${CLAUDE_CONFIG_DIR:-~/.claude})"
 else
   log "WARNING: No ANTHROPIC_API_KEY and no OAuth credentials found."
   log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
