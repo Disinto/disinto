@@ -85,7 +85,8 @@ memory_guard 2000
 log "--- Supervisor run start ---"
 
 # ── Resolve forge remote for git operations ─────────────────────────────
-resolve_forge_remote
+# Run git operations from the project checkout, not the baked code dir
+cd "$PROJECT_REPO_ROOT"
 
 # ── Housekeeping: clean up stale crashed worktrees (>24h) ────────────────
 cleanup_stale_crashed_worktrees 24

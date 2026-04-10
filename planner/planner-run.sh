@@ -89,6 +89,9 @@ fi
 log "sha=${CURRENT_SHA:0:8} ops=${CURRENT_OPS_SHA:0:8} unreviewed=${unreviewed_count} vision=${vision_open}"
 
 # ── Resolve forge remote for git operations ─────────────────────────────
+# Run git operations from the project checkout, not the baked code dir
+cd "$PROJECT_REPO_ROOT"
+
 resolve_forge_remote
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
