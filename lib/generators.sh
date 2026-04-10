@@ -116,6 +116,7 @@ _generate_local_model_services() {
       - \${HOME}/.ssh:/home/agent/.ssh:ro
     environment:
       FORGE_URL: http://forgejo:3000
+      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
       # Use llama-specific credentials if available, otherwise fall back to main FORGE_TOKEN
       FORGE_TOKEN: \${FORGE_TOKEN_LLAMA:-\${FORGE_TOKEN:-}}
       FORGE_PASS: \${FORGE_PASS_LLAMA:-\${FORGE_PASS:-}}
@@ -132,6 +133,7 @@ _generate_local_model_services() {
       CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
       CLAUDE_CODE_ENABLE_TELEMETRY: "0"
       DISINTO_CONTAINER: "1"
+      PROJECT_NAME: ${PROJECT_NAME:-project}
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
       WOODPECKER_REPO_ID: "${wp_repo_id}"
@@ -327,6 +329,7 @@ services:
       - woodpecker-data:/woodpecker-data:ro
     environment:
       FORGE_URL: http://forgejo:3000
+      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
       FORGE_TOKEN: ${FORGE_TOKEN:-}
       FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
       FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
@@ -344,6 +347,7 @@ services:
       FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
       FACTORY_REPO: ${FORGE_REPO:-disinto-admin/disinto}
       DISINTO_CONTAINER: "1"
+      PROJECT_NAME: ${PROJECT_NAME:-project}
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
