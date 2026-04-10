@@ -27,7 +27,7 @@
 id = "release-v120"
 formula = "release"
 context = "Release v1.2.0 — includes vault redesign, .profile system, architect agent"
-secrets = []
+secrets = ["GITHUB_TOKEN", "CODEBERG_TOKEN"]
 mounts = ["ssh"]
 
 # Optional: specify a larger model for complex release logic
