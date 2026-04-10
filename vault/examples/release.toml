@@ -12,7 +12,8 @@
 #   id = "release-v120"
 #   formula = "release"
 #   context = "Release v1.2.0"
-#   secrets = ["GITHUB_TOKEN", "CODEBERG_TOKEN"]
+#   secrets = []
+#   mounts = ["ssh"]
 #
 # Steps executed by the release formula:
 #   1. preflight - Validate prerequisites (version, FORGE_TOKEN, Docker)
@@ -26,7 +27,8 @@
 id = "release-v120"
 formula = "release"
 context = "Release v1.2.0 — includes vault redesign, .profile system, architect agent"
-secrets = ["GITHUB_TOKEN", "CODEBERG_TOKEN"]
+secrets = []
+mounts = ["ssh"]
 
 # Optional: specify a larger model for complex release logic
 # model = "sonnet"

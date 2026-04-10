@@ -39,6 +39,7 @@ if validate_vault_action "$TOML_FILE"; then
   echo "  Formula: $VAULT_ACTION_FORMULA"
   echo "  Context: $VAULT_ACTION_CONTEXT"
   echo "  Secrets: $VAULT_ACTION_SECRETS"
+  echo "  Mounts: ${VAULT_ACTION_MOUNTS:-none}"
   exit 0
 else
   echo "INVALID: $TOML_FILE" >&2

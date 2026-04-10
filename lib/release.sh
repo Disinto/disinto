@@ -96,7 +96,8 @@ disinto_release() {
 id = "${id}"
 formula = "release"
 context = "Release ${version}"
-secrets = ["GITHUB_TOKEN", "CODEBERG_TOKEN"]
+secrets = []
+mounts = ["ssh"]
 EOF
 
   echo "Created vault item: ${vault_toml}"

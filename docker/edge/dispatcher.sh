@@ -437,13 +437,40 @@ launch_runner() {
     log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
   fi
 
+  # Add volume mounts for file-based credentials (if any declared)
+  local mounts_array
+  mounts_array="${VAULT_ACTION_MOUNTS:-}"
+  if [ -n "$mounts_array" ]; then
+    local runtime_home="${HOME:-/home/debian}"
+    for mount_alias in $mounts_array; do
+      mount_alias=$(echo "$mount_alias" | xargs)
+      [ -n "$mount_alias" ] || continue
+      case "$mount_alias" in
+        ssh)
+          cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+          ;;
+        gpg)
+          cmd+=(-v "${runtime_home}/.gnupg:/home/agent/.gnupg:ro")
+          ;;
+        sops)
+          cmd+=(-v "${runtime_home}/.config/sops/age:/home/agent/.config/sops/age:ro")
+          ;;
+        *)
+          log "ERROR: Unknown mount alias '${mount_alias}' for action ${action_id}"
+          write_result "$action_id" 1 "Unknown mount alias: ${mount_alias}"
+          return 1
+          ;;
+      esac
+    done
+  fi
+
   # Mount the ops repo so the runner entrypoint can read the action TOML
   cmd+=(-v "${OPS_REPO_ROOT}:/home/agent/ops:ro")
 
   # Service name and action-id argument
   cmd+=(runner "$action_id")
 
-  log "Running: docker compose run --rm runner ${action_id} (secrets: ${secrets_array:-none})"
+  log "Running: docker compose run --rm runner ${action_id} (secrets: ${secrets_array:-none}, mounts: ${mounts_array:-none})"
 
   # Create temp file for logs
   local log_file
