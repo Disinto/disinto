@@ -108,9 +108,9 @@ curl -sf -o /dev/null -w 'HTTP %{http_code}' http://localhost:3000/
 # Claude auth works?
 docker exec -u agent disinto-agents bash -c 'claude -p "say ok" 2>&1'
 
-# Crontab has entries?
-docker exec -u agent disinto-agents crontab -l 2>/dev/null | grep -E 'dev-poll|review'
-# If empty: the projects TOML wasn't found. Check mounts.
+# Agent polling loop running?
+docker exec disinto-agents pgrep -f entrypoint.sh
+# If no process: check that entrypoint.sh is the container CMD and projects TOML is mounted.
 
 # Agent repo cloned?
 docker exec disinto-agents ls /home/agent/repos/harb/.git && echo ok
@@ -168,12 +168,13 @@ Credentials are bind-mounted into containers automatically.
 Multiple containers sharing OAuth can cause frequent expiry — consider
 using `ANTHROPIC_API_KEY` in `.env` instead.
 
-### Crontab empty after restart
-The entrypoint reads `projects/*.toml` to generate cron entries.
+### Agent loop not running after restart
+The entrypoint reads `projects/*.toml` to determine which agents to run.
 If the TOML isn't mounted or the disinto directory is read-only,
-cron entries won't be created. Check:
+the polling loop won't start agents. Check:
 ```bash
 docker exec disinto-agents ls /home/agent/disinto/projects/harb.toml
+docker logs disinto-agents --tail 20  # look for "Entering polling loop"
 ```
 
 ### "fatal: not a git repository"

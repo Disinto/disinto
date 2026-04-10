@@ -506,7 +506,8 @@ copy_issue_templates() {
   done
 }
 
-# Install cron entries for project agents (implementation in lib/ci-setup.sh)
+# Install scheduling entries for project agents (implementation in lib/ci-setup.sh)
+# In compose mode this is a no-op (the agents container uses a polling loop).
 install_cron() {
   _load_ci_context
   _install_cron_impl "$@"
@@ -765,7 +766,7 @@ p.write_text(text)
   # Copy issue templates to target project
   copy_issue_templates "$repo_root"
 
-  # Install cron jobs
+  # Install scheduling (bare-metal: cron; compose: polling loop in entrypoint.sh)
   install_cron "$project_name" "$toml_path" "$auto_yes" "$bare"
 
   # Set up mirror remotes if [mirrors] configured in TOML

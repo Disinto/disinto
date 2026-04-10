@@ -1,6 +1,6 @@
 # formulas/run-supervisor.toml — Supervisor formula (health monitoring + remediation)
 #
-# Executed by supervisor/supervisor-run.sh via cron (every 20 minutes).
+# Executed by supervisor/supervisor-run.sh via polling loop (every 20 minutes).
 # supervisor-run.sh runs claude -p via agent-sdk.sh and injects
 # this formula with pre-collected metrics as context.
 #

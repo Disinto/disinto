@@ -14,7 +14,7 @@
 #   3. Ready "backlog" issues without "priority" (FIFO within tier)
 #
 # Usage:
-#   cron every 10min
+#   Called by: entrypoint.sh polling loop (every 10 min)
 #   dev-poll.sh [projects/harb.toml]   # optional project config
 
 set -euo pipefail

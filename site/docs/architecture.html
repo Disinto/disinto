@@ -370,32 +370,32 @@
         <div class="agent-card">
           <div class="name">dev-agent</div>
           <div class="role">Picks up backlog issues, <strong>implements code</strong> in isolated git worktrees, opens PRs. Runs as a persistent tmux session.</div>
-          <div class="trigger">Cron: every 5 min</div>
+          <div class="trigger">Polling loop: every 5 min</div>
         </div>
         <div class="agent-card">
           <div class="name">review-agent</div>
           <div class="role"><strong>Reviews PRs</strong> against project conventions. Approves clean PRs, requests specific changes on others.</div>
-          <div class="trigger">Cron: every 5 min</div>
+          <div class="trigger">Polling loop: every 5 min</div>
         </div>
         <div class="agent-card">
           <div class="name">planner</div>
           <div class="role">Reads VISION.md and repo state. <strong>Creates issues</strong> for gaps between where the project is and where it should be.</div>
-          <div class="trigger">Cron: weekly</div>
+          <div class="trigger">Polling loop: weekly</div>
         </div>
         <div class="agent-card">
           <div class="name">gardener</div>
           <div class="role"><strong>Grooms the backlog.</strong> Closes duplicates, promotes tech-debt issues, ensures issues are well-structured.</div>
-          <div class="trigger">Cron: every 6 hours</div>
+          <div class="trigger">Polling loop: every 6 hours</div>
         </div>
         <div class="agent-card">
           <div class="name">supervisor</div>
           <div class="role"><strong>Monitors factory health.</strong> Kills stale sessions, manages disk/memory, escalates persistent failures.</div>
-          <div class="trigger">Cron: every 10 min</div>
+          <div class="trigger">Polling loop: every 10 min</div>
         </div>
         <div class="agent-card">
           <div class="name">predictor</div>
           <div class="role">Detects <strong>infrastructure patterns</strong> &mdash; recurring failures, resource trends, emerging issues. Files predictions for triage.</div>
-          <div class="trigger">Cron: daily</div>
+          <div class="trigger">Polling loop: daily</div>
         </div>
         <div class="agent-card">
           <div class="name">vault</div>
@@ -473,7 +473,7 @@
         <div class="label">Tech stack</div>
         <p><strong>Bash scripts</strong> &mdash; every agent is a shell script. No compiled binaries, no runtimes to install.</p>
         <p><strong>Claude CLI</strong> &mdash; AI is invoked via <code>claude -p</code> (one-shot) or <code>claude</code> (persistent tmux sessions).</p>
-        <p><strong>Cron</strong> &mdash; agents are triggered by cron jobs, not a daemon. Pull-based, not push-based.</p>
+        <p><strong>Polling loop</strong> &mdash; agents are triggered by a <code>while true</code> loop in <code>entrypoint.sh</code>. Pull-based, not push-based.</p>
         <p><strong>Forgejo + Woodpecker</strong> &mdash; git hosting and CI. All state lives in git and the issue tracker. No external databases.</p>
         <p><strong>Single VPS</strong> &mdash; runs on an 8 GB server. Flat cost, no scaling surprises.</p>
       </div>
@@ -485,7 +485,7 @@
       <div class="principles">
         <div class="principle">
           <div class="id">AD-001</div>
-          <div class="text"><strong>Nervous system runs from cron, not action issues.</strong> Planner, predictor, gardener, supervisor run directly. They create work, they don't become work.</div>
+          <div class="text"><strong>Nervous system runs from a polling loop, not action issues.</strong> Planner, predictor, gardener, supervisor run directly. They create work, they don't become work.</div>
         </div>
         <div class="principle">
           <div class="id">AD-002</div>
@@ -514,9 +514,9 @@
 disinto/
 ├── <span class="agent-name">dev/</span>           dev-poll.sh, dev-agent.sh, phase-handler.sh
 ├── <span class="agent-name">review/</span>        review-poll.sh, review-pr.sh
-├── <span class="agent-name">gardener/</span>      gardener-run.sh (cron executor)
-├── <span class="agent-name">predictor/</span>     predictor-run.sh (daily cron executor)
-├── <span class="agent-name">planner/</span>       planner-run.sh (weekly cron executor)
+├── <span class="agent-name">gardener/</span>      gardener-run.sh (polling-loop executor)
+├── <span class="agent-name">predictor/</span>     predictor-run.sh (daily polling-loop executor)
+├── <span class="agent-name">planner/</span>       planner-run.sh (weekly polling-loop executor)
 ├── <span class="agent-name">supervisor/</span>    supervisor-run.sh (health monitoring)
 ├── <span class="agent-name">vault/</span>         vault-env.sh (vault redesign in progress, see #73-#77)
 ├── <span class="agent-name">lib/</span>           env.sh, agent-session.sh, ci-helpers.sh

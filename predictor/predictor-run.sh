@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# predictor-run.sh — Cron wrapper: predictor execution via SDK + formula
+# predictor-run.sh — Polling-loop wrapper: predictor execution via SDK + formula
 #
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Flow:
-#   1. Guards: cron lock, memory check
+#   1. Guards: run lock, memory check
 #   2. Load formula (formulas/run-predictor.toml)
 #   3. Context: AGENTS.md, ops:RESOURCES.md, VISION.md, structural graph
 #   4. agent_run(worktree, prompt) → Claude analyzes, writes to ops repo
@@ -14,7 +14,7 @@
 # Usage:
 #   predictor-run.sh [projects/disinto.toml]   # project config (default: disinto)
 #
-# Cron: 0 6 * * * cd /path/to/dark-factory && bash predictor/predictor-run.sh
+# Called by: entrypoint.sh polling loop (daily)
 # =============================================================================
 set -euo pipefail
 
@@ -57,7 +57,7 @@ log() {
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active predictor
-acquire_cron_lock "/tmp/predictor-run.lock"
+acquire_run_lock "/tmp/predictor-run.lock"
 memory_guard 2000
 
 log "--- Predictor run start ---"

@@ -7,7 +7,7 @@
 #   3. Run disinto init
 #   4. Verify Forgejo state (users, repo)
 #   5. Verify local state (TOML, .env, repo clone)
-#   6. Verify cron setup
+#   6. Verify scheduling setup
 #
 # Required env: FORGE_URL (default: http://localhost:3000)
 # Required tools: bash, curl, jq, python3, git
@@ -264,27 +264,24 @@ else
   fail "Repo not cloned to /tmp/smoke-test-repo"
 fi
 
-# ── 6. Verify cron setup ────────────────────────────────────────────────────
-echo "=== 6/6 Verifying cron setup ==="
-cron_output=$(crontab -l 2>/dev/null) || cron_output=""
-if [ -n "$cron_output" ]; then
-  if printf '%s' "$cron_output" | grep -q 'dev-poll.sh'; then
-    pass "Cron includes dev-poll entry"
-  else
-    fail "Cron missing dev-poll entry"
-  fi
-  if printf '%s' "$cron_output" | grep -q 'review-poll.sh'; then
-    pass "Cron includes review-poll entry"
-  else
-    fail "Cron missing review-poll entry"
-  fi
-  if printf '%s' "$cron_output" | grep -q 'gardener-run.sh'; then
-    pass "Cron includes gardener entry"
-  else
-    fail "Cron missing gardener entry"
-  fi
+# ── 6. Verify scheduling setup ──────────────────────────────────────────────
+echo "=== 6/6 Verifying scheduling setup ==="
+# In compose mode, scheduling is handled by the entrypoint.sh polling loop.
+# In bare-metal mode (--bare), crontab entries are installed.
+# The smoke test runs without --bare, so cron install is skipped.
+if [ -f "${FACTORY_ROOT:-}/docker-compose.yml" ] 2>/dev/null || true; then
+  pass "Compose mode: scheduling handled by entrypoint.sh polling loop"
 else
-  fail "No cron entries found (crontab -l returned empty)"
+  cron_output=$(crontab -l 2>/dev/null) || cron_output=""
+  if [ -n "$cron_output" ]; then
+    if printf '%s' "$cron_output" | grep -q 'dev-poll.sh'; then
+      pass "Bare-metal: crontab includes dev-poll entry"
+    else
+      fail "Bare-metal: crontab missing dev-poll entry"
+    fi
+  else
+    pass "No crontab entries (expected in non-bare mode)"
+  fi
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────

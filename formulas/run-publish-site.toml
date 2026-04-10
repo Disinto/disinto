@@ -216,7 +216,7 @@ Check 3 — engagement evidence has been collected at least once:
     jq -r '"  visitors=\(.unique_visitors) pages=\(.page_views) referrals=\(.referred_visitors)"' "$LATEST" 2>/dev/null || true
   else
     echo "NOTE: No engagement reports yet — run: bash site/collect-engagement.sh"
-    echo "The first report will appear after the cron job runs (daily at 23:55 UTC)."
+    echo "The first report will appear after the scheduled collection runs (daily at 23:55 UTC)."
   fi
 
 Summary:

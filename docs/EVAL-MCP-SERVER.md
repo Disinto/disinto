@@ -39,9 +39,11 @@ programmatically instead of parsing SKILL.md instructions.
    (`mcp` package). This adds a build step, runtime dependency, and
    language that no current contributor or agent maintains.
 
-2. **Persistent process.** The factory is cron-driven — no long-running
-   daemons. An MCP server must stay up, be monitored, and be restarted on
-   failure. This contradicts the factory's event-driven architecture (AD-004).
+2. **Persistent process.** The factory already runs a long-lived polling loop
+   (`docker/agents/entrypoint.sh`), so an MCP server is not architecturally
+   alien — the loop could keep an MCP client alive across iterations. However,
+   adding a second long-running process increases the monitoring surface and
+   restart complexity.
 
 3. **Thin wrapper over existing APIs.** Every proposed MCP tool maps directly
    to a forge API call or a skill script invocation. The MCP server would be

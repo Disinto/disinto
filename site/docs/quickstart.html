@@ -353,7 +353,7 @@ cp .env.example .env
         <span class="step-num">2</span>
         Initialize your project
       </div>
-      <p><code>disinto init</code> starts the full stack (Forgejo + Woodpecker CI), creates your repo, clones it locally, generates the project config, adds labels, and installs cron jobs &mdash; all in one command.</p>
+      <p><code>disinto init</code> starts the full stack (Forgejo + Woodpecker CI), creates your repo, clones it locally, generates the project config, adds labels, and configures agent scheduling &mdash; all in one command.</p>
 <pre><code>bin/disinto init user/your-project</code></pre>
       <p>Use <code>disinto up</code> / <code>disinto down</code> later to restart or stop the stack.</p>
       <div class="expected">
@@ -373,7 +373,7 @@ Creating labels on you/your-project...
   + vision
   + action
 Created: /home/you/your-project/VISION.md
-Cron entries installed
+Agent scheduling configured
 Done. Project your-project is ready.</code>
       </div>
       <p>Optional flags:</p>

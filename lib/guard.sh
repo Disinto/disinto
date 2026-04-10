@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# guard.sh — Active-state guard for cron entry points
+# guard.sh — Active-state guard for polling-loop entry points
 #
 # Each agent checks for a state file before running. If the file
 # doesn't exist, the agent logs a skip and exits cleanly.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# formula-session.sh — Shared helpers for formula-driven cron agents
+# formula-session.sh — Shared helpers for formula-driven polling-loop agents
 #
-# Provides reusable utility functions for the common cron-wrapper pattern
+# Provides reusable utility functions for the common polling-loop wrapper pattern
 # used by planner-run.sh, predictor-run.sh, gardener-run.sh, and supervisor-run.sh.
 #
 # Functions:
-#   acquire_cron_lock   LOCK_FILE          — PID lock with stale cleanup
+#   acquire_run_lock    LOCK_FILE          — PID lock with stale cleanup
 #   load_formula        FORMULA_FILE       — sets FORMULA_CONTENT
 #   build_context_block FILE [FILE ...]    — sets CONTEXT_BLOCK
 #   build_prompt_footer [EXTRA_API_LINES]  — sets PROMPT_FOOTER (API ref + env)
@@ -30,24 +30,24 @@
 #
 # Requires: lib/env.sh, lib/worktree.sh sourced first for shared helpers.
 
-# ── Cron guards ──────────────────────────────────────────────────────────
+# ── Run guards ───────────────────────────────────────────────────────────
 
-# acquire_cron_lock LOCK_FILE
+# acquire_run_lock LOCK_FILE
 # Acquires a PID lock. Exits 0 if another instance is running.
 # Sets an EXIT trap to clean up the lock file.
-acquire_cron_lock() {
-  _CRON_LOCK_FILE="$1"
-  if [ -f "$_CRON_LOCK_FILE" ]; then
+acquire_run_lock() {
+  _RUN_LOCK_FILE="$1"
+  if [ -f "$_RUN_LOCK_FILE" ]; then
     local lock_pid
-    lock_pid=$(cat "$_CRON_LOCK_FILE" 2>/dev/null || true)
+    lock_pid=$(cat "$_RUN_LOCK_FILE" 2>/dev/null || true)
     if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
       log "run: already running (PID $lock_pid)"
       exit 0
     fi
-    rm -f "$_CRON_LOCK_FILE"
+    rm -f "$_RUN_LOCK_FILE"
   fi
-  echo $$ > "$_CRON_LOCK_FILE"
-  trap 'rm -f "$_CRON_LOCK_FILE"' EXIT
+  echo $$ > "$_RUN_LOCK_FILE"
+  trap 'rm -f "$_RUN_LOCK_FILE"' EXIT
 }
 
 # ── Agent identity resolution ────────────────────────────────────────────

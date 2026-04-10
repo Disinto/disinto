@@ -1,6 +1,6 @@
 # formulas/run-planner.toml — Strategic planning formula (v4: graph-driven)
 #
-# Executed directly by planner-run.sh via cron — no action issues.
+# Executed directly by planner-run.sh via polling loop — no action issues.
 # planner-run.sh creates a tmux session with Claude (opus) and injects
 # this formula as context, plus the graph report from build-graph.py.
 #

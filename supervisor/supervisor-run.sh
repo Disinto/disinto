@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# supervisor-run.sh — Cron wrapper: supervisor execution via SDK + formula
+# supervisor-run.sh — Polling-loop wrapper: supervisor execution via SDK + formula
 #
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Flow:
-#   1. Guards: cron lock, memory check
+#   1. Guards: run lock, memory check
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Load formula (formulas/run-supervisor.toml)
@@ -16,7 +16,7 @@
 # Usage:
 #   supervisor-run.sh [projects/disinto.toml]   # project config (default: disinto)
 #
-# Cron: */20 * * * * cd /path/to/dark-factory && bash supervisor/supervisor-run.sh
+# Called by: entrypoint.sh polling loop (every 20 minutes)
 # =============================================================================
 set -euo pipefail
 
@@ -79,7 +79,7 @@ log() {
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active supervisor
-acquire_cron_lock "/tmp/supervisor-run.lock"
+acquire_run_lock "/tmp/supervisor-run.lock"
 memory_guard 2000
 
 log "--- Supervisor run start ---"
