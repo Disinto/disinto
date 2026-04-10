@@ -489,7 +489,7 @@
         </div>
         <div class="principle">
           <div class="id">AD-002</div>
-          <div class="text"><strong>Single-threaded pipeline per project.</strong> One dev issue at a time. No new work while a PR awaits CI or review.</div>
+          <div class="text"><strong>Concurrency is bounded per LLM backend, not per project.</strong> One concurrent Claude session per OAuth credential pool; one concurrent session per llama-server instance. Containers with disjoint backends may run in parallel.</div>
         </div>
         <div class="principle">
           <div class="id">AD-003</div>

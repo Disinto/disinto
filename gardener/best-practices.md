@@ -51,3 +51,4 @@ Compact, decision-ready. Human should be able to reply "1a 2c 3b" and be done.
 - Dev-agent doesn't understand the product — clear acceptance criteria save 2-3 CI cycles
 - Feature issues MUST list affected e2e test files
 - Issue templates from ISSUE-TEMPLATES.md propagate via triage gate
+- **AD-002 is a runtime invariant; nothing for the gardener to check at issue-groom time.** Concurrency is enforced by `flock session.lock` within each container and by `issue_claim` for per-issue work. A violation manifests as a 401 or VRAM OOM in agent logs, not as a malformed issue.
