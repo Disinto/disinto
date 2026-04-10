@@ -23,6 +23,6 @@ git worktree prune 2>/dev/null || true
 - Check for unmet dependencies (issues with `Depends on` refs)
 
 ### Prevention
-- Single-threaded pipeline per project (AD-002)
+- Concurrency bounded per LLM backend (AD-002)
 - Clear lock files in EXIT traps
 - Use phase files to track agent state

@@ -150,7 +150,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 
 ### Dependency conventions
 
-Issues declare dependencies via `## Dependencies` / `## Depends on` sections listing `#N` refs. `lib/parse-deps.sh` extracts these; dev-poll only picks issues whose deps are all closed. See AD-002 for single-threaded pipeline rules.
+Issues declare dependencies via `## Dependencies` / `## Depends on` sections listing `#N` refs. `lib/parse-deps.sh` extracts these; dev-poll only picks issues whose deps are all closed. See AD-002 for concurrency bounds per LLM backend.
 
 ---
 
@@ -174,7 +174,7 @@ Humans write these. Agents read and enforce them.
 | ID | Decision | Rationale |
 |---|---|---|
 | AD-001 | Nervous system runs from a polling loop (`docker/agents/entrypoint.sh`), not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
-| AD-002 | Single-threaded pipeline per project. | One dev issue at a time. No new work while a PR awaits CI or review. Prevents merge conflicts and keeps context clear. |
+| AD-002 | **Concurrency is bounded per LLM backend, not per project.** One concurrent Claude session per OAuth credential pool; one concurrent session per llama-server instance. Containers with disjoint backends may run in parallel. | The single-thread invariant is about *backends*, not pipelines. **(a) Anthropic OAuth credentials race on token refresh** — two sessions sharing one mounted `~/.claude` will trip over each other during rotation and 401. All agents inside an OAuth-mounted container serialize on `flock session.lock`. **(b) llama-server has finite VRAM and one KV cache** — parallel inference thrashes the cache and risks OOM. All llama-backed agents serialize on the same lock. **(c) Disjoint backends are free to parallelize.** Today `disinto-agents` (Anthropic OAuth, runs `review,gardener`) runs concurrently with `disinto-agents-llama` (llama, runs `dev`) on the same project — they share neither OAuth state nor llama VRAM. **(d) Per-project work-conflict safety** (no duplicate dev work, no merge conflicts on the same branch) is enforced by `issue_claim` (assignee + `in-progress` label) and per-issue worktrees — that's a separate guard that does NOT depend on this AD. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
 | AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc`, vault secrets in `.env.vault.enc` (SOPS-encrypted when available; plaintext `.env`/`.env.vault` fallback supported). Referenced as `$VAR_NAME`. Runner gets only vault secrets; agents get only agent secrets. |
@@ -184,6 +184,7 @@ Humans write these. Agents read and enforce them.
 - **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.
 - **Planner** plans within the architecture; does not create issues that violate ADs.
 - **Dev-agent** reads AGENTS.md before implementing; refuses work that violates ADs.
+- **AD-002 is a runtime invariant; nothing for the gardener to check at issue-groom time.** Concurrency is enforced by `flock session.lock` within each container and by `issue_claim` for per-issue work. A violation manifests as a 401 or VRAM OOM in agent logs, not as a malformed issue.
 
 ---
 
