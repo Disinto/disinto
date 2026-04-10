@@ -132,6 +132,13 @@ export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 unset GITHUB_TOKEN 2>/dev/null || true
 unset CLAWHUB_TOKEN 2>/dev/null || true
 
+# Shared Claude config directory for cross-container OAuth lock coherence (#641).
+# All containers and the host resolve to the same CLAUDE_CONFIG_DIR on a shared
+# bind-mounted filesystem, so proper-lockfile's atomic mkdir works across them.
+: "${CLAUDE_SHARED_DIR:=/var/lib/disinto/claude-shared}"
+: "${CLAUDE_CONFIG_DIR:=${CLAUDE_SHARED_DIR}/config}"
+export CLAUDE_SHARED_DIR CLAUDE_CONFIG_DIR
+
 # Disable Claude Code auto-updater, telemetry, error reporting in factory sessions.
 # Factory processes must never phone home or auto-update mid-session (#725).
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1

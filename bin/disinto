@@ -32,6 +32,7 @@ source "${FACTORY_ROOT}/lib/generators.sh"
 source "${FACTORY_ROOT}/lib/forge-push.sh"
 source "${FACTORY_ROOT}/lib/ci-setup.sh"
 source "${FACTORY_ROOT}/lib/release.sh"
+source "${FACTORY_ROOT}/lib/claude-config.sh"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -948,6 +949,18 @@ p.write_text(text)
     fi
   fi
 
+  # ── Claude shared config directory (#641) ───────────────────────────
+  # Create CLAUDE_CONFIG_DIR for cross-container OAuth lock coherence.
+  # proper-lockfile uses atomic mkdir(${CLAUDE_CONFIG_DIR}.lock), so all
+  # containers sharing this path get native cross-container locking.
+  if ! setup_claude_config_dir "$auto_yes"; then
+    exit 1
+  fi
+
+  # Write CLAUDE_SHARED_DIR and CLAUDE_CONFIG_DIR to .env (idempotent)
+  _env_set_idempotent "CLAUDE_SHARED_DIR" "$CLAUDE_SHARED_DIR" "$env_file"
+  _env_set_idempotent "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG_DIR" "$env_file"
+
   # Activate default agents (zero-cost when idle — they only invoke Claude
   # when there is actual work, so an empty project burns no LLM tokens)
   mkdir -p "${FACTORY_ROOT}/state"
@@ -976,9 +989,16 @@ p.write_text(text)
   echo "── Claude authentication ──────────────────────────────"
   echo "  OAuth (shared across containers):"
   echo "    Run 'claude auth login' on the host once."
-  echo "    Credentials in ~/.claude are mounted into containers."
+  echo "    Credentials in ${CLAUDE_CONFIG_DIR} are shared across containers."
   echo "  API key (alternative — metered billing, no rotation issues):"
   echo "    Set ANTHROPIC_API_KEY in .env to skip OAuth entirely."
+  echo ""
+  echo "── Claude config directory ────────────────────────────"
+  echo "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}"
+  echo "  Add this to your shell rc (~/.bashrc or ~/.zshrc):"
+  echo "    export CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}"
+  echo "  This ensures interactive Claude Code sessions on this host"
+  echo "  share the same OAuth lock and token store as the factory."
   echo ""
   echo "  Run 'disinto status' to verify."
 }
