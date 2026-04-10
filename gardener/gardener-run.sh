@@ -67,6 +67,12 @@ memory_guard 2000
 
 log "--- Gardener run start ---"
 
+# ── Resolve forge remote for git operations ─────────────────────────────
+# Run git operations from the project checkout, not the baked code dir
+cd "$PROJECT_REPO_ROOT"
+
+resolve_forge_remote
+
 # ── Precondition checks: skip if nothing to do ────────────────────────────
 # Check for new commits since last run
 CURRENT_SHA=$(git -C "$FACTORY_ROOT" rev-parse HEAD 2>/dev/null || echo "")
@@ -84,9 +90,6 @@ if [ "$CURRENT_SHA" = "$LAST_SHA" ] && [ "${backlog_count:-0}" -eq 0 ] && [ "${t
 fi
 
 log "current sha: ${CURRENT_SHA:0:8}..., backlog issues: ${backlog_count}, tech-debt issues: ${tech_debt_count}"
-
-# ── Resolve forge remote for git operations ─────────────────────────────
-resolve_forge_remote
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
 resolve_agent_identity || true

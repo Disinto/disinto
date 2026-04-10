@@ -78,6 +78,9 @@ memory_guard 2000
 log "--- Architect run start ---"
 
 # ── Resolve forge remote for git operations ─────────────────────────────
+# Run git operations from the project checkout, not the baked code dir
+cd "$PROJECT_REPO_ROOT"
+
 resolve_forge_remote
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
