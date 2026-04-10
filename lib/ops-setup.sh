@@ -54,30 +54,57 @@ setup_ops_repo() {
   # If not found, try to create it in the configured namespace
   if [ -z "$actual_ops_slug" ]; then
     echo "Creating ops repo in namespace: ${org_name}"
-    # Create org if it doesn't exist
-    curl -sf -X POST \
-      -H "Authorization: token ${admin_token}" \
-      -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/orgs" \
-      -d "{\"username\":\"${org_name}\",\"visibility\":\"public\"}" >/dev/null 2>&1 || true
+
+    # Determine if target namespace is a user or an org
+    local ns_type=""
+    if curl -sf -H "Authorization: token ${admin_token}" \
+      "${forge_url}/api/v1/users/${org_name}" >/dev/null 2>&1; then
+      # User endpoint exists - check if it's an org
+      if curl -sf -H "Authorization: token ${admin_token}" \
+        "${forge_url}/api/v1/users/${org_name}" | grep -q '"is_org":true'; then
+        ns_type="org"
+      else
+        ns_type="user"
+      fi
+    elif curl -sf -H "Authorization: token ${admin_token}" \
+      "${forge_url}/api/v1/orgs/${org_name}" >/dev/null 2>&1; then
+      # Org endpoint exists
+      ns_type="org"
+    fi
+
+    local create_endpoint="" via_msg=""
+    if [ "$ns_type" = "org" ]; then
+      # Org namespace — use org API
+      create_endpoint="/api/v1/orgs/${org_name}/repos"
+      # Create org if it doesn't exist
+      curl -sf -X POST \
+        -H "Authorization: token ${admin_token}" \
+        -H "Content-Type: application/json" \
+        "${forge_url}/api/v1/orgs" \
+        -d "{\"username\":\"${org_name}\",\"visibility\":\"public\"}" >/dev/null 2>&1 || true
+    else
+      # User namespace — use admin API (requires admin token)
+      create_endpoint="/api/v1/admin/users/${org_name}/repos"
+      via_msg=" (via admin API)"
+    fi
+
     if curl -sf -X POST \
       -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/orgs/${org_name}/repos" \
+      "${forge_url}${create_endpoint}" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
       actual_ops_slug="${org_name}/${ops_name}"
-      echo "Ops repo: ${actual_ops_slug} created on Forgejo"
+      echo "Ops repo: ${actual_ops_slug} created on Forgejo${via_msg}"
     else
-      # Fallback: use admin API to create repo under the target namespace
       http_code=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Authorization: token ${admin_token}" \
         -H "Content-Type: application/json" \
-        "${forge_url}/api/v1/admin/users/${org_name}/repos" \
+        "${forge_url}${create_endpoint}" \
         -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" 2>/dev/null || echo "0")
       if [ "$http_code" = "201" ]; then
         actual_ops_slug="${org_name}/${ops_name}"
-        echo "Ops repo: ${actual_ops_slug} created on Forgejo (via admin API)"
+        echo "Ops repo: ${actual_ops_slug} created on Forgejo${via_msg}"
       else
         echo "Error: failed to create ops repo '${org_name}/${ops_name}' (HTTP ${http_code})" >&2
         return 1
