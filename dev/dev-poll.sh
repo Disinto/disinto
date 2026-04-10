@@ -426,6 +426,7 @@ ORPHANS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
 
 ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
 BLOCKED_BY_INPROGRESS=false
+OTHER_AGENT_INPROGRESS=false
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
 
@@ -478,13 +479,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       fi
     else
       log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
-      BLOCKED_BY_INPROGRESS=true
-      # Issue assigned to another agent — don't block, fall through to backlog
+      OTHER_AGENT_INPROGRESS=true
+      # Issue assigned to another agent — skip stale checks but fall through to backlog
     fi
   fi
 
-  # Only proceed with in-progress checks if not blocked by another agent
-  if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
+  # Only proceed with in-progress checks if not blocked by this agent's own work
+  if [ "$BLOCKED_BY_INPROGRESS" = false ] && [ "$OTHER_AGENT_INPROGRESS" = false ]; then
     # Check for dev-agent lock file (agent may be running in another container)
     LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
     if [ -f "$LOCK_FILE" ]; then
