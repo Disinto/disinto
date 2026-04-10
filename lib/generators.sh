@@ -66,6 +66,9 @@ _generate_local_model_services() {
     volumes:
       - agents-${service_name}-data:/home/agent/data
       - project-repos:/home/agent/repos
+      - \${HOME}/.claude:/home/agent/.claude
+      - \${HOME}/.claude.json:/home/agent/.claude.json:ro
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       - ${HOME}/.ssh:/home/agent/.ssh:ro
     environment:
       FORGE_URL: http://forgejo:3000
