@@ -401,10 +401,16 @@ services:
       - OPS_REPO_ROOT=/opt/disinto-ops
       - PROJECT_REPO_ROOT=/opt/disinto
       - PRIMARY_BRANCH=main
+      # Reverse tunnel (optional — set by `disinto edge register`, see #622)
+      - EDGE_TUNNEL_HOST=${EDGE_TUNNEL_HOST:-}
+      - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
+      - EDGE_TUNNEL_PORT=${EDGE_TUNNEL_PORT:-}
+      - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
     depends_on:
       - forgejo
       - woodpecker
