@@ -18,8 +18,8 @@ set -euo pipefail
 
 DISINTO_DIR="/home/agent/disinto"
 LOGFILE="/home/agent/data/agent-entrypoint.log"
-mkdir -p /home/agent/data
-chown agent:agent /home/agent/data
+mkdir -p /home/agent/data/logs
+chown -R agent:agent /home/agent/data
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
