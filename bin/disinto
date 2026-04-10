@@ -540,6 +540,86 @@ activate_woodpecker_repo() {
   _activate_woodpecker_repo_impl "$@"
 }
 
+# ── Password prompt helper ────────────────────────────────────────────────────
+# Prompts for FORGE_ADMIN_PASS with confirmation.
+# Returns 0 on success, 1 on failure.
+# Usage: prompt_admin_password [<env_file>]
+prompt_admin_password() {
+  local env_file="${1:-${FACTORY_ROOT}/.env}"
+
+  # Check if password already exists in .env (resumable init)
+  if grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
+    echo "Forge:   FORGE_ADMIN_PASS already set (resuming from .env)"
+    return 0
+  fi
+
+  # Non-interactive mode without pre-exported password
+  if [ "$auto_yes" = true ]; then
+    if [ -z "${FORGE_ADMIN_PASS:-}" ]; then
+      echo "Error: FORGE_ADMIN_PASS environment variable is required in non-interactive mode" >&2
+      echo "  Export the password before running: export FORGE_ADMIN_PASS='<your-password>'" >&2
+      exit 1
+    fi
+    # Write the pre-exported password to .env
+    if grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
+      sed -i "s|^FORGE_ADMIN_PASS=.*|FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS}|" "$env_file"
+    else
+      printf 'FORGE_ADMIN_PASS=%s\n' "$FORGE_ADMIN_PASS" >> "$env_file"
+    fi
+    echo "Forge:   FORGE_ADMIN_PASS set from environment"
+    return 0
+  fi
+
+  # Interactive mode: prompt for password with confirmation
+  if [ -t 0 ]; then
+    local pass1 pass2 min_length=8 attempts=0 max_attempts=3
+    echo "Forge:   Setting disinto-admin password"
+    echo "  Password must be at least ${min_length} characters"
+    echo ""
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+      attempts=$((attempts + 1))
+
+      # First attempt (or retry): read password
+      printf "Enter password [%d/%d]: " "$attempts" "$max_attempts"
+      IFS= read -rs -p '' pass1
+      echo ""
+
+      # Read confirmation
+      printf "Confirm password: "
+      IFS= read -rs -p '' pass2
+      echo ""
+
+      # Validate length
+      if [ "${#pass1}" -lt "$min_length" ]; then
+        echo "Error: password must be at least ${min_length} characters (got ${#pass1})" >&2
+        continue
+      fi
+
+      # Validate match
+      if [ "$pass1" != "$pass2" ]; then
+        echo "Error: passwords do not match" >&2
+        continue
+      fi
+
+      # Success: write to .env
+      printf 'FORGE_ADMIN_PASS=%s\n' "$pass1" >> "$env_file"
+      echo "Forge:   FORGE_ADMIN_PASS set (saved to .env)"
+      return 0
+    done
+
+    echo "Error: exceeded ${max_attempts} attempts — password not set" >&2
+    return 1
+  fi
+
+  # Non-interactive, no TTY, no pre-exported password
+  echo "Error: FORGE_ADMIN_PASS is not set and cannot prompt (no TTY)" >&2
+  echo "  Either:" >&2
+  echo "    1) Export the password before running: export FORGE_ADMIN_PASS='<your-password>'" >&2
+  echo "    2) Run interactively (attach a TTY) to be prompted" >&2
+  exit 1
+}
+
 # ── init command ─────────────────────────────────────────────────────────────
 
 disinto_init() {
@@ -651,6 +731,10 @@ p.write_text(text)
     # env_file reference before setup_forge generates the real tokens (#769)
     touch "${FACTORY_ROOT}/.env"
   fi
+
+  # Prompt for FORGE_ADMIN_PASS before setup_forge
+  # This ensures the password is set before Forgejo user creation
+  prompt_admin_password "${FACTORY_ROOT}/.env"
 
   # Set up local Forgejo instance (provision if needed, create users/tokens/repo)
   if [ "$rotate_tokens" = true ]; then
