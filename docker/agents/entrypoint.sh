@@ -16,7 +16,9 @@ set -euo pipefail
 #   - planner: every 12 hours (144 iterations * 5 min)
 #   - predictor: every 24 hours (288 iterations * 5 min)
 
-DISINTO_DIR="/home/agent/disinto"
+DISINTO_BAKED="/home/agent/disinto"
+DISINTO_LIVE="/home/agent/repos/_factory"
+DISINTO_DIR="$DISINTO_BAKED"  # start with baked copy; switched to live checkout after bootstrap
 LOGFILE="/home/agent/data/agent-entrypoint.log"
 
 # Create all expected log subdirectories and set ownership as root before dropping to agent.
@@ -208,12 +210,76 @@ print(cfg.get('primary_branch', 'main'))
   done
 }
 
+# Bootstrap the factory (disinto) repo from Forgejo into the project-repos
+# volume so the entrypoint runs from a live git checkout that receives
+# updates via `git pull`, not the stale baked copy from `COPY .` (#593).
+bootstrap_factory_repo() {
+  local repo="${FACTORY_REPO:-}"
+  if [ -z "$repo" ]; then
+    log "Factory bootstrap: FACTORY_REPO not set — running from baked copy"
+    return 0
+  fi
+
+  local remote_url="${FORGE_URL}/${repo}.git"
+  local primary_branch="${PRIMARY_BRANCH:-main}"
+
+  if [ ! -d "${DISINTO_LIVE}/.git" ]; then
+    log "Factory bootstrap: cloning ${repo} -> ${DISINTO_LIVE}"
+    if gosu agent git clone --quiet --branch "$primary_branch" "$remote_url" "$DISINTO_LIVE" 2>&1; then
+      log "Factory bootstrap: cloned successfully"
+    else
+      log "Factory bootstrap: clone failed — running from baked copy"
+      return 0
+    fi
+  else
+    log "Factory bootstrap: pulling latest ${repo}"
+    gosu agent bash -c "
+      cd '${DISINTO_LIVE}' && \
+      git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+      git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+    " || log "Factory bootstrap: pull failed — using existing checkout"
+  fi
+
+  # Copy project TOMLs from baked dir — they are gitignored AND docker-ignored,
+  # so neither the image nor the clone normally contains them.  If the baked
+  # copy has any (e.g. operator manually placed them), propagate them.
+  if compgen -G "${DISINTO_BAKED}/projects/*.toml" >/dev/null 2>&1; then
+    mkdir -p "${DISINTO_LIVE}/projects"
+    cp "${DISINTO_BAKED}"/projects/*.toml "${DISINTO_LIVE}/projects/"
+    chown -R agent:agent "${DISINTO_LIVE}/projects"
+    log "Factory bootstrap: copied project TOMLs to live checkout"
+  fi
+
+  # Verify the live checkout has the expected structure
+  if [ -f "${DISINTO_LIVE}/lib/env.sh" ]; then
+    DISINTO_DIR="$DISINTO_LIVE"
+    log "Factory bootstrap: DISINTO_DIR switched to live checkout at ${DISINTO_LIVE}"
+  else
+    log "Factory bootstrap: live checkout missing expected files — falling back to baked copy"
+  fi
+}
+
+# Pull latest factory code at the start of each poll iteration (#593).
+# Runs as the agent user; failures are non-fatal (stale code still works).
+pull_factory_repo() {
+  [ "$DISINTO_DIR" = "$DISINTO_LIVE" ] || return 0
+  local primary_branch="${PRIMARY_BRANCH:-main}"
+  gosu agent bash -c "
+    cd '${DISINTO_LIVE}' && \
+    git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+    git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+  " || log "Factory pull failed — continuing with current checkout"
+}
+
 # Configure git and tea once at startup (as root, then drop to agent)
 configure_git_creds
 configure_tea_login
 
 # Bootstrap ops repos from forgejo into container volumes (#586)
 bootstrap_ops_repos
+
+# Bootstrap factory repo — switch DISINTO_DIR to live checkout (#593)
+bootstrap_factory_repo
 
 # Initialize state directory for check_active guards
 init_state_dir
@@ -233,6 +299,9 @@ iteration=0
 while true; do
   iteration=$((iteration + 1))
   now=$(date +%s)
+
+  # Pull latest factory code so poll scripts stay current (#593)
+  pull_factory_repo
 
   # Stale .sid cleanup — needed for agents that don't support --resume
   # Run this as the agent user
