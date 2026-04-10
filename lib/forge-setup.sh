@@ -138,7 +138,7 @@ setup_forge() {
     admin_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
   fi
 
-  if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
+  if ! curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
     echo "Creating admin user: ${admin_user}"
     local create_output
     if ! create_output=$(_forgejo_exec forgejo admin user create \
@@ -159,7 +159,7 @@ setup_forge() {
       --must-change-password=false
 
     # Verify admin user was actually created
-    if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
+    if ! curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/users/${admin_user}" >/dev/null 2>&1; then
       echo "Error: admin user '${admin_user}' not found after creation" >&2
       exit 1
     fi
@@ -190,7 +190,7 @@ setup_forge() {
   local human_pass
   human_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
 
-  if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+  if ! curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
     echo "Creating human user: ${human_user}"
     local create_output
     if ! create_output=$(_forgejo_exec forgejo admin user create \
@@ -211,7 +211,7 @@ setup_forge() {
       --must-change-password=false
 
     # Verify human user was actually created
-    if ! curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+    if ! curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
       echo "Error: human user '${human_user}' not found after creation" >&2
       exit 1
     fi
@@ -248,7 +248,7 @@ setup_forge() {
 
   # Get or create human user token
   local human_token
-  if curl -sf --max-time 5 "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
+  if curl -sf --max-time 5 -H "Authorization: token ${admin_token}" "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
     # Delete existing human token if present (token sha1 is only returned at creation time)
     local existing_human_token_id
     existing_human_token_id=$(curl -sf \
@@ -555,7 +555,7 @@ setup_forge() {
 
   for bot_user in "${bot_users[@]}"; do
     # Check if .profile repo already exists
-    if curl -sf --max-time 5 "${forge_url}/api/v1/repos/${bot_user}/.profile" >/dev/null 2>&1; then
+    if curl -sf --max-time 5 -H "Authorization: token ${admin_token}" "${forge_url}/api/v1/repos/${bot_user}/.profile" >/dev/null 2>&1; then
       echo "  ${bot_user}/.profile already exists"
       continue
     fi
