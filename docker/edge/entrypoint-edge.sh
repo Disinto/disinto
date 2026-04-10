@@ -106,6 +106,37 @@ fi
 # Ensure log directory exists
 mkdir -p /opt/disinto-logs
 
+# ── Reverse tunnel (optional) ──────────────────────────────────────────
+# When EDGE_TUNNEL_HOST is set, open a single reverse-SSH forward so the
+# DO edge box can reach this container's Caddy on the project's assigned port.
+# Guarded: if EDGE_TUNNEL_HOST is empty/unset the block is skipped entirely,
+# keeping local-only dev working without errors.
+if [ -n "${EDGE_TUNNEL_HOST:-}" ]; then
+  _tunnel_key="/run/secrets/tunnel_key"
+  if [ ! -f "$_tunnel_key" ]; then
+    echo "WARN: EDGE_TUNNEL_HOST is set but ${_tunnel_key} is missing — skipping tunnel" >&2
+  else
+    # Ensure correct permissions (bind-mount may arrive as 644)
+    chmod 0400 "$_tunnel_key" 2>/dev/null || true
+
+    : "${EDGE_TUNNEL_USER:=tunnel}"
+    : "${EDGE_TUNNEL_PORT:?EDGE_TUNNEL_PORT must be set when EDGE_TUNNEL_HOST is set}"
+
+    export AUTOSSH_GATETIME=0   # don't exit if the first attempt fails quickly
+
+    autossh -M 0 -N -f \
+      -o StrictHostKeyChecking=accept-new \
+      -o ServerAliveInterval=30 \
+      -o ServerAliveCountMax=3 \
+      -o ExitOnForwardFailure=yes \
+      -i "$_tunnel_key" \
+      -R "127.0.0.1:${EDGE_TUNNEL_PORT}:localhost:80" \
+      "${EDGE_TUNNEL_USER}@${EDGE_TUNNEL_HOST}"
+
+    echo "edge: reverse tunnel → ${EDGE_TUNNEL_HOST}:${EDGE_TUNNEL_PORT}" >&2
+  fi
+fi
+
 # Start dispatcher in background
 bash /opt/disinto/docker/edge/dispatcher.sh &
 
