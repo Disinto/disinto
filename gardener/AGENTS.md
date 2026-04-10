@@ -7,18 +7,18 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener-run.sh` runs 4x/day via cron. Sources `lib/guard.sh` and
-calls `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active`
-is absent. **Early-exit optimization**: if no issues, PRs, or repo files have
-changed since the last run (checked via Forgejo API and `git diff`), the model
-is not invoked — the run exits immediately (no tmux session, no tokens consumed).
-Otherwise, creates a tmux session with `claude --model sonnet`, injects
-`formulas/run-gardener.toml` as context, monitors the phase file, and cleans up
-on completion or timeout (2h max session). No action issues — the gardener runs
-directly from cron like the planner, predictor, and supervisor.
+**Trigger**: `gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
+`check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
+**Early-exit optimization**: if no issues, PRs, or repo files have changed since the last
+run (checked via Forgejo API and `git diff`), the model is not invoked — the run exits
+immediately (no tmux session, no tokens consumed). Otherwise, creates a tmux session with
+`claude --model sonnet`, injects `formulas/run-gardener.toml` as context, monitors the
+phase file, and cleans up on completion or timeout (2h max session). No action issues —
+the gardener runs as part of the polling loop alongside the planner, predictor, and supervisor.
 
 **Key files**:
-- `gardener/gardener-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
+- `gardener/gardener-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
   sources disinto project config, creates tmux session, injects formula prompt,
   monitors phase file via custom `_gardener_on_phase_change` callback (passed to
   `run_formula_and_monitor`). Stays alive through CI/review/merge cycle after
@@ -35,8 +35,8 @@ directly from cron like the planner, predictor, and supervisor.
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
-**Lifecycle**: gardener-run.sh (cron 0,6,12,18) → `check_active gardener` → lock + memory guard →
-load formula + context → create tmux session →
+**Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
+lock + memory guard → load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 updates AGENTS.md, commits manifest + docs to PR →
 `PHASE:awaiting_ci` (stays alive) → CI pass → `PHASE:awaiting_review` →

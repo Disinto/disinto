@@ -67,7 +67,7 @@ resumes the session using `--resume session_id` to preserve codebase context.
 ## Execution
 
 Run via `architect/architect-run.sh`, which:
-- Acquires a cron lock and checks available memory
+- Acquires a poll-loop lock (via `acquire_lock`) and checks available memory
 - Cleans up per-issue scratch files from previous runs (`/tmp/architect-{project}-scratch-*.md`)
 - Sources shared libraries (env.sh, formula-session.sh)
 - Uses FORGE_ARCHITECT_TOKEN for authentication
@@ -88,12 +88,10 @@ Run via `architect/architect-run.sh`, which:
 - Bash creates the PR with pitch content and posts ACCEPT/REJECT footer comment
 - Branch names use issue number (architect/sprint-vision-{issue_number}) to avoid collisions
 
-## Cron
+## Schedule
 
-Suggested cron entry (every 6 hours):
-```cron
-0 */6 * * * cd /path/to/disinto && bash architect/architect-run.sh
-```
+The architect runs every 6 hours as part of the polling loop in
+`docker/agents/entrypoint.sh` (iteration math at line 196-208).
 
 ## State
 

@@ -2,7 +2,7 @@
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
-executed directly from cron via tmux + Claude.
+invoked by the polling loop in `docker/agents/entrypoint.sh` every 12 hours (iteration math at line 210-222) via tmux + Claude.
 Phase 0 (preflight): pull latest code, load persistent memory and prerequisite
 tree from `$OPS_REPO_ROOT/knowledge/planner-memory.md` and `$OPS_REPO_ROOT/prerequisites.md`. Also reads
 all available formulas: factory formulas (`$FACTORY_ROOT/formulas/*.toml`) and
@@ -41,16 +41,16 @@ AGENTS.md maintenance is handled by the Gardener.
 prerequisite tree, memory, vault state) live under `$OPS_REPO_ROOT/`.
 Each project manages its own planner state in a separate ops repo.
 
-**Trigger**: `planner-run.sh` runs daily via cron (accepts an optional project
-TOML argument, defaults to `projects/disinto.toml`). Sources `lib/guard.sh` and
-calls `check_active planner` first — skips if `$FACTORY_ROOT/state/.planner-active`
-is absent. Then creates a tmux session with `claude --model opus`, injects
-`formulas/run-planner.toml` as context, monitors the phase file, and cleans up
-on completion or timeout. No action issues — the planner is a nervous system
-component, not work.
+**Trigger**: `planner-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+every 12 hours (iteration math at line 210-222). Accepts an optional project TOML argument,
+defaults to `projects/disinto.toml`. Sources `lib/guard.sh` and calls `check_active planner`
+first — skips if `$FACTORY_ROOT/state/.planner-active` is absent. Then creates a tmux session
+with `claude --model opus`, injects `formulas/run-planner.toml` as context, monitors the
+phase file, and cleans up on completion or timeout. No action issues — the planner is a
+nervous system component, not work.
 
 **Key files**:
-- `planner/planner-run.sh` — Cron wrapper + orchestrator: lock, memory guard,
+- `planner/planner-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
   sources disinto project config, builds structural analysis via `lib/formula-session.sh:build_graph_section()`,
   creates tmux session, injects formula prompt, monitors phase file, handles crash recovery, cleans up
 - `formulas/run-planner.toml` — Execution spec: six steps (preflight,
