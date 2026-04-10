@@ -230,11 +230,8 @@ cat > "$CADDYFILE" <<EOF
 # Caddy configuration for edge control plane
 # Admin API enabled on 127.0.0.1:2019
 
-:2019 {
-  @admin {
-    header Host 127.0.0.1
-  }
-  respond @admin "Caddy admin API" 200
+{
+  admin localhost:2019
 }
 
 # Default site (reverse proxy for edge tunnels will be added dynamically)

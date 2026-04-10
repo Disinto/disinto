@@ -1715,11 +1715,8 @@ disinto_edge() {
       # Write to .env (replace existing entries to avoid duplicates)
       local tmp_env
       tmp_env=$(mktemp)
-      grep -v "^EDGE_TUNNEL_HOST=" "$env_file" > "$tmp_env" 2>/dev/null || true
-      grep -v "^EDGE_TUNNEL_PORT=" "$env_file" >> "$tmp_env" 2>/dev/null || true
-      grep -v "^EDGE_TUNNEL_FQDN=" "$env_file" >> "$tmp_env" 2>/dev/null || true
-      cat "$tmp_env" > "$env_file"
-      rm -f "$tmp_env"
+      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      mv "$tmp_env" "$env_file"
       echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
       echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
       echo "EDGE_TUNNEL_FQDN=${fqdn}" >> "$env_file"
@@ -1763,7 +1760,7 @@ disinto_edge() {
       # SSH to edge host and deregister
       echo "Deregistering tunnel for ${project} on ${edge_host}..."
       local response
-      response=$(ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
         "disinto-register@${edge_host}" \
         "deregister ${project}" 2>&1) || {
         echo "Error: failed to deregister tunnel" >&2
@@ -1804,7 +1801,7 @@ disinto_edge() {
       # SSH to edge host and get status
       echo "Checking tunnel status on ${edge_host}..."
       local response
-      response=$(ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
         "disinto-register@${edge_host}" \
         "list" 2>&1) || {
         echo "Error: failed to get status" >&2

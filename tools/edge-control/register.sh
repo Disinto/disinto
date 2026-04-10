@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source libraries
 source "${SCRIPT_DIR}/lib/ports.sh"
 source "${SCRIPT_DIR}/lib/caddy.sh"
+source "${SCRIPT_DIR}/lib/authorized_keys.sh"
 
 # Domain suffix
 DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-disinto.ai}"
@@ -77,7 +78,7 @@ do_register() {
   add_route "$project" "$port"
 
   # Rebuild authorized_keys for tunnel user
-  "${SCRIPT_DIR}/lib/authorized_keys.sh" rebuild_authorized_keys
+  rebuild_authorized_keys
 
   # Reload Caddy
   reload_caddy
@@ -107,7 +108,7 @@ do_deregister() {
   remove_route "$project"
 
   # Rebuild authorized_keys for tunnel user
-  "${SCRIPT_DIR}/lib/authorized_keys.sh" rebuild_authorized_keys
+  rebuild_authorized_keys
 
   # Reload Caddy
   reload_caddy

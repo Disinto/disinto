@@ -49,7 +49,7 @@ generate_authorized_keys_content() {
     pubkey=$(echo "$line" | jq -r '.pubkey')
 
     # Skip if missing required fields
-    [ -z "$port" ] || [ -z "$pubkey" ] && continue
+    { [ -z "$port" ] || [ -z "$pubkey" ]; } && continue
 
     # Build the authorized_keys line
     # Format: restrict,port-forwarding,permitlisten="127.0.0.1:<port>",command="/bin/false" <key-type> <key>

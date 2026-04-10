@@ -85,18 +85,11 @@ remove_route() {
     return 1
   }
 
-  # Find the route index that matches our fqdn
-  local route_index=-1
-  local idx=0
-  while IFS= read -r host; do
-    if [ "$host" = "$fqdn" ]; then
-      route_index=$idx
-      break
-    fi
-    idx=$((idx + 1))
-  done < <(echo "$routes_json" | jq -r '.[].match[].host[]' 2>/dev/null)
+  # Find the route index that matches our fqdn using jq
+  local route_index
+  route_index=$(echo "$routes_json" | jq -r "to_entries[] | select(.value.match[]?.host[]? == \"${fqdn}\") | .key" 2>/dev/null | head -1)
 
-  if [ "$route_index" -lt 0 ]; then
+  if [ -z "$route_index" ] || [ "$route_index" = "null" ]; then
     echo "Warning: route for ${fqdn} not found" >&2
     return 0
   fi
