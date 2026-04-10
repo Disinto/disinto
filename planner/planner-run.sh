@@ -61,6 +61,33 @@ memory_guard 2000
 
 log "--- Planner run start ---"
 
+# ── Precondition checks: skip if nothing to plan ──────────────────────────
+LAST_SHA_FILE="$FACTORY_ROOT/state/planner-last-sha"
+LAST_OPS_SHA_FILE="$FACTORY_ROOT/state/planner-last-ops-sha"
+
+CURRENT_SHA=$(git -C "$FACTORY_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+LAST_SHA=$(cat "$LAST_SHA_FILE" 2>/dev/null || echo "")
+
+# ops repo is required for planner — pull before checking sha
+ensure_ops_repo
+CURRENT_OPS_SHA=$(git -C "$OPS_REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+LAST_OPS_SHA=$(cat "$LAST_OPS_SHA_FILE" 2>/dev/null || echo "")
+
+unreviewed_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues?labels=prediction/unreviewed&state=open&limit=1" 2>/dev/null | jq length) || unreviewed_count=0
+vision_open=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API}/issues?labels=vision&state=open&limit=1" 2>/dev/null | jq length) || vision_open=0
+
+if [ "$CURRENT_SHA" = "$LAST_SHA" ] \
+   && [ "$CURRENT_OPS_SHA" = "$LAST_OPS_SHA" ] \
+   && [ "${unreviewed_count:-0}" -eq 0 ] \
+   && [ "${vision_open:-0}" -eq 0 ]; then
+  log "no new commits, no ops changes, no unreviewed predictions, no open vision — skipping"
+  exit 0
+fi
+
+log "sha=${CURRENT_SHA:0:8} ops=${CURRENT_OPS_SHA:0:8} unreviewed=${unreviewed_count} vision=${vision_open}"
+
 # ── Resolve forge remote for git operations ─────────────────────────────
 resolve_forge_remote
 
@@ -73,9 +100,6 @@ build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:prerequisites.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
-
-# ── Ensure ops repo is available ───────────────────────────────────────
-ensure_ops_repo
 
 # ── Read planner memory ─────────────────────────────────────────────────
 MEMORY_BLOCK=""
@@ -123,6 +147,11 @@ export CLAUDE_MODEL="opus"
 
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# Persist watermarks so next run can skip if nothing changed
+mkdir -p "$FACTORY_ROOT/state"
+echo "$CURRENT_SHA" > "$LAST_SHA_FILE"
+echo "$CURRENT_OPS_SHA" > "$LAST_OPS_SHA_FILE"
 
 # Write journal entry post-session
 profile_write_journal "planner-run" "Planner run $(date -u +%Y-%m-%d)" "complete" "" || true
