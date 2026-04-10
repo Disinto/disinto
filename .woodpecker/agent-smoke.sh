@@ -11,6 +11,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# CI-side filesystem snapshot: show lib/ state at smoke time (#600)
+echo "=== smoke environment snapshot ==="
+ls -la lib/ 2>&1 | head -50
+echo "=== "
+
 FAILED=0
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -93,6 +98,26 @@ echo "syntax check done"
 
 echo "=== 2/2  Function resolution ==="
 
+# Required lib files for LIB_FUNS construction. Missing any of these means the
+# checkout is incomplete or the test is misconfigured — fail loudly, do NOT
+# silently produce a partial LIB_FUNS list (that masquerades as "undef" errors
+# in unrelated scripts; see #600).
+REQUIRED_LIBS=(
+  lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh
+  lib/secret-scan.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh
+  lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh
+)
+
+for f in "${REQUIRED_LIBS[@]}"; do
+  if [ ! -f "$f" ]; then
+    printf 'FAIL [missing-lib] expected %s but it is not present at smoke time\n' "$f" >&2
+    printf '  pwd=%s\n' "$(pwd)" >&2
+    printf '  ls lib/=%s\n' "$(ls lib/ 2>&1 | tr '\n' ' ')" >&2
+    echo '=== SMOKE TEST FAILED (precondition) ===' >&2
+    exit 2
+  fi
+done
+
 # Functions provided by shared lib files (available to all agent scripts via source).
 #
 # Included — these are inline-sourced by agent scripts:
@@ -100,8 +125,7 @@ echo "=== 2/2  Function resolution ==="
 #   lib/agent-sdk.sh        — sourced by SDK agents (agent_run, agent_recover_session)
 #   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
-#   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
-#   lib/secret-scan.sh      — sourced by file-action-issue.sh (scan_for_secrets, redact_secrets)
+#   lib/secret-scan.sh      — standalone CLI tool, run directly (not sourced)
 #   lib/formula-session.sh  — sourced by formula-driven agents (acquire_run_lock, check_memory, etc.)
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
 #   lib/guard.sh            — sourced by all polling-loop entry points (check_active)
@@ -117,9 +141,7 @@ echo "=== 2/2  Function resolution ==="
 # If a new lib file is added and sourced by agents, add it to LIB_FUNS below
 # and add a check_script call for it in the lib files section further down.
 LIB_FUNS=$(
-  for f in lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh lib/secret-scan.sh lib/file-action-issue.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh; do
-    if [ -f "$f" ]; then get_fns "$f"; fi
-  done | sort -u
+  for f in "${REQUIRED_LIBS[@]}"; do get_fns "$f"; done | sort -u
 )
 
 # Known external commands and shell builtins — never flag these
@@ -172,6 +194,12 @@ check_script() {
     is_known_cmd "$fn" && continue
     if ! printf '%s\n' "$all_fns" | grep -qxF "$fn"; then
       printf 'FAIL [undef] %s: %s\n' "$script" "$fn"
+      # Diagnostic dump (#600): if the function is expected to be in a known lib,
+      # print what the actual all_fns set looks like so we can tell whether the
+      # function is genuinely missing or whether the resolution loop is broken.
+      printf '  all_fns count: %d\n' "$(printf '%s\n' "$all_fns" | wc -l)"
+      printf '  LIB_FUNS contains "%s": %s\n' "$fn" "$(printf '%s\n' "$LIB_FUNS" | grep -cxF "$fn")"
+      printf '  defining lib (if any): %s\n' "$(grep -l "^[[:space:]]*${fn}[[:space:]]*()" lib/*.sh 2>/dev/null | tr '\n' ' ')"
       FAILED=1
     fi
   done <<< "$candidates"
@@ -184,7 +212,6 @@ check_script lib/env.sh              lib/mirrors.sh
 check_script lib/agent-sdk.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
-check_script lib/file-action-issue.sh   lib/secret-scan.sh
 check_script lib/tea-helpers.sh         lib/secret-scan.sh
 check_script lib/formula-session.sh
 check_script lib/load-project.sh
