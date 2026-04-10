@@ -247,38 +247,36 @@ setup_forge() {
   fi
 
   # Get or create human user token
-  local human_token
-  if curl -sf --max-time 5 -H "Authorization: token ${admin_token}" "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
-    # Delete existing human token if present (token sha1 is only returned at creation time)
-    local existing_human_token_id
-    existing_human_token_id=$(curl -sf \
+  local human_token=""
+  # Delete existing human token if present (token sha1 is only returned at creation time)
+  local existing_human_token_id
+  existing_human_token_id=$(curl -sf \
+    -u "${human_user}:${human_pass}" \
+    "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
+    | jq -r '.[] | select(.name == "disinto-human-token") | .id') || existing_human_token_id=""
+  if [ -n "$existing_human_token_id" ]; then
+    curl -sf -X DELETE \
       -u "${human_user}:${human_pass}" \
-      "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
-      | jq -r '.[] | select(.name == "disinto-human-token") | .id') || existing_human_token_id=""
-    if [ -n "$existing_human_token_id" ]; then
-      curl -sf -X DELETE \
-        -u "${human_user}:${human_pass}" \
-        "${forge_url}/api/v1/users/${human_user}/tokens/${existing_human_token_id}" >/dev/null 2>&1 || true
-    fi
+      "${forge_url}/api/v1/users/${human_user}/tokens/${existing_human_token_id}" >/dev/null 2>&1 || true
+  fi
 
-    # Create human token (fresh, so sha1 is returned)
-    human_token=$(curl -sf -X POST \
-      -u "${human_user}:${human_pass}" \
-      -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/users/${human_user}/tokens" \
-      -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
-      | jq -r '.sha1 // empty') || human_token=""
+  # Create human token (fresh, so sha1 is returned)
+  human_token=$(curl -sf -X POST \
+    -u "${human_user}:${human_pass}" \
+    -H "Content-Type: application/json" \
+    "${forge_url}/api/v1/users/${human_user}/tokens" \
+    -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
+    | jq -r '.sha1 // empty') || human_token=""
 
-    if [ -n "$human_token" ]; then
-      # Store human token in .env
-      if grep -q '^HUMAN_TOKEN=' "$env_file" 2>/dev/null; then
-        sed -i "s|^HUMAN_TOKEN=.*|HUMAN_TOKEN=${human_token}|" "$env_file"
-      else
-        printf 'HUMAN_TOKEN=%s\n' "$human_token" >> "$env_file"
-      fi
-      export HUMAN_TOKEN="$human_token"
-      echo "  Human token saved (HUMAN_TOKEN)"
+  if [ -n "$human_token" ]; then
+    # Store human token in .env
+    if grep -q '^HUMAN_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^HUMAN_TOKEN=.*|HUMAN_TOKEN=${human_token}|" "$env_file"
+    else
+      printf 'HUMAN_TOKEN=%s\n' "$human_token" >> "$env_file"
     fi
+    export HUMAN_TOKEN="$human_token"
+    echo "  Human token saved (HUMAN_TOKEN)"
   fi
 
   # Create bot users and tokens

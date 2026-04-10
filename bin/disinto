@@ -685,7 +685,7 @@ p.write_text(text)
   # the calling user (e.g. johba) but the ops repo belongs to disinto-admin.
   local ops_slug="disinto-admin/${project_name}-ops"
   local ops_root="/home/${USER}/${project_name}-ops"
-  setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch"
+  setup_ops_repo "$forge_url" "$ops_slug" "$ops_root" "$branch" "${HUMAN_TOKEN:-}"
 
   # Migrate ops repo to canonical structure (seed missing directories/files)
   # This brings pre-#407 deployments up to date with the canonical structure
