@@ -5,10 +5,10 @@
 #   source "$(dirname "$0")/../lib/ops-setup.sh"
 #
 # Required globals: FORGE_URL, FORGE_TOKEN, FACTORY_ROOT
-# Optional: admin_token (falls back to FORGE_TOKEN for admin operations)
+# Optional: HUMAN_TOKEN (falls back to FORGE_TOKEN for admin operations)
 #
 # Functions:
-#   setup_ops_repo <forge_url> <ops_slug> <ops_root> [primary_branch]
+#   setup_ops_repo <forge_url> <ops_slug> <ops_root> [primary_branch] [admin_token]
 #     - Create ops repo on Forgejo if it doesn't exist
 #     - Configure bot collaborators with appropriate permissions
 #     - Clone or initialize ops repo locally
@@ -26,6 +26,7 @@ set -euo pipefail
 setup_ops_repo() {
 
   local forge_url="$1" ops_slug="$2" ops_root="$3" primary_branch="${4:-main}"
+  local admin_token="${5:-${HUMAN_TOKEN:-${FORGE_TOKEN}}}"
   local org_name="${ops_slug%%/*}"
   local ops_name="${ops_slug##*/}"
 
@@ -55,12 +56,12 @@ setup_ops_repo() {
     echo "Creating ops repo in namespace: ${org_name}"
     # Create org if it doesn't exist
     curl -sf -X POST \
-      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs" \
       -d "{\"username\":\"${org_name}\",\"visibility\":\"public\"}" >/dev/null 2>&1 || true
     if curl -sf -X POST \
-      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/orgs/${org_name}/repos" \
       -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" >/dev/null 2>&1; then
@@ -70,7 +71,7 @@ setup_ops_repo() {
       # Fallback: use admin API to create repo under the target namespace
       http_code=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
-        -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+        -H "Authorization: token ${admin_token}" \
         -H "Content-Type: application/json" \
         "${forge_url}/api/v1/admin/users/${org_name}/repos" \
         -d "{\"name\":\"${ops_name}\",\"auto_init\":true,\"default_branch\":\"${primary_branch}\",\"description\":\"Operational data for ${org_name}/${ops_name%-ops}\"}" 2>/dev/null || echo "0")
@@ -104,7 +105,7 @@ setup_ops_repo() {
   for bot_user in "${!bot_permissions[@]}"; do
     bot_perm="${bot_permissions[$bot_user]}"
     if curl -sf -X PUT \
-      -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+      -H "Authorization: token ${admin_token}" \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/repos/${actual_ops_slug}/collaborators/${bot_user}" \
       -d "{\"permission\":\"${bot_perm}\"}" >/dev/null 2>&1; then
@@ -116,7 +117,7 @@ setup_ops_repo() {
 
   # Add disinto-admin as admin collaborator
   if curl -sf -X PUT \
-    -H "Authorization: token ${admin_token:-${FORGE_TOKEN}}" \
+    -H "Authorization: token ${admin_token}" \
     -H "Content-Type: application/json" \
     "${forge_url}/api/v1/repos/${actual_ops_slug}/collaborators/disinto-admin" \
     -d '{"permission":"admin"}' >/dev/null 2>&1; then
