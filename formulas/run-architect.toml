@@ -1,6 +1,6 @@
 # formulas/run-architect.toml — Architect formula
 #
-# Executed by architect-run.sh via cron — strategic decomposition of vision
+# Executed by architect-run.sh via polling loop — strategic decomposition of vision
 # issues into development sprints.
 #
 # This formula orchestrates the architect agent's workflow:
@@ -141,7 +141,7 @@ For each issue in ARCHITECT_TARGET_ISSUES, bash performs:
 
 ## Cost — new infra to maintain
 <what ongoing maintenance burden does this sprint add>
-<new services, cron jobs, formulas, agent roles>
+<new services, scheduled tasks, formulas, agent roles>
 
 ## Recommendation
 <architect's assessment: worth it / defer / alternative approach>

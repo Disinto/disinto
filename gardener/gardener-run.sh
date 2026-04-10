@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# gardener-run.sh — Cron wrapper: gardener execution via SDK + formula
+# gardener-run.sh — Polling-loop wrapper: gardener execution via SDK + formula
 #
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Flow:
-#   1. Guards: cron lock, memory check
+#   1. Guards: run lock, memory check
 #   2. Load formula (formulas/run-gardener.toml)
 #   3. Build context: AGENTS.md, scratch file, prompt footer
 #   4. agent_run(worktree, prompt) → Claude does maintenance, pushes if needed
@@ -17,7 +17,7 @@
 # Usage:
 #   gardener-run.sh [projects/disinto.toml]   # project config (default: disinto)
 #
-# Cron: 0 0,6,12,18 * * * cd /home/debian/dark-factory && bash gardener/gardener-run.sh projects/disinto.toml
+# Called by: entrypoint.sh polling loop (every 6 hours)
 # =============================================================================
 set -euo pipefail
 
@@ -62,7 +62,7 @@ LOG_AGENT="gardener"
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active gardener
-acquire_cron_lock "/tmp/gardener-run.lock"
+acquire_run_lock "/tmp/gardener-run.lock"
 memory_guard 2000
 
 log "--- Gardener run start ---"

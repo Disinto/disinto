@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# architect-run.sh — Cron wrapper: architect execution via SDK + formula
+# architect-run.sh — Polling-loop wrapper: architect execution via SDK + formula
 #
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Flow:
-#   1. Guards: cron lock, memory check
+#   1. Guards: run lock, memory check
 #   2. Precondition checks: skip if no work (no vision issues, no responses)
 #   3. Load formula (formulas/run-architect.toml)
 #   4. Context: VISION.md, AGENTS.md, ops:prerequisites.md, structural graph
@@ -25,7 +25,7 @@
 # Usage:
 #   architect-run.sh [projects/disinto.toml]   # project config (default: disinto)
 #
-# Cron: 0 */6 * * *   # every 6 hours
+# Called by: entrypoint.sh polling loop (every 6 hours)
 # =============================================================================
 set -euo pipefail
 
@@ -72,7 +72,7 @@ log() {
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active architect
-acquire_cron_lock "/tmp/architect-run.lock"
+acquire_run_lock "/tmp/architect-run.lock"
 memory_guard 2000
 
 log "--- Architect run start ---"
@@ -353,7 +353,7 @@ Instructions:
 
 ## Cost — new infra to maintain
 <what ongoing maintenance burden does this sprint add>
-<new services, cron jobs, formulas, agent roles>
+<new services, scheduled tasks, formulas, agent roles>
 
 ## Recommendation
 <architect's assessment: worth it / defer / alternative approach>

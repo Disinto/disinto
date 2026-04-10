@@ -6,7 +6,7 @@
 # Memory: previous predictions on the forge ARE the memory.
 # No separate memory file — the issue tracker is the source of truth.
 #
-# Executed by predictor/predictor-run.sh via cron — no action issues.
+# Executed by predictor/predictor-run.sh via polling loop — no action issues.
 # predictor-run.sh creates a tmux session with Claude (sonnet) and injects
 # this formula as context. Claude executes all steps autonomously.
 #

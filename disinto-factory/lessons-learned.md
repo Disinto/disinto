@@ -1,54 +1,35 @@
-# Working with the factory — lessons learned
+# Lessons learned
 
-## Writing issues for the dev agent
+## Remediation & deployment
 
-**Put everything in the issue body, not comments.** The dev agent reads the issue body when it starts work. It does not reliably read comments. If an issue fails and you need to add guidance for a retry, update the issue body.
+**Escalate gradually.** Cheapest fix first, re-measure, escalate only if it persists. Single-shot fixes are either too weak or cause collateral damage.
 
-**One approach per issue, no choices.** The dev agent cannot make design decisions. If there are multiple ways to solve a problem, decide before filing. Issues with "Option A or Option B" will confuse the agent.
+**Parameterize deployment boundaries.** Entrypoint references to a specific project name are config values waiting to escape. `${VAR:-default}` preserves compat and unlocks reuse.
 
-**Issues must fit the templates.** Every backlog issue needs: affected files (max 3), acceptance criteria (max 5 checkboxes), and a clear proposed solution. If you cannot fill these fields, the issue is too big — label it `vision` and break it down first.
+**Fail loudly over silent defaults.** A fatal error with a clear message beats a wrong default that appears to work.
 
-**Explicit dependencies prevent ordering bugs.** Add `Depends-on: #N` in the issue body. dev-poll checks these before pickup. Without explicit deps, the agent may attempt work on a stale codebase.
+**Audit the whole file when fixing one value.** Hardcoded assumptions cluster. Fixing one while leaving siblings produces multi-commit churn.
 
-## Debugging CI failures
+## Documentation
 
-**Check CI logs via Woodpecker SQLite when the API fails.** The Woodpecker v3 log API may return HTML instead of JSON. Reliable fallback:
-```bash
-sqlite3 /var/lib/docker/volumes/disinto_woodpecker-data/_data/woodpecker.sqlite \
-  "SELECT le.data FROM log_entries le \
-   JOIN steps s ON le.step_id = s.id \
-   JOIN workflows w ON s.pipeline_id = w.id \
-   JOIN pipelines p ON w.pipeline_id = p.id \
-   WHERE p.number = <N> AND s.name = '<step>' ORDER BY le.id"
-```
+**Per-context rewrites, not batch replacement.** Each doc mention sits in a different narrative. Blanket substitution produces awkward text.
 
-**When the agent fails repeatedly on CI, diagnose externally.** The dev agent cannot see CI log output (only pass/fail status). If the same step fails 3+ times, read the logs yourself and put the exact error and fix in the issue body.
+**Search for implicit references too.** After keyword matches, check for instructions that assume the old mechanism without naming it.
 
-## Retrying failed issues
+## Code review
 
-**Clean up stale branches before retrying.** Old branches cause recovery mode which inherits stale code. Close the PR, delete the branch on Forgejo, then relabel to backlog.
+**Approval means "safe to ship," not "how I'd write it."** Distinguish "wrong" from "different" — only the former blocks.
 
-**After a dependency lands, stale branches miss the fix.** If issue B depends on A, and B's PR was created before A merged, B's branch is stale. Close the PR and delete the branch so the agent starts fresh from current main.
+**Scale scrutiny to blast radius.** A targeted fix warrants less ceremony than a cross-cutting refactor.
 
-## Environment gotchas
+**Be specific; separate blockers from preferences.** Concrete observations invite fixes; vague concerns invite debate.
 
-**Alpine/BusyBox differs from Debian.** CI and edge containers use Alpine:
-- `grep -P` (Perl regex) does not work — use `grep -E`
-- `USER` variable is unset — set it explicitly: `USER=$(whoami); export USER`
-- Network calls fail during `docker build` in LXD — download binaries on the host, COPY into images
+**Read diffs top-down: intent, behavior, edge cases.** Verify the change matches its stated goal before examining lines.
 
-**The host repo drifts from Forgejo main.** If factory code is bind-mounted, the host checkout goes stale. Pull regularly or use versioned releases.
+## Issue authoring & retry
 
-## Vault operations
+**Self-contained issue bodies.** The agent reads the body, not comments. On retry, update the body with exact error and fix guidance.
 
-**The human merging a vault PR must be a Forgejo site admin.** The dispatcher verifies `is_admin` on the merger. Promote your user via the Forgejo CLI or database if needed.
+**Clean stale branches before retry.** Old branches trigger recovery on stale code. Close PR, delete branch, relabel.
 
-**Result files cache failures.** If a vault action fails, the dispatcher writes `.result.json` and skips it. To retry: delete the result file inside the edge container.
-
-## Breaking down large features
-
-**Vision issues need structured decomposition.** When a feature touches multiple subsystems or has design forks, label it `vision`. Break it down by identifying what exists, what can be reused, where the design forks are, and resolve them before filing backlog issues.
-
-**Prefer gluecode over greenfield.** Check if Forgejo API, Woodpecker, Docker, or existing lib/ functions can do the job before building new components.
-
-**Max 7 sub-issues per sprint.** If a breakdown produces more, split into two sprints.
+**Diagnose CI failures externally.** The agent sees pass/fail, not logs. After repeated failures, read logs yourself and put findings in the issue.

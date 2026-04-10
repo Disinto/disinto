@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ci-setup.sh — CI setup functions for Woodpecker and cron configuration
+# ci-setup.sh — CI setup functions for Woodpecker and scheduling configuration
 #
 # Internal functions (called via _load_ci_context + _*_impl):
-#   _install_cron_impl()              - Install crontab entries for project agents
+#   _install_cron_impl()              - Install crontab entries (bare-metal only; compose uses polling loop)
 #   _create_woodpecker_oauth_impl()   - Create OAuth2 app on Forgejo for Woodpecker
 #   _generate_woodpecker_token_impl() - Auto-generate WOODPECKER_TOKEN via OAuth2 flow
 #   _activate_woodpecker_repo_impl()  - Activate repo in Woodpecker
@@ -30,12 +30,13 @@ _load_ci_context() {
   fi
 }
 
-# Generate and optionally install cron entries for the project agents.
+# Generate and optionally install cron entries for bare-metal deployments.
+# In compose mode, the agents container uses a polling loop (entrypoint.sh) instead.
 # Usage: install_cron <name> <toml_path> <auto_yes> <bare>
 _install_cron_impl() {
   local name="$1" toml="$2" auto_yes="$3" bare="${4:-false}"
 
-  # In compose mode, skip host cron — the agents container runs cron internally
+  # In compose mode, skip host cron — the agents container uses a polling loop
   if [ "$bare" = false ]; then
     echo ""
     echo "Cron:    skipped (agents container handles scheduling in compose mode)"

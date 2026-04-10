@@ -102,9 +102,9 @@ echo "=== 2/2  Function resolution ==="
 #   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
 #   lib/file-action-issue.sh — sourced by gardener-run.sh (file_action_issue)
 #   lib/secret-scan.sh      — sourced by file-action-issue.sh (scan_for_secrets, redact_secrets)
-#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_cron_lock, check_memory, etc.)
+#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_run_lock, check_memory, etc.)
 #   lib/mirrors.sh          — sourced by merge sites (mirror_push)
-#   lib/guard.sh            — sourced by all cron entry points (check_active)
+#   lib/guard.sh            — sourced by all polling-loop entry points (check_active)
 #   lib/issue-lifecycle.sh  — sourced by agents for issue claim/release/block/deps
 #   lib/worktree.sh         — sourced by agents for worktree create/recover/cleanup/preserve
 #

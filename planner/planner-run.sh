@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# planner-run.sh — Cron wrapper: planner execution via SDK + formula
+# planner-run.sh — Polling-loop wrapper: planner execution via SDK + formula
 #
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Flow:
-#   1. Guards: cron lock, memory check
+#   1. Guards: run lock, memory check
 #   2. Load formula (formulas/run-planner.toml)
 #   3. Context: VISION.md, AGENTS.md, ops:RESOURCES.md, structural graph,
 #      planner memory, journal entries
@@ -56,7 +56,7 @@ log() {
 
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
-acquire_cron_lock "/tmp/planner-run.lock"
+acquire_run_lock "/tmp/planner-run.lock"
 memory_guard 2000
 
 log "--- Planner run start ---"
