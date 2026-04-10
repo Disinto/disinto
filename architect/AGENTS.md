@@ -51,9 +51,11 @@ Bash in `architect-run.sh` handles state detection and orchestration:
 ```
 New vision issue → pitch PR (model generates pitch, bash creates PR)
   ↓
-ACCEPT review → research + questions (model, session saved to $SID_FILE)
+APPROVED review → start design questions (model posts Q1:, adds Design forks section)
   ↓
-Answers received → sub-issue filing (model, session resumed via --resume)
+Answers received → continue Q&A (model processes answers, posts follow-ups)
+  ↓
+All forks resolved → sub-issue filing (model files implementation issues)
   ↓
 REJECT review → close PR + journal (model processes rejection, bash merges PR)
 ```
