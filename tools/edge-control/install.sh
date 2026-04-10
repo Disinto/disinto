@@ -311,7 +311,10 @@ else
 fi
 
 # Create initial authorized_keys for tunnel user
-"${INSTALL_DIR}/lib/authorized_keys.sh" rebuild_authorized_keys
+# Source the library and call the function directly (not as subprocess)
+source "${INSTALL_DIR}/lib/ports.sh"
+source "${INSTALL_DIR}/lib/authorized_keys.sh"
+rebuild_authorized_keys
 
 # =============================================================================
 # Step 6: Configure forced command for disinto-register

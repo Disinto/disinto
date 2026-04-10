@@ -85,7 +85,7 @@ rebuild_authorized_keys() {
   chmod 600 "$TUNNEL_AUTH_KEYS"
   chown -R "$TUNNEL_USER":"$TUNNEL_USER" "$TUNNEL_SSH_DIR"
 
-  echo "Rebuilt authorized_keys for ${TUNNEL_USER} (entries: $(echo "$content" | grep -c 'ssh-' || echo 0))"
+  echo "Rebuilt authorized_keys for ${TUNNEL_USER} (entries: $(echo "$content" | grep -c 'ssh-' || echo 0))" >&2
 }
 
 # Get the current authorized_keys content (for verification)

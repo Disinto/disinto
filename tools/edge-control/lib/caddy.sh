@@ -69,7 +69,7 @@ EOF
     return 1
   }
 
-  echo "Added route: ${fqdn} → 127.0.0.1:${port}"
+  echo "Added route: ${fqdn} → 127.0.0.1:${port}" >&2
 }
 
 # Remove a route for a project
@@ -104,7 +104,7 @@ remove_route() {
     return 1
   }
 
-  echo "Removed route: ${fqdn}"
+  echo "Removed route: ${fqdn}" >&2
 }
 
 # Reload Caddy to apply configuration changes
@@ -118,7 +118,7 @@ reload_caddy() {
     return 1
   }
 
-  echo "Caddy reloaded"
+  echo "Caddy reloaded" >&2
 }
 
 # Get Caddy config for debugging
