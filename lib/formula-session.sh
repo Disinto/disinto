@@ -314,7 +314,7 @@ _profile_commit_and_push() {
 
     if ! git diff --cached --quiet 2>/dev/null; then
       git config user.name "${AGENT_IDENTITY}" || true
-      git config user.email "${AGENT_IDENTITY}@users.noreply.codeberg.org" || true
+      git config user.email "${AGENT_IDENTITY}@disinto.local" || true
       git commit -m "$msg" --no-verify 2>/dev/null || true
       git push origin main --quiet 2>/dev/null || git push origin master --quiet 2>/dev/null || true
     fi
