@@ -268,7 +268,10 @@ log "forge remote: ${FORGE_REMOTE}"
 # First attempt: fix/issue-N, subsequent: fix/issue-N-1, fix/issue-N-2, etc.
 if [ "$RECOVERY_MODE" = false ]; then
   # Count only branches matching fix/issue-N, fix/issue-N-1, fix/issue-N-2, etc. (exact prefix match)
-  ATTEMPT=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}" 2>/dev/null | grep -c "refs/heads/fix/issue-${ISSUE}$" || echo 0)
+  # grep -c always prints a count and exits 1 when count=0; use || true to swallow the exit status.
+  # Do NOT use "|| echo 0" here: grep would print "0" AND echo would append "0", producing "0\n0" which breaks arithmetic.
+  ATTEMPT=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}" 2>/dev/null | grep -c "refs/heads/fix/issue-${ISSUE}$" || true)
+  ATTEMPT="${ATTEMPT:-0}"
   ATTEMPT=$((ATTEMPT + $(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}-*" 2>/dev/null | wc -l)))
   if [ "$ATTEMPT" -gt 0 ]; then
     BRANCH="fix/issue-${ISSUE}-${ATTEMPT}"
