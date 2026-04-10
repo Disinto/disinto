@@ -36,10 +36,32 @@ if [ -z "${FORGE_REPO:-}" ]; then
   fi
 fi
 
+# Detect bind-mount of a non-git directory before attempting clone
+if [ -d /opt/disinto ] && [ ! -d /opt/disinto/.git ] && [ -n "$(ls -A /opt/disinto 2>/dev/null)" ]; then
+  echo "FATAL: /opt/disinto contains files but no .git directory." >&2
+  echo "If you bind-mounted a directory at /opt/disinto, ensure it is a git working tree." >&2
+  echo "Sleeping 60s before exit to throttle the restart loop..." >&2
+  sleep 60
+  exit 1
+fi
+
 # Shallow clone at the pinned version (inject token to support auth-required Forgejo)
 if [ ! -d /opt/disinto/.git ]; then
   _auth_url=$(printf '%s' "$FORGE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
-  git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${_auth_url}/${FORGE_REPO}.git" /opt/disinto
+  echo "edge: cloning ${FORGE_URL}/${FORGE_REPO} (branch ${DISINTO_VERSION:-main})..." >&2
+  if ! git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${_auth_url}/${FORGE_REPO}.git" /opt/disinto; then
+    echo >&2
+    echo "FATAL: failed to clone ${FORGE_URL}/${FORGE_REPO}.git (branch ${DISINTO_VERSION:-main})" >&2
+    echo "Likely causes:" >&2
+    echo "  - Forgejo at ${FORGE_URL} is unreachable from the edge container" >&2
+    echo "  - Repository '${FORGE_REPO}' does not exist on this forge" >&2
+    echo "  - FORGE_TOKEN is invalid or has no read access to '${FORGE_REPO}'" >&2
+    echo "  - Branch '${DISINTO_VERSION:-main}' does not exist in '${FORGE_REPO}'" >&2
+    echo "Workaround: bind-mount a local git checkout into /opt/disinto." >&2
+    echo "Sleeping 60s before exit to throttle the restart loop..." >&2
+    sleep 60
+    exit 1
+  fi
 fi
 
 # Set HOME so that claude OAuth credentials and session.lock are found at the
