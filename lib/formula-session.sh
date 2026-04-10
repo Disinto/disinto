@@ -31,7 +31,7 @@
 # Requires: lib/env.sh, lib/worktree.sh, lib/agent-sdk.sh sourced first for shared helpers.
 
 # Source agent-sdk for claude_run_with_watchdog watchdog helper
-source "$(dirname "$0")/agent-sdk.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/agent-sdk.sh"
 
 # ── Run guards ───────────────────────────────────────────────────────────
 
