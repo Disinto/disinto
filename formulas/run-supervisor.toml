@@ -105,8 +105,13 @@ For each finding from the health assessment, decide and execute an action.
   sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
 
 **P1 Disk pressure:**
-  # Docker cleanup
+  # First pass: dangling only (cheap, safe)
   sudo docker system prune -f >/dev/null 2>&1 || true
+  # If still > 80%, escalate to all unused images (more aggressive but necessary)
+  _pct=$(df -h / | awk 'NR==2{print $5}' | tr -d '%')
+  if [ "${_pct:-0}" -gt 80 ]; then
+    sudo docker system prune -a -f >/dev/null 2>&1 || true
+  fi
   # Truncate logs > 10MB
   for f in "$FACTORY_ROOT"/{dev,review,supervisor,gardener,planner,predictor}/*.log; do
     [ -f "$f" ] && [ "$(du -k "$f" | cut -f1)" -gt 10240 ] && truncate -s 0 "$f"
