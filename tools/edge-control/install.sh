@@ -42,6 +42,7 @@ GANDI_TOKEN=""
 INSTALL_DIR="/opt/disinto-edge"
 REGISTRY_DIR="/var/lib/disinto"
 CADDY_VERSION="2.8.4"
+DOMAIN_SUFFIX="disinto.ai"
 
 usage() {
   cat <<EOF
@@ -52,6 +53,7 @@ Options:
   --install-dir <dir>     Install directory (default: /opt/disinto-edge)
   --registry-dir <dir>    Registry directory (default: /var/lib/disinto)
   --caddy-version <ver>   Caddy version to install (default: ${CADDY_VERSION})
+  --domain-suffix <suffix> Domain suffix for tunnels (default: disinto.ai)
   -h, --help              Show this help
 
 Example:
@@ -76,6 +78,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --caddy-version)
       CADDY_VERSION="$2"
+      shift 2
+      ;;
+    --domain-suffix)
+      DOMAIN_SUFFIX="$2"
       shift 2
       ;;
     -h|--help)
@@ -164,17 +170,23 @@ if ! command -v caddy &>/dev/null; then
   }
 fi
 
-# Download Caddy binary directly (faster than building)
-CADDY_LINUX_AMD64="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64"
+# Download Caddy with Gandi DNS plugin using Caddy's download API
+# The API returns a binary with specified plugins baked in
+CADDY_DOWNLOAD_API="https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/caddy-dns/gandi"
 
-log_info "Downloading Caddy..."
-curl -sL "$CADDY_LINUX_AMD64" -o /tmp/caddy
+log_info "Downloading Caddy with Gandi DNS plugin..."
+curl -sL "$CADDY_DOWNLOAD_API" -o /tmp/caddy
 chmod +x /tmp/caddy
 
 # Verify it works
 if ! /tmp/caddy version &>/dev/null; then
   log_error "Caddy binary verification failed"
   exit 1
+fi
+
+# Check for Gandi plugin
+if ! /tmp/caddy version 2>&1 | grep -qi gandi; then
+  log_warn "Gandi plugin not found in Caddy binary - DNS-01 challenge will fail"
 fi
 
 mv /tmp/caddy "$CADDY_BINARY"
@@ -250,11 +262,11 @@ log_info "Installing control plane scripts to ${INSTALL_DIR}..."
 
 mkdir -p "${INSTALL_DIR}/lib"
 
-# Copy scripts
-cp -n "${BASH_SOURCE%/*}/register.sh" "${INSTALL_DIR}/"
-cp -n "${BASH_SOURCE%/*}/lib/ports.sh" "${INSTALL_DIR}/lib/"
-cp -n "${BASH_SOURCE%/*}/lib/authorized_keys.sh" "${INSTALL_DIR}/lib/"
-cp -n "${BASH_SOURCE%/*}/lib/caddy.sh" "${INSTALL_DIR}/lib/"
+# Copy scripts (overwrite existing to ensure idempotent updates)
+cp "${BASH_SOURCE%/*}/register.sh" "${INSTALL_DIR}/"
+cp "${BASH_SOURCE%/*}/lib/ports.sh" "${INSTALL_DIR}/lib/"
+cp "${BASH_SOURCE%/*}/lib/authorized_keys.sh" "${INSTALL_DIR}/lib/"
+cp "${BASH_SOURCE%/*}/lib/caddy.sh" "${INSTALL_DIR}/lib/"
 
 chmod +x "${INSTALL_DIR}/register.sh"
 chmod +x "${INSTALL_DIR}/lib/"*.sh
@@ -330,10 +342,7 @@ fi
 # =============================================================================
 # Step 7: Final configuration
 # =============================================================================
-log_info "Setting environment variables..."
-
-# Set DOMAIN_SUFFIX in register.sh
-sed -i "s/DOMAIN_SUFFIX=\"${DOMAIN_SUFFIX:-disinto.ai}\"/DOMAIN_SUFFIX=\"${DOMAIN_SUFFIX:-disinto.ai}\"/" "${INSTALL_DIR}/register.sh"
+log_info "Configuring domain suffix: ${DOMAIN_SUFFIX}"
 
 # Reload systemd if needed
 systemctl daemon-reload 2>/dev/null || true

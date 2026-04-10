@@ -14,8 +14,8 @@
 # =============================================================================
 set -euo pipefail
 
-# Source ports library
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Source ports library (SCRIPT_DIR is this file's directory, so lib/ports.sh is adjacent)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/ports.sh"
 
 # Tunnel user home directory

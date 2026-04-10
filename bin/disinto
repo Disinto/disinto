@@ -1693,7 +1693,7 @@ disinto_edge() {
       # SSH to edge host and register
       echo "Registering tunnel for ${project} on ${edge_host}..."
       local response
-      response=$(ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
+      response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
         "disinto-register@${edge_host}" \
         "register ${project} ${pubkey}" 2>&1) || {
         echo "Error: failed to register tunnel" >&2
@@ -1712,7 +1712,14 @@ disinto_edge() {
         exit 1
       fi
 
-      # Write to .env
+      # Write to .env (replace existing entries to avoid duplicates)
+      local tmp_env
+      tmp_env=$(mktemp)
+      grep -v "^EDGE_TUNNEL_HOST=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      grep -v "^EDGE_TUNNEL_PORT=" "$env_file" >> "$tmp_env" 2>/dev/null || true
+      grep -v "^EDGE_TUNNEL_FQDN=" "$env_file" >> "$tmp_env" 2>/dev/null || true
+      cat "$tmp_env" > "$env_file"
+      rm -f "$tmp_env"
       echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
       echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
       echo "EDGE_TUNNEL_FQDN=${fqdn}" >> "$env_file"
@@ -1768,9 +1775,7 @@ disinto_edge() {
       if [ -f "$env_file" ]; then
         local tmp_env
         tmp_env=$(mktemp)
-        grep -v "^EDGE_TUNNEL_HOST=" "$env_file" > "$tmp_env" 2>/dev/null || true
-        grep -v "^EDGE_TUNNEL_PORT=" "$env_file" >> "$tmp_env" 2>/dev/null || true
-        grep -v "^EDGE_TUNNEL_FQDN=" "$env_file" >> "$tmp_env" 2>/dev/null || true
+        grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
         mv "$tmp_env" "$env_file"
       fi
 

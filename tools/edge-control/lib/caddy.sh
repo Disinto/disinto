@@ -26,73 +26,50 @@ add_route() {
   local port="$2"
   local fqdn="${project}.${DOMAIN_SUFFIX}"
 
-  # Build Caddy site block configuration
-  local config
-  config=$(cat <<EOF
+  # Build the route configuration (partial config)
+  local route_config
+  route_config=$(cat <<EOF
 {
-  "apps": {
-    "http": {
-      "servers": {
-        "edge": {
-          "listen": [":80", ":443"],
-          "routes": [
+  "match": [
+    {
+      "host": ["${fqdn}"]
+    }
+  ],
+  "handle": [
+    {
+      "handler": "subroute",
+      "routes": [
+        {
+          "handle": [
             {
-              "match": [
+              "handler": "reverse_proxy",
+              "upstreams": [
                 {
-                  "host": ["${fqdn}"]
-                }
-              ],
-              "handle": [
-                {
-                  "handler": "subroute",
-                  "routes": [
-                    {
-                      "handle": [
-                        {
-                          "handler": "reverse_proxy",
-                          "upstreams": [
-                            {
-                              "dial": "127.0.0.1:${port}"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
+                  "dial": "127.0.0.1:${port}"
                 }
               ]
             }
           ]
         }
-      }
+      ]
     }
-  }
+  ]
 }
 EOF
 )
 
-  # Send POST to Caddy admin API to load config
-  # Note: This appends to existing config rather than replacing
+  # Append route using POST /config/apps/http/servers/edge/routes
   local response
   response=$(curl -s -X POST \
-    "${CADDY_ADMIN_URL}/load" \
+    "${CADDY_ADMIN_URL}/config/apps/http/servers/edge/routes" \
     -H "Content-Type: application/json" \
-    -d "$config" 2>&1) || {
+    -d "$route_config" 2>&1) || {
     echo "Error: failed to add route for ${fqdn}" >&2
     echo "Response: ${response}" >&2
     return 1
   }
 
-  # Check response
-  local loaded
-  loaded=$(echo "$response" | jq -r '.loaded // empty' 2>/dev/null) || loaded=""
-
-  if [ "$loaded" = "true" ]; then
-    echo "Added route: ${fqdn} → 127.0.0.1:${port}"
-  else
-    echo "Warning: Caddy admin response: ${response}" >&2
-    # Don't fail hard - config might have been merged successfully
-  fi
+  echo "Added route: ${fqdn} → 127.0.0.1:${port}"
 }
 
 # Remove a route for a project
@@ -101,11 +78,33 @@ remove_route() {
   local project="$1"
   local fqdn="${project}.${DOMAIN_SUFFIX}"
 
-  # Use Caddy admin API to delete the config for this host
-  # We need to delete the specific host match from the config
+  # First, get current routes
+  local routes_json
+  routes_json=$(curl -s "${CADDY_ADMIN_URL}/config/apps/http/servers/edge/routes" 2>&1) || {
+    echo "Error: failed to get current routes" >&2
+    return 1
+  }
+
+  # Find the route index that matches our fqdn
+  local route_index=-1
+  local idx=0
+  while IFS= read -r host; do
+    if [ "$host" = "$fqdn" ]; then
+      route_index=$idx
+      break
+    fi
+    idx=$((idx + 1))
+  done < <(echo "$routes_json" | jq -r '.[].match[].host[]' 2>/dev/null)
+
+  if [ "$route_index" -lt 0 ]; then
+    echo "Warning: route for ${fqdn} not found" >&2
+    return 0
+  fi
+
+  # Delete the route at the found index
   local response
   response=$(curl -s -X DELETE \
-    "${CADDY_ADMIN_URL}/config/apps/http/servers/edge/routes/0" \
+    "${CADDY_ADMIN_URL}/config/apps/http/servers/edge/routes/${route_index}" \
     -H "Content-Type: application/json" 2>&1) || {
     echo "Error: failed to remove route for ${fqdn}" >&2
     echo "Response: ${response}" >&2
