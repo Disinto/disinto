@@ -439,12 +439,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     OPEN_PR=true
   fi
 
-  # Skip vision-labeled issues — they are managed by architect agent, not dev-poll
+  # Skip issues owned by non-dev agents (bug-report, vision, prediction, etc.)
+  # See issue #608: dev-poll must only touch issues it could actually claim.
   issue_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${ISSUE_NUM}" | jq -r '[.labels[].name] | join(",")')
-  if echo "$issue_labels" | grep -q "vision"; then
-    log "issue #${ISSUE_NUM} has 'vision' label — skipping stale detection (managed by architect)"
-    BLOCKED_BY_INPROGRESS=true
+  if ! issue_is_dev_claimable "$issue_labels"; then
+    log "issue #${ISSUE_NUM} has non-dev label(s) [${issue_labels}] — skipping (owned by another agent)"
+    BLOCKED_BY_INPROGRESS=false
+    OTHER_AGENT_INPROGRESS=true
   fi
 
   # Check if issue has an assignee — only block on issues assigned to this agent
@@ -501,20 +503,6 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
       else
         log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
         relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
-        BLOCKED_BY_INPROGRESS=true
-      fi
-    fi
-
-    # Formula guard: formula-labeled issues should not be worked on by dev-agent.
-    # Remove in-progress label and skip to prevent infinite respawn cycle (#115).
-    if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
-      ORPHAN_LABELS=$(echo "$ORPHANS_JSON" | jq -r '.[0].labels[].name' 2>/dev/null) || true
-      SKIP_LABEL=$(echo "$ORPHAN_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
-      if [ -n "$SKIP_LABEL" ]; then
-        log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — removing in-progress, skipping"
-        IP_ID=$(_ilc_in_progress_id)
-        curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
-          "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
         BLOCKED_BY_INPROGRESS=true
       fi
     fi
