@@ -72,7 +72,9 @@ _generate_local_model_services() {
       - \${HOME}/.ssh:/home/agent/.ssh:ro
     environment:
       FORGE_URL: http://forgejo:3000
-      FORGE_TOKEN: \${FORGE_TOKEN:-}
+      # Use llama-specific credentials if available, otherwise fall back to main FORGE_TOKEN
+      FORGE_TOKEN: \${FORGE_TOKEN_LLAMA:-\${FORGE_TOKEN:-}}
+      FORGE_PASS: \${FORGE_PASS_LLAMA:-\${FORGE_PASS:-}}
       FORGE_REVIEW_TOKEN: \${FORGE_REVIEW_TOKEN:-}
       FORGE_BOT_USERNAMES: \${FORGE_BOT_USERNAMES:-}
       AGENT_ROLES: "${roles}"
