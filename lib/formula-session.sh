@@ -123,6 +123,9 @@ ensure_profile_repo() {
   # Check if already cached and up-to-date
   if [ -d "${PROFILE_REPO_PATH}/.git" ]; then
     log "Pulling .profile repo: ${agent_identity}/.profile"
+    # Always refresh the remote URL to ensure it's clean (no baked credentials)
+    # This fixes auth issues when old URLs contained the wrong username (#652)
+    git -C "$PROFILE_REPO_PATH" remote set-url origin "$clone_url" 2>/dev/null || true
     if git -C "$PROFILE_REPO_PATH" fetch origin --quiet 2>/dev/null; then
       git -C "$PROFILE_REPO_PATH" checkout main --quiet 2>/dev/null || \
       git -C "$PROFILE_REPO_PATH" checkout master --quiet 2>/dev/null || true
@@ -311,6 +314,15 @@ _profile_commit_and_push() {
 
   (
     cd "$PROFILE_REPO_PATH" || return 1
+
+    # Refresh the remote URL to ensure credentials are current (#652)
+    # This ensures we use the correct bot identity and fresh credentials
+    local forge_url="${FORGE_URL:-http://localhost:3000}"
+    local agent_identity="${AGENT_IDENTITY:-}"
+    if [ -n "$agent_identity" ]; then
+      local remote_url="${forge_url}/${agent_identity}/.profile.git"
+      git remote set-url origin "$remote_url" 2>/dev/null || true
+    fi
 
     if [ ${#files[@]} -gt 0 ]; then
       git add "${files[@]}"
