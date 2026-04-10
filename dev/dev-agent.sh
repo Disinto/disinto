@@ -268,11 +268,22 @@ log "forge remote: ${FORGE_REMOTE}"
 # First attempt: fix/issue-N, subsequent: fix/issue-N-1, fix/issue-N-2, etc.
 if [ "$RECOVERY_MODE" = false ]; then
   # Count only branches matching fix/issue-N, fix/issue-N-1, fix/issue-N-2, etc. (exact prefix match)
-  # grep -c always prints a count and exits 1 when count=0; use || true to swallow the exit status.
-  # Do NOT use "|| echo 0" here: grep would print "0" AND echo would append "0", producing "0\n0" which breaks arithmetic.
-  ATTEMPT=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}" 2>/dev/null | grep -c "refs/heads/fix/issue-${ISSUE}$" || true)
+  # Use explicit error handling to avoid silent failure from set -e + pipefail when git ls-remote fails.
+  if _lr1=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}" 2>&1); then
+    ATTEMPT=$(printf '%s\n' "$_lr1" | grep -c "refs/heads/fix/issue-${ISSUE}$" || true)
+  else
+    log "WARNING: git ls-remote failed for attempt counting: $_lr1"
+    ATTEMPT=0
+  fi
   ATTEMPT="${ATTEMPT:-0}"
-  ATTEMPT=$((ATTEMPT + $(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}-*" 2>/dev/null | wc -l)))
+
+  if _lr2=$(git ls-remote --heads "$FORGE_REMOTE" "refs/heads/fix/issue-${ISSUE}-*" 2>&1); then
+    # Guard on empty to avoid off-by-one: command substitution strips trailing newlines,
+    # so wc -l undercounts by 1 when output exists. Re-add newline only if non-empty.
+    ATTEMPT=$((ATTEMPT + $( [ -z "$_lr2" ] && echo 0 || printf '%s\n' "$_lr2" | wc -l )))
+  else
+    log "WARNING: git ls-remote failed for suffix counting: $_lr2"
+  fi
   if [ "$ATTEMPT" -gt 0 ]; then
     BRANCH="fix/issue-${ISSUE}-${ATTEMPT}"
   fi
