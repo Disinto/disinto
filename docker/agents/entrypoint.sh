@@ -58,6 +58,27 @@ _setup_git_creds() {
   _GIT_CREDS_LOG_FN=log repair_baked_cred_urls /home/agent/repos
 }
 
+# Configure git author identity for commits made by this container.
+# Derives identity from the resolved bot user (BOT_USER) to ensure commits
+# are visibly attributable to the correct bot in the forge timeline.
+configure_git_identity() {
+  # Resolve BOT_USER from FORGE_TOKEN if not already set
+  if [ -z "${BOT_USER:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
+    BOT_USER=$(curl -sf --max-time 10 \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || true
+  fi
+
+  # Default to dev-bot if resolution fails
+  BOT_USER="${BOT_USER:-dev-bot}"
+
+  # Configure git identity for all repositories
+  gosu agent git config --global user.name "${BOT_USER}"
+  gosu agent git config --global user.email "${BOT_USER}@disinto.local"
+
+  log "Git identity configured: ${BOT_USER} <${BOT_USER}@disinto.local>"
+}
+
 # Configure tea CLI login for forge operations (runs as agent user).
 # tea stores config in ~/.config/tea/ — persistent across container restarts
 # only if that directory is on a mounted volume.
@@ -277,6 +298,7 @@ pull_factory_repo() {
 
 # Configure git and tea once at startup (as root, then drop to agent)
 _setup_git_creds
+configure_git_identity
 configure_tea_login
 
 # Clone project repo on first run (makes agents self-healing, #589)
