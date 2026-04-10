@@ -51,7 +51,7 @@ Usage:
   disinto ci-logs <pipeline> [--step <name>]
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
-  disinto hire-an-agent <agent-name> <role> [--formula <path>]
+  disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo)
 
 Init options:
@@ -64,6 +64,9 @@ Init options:
 
 Hire an agent options:
   --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
+  --local-model <url>  Base URL for local model server (e.g., http://10.10.10.1:8081)
+  --model <name>       Model name for local model (e.g., unsloth/Qwen3.5-35B-A3B)
+  --poll-interval <s>  Poll interval in seconds (default: 60)
 
 CI logs options:
   --step <name>        Filter logs to a specific step (e.g., smoke-init)
