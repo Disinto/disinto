@@ -18,7 +18,10 @@ set -euo pipefail
 
 DISINTO_DIR="/home/agent/disinto"
 LOGFILE="/home/agent/data/agent-entrypoint.log"
-mkdir -p /home/agent/data/logs
+
+# Create all expected log subdirectories and set ownership as root before dropping to agent.
+# This handles both fresh volumes and stale root-owned dirs from prior container runs.
+mkdir -p /home/agent/data/logs/{dev,action,review,supervisor,vault,site,metrics,gardener,planner,predictor,architect,dispatcher}
 chown -R agent:agent /home/agent/data
 
 log() {
