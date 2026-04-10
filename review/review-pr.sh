@@ -227,6 +227,7 @@ PROMPT=$(cat "${REVIEW_TMPDIR}/prompt.md")
 status "running review"
 rm -f "$OUTPUT_FILE"
 export CLAUDE_MODEL="sonnet"
+export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"   # 15 min — reviews shouldn't take longer
 
 if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
   agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" "$PROMPT"
