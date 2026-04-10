@@ -146,27 +146,24 @@ done
 
 echo "## CI Pipelines (${PROJECT_NAME})"
 
-_recent_ci=$(wpdb -A -c "
-  SELECT number, status, branch,
-         ROUND(EXTRACT(EPOCH FROM (to_timestamp(finished) - to_timestamp(started)))/60)::int as dur_min
-  FROM pipelines
-  WHERE repo_id = ${WOODPECKER_REPO_ID}
-    AND finished > 0
-    AND to_timestamp(finished) > now() - interval '24 hours'
-  ORDER BY number DESC LIMIT 10;" 2>/dev/null || echo "CI database query failed")
+# Fetch pipelines via Woodpecker REST API (database-driver-agnostic)
+_pipelines=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines?perPage=50" 2>/dev/null || echo '[]')
+_now=$(date +%s)
+
+# Recent pipelines (finished in last 24h = 86400s), sorted by number DESC
+_recent_ci=$(echo "$_pipelines" | jq -r --argjson now "$_now" '
+  [.[] | select(.finished > 0) | select(($now - .finished) < 86400)]
+  | sort_by(-.number) | .[0:10]
+  | .[] | "\(.number)\t\(.status)\t\(.branch)\t\((.finished - .started) / 60 | floor)"' 2>/dev/null || echo "CI query failed")
 echo "$_recent_ci"
 
-_stuck=$(wpdb -c "
-  SELECT count(*) FROM pipelines
-  WHERE repo_id=${WOODPECKER_REPO_ID}
-    AND status='running'
-    AND EXTRACT(EPOCH FROM now() - to_timestamp(started)) > 1200;" 2>/dev/null | xargs || echo "?")
+# Stuck: running pipelines older than 20min (1200s)
+_stuck=$(echo "$_pipelines" | jq --argjson now "$_now" '
+  [.[] | select(.status == "running") | select(($now - .started) > 1200)] | length' 2>/dev/null || echo "?")
 
-_pending=$(wpdb -c "
-  SELECT count(*) FROM pipelines
-  WHERE repo_id=${WOODPECKER_REPO_ID}
-    AND status='pending'
-    AND EXTRACT(EPOCH FROM now() - to_timestamp(created)) > 1800;" 2>/dev/null | xargs || echo "?")
+# Pending: pending pipelines older than 30min (1800s)
+_pending=$(echo "$_pipelines" | jq --argjson now "$_now" '
+  [.[] | select(.status == "pending") | select(($now - .created) > 1800)] | length' 2>/dev/null || echo "?")
 
 echo "Stuck (>20min): ${_stuck}"
 echo "Pending (>30min): ${_pending}"
