@@ -72,6 +72,8 @@ cd disinto
 disinto init https://github.com/yourorg/yourproject
 ```
 
+This will generate a `docker-compose.yml` file.
+
 Or configure manually — edit `.env` with your values:
 
 ```bash
@@ -97,7 +99,7 @@ CLAUDE_TIMEOUT=7200         # max seconds per Claude invocation (default: 2h)
 docker compose up -d
 
 # 4. Verify the entrypoint loop is running
-docker exec disinto-agents-1 tail -f /home/agent/data/agent-entrypoint.log
+docker exec disinto-agents tail -f /home/agent/data/agent-entrypoint.log
 ```
 
 ## Directory Structure

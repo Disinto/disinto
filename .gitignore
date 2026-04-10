@@ -28,3 +28,6 @@ secrets/
 
 # Pre-built binaries for Docker builds (avoid network calls during build)
 docker/agents/bin/
+
+# Generated docker-compose.yml (run 'bin/disinto init' to regenerate)
+docker-compose.yml

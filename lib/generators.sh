@@ -221,6 +221,9 @@ for name, config in agents.items():
 }
 
 # Generate docker-compose.yml in the factory root.
+# **CANONICAL SOURCE**: This generator is the single source of truth for docker-compose.yml.
+# The tracked docker-compose.yml file has been removed. Operators must run 'bin/disinto init'
+# to materialize a working stack on a fresh checkout.
 _generate_compose_impl() {
   local forge_port="${1:-3000}"
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
