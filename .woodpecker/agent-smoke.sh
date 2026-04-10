@@ -202,7 +202,7 @@ check_script lib/parse-deps.sh
 check_script dev/dev-agent.sh
 check_script dev/dev-poll.sh
 check_script dev/phase-test.sh
-check_script gardener/gardener-run.sh
+check_script gardener/gardener-run.sh    lib/formula-session.sh
 check_script review/review-pr.sh         lib/agent-sdk.sh
 check_script review/review-poll.sh
 check_script planner/planner-run.sh      lib/formula-session.sh
