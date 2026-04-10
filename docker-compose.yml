@@ -117,6 +117,7 @@ services:
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
       - disinto-logs:/opt/disinto-logs
       - ./docker-compose.yml:/opt/docker-compose.yml:ro
+      - ./projects:/opt/disinto/projects:ro
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
