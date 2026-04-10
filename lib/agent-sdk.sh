@@ -27,6 +27,88 @@ agent_recover_session() {
   fi
 }
 
+# claude_run_with_watchdog — run claude with idle-after-final-message watchdog
+#
+# Mitigates upstream Claude Code hang (#591) by detecting when the final
+# assistant message has been written and terminating the process after a
+# short grace period instead of waiting for CLAUDE_TIMEOUT.
+#
+# The watchdog:
+#   1. Streams claude stdout to a temp file
+#   2. Polls for the final result marker ("type":"result" for stream-json
+#      or closing } for regular json output)
+#   3. After detecting the final marker, starts a CLAUDE_IDLE_GRACE countdown
+#   4. SIGTERM claude if it hasn't exited cleanly within the grace period
+#   5. Falls back to CLAUDE_TIMEOUT as the absolute hard ceiling
+#
+# Usage: claude_run_with_watchdog claude [args...]
+# Expects: LOGFILE, CLAUDE_TIMEOUT, CLAUDE_IDLE_GRACE (default 30)
+# Returns: exit code from claude or timeout
+claude_run_with_watchdog() {
+  local -a cmd=("$@")
+  local out_file pid grace_pid rc
+
+  # Create temp file for stdout capture
+  out_file=$(mktemp) || return 1
+  trap 'rm -f "$out_file"' RETURN
+
+  # Start claude in background, capturing stdout to temp file
+  "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
+  pid=$!
+
+  # Background watchdog: poll for final result marker
+  (
+    local grace="${CLAUDE_IDLE_GRACE:-30}"
+    local detected=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+      # Check for stream-json result marker first (more reliable)
+      if grep -q '"type":"result"' "$out_file" 2>/dev/null; then
+        detected=1
+        break
+      fi
+      # Fallback: check for closing brace of top-level result object
+      if tail -c 100 "$out_file" 2>/dev/null | grep -q '}[[:space:]]*$'; then
+        # Verify it looks like a JSON result (has session_id or result key)
+        if grep -qE '"(session_id|result)":' "$out_file" 2>/dev/null; then
+          detected=1
+          break
+        fi
+      fi
+      sleep 2
+    done
+
+    # If we detected a final message, wait grace period then kill if still running
+    if [ "$detected" -eq 1 ] && kill -0 "$pid" 2>/dev/null; then
+      log "watchdog: final result detected, ${grace}s grace period before SIGTERM"
+      sleep "$grace"
+      if kill -0 "$pid" 2>/dev/null; then
+        log "watchdog: claude -p idle for ${grace}s after final result; SIGTERM"
+        kill -TERM "$pid" 2>/dev/null || true
+        # Give it a moment to clean up
+        sleep 5
+        if kill -0 "$pid" 2>/dev/null; then
+          log "watchdog: force kill after SIGTERM timeout"
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
+    fi
+  ) &
+  grace_pid=$!
+
+  # Hard ceiling timeout (existing behavior) — use tail --pid to wait for process
+  timeout --foreground "${CLAUDE_TIMEOUT:-7200}" tail --pid="$pid" -f /dev/null 2>/dev/null
+  rc=$?
+
+  # Clean up the watchdog
+  kill "$grace_pid" 2>/dev/null || true
+  wait "$grace_pid" 2>/dev/null || true
+
+  # Output the captured stdout
+  cat "$out_file"
+  return "$rc"
+}
+
 # agent_run — synchronous Claude invocation (one-shot claude -p)
 # Usage: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
 # Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
@@ -50,7 +132,7 @@ agent_run() {
   mkdir -p "$(dirname "$lock_file")"
   local output rc
   log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
-  output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude "${args[@]}" 2>>"$LOGFILE") && rc=0 || rc=$?
+  output=$(cd "$run_dir" && flock -w 600 "$lock_file" claude_run_with_watchdog claude "${args[@]}" 2>>"$LOGFILE") && rc=0 || rc=$?
   if [ "$rc" -eq 124 ]; then
     log "agent_run: timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $rc)"
   elif [ "$rc" -ne 0 ]; then
@@ -91,7 +173,7 @@ agent_run() {
         local nudge="You stopped but did not push any code. You have uncommitted changes. Commit them and push."
         log "agent_run: nudging (uncommitted changes)"
         local nudge_rc
-        output=$(cd "$run_dir" && flock -w 600 "$lock_file" timeout "${CLAUDE_TIMEOUT:-7200}" claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
+        output=$(cd "$run_dir" && flock -w 600 "$lock_file" claude_run_with_watchdog claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
         if [ "$nudge_rc" -eq 124 ]; then
           log "agent_run: nudge timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $nudge_rc)"
         elif [ "$nudge_rc" -ne 0 ]; then
