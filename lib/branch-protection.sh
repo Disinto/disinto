@@ -35,6 +35,55 @@ _ops_api() {
 }
 
 # -----------------------------------------------------------------------------
+# _bp_wait_for_branch — Wait for Forgejo to index a branch with exponential backoff
+#
+# Forgejo's branch indexer can take 5–15s to register a newly-pushed branch.
+# This helper retries up to 10 times with exponential backoff (2s, 4s, 6s, …)
+# capped at 10s per wait, for a worst-case total of ~70s.
+#
+# Args:
+#   $1 - Full API URL for the repo (e.g. https://forge.example/api/v1/repos/owner/repo)
+#   $2 - Branch name
+#   $3 - Human-readable repo identifier for log messages
+#
+# Returns: 0 if branch found, 1 if not found after all retries
+# -----------------------------------------------------------------------------
+_bp_wait_for_branch() {
+  local api_url="$1"
+  local branch="$2"
+  local repo_label="$3"
+
+  local max_retries=10
+  local base_wait=2
+  local attempt=1
+  local branch_status="0"
+
+  while [ "$attempt" -le "$max_retries" ]; do
+    branch_status=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
+
+    if [ "$branch_status" = "200" ]; then
+      _bp_log "Branch ${branch} exists on ${repo_label}"
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$max_retries" ]; then
+      local wait_time=$(( base_wait * attempt ))
+      if [ "$wait_time" -gt 10 ]; then
+        wait_time=10
+      fi
+      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_retries}), waiting ${wait_time}s..."
+      sleep "$wait_time"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  _bp_log "ERROR: Branch ${branch} does not exist on ${repo_label} after ${max_retries} attempts"
+  return 1
+}
+
+# -----------------------------------------------------------------------------
 # setup_vault_branch_protection — Set up admin-only branch protection for main
 #
 # Configures the following protection rules:
@@ -51,30 +100,8 @@ setup_vault_branch_protection() {
 
   _bp_log "Setting up branch protection for ${branch} on ${FORGE_OPS_REPO}"
 
-  # Check if branch exists with retry loop (handles race condition after initial push)
-  local branch_exists="0"
-  local max_attempts=3
-  local attempt=1
-
-  while [ "$attempt" -le "$max_attempts" ]; do
-    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
-
-    if [ "$branch_exists" = "200" ]; then
-      _bp_log "Branch ${branch} exists on ${FORGE_OPS_REPO}"
-      break
-    fi
-
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
-      sleep 2
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist on ${FORGE_OPS_REPO} after ${max_attempts} attempts"
+  # Wait for Forgejo to index the branch (may take 5–15s after push)
+  if ! _bp_wait_for_branch "$api_url" "$branch" "$FORGE_OPS_REPO"; then
     return 1
   fi
 
@@ -244,30 +271,8 @@ setup_profile_branch_protection() {
   local api_url
   api_url="${FORGE_URL}/api/v1/repos/${repo}"
 
-  # Check if branch exists with retry loop (handles race condition after initial push)
-  local branch_exists="0"
-  local max_attempts=3
-  local attempt=1
-
-  while [ "$attempt" -le "$max_attempts" ]; do
-    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
-
-    if [ "$branch_exists" = "200" ]; then
-      _bp_log "Branch ${branch} exists on ${repo}"
-      break
-    fi
-
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
-      sleep 2
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist on ${repo} after ${max_attempts} attempts"
+  # Wait for Forgejo to index the branch (may take 5–15s after push)
+  if ! _bp_wait_for_branch "$api_url" "$branch" "$repo"; then
     return 1
   fi
 
@@ -430,30 +435,8 @@ setup_project_branch_protection() {
   local api_url
   api_url="${FORGE_URL}/api/v1/repos/${repo}"
 
-  # Check if branch exists with retry loop (handles race condition after initial push)
-  local branch_exists="0"
-  local max_attempts=3
-  local attempt=1
-
-  while [ "$attempt" -le "$max_attempts" ]; do
-    branch_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${api_url}/git/branches/${branch}" 2>/dev/null || echo "0")
-
-    if [ "$branch_exists" = "200" ]; then
-      _bp_log "Branch ${branch} exists on ${repo}"
-      break
-    fi
-
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      _bp_log "Branch ${branch} not indexed yet (attempt ${attempt}/${max_attempts}), waiting 2s..."
-      sleep 2
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  if [ "$branch_exists" != "200" ]; then
-    _bp_log "ERROR: Branch ${branch} does not exist on ${repo} after ${max_attempts} attempts"
+  # Wait for Forgejo to index the branch (may take 5–15s after push)
+  if ! _bp_wait_for_branch "$api_url" "$branch" "$repo"; then
     return 1
   fi
 
