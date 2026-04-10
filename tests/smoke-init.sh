@@ -161,6 +161,8 @@ git commit --quiet -m "Initial commit"
 
 export SMOKE_FORGE_URL="$FORGE_URL"
 export FORGE_URL
+# Required for non-interactive init (issue #620)
+export FORGE_ADMIN_PASS="smoke-test-password-123"
 
 # Skip push to mock server (no git support)
 export SKIP_PUSH=true
