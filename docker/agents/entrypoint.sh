@@ -237,6 +237,32 @@ bootstrap_factory_repo() {
   fi
 }
 
+# Ensure the project repo is cloned on first run (#589).
+# The agents container uses a named volume (project-repos) at /home/agent/repos.
+# On first startup, if the project repo is missing, clone it from FORGE_URL/FORGE_REPO.
+# This makes the agents container self-healing and independent of init's host clone.
+ensure_project_clone() {
+  # shellcheck disable=SC2153
+  local repo_dir="/home/agent/repos/${PROJECT_NAME}"
+  if [ -d "${repo_dir}/.git" ]; then
+    log "Project repo present at ${repo_dir}"
+    return 0
+  fi
+  if [ -z "${FORGE_REPO:-}" ] || [ -z "${FORGE_URL:-}" ]; then
+    log "Cannot clone project repo: FORGE_REPO or FORGE_URL unset"
+    return 1
+  fi
+  log "Cloning ${FORGE_URL}/${FORGE_REPO}.git -> ${repo_dir} (first run)"
+  mkdir -p "$(dirname "$repo_dir")"
+  chown -R agent:agent "$(dirname "$repo_dir")"
+  if gosu agent git clone --quiet "${FORGE_URL}/${FORGE_REPO}.git" "$repo_dir"; then
+    log "Project repo cloned"
+  else
+    log "Project repo clone failed — agents may fail until manually fixed"
+    return 1
+  fi
+}
+
 # Pull latest factory code at the start of each poll iteration (#593).
 # Runs as the agent user; failures are non-fatal (stale code still works).
 pull_factory_repo() {
@@ -252,6 +278,9 @@ pull_factory_repo() {
 # Configure git and tea once at startup (as root, then drop to agent)
 _setup_git_creds
 configure_tea_login
+
+# Clone project repo on first run (makes agents self-healing, #589)
+ensure_project_clone
 
 # Bootstrap ops repos from forgejo into container volumes (#586)
 bootstrap_ops_repos

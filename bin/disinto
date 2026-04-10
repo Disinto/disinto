@@ -664,6 +664,10 @@ p.write_text(text)
   preflight_check "$forge_repo" "$forge_url"
 
   # Determine repo root (for new projects)
+  # This host-side clone is operator-only convenience (#589): it enables
+  # `cd ~/project && $EDITOR .` but is NOT read by agents at runtime.
+  # Agents clone independently from FORGE_URL/FORGE_REPO into the
+  # project-repos named volume at /home/agent/repos/${project_name}.
   repo_root="${repo_root:-/home/${USER}/${project_name}}"
 
   # Clone or validate (try origin first for initial clone from upstream)
