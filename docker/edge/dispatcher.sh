@@ -9,7 +9,7 @@
 # 3. Verify TOML arrived via merged PR with admin merger (Forgejo API)
 # 4. Validate TOML using vault-env.sh validator
 # 5. Decrypt .env.vault.enc and extract only declared secrets
-# 6. Launch: docker run --rm disinto-agents:latest <formula> <action-id>
+# 6. Launch: docker run --rm disinto/agents:latest <action-id>
 # 7. Write <action-id>.result.json with exit code, timestamp, logs summary
 #
 # Part of #76.
@@ -408,16 +408,42 @@ launch_runner() {
   local secrets_array
   secrets_array="${VAULT_ACTION_SECRETS:-}"
 
-  # Build docker compose run command (delegates to compose runner service)
-  # The runner service definition handles image, network, volumes, and base env.
-  # The dispatcher only adds declared secrets and the ops repo mount.
-  #
-  # The edge container has docker-compose.yml mounted at /opt/docker-compose.yml.
-  # --project-directory tells docker compose to resolve relative paths (volumes,
-  # env_file) against the HOST project root so the Docker daemon finds them.
-  local compose_file="${COMPOSE_FILE:-/opt/docker-compose.yml}"
-  local project_dir="${HOST_PROJECT_DIR:-.}"
-  local -a cmd=(docker compose -f "$compose_file" --project-directory "$project_dir" run --rm)
+  # Build docker run command (self-contained, no compose context needed).
+  # The edge container has the Docker socket but not the host's compose project,
+  # so docker compose run would fail with exit 125. docker run is self-contained:
+  # the dispatcher knows the image, network, env vars, and entrypoint.
+  local -a cmd=(docker run --rm
+    --name "vault-runner-${action_id}"
+    --network host
+    --entrypoint bash
+    -e DISINTO_CONTAINER=1
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}"
+    -e "FORGE_OPS_REPO=${FORGE_OPS_REPO:-}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
+  )
+
+  # Pass through optional env vars if set
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  fi
+  if [ -n "${CLAUDE_MODEL:-}" ]; then
+    cmd+=(-e "CLAUDE_MODEL=${CLAUDE_MODEL}")
+  fi
+
+  # Mount docker socket, claude binary, and claude config
+  cmd+=(-v /var/run/docker.sock:/var/run/docker.sock)
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
+  fi
+  local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${runtime_home}/.claude" ]; then
+    cmd+=(-v "${runtime_home}/.claude:/home/agent/.claude")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
 
   # Add environment variables for secrets (if any declared)
   if [ -n "$secrets_array" ]; then
@@ -441,7 +467,6 @@ launch_runner() {
   local mounts_array
   mounts_array="${VAULT_ACTION_MOUNTS:-}"
   if [ -n "$mounts_array" ]; then
-    local runtime_home="${HOME:-/home/debian}"
     for mount_alias in $mounts_array; do
       mount_alias=$(echo "$mount_alias" | xargs)
       [ -n "$mount_alias" ] || continue
@@ -467,10 +492,10 @@ launch_runner() {
   # Mount the ops repo so the runner entrypoint can read the action TOML
   cmd+=(-v "${OPS_REPO_ROOT}:/home/agent/ops:ro")
 
-  # Service name and action-id argument
-  cmd+=(runner "$action_id")
+  # Image and entrypoint arguments: runner entrypoint + action-id
+  cmd+=(disinto/agents:latest /home/agent/disinto/docker/runner/entrypoint-runner.sh "$action_id")
 
-  log "Running: docker compose run --rm runner ${action_id} (secrets: ${secrets_array:-none}, mounts: ${mounts_array:-none})"
+  log "Running: docker run --rm vault-runner-${action_id} (secrets: ${secrets_array:-none}, mounts: ${mounts_array:-none})"
 
   # Create temp file for logs
   local log_file
