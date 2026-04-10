@@ -34,13 +34,15 @@ and injected into your prompt above. Review them now.
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
 
-2. Check vault state: read $OPS_REPO_ROOT/vault/pending/*.md for any procurement items
+2. Check vault state: read ${OPS_VAULT_ROOT:-$OPS_REPO_ROOT/vault/pending}/*.md for any procurement items
    the planner has filed. Note items relevant to the health assessment
    (e.g. a blocked resource that explains why the pipeline is stalled).
+   Note: In degraded mode, vault items are stored locally.
 
 3. Read the supervisor journal for recent history:
-     JOURNAL_FILE="$OPS_REPO_ROOT/journal/supervisor/$(date -u +%Y-%m-%d).md"
+     JOURNAL_FILE="${OPS_JOURNAL_ROOT:-$OPS_REPO_ROOT/journal/supervisor}/$(date -u +%Y-%m-%d).md"
      if [ -f "$JOURNAL_FILE" ]; then cat "$JOURNAL_FILE"; fi
+   Note: In degraded mode, the journal is stored locally and not committed to git.
 
 4. Note any values that cross these thresholds:
    - RAM available < 500MB or swap > 3GB → P0 (memory crisis)
@@ -143,7 +145,7 @@ For each finding from the health assessment, decide and execute an action.
 **P3 Stale PRs (CI done >20min, no push since):**
   Do NOT read dev-poll.sh, push branches, attempt merges, or investigate pipeline code.
   Instead, file a vault item for the dev-agent to pick up:
-    Write $OPS_REPO_ROOT/vault/pending/stale-pr-${ISSUE_NUM}.md:
+    Write ${OPS_VAULT_ROOT:-$OPS_REPO_ROOT/vault/pending}/stale-pr-${ISSUE_NUM}.md:
       # Stale PR: ${PR_TITLE}
       ## What
       CI finished >20min ago but no git push has been made to the PR branch.
@@ -157,7 +159,7 @@ For each finding from the health assessment, decide and execute an action.
 
 For P0-P2 issues that persist after auto-fix attempts, or issues requiring
 human judgment, file a vault procurement item:
-  Write $OPS_REPO_ROOT/vault/pending/supervisor-<issue-slug>.md:
+  Write ${OPS_VAULT_ROOT:-$OPS_REPO_ROOT/vault/pending}/supervisor-<issue-slug>.md:
     # <What is needed>
     ## What
     <description of the problem and why the supervisor cannot fix it>
@@ -166,13 +168,23 @@ human judgment, file a vault procurement item:
     ## Unblocks
     - Factory health: <what this resolves>
   Vault PR filed on ops repo — human approves via PR review.
+  Note: In degraded mode (no ops repo), vault items are written locally to ${OPS_VAULT_ROOT:-local path}.
 
-Read the relevant best-practices file before taking action:
-  cat "$OPS_REPO_ROOT/knowledge/memory.md"    # P0
-  cat "$OPS_REPO_ROOT/knowledge/disk.md"      # P1
-  cat "$OPS_REPO_ROOT/knowledge/ci.md"        # P2 CI
-  cat "$OPS_REPO_ROOT/knowledge/dev-agent.md" # P2 agent
-  cat "$OPS_REPO_ROOT/knowledge/git.md"       # P2 git
+### Reading best-practices files
+
+Read the relevant best-practices file before taking action. In degraded mode,
+use the bundled knowledge files from ${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}:
+
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/memory.md"    # P0
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/disk.md"      # P1
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/ci.md"        # P2 CI
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/dev-agent.md" # P2 agent
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/git.md"       # P2 git
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/review-agent.md" # P2 review
+  cat "${OPS_KNOWLEDGE_ROOT:-$OPS_REPO_ROOT/knowledge}/forge.md"     # P2 forge
+
+Note: If OPS_REPO_ROOT is not available (degraded mode), the bundled knowledge
+files in ${OPS_KNOWLEDGE_ROOT:-<unset>} provide fallback guidance.
 
 Track what you fixed and what vault items you filed for the report step.
 """
@@ -214,7 +226,7 @@ description = """
 Append a timestamped entry to the supervisor journal.
 
 File path:
-  $OPS_REPO_ROOT/journal/supervisor/$(date -u +%Y-%m-%d).md
+  ${OPS_JOURNAL_ROOT:-$OPS_REPO_ROOT/journal/supervisor}/$(date -u +%Y-%m-%d).md
 
 If the file already exists (multiple runs per day), append a new section.
 If it does not exist, create it.
@@ -247,12 +259,20 @@ run-to-run context so future supervisor runs can detect trends
 IMPORTANT: Do NOT commit or push the journal — it is a local working file.
 The journal directory is committed to git periodically by other agents.
 
+Note: In degraded mode (no ops repo), the journal is written locally to
+${OPS_JOURNAL_ROOT:-<unset>} and is NOT automatically committed to any repo.
+
 ## Learning
 
-If you discover something new during this run, append it to the relevant
-knowledge file in the ops repo:
-  echo "### Lesson title
-  Description of what you learned." >> "${OPS_REPO_ROOT}/knowledge/<file>.md"
+If you discover something new during this run:
+
+- In full mode (ops repo available): append to the relevant knowledge file:
+    echo "### Lesson title
+    Description of what you learned." >> "${OPS_REPO_ROOT}/knowledge/<file>.md"
+
+- In degraded mode: write to the local knowledge directory for reference:
+    echo "### Lesson title
+    Description of what you learned." >> "${OPS_KNOWLEDGE_ROOT:-<unset>}/<file>.md"
 
 Knowledge files: memory.md, disk.md, ci.md, forge.md, dev-agent.md,
 review-agent.md, git.md.

@@ -50,6 +50,26 @@ WORKTREE="/tmp/${PROJECT_NAME}-supervisor-run"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
 LOG_AGENT="supervisor"
 
+# ── OPS Repo Detection (Issue #544) ──────────────────────────────────────
+# Detect if OPS_REPO_ROOT is available and set degraded mode flag if not.
+# This allows the supervisor to run with fallback knowledge files and
+# local journal/vault paths when the ops repo is absent.
+if [ -z "${OPS_REPO_ROOT:-}" ] || [ ! -d "${OPS_REPO_ROOT}" ]; then
+  log "WARNING: OPS_REPO_ROOT not set or directory missing — running in degraded mode (no playbooks, no journal continuity, no vault destination)"
+  export OPS_REPO_DEGRADED=1
+  # Set fallback paths for degraded mode
+  export OPS_KNOWLEDGE_ROOT="${FACTORY_ROOT}/knowledge"
+  export OPS_JOURNAL_ROOT="${FACTORY_ROOT}/state/supervisor-journal"
+  export OPS_VAULT_ROOT="${PROJECT_REPO_ROOT}/vault/pending"
+  mkdir -p "$OPS_JOURNAL_ROOT" "$OPS_VAULT_ROOT" 2>/dev/null || true
+else
+  export OPS_REPO_DEGRADED=0
+  export OPS_KNOWLEDGE_ROOT="${OPS_REPO_ROOT}/knowledge"
+  export OPS_JOURNAL_ROOT="${OPS_REPO_ROOT}/journal/supervisor"
+  export OPS_VAULT_ROOT="${OPS_REPO_ROOT}/vault/pending"
+  mkdir -p "$OPS_JOURNAL_ROOT" "$OPS_VAULT_ROOT" 2>/dev/null || true
+fi
+
 # Override log() to append to supervisor-specific log file
 # shellcheck disable=SC2034
 log() {
@@ -105,6 +125,25 @@ export CLAUDE_MODEL="sonnet"
 # ── Create worktree (before prompt assembly so trap is set early) ────────
 formula_worktree_setup "$WORKTREE"
 
+# Inject OPS repo status into prompt
+if [ "${OPS_REPO_DEGRADED:-0}" = "1" ]; then
+  OPS_STATUS="
+## OPS Repo Status
+**DEGRADED MODE**: OPS repo is not available. Using bundled knowledge files and local journal/vault paths.
+- Knowledge files: ${OPS_KNOWLEDGE_ROOT:-<unset>}
+- Journal: ${OPS_JOURNAL_ROOT:-<unset>}
+- Vault destination: ${OPS_VAULT_ROOT:-<unset>}
+"
+else
+  OPS_STATUS="
+## OPS Repo Status
+**FULL MODE**: OPS repo available at ${OPS_REPO_ROOT}
+- Knowledge files: ${OPS_KNOWLEDGE_ROOT:-<unset>}
+- Journal: ${OPS_JOURNAL_ROOT:-<unset>}
+- Vault destination: ${OPS_VAULT_ROOT:-<unset>}
+"
+fi
+
 PROMPT="You are the supervisor agent for ${FORGE_REPO}. Work through the formula below.
 
 You have full shell access and --dangerously-skip-permissions.
@@ -117,6 +156,7 @@ ${PREFLIGHT_OUTPUT}
 ${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
+${OPS_STATUS}
 Priority order: P0 memory > P1 disk > P2 stopped > P3 degraded > P4 housekeeping
 
 ${FORMULA_CONTENT}

@@ -40,6 +40,12 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
+**Degraded mode (Issue #544)**: When `OPS_REPO_ROOT` is not set or the directory doesn't exist, the supervisor runs in degraded mode:
+- Uses bundled knowledge files from `$FACTORY_ROOT/knowledge/` instead of ops repo playbooks
+- Writes journal locally to `$FACTORY_ROOT/state/supervisor-journal/` (not committed to git)
+- Files vault items locally to `$PROJECT_REPO_ROOT/vault/pending/`
+- Logs a WARNING message at startup indicating degraded mode
+
 **Lifecycle**: supervisor-run.sh (cron */20) → lock + memory guard → run
 preflight.sh (collect metrics) → load formula + context → run claude -p via agent-sdk.sh
 → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.
