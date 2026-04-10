@@ -289,6 +289,12 @@ Write the complete, rewritten lessons-learned.md content below. No preamble, no 
     fi
   fi
 
+  # Commit and push the digest results
+  _profile_commit_and_push \
+    "profile: digest ${archived:-0} journals → knowledge/lessons-learned.md" \
+    knowledge/lessons-learned.md \
+    journal/
+
   return 0
 }
 
