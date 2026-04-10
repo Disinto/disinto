@@ -45,17 +45,48 @@ if [ -d /opt/disinto ] && [ ! -d /opt/disinto/.git ] && [ -n "$(ls -A /opt/disin
   exit 1
 fi
 
-# Shallow clone at the pinned version (inject token to support auth-required Forgejo)
+# Set HOME early so credential helper and git config land in the right place.
+export HOME=/home/agent
+mkdir -p "$HOME"
+
+# Configure git credential helper before cloning (#604).
+# /opt/disinto does not exist yet so we cannot source lib/git-creds.sh;
+# inline a minimal credential-helper setup here.
+if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+  _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
+  _forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
+  _bot_user=""
+  if [ -n "${FORGE_TOKEN:-}" ]; then
+    _bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || _bot_user=""
+  fi
+  _bot_user="${_bot_user:-dev-bot}"
+
+  cat > "${HOME}/.git-credentials-helper" <<CREDEOF
+#!/bin/sh
+[ "\$1" = "get" ] || exit 0
+cat >/dev/null
+echo "protocol=${_forge_proto}"
+echo "host=${_forge_host}"
+echo "username=${_bot_user}"
+echo "password=${FORGE_PASS}"
+CREDEOF
+  chmod 755 "${HOME}/.git-credentials-helper"
+  git config --global credential.helper "${HOME}/.git-credentials-helper"
+  git config --global --add safe.directory '*'
+fi
+
+# Shallow clone at the pinned version — use clean URL, credential helper
+# supplies auth (#604).
 if [ ! -d /opt/disinto/.git ]; then
-  _auth_url=$(printf '%s' "$FORGE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
   echo "edge: cloning ${FORGE_URL}/${FORGE_REPO} (branch ${DISINTO_VERSION:-main})..." >&2
-  if ! git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${_auth_url}/${FORGE_REPO}.git" /opt/disinto; then
+  if ! git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${FORGE_URL}/${FORGE_REPO}.git" /opt/disinto; then
     echo >&2
     echo "FATAL: failed to clone ${FORGE_URL}/${FORGE_REPO}.git (branch ${DISINTO_VERSION:-main})" >&2
     echo "Likely causes:" >&2
     echo "  - Forgejo at ${FORGE_URL} is unreachable from the edge container" >&2
     echo "  - Repository '${FORGE_REPO}' does not exist on this forge" >&2
-    echo "  - FORGE_TOKEN is invalid or has no read access to '${FORGE_REPO}'" >&2
+    echo "  - FORGE_TOKEN/FORGE_PASS is invalid or has no read access to '${FORGE_REPO}'" >&2
     echo "  - Branch '${DISINTO_VERSION:-main}' does not exist in '${FORGE_REPO}'" >&2
     echo "Workaround: bind-mount a local git checkout into /opt/disinto." >&2
     echo "Sleeping 60s before exit to throttle the restart loop..." >&2
@@ -64,11 +95,13 @@ if [ ! -d /opt/disinto/.git ]; then
   fi
 fi
 
-# Set HOME so that claude OAuth credentials and session.lock are found at the
-# same in-container path as in disinto-agents (/home/agent/.claude), which makes
-# flock cross-serialize across containers on the same host inode.
-export HOME=/home/agent
-mkdir -p "$HOME"
+# Repair any legacy baked-credential URLs in /opt/disinto (#604).
+# Now that /opt/disinto exists, source the shared lib.
+if [ -f /opt/disinto/lib/git-creds.sh ]; then
+  # shellcheck source=/opt/disinto/lib/git-creds.sh
+  source /opt/disinto/lib/git-creds.sh
+  _GIT_CREDS_LOG_FN="echo" repair_baked_cred_urls /opt/disinto
+fi
 
 # Ensure log directory exists
 mkdir -p /opt/disinto-logs

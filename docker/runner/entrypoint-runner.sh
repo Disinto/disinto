@@ -23,6 +23,15 @@ log() {
   printf '[%s] runner: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
+# Configure git credential helper so formulas can clone/push without
+# needing tokens embedded in remote URLs (#604).
+if [ -f "${FACTORY_ROOT}/lib/git-creds.sh" ]; then
+  # shellcheck source=lib/git-creds.sh
+  source "${FACTORY_ROOT}/lib/git-creds.sh"
+  # shellcheck disable=SC2119  # no args intended — uses defaults
+  configure_git_creds
+fi
+
 # ── Argument parsing ─────────────────────────────────────────────────────
 
 action_id="${1:-}"

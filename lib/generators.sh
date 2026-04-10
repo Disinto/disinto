@@ -391,6 +391,7 @@ services:
       - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
       - FORGE_OPS_REPO=${FORGE_OPS_REPO:-disinto-admin/disinto-ops}
       - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_PASS=${FORGE_PASS:-}
       - FORGE_ADMIN_USERS=${FORGE_ADMIN_USERS:-disinto-admin}
       - FORGE_ADMIN_TOKEN=${FORGE_ADMIN_TOKEN:-}
       - OPS_REPO_ROOT=/opt/disinto-ops

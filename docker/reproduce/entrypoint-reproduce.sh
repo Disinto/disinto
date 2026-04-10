@@ -84,6 +84,15 @@ export DISINTO_CONTAINER=1
 export HOME="${HOME:-/home/agent}"
 export USER="${USER:-agent}"
 
+# Configure git credential helper so reproduce/triage agents can clone/push
+# without needing tokens embedded in remote URLs (#604).
+if [ -f "${DISINTO_DIR}/lib/git-creds.sh" ]; then
+  # shellcheck source=lib/git-creds.sh
+  source "${DISINTO_DIR}/lib/git-creds.sh"
+  # shellcheck disable=SC2119  # no args intended — uses defaults
+  configure_git_creds
+fi
+
 FORGE_API="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
 
 # Load project name from TOML

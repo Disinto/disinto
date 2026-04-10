@@ -153,11 +153,10 @@ setup_ops_repo() {
     echo "  ! disinto-admin = admin (already set or failed)"
   fi
 
-  # Clone ops repo locally if not present
+  # Clone ops repo locally if not present — use clean URL, credential helper
+  # supplies auth (#604).
   if [ ! -d "${ops_root}/.git" ]; then
-    local auth_url
-    auth_url=$(printf '%s' "$forge_url" | sed "s|://|://dev-bot:${FORGE_TOKEN}@|")
-    local clone_url="${auth_url}/${actual_ops_slug}.git"
+    local clone_url="${forge_url}/${actual_ops_slug}.git"
     echo "Cloning: ops repo -> ${ops_root}"
     if git clone --quiet "$clone_url" "$ops_root" 2>/dev/null; then
       echo "Ops repo: ${actual_ops_slug} cloned successfully"

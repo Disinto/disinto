@@ -113,11 +113,9 @@ ensure_profile_repo() {
   # Define cache directory: /home/agent/data/.profile/{agent-name}
   PROFILE_REPO_PATH="${HOME:-/home/agent}/data/.profile/${agent_identity}"
 
-  # Build clone URL from FORGE_URL and agent identity
+  # Build clone URL from FORGE_URL — credential helper supplies auth (#604)
   local forge_url="${FORGE_URL:-http://localhost:3000}"
-  local auth_url
-  auth_url=$(printf '%s' "$forge_url" | sed "s|://|://$(whoami):${FORGE_TOKEN}@|")
-  local clone_url="${auth_url}/${agent_identity}/.profile.git"
+  local clone_url="${forge_url}/${agent_identity}/.profile.git"
 
   # Check if already cached and up-to-date
   if [ -d "${PROFILE_REPO_PATH}/.git" ]; then
@@ -592,14 +590,8 @@ ensure_ops_repo() {
   local ops_repo="${FORGE_OPS_REPO:-}"
   [ -n "$ops_repo" ] || return 0
   local forge_url="${FORGE_URL:-http://localhost:3000}"
-  local clone_url
-  if [ -n "${FORGE_TOKEN:-}" ]; then
-    local auth_url
-    auth_url=$(printf '%s' "$forge_url" | sed "s|://|://$(whoami):${FORGE_TOKEN}@|")
-    clone_url="${auth_url}/${ops_repo}.git"
-  else
-    clone_url="${forge_url}/${ops_repo}.git"
-  fi
+  # Use clean URL — credential helper supplies auth (#604)
+  local clone_url="${forge_url}/${ops_repo}.git"
 
   log "Cloning ops repo: ${ops_repo} -> ${ops_root}"
   if git clone --quiet "$clone_url" "$ops_root" 2>/dev/null; then
