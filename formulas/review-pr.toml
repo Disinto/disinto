@@ -80,6 +80,64 @@ For each BEHAVIORAL change in the diff (not pure bug fixes or formatting):
 This check is SKIPPED for pure bug fixes where the intended behavior is
 unchanged (the code was wrong, not the documentation).
 
+## 3c. Infrastructure file review (conditional)
+
+If the diff touches ANY of these files, apply this additional checklist:
+- `docker-compose.yml` or `docker-compose.*.yml`
+- `Dockerfile` or `docker/*`
+- `.woodpecker/` CI configs
+- `docker/agents/entrypoint.sh`
+
+Infrastructure files have a different failure mode from application code:
+a single dropped line (a volume mount, an env var, a restart policy) can
+break a running deployment with no syntax error. Treat dropped
+infrastructure configuration as a **blocking defect**, not a style choice.
+
+### For docker-compose.yml changes:
+
+1. **Read the full file** in the PR branch — do not rely only on the diff.
+2. Run `git diff <base>..HEAD -- docker-compose.yml` to see the complete
+   change, not just the truncated diff.
+3. Check that NONE of the following were dropped without explicit
+   justification in the PR description:
+   - Named volumes (e.g. `agent-data`, `project-repos`)
+   - Bind mounts (especially for config, secrets, SSH keys, shared dirs)
+   - Environment variables (compare the full `environment:` block against
+     the base branch)
+   - `restart:` policy (should be `unless-stopped` for production services)
+   - `security_opt:` settings
+   - Network configuration
+   - Resource limits / deploy constraints
+4. If ANY production configuration was dropped and the PR description does
+   not explain why, **REQUEST_CHANGES**. List each dropped item explicitly.
+
+### For Dockerfile / entrypoint changes:
+
+1. Check that base image, installed packages, and runtime deps are preserved.
+2. Verify that entrypoint/CMD changes don't break the container startup.
+
+### For CI config changes:
+
+1. Check that pipeline steps aren't silently removed.
+2. Verify that secret references still match available secrets.
+
+## 3d. Scope discipline
+
+Compare the actual diff footprint against the stated issue scope:
+
+1. Read the PR title and description to identify what the issue asked for.
+2. Estimate the expected diff size (e.g., "add 3 env vars" = ~5-10 lines
+   in compose + ~5 lines in scripts).
+3. If the actual diff in ANY single file exceeds 3x the expected scope,
+   flag it: "this file changed N lines but the issue scope suggests ~M."
+
+For infrastructure files (compose, Dockerfiles, CI), scope violations are
+**blocking**: REQUEST_CHANGES and ask the author to split out-of-scope
+changes into a separate PR or justify them in the description.
+
+For non-infrastructure files, scope violations are advisory: leave a
+non-blocking COMMENT noting the scope creep.
+
 ## 4. Vault item quality (conditional)
 
 If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these
@@ -219,9 +277,11 @@ for actual problems (bugs, security issues, broken functionality, missing
 required behavior). Use DISCUSS sparingly.
 
 Note: The bias toward APPROVE applies to code correctness and style decisions.
-It does NOT apply to documentation consistency (step 3b) or tech-debt filing
-(step 7) — those are separate concerns that should be handled regardless of
-the change's correctness.
+It does NOT apply to documentation consistency (step 3b), infrastructure file
+findings (step 3c), or tech-debt filing (step 7) — those are separate concerns
+that should be handled regardless of the change's correctness. In particular,
+dropped production configuration (volumes, bind mounts, env vars, restart
+policy) is a blocking defect, not a style preference.
 
 ## 9. Output
 
