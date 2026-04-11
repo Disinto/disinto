@@ -354,7 +354,8 @@ while true; do
   # Fast agents (review-poll, dev-poll) run in background so they don't block
   # each other.  Slow agents (gardener, architect, planner, predictor) also run
   # in background but are guarded by pgrep so only one instance runs at a time.
-  # The flock on session.lock already serializes claude -p calls.
+  # Per-session CLAUDE_CONFIG_DIR isolation handles OAuth concurrency natively.
+  # Set CLAUDE_EXTERNAL_LOCK=1 to re-enable the legacy flock serialization.
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
 
