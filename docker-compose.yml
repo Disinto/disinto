@@ -32,6 +32,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
       - DISINTO_AGENTS=review,gardener
+      - GARDENER_INTERVAL=3600
+      - ARCHITECT_INTERVAL=540
+      - PLANNER_INTERVAL=660
     depends_on:
       - forgejo
 

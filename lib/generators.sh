@@ -141,6 +141,7 @@ _generate_local_model_services() {
       POLL_INTERVAL: "${poll_interval_val}"
       GARDENER_INTERVAL: "${GARDENER_INTERVAL:-21600}"
       ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
+      PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
     depends_on:
       - forgejo
       - woodpecker
@@ -357,6 +358,7 @@ services:
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
       GARDENER_INTERVAL: ${GARDENER_INTERVAL:-21600}
       ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
+      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # .env.vault.enc and are NEVER injected here — only the runner

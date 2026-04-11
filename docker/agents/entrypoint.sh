@@ -13,7 +13,7 @@ set -euo pipefail
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
 #   - gardener: every GARDENER_INTERVAL seconds (default: 21600 = 6 hours)
 #   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
-#   - planner: every 12 hours (144 iterations * 5 min)
+#   - planner: every PLANNER_INTERVAL seconds (default: 43200 = 12 hours)
 #   - predictor: every 24 hours (288 iterations * 5 min)
 
 DISINTO_BAKED="/home/agent/disinto"
@@ -332,9 +332,10 @@ POLL_INTERVAL="${POLL_INTERVAL:-300}"
 # Gardener and architect intervals (default 6 hours = 21600 seconds)
 GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
 ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
+PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
-log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s"
+log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s"
 
 # Main polling loop using iteration counter for gardener scheduling
 iteration=0
@@ -424,13 +425,12 @@ print(cfg.get('primary_branch', 'main'))
       fi
     fi
 
-    # Planner (every 12 hours = 144 iterations * 5 min = 43200 seconds)
+    # Planner (interval configurable via PLANNER_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",planner,"* ]]; then
       planner_iteration=$((iteration * POLL_INTERVAL))
-      planner_interval=$((12 * 60 * 60))  # 12 hours in seconds
-      if [ $((planner_iteration % planner_interval)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
+      if [ $((planner_iteration % PLANNER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
         if ! pgrep -f "planner-run.sh" >/dev/null; then
-          log "Running planner (iteration ${iteration}, 12-hour interval) for ${toml}"
+          log "Running planner (iteration ${iteration}, ${PLANNER_INTERVAL}s interval) for ${toml}"
           gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/planner.log" 2>&1 &
         else
           log "Skipping planner — already running"
