@@ -1,0 +1,140 @@
+version: "3.8"
+
+services:
+  agents:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents:latest
+    container_name: disinto-agents
+    volumes:
+      - ./data/agents:/home/agent/data
+      - ./disinto:/home/agent/disinto:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+    environment:
+      - FORGE_URL=http://forgejo:3000
+      - FORGE_REPO=disinto-admin/disinto
+      - FORGE_OPS_REPO=disinto-admin/disinto-ops
+      - PRIMARY_BRANCH=main
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_REVIEW_TOKEN=${FORGE_REVIEW_TOKEN:-}
+      - FORGE_GARDENER_TOKEN=${FORGE_GARDENER_TOKEN:-}
+      - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
+      - FORGE_PREDICTOR_TOKEN=${FORGE_PREDICTOR_TOKEN:-}
+      - FORGE_ARCHITECT_TOKEN=${FORGE_ARCHITECT_TOKEN:-}
+      - FORGE_VAULT_TOKEN=${FORGE_VAULT_TOKEN:-}
+      - FORGE_PLANNER_TOKEN=${FORGE_PLANNER_TOKEN:-}
+      - FORGE_BOT_USERNAMES=${FORGE_BOT_USERNAMES:-}
+      - WOODPECKER_TOKEN=${WOODPECKER_TOKEN:-}
+      - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-7200}
+      - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
+      - DISINTO_AGENTS=review,gardener
+    depends_on:
+      - forgejo
+
+  agents-llama:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents-llama:latest
+    container_name: disinto-agents-llama
+    volumes:
+      - ./data/llama:/home/agent/data
+      - ./disinto:/home/agent/disinto:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+    environment:
+      - FORGE_URL=http://forgejo:3000
+      - FORGE_REPO=disinto-admin/disinto
+      - FORGE_OPS_REPO=disinto-admin/disinto-ops
+      - PRIMARY_BRANCH=main
+      - FORGE_TOKEN=${FORGE_TOKEN_DEVQWEN:-}
+      - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
+      - FORGE_PREDICTOR_TOKEN=${FORGE_PREDICTOR_TOKEN:-}
+      - FORGE_ARCHITECT_TOKEN=${FORGE_ARCHITECT_TOKEN:-}
+      - FORGE_VAULT_TOKEN=${FORGE_VAULT_TOKEN:-}
+      - FORGE_PLANNER_TOKEN=${FORGE_PLANNER_TOKEN:-}
+      - FORGE_BOT_USERNAMES=${FORGE_BOT_USERNAMES:-}
+      - WOODPECKER_TOKEN=${WOODPECKER_TOKEN:-}
+      - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-7200}
+      - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60
+      - CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
+      - DISINTO_AGENTS=dev
+      - PROJECT_TOML=projects/disinto.toml
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - POLL_INTERVAL=${POLL_INTERVAL:-300}
+      - AGENT_ROLES=dev
+    depends_on:
+      - forgejo
+
+  reproduce:
+    build:
+      context: .
+      dockerfile: docker/reproduce/Dockerfile
+    image: disinto-reproduce:latest
+    network_mode: host
+    profiles: ["reproduce"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${HOME}/.claude:/home/agent/.claude
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+    env_file:
+      - .env
+
+  edge:
+    build:
+      context: docker/edge
+      dockerfile: Dockerfile
+    image: disinto/edge:latest
+    container_name: disinto-edge
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - ${HOME}/.claude.json:/root/.claude.json:ro
+      - ${HOME}/.claude:/root/.claude:ro
+      - disinto-logs:/opt/disinto-logs
+    environment:
+      - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_MODEL=claude-sonnet-4-6
+      - FORGE_TOKEN=${FORGE_TOKEN:-}
+      - FORGE_URL=http://forgejo:3000
+      - FORGE_REPO=disinto-admin/disinto
+      - FORGE_OPS_REPO=disinto-admin/disinto-ops
+      - PRIMARY_BRANCH=main
+      - DISINTO_CONTAINER=1
+      - FORGE_ADMIN_USERS=disinto-admin,vault-bot,admin
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - forgejo
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:11.0
+    container_name: disinto-forgejo
+    volumes:
+      - ./data/forgejo:/var/lib/forgejo
+    environment:
+      - FORGEJO__database__DB_TYPE=sqlite3
+      - FORGEJO__service__REGISTER_EMAIL_CONFIRMATION=false
+      - FORGEJO__service__ENABLE_NOTIFY_MAIL=false
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+      - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
+    ports:
+      - "3000:3000"
+
+volumes:
+  disinto-logs:
+  agent-data:
+  project-repos:

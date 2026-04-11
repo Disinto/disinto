@@ -30,4 +30,5 @@ secrets/
 docker/agents/bin/
 
 # Generated docker-compose.yml (run 'bin/disinto init' to regenerate)
-docker-compose.yml
+# Note: This file is now committed to track volume mount configuration
+# docker-compose.yml
