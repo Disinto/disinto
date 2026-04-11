@@ -137,11 +137,16 @@ agent_run() {
 
   local run_dir="${worktree_dir:-$(pwd)}"
   local lock_file="${HOME}/.claude/session.lock"
-  mkdir -p "$(dirname "$lock_file")"
   local output rc
   log "agent_run: starting (resume=${resume_id:-(new)}, dir=${run_dir})"
-  # Acquire lock separately (flock cannot exec bash functions)
-  output=$(cd "$run_dir" && ( flock -w 600 9 || exit 1; claude_run_with_watchdog claude "${args[@]}" ) 9>"$lock_file" 2>>"$LOGFILE") && rc=0 || rc=$?
+  # External flock is redundant once CLAUDE_CONFIG_DIR rollout is verified (#647).
+  # Gate behind CLAUDE_EXTERNAL_LOCK for rollback safety; default off.
+  if [ -n "${CLAUDE_EXTERNAL_LOCK:-}" ]; then
+    mkdir -p "$(dirname "$lock_file")"
+    output=$(cd "$run_dir" && ( flock -w 600 9 || exit 1; claude_run_with_watchdog claude "${args[@]}" ) 9>"$lock_file" 2>>"$LOGFILE") && rc=0 || rc=$?
+  else
+    output=$(cd "$run_dir" && claude_run_with_watchdog claude "${args[@]}" 2>>"$LOGFILE") && rc=0 || rc=$?
+  fi
   if [ "$rc" -eq 124 ]; then
     log "agent_run: timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $rc)"
   elif [ "$rc" -ne 0 ]; then
@@ -182,7 +187,11 @@ agent_run() {
         local nudge="You stopped but did not push any code. You have uncommitted changes. Commit them and push."
         log "agent_run: nudging (uncommitted changes)"
         local nudge_rc
-        output=$(cd "$run_dir" && ( flock -w 600 9 || exit 1; claude_run_with_watchdog claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} ) 9>"$lock_file" 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
+        if [ -n "${CLAUDE_EXTERNAL_LOCK:-}" ]; then
+          output=$(cd "$run_dir" && ( flock -w 600 9 || exit 1; claude_run_with_watchdog claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} ) 9>"$lock_file" 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
+        else
+          output=$(cd "$run_dir" && claude_run_with_watchdog claude -p "$nudge" --resume "$_AGENT_SESSION_ID" --output-format json --dangerously-skip-permissions --max-turns 50 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") && nudge_rc=0 || nudge_rc=$?
+        fi
         if [ "$nudge_rc" -eq 124 ]; then
           log "agent_run: nudge timeout after ${CLAUDE_TIMEOUT:-7200}s (exit code $nudge_rc)"
         elif [ "$nudge_rc" -ne 0 ]; then
