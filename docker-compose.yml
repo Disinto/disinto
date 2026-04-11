@@ -7,36 +7,52 @@ services:
       dockerfile: docker/agents/Dockerfile
     image: disinto/agents:latest
     container_name: disinto-agents
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
     volumes:
-      - ./data/agents:/home/agent/data
-      - ./disinto:/home/agent/disinto:ro
-      - ./projects:/home/agent/disinto/projects:ro
-      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - woodpecker-data:/woodpecker-data:ro
     environment:
       - FORGE_URL=http://forgejo:3000
-      - FORGE_REPO=disinto-admin/disinto
-      - FORGE_OPS_REPO=disinto-admin/disinto-ops
-      - PRIMARY_BRANCH=main
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
       - FORGE_TOKEN=${FORGE_TOKEN:-}
       - FORGE_REVIEW_TOKEN=${FORGE_REVIEW_TOKEN:-}
+      - FORGE_PLANNER_TOKEN=${FORGE_PLANNER_TOKEN:-}
       - FORGE_GARDENER_TOKEN=${FORGE_GARDENER_TOKEN:-}
+      - FORGE_VAULT_TOKEN=${FORGE_VAULT_TOKEN:-}
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - FORGE_PREDICTOR_TOKEN=${FORGE_PREDICTOR_TOKEN:-}
       - FORGE_ARCHITECT_TOKEN=${FORGE_ARCHITECT_TOKEN:-}
-      - FORGE_VAULT_TOKEN=${FORGE_VAULT_TOKEN:-}
-      - FORGE_PLANNER_TOKEN=${FORGE_PLANNER_TOKEN:-}
       - FORGE_BOT_USERNAMES=${FORGE_BOT_USERNAMES:-}
       - WOODPECKER_TOKEN=${WOODPECKER_TOKEN:-}
       - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-7200}
       - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FORGE_PASS=${FORGE_PASS:-}
       - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
-      - DISINTO_AGENTS=review,gardener
-      - GARDENER_INTERVAL=3600
-      - ARCHITECT_INTERVAL=540
-      - PLANNER_INTERVAL=660
+      - FACTORY_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - DISINTO_CONTAINER=1
+      - PROJECT_NAME=${PROJECT_NAME:-project}
+      - PROJECT_REPO_ROOT=/home/agent/repos/${PROJECT_NAME:-project}
+      - WOODPECKER_DATA_DIR=/woodpecker-data
+      - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
+      - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      - POLL_INTERVAL=${POLL_INTERVAL:-300}
+      - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
+      - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-21600}
+      - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
     depends_on:
       - forgejo
+      - woodpecker
+    networks:
+      - disinto-net
 
   agents-llama:
     build:
@@ -44,17 +60,23 @@ services:
       dockerfile: docker/agents/Dockerfile
     image: disinto/agents-llama:latest
     container_name: disinto-agents-llama
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
     volumes:
-      - ./data/llama:/home/agent/data
-      - ./disinto:/home/agent/disinto:ro
-      - ./projects:/home/agent/disinto/projects:ro
-      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - woodpecker-data:/woodpecker-data:ro
     environment:
       - FORGE_URL=http://forgejo:3000
-      - FORGE_REPO=disinto-admin/disinto
-      - FORGE_OPS_REPO=disinto-admin/disinto-ops
-      - PRIMARY_BRANCH=main
-      - FORGE_TOKEN=${FORGE_TOKEN_DEVQWEN:-}
+      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - FORGE_TOKEN=${FORGE_TOKEN_LLAMA:-}
+      - FORGE_PASS=${FORGE_PASS_LLAMA:-}
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - FORGE_PREDICTOR_TOKEN=${FORGE_PREDICTOR_TOKEN:-}
       - FORGE_ARCHITECT_TOKEN=${FORGE_ARCHITECT_TOKEN:-}
@@ -69,13 +91,20 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - FORGE_ADMIN_PASS=${FORGE_ADMIN_PASS:-}
-      - DISINTO_AGENTS=dev
+      - DISINTO_CONTAINER=1
       - PROJECT_TOML=projects/disinto.toml
-      - FORGE_REPO=${FORGE_REPO:-disinto-admin/disinto}
+      - PROJECT_NAME=${PROJECT_NAME:-project}
+      - PROJECT_REPO_ROOT=/home/agent/repos/${PROJECT_NAME:-project}
+      - WOODPECKER_DATA_DIR=/woodpecker-data
+      - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
+      - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
       - AGENT_ROLES=dev
     depends_on:
       - forgejo
+      - woodpecker
+    networks:
+      - disinto-net
 
   reproduce:
     build:
@@ -100,6 +129,8 @@ services:
       dockerfile: Dockerfile
     image: disinto/edge:latest
     container_name: disinto-edge
+    security_opt:
+      - apparmor=unconfined
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/local/bin/claude:/usr/local/bin/claude:ro
@@ -122,22 +153,36 @@ services:
       - "443:443"
     depends_on:
       - forgejo
+    networks:
+      - disinto-net
 
   forgejo:
     image: codeberg.org/forgejo/forgejo:11.0
     container_name: disinto-forgejo
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
     volumes:
-      - ./data/forgejo:/var/lib/forgejo
+      - forgejo-data:/data
     environment:
       - FORGEJO__database__DB_TYPE=sqlite3
-      - FORGEJO__service__REGISTER_EMAIL_CONFIRMATION=false
-      - FORGEJO__service__ENABLE_NOTIFY_MAIL=false
+      - FORGEJO__server__ROOT_URL=http://forgejo:3000/
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__security__INSTALL_LOCK=true
       - FORGEJO__service__DISABLE_REGISTRATION=true
-      - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
+      - FORGEJO__webhook__ALLOWED_HOST_LIST=private
     ports:
       - "3000:3000"
+    networks:
+      - disinto-net
 
 volumes:
   disinto-logs:
   agent-data:
   project-repos:
+  woodpecker-data:
+  forgejo-data:
+
+networks:
+  disinto-net:
+    driver: bridge
