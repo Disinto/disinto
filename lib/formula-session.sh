@@ -18,7 +18,8 @@
 #   ensure_profile_repo [AGENT_IDENTITY]   — clone/pull .profile repo
 #   _profile_has_repo                      — check if agent has .profile repo
 #   _count_undigested_journals             — count journal entries to digest
-#   _profile_digest_journals               — digest journals into lessons
+#   _profile_digest_journals               — digest journals into lessons (timeout + batch cap)
+#   _profile_restore_lessons FILE BACKUP   — restore lessons on digest failure
 #   _profile_commit_and_push MESSAGE [FILES] — commit/push to .profile repo
 #   resolve_agent_identity                 — resolve agent user login from FORGE_TOKEN
 #   build_graph_section                    — run build-graph.py and set GRAPH_SECTION
@@ -191,10 +192,14 @@ _count_undigested_journals() {
 
 # _profile_digest_journals
 # Runs a claude -p one-shot to digest undigested journals into lessons-learned.md
+# Respects PROFILE_DIGEST_TIMEOUT (default 300s) and PROFILE_DIGEST_MAX_BATCH (default 5).
+# On failure/timeout, preserves the previous lessons-learned.md and does not archive journals.
 # Returns 0 on success, 1 on failure.
 _profile_digest_journals() {
   local agent_identity="${AGENT_IDENTITY:-}"
   local model="${CLAUDE_MODEL:-opus}"
+  local digest_timeout="${PROFILE_DIGEST_TIMEOUT:-300}"
+  local max_batch="${PROFILE_DIGEST_MAX_BATCH:-5}"
 
   if [ -z "$agent_identity" ]; then
     if ! resolve_agent_identity; then
@@ -207,19 +212,27 @@ _profile_digest_journals() {
   local knowledge_dir="${PROFILE_REPO_PATH}/knowledge"
   local lessons_file="${knowledge_dir}/lessons-learned.md"
 
-  # Collect undigested journal entries
+  # Collect undigested journal entries (capped at max_batch)
   local journal_entries=""
+  local batch_count=0
+  local -a batchfiles=()
   if [ -d "$journal_dir" ]; then
     for jf in "$journal_dir"/*.md; do
       [ -f "$jf" ] || continue
       # Skip archived entries
       [[ "$jf" == */archive/* ]] && continue
+      if [ "$batch_count" -ge "$max_batch" ]; then
+        log "profile: capping digest batch at ${max_batch} journals (remaining will be digested in future runs)"
+        break
+      fi
       local basename
       basename=$(basename "$jf")
       journal_entries="${journal_entries}
 ### ${basename}
 $(cat "$jf")
 "
+      batchfiles+=("$jf")
+      batch_count=$((batch_count + 1))
     done
   fi
 
@@ -228,8 +241,17 @@ $(cat "$jf")
     return 0
   fi
 
+  log "profile: digesting ${batch_count} journals (timeout ${digest_timeout}s)"
+
   # Ensure knowledge directory exists
   mkdir -p "$knowledge_dir"
+
+  # Back up existing lessons-learned.md so we can restore on failure
+  local lessons_backup=""
+  if [ -f "$lessons_file" ]; then
+    lessons_backup=$(mktemp)
+    cp "$lessons_file" "$lessons_backup"
+  fi
 
   # Capture mtime so we can detect a Write-tool write afterwards
   local mtime_before=0
@@ -257,27 +279,51 @@ Update the lessons-learned file at this exact absolute path:
 ## Journal entries to digest
 ${journal_entries}"
 
-  # Run claude -p one-shot with same model as agent
-  local output
+  # Run claude -p one-shot with digest-specific timeout
+  local output digest_rc
+  local saved_timeout="${CLAUDE_TIMEOUT:-7200}"
+  CLAUDE_TIMEOUT="$digest_timeout"
   output=$(claude_run_with_watchdog claude -p "$digest_prompt" \
     --output-format json \
     --dangerously-skip-permissions \
     ${model:+--model "$model"} \
-    2>>"$LOGFILE" || echo '{"result":"error"}')
+    2>>"$LOGFILE") && digest_rc=0 || digest_rc=$?
+  CLAUDE_TIMEOUT="$saved_timeout"
+
+  if [ "$digest_rc" -eq 124 ]; then
+    log "profile: digest timed out after ${digest_timeout}s — preserving previous lessons, skipping archive"
+    _profile_restore_lessons "$lessons_file" "$lessons_backup"
+    return 1
+  fi
+
+  if [ "$digest_rc" -ne 0 ]; then
+    log "profile: digest failed (exit code ${digest_rc}) — preserving previous lessons, skipping archive"
+    _profile_restore_lessons "$lessons_file" "$lessons_backup"
+    return 1
+  fi
 
   local mtime_after=0
   [ -f "$lessons_file" ] && mtime_after=$(stat -c %Y "$lessons_file")
 
   if [ "$mtime_after" -gt "$mtime_before" ] && [ -s "$lessons_file" ]; then
-    log "profile: lessons-learned.md written by model via Write tool ($(wc -c < "$lessons_file") bytes)"
+    local file_size
+    file_size=$(wc -c < "$lessons_file")
+    # Treat tiny files (<=16 bytes) as failed digestion (e.g. "null", "{}", empty)
+    if [ "$file_size" -le 16 ]; then
+      log "profile: digest produced suspiciously small file (${file_size} bytes) — preserving previous lessons, skipping archive"
+      _profile_restore_lessons "$lessons_file" "$lessons_backup"
+      return 1
+    fi
+    log "profile: lessons-learned.md written by model via Write tool (${file_size} bytes)"
   else
     # Fallback: model didn't use Write tool — capture .result and strip any markdown code fence
     local lessons_content
     lessons_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
     lessons_content=$(printf '%s' "$lessons_content" | sed -E '1{/^```(markdown|md)?[[:space:]]*$/d;};${/^```[[:space:]]*$/d;}')
 
-    if [ -z "$lessons_content" ]; then
-      log "profile: failed to digest journals (no Write tool call, empty .result)"
+    if [ -z "$lessons_content" ] || [ "${#lessons_content}" -le 16 ]; then
+      log "profile: failed to digest journals (no Write tool call, empty or tiny .result) — preserving previous lessons, skipping archive"
+      _profile_restore_lessons "$lessons_file" "$lessons_backup"
       return 1
     fi
 
@@ -285,13 +331,14 @@ ${journal_entries}"
     log "profile: lessons-learned.md written from .result fallback (${#lessons_content} bytes)"
   fi
 
-  # Move digested journals to archive (if any were processed)
-  if [ -d "$journal_dir" ]; then
+  # Clean up backup on success
+  [ -n "$lessons_backup" ] && rm -f "$lessons_backup"
+
+  # Move only the digested journals to archive (not all — only the batch we processed)
+  if [ ${#batchfiles[@]} -gt 0 ]; then
     mkdir -p "${journal_dir}/archive"
     local archived=0
-    for jf in "$journal_dir"/*.md; do
-      [ -f "$jf" ] || continue
-      [[ "$jf" == */archive/* ]] && continue
+    for jf in "${batchfiles[@]}"; do
       local basename
       basename=$(basename "$jf")
       mv "$jf" "${journal_dir}/archive/${basename}" 2>/dev/null && archived=$((archived + 1))
@@ -308,6 +355,18 @@ ${journal_entries}"
     journal/
 
   return 0
+}
+
+# _profile_restore_lessons LESSONS_FILE BACKUP_FILE
+# Restores previous lessons-learned.md from backup on digest failure.
+_profile_restore_lessons() {
+  local lessons_file="$1"
+  local backup="$2"
+  if [ -n "$backup" ] && [ -f "$backup" ]; then
+    cp "$backup" "$lessons_file"
+    rm -f "$backup"
+    log "profile: restored previous lessons-learned.md"
+  fi
 }
 
 # _profile_commit_and_push MESSAGE [FILE ...]
@@ -350,7 +409,8 @@ _profile_commit_and_push() {
 
 # profile_load_lessons
 # Pre-session: loads lessons-learned.md into LESSONS_CONTEXT for prompt injection.
-# Lazy digestion: if >10 undigested journals exist, runs claude -p to digest them.
+# Lazy digestion: if undigested journals exceed PROFILE_DIGEST_THRESHOLD (default 10),
+# runs claude -p to digest them (bounded by PROFILE_DIGEST_MAX_BATCH and PROFILE_DIGEST_TIMEOUT).
 # Returns 0 on success, 1 if agent has no .profile repo (silent no-op).
 # Requires: ensure_profile_repo() called, AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL, CLAUDE_MODEL.
 # Exports: LESSONS_CONTEXT (the lessons file content, hard-capped at 2KB).
@@ -366,13 +426,14 @@ profile_load_lessons() {
   fi
 
   # Check journal count for lazy digestion trigger
-  local journal_count
+  local journal_count digest_threshold
   journal_count=$(_count_undigested_journals)
+  digest_threshold="${PROFILE_DIGEST_THRESHOLD:-10}"
 
-  if [ "${journal_count:-0}" -gt 10 ]; then
-    log "profile: digesting ${journal_count} undigested journals"
+  if [ "${journal_count:-0}" -gt "$digest_threshold" ]; then
+    log "profile: ${journal_count} undigested journals (threshold ${digest_threshold})"
     if ! _profile_digest_journals; then
-      log "profile: warning — journal digestion failed"
+      log "profile: warning — journal digestion failed, continuing with existing lessons"
     fi
   fi
 
