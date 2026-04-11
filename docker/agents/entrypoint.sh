@@ -11,8 +11,8 @@ set -euo pipefail
 # (default: all six). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
-#   - gardener: every 6 hours (72 iterations * 5 min)
-#   - architect: every 6 hours (same as gardener)
+#   - gardener: every GARDENER_INTERVAL seconds (default: 21600 = 6 hours)
+#   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
 #   - planner: every 12 hours (144 iterations * 5 min)
 #   - predictor: every 24 hours (288 iterations * 5 min)
 
@@ -324,7 +324,12 @@ log "Agent roles configured: ${AGENT_ROLES}"
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
+# Gardener and architect intervals (default 6 hours = 21600 seconds)
+GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
+ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
+
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
+log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s"
 
 # Main polling loop using iteration counter for gardener scheduling
 iteration=0
@@ -388,13 +393,12 @@ print(cfg.get('primary_branch', 'main'))
 
     # --- Slow agents: run in background with pgrep guard ---
 
-    # Gardener (every 6 hours = 72 iterations * 5 min = 21600 seconds)
+    # Gardener (interval configurable via GARDENER_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
       gardener_iteration=$((iteration * POLL_INTERVAL))
-      gardener_interval=$((6 * 60 * 60))  # 6 hours in seconds
-      if [ $((gardener_iteration % gardener_interval)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
+      if [ $((gardener_iteration % GARDENER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
         if ! pgrep -f "gardener-run.sh" >/dev/null; then
-          log "Running gardener (iteration ${iteration}, 6-hour interval) for ${toml}"
+          log "Running gardener (iteration ${iteration}, ${GARDENER_INTERVAL}s interval) for ${toml}"
           gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 &
         else
           log "Skipping gardener — already running"
@@ -402,13 +406,12 @@ print(cfg.get('primary_branch', 'main'))
       fi
     fi
 
-    # Architect (every 6 hours, same schedule as gardener)
+    # Architect (interval configurable via ARCHITECT_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",architect,"* ]]; then
       architect_iteration=$((iteration * POLL_INTERVAL))
-      architect_interval=$((6 * 60 * 60))  # 6 hours in seconds
-      if [ $((architect_iteration % architect_interval)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
+      if [ $((architect_iteration % ARCHITECT_INTERVAL)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
         if ! pgrep -f "architect-run.sh" >/dev/null; then
-          log "Running architect (iteration ${iteration}, 6-hour interval) for ${toml}"
+          log "Running architect (iteration ${iteration}, ${ARCHITECT_INTERVAL}s interval) for ${toml}"
           gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 &
         else
           log "Skipping architect — already running"
