@@ -54,7 +54,7 @@ do_register() {
   # Extract key type and key from pubkey (format: "ssh-ed25519 AAAAC3...")
   local key_type key
   key_type=$(echo "$pubkey" | awk '{print $1}')
-  key=$(echo "$pubkey" | awk '{$1=""; print $0}' | tr -d ' ')
+  key=$(echo "$pubkey" | awk '{print $2}')
 
   if [ -z "$key_type" ] || [ -z "$key" ]; then
     echo '{"error":"invalid pubkey format"}'
