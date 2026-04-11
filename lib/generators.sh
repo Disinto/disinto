@@ -143,8 +143,10 @@ _generate_local_model_services() {
       ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
       PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
     depends_on:
-      - forgejo
-      - woodpecker
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
     networks:
       - disinto-net
     profiles: ["agents-${service_name}"]
@@ -263,6 +265,12 @@ services:
       FORGEJO__security__INSTALL_LOCK: "true"
       FORGEJO__service__DISABLE_REGISTRATION: "true"
       FORGEJO__webhook__ALLOWED_HOST_LIST: "private"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/v1/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
     networks:
       - disinto-net
 
@@ -289,7 +297,8 @@ services:
       WOODPECKER_DATABASE_DATASOURCE: /var/lib/woodpecker/woodpecker.sqlite
       WOODPECKER_ENVIRONMENT: "FORGE_TOKEN:${FORGE_TOKEN}"
     depends_on:
-      - forgejo
+      forgejo:
+        condition: service_healthy
     networks:
       - disinto-net
 
@@ -364,8 +373,10 @@ services:
     # .env.vault.enc and are NEVER injected here — only the runner
     # container receives them at fire time (AD-006, #745).
     depends_on:
-      - forgejo
-      - woodpecker
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
     networks:
       - disinto-net
 
@@ -426,9 +437,12 @@ services:
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
     depends_on:
-      - forgejo
-      - woodpecker
-      - staging
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
+      staging:
+        condition: service_started
     networks:
       - disinto-net
 
