@@ -107,6 +107,11 @@ log "Agent container starting"
 export USER=agent
 export HOME=/home/agent
 
+# Source lib/env.sh to get DISINTO_LOG_DIR and other shared environment.
+# This must happen after USER/HOME are set (env.sh preconditions).
+# shellcheck source=lib/env.sh
+source "${DISINTO_BAKED}/lib/env.sh"
+
 # Verify Claude CLI is available (expected via volume mount from host).
 if ! command -v claude &>/dev/null; then
   log "FATAL: claude CLI not found in PATH."
@@ -377,7 +382,7 @@ print(cfg.get('primary_branch', 'main'))
     # Review poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
       log "Running review-poll (iteration ${iteration}) for ${toml}"
-      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/review-poll.log" 2>&1 &
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/review-poll.log" 2>&1 &
     fi
 
     sleep 2  # stagger fast polls
@@ -385,7 +390,7 @@ print(cfg.get('primary_branch', 'main'))
     # Dev poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",dev,"* ]]; then
       log "Running dev-poll (iteration ${iteration}) for ${toml}"
-      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/dev-poll.log" 2>&1 &
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/dev-poll.log" 2>&1 &
     fi
 
     # Wait for fast polls to finish before launching slow agents
@@ -399,7 +404,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((gardener_iteration % GARDENER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
         if ! pgrep -f "gardener-run.sh" >/dev/null; then
           log "Running gardener (iteration ${iteration}, ${GARDENER_INTERVAL}s interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/gardener.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener.log" 2>&1 &
         else
           log "Skipping gardener — already running"
         fi
@@ -412,7 +417,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((architect_iteration % ARCHITECT_INTERVAL)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
         if ! pgrep -f "architect-run.sh" >/dev/null; then
           log "Running architect (iteration ${iteration}, ${ARCHITECT_INTERVAL}s interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/architect.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/architect.log" 2>&1 &
         else
           log "Skipping architect — already running"
         fi
@@ -426,7 +431,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((planner_iteration % planner_interval)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
         if ! pgrep -f "planner-run.sh" >/dev/null; then
           log "Running planner (iteration ${iteration}, 12-hour interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/planner.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/planner.log" 2>&1 &
         else
           log "Skipping planner — already running"
         fi
@@ -440,7 +445,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((predictor_iteration % predictor_interval)) -eq 0 ] && [ "$now" -ge "$predictor_iteration" ]; then
         if ! pgrep -f "predictor-run.sh" >/dev/null; then
           log "Running predictor (iteration ${iteration}, 24-hour interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_DIR}/../data/logs/predictor.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/predictor.log" 2>&1 &
         else
           log "Skipping predictor — already running"
         fi
