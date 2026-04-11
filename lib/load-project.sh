@@ -103,22 +103,11 @@ if [ -n "$FORGE_REPO" ]; then
   export FORGE_REPO_OWNER="${FORGE_REPO%%/*}"
 fi
 
-# Derive PROJECT_REPO_ROOT if not explicitly set
-if [ -z "${PROJECT_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
-  export PROJECT_REPO_ROOT="/home/${USER}/${PROJECT_NAME}"
-fi
-
-# Derive OPS_REPO_ROOT if not explicitly set
-if [ -z "${OPS_REPO_ROOT:-}" ] && [ -n "${PROJECT_NAME:-}" ]; then
-  export OPS_REPO_ROOT="/home/${USER}/${PROJECT_NAME}-ops"
-fi
-
-# Inside the container, always derive repo paths from PROJECT_NAME — the TOML
-# carries host-perspective paths that do not exist in the container filesystem.
-if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${PROJECT_NAME:-}" ]; then
-  export PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
-  export OPS_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}-ops"
-fi
+# PROJECT_REPO_ROOT and OPS_REPO_ROOT: no fallback derivation from USER/HOME.
+# These must be set by the entrypoint (container) or the TOML (host CLI).
+# Inside the container, the entrypoint exports the correct paths before agent
+# scripts source env.sh; the TOML's host-perspective paths are skipped by the
+# DISINTO_CONTAINER guard above.
 
 # Derive FORGE_OPS_REPO if not explicitly set
 if [ -z "${FORGE_OPS_REPO:-}" ] && [ -n "${FORGE_REPO:-}" ]; then

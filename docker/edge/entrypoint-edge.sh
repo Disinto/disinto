@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Set USER before sourcing env.sh (Alpine doesn't set USER)
-export USER="${USER:-root}"
+# Set USER and HOME before sourcing env.sh — preconditions for lib/env.sh (#674).
+export USER="${USER:-agent}"
+export HOME="${HOME:-/home/agent}"
 
 FORGE_URL="${FORGE_URL:-http://forgejo:3000}"
 
@@ -137,6 +138,12 @@ if [ -n "${EDGE_TUNNEL_HOST:-}" ]; then
     echo "edge: reverse tunnel → ${EDGE_TUNNEL_HOST}:${EDGE_TUNNEL_PORT}" >&2
   fi
 fi
+
+# Set project context vars for scripts that source lib/env.sh (#674).
+# These satisfy env.sh's preconditions for edge-container scripts.
+export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-/opt/disinto}"
+export PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
+export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/${PROJECT_NAME:-disinto}-ops}"
 
 # Start dispatcher in background
 bash /opt/disinto/docker/edge/dispatcher.sh &

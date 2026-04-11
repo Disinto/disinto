@@ -84,6 +84,10 @@ export DISINTO_CONTAINER=1
 export HOME="${HOME:-/home/agent}"
 export USER="${USER:-agent}"
 
+# Set project context vars for lib/env.sh surface contract (#674).
+# PROJECT_NAME and PROJECT_REPO_ROOT are set below after TOML parsing.
+export PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
+
 # Configure git credential helper so reproduce/triage agents can clone/push
 # without needing tokens embedded in remote URLs (#604).
 if [ -f "${DISINTO_DIR}/lib/git-creds.sh" ]; then
@@ -107,6 +111,8 @@ with open(sys.argv[1], 'rb') as f:
 export PROJECT_NAME
 
 PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
+export PROJECT_REPO_ROOT
+export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/${PROJECT_NAME}-ops}"
 
 if [ "$AGENT_TYPE" = "triage" ]; then
   log "Starting triage-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
