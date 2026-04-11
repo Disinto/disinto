@@ -515,12 +515,11 @@ ${pitch_context}
 "
 
   # Execute stateless claude -p call
-  local pitch_output
-  pitch_output=$(agent_run "$pitch_prompt" 2>>"$LOGFILE") || true
+  agent_run "$pitch_prompt" 2>>"$LOGFILE" || true
 
   # Extract pitch content from JSON response
   local pitch
-  pitch=$(printf '%s' "$pitch_output" | jq -r '.content // empty' 2>/dev/null) || pitch=""
+  pitch=$(printf '%s' "$_AGENT_LAST_OUTPUT" | jq -r '.content // empty' 2>/dev/null) || pitch=""
 
   if [ -z "$pitch" ]; then
     log "WARNING: empty pitch generated for vision issue #${issue_num}"
