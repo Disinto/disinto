@@ -522,14 +522,14 @@ close_vision_issue() {
   subissues=$(get_vision_subissues "$vision_issue")
 
   # Build summary comment
-  local subissue_list=""
+  local summary=""
   local count=0
   while IFS= read -r subissue_num; do
     [ -z "$subissue_num" ] && continue
     local sub_title
     sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
-    subissue_list+="- #${subissue_num}: ${sub_title}\n"
+    summary+="- #${subissue_num}: ${sub_title}\n"
     count=$((count + 1))
   done <<< "$subissues"
 
@@ -540,7 +540,7 @@ close_vision_issue() {
 All sub-issues have been implemented and merged. This vision issue is now closed.
 
 ### Completed sub-issues (${count}):
-${subissue_list}
+${summary}
 ---
 *Automated closure by architect · $(date -u '+%Y-%m-%d %H:%M UTC')*
 EOF
