@@ -49,6 +49,7 @@ configure_git_creds() {
   cat > "$helper_path" <<CREDEOF
 #!/bin/sh
 # Auto-generated git credential helper for Forgejo password auth (#361, #604)
+# Reads \$FORGE_PASS from env at runtime — file is safe to read on disk.
 # Only respond to "get" action; ignore "store" and "erase".
 [ "\$1" = "get" ] || exit 0
 # Read and discard stdin (git sends protocol/host info)
@@ -56,7 +57,7 @@ cat >/dev/null
 echo "protocol=${forge_proto}"
 echo "host=${forge_host}"
 echo "username=${bot_user}"
-echo "password=${FORGE_PASS}"
+echo "password=\$FORGE_PASS"
 CREDEOF
   chmod 755 "$helper_path"
 

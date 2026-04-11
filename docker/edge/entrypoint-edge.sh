@@ -64,12 +64,13 @@ if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
 
   cat > "${HOME}/.git-credentials-helper" <<CREDEOF
 #!/bin/sh
+# Reads \$FORGE_PASS from env at runtime — file is safe to read on disk.
 [ "\$1" = "get" ] || exit 0
 cat >/dev/null
 echo "protocol=${_forge_proto}"
 echo "host=${_forge_host}"
 echo "username=${_bot_user}"
-echo "password=${FORGE_PASS}"
+echo "password=\$FORGE_PASS"
 CREDEOF
   chmod 755 "${HOME}/.git-credentials-helper"
   git config --global credential.helper "${HOME}/.git-credentials-helper"
