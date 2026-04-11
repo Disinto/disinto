@@ -8,7 +8,7 @@
 
 The reviewer agent approved PR #683 in ~1 minute without flagging that it
 contained a destructive rewrite of `docker-compose.yml` — dropping named
-volumes, bind mounts, env vars, restart policy, and security options. Five
+volumes, bind mounts, env vars, restart policy, and security options. Six
 structural gaps in the review pipeline allowed this to pass.
 
 ## Root causes

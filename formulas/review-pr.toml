@@ -277,9 +277,11 @@ for actual problems (bugs, security issues, broken functionality, missing
 required behavior). Use DISCUSS sparingly.
 
 Note: The bias toward APPROVE applies to code correctness and style decisions.
-It does NOT apply to documentation consistency (step 3b) or tech-debt filing
-(step 7) — those are separate concerns that should be handled regardless of
-the change's correctness.
+It does NOT apply to documentation consistency (step 3b), infrastructure file
+findings (step 3c), or tech-debt filing (step 7) — those are separate concerns
+that should be handled regardless of the change's correctness. In particular,
+dropped production configuration (volumes, bind mounts, env vars, restart
+policy) is a blocking defect, not a style preference.
 
 ## 9. Output
 
