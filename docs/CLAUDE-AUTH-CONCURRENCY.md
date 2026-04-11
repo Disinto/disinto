@@ -40,7 +40,7 @@ serialization — no external wrapper needed.
 Host filesystem:
   /var/lib/disinto/claude-shared/          ← CLAUDE_SHARED_DIR
   └── config/                              ← CLAUDE_CONFIG_DIR
-      ├── credentials.json
+      ├── .credentials.json
       ├── settings.json
       └── ...
 

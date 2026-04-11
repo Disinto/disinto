@@ -333,12 +333,12 @@ fi
 # Sub-test 2: migration (pre-existing ~/.claude with content)
 rm -rf "$HOME/.claude" "$CLAUDE_SHARED_DIR"
 mkdir -p "$HOME/.claude"
-echo "test-token" > "$HOME/.claude/credentials.json"
+echo "test-token" > "$HOME/.claude/.credentials.json"
 setup_claude_config_dir "true"
-if [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ]; then
-  pass "Migration: credentials.json moved to CLAUDE_CONFIG_DIR"
+if [ -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
+  pass "Migration: .credentials.json moved to CLAUDE_CONFIG_DIR"
 else
-  fail "Migration: credentials.json not found in CLAUDE_CONFIG_DIR"
+  fail "Migration: .credentials.json not found in CLAUDE_CONFIG_DIR"
 fi
 if [ -L "$HOME/.claude" ]; then
   link_target=$(readlink -f "$HOME/.claude")
@@ -354,7 +354,7 @@ fi
 
 # Sub-test 3: idempotency (re-run after migration)
 setup_claude_config_dir "true"
-if [ -L "$HOME/.claude" ] && [ -f "$CLAUDE_CONFIG_DIR/credentials.json" ]; then
+if [ -L "$HOME/.claude" ] && [ -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
   pass "Idempotency: re-run is a no-op"
 else
   fail "Idempotency: re-run broke the layout"
