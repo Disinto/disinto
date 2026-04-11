@@ -9,7 +9,7 @@
 # Usage:
 #   source "${FACTORY_ROOT}/lib/git-creds.sh"
 #   configure_git_creds [HOME_DIR] [RUN_AS_CMD]
-#   repair_baked_cred_urls DIR [DIR ...]
+#   repair_baked_cred_urls [--as RUN_AS_CMD] DIR [DIR ...]
 #
 # Globals expected:
 #   FORGE_PASS  — bot password for git HTTP auth
@@ -79,16 +79,27 @@ CREDEOF
   fi
 }
 
-# repair_baked_cred_urls DIR [DIR ...]
+# repair_baked_cred_urls [--as RUN_AS_CMD] DIR [DIR ...]
 #   Scans git repos under each DIR and rewrites remote URLs that contain
 #   embedded credentials (user:pass@host) to clean URLs.
 #   Logs each repair so operators can see the migration happened.
 #
+#   Optional --as flag runs git operations under the specified user wrapper
+#   (e.g. "gosu agent") to avoid dubious-ownership issues on user-owned repos.
+#
 # Set _GIT_CREDS_LOG_FN to a custom log function name (default: echo).
 repair_baked_cred_urls() {
   local log_fn="${_GIT_CREDS_LOG_FN:-echo}"
+  local run_as=""
+  local -a dirs=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) shift; run_as="$1"; shift ;;
+      *) dirs+=("$1"); shift ;;
+    esac
+  done
 
-  for dir in "$@"; do
+  for dir in "${dirs[@]}"; do
     [ -d "$dir" ] || continue
 
     # Find git repos: either dir itself or immediate subdirectories
@@ -105,7 +116,11 @@ repair_baked_cred_urls() {
     local repo
     for repo in "${repos[@]}"; do
       local url
-      url=$(git -C "$repo" config --get remote.origin.url 2>/dev/null || true)
+      if [ -n "$run_as" ]; then
+        url=$($run_as git -C "$repo" config --get remote.origin.url 2>/dev/null || true)
+      else
+        url=$(git -C "$repo" config --get remote.origin.url 2>/dev/null || true)
+      fi
       [ -n "$url" ] || continue
 
       # Check if URL contains embedded credentials: http(s)://user:pass@host
@@ -113,7 +128,11 @@ repair_baked_cred_urls() {
         # Strip credentials: http(s)://user:pass@host/path -> http(s)://host/path
         local clean_url
         clean_url=$(printf '%s' "$url" | sed -E 's|(https?://)[^@]+@|\1|')
-        git -C "$repo" remote set-url origin "$clean_url"
+        if [ -n "$run_as" ]; then
+          $run_as git -C "$repo" remote set-url origin "$clean_url"
+        else
+          git -C "$repo" remote set-url origin "$clean_url"
+        fi
         $log_fn "Repaired baked credentials in ${repo} (remote origin -> ${clean_url})"
       fi
     done

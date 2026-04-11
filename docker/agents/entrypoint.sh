@@ -55,7 +55,7 @@ _setup_git_creds() {
   fi
 
   # Repair legacy clones with baked-in stale credentials (#604).
-  _GIT_CREDS_LOG_FN=log repair_baked_cred_urls /home/agent/repos
+  _GIT_CREDS_LOG_FN=log repair_baked_cred_urls --as "gosu agent" /home/agent/repos
 }
 
 # Configure git author identity for commits made by this container.
