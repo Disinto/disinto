@@ -260,7 +260,7 @@ services:
       - forgejo-data:/data
     environment:
       FORGEJO__database__DB_TYPE: sqlite3
-      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-http://forgejo:3000/}
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__security__INSTALL_LOCK: "true"
       FORGEJO__service__DISABLE_REGISTRATION: "true"
@@ -291,6 +291,7 @@ services:
       WOODPECKER_FORGEJO_CLIENT: ${WP_FORGEJO_CLIENT:-}
       WOODPECKER_FORGEJO_SECRET: ${WP_FORGEJO_SECRET:-}
       WOODPECKER_HOST: ${WOODPECKER_HOST:-http://woodpecker:8000}
+      WOODPECKER_SERVER: http://woodpecker:9000
       WOODPECKER_OPEN: "true"
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_DATABASE_DRIVER: sqlite3
@@ -553,8 +554,13 @@ _generate_caddyfile_impl() {
 # IP-only binding at bootstrap; domain + TLS added later via vault resource request
 
 :80 {
+    # Redirect root to Forgejo
+    handle / {
+        redir /forge/ 302
+    }
+
     # Reverse proxy to Forgejo
-    handle /forgejo/* {
+    handle /forge/* {
         reverse_proxy forgejo:3000
     }
 
@@ -563,9 +569,14 @@ _generate_caddyfile_impl() {
         reverse_proxy woodpecker:8000
     }
 
-    # Default: proxy to staging container
-    handle {
+    # Reverse proxy to staging
+    handle /staging/* {
         reverse_proxy staging:80
+    }
+
+    # Chat placeholder — returns 503 until #705
+    handle /chat/* {
+        respond "chat not yet deployed" 503
     }
 }
 CADDYFILEEOF
