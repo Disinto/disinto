@@ -23,6 +23,22 @@ check_prs            = true
 check_dev_agent      = true
 check_pipeline_stall = false
 
+# Agent scheduling configuration
+#
+# These values are passed to the agents container as environment variables.
+# The default values (6 hours each) work well for stable production projects.
+# For active development on the disinto factory itself, you may want to
+# configure shorter intervals:
+#
+#   GARDENER_INTERVAL=3600    # 1 hour (default: 21600 = 6 hours)
+#   ARCHITECT_INTERVAL=600    # 10 minutes (default: 21600 = 6 hours)
+#
+# These can be set in docker-compose.yml environment section or in a .env file.
+#
+# [agents.schedule]
+#   gardener_interval = 21600  # seconds (default: 21600 = 6 hours)
+#   architect_interval  = 21600  # seconds (default: 21600 = 6 hours)
+
 # Local-model agents (optional) — configure to use llama-server or similar
 # for local LLM inference. Each agent gets its own container with isolated
 # credentials and configuration.
