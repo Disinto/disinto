@@ -213,7 +213,7 @@ check_script lib/agent-sdk.sh
 check_script lib/ci-helpers.sh
 check_script lib/secret-scan.sh
 check_script lib/tea-helpers.sh         lib/secret-scan.sh
-check_script lib/formula-session.sh
+check_script lib/formula-session.sh     lib/ops-setup.sh
 check_script lib/load-project.sh
 check_script lib/mirrors.sh              lib/env.sh
 check_script lib/guard.sh

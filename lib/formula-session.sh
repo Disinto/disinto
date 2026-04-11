@@ -33,6 +33,9 @@
 # Source agent-sdk for claude_run_with_watchdog watchdog helper
 source "$(dirname "${BASH_SOURCE[0]}")/agent-sdk.sh"
 
+# Source ops-setup for migrate_ops_repo (used by ensure_ops_repo)
+source "$(dirname "${BASH_SOURCE[0]}")/ops-setup.sh"
+
 # ── Run guards ───────────────────────────────────────────────────────────
 
 # acquire_run_lock LOCK_FILE
@@ -610,6 +613,7 @@ ensure_ops_repo() {
     git -C "$ops_root" fetch origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
     git -C "$ops_root" checkout "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
     git -C "$ops_root" pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    migrate_ops_repo "$ops_root" "${PRIMARY_BRANCH}"
     return 0
   fi
 
