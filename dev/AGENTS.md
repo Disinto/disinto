@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8137410e7e62fb9862cac2c1917ee56f3876d9d7 -->
+<!-- last-reviewed: 31f2cb7bfa38df3db8fbed28ec0899c412f06c49 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -34,7 +34,7 @@ filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Oth
 PRs do not block this agent's pipeline (#358, #369). **Pre-lock merge scan own-PRs only**:
 the direct-merge scan only merges PRs whose linked issue is assigned to this agent — skips
 PRs owned by other bot users (#374).
-- `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval
+- `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval. **Launched as a subshell** (`("${SCRIPT_DIR}/dev-agent.sh" ...) &`) — not via `nohup` — to avoid deadlocking the polling loop and review-poll when running in the same container (#693).
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
