@@ -215,7 +215,7 @@ _profile_digest_journals() {
   # Collect undigested journal entries (capped at max_batch)
   local journal_entries=""
   local batch_count=0
-  local -a digested_files=()
+  local -a batchfiles=()
   if [ -d "$journal_dir" ]; then
     for jf in "$journal_dir"/*.md; do
       [ -f "$jf" ] || continue
@@ -231,7 +231,7 @@ _profile_digest_journals() {
 ### ${basename}
 $(cat "$jf")
 "
-      digested_files+=("$jf")
+      batchfiles+=("$jf")
       batch_count=$((batch_count + 1))
     done
   fi
@@ -335,10 +335,10 @@ ${journal_entries}"
   [ -n "$lessons_backup" ] && rm -f "$lessons_backup"
 
   # Move only the digested journals to archive (not all — only the batch we processed)
-  if [ ${#digested_files[@]} -gt 0 ]; then
+  if [ ${#batchfiles[@]} -gt 0 ]; then
     mkdir -p "${journal_dir}/archive"
     local archived=0
-    for jf in "${digested_files[@]}"; do
+    for jf in "${batchfiles[@]}"; do
       local basename
       basename=$(basename "$jf")
       mv "$jf" "${journal_dir}/archive/${basename}" 2>/dev/null && archived=$((archived + 1))
