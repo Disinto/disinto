@@ -430,7 +430,7 @@ get_vision_subissues() {
   # Method 1: Find issues with "Decomposed from #N" in body
   local issues_json
   issues_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues?state=open&limit=100" 2>/dev/null) || true
+    "${FORGE_API}/issues?state=closed&limit=100" 2>/dev/null) || true
 
   if [ -n "$issues_json" ] && [ "$issues_json" != "null" ]; then
     while IFS= read -r subissue_num; do
@@ -529,7 +529,7 @@ close_vision_issue() {
     local sub_title
     sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
-    summary+="- #${subissue_num}: ${sub_title}\n"
+    summary+="- #${subissue_num}: ${sub_title}"$'\n'
     count=$((count + 1))
   done <<< "$subissues"
 

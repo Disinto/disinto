@@ -60,6 +60,17 @@ All forks resolved → sub-issue filing (model files implementation issues)
 REJECT review → close PR + journal (model processes rejection, bash merges PR)
 ```
 
+### Vision issue lifecycle
+
+Vision issues decompose into sprint sub-issues tracked via "Decomposed from #N" in sub-issue bodies. The architect automatically closes vision issues when all sub-issues are closed:
+
+1. Before picking new vision issues, the architect checks each open vision issue
+2. For each, it queries for sub-issues with "Decomposed from #N" in their body (regardless of state)
+3. If all sub-issues are closed, it posts a summary comment listing completed sub-issues
+4. The vision issue is then closed automatically
+
+This ensures vision issues transition from `open` → `closed` once their work is complete, without manual intervention.
+
 ### Session management
 
 The agent maintains a global session file at `/tmp/architect-session-{project}.sid`.
