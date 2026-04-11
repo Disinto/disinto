@@ -101,8 +101,11 @@ configure_tea_login() {
 
 log "Agent container starting"
 
-# Set USER for scripts that source lib/env.sh (e.g., OPS_REPO_ROOT default)
+# Set USER and HOME for scripts that source lib/env.sh.
+# These are preconditions required by lib/env.sh's surface contract.
+# gosu agent inherits the parent's env, so exports here propagate to all children.
 export USER=agent
+export HOME=/home/agent
 
 # Verify Claude CLI is available (expected via volume mount from host).
 if ! command -v claude &>/dev/null; then
@@ -343,6 +346,25 @@ while true; do
   # The flock on session.lock already serializes claude -p calls.
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
+
+    # Parse project name and primary branch from TOML so env.sh preconditions
+    # are satisfied when agent scripts source it (#674).
+    _toml_vals=$(python3 -c "
+import tomllib, sys
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+print(cfg.get('name', ''))
+print(cfg.get('primary_branch', 'main'))
+" "$toml" 2>/dev/null || true)
+    _pname=$(sed -n '1p' <<< "$_toml_vals")
+    _pbranch=$(sed -n '2p' <<< "$_toml_vals")
+    [ -n "$_pname" ] || { log "WARNING: could not parse project name from ${toml} — skipping"; continue; }
+
+    export PROJECT_NAME="$_pname"
+    export PROJECT_REPO_ROOT="/home/agent/repos/${_pname}"
+    export OPS_REPO_ROOT="/home/agent/repos/${_pname}-ops"
+    export PRIMARY_BRANCH="${_pbranch:-main}"
+
     log "Processing project TOML: ${toml}"
 
     # --- Fast agents: run in background, wait before slow agents ---

@@ -1,11 +1,40 @@
 #!/usr/bin/env bash
+# =============================================================================
 # env.sh — Load environment and shared utilities
 # Source this at the top of every script: source "$(dirname "$0")/lib/env.sh"
+#
+# SURFACE CONTRACT
+#
+# Required preconditions — the entrypoint (or caller) MUST set these before
+# sourcing this file:
+#   USER              — OS user name (e.g. "agent", "johba")
+#   HOME              — home directory (e.g. "/home/agent")
+#
+# Required when PROJECT_TOML is set (i.e. agent scripts loading a project):
+#   PROJECT_REPO_ROOT — absolute path to the project git clone
+#   PRIMARY_BRANCH    — default branch name (e.g. "main")
+#   OPS_REPO_ROOT     — absolute path to the ops repo clone
+#   (these are normally populated by load-project.sh from the TOML)
+#
+# What this file sets / exports:
+#   FACTORY_ROOT, DISINTO_LOG_DIR
+#   .env / .env.enc secrets (FORGE_TOKEN, etc.)
+#   FORGE_API, FORGE_WEB, TEA_LOGIN, FORGE_OPS_REPO (derived from FORGE_URL/FORGE_REPO)
+#   Per-agent tokens (FORGE_REVIEW_TOKEN, FORGE_GARDENER_TOKEN, …)
+#   CLAUDE_SHARED_DIR, CLAUDE_CONFIG_DIR
+#   Helper functions: log(), validate_url(), forge_api(), forge_api_all(),
+#     woodpecker_api(), wpdb(), memory_guard()
+# =============================================================================
 
 set -euo pipefail
 
 # Resolve script root (parent of lib/)
 FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ── Precondition assertions ──────────────────────────────────────────────────
+# These must be set by the entrypoint before sourcing this file.
+: "${USER:?must be set by entrypoint before sourcing lib/env.sh}"
+: "${HOME:?must be set by entrypoint before sourcing lib/env.sh}"
 
 # Container detection: when running inside the agent container, DISINTO_CONTAINER
 # is set by docker-compose.yml.  Adjust paths so phase files, logs, and thread
@@ -72,7 +101,6 @@ fi
 
 # PATH: foundry, node, system
 export PATH="${HOME}/.local/bin:${HOME}/.foundry/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
-export HOME="${HOME:-/home/debian}"
 
 # Load project TOML if PROJECT_TOML is set (by poll scripts that accept project arg)
 if [ -n "${PROJECT_TOML:-}" ] && [ -f "$PROJECT_TOML" ]; then
@@ -112,12 +140,14 @@ fi
 export TEA_LOGIN
 
 export PROJECT_NAME="${PROJECT_NAME:-${FORGE_REPO##*/}}"
-export PROJECT_REPO_ROOT="${PROJECT_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}}"
-export PRIMARY_BRANCH="${PRIMARY_BRANCH:-master}"
 
-# Ops repo: operational data (vault items, journals, evidence, prerequisites).
-# Default convention: sibling directory named {project}-ops.
-export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/${USER}/${PROJECT_NAME}-ops}"
+# Project-specific paths: no guessing from USER/HOME — must be set by
+# the entrypoint or loaded from PROJECT_TOML (via load-project.sh above).
+if [ -n "${PROJECT_TOML:-}" ]; then
+  : "${PROJECT_REPO_ROOT:?must be set by entrypoint or PROJECT_TOML before sourcing lib/env.sh}"
+  : "${PRIMARY_BRANCH:?must be set by entrypoint or PROJECT_TOML before sourcing lib/env.sh}"
+  : "${OPS_REPO_ROOT:?must be set by entrypoint or PROJECT_TOML before sourcing lib/env.sh}"
+fi
 
 # Forge repo slug for the ops repo (used by agents that commit to ops).
 export FORGE_OPS_REPO="${FORGE_OPS_REPO:-${FORGE_REPO:+${FORGE_REPO}-ops}}"
