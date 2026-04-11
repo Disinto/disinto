@@ -417,6 +417,206 @@ fetch_vision_issues() {
     "${FORGE_API}/issues?labels=vision&state=open&limit=100" 2>/dev/null || echo '[]'
 }
 
+# ── Helper: Fetch all sub-issues for a vision issue ───────────────────────
+# Sub-issues are identified by:
+#   1. Issues whose body contains "Decomposed from #N" pattern
+#   2. Issues referenced in merged sprint PR bodies
+# Returns: newline-separated list of sub-issue numbers (empty if none)
+# Args: vision_issue_number
+get_vision_subissues() {
+  local vision_issue="$1"
+  local subissues=()
+
+  # Method 1: Find issues with "Decomposed from #N" in body
+  local issues_json
+  issues_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?limit=100" 2>/dev/null) || true
+
+  if [ -n "$issues_json" ] && [ "$issues_json" != "null" ]; then
+    while IFS= read -r subissue_num; do
+      [ -z "$subissue_num" ] && continue
+      subissues+=("$subissue_num")
+    done <<< "$(printf '%s' "$issues_json" | jq -r --arg vid "$vision_issue" \
+      '[.[] | select(.number != ($vid | tonumber)) | select(.body // "" | contains("Decomposed from #" + $vid))] | .[].number' 2>/dev/null)"
+  fi
+
+  # Method 2: Find issues referenced in merged sprint PR bodies
+  local prs_json
+  prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || true
+
+  if [ -n "$prs_json" ] && [ "$prs_json" != "null" ]; then
+    while IFS= read -r pr_num; do
+      [ -z "$pr_num" ] && continue
+
+      # Check if PR is merged and references the vision issue
+      local pr_details pr_body
+      pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
+
+      local is_merged
+      is_merged=$(printf '%s' "$pr_details" | jq -r '.merged // false') || continue
+
+      if [ "$is_merged" != "true" ]; then
+        continue
+      fi
+
+      pr_body=$(printf '%s' "$pr_details" | jq -r '.body // ""') || continue
+
+      # Extract all issue numbers from PR body
+      while IFS= read -r ref_issue; do
+        [ -z "$ref_issue" ] && continue
+        # Skip if already in list
+        local found=false
+        for existing in "${subissues[@]+"${subissues[@]}"}"; do
+          [ "$existing" = "$ref_issue" ] && found=true && break
+        done
+        if [ "$found" = false ]; then
+          subissues+=("$ref_issue")
+        fi
+      done <<< "$(printf '%s' "$pr_body" | grep -oE '#[0-9]+' | tr -d '#' | sort -u)"
+    done <<< "$(printf '%s' "$prs_json" | jq -r '.[] | select(.title | contains("architect:")) | .number')"
+  fi
+
+  # Output unique sub-issues
+  printf '%s\n' "${subissues[@]}" | sort -u | grep -v '^$' || true
+}
+
+# ── Helper: Check if all sub-issues of a vision issue are closed ───────────
+# Returns: 0 if all sub-issues are closed, 1 if any are still open
+# Args: vision_issue_number
+all_subissues_closed() {
+  local vision_issue="$1"
+  local subissues
+  subissues=$(get_vision_subissues "$vision_issue")
+
+  # If no sub-issues found, parent cannot be considered complete
+  if [ -z "$subissues" ]; then
+    return 1
+  fi
+
+  # Check each sub-issue state
+  while IFS= read -r subissue_num; do
+    [ -z "$subissue_num" ] && continue
+
+    local sub_state
+    sub_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.state // "unknown"') || true
+
+    if [ "$sub_state" != "closed" ]; then
+      log "Sub-issue #${subissue_num} is ${sub_state} — vision issue #${vision_issue} not ready to close"
+      return 1
+    fi
+  done <<< "$subissues"
+
+  return 0
+}
+
+# ── Helper: Close vision issue with summary comment ────────────────────────
+# Posts a comment listing all completed sub-issues before closing.
+# Returns: 0 on success, 1 on failure
+# Args: vision_issue_number
+close_vision_issue() {
+  local vision_issue="$1"
+  local subissues
+  subissues=$(get_vision_subissues "$vision_issue")
+
+  # Build summary comment
+  local summary=""
+  local count=0
+  while IFS= read -r subissue_num; do
+    [ -z "$subissue_num" ] && continue
+    local sub_title
+    sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
+    summary+="- #${subissue_num}: ${sub_title}"$'\n'
+    count=$((count + 1))
+  done <<< "$subissues"
+
+  local comment
+  comment=$(cat <<EOF
+## Vision Issue Completed
+
+All sub-issues have been implemented and merged. This vision issue is now closed.
+
+### Completed sub-issues (${count}):
+${summary}
+---
+*Automated closure by architect · $(date -u '+%Y-%m-%d %H:%M UTC')*
+EOF
+)
+
+  # Post comment before closing
+  local tmpfile tmpjson
+  tmpfile=$(mktemp /tmp/vision-close-XXXXXX.md)
+  tmpjson="${tmpfile}.json"
+  printf '%s' "$comment" > "$tmpfile"
+  jq -Rs '{body:.}' < "$tmpfile" > "$tmpjson"
+
+  if ! curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${vision_issue}/comments" \
+    --data-binary @"$tmpjson" >/dev/null 2>&1; then
+    log "WARNING: failed to post closure comment on vision issue #${vision_issue}"
+    rm -f "$tmpfile" "$tmpjson"
+    return 1
+  fi
+  rm -f "$tmpfile" "$tmpjson"
+
+  # Clear assignee and close the issue
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${vision_issue}" \
+    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${vision_issue}" \
+    -d '{"state":"closed"}' >/dev/null 2>&1 || true
+
+  log "Closed vision issue #${vision_issue} — all ${count} sub-issue(s) complete"
+  return 0
+}
+
+# ── Lifecycle check: Close vision issues with all sub-issues complete ──────
+# Runs before picking new vision issues for decomposition.
+# Checks each open vision issue and closes it if all sub-issues are closed.
+check_and_close_completed_visions() {
+  log "Checking for vision issues with all sub-issues complete..."
+
+  local vision_issues_json
+  vision_issues_json=$(fetch_vision_issues)
+
+  if [ -z "$vision_issues_json" ] || [ "$vision_issues_json" = "null" ]; then
+    log "No open vision issues found"
+    return 0
+  fi
+
+  # Get all vision issue numbers
+  local vision_issue_nums
+  vision_issue_nums=$(printf '%s' "$vision_issues_json" | jq -r '.[].number' 2>/dev/null) || vision_issue_nums=""
+
+  local closed_count=0
+  while IFS= read -r vision_issue; do
+    [ -z "$vision_issue" ] && continue
+
+    if all_subissues_closed "$vision_issue"; then
+      if close_vision_issue "$vision_issue"; then
+        closed_count=$((closed_count + 1))
+      fi
+    fi
+  done <<< "$vision_issue_nums"
+
+  if [ "$closed_count" -gt 0 ]; then
+    log "Closed ${closed_count} vision issue(s) with all sub-issues complete"
+  else
+    log "No vision issues ready for closure"
+  fi
+}
+
 # ── Helper: Fetch open architect PRs from ops repo Forgejo API ───────────
 # Returns: JSON array of architect PR objects
 fetch_open_architect_prs() {
@@ -688,6 +888,10 @@ if [ "${open_arch_prs:-0}" -ge 3 ]; then
   fi
   log "3 open architect PRs found but responses detected — processing"
 fi
+
+# ── Lifecycle check: Close vision issues with all sub-issues complete ──────
+# Run before picking new vision issues for decomposition
+check_and_close_completed_visions
 
 # ── Bash-driven state management: Select vision issues for pitching ───────
 # This logic is also documented in formulas/run-architect.toml preflight step
