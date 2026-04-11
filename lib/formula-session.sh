@@ -225,32 +225,34 @@ $(cat "$jf")
     return 0
   fi
 
-  # Read existing lessons if available
-  local existing_lessons=""
-  if [ -f "$lessons_file" ]; then
-    existing_lessons=$(cat "$lessons_file")
-  fi
+  # Ensure knowledge directory exists
+  mkdir -p "$knowledge_dir"
+
+  # Capture mtime so we can detect a Write-tool write afterwards
+  local mtime_before=0
+  [ -f "$lessons_file" ] && mtime_before=$(stat -c %Y "$lessons_file")
 
   # Build prompt for digestion
   local digest_prompt="You are digesting journal entries from a developer agent's work sessions.
 
 ## Task
-Condense these journal entries into abstract, transferable lessons. Rewrite lessons-learned.md entirely.
+Update the lessons-learned file at this exact absolute path:
+
+  ${lessons_file}
+
+1. Read ${lessons_file} (it may not exist yet — that's fine, treat as empty).
+2. Digest the journal entries below into abstract, transferable patterns and heuristics.
+3. Merge with the existing lessons: preserve anything still useful, refine, drop stale or redundant entries, add new ones.
+4. Write the merged result back to ${lessons_file} using the Write tool.
 
 ## Constraints
 - Hard cap: 2KB maximum
 - Abstract: patterns and heuristics, not specific issues or file paths
 - Transferable: must help with future unseen work, not just recall past work
-- Drop the least transferable lessons if over limit
-
-## Existing lessons-learned.md (if any)
-${existing_lessons:-<none>}
+- Drop the least transferable lessons if over the cap
 
 ## Journal entries to digest
-${journal_entries}
-
-## Output
-Write the complete, rewritten lessons-learned.md content below. No preamble, no explanation — just the file content."
+${journal_entries}"
 
   # Run claude -p one-shot with same model as agent
   local output
@@ -260,21 +262,25 @@ Write the complete, rewritten lessons-learned.md content below. No preamble, no 
     ${model:+--model "$model"} \
     2>>"$LOGFILE" || echo '{"result":"error"}')
 
-  # Extract content from JSON response
-  local lessons_content
-  lessons_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+  local mtime_after=0
+  [ -f "$lessons_file" ] && mtime_after=$(stat -c %Y "$lessons_file")
 
-  if [ -z "$lessons_content" ]; then
-    log "profile: failed to digest journals"
-    return 1
+  if [ "$mtime_after" -gt "$mtime_before" ] && [ -s "$lessons_file" ]; then
+    log "profile: lessons-learned.md written by model via Write tool ($(wc -c < "$lessons_file") bytes)"
+  else
+    # Fallback: model didn't use Write tool — capture .result and strip any markdown code fence
+    local lessons_content
+    lessons_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+    lessons_content=$(printf '%s' "$lessons_content" | sed -E '1{/^```(markdown|md)?[[:space:]]*$/d;};${/^```[[:space:]]*$/d;}')
+
+    if [ -z "$lessons_content" ]; then
+      log "profile: failed to digest journals (no Write tool call, empty .result)"
+      return 1
+    fi
+
+    printf '%s\n' "$lessons_content" > "$lessons_file"
+    log "profile: lessons-learned.md written from .result fallback (${#lessons_content} bytes)"
   fi
-
-  # Ensure knowledge directory exists
-  mkdir -p "$knowledge_dir"
-
-  # Write the lessons file (full rewrite)
-  printf '%s\n' "$lessons_content" > "$lessons_file"
-  log "profile: wrote lessons-learned.md (${#lessons_content} bytes)"
 
   # Move digested journals to archive (if any were processed)
   if [ -d "$journal_dir" ]; then
