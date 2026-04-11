@@ -516,7 +516,7 @@ ${pitch_context}
 
   # Execute stateless claude -p call
   local pitch_output
-  pitch_output=$(agent_run -p "$pitch_prompt" --output-format json --dangerously-skip-permissions --max-turns 200 ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} 2>>"$LOGFILE") || true
+  pitch_output=$(agent_run "$pitch_prompt" 2>>"$LOGFILE") || true
 
   # Extract pitch content from JSON response
   local pitch
