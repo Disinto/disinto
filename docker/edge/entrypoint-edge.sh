@@ -80,11 +80,29 @@ fi
 
 # Shallow clone at the pinned version — use clean URL, credential helper
 # supplies auth (#604).
+# Retry with exponential backoff — forgejo may still be starting (#665).
 if [ ! -d /opt/disinto/.git ]; then
   echo "edge: cloning ${FORGE_URL}/${FORGE_REPO} (branch ${DISINTO_VERSION:-main})..." >&2
-  if ! git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${FORGE_URL}/${FORGE_REPO}.git" /opt/disinto; then
+  _clone_ok=false
+  _backoff=2
+  _max_backoff=30
+  _max_attempts=10
+  for _attempt in $(seq 1 "$_max_attempts"); do
+    if git clone --depth 1 --branch "${DISINTO_VERSION:-main}" "${FORGE_URL}/${FORGE_REPO}.git" /opt/disinto 2>&1; then
+      _clone_ok=true
+      break
+    fi
+    rm -rf /opt/disinto  # clean up partial clone before retry
+    if [ "$_attempt" -lt "$_max_attempts" ]; then
+      echo "edge: clone attempt ${_attempt}/${_max_attempts} failed, retrying in ${_backoff}s..." >&2
+      sleep "$_backoff"
+      _backoff=$(( _backoff * 2 ))
+      if [ "$_backoff" -gt "$_max_backoff" ]; then _backoff=$_max_backoff; fi
+    fi
+  done
+  if [ "$_clone_ok" != "true" ]; then
     echo >&2
-    echo "FATAL: failed to clone ${FORGE_URL}/${FORGE_REPO}.git (branch ${DISINTO_VERSION:-main})" >&2
+    echo "FATAL: failed to clone ${FORGE_URL}/${FORGE_REPO}.git (branch ${DISINTO_VERSION:-main}) after ${_max_attempts} attempts" >&2
     echo "Likely causes:" >&2
     echo "  - Forgejo at ${FORGE_URL} is unreachable from the edge container" >&2
     echo "  - Repository '${FORGE_REPO}' does not exist on this forge" >&2
