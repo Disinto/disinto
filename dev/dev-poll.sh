@@ -468,7 +468,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
 
         if [ "${HAS_CHANGES:-0}" -gt 0 ]; then
           log "issue #${ISSUE_NUM} has review feedback — spawning agent"
-          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
           log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
           BLOCKED_BY_INPROGRESS=true
         else
@@ -560,7 +560,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             else
               # Direct merge failed (conflicts?) — fall back to dev-agent
               log "falling back to dev-agent for PR #${HAS_PR} merge"
-              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
               log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
               BLOCKED_BY_INPROGRESS=true
             fi
@@ -578,7 +578,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
               BLOCKED_BY_INPROGRESS=false
             else
               log "issue #${ISSUE_NUM} PR #${HAS_PR} has REQUEST_CHANGES — spawning agent"
-              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
               log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
               BLOCKED_BY_INPROGRESS=true
             fi
@@ -593,7 +593,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
                 BLOCKED_BY_INPROGRESS=true  # exhausted between check and launch
               else
                 log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
-                nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+                ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
                 log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
                 BLOCKED_BY_INPROGRESS=true
               fi
@@ -619,7 +619,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           # Don't block — fall through to backlog
         else
           log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
-          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
           log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
           BLOCKED_BY_INPROGRESS=true
         fi
@@ -686,7 +686,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     fi
     # Direct merge failed (conflicts?) — fall back to dev-agent
     log "falling back to dev-agent for PR #${PR_NUM} merge"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    ("${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1) &
     log "started dev-agent PID $! for stuck PR #${PR_NUM} (agent-merge)"
     exit 0
   fi
@@ -707,7 +707,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       continue  # skip this PR, check next stuck PR or fall through to backlog
     fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    ("${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1) &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
   elif ci_failed "$CI_STATE"; then
@@ -719,7 +719,7 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       continue  # exhausted between check and launch
     fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) CI failed — fixing (attempt ${CI_FIX_ATTEMPTS}/3)"
-    nohup "${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1 &
+    ("${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1) &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"
     exit 0
   fi
@@ -840,7 +840,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       fi
       # Direct merge failed (conflicts?) — fall back to dev-agent
       log "falling back to dev-agent for PR #${EXISTING_PR} merge"
-      nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+      ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
       log "started dev-agent PID $! for issue #${ISSUE_NUM} (agent-merge)"
       exit 0
 
@@ -918,5 +918,5 @@ if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
 fi
 
 log "launching dev-agent for #${READY_ISSUE}"
-nohup "${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1 &
+("${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1) &
 log "started dev-agent PID $! for issue #${READY_ISSUE}"
