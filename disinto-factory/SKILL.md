@@ -11,7 +11,6 @@ You are helping the user set up and operate a **disinto autonomous code factory*
 
 - **[Setup guide](setup.md)** — First-time factory setup: environment, init, verification, backlog seeding
 - **[Operations guide](operations.md)** — Day-to-day: status checks, CI debugging, unsticking issues, Forgejo access
-- **[Lessons learned](lessons-learned.md)** — Patterns for writing issues, debugging CI, retrying failures, vault operations, breaking down features
 
 ## Important context
 
