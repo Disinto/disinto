@@ -39,6 +39,11 @@ EOF
   exit 1
 }
 
+# TODO(#713): Subdomain fallback — if subpath routing (#704/#708) fails, this
+# function would need to register additional routes for forge.<project>,
+# ci.<project>, chat.<project> subdomains (or accept a --subdomain parameter).
+# See docs/edge-routing-fallback.md for the full pivot plan.
+
 # Register a new tunnel
 # Usage: do_register <project> <pubkey>
 do_register() {
