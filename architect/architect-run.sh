@@ -533,27 +533,34 @@ close_vision_issue() {
     "${FORGE_API}/issues/${vision_issue}/comments" 2>/dev/null) || existing_comments="[]"
 
   if printf '%s' "$existing_comments" | jq -e '[.[] | select(.body | contains("Vision Issue Completed"))] | length > 0' >/dev/null 2>&1; then
-    log "Vision issue #${vision_issue} already has a completion comment — skipping"
-    return 0
-  fi
+    # Comment exists — verify the issue is actually closed before skipping
+    local issue_state
+    issue_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${vision_issue}" 2>/dev/null | jq -r '.state // "open"') || issue_state="open"
+    if [ "$issue_state" = "closed" ]; then
+      log "Vision issue #${vision_issue} already has a completion comment and is closed — skipping"
+      return 0
+    fi
+    log "Vision issue #${vision_issue} has a completion comment but state=${issue_state} — retrying close"
+  else
+    # No completion comment yet — build and post one
+    local subissues
+    subissues=$(get_vision_subissues "$vision_issue")
 
-  local subissues
-  subissues=$(get_vision_subissues "$vision_issue")
+    # Build summary comment
+    local summary=""
+    local count=0
+    while IFS= read -r subissue_num; do
+      [ -z "$subissue_num" ] && continue
+      local sub_title
+      sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+        "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
+      summary+="- #${subissue_num}: ${sub_title}"$'\n'
+      count=$((count + 1))
+    done <<< "$subissues"
 
-  # Build summary comment
-  local summary=""
-  local count=0
-  while IFS= read -r subissue_num; do
-    [ -z "$subissue_num" ] && continue
-    local sub_title
-    sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
-    summary+="- #${subissue_num}: ${sub_title}"$'\n'
-    count=$((count + 1))
-  done <<< "$subissues"
-
-  local comment
-  comment=$(cat <<EOF
+    local comment
+    comment=$(cat <<EOF
 ## Vision Issue Completed
 
 All sub-issues have been implemented and merged. This vision issue is now closed.
@@ -565,38 +572,50 @@ ${summary}
 EOF
 )
 
-  # Post comment before closing
-  local tmpfile tmpjson
-  tmpfile=$(mktemp /tmp/vision-close-XXXXXX.md)
-  tmpjson="${tmpfile}.json"
-  printf '%s' "$comment" > "$tmpfile"
-  jq -Rs '{body:.}' < "$tmpfile" > "$tmpjson"
+    # Post comment before closing
+    local tmpfile tmpjson
+    tmpfile=$(mktemp /tmp/vision-close-XXXXXX.md)
+    tmpjson="${tmpfile}.json"
+    printf '%s' "$comment" > "$tmpfile"
+    jq -Rs '{body:.}' < "$tmpfile" > "$tmpjson"
 
-  if ! curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${vision_issue}/comments" \
-    --data-binary @"$tmpjson" >/dev/null 2>&1; then
-    log "WARNING: failed to post closure comment on vision issue #${vision_issue}"
+    if ! curl -sf -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_API}/issues/${vision_issue}/comments" \
+      --data-binary @"$tmpjson" >/dev/null 2>&1; then
+      log "WARNING: failed to post closure comment on vision issue #${vision_issue}"
+      rm -f "$tmpfile" "$tmpjson"
+      return 1
+    fi
     rm -f "$tmpfile" "$tmpjson"
-    return 1
   fi
-  rm -f "$tmpfile" "$tmpjson"
 
-  # Clear assignee and close the issue
+  # Clear assignee (best-effort) and close the issue
   curl -sf -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_API}/issues/${vision_issue}" \
     -d '{"assignees":[]}' >/dev/null 2>&1 || true
 
-  curl -sf -X PATCH \
+  local close_response
+  close_response=$(curl -sf -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_API}/issues/${vision_issue}" \
-    -d '{"state":"closed"}' >/dev/null 2>&1 || true
+    -d '{"state":"closed"}' 2>/dev/null) || {
+    log "ERROR: state=closed PATCH failed for vision issue #${vision_issue}"
+    return 1
+  }
 
-  log "Closed vision issue #${vision_issue} — all ${count} sub-issue(s) complete"
+  local result_state
+  result_state=$(printf '%s' "$close_response" | jq -r '.state // "unknown"') || result_state="unknown"
+  if [ "$result_state" != "closed" ]; then
+    log "ERROR: vision issue #${vision_issue} state is '${result_state}' after close PATCH — expected 'closed'"
+    return 1
+  fi
+
+  log "Closed vision issue #${vision_issue}${count:+ — all ${count} sub-issue(s) complete}"
   return 0
 }
 
