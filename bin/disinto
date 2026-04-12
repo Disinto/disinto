@@ -542,6 +542,12 @@ create_woodpecker_oauth() {
   _create_woodpecker_oauth_impl "$@"
 }
 
+# Create Chat OAuth2 app on Forgejo (implementation in lib/ci-setup.sh)
+create_chat_oauth() {
+  _load_ci_context
+  _create_chat_oauth_impl "$@"
+}
+
 # Generate WOODPECKER_TOKEN via Forgejo OAuth2 flow (implementation in lib/ci-setup.sh)
 generate_woodpecker_token() {
   _load_ci_context
@@ -859,6 +865,15 @@ p.write_text(text)
   # Create OAuth2 app on Forgejo for Woodpecker (before compose up)
   _WP_REPO_ID=""
   create_woodpecker_oauth "$forge_url" "$forge_repo"
+
+  # Create OAuth2 app on Forgejo for disinto-chat (#708)
+  local chat_redirect_uri
+  if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
+    chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
+  else
+    chat_redirect_uri="http://localhost/chat/oauth/callback"
+  fi
+  create_chat_oauth "$chat_redirect_uri"
 
   # Generate WOODPECKER_AGENT_SECRET for server↔agent auth
   local env_file="${FACTORY_ROOT}/.env"
