@@ -746,6 +746,18 @@ p.write_text(text)
     touch "${FACTORY_ROOT}/.env"
   fi
 
+  # Configure Forgejo and Woodpecker subpath URLs when EDGE_TUNNEL_FQDN is set
+  if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
+    # Forgejo ROOT_URL with /forge/ subpath (note trailing slash - Forgejo needs it)
+    if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+      echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN}/forge/" >> "${FACTORY_ROOT}/.env"
+    fi
+    # Woodpecker WOODPECKER_HOST with /ci subpath (no trailing slash for v3)
+    if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+      echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
+    fi
+  fi
+
   # Prompt for FORGE_ADMIN_PASS before setup_forge
   # This ensures the password is set before Forgejo user creation
   prompt_admin_password "${FACTORY_ROOT}/.env"
