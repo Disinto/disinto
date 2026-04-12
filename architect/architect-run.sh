@@ -235,7 +235,7 @@ detect_questions_phase() {
   # Use Forgejo API to find open architect PRs
   local response
   response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
 
   # Check each open PR for architect markers
   pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
@@ -246,7 +246,7 @@ detect_questions_phase() {
 
   # Fetch PR body
   pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
 
   # Check for `## Design forks` section (added by #101 after ACCEPT)
   if ! printf '%s' "$pr_body" | grep -q "## Design forks"; then
@@ -257,7 +257,7 @@ detect_questions_phase() {
   # Use jq to extract body text before grepping (handles JSON escaping properly)
   local comments
   comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
 
   if ! printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
     return 1
@@ -289,7 +289,7 @@ detect_approved_pending_questions() {
   # Use Forgejo API to find open architect PRs
   local response
   response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
 
   # Check each open PR for architect markers
   pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
@@ -300,12 +300,12 @@ detect_approved_pending_questions() {
 
   # Fetch PR body
   pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
 
   # Check for APPROVED review
   local reviews
   reviews=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
 
   if ! printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
     return 1
@@ -321,7 +321,7 @@ detect_approved_pending_questions() {
   # Check that PR has NO question comments yet (Q1:, Q2:, etc.)
   local comments
   comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
 
   if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
     # Has question comments — this is either in questions phase or past it
@@ -371,7 +371,7 @@ has_merged_sprint_pr() {
   # Get closed PRs from ops repo
   local prs_json
   prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || return 1
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || return 1
 
   # Check each closed PR for architect markers and vision issue reference
   local pr_numbers
@@ -384,7 +384,7 @@ has_merged_sprint_pr() {
     # Get PR details including merged status
     local pr_details
     pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
+      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
 
     # Check if PR is actually merged (not just closed)
     local is_merged
@@ -443,7 +443,7 @@ get_vision_subissues() {
   # Method 2: Find issues referenced in merged sprint PR bodies
   local prs_json
   prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || true
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || true
 
   if [ -n "$prs_json" ] && [ "$prs_json" != "null" ]; then
     while IFS= read -r pr_num; do
@@ -452,7 +452,7 @@ get_vision_subissues() {
       # Check if PR is merged and references the vision issue
       local pr_details pr_body
       pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
+        "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
 
       local is_merged
       is_merged=$(printf '%s' "$pr_details" | jq -r '.merged // false') || continue
@@ -621,7 +621,7 @@ check_and_close_completed_visions() {
 # Returns: JSON array of architect PR objects
 fetch_open_architect_prs() {
   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
 }
 
 # ── Helper: Get vision issue body by number ──────────────────────────────
@@ -742,7 +742,7 @@ create_sprint_pr() {
   if ! curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/branches" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/branches" \
     -d "{\"new_branch_name\": \"${branch_name}\", \"old_branch_name\": \"${PRIMARY_BRANCH:-main}\"}" >/dev/null 2>&1; then
     log "WARNING: failed to create branch ${branch_name}"
     return 1
@@ -767,7 +767,7 @@ ${sprint_body}
   if ! curl -sf -X PUT \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/contents/sprints/${sprint_slug}.md" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/contents/sprints/${sprint_slug}.md" \
     -d "{\"message\": \"sprint: add ${sprint_slug}.md\", \"content\": \"${sprint_spec_b64}\", \"branch\": \"${branch_name}\"}" >/dev/null 2>&1; then
     log "WARNING: failed to write sprint spec file"
     return 1
@@ -786,7 +786,7 @@ ${sprint_body}
   pr_response=$(curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls" \
     -d "$pr_payload" 2>/dev/null) || return 1
 
   # Extract PR number
@@ -806,7 +806,7 @@ post_pr_footer() {
   if curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" \
     -d "{\"body\": \"${footer}\"}" >/dev/null 2>&1; then
     log "Posted footer comment on PR #${pr_number}"
     return 0
@@ -838,7 +838,7 @@ add_inprogress_label() {
   if curl -sf -X POST \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${FORGE_API}/repos/${FORGE_REPO}/issues/${issue_num}/labels" \
+    "${FORGE_API}/issues/${issue_num}/labels" \
     -d "{\"labels\": [${inprogress_label_id}]}" >/dev/null 2>&1; then
     log "Added in-progress label to vision issue #${issue_num}"
     return 0
@@ -856,7 +856,7 @@ vision_count=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
 if [ "${vision_count:-0}" -eq 0 ]; then
   # Check for open architect PRs that need handling (ACCEPT/REJECT responses)
   open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
   if [ "${open_arch_prs:-0}" -eq 0 ]; then
     log "no vision issues and no open architect PRs — skipping"
     exit 0
@@ -867,10 +867,10 @@ fi
 # This ensures responses are processed regardless of open_arch_prs count
 has_responses_to_process=false
 pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-  "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+  "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
 for pr_num in $pr_numbers; do
   comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
   if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
     has_responses_to_process=true
     break
@@ -879,7 +879,7 @@ done
 
 # Check 2 (continued): Skip if already at max open pitches (3), unless there are responses to process
 open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-  "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
+  "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
 if [ "${open_arch_prs:-0}" -ge 3 ]; then
   if [ "$has_responses_to_process" = false ]; then
     log "already 3 open architect PRs with no responses to process — skipping"
@@ -904,7 +904,7 @@ declare -A _arch_vision_issues_with_open_prs
 while IFS= read -r pr_num; do
   [ -z "$pr_num" ] && continue
   pr_body=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null | jq -r '.body // ""') || continue
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null | jq -r '.body // ""') || continue
   # Extract vision issue numbers referenced in PR body (e.g., "refs #419" or "#419")
   while IFS= read -r ref_issue; do
     [ -z "$ref_issue" ] && continue
@@ -1043,16 +1043,16 @@ if [ "${has_responses_to_process:-false}" = "true" ]; then
   # Check if any PRs have responses that need agent handling
   needs_agent=false
   pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
 
   for pr_num in $pr_numbers; do
     # Check for ACCEPT/REJECT in comments
     comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "${FORGE_API}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
+      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
 
     # Check for review decisions (higher precedence)
     reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "${FORGE_API}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews=""
+      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews=""
 
     # Check for ACCEPT (APPROVED review or ACCEPT comment)
     if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then

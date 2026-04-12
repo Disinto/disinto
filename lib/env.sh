@@ -128,7 +128,8 @@ export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-dev-bot,review-bot,planner-bo
 # Project config
 export FORGE_REPO="${FORGE_REPO:-}"
 export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
-export FORGE_API="${FORGE_API:-${FORGE_URL}/api/v1/repos/${FORGE_REPO}}"
+export FORGE_API_BASE="${FORGE_API_BASE:-${FORGE_URL}/api/v1}"
+export FORGE_API="${FORGE_API:-${FORGE_API_BASE}/repos/${FORGE_REPO}}"
 export FORGE_WEB="${FORGE_WEB:-${FORGE_URL}/${FORGE_REPO}}"
 # tea CLI login name: derived from FORGE_URL (codeberg vs local forgejo)
 if [ -z "${TEA_LOGIN:-}" ]; then
