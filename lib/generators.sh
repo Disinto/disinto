@@ -499,6 +499,8 @@ services:
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
       # Throwaway named volume for chat config (isolated from host ~/.claude)
       - chat-config:/var/chat/config
+      # Chat history persistence: per-user NDJSON files on bind-mounted host volume
+      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     environment:
       CHAT_HOST: "0.0.0.0"
       CHAT_PORT: "8080"
@@ -523,6 +525,7 @@ volumes:
   project-repos:
   caddy_data:
   chat-config:
+  chat-history:
 
 networks:
   disinto-net:
