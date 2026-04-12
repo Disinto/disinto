@@ -6,11 +6,21 @@ set -euo pipefail
 # Exec-replace pattern: this script is the container entrypoint and runs
 # the server directly (no wrapper needed). Logs to stdout for docker logs.
 
-LOGFILE="/var/chat/chat.log"
+LOGFILE="/tmp/chat.log"
 
 log() {
     printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }
+
+# Sandbox sanity checks (#706) — fail fast if isolation is broken
+if [ -e /var/run/docker.sock ]; then
+    log "FATAL: /var/run/docker.sock is accessible — sandbox violation"
+    exit 1
+fi
+if [ "$(id -u)" = "0" ]; then
+    log "FATAL: running as root (uid 0) — sandbox violation"
+    exit 1
+fi
 
 # Verify Claude CLI is available (expected via volume mount from host).
 if ! command -v claude &>/dev/null; then
