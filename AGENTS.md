@@ -1,4 +1,4 @@
-<!-- last-reviewed: 3e65878093bbbcea6dfe4db341f82dc89d4e0ac0 -->
+<!-- last-reviewed: 34d4136f2e20633cd38768265db08bce9301e392 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -35,12 +35,12 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py,
-│                  branch-protection.sh, secret-scan.sh, tea-helpers.sh, vault.sh, ci-log-reader.py, git-creds.sh
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, vault.sh, ci-log-reader.py, git-creds.sh
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
-├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, Dockerfile, ui/)
+├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh)
