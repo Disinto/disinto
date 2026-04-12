@@ -869,6 +869,14 @@ has_responses_to_process=false
 pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
   "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
 for pr_num in $pr_numbers; do
+  # Check formal reviews first (Forgejo green check via review API)
+  reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews="[]"
+  if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED" or .state == "REQUEST_CHANGES")' >/dev/null 2>&1; then
+    has_responses_to_process=true
+    break
+  fi
+  # Then check ACCEPT/REJECT in comments (legacy / human-typed)
   comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
     "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
   if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
