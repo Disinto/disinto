@@ -509,6 +509,10 @@ services:
       DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
       # Shared secret for Caddy forward_auth verify endpoint (#709)
       FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
+      # Cost caps / rate limiting (#711)
+      CHAT_MAX_REQUESTS_PER_HOUR: ${CHAT_MAX_REQUESTS_PER_HOUR:-60}
+      CHAT_MAX_REQUESTS_PER_DAY: ${CHAT_MAX_REQUESTS_PER_DAY:-500}
+      CHAT_MAX_TOKENS_PER_DAY: ${CHAT_MAX_TOKENS_PER_DAY:-1000000}
     networks:
       - disinto-net
 
