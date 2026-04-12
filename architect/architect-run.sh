@@ -441,6 +441,7 @@ get_vision_subissues() {
   fi
 
   # Method 2: Find issues referenced in merged sprint PR bodies
+  # Only consider PRs whose title or body references this specific vision issue
   local prs_json
   prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || true
@@ -449,8 +450,7 @@ get_vision_subissues() {
     while IFS= read -r pr_num; do
       [ -z "$pr_num" ] && continue
 
-      # Check if PR is merged and references the vision issue
-      local pr_details pr_body
+      local pr_details pr_body pr_title
       pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
 
@@ -461,11 +461,19 @@ get_vision_subissues() {
         continue
       fi
 
+      pr_title=$(printf '%s' "$pr_details" | jq -r '.title // ""') || continue
       pr_body=$(printf '%s' "$pr_details" | jq -r '.body // ""') || continue
 
-      # Extract all issue numbers from PR body
+      # Only process PRs that reference this specific vision issue
+      if ! printf '%s\n%s' "$pr_title" "$pr_body" | grep -qE "#${vision_issue}([^0-9]|$)"; then
+        continue
+      fi
+
+      # Extract issue numbers from PR body, excluding the vision issue itself
       while IFS= read -r ref_issue; do
         [ -z "$ref_issue" ] && continue
+        # Skip the vision issue itself
+        [ "$ref_issue" = "$vision_issue" ] && continue
         # Skip if already in list
         local found=false
         for existing in "${subissues[@]+"${subissues[@]}"}"; do
@@ -518,6 +526,17 @@ all_subissues_closed() {
 # Args: vision_issue_number
 close_vision_issue() {
   local vision_issue="$1"
+
+  # Idempotency guard: check if a completion comment already exists
+  local existing_comments
+  existing_comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${vision_issue}/comments" 2>/dev/null) || existing_comments="[]"
+
+  if printf '%s' "$existing_comments" | jq -e '[.[] | select(.body | contains("Vision Issue Completed"))] | length > 0' >/dev/null 2>&1; then
+    log "Vision issue #${vision_issue} already has a completion comment — skipping"
+    return 0
+  fi
+
   local subissues
   subissues=$(get_vision_subissues "$vision_issue")
 
