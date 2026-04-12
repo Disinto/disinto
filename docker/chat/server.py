@@ -3,6 +3,7 @@
 disinto-chat server — minimal HTTP backend for Claude chat UI.
 
 Routes:
+    GET /chat/auth/verify    → Caddy forward_auth callback (returns 200+X-Forwarded-User or 401)
     GET /chat/login          → 302 to Forgejo OAuth authorize
     GET /chat/oauth/callback → exchange code for token, validate user, set session
     GET /chat/               → serves index.html (session required)
@@ -42,6 +43,12 @@ FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
 CHAT_OAUTH_CLIENT_ID = os.environ.get("CHAT_OAUTH_CLIENT_ID", "")
 CHAT_OAUTH_CLIENT_SECRET = os.environ.get("CHAT_OAUTH_CLIENT_SECRET", "")
 EDGE_TUNNEL_FQDN = os.environ.get("EDGE_TUNNEL_FQDN", "")
+
+# Shared secret for Caddy forward_auth verify endpoint (#709).
+# When set, only requests carrying this value in X-Forward-Auth-Secret are
+# allowed to call /chat/auth/verify.  When empty the endpoint is unrestricted
+# (acceptable during local dev; production MUST set this).
+FORWARD_AUTH_SECRET = os.environ.get("FORWARD_AUTH_SECRET", "")
 
 # Allowed users — disinto-admin always allowed; CSV allowlist extends it
 _allowed_csv = os.environ.get("DISINTO_CHAT_ALLOWED_USERS", "")
@@ -186,10 +193,43 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.end_headers()
         return None
 
+    def _check_forwarded_user(self, session_user):
+        """Defense-in-depth: verify X-Forwarded-User matches session user (#709).
+
+        Returns True if the request may proceed, False if a 403 was sent.
+        When X-Forwarded-User is absent (forward_auth removed from Caddy),
+        the request is rejected — fail-closed by design.
+        """
+        forwarded = self.headers.get("X-Forwarded-User")
+        if not forwarded:
+            rid = self.headers.get("X-Request-Id", "-")
+            print(
+                f"WARN: missing X-Forwarded-User for session_user={session_user} "
+                f"req_id={rid} — fail-closed (#709)",
+                file=sys.stderr,
+            )
+            self.send_error_page(403, "Forbidden: missing forwarded-user header")
+            return False
+        if forwarded != session_user:
+            rid = self.headers.get("X-Request-Id", "-")
+            print(
+                f"WARN: X-Forwarded-User mismatch: header={forwarded} "
+                f"session={session_user} req_id={rid} (#709)",
+                file=sys.stderr,
+            )
+            self.send_error_page(403, "Forbidden: user identity mismatch")
+            return False
+        return True
+
     def do_GET(self):
         """Handle GET requests."""
         parsed = urlparse(self.path)
         path = parsed.path
+
+        # Verify endpoint for Caddy forward_auth (#709)
+        if path == "/chat/auth/verify":
+            self.handle_auth_verify()
+            return
 
         # OAuth routes (no session required)
         if path == "/chat/login":
@@ -202,14 +242,20 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         # Serve index.html at root
         if path in ("/", "/chat", "/chat/"):
-            if not self._require_session():
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
                 return
             self.serve_index()
             return
 
         # Serve static files
         if path.startswith("/chat/static/") or path.startswith("/static/"):
-            if not self._require_session():
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
                 return
             self.serve_static(path)
             return
@@ -229,13 +275,46 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         # Chat endpoint (session required)
         if path in ("/chat", "/chat/"):
-            if not self._require_session():
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
                 return
             self.handle_chat()
             return
 
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
+
+    def handle_auth_verify(self):
+        """Caddy forward_auth callback — validate session and return X-Forwarded-User (#709).
+
+        Caddy calls this endpoint for every /chat/* request.  If the session
+        cookie is valid the endpoint returns 200 with the X-Forwarded-User
+        header set to the session username.  Otherwise it returns 401 so Caddy
+        knows the request is unauthenticated.
+
+        Access control: when FORWARD_AUTH_SECRET is configured, the request must
+        carry a matching X-Forward-Auth-Secret header (shared secret between
+        Caddy and the chat backend).
+        """
+        # Shared-secret gate
+        if FORWARD_AUTH_SECRET:
+            provided = self.headers.get("X-Forward-Auth-Secret", "")
+            if not secrets.compare_digest(provided, FORWARD_AUTH_SECRET):
+                self.send_error_page(403, "Forbidden: invalid forward-auth secret")
+                return
+
+        user = _validate_session(self.headers.get("Cookie"))
+        if not user:
+            self.send_error_page(401, "Unauthorized: no valid session")
+            return
+
+        self.send_response(200)
+        self.send_header("X-Forwarded-User", user)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"ok")
 
     def handle_login(self):
         """Redirect to Forgejo OAuth authorize endpoint."""
@@ -440,6 +519,10 @@ def main():
         print(f"Allowed users: {', '.join(sorted(ALLOWED_USERS))}", file=sys.stderr)
     else:
         print("WARNING: CHAT_OAUTH_CLIENT_ID not set — OAuth disabled", file=sys.stderr)
+    if FORWARD_AUTH_SECRET:
+        print("forward_auth secret configured (#709)", file=sys.stderr)
+    else:
+        print("WARNING: FORWARD_AUTH_SECRET not set — verify endpoint unrestricted", file=sys.stderr)
     httpd.serve_forever()
 
 

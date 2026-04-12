@@ -430,6 +430,8 @@ services:
       - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
       - EDGE_TUNNEL_PORT=${EDGE_TUNNEL_PORT:-}
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
+      # Shared secret for Caddy ↔ chat forward_auth (#709)
+      - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -505,6 +507,8 @@ services:
       CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
       EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
       DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
+      # Shared secret for Caddy forward_auth verify endpoint (#709)
+      FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
     networks:
       - disinto-net
 
@@ -611,7 +615,20 @@ _generate_caddyfile_impl() {
     }
 
     # Chat service — reverse proxy to disinto-chat backend (#705)
+    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
+    handle /chat/login {
+        reverse_proxy chat:8080
+    }
+    handle /chat/oauth/callback {
+        reverse_proxy chat:8080
+    }
+    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
+        forward_auth chat:8080 {
+            uri /chat/auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
         reverse_proxy chat:8080
     }
 }
