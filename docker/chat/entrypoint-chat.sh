@@ -6,7 +6,7 @@ set -euo pipefail
 # Exec-replace pattern: this script is the container entrypoint and runs
 # the server directly (no wrapper needed). Logs to stdout for docker logs.
 
-LOGFILE="/var/chat/chat.log"
+LOGFILE="/tmp/chat.log"
 
 log() {
     printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"

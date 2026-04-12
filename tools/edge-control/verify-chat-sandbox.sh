@@ -39,6 +39,14 @@ else
     fail "CapAdd expected null, got $cap_add"
 fi
 
+# CapDrop — should contain ALL
+cap_drop=$(echo "$inspect_json" | python3 -c "import sys,json; caps=json.load(sys.stdin)[0]['HostConfig']['CapDrop'] or []; print(' '.join(caps))")
+if echo "$cap_drop" | grep -q "ALL"; then
+    pass "CapDrop contains ALL"
+else
+    fail "CapDrop expected ALL, got: $cap_drop"
+fi
+
 # PidsLimit
 pids_limit=$(echo "$inspect_json" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['HostConfig']['PidsLimit'])")
 if [ "$pids_limit" = "128" ]; then
