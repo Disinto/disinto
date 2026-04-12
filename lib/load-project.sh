@@ -97,7 +97,8 @@ done <<< "$_PROJECT_VARS"
 # FORGE_URL: TOML forge_url > existing FORGE_URL > default
 export FORGE_URL="${FORGE_URL:-http://localhost:3000}"
 if [ -n "$FORGE_REPO" ]; then
-  export FORGE_API="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
+  export FORGE_API_BASE="${FORGE_URL}/api/v1"
+  export FORGE_API="${FORGE_API_BASE}/repos/${FORGE_REPO}"
   export FORGE_WEB="${FORGE_URL}/${FORGE_REPO}"
   # Extract repo owner (first path segment of owner/repo)
   export FORGE_REPO_OWNER="${FORGE_REPO%%/*}"
