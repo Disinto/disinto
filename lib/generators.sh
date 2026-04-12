@@ -500,6 +500,11 @@ services:
     environment:
       CHAT_HOST: "0.0.0.0"
       CHAT_PORT: "8080"
+      FORGE_URL: http://forgejo:3000
+      CHAT_OAUTH_CLIENT_ID: ${CHAT_OAUTH_CLIENT_ID:-}
+      CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
+      EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
+      DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
     networks:
       - disinto-net
 

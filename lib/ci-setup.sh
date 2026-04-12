@@ -4,7 +4,9 @@
 #
 # Internal functions (called via _load_ci_context + _*_impl):
 #   _install_cron_impl()              - Install crontab entries (bare-metal only; compose uses polling loop)
+#   _create_forgejo_oauth_app()       - Generic: create an OAuth2 app on Forgejo (shared helper)
 #   _create_woodpecker_oauth_impl()   - Create OAuth2 app on Forgejo for Woodpecker
+#   _create_chat_oauth_impl()         - Create OAuth2 app on Forgejo for disinto-chat
 #   _generate_woodpecker_token_impl() - Auto-generate WOODPECKER_TOKEN via OAuth2 flow
 #   _activate_woodpecker_repo_impl()  - Activate repo in Woodpecker
 #
@@ -90,6 +92,54 @@ _install_cron_impl() {
   fi
 }
 
+# Create an OAuth2 application on Forgejo.
+# Generic helper used by both Woodpecker and chat OAuth setup.
+# Sets _OAUTH_CLIENT_ID and _OAUTH_CLIENT_SECRET on success.
+# Usage: _create_forgejo_oauth_app <app_name> <redirect_uri>
+_create_forgejo_oauth_app() {
+  local oauth2_name="$1"
+  local redirect_uri="$2"
+  local forge_url="${FORGE_URL}"
+
+  _OAUTH_CLIENT_ID=""
+  _OAUTH_CLIENT_SECRET=""
+
+  local existing_app
+  existing_app=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${forge_url}/api/v1/user/applications/oauth2" 2>/dev/null \
+    | jq -r --arg name "$oauth2_name" '.[] | select(.name == $name) | .client_id // empty' 2>/dev/null) || true
+
+  if [ -n "$existing_app" ]; then
+    echo "OAuth2:  ${oauth2_name} (already exists, client_id=${existing_app})"
+    _OAUTH_CLIENT_ID="$existing_app"
+    return 0
+  fi
+
+  local oauth2_resp
+  oauth2_resp=$(curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${forge_url}/api/v1/user/applications/oauth2" \
+    -d "{\"name\":\"${oauth2_name}\",\"redirect_uris\":[\"${redirect_uri}\"],\"confidential_client\":true}" \
+    2>/dev/null) || oauth2_resp=""
+
+  if [ -z "$oauth2_resp" ]; then
+    echo "Warning: failed to create OAuth2 app '${oauth2_name}' on Forgejo" >&2
+    return 1
+  fi
+
+  _OAUTH_CLIENT_ID=$(printf '%s' "$oauth2_resp" | jq -r '.client_id // empty')
+  _OAUTH_CLIENT_SECRET=$(printf '%s' "$oauth2_resp" | jq -r '.client_secret // empty')
+
+  if [ -z "$_OAUTH_CLIENT_ID" ]; then
+    echo "Warning: OAuth2 app creation returned no client_id" >&2
+    return 1
+  fi
+
+  echo "OAuth2:  ${oauth2_name} created (client_id=${_OAUTH_CLIENT_ID})"
+}
+
 # Set up Woodpecker CI to use Forgejo as its forge backend.
 # Creates an OAuth2 app on Forgejo for Woodpecker, activates the repo.
 # Usage: create_woodpecker_oauth <forge_url> <repo_slug>
@@ -100,44 +150,9 @@ _create_woodpecker_oauth_impl() {
   echo ""
   echo "── Woodpecker OAuth2 setup ────────────────────────────"
 
-  # Create OAuth2 application on Forgejo for Woodpecker
-  local oauth2_name="woodpecker-ci"
-  local redirect_uri="http://localhost:8000/authorize"
-  local existing_app client_id client_secret
-
-  # Check if OAuth2 app already exists
-  existing_app=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${forge_url}/api/v1/user/applications/oauth2" 2>/dev/null \
-    | jq -r --arg name "$oauth2_name" '.[] | select(.name == $name) | .client_id // empty' 2>/dev/null) || true
-
-  if [ -n "$existing_app" ]; then
-    echo "OAuth2:  ${oauth2_name} (already exists, client_id=${existing_app})"
-    client_id="$existing_app"
-  else
-    local oauth2_resp
-    oauth2_resp=$(curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${forge_url}/api/v1/user/applications/oauth2" \
-      -d "{\"name\":\"${oauth2_name}\",\"redirect_uris\":[\"${redirect_uri}\"],\"confidential_client\":true}" \
-      2>/dev/null) || oauth2_resp=""
-
-    if [ -z "$oauth2_resp" ]; then
-      echo "Warning: failed to create OAuth2 app on Forgejo" >&2
-      return
-    fi
-
-    client_id=$(printf '%s' "$oauth2_resp" | jq -r '.client_id // empty')
-    client_secret=$(printf '%s' "$oauth2_resp" | jq -r '.client_secret // empty')
-
-    if [ -z "$client_id" ]; then
-      echo "Warning: OAuth2 app creation returned no client_id" >&2
-      return
-    fi
-
-    echo "OAuth2:  ${oauth2_name} created (client_id=${client_id})"
-  fi
+  _create_forgejo_oauth_app "woodpecker-ci" "http://localhost:8000/authorize" || return 0
+  local client_id="${_OAUTH_CLIENT_ID}"
+  local client_secret="${_OAUTH_CLIENT_SECRET}"
 
   # Store Woodpecker forge config in .env
   # WP_FORGEJO_CLIENT/SECRET match the docker-compose.yml variable references
@@ -164,6 +179,39 @@ _create_woodpecker_oauth_impl() {
     fi
   done
   echo "Config:  Woodpecker forge vars written to .env"
+}
+
+# Create OAuth2 app on Forgejo for disinto-chat.
+# Writes CHAT_OAUTH_CLIENT_ID / CHAT_OAUTH_CLIENT_SECRET to .env.
+# Usage: _create_chat_oauth_impl <redirect_uri>
+_create_chat_oauth_impl() {
+  local redirect_uri="$1"
+
+  echo ""
+  echo "── Chat OAuth2 setup ──────────────────────────────────"
+
+  _create_forgejo_oauth_app "disinto-chat" "$redirect_uri" || return 0
+  local client_id="${_OAUTH_CLIENT_ID}"
+  local client_secret="${_OAUTH_CLIENT_SECRET}"
+
+  local env_file="${FACTORY_ROOT}/.env"
+  local chat_vars=()
+  if [ -n "${client_id:-}" ]; then
+    chat_vars+=("CHAT_OAUTH_CLIENT_ID=${client_id}")
+  fi
+  if [ -n "${client_secret:-}" ]; then
+    chat_vars+=("CHAT_OAUTH_CLIENT_SECRET=${client_secret}")
+  fi
+
+  for var_line in "${chat_vars[@]}"; do
+    local var_name="${var_line%%=*}"
+    if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${var_name}=.*|${var_line}|" "$env_file"
+    else
+      printf '%s\n' "$var_line" >> "$env_file"
+    fi
+  done
+  echo "Config:  Chat OAuth vars written to .env"
 }
 
 # Auto-generate WOODPECKER_TOKEN by driving the Forgejo OAuth2 login flow.
