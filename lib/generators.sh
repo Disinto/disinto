@@ -615,6 +615,13 @@ _generate_caddyfile_impl() {
     }
 
     # Chat service — reverse proxy to disinto-chat backend (#705)
+    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
+    handle /chat/login {
+        reverse_proxy chat:8080
+    }
+    handle /chat/oauth/callback {
+        reverse_proxy chat:8080
+    }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
         forward_auth chat:8080 {
