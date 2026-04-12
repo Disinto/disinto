@@ -22,6 +22,7 @@ OAuth flow:
 The claude binary is expected to be mounted from the host at /usr/local/bin/claude.
 """
 
+import datetime
 import json
 import os
 import secrets
@@ -50,6 +51,11 @@ EDGE_TUNNEL_FQDN = os.environ.get("EDGE_TUNNEL_FQDN", "")
 # (acceptable during local dev; production MUST set this).
 FORWARD_AUTH_SECRET = os.environ.get("FORWARD_AUTH_SECRET", "")
 
+# Rate limiting / cost caps (#711)
+CHAT_MAX_REQUESTS_PER_HOUR = int(os.environ.get("CHAT_MAX_REQUESTS_PER_HOUR", 60))
+CHAT_MAX_REQUESTS_PER_DAY = int(os.environ.get("CHAT_MAX_REQUESTS_PER_DAY", 500))
+CHAT_MAX_TOKENS_PER_DAY = int(os.environ.get("CHAT_MAX_TOKENS_PER_DAY", 1000000))
+
 # Allowed users — disinto-admin always allowed; CSV allowlist extends it
 _allowed_csv = os.environ.get("DISINTO_CHAT_ALLOWED_USERS", "")
 ALLOWED_USERS = {"disinto-admin"}
@@ -67,6 +73,12 @@ _sessions = {}
 
 # Pending OAuth state tokens: state → expires (float)
 _oauth_states = {}
+
+# Per-user rate limiting state (#711)
+# user → list of request timestamps (for sliding-window hourly/daily caps)
+_request_log = {}
+# user → {"tokens": int, "date": "YYYY-MM-DD"}
+_daily_tokens = {}
 
 # MIME types for static files
 MIME_TYPES = {
@@ -166,6 +178,110 @@ def _fetch_user(access_token):
     except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
         print(f"User fetch failed: {e}", file=sys.stderr)
         return None
+
+
+def _check_rate_limit(user):
+    """Check per-user rate limits. Returns (allowed, retry_after, reason) (#711).
+
+    Checks hourly request cap, daily request cap, and daily token cap.
+    """
+    now = time.time()
+    one_hour_ago = now - 3600
+    today = datetime.date.today().isoformat()
+
+    # Prune old entries from request log
+    timestamps = _request_log.get(user, [])
+    timestamps = [t for t in timestamps if t > now - 86400]
+    _request_log[user] = timestamps
+
+    # Hourly request cap
+    hourly = [t for t in timestamps if t > one_hour_ago]
+    if len(hourly) >= CHAT_MAX_REQUESTS_PER_HOUR:
+        oldest_in_window = min(hourly)
+        retry_after = int(oldest_in_window + 3600 - now) + 1
+        return False, max(retry_after, 1), "hourly request limit"
+
+    # Daily request cap
+    start_of_day = time.mktime(datetime.date.today().timetuple())
+    daily = [t for t in timestamps if t >= start_of_day]
+    if len(daily) >= CHAT_MAX_REQUESTS_PER_DAY:
+        next_day = start_of_day + 86400
+        retry_after = int(next_day - now) + 1
+        return False, max(retry_after, 1), "daily request limit"
+
+    # Daily token cap
+    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
+    if token_info["date"] != today:
+        token_info = {"tokens": 0, "date": today}
+        _daily_tokens[user] = token_info
+    if token_info["tokens"] >= CHAT_MAX_TOKENS_PER_DAY:
+        next_day = start_of_day + 86400
+        retry_after = int(next_day - now) + 1
+        return False, max(retry_after, 1), "daily token limit"
+
+    return True, 0, ""
+
+
+def _record_request(user):
+    """Record a request timestamp for the user (#711)."""
+    _request_log.setdefault(user, []).append(time.time())
+
+
+def _record_tokens(user, tokens):
+    """Record token usage for the user (#711)."""
+    today = datetime.date.today().isoformat()
+    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
+    if token_info["date"] != today:
+        token_info = {"tokens": 0, "date": today}
+    token_info["tokens"] += tokens
+    _daily_tokens[user] = token_info
+
+
+def _parse_stream_json(output):
+    """Parse stream-json output from claude --print (#711).
+
+    Returns (text_content, total_tokens).  Falls back gracefully if the
+    usage event is absent or malformed.
+    """
+    text_parts = []
+    total_tokens = 0
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type", "")
+
+        # Collect assistant text
+        if etype == "content_block_delta":
+            delta = event.get("delta", {})
+            if delta.get("type") == "text_delta":
+                text_parts.append(delta.get("text", ""))
+        elif etype == "assistant":
+            # Full assistant message (non-streaming)
+            content = event.get("content", "")
+            if isinstance(content, str) and content:
+                text_parts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("text"):
+                        text_parts.append(block["text"])
+
+        # Parse usage from result event
+        if etype == "result":
+            usage = event.get("usage", {})
+            total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        elif "usage" in event:
+            usage = event["usage"]
+            if isinstance(usage, dict):
+                total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+
+    return "".join(text_parts), total_tokens
 
 
 class ChatHandler(BaseHTTPRequestHandler):
@@ -280,7 +396,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 return
             if not self._check_forwarded_user(user):
                 return
-            self.handle_chat()
+            self.handle_chat(user)
             return
 
         # 404 for unknown paths
@@ -442,11 +558,33 @@ class ChatHandler(BaseHTTPRequestHandler):
         except IOError as e:
             self.send_error_page(500, f"Error reading file: {e}")
 
-    def handle_chat(self):
+    def _send_rate_limit_response(self, retry_after, reason):
+        """Send a 429 response with Retry-After header and HTMX fragment (#711)."""
+        body = (
+            f'<div class="rate-limit-error">'
+            f"Rate limit exceeded: {reason}. "
+            f"Please try again in {retry_after} seconds."
+            f"</div>"
+        )
+        self.send_response(429)
+        self.send_header("Retry-After", str(retry_after))
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
+    def handle_chat(self, user):
         """
         Handle chat requests by spawning `claude --print` with the user message.
-        Returns the response as plain text.
+        Enforces per-user rate limits and tracks token usage (#711).
         """
+
+        # Check rate limits before processing (#711)
+        allowed, retry_after, reason = _check_rate_limit(user)
+        if not allowed:
+            self._send_rate_limit_response(retry_after, reason)
+            return
+
         # Read request body
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
@@ -472,30 +610,45 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(500, "Claude CLI not found")
             return
 
+        # Record request for rate limiting (#711)
+        _record_request(user)
+
         try:
-            # Spawn claude --print with text output format
+            # Spawn claude --print with stream-json for token tracking (#711)
             proc = subprocess.Popen(
-                [CLAUDE_BIN, "--print", message],
+                [CLAUDE_BIN, "--print", "--output-format", "stream-json", message],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
 
-            # Read response as text (Claude outputs plain text when not using stream-json)
-            response = proc.stdout.read()
+            raw_output = proc.stdout.read()
 
-            # Read stderr (should be minimal, mostly for debugging)
             error_output = proc.stderr.read()
             if error_output:
                 print(f"Claude stderr: {error_output}", file=sys.stderr)
 
-            # Wait for process to complete
             proc.wait()
 
-            # Check for errors
             if proc.returncode != 0:
                 self.send_error_page(500, f"Claude CLI failed with exit code {proc.returncode}")
                 return
+
+            # Parse stream-json for text and token usage (#711)
+            response, total_tokens = _parse_stream_json(raw_output)
+
+            # Track token usage — does not block *this* request (#711)
+            if total_tokens > 0:
+                _record_tokens(user, total_tokens)
+                print(
+                    f"Token usage: user={user} tokens={total_tokens}",
+                    file=sys.stderr,
+                )
+
+            # Fall back to raw output if stream-json parsing yielded no text
+            if not response:
+                response = raw_output
+
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", len(response.encode("utf-8")))
@@ -523,6 +676,12 @@ def main():
         print("forward_auth secret configured (#709)", file=sys.stderr)
     else:
         print("WARNING: FORWARD_AUTH_SECRET not set — verify endpoint unrestricted", file=sys.stderr)
+    print(
+        f"Rate limits (#711): {CHAT_MAX_REQUESTS_PER_HOUR}/hr, "
+        f"{CHAT_MAX_REQUESTS_PER_DAY}/day, "
+        f"{CHAT_MAX_TOKENS_PER_DAY} tokens/day",
+        file=sys.stderr,
+    )
     httpd.serve_forever()
 
 
