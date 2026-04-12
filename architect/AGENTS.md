@@ -1,4 +1,4 @@
-<!-- last-reviewed: c51cc9dba649ed543b910b561231a5c8bd2130bc -->
+<!-- last-reviewed: 3e65878093bbbcea6dfe4db341f82dc89d4e0ac0 -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -40,11 +40,13 @@ the steps for:
 Bash in `architect-run.sh` handles state detection and orchestration:
 
 - **Deterministic state detection**: Bash reads the Forgejo reviews API to detect
-  ACCEPT/REJECT decisions — no model-dependent API parsing
+  ACCEPT/REJECT decisions — checks both formal APPROVED reviews and PR comments, not just comments (#718)
 - **Human guidance injection**: Review body text from ACCEPT reviews is injected
   directly into the research prompt as context
 - **Response processing**: When ACCEPT/REJECT responses are detected, bash invokes
   the agent with appropriate context (session resumed for questions phase)
+- **Pitch capture**: `pitch_output` is written to a temp file instead of captured via `$()` subshell, because `agent_run` writes to side-channels (`SID_FILE`, `LOGFILE`) that subshell capture would suppress (#716)
+- **PR URL construction**: existing-PR check uses `${FORGE_API}/pulls` directly (not `${FORGE_API}/repos/…`) — the base URL already includes the repos segment (#717)
 
 ### State transitions
 
