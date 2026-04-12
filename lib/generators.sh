@@ -475,14 +475,23 @@ services:
 
   # Chat container — Claude chat UI backend (#705)
   # Internal service only; edge proxy routes to chat:8080
+  # Sandbox hardened per #706 — no docker.sock, read-only rootfs, minimal caps
   chat:
     build:
       context: ./docker/chat
       dockerfile: Dockerfile
     container_name: disinto-chat
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     security_opt:
-      - apparmor=unconfined
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       # Mount claude binary from host (same as agents)
       - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro

@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN useradd -m -u 1000 -s /bin/bash chat
+# Non-root user — fixed UID 10001 for sandbox hardening (#706)
+RUN useradd -m -u 10001 -s /bin/bash chat
 
 # Copy application files
 COPY server.py /usr/local/bin/server.py
@@ -27,5 +27,9 @@ RUN chmod +x /entrypoint-chat.sh /usr/local/bin/server.py
 
 USER chat
 WORKDIR /var/chat
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/')" || exit 1
 
 ENTRYPOINT ["/entrypoint-chat.sh"]
