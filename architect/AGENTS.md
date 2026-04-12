@@ -1,4 +1,4 @@
-<!-- last-reviewed: 9d778f6fd6672f1fd9446b0007b64846e209dc0b -->
+<!-- last-reviewed: ec7dff854a71d64f427a4e6d6874de8e6dee822c -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -67,11 +67,12 @@ REJECT review → close PR + journal (model processes rejection, bash merges PR)
 Vision issues decompose into sprint sub-issues tracked via "Decomposed from #N" in sub-issue bodies. The architect automatically closes vision issues when all sub-issues are closed:
 
 1. Before picking new vision issues, the architect checks each open vision issue
-2. For each, it queries for sub-issues with "Decomposed from #N" in their body (regardless of state)
-3. If all sub-issues are closed, it posts a summary comment listing completed sub-issues
-4. The vision issue is then closed automatically
+2. For each, it queries merged sprint PRs — **only PRs whose title or body reference the specific vision issue** (matched via `#N` pattern, filtering out unrelated PRs that happen to close unrelated issues) (#735/#736)
+3. Extracts sub-issue numbers from those PRs, excluding the vision issue itself
+4. If all sub-issues are closed, posts a summary comment listing completed sub-issues (with an idempotency guard: skips if a "Vision Issue Completed" comment already exists)
+5. The vision issue is then closed automatically
 
-This ensures vision issues transition from `open` → `closed` once their work is complete, without manual intervention.
+This ensures vision issues transition from `open` → `closed` once their work is complete, without manual intervention. The #N-scoped matching prevents false positives where unrelated sub-issues would incorrectly trigger vision issue closure.
 
 ### Session management
 
