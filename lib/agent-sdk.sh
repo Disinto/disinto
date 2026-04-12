@@ -131,6 +131,8 @@ agent_run() {
   done
   local prompt="${1:-}"
 
+  _AGENT_LAST_OUTPUT=""
+
   local -a args=(-p "$prompt" --output-format json --dangerously-skip-permissions --max-turns 200)
   [ -n "$resume_id" ] && args+=(--resume "$resume_id")
   [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
@@ -171,7 +173,9 @@ agent_run() {
 
   # Save output for diagnostics (no_push, crashes)
   _AGENT_LAST_OUTPUT="$output"
-  local diag_file="${DISINTO_LOG_DIR:-/tmp}/dev/agent-run-last.json"
+  local diag_dir="${DISINTO_LOG_DIR:-/tmp}/${LOG_AGENT:-dev}"
+  mkdir -p "$diag_dir" 2>/dev/null || true
+  local diag_file="${diag_dir}/agent-run-last.json"
   printf '%s' "$output" > "$diag_file" 2>/dev/null || true
 
   # Nudge: if the model stopped without pushing, resume with encouragement.
