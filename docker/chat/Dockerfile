@@ -1,7 +1,7 @@
-# disinto-chat — minimal HTTP+WebSocket backend for Claude chat UI
+# disinto-chat — minimal HTTP backend for Claude chat UI
 #
-# Small Debian slim base with Python runtime and websockets library.
-# Chosen for simplicity and small image size (~100MB vs ~150MB for Go).
+# Small Debian slim base with Python runtime.
+# Chosen for simplicity and small image size (~100MB).
 #
 # Image size: ~100MB (well under the 200MB ceiling)
 #
@@ -10,11 +10,9 @@
 
 FROM debian:bookworm-slim
 
-# Install Python and websockets (no build-time network access needed)
+# Install Python (no build-time network access needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
-    && pip3 install --break-system-packages websockets \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user

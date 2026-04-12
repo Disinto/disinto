@@ -165,35 +165,21 @@ class ChatHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            # Spawn claude --print with streaming output
-            # Using stream-json format for structured parsing capability
+            # Spawn claude --print with text output format
             proc = subprocess.Popen(
-                [CLAUDE_BIN, "--print", message, "--output-format", "stream-json"],
+                [CLAUDE_BIN, "--print", message],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=False,
-                bufsize=0,  # Unbuffered for streaming
+                text=True,
             )
 
-            # Read and stream response
-            response_parts = []
-            error_parts = []
-
-            # Read stdout in chunks
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    break
-                try:
-                    response_parts.append(chunk.decode("utf-8"))
-                except UnicodeDecodeError:
-                    response_parts.append(chunk.decode("utf-8", errors="replace"))
+            # Read response as text (Claude outputs plain text when not using stream-json)
+            response = proc.stdout.read()
 
             # Read stderr (should be minimal, mostly for debugging)
-            if proc.stderr:
-                error_output = proc.stderr.read()
-                if error_output:
-                    error_parts.append(error_output.decode("utf-8", errors="replace"))
+            error_output = proc.stderr.read()
+            if error_output:
+                print(f"Claude stderr: {error_output}", file=sys.stderr)
 
             # Wait for process to complete
             proc.wait()
@@ -202,12 +188,6 @@ class ChatHandler(BaseHTTPRequestHandler):
             if proc.returncode != 0:
                 self.send_error(500, f"Claude CLI failed with exit code {proc.returncode}")
                 return
-
-            # Combine response parts
-            response = "".join(response_parts)
-
-            # If using stream-json, we could parse and reformat here.
-            # For now, return as-is (HTMX will display it in the UI).
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", len(response.encode("utf-8")))

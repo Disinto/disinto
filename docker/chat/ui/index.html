@@ -132,7 +132,7 @@
                 <div class="content">Welcome to disinto-chat. Type a message to start chatting with Claude.</div>
             </div>
         </div>
-        <form class="input-area" hx-post="/chat" hx-swap="none" hx-target="#messages">
+        <form class="input-area">
             <textarea name="message" placeholder="Type your message..." required></textarea>
             <button type="submit" id="send-btn">Send</button>
         </form>
@@ -161,13 +161,6 @@
             return div.innerHTML.replace(/\n/g, '<br>');
         }
 
-        // Handle HTMX swap for streaming responses
-        document.body.addEventListener('htmx:afterSwap', function(event) {
-            const newContent = event.detail.xhr.responseText;
-            // HTMX will handle the swap; we just need to scroll to bottom
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        });
-
         // Send message handler
         sendBtn.addEventListener('click', async () => {
             const message = textarea.value.trim();
@@ -183,13 +176,16 @@
             textarea.value = '';
 
             try {
-                // Use fetch for better control over streaming
-                const formData = new FormData();
-                formData.append('message', message);
+                // Use fetch with URLSearchParams for application/x-www-form-urlencoded
+                const params = new URLSearchParams();
+                params.append('message', message);
 
                 const response = await fetch('/chat', {
                     method: 'POST',
-                    body: formData
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: params
                 });
 
                 if (!response.ok) {

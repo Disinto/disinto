@@ -32,3 +32,8 @@ docker/agents/bin/
 # Generated docker-compose.yml (run 'bin/disinto init' to regenerate)
 # Note: This file is now committed to track volume mount configuration
 # docker-compose.yml
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
