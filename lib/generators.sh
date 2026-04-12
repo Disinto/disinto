@@ -473,12 +473,34 @@ services:
       - disinto-net
     command: ["echo", "staging slot — replace with project image"]
 
+  # Chat container — Claude chat UI backend (#705)
+  # Internal service only; edge proxy routes to chat:8080
+  chat:
+    build:
+      context: ./docker/chat
+      dockerfile: Dockerfile
+    container_name: disinto-chat
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      # Mount claude binary from host (same as agents)
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
+      # Throwaway named volume for chat config (isolated from host ~/.claude)
+      - chat-config:/var/chat/config
+    environment:
+      CHAT_HOST: "0.0.0.0"
+      CHAT_PORT: "8080"
+    networks:
+      - disinto-net
+
 volumes:
   forgejo-data:
   woodpecker-data:
   agent-data:
   project-repos:
   caddy_data:
+  chat-config:
 
 networks:
   disinto-net:
@@ -574,9 +596,9 @@ _generate_caddyfile_impl() {
         reverse_proxy staging:80
     }
 
-    # Chat placeholder — returns 503 until #705
+    # Chat service — reverse proxy to disinto-chat backend (#705)
     handle /chat/* {
-        respond "chat not yet deployed" 503
+        reverse_proxy chat:8080
     }
 }
 CADDYFILEEOF
