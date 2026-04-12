@@ -3,16 +3,16 @@
 disinto-chat server — minimal HTTP backend for Claude chat UI.
 
 Routes:
-    GET /chat/auth/verify    → Caddy forward_auth callback (returns 200+X-Forwarded-User or 401)
-    GET /chat/login          → 302 to Forgejo OAuth authorize
-    GET /chat/oauth/callback → exchange code for token, validate user, set session
-    GET /chat/               → serves index.html (session required)
-    GET /chat/static/*       → serves static assets (session required)
-    POST /chat               → spawns `claude --print` with user message (session required)
-    GET /ws                  → reserved for future streaming upgrade (returns 501)
+    GET /chat/auth/verify    -> Caddy forward_auth callback (returns 200+X-Forwarded-User or 401)
+    GET /chat/login          -> 302 to Forgejo OAuth authorize
+    GET /chat/oauth/callback -> exchange code for token, validate user, set session
+    GET /chat/               -> serves index.html (session required)
+    GET /chat/static/*       -> serves static assets (session required)
+    POST /chat               -> spawns `claude --print` with user message (session required)
+    GET /ws                  -> reserved for future streaming upgrade (returns 501)
 
 OAuth flow:
-    1. User hits any /chat/* route without a valid session cookie → 302 /chat/login
+    1. User hits any /chat/* route without a valid session cookie -> 302 /chat/login
     2. /chat/login redirects to Forgejo /login/oauth/authorize
     3. Forgejo redirects back to /chat/oauth/callback with ?code=...&state=...
     4. Server exchanges code for access token, fetches /api/v1/user
@@ -25,6 +25,7 @@ The claude binary is expected to be mounted from the host at /usr/local/bin/clau
 import datetime
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -56,7 +57,7 @@ CHAT_MAX_REQUESTS_PER_HOUR = int(os.environ.get("CHAT_MAX_REQUESTS_PER_HOUR", 60
 CHAT_MAX_REQUESTS_PER_DAY = int(os.environ.get("CHAT_MAX_REQUESTS_PER_DAY", 500))
 CHAT_MAX_TOKENS_PER_DAY = int(os.environ.get("CHAT_MAX_TOKENS_PER_DAY", 1000000))
 
-# Allowed users — disinto-admin always allowed; CSV allowlist extends it
+# Allowed users - disinto-admin always allowed; CSV allowlist extends it
 _allowed_csv = os.environ.get("DISINTO_CHAT_ALLOWED_USERS", "")
 ALLOWED_USERS = {"disinto-admin"}
 if _allowed_csv:
@@ -68,16 +69,22 @@ SESSION_COOKIE = "disinto_chat_session"
 # Session TTL: 24 hours
 SESSION_TTL = 24 * 60 * 60
 
-# In-memory session store: token → {"user": str, "expires": float}
+# Chat history directory (bind-mounted from host)
+CHAT_HISTORY_DIR = os.environ.get("CHAT_HISTORY_DIR", "/var/lib/chat/history")
+
+# Regex for valid conversation_id (12-char hex, no slashes)
+CONVERSATION_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+
+# In-memory session store: token -> {"user": str, "expires": float}
 _sessions = {}
 
-# Pending OAuth state tokens: state → expires (float)
+# Pending OAuth state tokens: state -> expires (float)
 _oauth_states = {}
 
 # Per-user rate limiting state (#711)
-# user → list of request timestamps (for sliding-window hourly/daily caps)
+# user -> list of request timestamps (for sliding-window hourly/daily caps)
 _request_log = {}
-# user → {"tokens": int, "date": "YYYY-MM-DD"}
+# user -> {"tokens": int, "date": "YYYY-MM-DD"}
 _daily_tokens = {}
 
 # MIME types for static files
@@ -119,7 +126,7 @@ def _validate_session(cookie_header):
             session = _sessions.get(token)
             if session and session["expires"] > time.time():
                 return session["user"]
-            # Expired — clean up
+            # Expired - clean up
             _sessions.pop(token, None)
             return None
     return None
@@ -179,6 +186,10 @@ def _fetch_user(access_token):
         print(f"User fetch failed: {e}", file=sys.stderr)
         return None
 
+
+# =============================================================================
+# Rate Limiting Functions (#711)
+# =============================================================================
 
 def _check_rate_limit(user):
     """Check per-user rate limits. Returns (allowed, retry_after, reason) (#711).
@@ -284,6 +295,134 @@ def _parse_stream_json(output):
     return "".join(text_parts), total_tokens
 
 
+# =============================================================================
+# Conversation History Functions (#710)
+# =============================================================================
+
+def _generate_conversation_id():
+    """Generate a new conversation ID (12-char hex string)."""
+    return secrets.token_hex(6)
+
+
+def _validate_conversation_id(conv_id):
+    """Validate that conversation_id matches the required format."""
+    return bool(CONVERSATION_ID_PATTERN.match(conv_id))
+
+
+def _get_user_history_dir(user):
+    """Get the history directory path for a user."""
+    return os.path.join(CHAT_HISTORY_DIR, user)
+
+
+def _get_conversation_path(user, conv_id):
+    """Get the full path to a conversation file."""
+    user_dir = _get_user_history_dir(user)
+    return os.path.join(user_dir, f"{conv_id}.ndjson")
+
+
+def _ensure_user_dir(user):
+    """Ensure the user's history directory exists."""
+    user_dir = _get_user_history_dir(user)
+    os.makedirs(user_dir, exist_ok=True)
+    return user_dir
+
+
+def _write_message(user, conv_id, role, content):
+    """Append a message to a conversation file in NDJSON format."""
+    conv_path = _get_conversation_path(user, conv_id)
+    _ensure_user_dir(user)
+
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "user": user,
+        "role": role,
+        "content": content,
+    }
+
+    with open(conv_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _read_conversation(user, conv_id):
+    """Read all messages from a conversation file."""
+    conv_path = _get_conversation_path(user, conv_id)
+    messages = []
+
+    if not os.path.exists(conv_path):
+        return None
+
+    try:
+        with open(conv_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        messages.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        # Skip malformed lines
+                        continue
+    except IOError:
+        return None
+
+    return messages
+
+
+def _list_user_conversations(user):
+    """List all conversation files for a user with first message preview."""
+    user_dir = _get_user_history_dir(user)
+    conversations = []
+
+    if not os.path.exists(user_dir):
+        return conversations
+
+    try:
+        for filename in os.listdir(user_dir):
+            if not filename.endswith(".ndjson"):
+                continue
+
+            conv_id = filename[:-7]  # Remove .ndjson extension
+            if not _validate_conversation_id(conv_id):
+                continue
+
+            conv_path = os.path.join(user_dir, filename)
+            messages = _read_conversation(user, conv_id)
+
+            if messages:
+                first_msg = messages[0]
+                preview = first_msg.get("content", "")[:50]
+                if len(first_msg.get("content", "")) > 50:
+                    preview += "..."
+                conversations.append({
+                    "id": conv_id,
+                    "created_at": first_msg.get("ts", ""),
+                    "preview": preview,
+                    "message_count": len(messages),
+                })
+            else:
+                # Empty conversation file
+                conversations.append({
+                    "id": conv_id,
+                    "created_at": "",
+                    "preview": "(empty)",
+                    "message_count": 0,
+                })
+    except OSError:
+        pass
+
+    # Sort by created_at descending
+    conversations.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return conversations
+
+
+def _delete_conversation(user, conv_id):
+    """Delete a conversation file."""
+    conv_path = _get_conversation_path(user, conv_id)
+    if os.path.exists(conv_path):
+        os.remove(conv_path)
+        return True
+    return False
+
+
 class ChatHandler(BaseHTTPRequestHandler):
     """HTTP request handler for disinto-chat with Forgejo OAuth."""
 
@@ -314,14 +453,14 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         Returns True if the request may proceed, False if a 403 was sent.
         When X-Forwarded-User is absent (forward_auth removed from Caddy),
-        the request is rejected — fail-closed by design.
+        the request is rejected - fail-closed by design.
         """
         forwarded = self.headers.get("X-Forwarded-User")
         if not forwarded:
             rid = self.headers.get("X-Request-Id", "-")
             print(
                 f"WARN: missing X-Forwarded-User for session_user={session_user} "
-                f"req_id={rid} — fail-closed (#709)",
+                f"req_id={rid} - fail-closed (#709)",
                 file=sys.stderr,
             )
             self.send_error_page(403, "Forbidden: missing forwarded-user header")
@@ -354,6 +493,27 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         if path == "/chat/oauth/callback":
             self.handle_oauth_callback(parsed.query)
+            return
+
+        # Conversation list endpoint: GET /chat/history
+        if path == "/chat/history":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_conversation_list(user)
+            return
+
+        # Single conversation endpoint: GET /chat/history/<id>
+        if path.startswith("/chat/history/"):
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            conv_id = path[len("/chat/history/"):]
+            self.handle_conversation_get(user, conv_id)
             return
 
         # Serve index.html at root
@@ -389,6 +549,16 @@ class ChatHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # New conversation endpoint (session required)
+        if path == "/chat/new":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_new_conversation(user)
+            return
+
         # Chat endpoint (session required)
         if path in ("/chat", "/chat/"):
             user = self._require_session()
@@ -403,7 +573,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_error_page(404, "Not found")
 
     def handle_auth_verify(self):
-        """Caddy forward_auth callback — validate session and return X-Forwarded-User (#709).
+        """Caddy forward_auth callback - validate session and return X-Forwarded-User (#709).
 
         Caddy calls this endpoint for every /chat/* request.  If the session
         cookie is valid the endpoint returns 200 with the X-Forwarded-User
@@ -597,6 +767,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             body_str = body.decode("utf-8")
             params = parse_qs(body_str)
             message = params.get("message", [""])[0]
+            conv_id = params.get("conversation_id", [None])[0]
         except (UnicodeDecodeError, KeyError):
             self.send_error_page(400, "Invalid message format")
             return
@@ -605,15 +776,28 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(400, "Empty message")
             return
 
+        # Get user from session
+        user = _validate_session(self.headers.get("Cookie"))
+        if not user:
+            self.send_error_page(401, "Unauthorized")
+            return
+
         # Validate Claude binary exists
         if not os.path.exists(CLAUDE_BIN):
             self.send_error_page(500, "Claude CLI not found")
             return
 
+        # Generate new conversation ID if not provided
+        if not conv_id or not _validate_conversation_id(conv_id):
+            conv_id = _generate_conversation_id()
+
         # Record request for rate limiting (#711)
         _record_request(user)
 
         try:
+            # Save user message to history
+            _write_message(user, conv_id, "user", message)
+
             # Spawn claude --print with stream-json for token tracking (#711)
             proc = subprocess.Popen(
                 [CLAUDE_BIN, "--print", "--output-format", "stream-json", message],
@@ -637,7 +821,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             # Parse stream-json for text and token usage (#711)
             response, total_tokens = _parse_stream_json(raw_output)
 
-            # Track token usage — does not block *this* request (#711)
+            # Track token usage - does not block *this* request (#711)
             if total_tokens > 0:
                 _record_tokens(user, total_tokens)
                 print(
@@ -649,16 +833,92 @@ class ChatHandler(BaseHTTPRequestHandler):
             if not response:
                 response = raw_output
 
+            # Save assistant response to history
+            _write_message(user, conv_id, "assistant", response)
+
             self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", len(response.encode("utf-8")))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            self.wfile.write(response.encode("utf-8"))
+            self.wfile.write(json.dumps({
+                "response": response,
+                "conversation_id": conv_id,
+            }, ensure_ascii=False).encode("utf-8"))
 
         except FileNotFoundError:
             self.send_error_page(500, "Claude CLI not found")
         except Exception as e:
             self.send_error_page(500, f"Error: {e}")
+
+    # =======================================================================
+    # Conversation History Handlers
+    # =======================================================================
+
+    def handle_conversation_list(self, user):
+        """List all conversations for the logged-in user."""
+        conversations = _list_user_conversations(user)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(conversations, ensure_ascii=False).encode("utf-8"))
+
+    def handle_conversation_get(self, user, conv_id):
+        """Get a specific conversation for the logged-in user."""
+        # Validate conversation_id format
+        if not _validate_conversation_id(conv_id):
+            self.send_error_page(400, "Invalid conversation ID")
+            return
+
+        messages = _read_conversation(user, conv_id)
+
+        if messages is None:
+            self.send_error_page(404, "Conversation not found")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+
+    def handle_conversation_delete(self, user, conv_id):
+        """Delete a specific conversation for the logged-in user."""
+        # Validate conversation_id format
+        if not _validate_conversation_id(conv_id):
+            self.send_error_page(400, "Invalid conversation ID")
+            return
+
+        if _delete_conversation(user, conv_id):
+            self.send_response(204)  # No Content
+            self.end_headers()
+        else:
+            self.send_error_page(404, "Conversation not found")
+
+    def handle_new_conversation(self, user):
+        """Create a new conversation and return its ID."""
+        conv_id = _generate_conversation_id()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps({"conversation_id": conv_id}, ensure_ascii=False).encode("utf-8"))
+
+    def do_DELETE(self):
+        """Handle DELETE requests."""
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # Delete conversation endpoint
+        if path.startswith("/chat/history/"):
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            conv_id = path[len("/chat/history/"):]
+            self.handle_conversation_delete(user, conv_id)
+            return
+
+        # 404 for unknown paths
+        self.send_error_page(404, "Not found")
 
 
 def main():
@@ -671,11 +931,11 @@ def main():
         print(f"OAuth enabled (client_id={CHAT_OAUTH_CLIENT_ID[:8]}...)", file=sys.stderr)
         print(f"Allowed users: {', '.join(sorted(ALLOWED_USERS))}", file=sys.stderr)
     else:
-        print("WARNING: CHAT_OAUTH_CLIENT_ID not set — OAuth disabled", file=sys.stderr)
+        print("WARNING: CHAT_OAUTH_CLIENT_ID not set - OAuth disabled", file=sys.stderr)
     if FORWARD_AUTH_SECRET:
         print("forward_auth secret configured (#709)", file=sys.stderr)
     else:
-        print("WARNING: FORWARD_AUTH_SECRET not set — verify endpoint unrestricted", file=sys.stderr)
+        print("WARNING: FORWARD_AUTH_SECRET not set - verify endpoint unrestricted", file=sys.stderr)
     print(
         f"Rate limits (#711): {CHAT_MAX_REQUESTS_PER_HOUR}/hr, "
         f"{CHAT_MAX_REQUESTS_PER_DAY}/day, "
