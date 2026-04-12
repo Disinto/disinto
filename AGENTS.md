@@ -1,4 +1,4 @@
-<!-- last-reviewed: c51cc9dba649ed543b910b561231a5c8bd2130bc -->
+<!-- last-reviewed: 3e65878093bbbcea6dfe4db341f82dc89d4e0ac0 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -40,7 +40,7 @@ disinto/                 (code repo)
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
-├── docker/        Dockerfiles and entrypoints for reproduce, triage, and edge dispatcher agents
+├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, Dockerfile, ui/)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh)
