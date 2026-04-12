@@ -525,7 +525,6 @@ volumes:
   project-repos:
   caddy_data:
   chat-config:
-  chat-history:
 
 networks:
   disinto-net:

@@ -340,6 +340,11 @@
 
         // Load a specific conversation
         async function loadConversation(convId) {
+            // Early-return if already showing this conversation
+            if (convId === currentConversationId) {
+                return;
+            }
+
             // Clear messages
             messagesDiv.innerHTML = '';
 
@@ -348,10 +353,6 @@
                 item.classList.remove('active');
             });
             document.querySelector(`[data-conversation-id="${convId}"]`)?.classList.add('active');
-
-            if (convId === currentConversationId) {
-                return;
-            }
 
             currentConversationId = convId;
 
