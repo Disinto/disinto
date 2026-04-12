@@ -430,6 +430,9 @@ services:
       - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
       - EDGE_TUNNEL_PORT=${EDGE_TUNNEL_PORT:-}
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
+      # Subdomain fallback (#713): if subpath routing (#704/#708) fails, add:
+      #   EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT
+      # See docs/edge-routing-fallback.md for the full pivot plan.
       # Shared secret for Caddy ↔ chat forward_auth (#709)
       - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
     volumes:
