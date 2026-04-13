@@ -49,7 +49,7 @@ source "${DISINTO_BAKED}/lib/git-creds.sh"
 # Wrapper that calls the shared configure_git_creds with agent-specific paths,
 # then repairs any legacy baked-credential URLs in existing clones.
 _setup_git_creds() {
-  configure_git_creds "/home/agent" "gosu agent"
+  _GIT_CREDS_LOG_FN=log configure_git_creds "/home/agent" "gosu agent"
   if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
     log "Git credential helper configured (password auth)"
   fi
@@ -61,16 +61,21 @@ _setup_git_creds() {
 # Configure git author identity for commits made by this container.
 # Derives identity from the resolved bot user (BOT_USER) to ensure commits
 # are visibly attributable to the correct bot in the forge timeline.
+# BOT_USER is normally set by configure_git_creds() (#741); this function
+# only falls back to its own API call if BOT_USER was not already resolved.
 configure_git_identity() {
-  # Resolve BOT_USER from FORGE_TOKEN if not already set
+  # Resolve BOT_USER from FORGE_TOKEN if not already set (configure_git_creds
+  # exports BOT_USER on success, so this is a fallback for edge cases only).
   if [ -z "${BOT_USER:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
     BOT_USER=$(curl -sf --max-time 10 \
       -H "Authorization: token ${FORGE_TOKEN}" \
       "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || true
   fi
 
-  # Default to dev-bot if resolution fails
-  BOT_USER="${BOT_USER:-dev-bot}"
+  if [ -z "${BOT_USER:-}" ]; then
+    log "WARNING: Could not resolve bot username for git identity — commits will use fallback"
+    BOT_USER="agent"
+  fi
 
   # Configure git identity for all repositories
   gosu agent git config --global user.name "${BOT_USER}"

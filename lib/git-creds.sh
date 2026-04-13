@@ -35,13 +35,35 @@ configure_git_creds() {
   forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
   forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
 
-  # Determine the bot username from FORGE_TOKEN identity (or default to dev-bot)
+  local log_fn="${_GIT_CREDS_LOG_FN:-echo}"
+
+  # Determine the bot username from FORGE_TOKEN identity with retry/backoff.
+  # Never fall back to a hardcoded default — a wrong username paired with the
+  # real password produces a cryptic 401 that's much harder to diagnose than
+  # a missing credential helper (#741).
   local bot_user=""
   if [ -n "${FORGE_TOKEN:-}" ]; then
-    bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || bot_user=""
+    local attempt
+    for attempt in 1 2 3 4 5; do
+      bot_user=$(curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN}" \
+        "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || bot_user=""
+      if [ -n "$bot_user" ]; then
+        break
+      fi
+      $log_fn "WARNING: Forgejo not reachable (attempt ${attempt}/5) — retrying in ${attempt}s"
+      sleep "$attempt"
+    done
   fi
-  bot_user="${bot_user:-dev-bot}"
+
+  if [ -z "$bot_user" ]; then
+    $log_fn "ERROR: Could not determine bot username from FORGE_TOKEN after 5 attempts — credential helper NOT configured"
+    $log_fn "ERROR: git push will fail until this is resolved. Restart the container after Forgejo is healthy."
+    return 1
+  fi
+
+  # Export BOT_USER so downstream functions (e.g. configure_git_identity) can
+  # reuse the resolved value without a redundant API call.
+  export BOT_USER="$bot_user"
 
   local helper_path="${home_dir}/.git-credentials-helper"
 
@@ -77,6 +99,17 @@ CREDEOF
   else
     git config --global --add safe.directory '*'
   fi
+
+  # Verify the credential helper actually authenticates (#741).
+  # A helper that was written with a valid username but a mismatched password
+  # would silently 401 on every push — catch it now.
+  if ! curl -sf --max-time 5 -u "${bot_user}:${FORGE_PASS}" \
+    "${FORGE_URL}/api/v1/user" >/dev/null 2>&1; then
+    $log_fn "ERROR: credential helper verification failed — ${bot_user}:FORGE_PASS rejected by Forgejo"
+    rm -f "$helper_path"
+    return 1
+  fi
+  $log_fn "Git credential helper verified: ${bot_user}@${forge_host}"
 }
 
 # repair_baked_cred_urls [--as RUN_AS_CMD] DIR [DIR ...]
