@@ -1,4 +1,4 @@
-<!-- last-reviewed: c4ca1e930d7be3f95060971ce4fa949dab2f76e7 -->
+<!-- last-reviewed: 4e53f508d9b36c60bd68ed5fc497fc8775fec79f -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -29,7 +29,11 @@ stale checks (vision issues are managed by the architect). If the issue is assig
 `REQUEST_CHANGES`, spawns the dev-agent to address it before setting `BLOCKED_BY_INPROGRESS=true`;
 otherwise just sets blocked. If assigned to another agent, logs and falls through (does not
 block). If no assignee, no open PR, and no agent lock file — removes `in-progress`, adds
-`blocked` with a human-triage comment. **Per-agent open-PR gate**: before starting new work,
+`blocked` with a human-triage comment. **Post-crash self-assigned recovery (#749)**: when the
+issue is self-assigned (this bot) but there is no open PR, dev-poll now checks for a lock
+file (`/tmp/dev-impl-summary-$PROJECT_NAME-$ISSUE_NUM.txt`) AND a remote branch
+(`fix/issue-$ISSUE_NUM`) before declaring "my thread is busy". If neither exists after a cold
+boot, it spawns a fresh dev-agent for recovery instead of looping forever. **Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents'
 PRs do not block this agent's pipeline (#358, #369). **Pre-lock merge scan own-PRs only**:
 the direct-merge scan only merges PRs whose linked issue is assigned to this agent — skips
