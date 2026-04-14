@@ -476,8 +476,19 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           BLOCKED_BY_INPROGRESS=true
         fi
       else
-        log "issue #${ISSUE_NUM} assigned to me — my thread is busy"
-        BLOCKED_BY_INPROGRESS=true
+        # No open PR — check if a thread is actually alive (lock file or remote branch)
+        LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
+        REMOTE_BRANCH_EXISTS=$(git ls-remote --exit-code origin "fix/issue-${ISSUE_NUM}" >/dev/null 2>&1 && echo yes || echo no)
+
+        if [ -f "$LOCK_FILE" ] || [ "$REMOTE_BRANCH_EXISTS" = "yes" ]; then
+          log "issue #${ISSUE_NUM} assigned to me — my thread is busy (lock=$([ -f "$LOCK_FILE" ] && echo y || echo n) remote_branch=$REMOTE_BRANCH_EXISTS)"
+          BLOCKED_BY_INPROGRESS=true
+        else
+          log "issue #${ISSUE_NUM} self-assigned but orphaned (no lock, no branch, no PR) — recovering"
+          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+          log "started dev-agent PID $! for issue #${ISSUE_NUM} (post-crash recovery)"
+          BLOCKED_BY_INPROGRESS=true
+        fi
       fi
     else
       log "issue #${ISSUE_NUM} assigned to ${assignee} — their thread, not blocking"
