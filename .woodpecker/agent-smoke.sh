@@ -98,50 +98,38 @@ echo "syntax check done"
 
 echo "=== 2/2  Function resolution ==="
 
-# Required lib files for LIB_FUNS construction. Missing any of these means the
-# checkout is incomplete or the test is misconfigured — fail loudly, do NOT
-# silently produce a partial LIB_FUNS list (that masquerades as "undef" errors
-# in unrelated scripts; see #600).
-REQUIRED_LIBS=(
-  lib/agent-sdk.sh lib/env.sh lib/ci-helpers.sh lib/load-project.sh
-  lib/secret-scan.sh lib/formula-session.sh lib/mirrors.sh lib/guard.sh
-  lib/pr-lifecycle.sh lib/issue-lifecycle.sh lib/worktree.sh
-)
-
-for f in "${REQUIRED_LIBS[@]}"; do
-  if [ ! -f "$f" ]; then
-    printf 'FAIL [missing-lib] expected %s but it is not present at smoke time\n' "$f" >&2
-    printf '  pwd=%s\n' "$(pwd)" >&2
-    printf '  ls lib/=%s\n' "$(ls lib/ 2>&1 | tr '\n' ' ')" >&2
-    echo '=== SMOKE TEST FAILED (precondition) ===' >&2
-    exit 2
-  fi
-done
-
-# Functions provided by shared lib files (available to all agent scripts via source).
+# Enumerate ALL lib/*.sh files in stable lexicographic order (#742).
+# Previous approach used a hand-maintained REQUIRED_LIBS list, which silently
+# became incomplete as new libs were added, producing partial LIB_FUNS that
+# caused non-deterministic "undef" failures.
 #
-# Included — these are inline-sourced by agent scripts:
-#   lib/env.sh              — sourced by every agent (log, forge_api, etc.)
-#   lib/agent-sdk.sh        — sourced by SDK agents (agent_run, agent_recover_session)
-#   lib/ci-helpers.sh       — sourced by pollers and review (ci_passed, classify_pipeline_failure, etc.)
-#   lib/load-project.sh     — sourced by env.sh when PROJECT_TOML is set
-#   lib/secret-scan.sh      — standalone CLI tool, run directly (not sourced)
-#   lib/formula-session.sh  — sourced by formula-driven agents (acquire_run_lock, check_memory, etc.)
-#   lib/mirrors.sh          — sourced by merge sites (mirror_push)
-#   lib/guard.sh            — sourced by all polling-loop entry points (check_active)
-#   lib/issue-lifecycle.sh  — sourced by agents for issue claim/release/block/deps
-#   lib/worktree.sh         — sourced by agents for worktree create/recover/cleanup/preserve
-#
-# Excluded — not sourced inline by agents:
-#   lib/tea-helpers.sh      — sourced conditionally by env.sh (tea_file_issue, etc.); checked standalone below
+# Excluded from LIB_FUNS (not sourced inline by agents):
 #   lib/ci-debug.sh         — standalone CLI tool, run directly (not sourced)
 #   lib/parse-deps.sh       — executed via `bash lib/parse-deps.sh` (not sourced)
 #   lib/hooks/*.sh          — Claude Code hook scripts, executed by the harness (not sourced)
-#
-# If a new lib file is added and sourced by agents, add it to LIB_FUNS below
-# and add a check_script call for it in the lib files section further down.
+EXCLUDED_LIBS="lib/ci-debug.sh lib/parse-deps.sh"
+
+# Build the list of lib files in deterministic order (LC_ALL=C sort).
+# Fail loudly if no lib files are found — checkout is broken.
+mapfile -t ALL_LIBS < <(LC_ALL=C find lib -maxdepth 1 -name '*.sh' -print | LC_ALL=C sort)
+if [ "${#ALL_LIBS[@]}" -eq 0 ]; then
+  echo 'FAIL [no-libs] no lib/*.sh files found at smoke time' >&2
+  printf '  pwd=%s\n' "$(pwd)" >&2
+  echo '=== SMOKE TEST FAILED (precondition) ===' >&2
+  exit 2
+fi
+
+# Build LIB_FUNS from all non-excluded lib files.
+# Use set -e inside the subshell so a failed get_fns aborts loudly
+# instead of silently shrinking the function list.
 LIB_FUNS=$(
-  for f in "${REQUIRED_LIBS[@]}"; do get_fns "$f"; done | sort -u
+  set -e
+  for f in "${ALL_LIBS[@]}"; do
+    # shellcheck disable=SC2086
+    skip=0; for ex in $EXCLUDED_LIBS; do [ "$f" = "$ex" ] && skip=1; done
+    [ "$skip" -eq 1 ] && continue
+    get_fns "$f"
+  done | sort -u
 )
 
 # Known external commands and shell builtins — never flag these
@@ -192,13 +180,14 @@ check_script() {
   while IFS= read -r fn; do
     [ -z "$fn" ] && continue
     is_known_cmd "$fn" && continue
-    if ! printf '%s\n' "$all_fns" | grep -qxF "$fn"; then
+    # Use here-string (<<<) instead of pipe to avoid SIGPIPE race (#742):
+    # with pipefail, `printf | grep -q` can fail when grep closes the pipe
+    # early after finding a match, causing printf to get SIGPIPE (exit 141).
+    # This produced non-deterministic false "undef" failures.
+    if ! grep -qxF "$fn" <<< "$all_fns"; then
       printf 'FAIL [undef] %s: %s\n' "$script" "$fn"
-      # Diagnostic dump (#600): if the function is expected to be in a known lib,
-      # print what the actual all_fns set looks like so we can tell whether the
-      # function is genuinely missing or whether the resolution loop is broken.
-      printf '  all_fns count: %d\n' "$(printf '%s\n' "$all_fns" | wc -l)"
-      printf '  LIB_FUNS contains "%s": %s\n' "$fn" "$(printf '%s\n' "$LIB_FUNS" | grep -cxF "$fn")"
+      printf '  all_fns count: %d\n' "$(grep -c . <<< "$all_fns")"
+      printf '  LIB_FUNS contains "%s": %s\n' "$fn" "$(grep -cxF "$fn" <<< "$LIB_FUNS")"
       printf '  defining lib (if any): %s\n' "$(grep -l "^[[:space:]]*${fn}[[:space:]]*()" lib/*.sh 2>/dev/null | tr '\n' ' ')"
       FAILED=1
     fi
