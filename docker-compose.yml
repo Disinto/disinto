@@ -49,8 +49,10 @@ services:
       - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-21600}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
     depends_on:
-      - forgejo
-      - woodpecker
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
     networks:
       - disinto-net
 
@@ -101,8 +103,10 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
       - AGENT_ROLES=dev
     depends_on:
-      - forgejo
-      - woodpecker
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
     networks:
       - disinto-net
 
@@ -171,6 +175,12 @@ services:
       - FORGEJO__security__INSTALL_LOCK=true
       - FORGEJO__service__DISABLE_REGISTRATION=true
       - FORGEJO__webhook__ALLOWED_HOST_LIST=private
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/v1/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
     ports:
       - "3000:3000"
     networks:
