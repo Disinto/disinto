@@ -59,6 +59,21 @@ fi
 
 mkdir -p "$EVIDENCE_DIR"
 
+# Verify input is Caddy JSON format (not Combined Log Format or other)
+first_line=$(grep -m1 '.' "$CADDY_LOG" || true)
+if [ -z "$first_line" ]; then
+  log "WARN: Caddy access log is empty at ${CADDY_LOG}"
+  echo "WARN: Caddy access log is empty — nothing to parse." >&2
+  exit 0
+fi
+if ! printf '%s\n' "$first_line" | jq empty 2>/dev/null; then
+  preview="${first_line:0:200}"
+  log "ERROR: Input file is not Caddy JSON format (expected structured JSON access log). Got: ${preview}"
+  echo "ERROR: Input file is not Caddy JSON format (expected structured JSON access log)." >&2
+  echo "Got: ${preview}" >&2
+  exit 1
+fi
+
 # ── Parse access log ────────────────────────────────────────────────────────
 
 log "Parsing ${CADDY_LOG} for entries since $(date -u -d "@${CUTOFF_TS}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "${CUTOFF_TS}")"
