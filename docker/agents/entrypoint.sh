@@ -385,11 +385,13 @@ print(cfg.get('primary_branch', 'main'))
     log "Processing project TOML: ${toml}"
 
     # --- Fast agents: run in background, wait before slow agents ---
+    FAST_PIDS=()
 
     # Review poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
       log "Running review-poll (iteration ${iteration}) for ${toml}"
       gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/review-poll.log" 2>&1 &
+      FAST_PIDS+=($!)
     fi
 
     sleep 2  # stagger fast polls
@@ -398,10 +400,14 @@ print(cfg.get('primary_branch', 'main'))
     if [[ ",${AGENT_ROLES}," == *",dev,"* ]]; then
       log "Running dev-poll (iteration ${iteration}) for ${toml}"
       gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/dev-poll.log" 2>&1 &
+      FAST_PIDS+=($!)
     fi
 
-    # Wait for fast polls to finish before launching slow agents
-    wait
+    # Wait only for THIS iteration's fast polls — long-running gardener/dev-agent
+    # from prior iterations must not block us.
+    if [ ${#FAST_PIDS[@]} -gt 0 ]; then
+      wait "${FAST_PIDS[@]}"
+    fi
 
     # --- Slow agents: run in background with pgrep guard ---
 
