@@ -381,6 +381,63 @@ services:
     networks:
       - disinto-net
 
+COMPOSEEOF
+
+  # ── Conditional agents-llama block (ENABLE_LLAMA_AGENT=1) ──────────────
+  # Local-Qwen dev agent — gated on ENABLE_LLAMA_AGENT so factories without
+  # a local llama endpoint don't try to start it.  See docs/agents-llama.md.
+  if [ "${ENABLE_LLAMA_AGENT:-0}" = "1" ]; then
+    cat >> "$compose_file" <<'LLAMAEOF'
+
+  agents-llama:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    container_name: disinto-agents-llama
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
+      - ${HOME}/.ssh:/home/agent/.ssh:ro
+      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - woodpecker-data:/woodpecker-data:ro
+    environment:
+      FORGE_URL: http://forgejo:3000
+      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
+      FORGE_TOKEN: ${FORGE_TOKEN_LLAMA:-}
+      FORGE_PASS: ${FORGE_PASS_LLAMA:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "60"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
+      DISINTO_CONTAINER: "1"
+      PROJECT_NAME: ${PROJECT_NAME:-project}
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      WOODPECKER_DATA_DIR: /woodpecker-data
+      WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      POLL_INTERVAL: ${POLL_INTERVAL:-300}
+      AGENT_ROLES: dev
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    networks:
+      - disinto-net
+LLAMAEOF
+  fi
+
+  # Resume the rest of the compose file (runner onward)
+  cat >> "$compose_file" <<'COMPOSEEOF'
+
   runner:
     build:
       context: .
