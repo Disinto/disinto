@@ -33,6 +33,9 @@ docker/agents/bin/
 # Note: This file is now committed to track volume mount configuration
 # docker-compose.yml
 
+# Generated Caddyfile — single source of truth is generate_caddyfile in lib/generators.sh
+docker/Caddyfile
+
 # Python bytecode
 __pycache__/
 *.pyc
