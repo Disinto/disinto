@@ -20,8 +20,8 @@ set -euo pipefail
 # Args: func_name, message, [detail]
 _hvault_err() {
   local func="$1" msg="$2" detail="${3:-}"
-  printf '{"error":true,"function":"%s","message":"%s","detail":"%s"}\n' \
-    "$func" "$msg" "$detail" >&2
+  jq -n --arg func "$func" --arg msg "$msg" --arg detail "$detail" \
+    '{error:true,function:$func,message:$msg,detail:$detail}' >&2
 }
 
 # _hvault_resolve_token — resolve VAULT_TOKEN from env or token file
@@ -117,7 +117,7 @@ hvault_kv_get() {
   response="$(_hvault_request GET "secret/data/${path}")" || return 1
 
   if [ -n "$key" ]; then
-    printf '%s' "$response" | jq -e -r ".data.data[\"$key\"]" 2>/dev/null || {
+    printf '%s' "$response" | jq -e -r --arg key "$key" '.data.data[$key]' 2>/dev/null || {
       _hvault_err "hvault_kv_get" "key not found" "key=$key path=$path"
       return 1
     }
@@ -142,9 +142,8 @@ hvault_kv_put() {
   fi
   _hvault_check_prereqs "hvault_kv_put" || return 1
 
-  # Build JSON payload from KEY=VAL pairs using jq
-  local payload='{"data":{'
-  local first=true
+  # Build JSON payload from KEY=VAL pairs entirely via jq
+  local payload='{"data":{}}'
   for kv in "$@"; do
     local k="${kv%%=*}"
     local v="${kv#*=}"
@@ -152,17 +151,8 @@ hvault_kv_put() {
       _hvault_err "hvault_kv_put" "invalid KEY=VAL pair" "got: $kv"
       return 1
     fi
-    if [ "$first" = true ]; then
-      first=false
-    else
-      payload+=","
-    fi
-    # Use jq to safely encode the value
-    local encoded_v
-    encoded_v="$(printf '%s' "$v" | jq -Rs '.')"
-    payload+="$(printf '"%s":%s' "$k" "$encoded_v")"
+    payload="$(printf '%s' "$payload" | jq --arg k "$k" --arg v "$v" '.data[$k] = $v')"
   done
-  payload+='}}'
 
   _hvault_request POST "secret/data/${path}" "$payload" >/dev/null
 }
