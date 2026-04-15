@@ -7,5 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -u 1000 -s /bin/bash agent
 COPY docker/reproduce/entrypoint-reproduce.sh /entrypoint-reproduce.sh
 RUN chmod +x /entrypoint-reproduce.sh
+VOLUME /home/agent/data
+VOLUME /home/agent/repos
+
 WORKDIR /home/agent
 ENTRYPOINT ["/entrypoint-reproduce.sh"]

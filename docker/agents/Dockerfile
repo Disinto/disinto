@@ -28,6 +28,9 @@ RUN chmod +x /entrypoint.sh
 
 # Entrypoint runs polling loop directly, dropping to agent user via gosu.
 # All scripts execute as the agent user (UID 1000) while preserving env vars.
+VOLUME /home/agent/data
+VOLUME /home/agent/repos
+
 WORKDIR /home/agent/disinto
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -82,6 +82,7 @@ Init options:
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --bare               Skip compose generation (bare-metal setup)
+  --build              Use local docker build instead of registry images (dev mode)
   --yes                Skip confirmation prompts
   --rotate-tokens      Force regeneration of all bot tokens/passwords (idempotent by default)
 
@@ -652,7 +653,7 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
@@ -660,6 +661,7 @@ disinto_init() {
       --ci-id)         ci_id="$2"; shift 2 ;;
       --forge-url)     forge_url_flag="$2"; shift 2 ;;
       --bare)          bare=true; shift ;;
+      --build)         use_build=true; shift ;;
       --yes)           auto_yes=true; shift ;;
       --rotate-tokens) rotate_tokens=true; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -743,7 +745,7 @@ p.write_text(text)
     local forge_port
     forge_port=$(printf '%s' "$forge_url" | sed -E 's|.*:([0-9]+)/?$|\1|')
     forge_port="${forge_port:-3000}"
-    generate_compose "$forge_port"
+    generate_compose "$forge_port" "$use_build"
     generate_agent_docker
     generate_caddyfile
     generate_staging_index
@@ -1412,13 +1414,15 @@ disinto_up() {
     exit 1
   fi
 
-  # Pre-build: download binaries to docker/agents/bin/ to avoid network calls during docker build
-  echo "── Pre-build: downloading agent binaries ────────────────────────"
-  if ! download_agent_binaries; then
-    echo "Error: failed to download agent binaries" >&2
-    exit 1
+  # Pre-build: download binaries only when compose uses local build
+  if grep -q '^\s*build:' "$compose_file"; then
+    echo "── Pre-build: downloading agent binaries ────────────────────────"
+    if ! download_agent_binaries; then
+      echo "Error: failed to download agent binaries" >&2
+      exit 1
+    fi
+    echo ""
   fi
-  echo ""
 
   # Decrypt secrets to temp .env if SOPS available and .env.enc exists
   local tmp_env=""
