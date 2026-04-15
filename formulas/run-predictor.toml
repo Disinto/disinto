@@ -125,8 +125,8 @@ For each weakness you identify, choose one:
   The prediction explains the theory. The vault PR triggers the proof
   after human approval. When the planner runs next, evidence is already there.
 
-  Vault dispatch (requires lib/vault.sh):
-    source "$PROJECT_REPO_ROOT/lib/vault.sh"
+  Vault dispatch (requires lib/action-vault.sh):
+    source "$PROJECT_REPO_ROOT/lib/action-vault.sh"
 
     TOML_CONTENT="id = \"predict-<prediction_number>-<formula>\"
 context = \"Test prediction #<prediction_number>: <theory summary> — focus: <specific test>\"
@@ -154,7 +154,7 @@ tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
        --title "<title>" --body "<body>" --labels "prediction/unreviewed"
 
 2. Dispatch formula via vault (if exploiting):
-     source "$PROJECT_REPO_ROOT/lib/vault.sh"
+     source "$PROJECT_REPO_ROOT/lib/action-vault.sh"
      PR_NUM=$(vault_request "predict-NNN-<formula>" "$TOML_CONTENT")
      # See EXPLOIT section above for TOML_CONTENT format
 

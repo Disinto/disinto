@@ -18,8 +18,8 @@
 # =============================================================================
 set -euo pipefail
 
-# Source vault.sh for _vault_log helper
-source "${FACTORY_ROOT}/lib/vault.sh"
+# Source action-vault.sh for _vault_log helper
+source "${FACTORY_ROOT}/lib/action-vault.sh"
 
 # Assert required globals are set before using this module.
 _assert_release_globals() {

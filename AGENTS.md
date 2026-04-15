@@ -31,11 +31,11 @@ disinto/                 (code repo)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (polling-loop executor)
 │                  preflight.sh — pre-flight data collection for supervisor formula
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
-├── vault/         vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
+├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)

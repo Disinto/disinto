@@ -719,7 +719,7 @@ setup_forge() {
     fi
 
     # Add all bot users as collaborators with appropriate permissions
-    # dev-bot: write (PR creation via lib/vault.sh)
+    # dev-bot: write (PR creation via lib/action-vault.sh)
     # review-bot: read (PR review)
     # planner-bot: write (prerequisites.md, memory)
     # gardener-bot: write (backlog grooming)

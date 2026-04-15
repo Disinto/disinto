@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# vault.sh — Helper for agents to create vault PRs on ops repo
+# action-vault.sh — Helper for agents to create vault PRs on ops repo
 #
 # Source after lib/env.sh:
 #   source "$(dirname "$0")/../lib/env.sh"
-#   source "$(dirname "$0")/lib/vault.sh"
+#   source "$(dirname "$0")/lib/action-vault.sh"
 #
 # Required globals: FORGE_TOKEN, FORGE_URL, FORGE_REPO, FORGE_OPS_REPO
 # Optional: OPS_REPO_ROOT (local path for ops repo)
@@ -12,7 +12,7 @@
 #   vault_request <action_id> <toml_content>  — Create vault PR, return PR number
 #
 # The function:
-# 1. Validates TOML content using validate_vault_action() from vault/vault-env.sh
+# 1. Validates TOML content using validate_vault_action() from action-vault/vault-env.sh
 # 2. Creates a branch on the ops repo: vault/<action-id>
 # 3. Writes TOML to vault/actions/<action-id>.toml on that branch
 # 4. Creates PR targeting main with title "vault: <action-id>"
@@ -133,7 +133,7 @@ vault_request() {
   printf '%s' "$toml_content" > "$tmp_toml"
 
   # Source vault-env.sh for validate_vault_action
-  local vault_env="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/vault/vault-env.sh"
+  local vault_env="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/action-vault/vault-env.sh"
   if [ ! -f "$vault_env" ]; then
     echo "ERROR: vault-env.sh not found at $vault_env" >&2
     return 1
@@ -161,7 +161,7 @@ vault_request() {
   ops_api="$(_vault_ops_api)"
 
   # Classify the action to determine if PR bypass is allowed
-  local classify_script="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/vault/classify.sh"
+  local classify_script="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/action-vault/classify.sh"
   local vault_tier
   vault_tier=$("$classify_script" "${VAULT_ACTION_FORMULA:-}" "${VAULT_BLAST_RADIUS_OVERRIDE:-}") || {
     # Classification failed, default to high tier (require PR)
