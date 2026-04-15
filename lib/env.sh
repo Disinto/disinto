@@ -158,8 +158,8 @@ export WOODPECKER_SERVER="${WOODPECKER_SERVER:-http://localhost:8000}"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 
 # Vault-only token guard (#745): external-action tokens (GITHUB_TOKEN, CLAWHUB_TOKEN)
-# must NEVER be available to agents. They live in .env.vault.enc and are injected
-# only into the ephemeral runner container at fire time. Unset them here so
+# must NEVER be available to agents. They live in secrets/*.enc and are decrypted
+# only into the ephemeral runner container at fire time (#777). Unset them here so
 # even an accidental .env inclusion cannot leak them into agent sessions.
 unset GITHUB_TOKEN 2>/dev/null || true
 unset CLAWHUB_TOKEN 2>/dev/null || true

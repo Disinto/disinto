@@ -1,8 +1,7 @@
-# Secrets — prevent .env files from being baked into the image
+# Secrets — prevent .env files and encrypted secrets from being baked into the image
 .env
 .env.enc
-.env.vault
-.env.vault.enc
+secrets/
 
 # Version control — .git is huge and not needed in image
 .git

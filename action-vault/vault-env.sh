@@ -28,7 +28,7 @@ fi
 # VAULT ACTION VALIDATION
 # =============================================================================
 
-# Allowed secret names - must match keys in .env.vault.enc
+# Allowed secret names - must match files in secrets/<NAME>.enc
 VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN CODEBERG_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN"
 
 # Allowed mount aliases — well-known file-based credential directories

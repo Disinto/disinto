@@ -372,8 +372,8 @@ services:
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
-    # .env.vault.enc and are NEVER injected here — only the runner
-    # container receives them at fire time (AD-006, #745).
+    # secrets/*.enc and are NEVER injected here — only the runner
+    # container receives them at fire time (AD-006, #745, #777).
     depends_on:
       forgejo:
         condition: service_healthy
