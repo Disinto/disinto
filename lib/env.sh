@@ -313,6 +313,68 @@ memory_guard() {
   fi
 }
 
+# =============================================================================
+# SECRET LOADING ABSTRACTION
+# =============================================================================
+# load_secret NAME [DEFAULT]
+#
+# Resolves a secret value using the following precedence:
+#   1. /secrets/<NAME>.env  — Nomad-rendered template (future)
+#   2. Current environment  — already set by .env.enc, compose, etc.
+#   3. secrets/<NAME>.enc   — age-encrypted per-key file (decrypted on demand)
+#   4. DEFAULT (or empty)
+#
+# Prints the resolved value to stdout.  Caches age-decrypted values in the
+# process environment so subsequent calls are free.
+# =============================================================================
+load_secret() {
+  local name="$1"
+  local default="${2:-}"
+
+  # 1. Nomad-rendered template (future: Nomad writes /secrets/<NAME>.env)
+  local nomad_path="/secrets/${name}.env"
+  if [ -f "$nomad_path" ]; then
+    # Source into a subshell to extract just the value
+    local _nomad_val
+    _nomad_val=$(
+      set -a
+      # shellcheck source=/dev/null
+      source "$nomad_path"
+      set +a
+      printf '%s' "${!name:-}"
+    )
+    if [ -n "$_nomad_val" ]; then
+      export "$name=$_nomad_val"
+      printf '%s' "$_nomad_val"
+      return 0
+    fi
+  fi
+
+  # 2. Already in environment (set by .env.enc, compose injection, etc.)
+  if [ -n "${!name:-}" ]; then
+    printf '%s' "${!name}"
+    return 0
+  fi
+
+  # 3. Age-encrypted per-key file: secrets/<NAME>.enc (#777)
+  local _age_key="${HOME}/.config/sops/age/keys.txt"
+  local _enc_path="${FACTORY_ROOT}/secrets/${name}.enc"
+  if [ -f "$_enc_path" ] && [ -f "$_age_key" ] && command -v age &>/dev/null; then
+    local _dec_val
+    if _dec_val=$(age -d -i "$_age_key" "$_enc_path" 2>/dev/null) && [ -n "$_dec_val" ]; then
+      export "$name=$_dec_val"
+      printf '%s' "$_dec_val"
+      return 0
+    fi
+  fi
+
+  # 4. Default (or empty)
+  if [ -n "$default" ]; then
+    printf '%s' "$default"
+  fi
+  return 0
+}
+
 # Source tea helpers (available when tea binary is installed)
 if command -v tea &>/dev/null; then
   # shellcheck source=tea-helpers.sh
