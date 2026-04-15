@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# hvault.sh — HashiCorp Vault helper module
+#
+# Typed, audited helpers for Vault KV v2 access so no script re-implements
+# `curl -H "X-Vault-Token: ..."` ad-hoc.
+#
+# Usage: source this file, then call any hvault_* function.
+#
+# Environment:
+#   VAULT_ADDR  — Vault server address (required, no default)
+#   VAULT_TOKEN — auth token (precedence: env > /etc/vault.d/root.token)
+#
+# All functions emit structured JSON errors to stderr on failure.
+
+set -euo pipefail
+
+# ── Internal helpers ─────────────────────────────────────────────────────────
+
+# _hvault_err — emit structured JSON error to stderr
+# Args: func_name, message, [detail]
+_hvault_err() {
+  local func="$1" msg="$2" detail="${3:-}"
+  jq -n --arg func "$func" --arg msg "$msg" --arg detail "$detail" \
+    '{error:true,function:$func,message:$msg,detail:$detail}' >&2
+}
+
+# _hvault_resolve_token — resolve VAULT_TOKEN from env or token file
+_hvault_resolve_token() {
+  if [ -n "${VAULT_TOKEN:-}" ]; then
+    return 0
+  fi
+  local token_file="/etc/vault.d/root.token"
+  if [ -f "$token_file" ]; then
+    VAULT_TOKEN="$(cat "$token_file")"
+    export VAULT_TOKEN
+    return 0
+  fi
+  return 1
+}
+
+# _hvault_check_prereqs — validate VAULT_ADDR and VAULT_TOKEN are set
+# Args: caller function name
+_hvault_check_prereqs() {
+  local caller="$1"
+  if [ -z "${VAULT_ADDR:-}" ]; then
+    _hvault_err "$caller" "VAULT_ADDR is not set" "export VAULT_ADDR before calling $caller"
+    return 1
+  fi
+  if ! _hvault_resolve_token; then
+    _hvault_err "$caller" "VAULT_TOKEN is not set and /etc/vault.d/root.token not found" \
+      "export VAULT_TOKEN or write token to /etc/vault.d/root.token"
+    return 1
+  fi
+}
+
+# _hvault_request — execute a Vault API request
+# Args: method, path, [data]
+# Outputs: response body to stdout
+# Returns: 0 on 2xx, 1 otherwise (error JSON to stderr)
+_hvault_request() {
+  local method="$1" path="$2" data="${3:-}"
+  local url="${VAULT_ADDR}/v1/${path}"
+  local http_code body
+  local tmpfile
+  tmpfile="$(mktemp)"
+
+  local curl_args=(
+    -s
+    -w '%{http_code}'
+    -H "X-Vault-Token: ${VAULT_TOKEN}"
+    -H "Content-Type: application/json"
+    -X "$method"
+    -o "$tmpfile"
+  )
+  if [ -n "$data" ]; then
+    curl_args+=(-d "$data")
+  fi
+
+  http_code="$(curl "${curl_args[@]}" "$url")" || {
+    _hvault_err "_hvault_request" "curl failed" "url=$url"
+    rm -f "$tmpfile"
+    return 1
+  }
+
+  body="$(cat "$tmpfile")"
+  rm -f "$tmpfile"
+
+  # Check HTTP status — 2xx is success
+  case "$http_code" in
+    2[0-9][0-9])
+      printf '%s' "$body"
+      return 0
+      ;;
+    *)
+      _hvault_err "_hvault_request" "HTTP $http_code" "$body"
+      return 1
+      ;;
+  esac
+}
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+# hvault_kv_get PATH [KEY]
+#   Read a KV v2 secret at PATH, optionally extract a single KEY.
+#   Outputs: JSON value (full data object, or single key value)
+hvault_kv_get() {
+  local path="${1:-}"
+  local key="${2:-}"
+
+  if [ -z "$path" ]; then
+    _hvault_err "hvault_kv_get" "PATH is required" "usage: hvault_kv_get PATH [KEY]"
+    return 1
+  fi
+  _hvault_check_prereqs "hvault_kv_get" || return 1
+
+  local response
+  response="$(_hvault_request GET "secret/data/${path}")" || return 1
+
+  if [ -n "$key" ]; then
+    printf '%s' "$response" | jq -e -r --arg key "$key" '.data.data[$key]' 2>/dev/null || {
+      _hvault_err "hvault_kv_get" "key not found" "key=$key path=$path"
+      return 1
+    }
+  else
+    printf '%s' "$response" | jq -e '.data.data' 2>/dev/null || {
+      _hvault_err "hvault_kv_get" "failed to parse response" "path=$path"
+      return 1
+    }
+  fi
+}
+
+# hvault_kv_put PATH KEY=VAL [KEY=VAL ...]
+#   Write a KV v2 secret at PATH. Accepts one or more KEY=VAL pairs.
+hvault_kv_put() {
+  local path="${1:-}"
+  shift || true
+
+  if [ -z "$path" ] || [ $# -eq 0 ]; then
+    _hvault_err "hvault_kv_put" "PATH and at least one KEY=VAL required" \
+      "usage: hvault_kv_put PATH KEY=VAL [KEY=VAL ...]"
+    return 1
+  fi
+  _hvault_check_prereqs "hvault_kv_put" || return 1
+
+  # Build JSON payload from KEY=VAL pairs entirely via jq
+  local payload='{"data":{}}'
+  for kv in "$@"; do
+    local k="${kv%%=*}"
+    local v="${kv#*=}"
+    if [ "$k" = "$kv" ]; then
+      _hvault_err "hvault_kv_put" "invalid KEY=VAL pair" "got: $kv"
+      return 1
+    fi
+    payload="$(printf '%s' "$payload" | jq --arg k "$k" --arg v "$v" '.data[$k] = $v')"
+  done
+
+  _hvault_request POST "secret/data/${path}" "$payload" >/dev/null
+}
+
+# hvault_kv_list PATH
+#   List keys at a KV v2 path.
+#   Outputs: JSON array of key names
+hvault_kv_list() {
+  local path="${1:-}"
+
+  if [ -z "$path" ]; then
+    _hvault_err "hvault_kv_list" "PATH is required" "usage: hvault_kv_list PATH"
+    return 1
+  fi
+  _hvault_check_prereqs "hvault_kv_list" || return 1
+
+  local response
+  response="$(_hvault_request LIST "secret/metadata/${path}")" || return 1
+
+  printf '%s' "$response" | jq -e '.data.keys' 2>/dev/null || {
+    _hvault_err "hvault_kv_list" "failed to parse response" "path=$path"
+    return 1
+  }
+}
+
+# hvault_policy_apply NAME FILE
+#   Idempotent policy upsert — create or update a Vault policy.
+hvault_policy_apply() {
+  local name="${1:-}"
+  local file="${2:-}"
+
+  if [ -z "$name" ] || [ -z "$file" ]; then
+    _hvault_err "hvault_policy_apply" "NAME and FILE are required" \
+      "usage: hvault_policy_apply NAME FILE"
+    return 1
+  fi
+  if [ ! -f "$file" ]; then
+    _hvault_err "hvault_policy_apply" "policy file not found" "file=$file"
+    return 1
+  fi
+  _hvault_check_prereqs "hvault_policy_apply" || return 1
+
+  local policy_content
+  policy_content="$(cat "$file")"
+  local payload
+  payload="$(jq -n --arg policy "$policy_content" '{"policy": $policy}')"
+
+  _hvault_request PUT "sys/policies/acl/${name}" "$payload" >/dev/null
+}
+
+# hvault_jwt_login ROLE JWT
+#   Exchange a JWT for a short-lived Vault token.
+#   Outputs: client token string
+hvault_jwt_login() {
+  local role="${1:-}"
+  local jwt="${2:-}"
+
+  if [ -z "$role" ] || [ -z "$jwt" ]; then
+    _hvault_err "hvault_jwt_login" "ROLE and JWT are required" \
+      "usage: hvault_jwt_login ROLE JWT"
+    return 1
+  fi
+  # Only need VAULT_ADDR, not VAULT_TOKEN (we're obtaining a token)
+  if [ -z "${VAULT_ADDR:-}" ]; then
+    _hvault_err "hvault_jwt_login" "VAULT_ADDR is not set"
+    return 1
+  fi
+
+  local payload
+  payload="$(jq -n --arg role "$role" --arg jwt "$jwt" \
+    '{"role": $role, "jwt": $jwt}')"
+
+  local response
+  # JWT login does not require an existing token — use curl directly
+  local tmpfile http_code
+  tmpfile="$(mktemp)"
+  http_code="$(curl -s -w '%{http_code}' \
+    -H "Content-Type: application/json" \
+    -X POST \
+    -d "$payload" \
+    -o "$tmpfile" \
+    "${VAULT_ADDR}/v1/auth/jwt/login")" || {
+    _hvault_err "hvault_jwt_login" "curl failed"
+    rm -f "$tmpfile"
+    return 1
+  }
+
+  local body
+  body="$(cat "$tmpfile")"
+  rm -f "$tmpfile"
+
+  case "$http_code" in
+    2[0-9][0-9])
+      printf '%s' "$body" | jq -e -r '.auth.client_token' 2>/dev/null || {
+        _hvault_err "hvault_jwt_login" "failed to extract client_token" "$body"
+        return 1
+      }
+      ;;
+    *)
+      _hvault_err "hvault_jwt_login" "HTTP $http_code" "$body"
+      return 1
+      ;;
+  esac
+}
+
+# hvault_token_lookup
+#   Returns TTL, policies, and accessor for the current token.
+#   Outputs: JSON object with ttl, policies, accessor fields
+hvault_token_lookup() {
+  _hvault_check_prereqs "hvault_token_lookup" || return 1
+
+  local response
+  response="$(_hvault_request GET "auth/token/lookup-self")" || return 1
+
+  printf '%s' "$response" | jq -e '{
+    ttl: .data.ttl,
+    policies: .data.policies,
+    accessor: .data.accessor,
+    display_name: .data.display_name
+  }' 2>/dev/null || {
+    _hvault_err "hvault_token_lookup" "failed to parse token info"
+    return 1
+  }
+}
