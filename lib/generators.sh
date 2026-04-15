@@ -407,6 +407,7 @@ services:
   edge:
     build: ./docker/edge
     container_name: disinto-edge
+    restart: unless-stopped
     security_opt:
       - apparmor=unconfined
     ports:
