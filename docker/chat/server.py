@@ -481,6 +481,14 @@ class ChatHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # Health endpoint (no auth required) — used by Docker healthcheck
+        if path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok\n")
+            return
+
         # Verify endpoint for Caddy forward_auth (#709)
         if path == "/chat/auth/verify":
             self.handle_auth_verify()
