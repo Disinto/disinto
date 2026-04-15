@@ -118,6 +118,7 @@ bash dev/phase-test.sh
 | Reproduce | `docker/reproduce/` | Bug reproduction using Playwright MCP | `formulas/reproduce.toml` |
 | Triage | `docker/reproduce/` | Deep root cause analysis | `formulas/triage.toml` |
 | Edge dispatcher | `docker/edge/` | Polls ops repo for vault actions, executes via Claude sessions | `docker/edge/dispatcher.sh` |
+| agents-llama | `docker/agents/` (same image) | Local-Qwen dev agent (`AGENT_ROLES=dev`), gated on `ENABLE_LLAMA_AGENT=1` | [docs/agents-llama.md](docs/agents-llama.md) |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 > See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow details.

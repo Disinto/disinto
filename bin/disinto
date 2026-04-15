@@ -892,6 +892,19 @@ p.write_text(text)
     echo "Config:  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 saved to .env"
   fi
 
+  # Write local-Qwen dev agent env keys with safe defaults (#769)
+  if ! grep -q '^ENABLE_LLAMA_AGENT=' "$env_file" 2>/dev/null; then
+    cat >> "$env_file" <<'LLAMAENVEOF'
+
+# Local Qwen dev agent (optional) — set to 1 to enable
+ENABLE_LLAMA_AGENT=0
+FORGE_TOKEN_LLAMA=
+FORGE_PASS_LLAMA=
+ANTHROPIC_BASE_URL=
+LLAMAENVEOF
+    echo "Config:  ENABLE_LLAMA_AGENT keys written to .env (disabled by default)"
+  fi
+
   # Create labels on remote
   create_labels "$forge_repo" "$forge_url"
 
