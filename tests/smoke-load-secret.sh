@@ -12,10 +12,10 @@
 set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FAILED=0
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; FAILED=1; }
 pass() { printf 'PASS: %s\n' "$*"; }
+FAILED=0
 
 # Set up a temp workspace and fake HOME so age key paths work
 test_dir=$(mktemp -d)
