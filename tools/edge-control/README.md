@@ -83,9 +83,12 @@ curl -sL https://raw.githubusercontent.com/disinto-admin/disinto/fix/issue-621/t
    - Permissions: `root:disinto-register 0750`
 
 3. **Installs Caddy**:
+   - Backs up any pre-existing `/etc/caddy/Caddyfile` to `/etc/caddy/Caddyfile.pre-disinto`
    - Download Caddy with Gandi DNS plugin
    - Enable admin API on `127.0.0.1:2019`
    - Configure wildcard cert for `*.disinto.ai` via DNS-01
+   - Creates `/etc/caddy/extra.d/` for operator-owned site blocks
+   - Emitted Caddyfile ends with `import /etc/caddy/extra.d/*.caddy`
 
 4. **Sets up SSH**:
    - Creates `disinto-register` authorized_keys with forced command
@@ -94,6 +97,27 @@ curl -sL https://raw.githubusercontent.com/disinto-admin/disinto/fix/issue-621/t
 5. **Installs control plane scripts**:
    - `/opt/disinto-edge/register.sh` — forced command handler
    - `/opt/disinto-edge/lib/*.sh` — helper libraries
+
+## Operator-Owned Site Blocks
+
+Edge-control owns the top-level `/etc/caddy/Caddyfile` and dynamic `<project>.<DOMAIN_SUFFIX>` routes injected via the Caddy admin API. Operators own everything under `/etc/caddy/extra.d/`.
+
+To serve non-tunnel content (apex domain, www redirect, static sites), drop `.caddy` files into `/etc/caddy/extra.d/`:
+
+```bash
+# Example: /etc/caddy/extra.d/landing.caddy
+disinto.ai {
+  root * /home/debian/disinto-site
+  file_server
+}
+
+# Example: /etc/caddy/extra.d/www-redirect.caddy
+www.disinto.ai {
+  redir https://disinto.ai{uri} permanent
+}
+```
+
+These files survive across `install.sh` re-runs. The `--extra-caddyfile <path>` flag overrides the default import glob (`/etc/caddy/extra.d/*.caddy`) if needed.
 
 ## Usage
 

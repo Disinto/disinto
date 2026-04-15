@@ -43,18 +43,21 @@ INSTALL_DIR="/opt/disinto-edge"
 REGISTRY_DIR="/var/lib/disinto"
 CADDY_VERSION="2.8.4"
 DOMAIN_SUFFIX="disinto.ai"
+EXTRA_CADDYFILE="/etc/caddy/extra.d/*.caddy"
 
 usage() {
   cat <<EOF
 Usage: $0 [options]
 
 Options:
-  --gandi-token <token>   Gandi API token for wildcard cert (required)
-  --install-dir <dir>     Install directory (default: /opt/disinto-edge)
-  --registry-dir <dir>    Registry directory (default: /var/lib/disinto)
-  --caddy-version <ver>   Caddy version to install (default: ${CADDY_VERSION})
-  --domain-suffix <suffix> Domain suffix for tunnels (default: disinto.ai)
-  -h, --help              Show this help
+  --gandi-token <token>       Gandi API token for wildcard cert (required)
+  --install-dir <dir>         Install directory (default: /opt/disinto-edge)
+  --registry-dir <dir>        Registry directory (default: /var/lib/disinto)
+  --caddy-version <ver>       Caddy version to install (default: ${CADDY_VERSION})
+  --domain-suffix <suffix>    Domain suffix for tunnels (default: disinto.ai)
+  --extra-caddyfile <path>    Import path for operator-owned Caddy config
+                              (default: /etc/caddy/extra.d/*.caddy)
+  -h, --help                  Show this help
 
 Example:
   $0 --gandi-token YOUR_GANDI_API_TOKEN
@@ -82,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --domain-suffix)
       DOMAIN_SUFFIX="$2"
+      shift 2
+      ;;
+    --extra-caddyfile)
+      EXTRA_CADDYFILE="$2"
       shift 2
       ;;
     -h|--help)
@@ -229,7 +236,25 @@ chmod 600 "$GANDI_ENV"
 # discovers the server name dynamically via _discover_server_name() so we
 # don't need to name the server here.
 CADDYFILE="/etc/caddy/Caddyfile"
-cat > "$CADDYFILE" <<'CADDYEOF'
+
+# Back up existing Caddyfile before overwriting
+if [ -f "$CADDYFILE" ] && [ ! -f "${CADDYFILE}.pre-disinto" ]; then
+  cp "$CADDYFILE" "${CADDYFILE}.pre-disinto"
+  log_info "Backed up existing Caddyfile to ${CADDYFILE}.pre-disinto"
+fi
+
+# Create extra.d directory for operator-owned site blocks
+EXTRA_DIR="/etc/caddy/extra.d"
+mkdir -p "$EXTRA_DIR"
+chmod 0755 "$EXTRA_DIR"
+if getent group caddy >/dev/null 2>&1; then
+  chown root:caddy "$EXTRA_DIR"
+else
+  log_warn "Group 'caddy' does not exist; extra.d owned by root:root"
+fi
+log_info "Created ${EXTRA_DIR} for operator-owned Caddy config"
+
+cat > "$CADDYFILE" <<CADDYEOF
 # Caddy configuration for edge control plane
 # Admin API enabled on 127.0.0.1:2019
 
@@ -243,6 +268,9 @@ cat > "$CADDYFILE" <<'CADDYEOF'
     dns gandi {env.GANDI_API_KEY}
   }
 }
+
+# Operator-owned site blocks (apex, www, static content, etc.)
+import ${EXTRA_CADDYFILE}
 CADDYEOF
 
 # Start Caddy
@@ -362,6 +390,7 @@ echo "Configuration:"
 echo "  Install directory: ${INSTALL_DIR}"
 echo "  Registry: ${REGISTRY_FILE}"
 echo "  Caddy admin API: http://127.0.0.1:2019"
+echo "  Operator site blocks: ${EXTRA_DIR}/ (import ${EXTRA_CADDYFILE})"
 echo ""
 echo "Users:"
 echo "  disinto-register - SSH forced command (runs ${INSTALL_DIR}/register.sh)"
