@@ -320,6 +320,12 @@ services:
       WOODPECKER_HEALTHCHECK_ADDR: ":3333"
       WOODPECKER_BACKEND_DOCKER_NETWORK: disinto_disinto-net
       WOODPECKER_MAX_WORKFLOWS: 1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       - woodpecker
 
@@ -374,6 +380,12 @@ services:
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # secrets/*.enc and are NEVER injected here — only the runner
     # container receives them at fire time (AD-006, #745, #777).
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       forgejo:
         condition: service_healthy
@@ -428,6 +440,12 @@ COMPOSEEOF
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
       AGENT_ROLES: dev
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       forgejo:
         condition: service_healthy
@@ -499,6 +517,12 @@ LLAMAEOF
       - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       forgejo:
         condition: service_healthy
@@ -516,6 +540,12 @@ LLAMAEOF
     command: ["caddy", "file-server", "--root", "/srv/site"]
     security_opt:
       - apparmor=unconfined
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     volumes:
       - ./docker:/srv/site:ro
     networks:
@@ -575,6 +605,12 @@ LLAMAEOF
       CHAT_MAX_REQUESTS_PER_HOUR: ${CHAT_MAX_REQUESTS_PER_HOUR:-60}
       CHAT_MAX_REQUESTS_PER_DAY: ${CHAT_MAX_REQUESTS_PER_DAY:-500}
       CHAT_MAX_TOKENS_PER_DAY: ${CHAT_MAX_TOKENS_PER_DAY:-1000000}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - disinto-net
 

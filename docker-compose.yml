@@ -49,6 +49,12 @@ services:
       - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
       - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-21600}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       forgejo:
         condition: service_healthy
@@ -103,6 +109,12 @@ services:
       - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
       - AGENT_ROLES=dev
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       forgejo:
         condition: service_healthy
@@ -156,6 +168,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       - forgejo
     networks:
