@@ -225,8 +225,11 @@ EOF
 chmod 600 "$GANDI_ENV"
 
 # Create Caddyfile with admin API and wildcard cert
+# Note: Caddy auto-generates server names (srv0, srv1, …). lib/caddy.sh
+# discovers the server name dynamically via _discover_server_name() so we
+# don't need to name the server here.
 CADDYFILE="/etc/caddy/Caddyfile"
-cat > "$CADDYFILE" <<EOF
+cat > "$CADDYFILE" <<'CADDYEOF'
 # Caddy configuration for edge control plane
 # Admin API enabled on 127.0.0.1:2019
 
@@ -240,7 +243,7 @@ cat > "$CADDYFILE" <<EOF
     dns gandi {env.GANDI_API_KEY}
   }
 }
-EOF
+CADDYEOF
 
 # Start Caddy
 systemctl restart caddy 2>/dev/null || {
