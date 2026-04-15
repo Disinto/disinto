@@ -35,7 +35,7 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
@@ -43,7 +43,7 @@ disinto/                 (code repo)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
-├── tests/         Test files (mock-forgejo.py, smoke-init.sh)
+├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats)
 ├── templates/     Issue templates
 ├── bin/           The `disinto` CLI script
 ├── disinto-factory/  Setup documentation and skill
