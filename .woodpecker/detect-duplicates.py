@@ -292,6 +292,8 @@ def main() -> int:
         "21aec56a99d5252b23fb9a38b895e8e8": "Verification helper: check body for Decomposed from pattern",
         "60ea98b3604557d539193b2a6624e232": "Verification helper: append sub-issue number",
         "9f6ae8e7811575b964279d8820494eb0": "Verification helper: for loop done pattern",
+        # Standard lib source block shared across formula-driven agent run scripts
+        "330e5809a00b95ade1a5fce2d749b94b": "Standard lib source block (env.sh, formula-session.sh, worktree.sh, guard.sh, agent-sdk.sh)",
     }
 
     if not sh_files:
