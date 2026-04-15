@@ -114,7 +114,7 @@ bash dev/phase-test.sh
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
 | Architect | `architect/` | Strategic decomposition (read-only on project repo) | [architect/AGENTS.md](architect/AGENTS.md) |
-| Filer | `lib/sprint-filer.sh` | Sub-issue filing from merged sprint PRs | `.woodpecker/ops-filer.yml` |
+| Filer | `lib/sprint-filer.sh` | Sub-issue filing from merged sprint PRs | ops repo pipeline (deferred, see #779) |
 | Reproduce | `docker/reproduce/` | Bug reproduction using Playwright MCP | `formulas/reproduce.toml` |
 | Triage | `docker/reproduce/` | Deep root cause analysis | `formulas/triage.toml` |
 | Edge dispatcher | `docker/edge/` | Polls ops repo for vault actions, executes via Claude sessions | `docker/edge/dispatcher.sh` |
