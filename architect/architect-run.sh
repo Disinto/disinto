@@ -117,8 +117,8 @@ build_architect_prompt() {
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 
 Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments,
-and file sub-issues after design forks are resolved.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments.
+You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
 
 ## Project context
 ${CONTEXT_BLOCK}
@@ -145,8 +145,8 @@ build_architect_prompt_for_mode() {
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 
 Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments,
-and file sub-issues after design forks are resolved.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments.
+You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
 
 ## CURRENT STATE: Approved PR awaiting initial design questions
 
@@ -157,10 +157,10 @@ design conversation has not yet started. Your task is to:
 2. Identify the key design decisions that need human input
 3. Post initial design questions (Q1:, Q2:, etc.) as comments on the PR
 4. Add a `## Design forks` section to the PR body documenting the design decisions
-5. File sub-issues for each design fork path if applicable
+5. Update the ## Sub-issues section in the sprint spec if design decisions affect decomposition
 
 This is NOT a pitch phase — the pitch is already approved. This is the START
-of the design Q&A phase.
+of the design Q&A phase. Sub-issues are filed by filer-bot after sprint PR merge (#764).
 
 ## Project context
 ${CONTEXT_BLOCK}
@@ -179,8 +179,8 @@ _PROMPT_EOF_
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 
 Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments,
-and file sub-issues after design forks are resolved.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments.
+You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
 
 ## CURRENT STATE: Design Q&A in progress
 
@@ -194,7 +194,7 @@ Your task is to:
 2. Read human answers from PR comments
 3. Parse the answers and determine next steps
 4. Post follow-up questions if needed (Q3:, Q4:, etc.)
-5. If all design forks are resolved, file sub-issues for each path
+5. If all design forks are resolved, finalize the ## Sub-issues section in the sprint spec
 6. Update the `## Design forks` section as you progress
 
 ## Project context
@@ -418,243 +418,10 @@ fetch_vision_issues() {
     "${FORGE_API}/issues?labels=vision&state=open&limit=100" 2>/dev/null || echo '[]'
 }
 
-# ── Helper: Fetch all sub-issues for a vision issue ───────────────────────
-# Sub-issues are identified by:
-#   1. Issues whose body contains "Decomposed from #N" pattern
-#   2. Issues referenced in merged sprint PR bodies
-# Returns: newline-separated list of sub-issue numbers (empty if none)
-# Args: vision_issue_number
-get_vision_subissues() {
-  local vision_issue="$1"
-  local subissues=()
-
-  # Method 1: Find issues with "Decomposed from #N" in body
-  local issues_json
-  issues_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues?limit=100" 2>/dev/null) || true
-
-  if [ -n "$issues_json" ] && [ "$issues_json" != "null" ]; then
-    while IFS= read -r subissue_num; do
-      [ -z "$subissue_num" ] && continue
-      subissues+=("$subissue_num")
-    done <<< "$(printf '%s' "$issues_json" | jq -r --arg vid "$vision_issue" \
-      '[.[] | select(.number != ($vid | tonumber)) | select(.body // "" | contains("Decomposed from #" + $vid))] | .[].number' 2>/dev/null)"
-  fi
-
-  # Method 2: Find issues referenced in merged sprint PR bodies
-  # Only consider PRs whose title or body references this specific vision issue
-  local prs_json
-  prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || true
-
-  if [ -n "$prs_json" ] && [ "$prs_json" != "null" ]; then
-    while IFS= read -r pr_num; do
-      [ -z "$pr_num" ] && continue
-
-      local pr_details pr_body pr_title
-      pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
-
-      local is_merged
-      is_merged=$(printf '%s' "$pr_details" | jq -r '.merged // false') || continue
-
-      if [ "$is_merged" != "true" ]; then
-        continue
-      fi
-
-      pr_title=$(printf '%s' "$pr_details" | jq -r '.title // ""') || continue
-      pr_body=$(printf '%s' "$pr_details" | jq -r '.body // ""') || continue
-
-      # Only process PRs that reference this specific vision issue
-      if ! printf '%s\n%s' "$pr_title" "$pr_body" | grep -qE "#${vision_issue}([^0-9]|$)"; then
-        continue
-      fi
-
-      # Extract issue numbers from PR body, excluding the vision issue itself
-      while IFS= read -r ref_issue; do
-        [ -z "$ref_issue" ] && continue
-        # Skip the vision issue itself
-        [ "$ref_issue" = "$vision_issue" ] && continue
-        # Skip if already in list
-        local found=false
-        for existing in "${subissues[@]+"${subissues[@]}"}"; do
-          [ "$existing" = "$ref_issue" ] && found=true && break
-        done
-        if [ "$found" = false ]; then
-          subissues+=("$ref_issue")
-        fi
-      done <<< "$(printf '%s' "$pr_body" | grep -oE '#[0-9]+' | tr -d '#' | sort -u)"
-    done <<< "$(printf '%s' "$prs_json" | jq -r '.[] | select(.title | contains("architect:")) | .number')"
-  fi
-
-  # Output unique sub-issues
-  printf '%s\n' "${subissues[@]}" | sort -u | grep -v '^$' || true
-}
-
-# ── Helper: Check if all sub-issues of a vision issue are closed ───────────
-# Returns: 0 if all sub-issues are closed, 1 if any are still open
-# Args: vision_issue_number
-all_subissues_closed() {
-  local vision_issue="$1"
-  local subissues
-  subissues=$(get_vision_subissues "$vision_issue")
-
-  # If no sub-issues found, parent cannot be considered complete
-  if [ -z "$subissues" ]; then
-    return 1
-  fi
-
-  # Check each sub-issue state
-  while IFS= read -r subissue_num; do
-    [ -z "$subissue_num" ] && continue
-
-    local sub_state
-    sub_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.state // "unknown"') || true
-
-    if [ "$sub_state" != "closed" ]; then
-      log "Sub-issue #${subissue_num} is ${sub_state} — vision issue #${vision_issue} not ready to close"
-      return 1
-    fi
-  done <<< "$subissues"
-
-  return 0
-}
-
-# ── Helper: Close vision issue with summary comment ────────────────────────
-# Posts a comment listing all completed sub-issues before closing.
-# Returns: 0 on success, 1 on failure
-# Args: vision_issue_number
-close_vision_issue() {
-  local vision_issue="$1"
-
-  # Idempotency guard: check if a completion comment already exists
-  local existing_comments
-  existing_comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues/${vision_issue}/comments" 2>/dev/null) || existing_comments="[]"
-
-  if printf '%s' "$existing_comments" | jq -e '[.[] | select(.body | contains("Vision Issue Completed"))] | length > 0' >/dev/null 2>&1; then
-    # Comment exists — verify the issue is actually closed before skipping
-    local issue_state
-    issue_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${vision_issue}" 2>/dev/null | jq -r '.state // "open"') || issue_state="open"
-    if [ "$issue_state" = "closed" ]; then
-      log "Vision issue #${vision_issue} already has a completion comment and is closed — skipping"
-      return 0
-    fi
-    log "Vision issue #${vision_issue} has a completion comment but state=${issue_state} — retrying close"
-  else
-    # No completion comment yet — build and post one
-    local subissues
-    subissues=$(get_vision_subissues "$vision_issue")
-
-    # Build summary comment
-    local summary=""
-    local count=0
-    while IFS= read -r subissue_num; do
-      [ -z "$subissue_num" ] && continue
-      local sub_title
-      sub_title=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-        "${FORGE_API}/issues/${subissue_num}" 2>/dev/null | jq -r '.title // "Untitled"') || sub_title="Untitled"
-      summary+="- #${subissue_num}: ${sub_title}"$'\n'
-      count=$((count + 1))
-    done <<< "$subissues"
-
-    local comment
-    comment=$(cat <<EOF
-## Vision Issue Completed
-
-All sub-issues have been implemented and merged. This vision issue is now closed.
-
-### Completed sub-issues (${count}):
-${summary}
----
-*Automated closure by architect · $(date -u '+%Y-%m-%d %H:%M UTC')*
-EOF
-)
-
-    # Post comment before closing
-    local tmpfile tmpjson
-    tmpfile=$(mktemp /tmp/vision-close-XXXXXX.md)
-    tmpjson="${tmpfile}.json"
-    printf '%s' "$comment" > "$tmpfile"
-    jq -Rs '{body:.}' < "$tmpfile" > "$tmpjson"
-
-    if ! curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues/${vision_issue}/comments" \
-      --data-binary @"$tmpjson" >/dev/null 2>&1; then
-      log "WARNING: failed to post closure comment on vision issue #${vision_issue}"
-      rm -f "$tmpfile" "$tmpjson"
-      return 1
-    fi
-    rm -f "$tmpfile" "$tmpjson"
-  fi
-
-  # Clear assignee (best-effort) and close the issue
-  curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${vision_issue}" \
-    -d '{"assignees":[]}' >/dev/null 2>&1 || true
-
-  local close_response
-  close_response=$(curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${vision_issue}" \
-    -d '{"state":"closed"}' 2>/dev/null) || {
-    log "ERROR: state=closed PATCH failed for vision issue #${vision_issue}"
-    return 1
-  }
-
-  local result_state
-  result_state=$(printf '%s' "$close_response" | jq -r '.state // "unknown"') || result_state="unknown"
-  if [ "$result_state" != "closed" ]; then
-    log "ERROR: vision issue #${vision_issue} state is '${result_state}' after close PATCH — expected 'closed'"
-    return 1
-  fi
-
-  log "Closed vision issue #${vision_issue}${count:+ — all ${count} sub-issue(s) complete}"
-  return 0
-}
-
-# ── Lifecycle check: Close vision issues with all sub-issues complete ──────
-# Runs before picking new vision issues for decomposition.
-# Checks each open vision issue and closes it if all sub-issues are closed.
-check_and_close_completed_visions() {
-  log "Checking for vision issues with all sub-issues complete..."
-
-  local vision_issues_json
-  vision_issues_json=$(fetch_vision_issues)
-
-  if [ -z "$vision_issues_json" ] || [ "$vision_issues_json" = "null" ]; then
-    log "No open vision issues found"
-    return 0
-  fi
-
-  # Get all vision issue numbers
-  local vision_issue_nums
-  vision_issue_nums=$(printf '%s' "$vision_issues_json" | jq -r '.[].number' 2>/dev/null) || vision_issue_nums=""
-
-  local closed_count=0
-  while IFS= read -r vision_issue; do
-    [ -z "$vision_issue" ] && continue
-
-    if all_subissues_closed "$vision_issue"; then
-      if close_vision_issue "$vision_issue"; then
-        closed_count=$((closed_count + 1))
-      fi
-    fi
-  done <<< "$vision_issue_nums"
-
-  if [ "$closed_count" -gt 0 ]; then
-    log "Closed ${closed_count} vision issue(s) with all sub-issues complete"
-  else
-    log "No vision issues ready for closure"
-  fi
-}
+# NOTE: get_vision_subissues, all_subissues_closed, close_vision_issue,
+# check_and_close_completed_visions removed (#764) — architect-bot is read-only
+# on the project repo. Vision lifecycle (closing completed visions, adding
+# in-progress labels) is now handled by filer-bot via lib/sprint-filer.sh.
 
 # ── Helper: Fetch open architect PRs from ops repo Forgejo API ───────────
 # Returns: JSON array of architect PR objects
@@ -746,7 +513,23 @@ Instructions:
 ## Recommendation
 <architect's assessment: worth it / defer / alternative approach>
 
+## Sub-issues
+
+<!-- filer:begin -->
+- id: <kebab-case-id>
+  title: \"vision(#${issue_num}): <concise sub-issue title>\"
+  labels: [backlog]
+  depends_on: []
+  body: |
+    ## Goal
+    <what this sub-issue accomplishes>
+    ## Acceptance criteria
+    - [ ] <criterion>
+<!-- filer:end -->
+
 IMPORTANT: Do NOT include design forks or questions. This is a go/no-go pitch.
+The ## Sub-issues block is parsed by the filer-bot pipeline after sprint PR merge.
+Each sub-issue between filer:begin/end markers becomes a Forgejo issue.
 
 ---
 
@@ -855,37 +638,8 @@ post_pr_footer() {
   fi
 }
 
-# ── Helper: Add in-progress label to vision issue ────────────────────────
-# Args: vision_issue_number
-add_inprogress_label() {
-  local issue_num="$1"
-
-  # Get label ID for 'in-progress'
-  local labels_json
-  labels_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/labels" 2>/dev/null) || return 1
-
-  local inprogress_label_id
-  inprogress_label_id=$(printf '%s' "$labels_json" | jq -r --arg label "in-progress" '.[] | select(.name == $label) | .id' 2>/dev/null) || true
-
-  if [ -z "$inprogress_label_id" ]; then
-    log "WARNING: in-progress label not found"
-    return 1
-  fi
-
-  # Add label to issue
-  if curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue_num}/labels" \
-    -d "{\"labels\": [${inprogress_label_id}]}" >/dev/null 2>&1; then
-    log "Added in-progress label to vision issue #${issue_num}"
-    return 0
-  else
-    log "WARNING: failed to add in-progress label to vision issue #${issue_num}"
-    return 1
-  fi
-}
+# NOTE: add_inprogress_label removed (#764) — architect-bot is read-only on
+# project repo. in-progress label is now added by filer-bot via sprint-filer.sh.
 
 # ── Precondition checks in bash before invoking the model ─────────────────
 
@@ -935,9 +689,7 @@ if [ "${open_arch_prs:-0}" -ge 3 ]; then
   log "3 open architect PRs found but responses detected — processing"
 fi
 
-# ── Lifecycle check: Close vision issues with all sub-issues complete ──────
-# Run before picking new vision issues for decomposition
-check_and_close_completed_visions
+# NOTE: Vision lifecycle check (close completed visions) moved to filer-bot (#764)
 
 # ── Bash-driven state management: Select vision issues for pitching ───────
 # This logic is also documented in formulas/run-architect.toml preflight step
@@ -1073,8 +825,7 @@ for vision_issue in "${ARCHITECT_TARGET_ISSUES[@]}"; do
   # Post footer comment
   post_pr_footer "$pr_number"
 
-  # Add in-progress label to vision issue
-  add_inprogress_label "$vision_issue"
+  # NOTE: in-progress label is added by filer-bot after sprint PR merge (#764)
 
   pitch_count=$((pitch_count + 1))
   log "Completed pitch for vision issue #${vision_issue} — PR #${pr_number}"

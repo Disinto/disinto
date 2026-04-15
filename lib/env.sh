@@ -121,9 +121,10 @@ export FORGE_VAULT_TOKEN="${FORGE_VAULT_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_SUPERVISOR_TOKEN="${FORGE_SUPERVISOR_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_PREDICTOR_TOKEN="${FORGE_PREDICTOR_TOKEN:-${FORGE_TOKEN}}"
 export FORGE_ARCHITECT_TOKEN="${FORGE_ARCHITECT_TOKEN:-${FORGE_TOKEN}}"
+export FORGE_FILER_TOKEN="${FORGE_FILER_TOKEN:-${FORGE_TOKEN}}"
 
 # Bot usernames filter
-export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot,architect-bot}"
+export FORGE_BOT_USERNAMES="${FORGE_BOT_USERNAMES:-dev-bot,review-bot,planner-bot,gardener-bot,vault-bot,supervisor-bot,predictor-bot,architect-bot,filer-bot}"
 
 # Project config
 export FORGE_REPO="${FORGE_REPO:-}"

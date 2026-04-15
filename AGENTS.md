@@ -35,7 +35,7 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, vault.sh, ci-log-reader.py, git-creds.sh
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
@@ -113,7 +113,8 @@ bash dev/phase-test.sh
 | Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
-| Architect | `architect/` | Strategic decomposition | [architect/AGENTS.md](architect/AGENTS.md) |
+| Architect | `architect/` | Strategic decomposition (read-only on project repo) | [architect/AGENTS.md](architect/AGENTS.md) |
+| Filer | `lib/sprint-filer.sh` | Sub-issue filing from merged sprint PRs | `.woodpecker/ops-filer.yml` |
 | Reproduce | `docker/reproduce/` | Bug reproduction using Playwright MCP | `formulas/reproduce.toml` |
 | Triage | `docker/reproduce/` | Deep root cause analysis | `formulas/triage.toml` |
 | Edge dispatcher | `docker/edge/` | Polls ops repo for vault actions, executes via Claude sessions | `docker/edge/dispatcher.sh` |
@@ -135,7 +136,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 |---|---|---|
 | `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. | Planner, gardener, humans |
 | `priority` | Queue tier above plain backlog. Issues with both `priority` and `backlog` are picked before plain `backlog` issues. FIFO within each tier. | Planner, humans |
-| `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. | dev-agent.sh (claims issue) |
+| `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. Also set on vision issues by filer-bot when sub-issues are filed (#764). | dev-agent.sh (claims issue), filer-bot (vision issues) |
 | `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, dev-poll.sh (on failure) |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |

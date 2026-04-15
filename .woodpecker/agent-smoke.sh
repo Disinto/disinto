@@ -213,6 +213,7 @@ check_script lib/issue-lifecycle.sh   lib/secret-scan.sh
 # Still checked for function resolution against LIB_FUNS + own definitions.
 check_script lib/ci-debug.sh
 check_script lib/parse-deps.sh
+check_script lib/sprint-filer.sh
 
 # Agent scripts — list cross-sourced files where function scope flows across files.
 check_script dev/dev-agent.sh

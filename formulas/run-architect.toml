@@ -16,7 +16,14 @@
 #            - Bash creates the ops PR with pitch content
 #            - Bash posts the ACCEPT/REJECT footer comment
 #   Step 3: Sprint PR creation with questions (issue #101) (one PR per pitch)
-#   Step 4: Answer parsing + sub-issue filing (issue #102)
+#   Step 4: Post-merge sub-issue filing via filer-bot (#764)
+#
+# Permission model (#764):
+#   architect-bot: READ-ONLY on project repo (GET issues/PRs/labels for context).
+#     Cannot POST/PUT/PATCH/DELETE any project-repo resource.
+#     Write access ONLY on ops repo (branches, PRs, comments).
+#   filer-bot: issues:write on project repo. Files sub-issues from merged sprint
+#     PRs via ops-filer pipeline. Adds in-progress label to vision issues.
 #
 # Architecture:
 # - Bash script (architect-run.sh) handles ALL state management
@@ -146,15 +153,32 @@ For each issue in ARCHITECT_TARGET_ISSUES, bash performs:
 ## Recommendation
 <architect's assessment: worth it / defer / alternative approach>
 
+## Sub-issues
+
+<!-- filer:begin -->
+- id: <kebab-case-id>
+  title: "vision(#N): <concise sub-issue title>"
+  labels: [backlog]
+  depends_on: []
+  body: |
+    ## Goal
+    <what this sub-issue accomplishes>
+    ## Acceptance criteria
+    - [ ] <criterion>
+<!-- filer:end -->
+
 IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
 decision for the human. Questions come only after acceptance.
+The ## Sub-issues block is parsed by the filer-bot pipeline after sprint PR merge.
+Each sub-issue between filer:begin/end markers becomes a Forgejo issue on the
+project repo. The filer appends a decomposed-from marker to each body automatically.
 
 4. Bash creates PR:
    - Create branch: architect/sprint-{pitch-number}
    - Write sprint spec to sprints/{sprint-slug}.md
    - Create PR with pitch content as body
    - Post footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
-   - Add in-progress label to vision issue
+   - NOTE: in-progress label is added by filer-bot after sprint PR merge (#764)
 
 Output:
 - One PR per vision issue (up to 3 per run)
@@ -185,6 +209,9 @@ This ensures approved PRs don't sit indefinitely without design conversation.
 Architecture:
 - Bash creates PRs during stateless pitch generation (step 2)
 - Model has no role in PR creation — no Forgejo API access
+- architect-bot is READ-ONLY on the project repo (#764) — all project-repo
+  writes (sub-issue filing, in-progress label) are handled by filer-bot
+  via the ops-filer pipeline after sprint PR merge
 - This step describes the PR format for reference
 
 PR Format (created by bash):
@@ -201,64 +228,29 @@ PR Format (created by bash):
    - Head: architect/sprint-{pitch-number}
    - Footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
 
-4. Add in-progress label to vision issue:
-   - Look up label ID: GET /repos/{owner}/{repo}/labels
-   - Add label: POST /repos/{owner}/{repo}/issues/{issue_number}/labels
-
 After creating all PRs, signal PHASE:done.
+NOTE: in-progress label on the vision issue is added by filer-bot after sprint PR merge (#764).
 
-## Forgejo API Reference
+## Forgejo API Reference (ops repo only)
 
-All operations use the Forgejo API with Authorization: token ${FORGE_TOKEN} header.
+All operations use the ops repo Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
+architect-bot is READ-ONLY on the project repo — cannot POST/PUT/PATCH/DELETE project-repo resources (#764).
 
-### Create branch
+### Create branch (ops repo)
 ```
-POST /repos/{owner}/{repo}/branches
+POST /repos/{owner}/{repo-ops}/branches
 Body: {"new_branch_name": "architect/<sprint-slug>", "old_branch_name": "main"}
 ```
 
-### Create/update file
+### Create/update file (ops repo)
 ```
-PUT /repos/{owner}/{repo}/contents/<path>
+PUT /repos/{owner}/{repo-ops}/contents/<path>
 Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-content>", "branch": "architect/<sprint-slug>"}
 ```
 
-### Create PR
+### Create PR (ops repo)
 ```
-POST /repos/{owner}/{repo}/pulls
-Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head": "architect/<sprint-slug>", "base": "main"}
-```
-
-**Important: PR body format**
-- The body field must contain plain markdown text (the raw content from the model)
-- Do NOT JSON-encode or escape the body — pass it as a JSON string value
-- Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
-
-### Add label to issue
-```
-POST /repos/{owner}/{repo}/issues/{index}/labels
-Body: {"labels": [<label-id>]}
-```
-
-## Forgejo API Reference
-
-All operations use the Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
-
-### Create branch
-```
-POST /repos/{owner}/{repo}/branches
-Body: {"new_branch_name": "architect/<sprint-slug>", "old_branch_name": "main"}
-```
-
-### Create/update file
-```
-PUT /repos/{owner}/{repo}/contents/<path>
-Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-content>", "branch": "architect/<sprint-slug>"}
-```
-
-### Create PR
-```
-POST /repos/{owner}/{repo}/pulls
+POST /repos/{owner}/{repo-ops}/pulls
 Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head": "architect/<sprint-slug>", "base": "main"}
 ```
 
@@ -267,30 +259,22 @@ Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head"
 - Do NOT JSON-encode or escape the body — pass it as a JSON string value
 - Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
 
-### Close PR
+### Close PR (ops repo)
 ```
-PATCH /repos/{owner}/{repo}/pulls/{index}
+PATCH /repos/{owner}/{repo-ops}/pulls/{index}
 Body: {"state": "closed"}
 ```
 
-### Delete branch
+### Delete branch (ops repo)
 ```
-DELETE /repos/{owner}/{repo}/git/branches/<branch-name>
-```
-
-### Get labels (look up label IDs by name)
-```
-GET /repos/{owner}/{repo}/labels
+DELETE /repos/{owner}/{repo-ops}/git/branches/<branch-name>
 ```
 
-### Add label to issue (for in-progress on vision issue)
+### Read-only on project repo (context gathering)
 ```
-POST /repos/{owner}/{repo}/issues/{index}/labels
-Body: {"labels": [<label-id>]}
-```
-
-### Remove label from issue (for in-progress removal on REJECT)
-```
-DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label-id}
+GET /repos/{owner}/{repo}/issues          — list issues
+GET /repos/{owner}/{repo}/issues/{number} — read issue details
+GET /repos/{owner}/{repo}/labels          — list labels
+GET /repos/{owner}/{repo}/pulls           — list PRs
 ```
 """
