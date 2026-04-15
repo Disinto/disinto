@@ -819,8 +819,7 @@ build_prompt_footer() {
 Base URL: ${FORGE_API}
 Auth header: -H \"Authorization: token \${FORGE_TOKEN}\"
   Read issue:  curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/issues/{number}' | jq '.body'
-  Create issue: curl -sf -X POST -H \"Authorization: token \${FORGE_TOKEN}\" -H 'Content-Type: application/json' '${FORGE_API}/issues' -d '{\"title\":\"...\",\"body\":\"...\",\"labels\":[LABEL_ID]}'${extra_api}
-  List labels: curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/labels'
+  List labels: curl -sf -H \"Authorization: token \${FORGE_TOKEN}\" '${FORGE_API}/labels'${extra_api}
 NEVER echo or include the actual token value in output — always reference \${FORGE_TOKEN}.
 
 ## Environment
