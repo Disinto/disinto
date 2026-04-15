@@ -1,4 +1,4 @@
-<!-- last-reviewed: cdb0408466d875cdd893c712e3b3f0d0b909d4ef -->
+<!-- last-reviewed: 10c7a88416b14e849f80ad3fe7ea8e51d26177e8 -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -96,6 +96,7 @@ Run via `architect/architect-run.sh`, which:
 - Acquires a poll-loop lock (via `acquire_lock`) and checks available memory
 - Cleans up per-issue scratch files from previous runs (`/tmp/architect-{project}-scratch-*.md`)
 - Sources shared libraries (env.sh, formula-session.sh)
+- Exports `FORGE_TOKEN_OVERRIDE="${FORGE_ARCHITECT_TOKEN}"` BEFORE sourcing env.sh, ensuring architect-bot identity survives re-sourcing (#762)
 - Uses FORGE_ARCHITECT_TOKEN for authentication
 - Processes existing architect PRs via bash-driven design phase
 - Loads the formula and builds context from VISION.md, AGENTS.md, and ops repo
