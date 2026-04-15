@@ -173,6 +173,41 @@ PROJECT_TOML="${PROJECT_TOML:-projects/disinto.toml}"
   sleep 1200  # 20 minutes
 done) &
 
+# Start daily engagement collection cron loop in background (#745)
+# Runs collect-engagement.sh daily at ~23:50 UTC via a sleep loop that
+# calculates seconds until the next 23:50 window. SSH key from .env.vault.enc.
+(while true; do
+  # Calculate seconds until next 23:50 UTC
+  _now=$(date -u +%s)
+  _target=$(date -u -d "today 23:50" +%s 2>/dev/null || date -u -d "23:50" +%s 2>/dev/null || echo 0)
+  if [ "$_target" -le "$_now" ]; then
+    _target=$(( _target + 86400 ))
+  fi
+  _sleep_secs=$(( _target - _now ))
+  echo "edge: collect-engagement scheduled in ${_sleep_secs}s (next 23:50 UTC)" >&2
+  sleep "$_sleep_secs"
+  # Set CADDY_ACCESS_LOG so the script reads from the fetched local copy
+  _fetch_log="/tmp/caddy-access-log-fetch.log"
+  if [ -n "${CADDY_SSH_KEY:-}" ]; then
+    _ssh_key_file=$(mktemp)
+    printf '%s\n' "$CADDY_SSH_KEY" > "$_ssh_key_file"
+    chmod 0600 "$_ssh_key_file"
+    scp -i "$_ssh_key_file" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes \
+      "${CADDY_SSH_USER:-debian}@${CADDY_SSH_HOST:-disinto.ai}:${CADDY_ACCESS_LOG:-/var/log/caddy/access.log}" \
+      "$_fetch_log" 2>&1 | tee -a /opt/disinto-logs/collect-engagement.log || true
+    rm -f "$_ssh_key_file"
+    if [ -s "$_fetch_log" ]; then
+      CADDY_ACCESS_LOG="$_fetch_log" bash /opt/disinto/site/collect-engagement.sh 2>&1 \
+        | tee -a /opt/disinto-logs/collect-engagement.log || true
+    else
+      echo "edge: collect-engagement: fetched log is empty, skipping parse" >&2
+    fi
+    rm -f "$_fetch_log"
+  else
+    echo "edge: collect-engagement: CADDY_SSH_KEY not set, skipping" >&2
+  fi
+done) &
+
 # Caddy as main process — run in foreground via wait so background jobs survive
 # (exec replaces the shell, which can orphan backgrounded subshells)
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
