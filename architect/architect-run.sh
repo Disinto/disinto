@@ -34,10 +34,11 @@ FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Accept project config from argument; default to disinto
 export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
+# Set override BEFORE sourcing env.sh so it survives any later re-source of
+# env.sh from nested shells / claude -p tools (#762, #747)
+export FORGE_TOKEN_OVERRIDE="${FORGE_ARCHITECT_TOKEN:-}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
-# Override FORGE_TOKEN with architect-bot's token (#747)
-FORGE_TOKEN="${FORGE_ARCHITECT_TOKEN:-${FORGE_TOKEN}}"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
 # shellcheck source=../lib/worktree.sh
