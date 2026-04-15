@@ -1545,8 +1545,14 @@ _regen_file() {
     mv "$target" "$stashed"
   fi
 
-  # Run the generator — it writes $target from scratch
-  "$generator" "$@"
+  # Run the generator — it writes $target from scratch.
+  # If the generator fails, restore the stashed original so it is not stranded.
+  if ! "$generator" "$@"; then
+    if [ -n "$stashed" ]; then
+      mv "$stashed" "$target"
+    fi
+    return 1
+  fi
 
   if [ -z "$stashed" ]; then
     # No previous file — first generation
