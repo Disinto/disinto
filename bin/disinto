@@ -1180,30 +1180,51 @@ disinto_secrets() {
 
   case "$subcmd" in
     add)
-      local name="${2:-}"
+      # Parse flags
+      local force=false
+      shift  # consume 'add'
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          -f|--force) force=true; shift ;;
+          -*) echo "Unknown flag: $1" >&2; exit 1 ;;
+          *) break ;;
+        esac
+      done
+      local name="${1:-}"
       if [ -z "$name" ]; then
-        echo "Usage: disinto secrets add <NAME>" >&2
+        echo "Usage: disinto secrets add [-f|--force] <NAME>" >&2
         exit 1
       fi
       _secrets_ensure_age_key
       mkdir -p "$secrets_dir"
 
-      printf 'Enter value for %s: ' "$name" >&2
       local value
-      IFS= read -rs value
-      echo >&2
+      if [ -t 0 ]; then
+        # Interactive TTY — prompt with hidden input (original behavior)
+        printf 'Enter value for %s: ' "$name" >&2
+        IFS= read -rs value
+        echo >&2
+      else
+        # Piped/redirected stdin — read raw bytes verbatim
+        IFS= read -r -d '' value || true
+      fi
       if [ -z "$value" ]; then
         echo "Error: empty value" >&2
         exit 1
       fi
 
       local enc_path="${secrets_dir}/${name}.enc"
-      if [ -f "$enc_path" ]; then
-        printf 'Secret %s already exists. Overwrite? [y/N] ' "$name" >&2
-        local confirm
-        read -r confirm
-        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-          echo "Aborted." >&2
+      if [ -f "$enc_path" ] && [ "$force" = false ]; then
+        if [ -t 0 ]; then
+          printf 'Secret %s already exists. Overwrite? [y/N] ' "$name" >&2
+          local confirm
+          read -r confirm
+          if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+            echo "Aborted." >&2
+            exit 1
+          fi
+        else
+          echo "Error: secret ${name} already exists (use -f to overwrite)" >&2
           exit 1
         fi
       fi
