@@ -1,4 +1,4 @@
-<!-- last-reviewed: 4e53f508d9b36c60bd68ed5fc497fc8775fec79f -->
+<!-- last-reviewed: ba3a11fa9d3d0f780318043b7adca135681ab758 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -54,6 +54,12 @@ PRs owned by other bot users (#374).
 **Session lock**: fd-based flock — released during idle phases (`awaiting_review`, `awaiting_ci`) so other agents can proceed; re-acquired before injecting the next prompt. This prevents the lock from blocking the whole factory while the dev session waits.
 
 **Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
+
+**Polling loop isolation (#753)**: `docker/agents/entrypoint.sh` now tracks fast-poll PIDs
+(`FAST_PIDS`) and calls `wait "${FAST_PIDS[@]}"` instead of `wait` (no-args). This means
+long-running dev-agent sessions no longer block the loop from launching the next iteration's
+fast polls — the loop only waits for review-poll and dev-poll (the fast agents), never for
+the dev-agent subprocess itself.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
 tmux session → phase file drives CI/review loop → merge + `mirror_push()` → close issue.
