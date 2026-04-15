@@ -1419,12 +1419,79 @@ download_agent_binaries() {
 
 # ── up command ────────────────────────────────────────────────────────────────
 
+# Regenerate a file idempotently: run the generator, compare output, backup if changed.
+# Usage: _regen_file <target_file> <generator_fn> [args...]
+_regen_file() {
+  local target="$1"; shift
+  local generator="$1"; shift
+  local basename
+  basename=$(basename "$target")
+
+  # Move existing file aside so the generator (which skips if file exists)
+  # produces a fresh copy.
+  local stashed=""
+  if [ -f "$target" ]; then
+    stashed=$(mktemp "${target}.stash.XXXXXX")
+    mv "$target" "$stashed"
+  fi
+
+  # Run the generator — it writes $target from scratch
+  "$generator" "$@"
+
+  if [ -z "$stashed" ]; then
+    # No previous file — first generation
+    echo "regenerated: ${basename} (new)"
+    return
+  fi
+
+  if cmp -s "$stashed" "$target"; then
+    # Content unchanged — restore original to preserve mtime
+    mv "$stashed" "$target"
+    echo "unchanged: ${basename}"
+  else
+    # Content changed — keep new, save old as .prev
+    mv "$stashed" "${target}.prev"
+    echo "regenerated: ${basename} (previous saved as ${basename}.prev)"
+  fi
+}
+
 disinto_up() {
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
+  local caddyfile="${FACTORY_ROOT}/docker/Caddyfile"
   if [ ! -f "$compose_file" ]; then
     echo "Error: docker-compose.yml not found" >&2
     echo "  Run 'disinto init <repo-url>' first (without --bare)" >&2
     exit 1
+  fi
+
+  # Parse --no-regen flag; remaining args pass through to docker compose
+  local no_regen=false
+  local -a compose_args=()
+  for arg in "$@"; do
+    case "$arg" in
+      --no-regen) no_regen=true ;;
+      *)          compose_args+=("$arg") ;;
+    esac
+  done
+
+  # ── Regenerate compose & Caddyfile from generators ──────────────────────
+  if [ "$no_regen" = true ]; then
+    echo "Warning: running with unmanaged compose — hand-edits will drift" >&2
+  else
+    # Determine forge_port from FORGE_URL (same logic as init)
+    local forge_url="${FORGE_URL:-http://localhost:3000}"
+    local forge_port
+    forge_port=$(printf '%s' "$forge_url" | sed -E 's|.*:([0-9]+)/?$|\1|')
+    forge_port="${forge_port:-3000}"
+
+    # Detect build mode from existing compose
+    local use_build=false
+    if grep -q '^\s*build:' "$compose_file"; then
+      use_build=true
+    fi
+
+    _regen_file "$compose_file" generate_compose "$forge_port" "$use_build"
+    _regen_file "$caddyfile"    generate_caddyfile
   fi
 
   # Pre-build: download binaries only when compose uses local build
@@ -1448,7 +1515,7 @@ disinto_up() {
     echo "Decrypted secrets for compose"
   fi
 
-  docker compose -f "$compose_file" up -d "$@"
+  docker compose -f "$compose_file" up -d --build --remove-orphans ${compose_args[@]+"${compose_args[@]}"}
   echo "Stack is up"
 
   # Clean up temp .env (also handled by EXIT trap if compose fails)
