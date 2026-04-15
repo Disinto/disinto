@@ -26,8 +26,8 @@ The `main` branch on the ops repo (`johba/disinto-ops`) is protected via Forgejo
 
 ## Vault PR Lifecycle
 
-1. **Request** — Agent calls `lib/vault.sh:vault_request()` with action TOML content
-2. **Validation** — TOML is validated against the schema in `vault/vault-env.sh`
+1. **Request** — Agent calls `lib/action-vault.sh:vault_request()` with action TOML content
+2. **Validation** — TOML is validated against the schema in `action-vault/vault-env.sh`
 3. **PR Creation** — A PR is created on `disinto-ops` with:
    - Branch: `vault/<action-id>`
    - Title: `vault: <action-id>`
@@ -90,12 +90,12 @@ To verify the protection is working:
 
 - #73 — Vault redesign proposal
 - #74 — Vault action TOML schema
-- #75 — Vault PR creation helper (`lib/vault.sh`)
+- #75 — Vault PR creation helper (`lib/action-vault.sh`)
 - #76 — Dispatcher rewrite (poll for merged vault PRs)
 - #77 — Branch protection on ops repo (this issue)
 
 ## See Also
 
-- [`lib/vault.sh`](../lib/vault.sh) — Vault PR creation helper
-- [`vault/vault-env.sh`](../vault/vault-env.sh) — TOML validation
+- [`lib/action-vault.sh`](../lib/action-vault.sh) — Vault PR creation helper
+- [`action-vault/vault-env.sh`](../action-vault/vault-env.sh) — TOML validation
 - [`lib/branch-protection.sh`](../lib/branch-protection.sh) — Branch protection helper

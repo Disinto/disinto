@@ -177,7 +177,7 @@ DUST (trivial — single-line edit, rename, comment, style, whitespace):
 
 VAULT (needs human decision or external resource):
   File a vault procurement item using vault_request():
-    source "$(dirname "$0")/../lib/vault.sh"
+    source "$(dirname "$0")/../lib/action-vault.sh"
     TOML_CONTENT="# Vault action: <action_id>
 context = \"<description of what decision/resource is needed>\"
 unblocks = [\"#NNN\"]

@@ -46,7 +46,7 @@ OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/debian/disinto-ops}"
 VAULT_ACTIONS_DIR="${OPS_REPO_ROOT}/vault/actions"
 
 # Vault action validation
-VAULT_ENV="${SCRIPT_ROOT}/../vault/vault-env.sh"
+VAULT_ENV="${SCRIPT_ROOT}/../action-vault/vault-env.sh"
 
 # Admin users who can merge vault PRs (from issue #77)
 # Comma-separated list of Forgejo usernames with admin role
