@@ -1,52 +1,62 @@
 [
   {
+    "action": "edit_body",
+    "issue": 784,
+    "body": "Flagged by AI reviewer in PR #783.\n\n## Problem\n\n`_regen_file()` (added in PR #783, `bin/disinto` ~line 1424) moves the existing target file to a temp stash before calling the generator:\n\n```bash\nmv \"$target\" \"$stashed\"\n\"$generator\" \"$@\"\n```\n\nThe script runs under `set -euo pipefail`. If the generator exits non-zero, bash exits immediately and the original file remains stranded at `${target}.stash.XXXXXX` (never restored). The target file no longer exists, and `docker compose up` is never reached. Recovery requires the operator to manually locate and rename the hidden stash file.\n\n## Fix\n\nAdd an ERR trap inside `_regen_file` to restore the stash on failure, e.g.:\n```bash\n\"$generator\" \"$@\" || { mv \"$stashed\" \"$target\"; return 1; }\n```\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] If the generator exits non-zero, the original target file is restored from the stash (not stranded at the temp path)\n- [ ] `_regen_file` still removes the stash file after a successful generator run\n- [ ] `docker compose up` is reached when the generator succeeds\n- [ ] ShellCheck passes on `bin/disinto`\n\n## Affected files\n\n- `bin/disinto` — `_regen_file()` function (~line 1424)\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 784,
+    "label": "backlog"
+  },
+  {
     "action": "remove_label",
-    "issue": 771,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 771,
-    "body": "## Symptom\n\n`docker/Caddyfile` is tracked in git with legacy content (`/forgejo/*` path). `lib/generators.sh` has a `generate_caddyfile` function that emits a different Caddyfile with `/forge/*` (post-#704 vision), `/ci/*`, `/staging/*`, and conditional `/chat/*` blocks when `EDGE_TUNNEL_FQDN` is set.\n\nBoth files exist. The edge container's compose block mounts `./docker/Caddyfile:/etc/caddy/Caddyfile`, so the **static** file is what actually serves traffic today. The generated file is written to a different path and effectively unused until someone rewires the mount.\n\nThis means:\n\n- Changes to the generator's Caddy block are invisible to running stacks (same drift class as #C).\n- The static file's `/forgejo/*` naming contradicts #704's `/forge/*` convention — anyone reading the vision will be confused by the real system.\n- Two places for the same configuration invites one-side-only edits.\n\n## Fix\n\nSingle source of truth: the file `generate_caddyfile` produces.\n\n1. Delete tracked `docker/Caddyfile`.\n2. Update `generate_caddyfile` to write to `docker/Caddyfile` (or a well-known path like `state/caddyfile/Caddyfile`, decide based on which side of the ignore/commit line fits the project) — whichever path the edge compose block mounts.\n3. Add the output path to `.gitignore` so it's a generated artifact, not tracked.\n4. Confirm `lib/generators.sh`'s compose block mounts the generator output path.\n5. Update `disinto init` flow: if a fresh init runs `generate_caddyfile` and `generate_compose` in the right order, the first `disinto up` already has a working Caddy. Document this ordering in `docs/commands.md` or equivalent.\n\n## Acceptance criteria\n\n- [ ] `docker/Caddyfile` is removed from git (no tracked static version)\n- [ ] `generate_caddyfile` writes to a single, documented output path; that path is what the edge compose block mounts\n- [ ] `.gitignore` excludes the generated Caddyfile path\n- [ ] After `disinto init` on a fresh clone, the edge container starts and serves the generator's Caddyfile — not a stale static one\n- [ ] `grep -rn \"/forgejo/\\*\" docker/` returns nothing — convention is consistently `/forge/*` everywhere\n- [ ] CI green\n\n## Note\n\nThis is independent of children A / B / C — can land whenever. No blocking dependency.\n\n## Affected files\n- `docker/Caddyfile` — delete (tracked static file to be removed)\n- `lib/generators.sh` — update `generate_caddyfile` to write to the edge-mounted path\n- `.gitignore` — exclude the generated Caddyfile path\n- `bin/disinto` — ensure `disinto init` calls `generate_caddyfile` in correct order\n- `docs/commands.md` — document Caddyfile generation ordering (if file exists)\n"
+    "issue": 773,
+    "label": "blocked"
   },
   {
     "action": "add_label",
-    "issue": 771,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 776,
-    "body": "## Problem\n\n`disinto secrets add NAME` uses `IFS= read -rs value` — TTY-only, cannot be piped. No automation path for multi-line key material (SSH keys, PEM, TLS certs). Every rent-a-human formula that needs to hand a secret to the factory currently requires either the interactive editor (`edit-vault`) or writing a plaintext file to disk first.\n\nConcrete blocker: importing `CADDY_SSH_KEY` for collect-engagement (#745) into the factory's secret store, ahead of starting the edge container.\n\n## Proposed solution\n\nMake stdin detection the dispatch inside `disinto_secrets() → add)`:\n\n- stdin is a TTY → prompt as today (preserves interactive use)\n- stdin is a pipe/redirect → read raw bytes verbatim, no prompt, no echo\n\nInvocations:\n\n```\ncat ~/caddy-collect | disinto secrets add CADDY_SSH_KEY\ndisinto secrets add CADDY_SSH_KEY < ~/caddy-collect\necho 159.89.14.107 | disinto secrets add CADDY_SSH_HOST\n```\n\nNo `--from-file` / `--from-stdin` flag ceremony. One flag exception: `--force` / `-f` to suppress the overwrite prompt for scripted upserts.\n\n## Acceptance criteria\n- [ ] Piped multi-line input stored verbatim; `disinto secrets show CADDY_SSH_KEY` round-trips byte-for-byte (diff against the source file is empty, including trailing newline)\n- [ ] TTY invocation unchanged (prompt + hidden read)\n- [ ] `-f` / `--force` skips overwrite confirmation\n- [ ] Stdin reading uses `cat` / `IFS= read -d ''` — NOT `read -rs` which strips characters\n\n## Affected files\n- `bin/disinto` — `disinto_secrets()` `add)` branch around line 1167\n\n## Context\n- `bin/disinto` → `disinto_secrets()` around line 1167 (`add)` branch).\n- Parent: sprint PR `disinto-admin/disinto-ops#10` (website-observability-wire-up).\n- Unblocks: issue C (#778 rent-a-human-caddy-ssh.toml fix).\n"
-  },
-  {
-    "action": "add_label",
-    "issue": 776,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 777,
-    "body": "## Problem\n\nTwo parallel secret stores:\n\n1. `secrets/<NAME>.enc` — per-key, age-encrypted. Populated by `disinto secrets add`. **No runtime consumer today.** Only `disinto secrets show` ever decrypts these.\n2. `.env.vault.enc` — monolithic, sops/dotenv-encrypted. The only store actually loaded into containers (via `docker/edge/dispatcher.sh` → `sops -d --output-type dotenv`).\n\nTwo mental models, redundant subcommands (`edit-vault`, `show-vault`, `migrate-vault`), and today`s `disinto secrets add` silently deposits secrets into a dead-letter directory. Operator runs the command, edge container still logs `CADDY_SSH_KEY not set, skipping` (docker/edge/entrypoint-edge.sh:207).\n\n## Proposed solution\n\nConsolidate on `secrets/<NAME>.enc` as THE store. One file per secret, granular, small surface.\n\n**1. Wire container dispatchers to load `secrets/*.enc` into env**\n- `docker/edge/dispatcher.sh` (and agent / ops dispatchers) decrypt declared secrets at startup and export them.\n- Granular per-secret — not a bulk dump.\n\n**2. Containers declare required secrets**\n- `secrets.required = [\"CADDY_SSH_KEY\", \"CADDY_SSH_HOST\", ...]` in the container's TOML, or equivalent in compose.\n- Missing required secret → **hard fail** with clear message. Replaces today's silent-skip branch at `entrypoint-edge.sh:207`.\n\n**3. Deprecate the monolithic vault**\n- Remove `.env.vault`, `.env.vault.enc`, and subcommands `edit-vault` / `show-vault` / `migrate-vault` from `bin/disinto`.\n- Remove sops round-trip from `docker/edge/dispatcher.sh` (lines 32-40 currently).\n\n**4. One-shot migration for existing operators**\n- `disinto secrets migrate-from-vault` splits an existing `.env.vault.enc` into `secrets/<KEY>.enc` files, verifies each, then removes the old vault on success.\n- Idempotent: safe to run multiple times.\n\n## Acceptance criteria\n- [ ] Edge container declares `secrets.required = [\"CADDY_SSH_KEY\", \"CADDY_SSH_HOST\", \"CADDY_SSH_USER\", \"CADDY_ACCESS_LOG\"]`. Dispatcher exports them. `collect-engagement.sh` runs without additional env wiring.\n- [ ] Container refuses to start when a required secret is missing (fail loudly, not skip silently)\n- [ ] `.env.vault*` files and all vault-specific subcommands removed from `bin/disinto` and all formulas / docs\n- [ ] `migrate-from-vault` converts an existing monolithic vault correctly (verified by round-trip test)\n- [ ] `disinto secrets` help text shows one store, four verbs: `add`, `show`, `remove`, `list`\n\n## Affected files\n- `bin/disinto` — `disinto_secrets()`: wire stdin to `secrets/<NAME>.enc`, add `migrate-from-vault` subcommand, remove `edit-vault`/`show-vault`/`migrate-vault`\n- `docker/edge/dispatcher.sh` — replace sops round-trip (lines 32-40) with per-secret decryption from `secrets/*.enc`\n- `docker/edge/entrypoint-edge.sh` — replace silent-skip branch at line 207 with hard fail on missing required secrets\n\n## Dependencies\n- #776 (piped stdin for `disinto secrets add` must land before deprecating `edit-vault`)\n\n## Context\n- Parent: sprint PR `disinto-admin/disinto-ops#10`.\n- Rationale (operator quote): \"containers should have option to load single secrets, granular. no 2 mental models, only 1 thing that works well and has small surface.\"\n"
-  },
-  {
-    "action": "add_label",
-    "issue": 777,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 778,
-    "body": "## Problem\n\n`formulas/rent-a-human-caddy-ssh.toml` step 3 tells the operator:\n\n```\necho \"CADDY_SSH_KEY=$(base64 -w0 caddy-collect)\" >> .env.vault.enc\n```\n\n**You cannot append plaintext to a sops-encrypted file.** The append silently corrupts `.env.vault.enc` — subsequent `sops -d` fails, all vault secrets become unrecoverable. Any operator who followed the docs verbatim has broken their vault.\n\nSteps 4 (`CADDY_HOST`) and 5 (`CADDY_ACCESS_LOG`) have the same bug.\n\n## Proposed fix\n\nRewrite the `>>` steps to use the stdin-piped `disinto secrets add` (from issue #776):\n\n```\ncat caddy-collect | disinto secrets add CADDY_SSH_KEY\necho '159.89.14.107' | disinto secrets add CADDY_SSH_HOST\necho 'debian'        | disinto secrets add CADDY_SSH_USER\necho '/var/log/caddy/access.log' | disinto secrets add CADDY_ACCESS_LOG\n```\n\nAlso:\n- Remove the `base64 -w0` step — the new `secrets add` stores multi-line keys verbatim.\n- Remove the `shred -u caddy-collect` step from the happy path — let the operator keep the backup until they've verified the edge container picks it up.\n- Add a recovery note: operators with a corrupted vault from the old docs must `rm .env.vault.enc` (or `migrate-from-vault` if issue #777 landed) before re-running.\n\n## Acceptance criteria\n- [ ] Formula runs end-to-end without touching `.env.vault.enc` or `.env.vault` by hand\n- [ ] Re-running is idempotent (upsert via `disinto secrets add -f`)\n- [ ] Edge container starts cleanly with the imported secrets and the daily collect-engagement cron fires without `\"CADDY_SSH_KEY not set, skipping\"`\n- [ ] Recovery note present in formula for operators with corrupted vault\n\n## Affected files\n- `formulas/rent-a-human-caddy-ssh.toml` — rewrite steps 3-5 to use `disinto secrets add` instead of `>>` append to encrypted file\n\n## Dependencies\n- #776 (piped stdin for `disinto secrets add` must land first)\n\n## Context\n- Parent: sprint PR `disinto-admin/disinto-ops#10`.\n- Soft-depends on: #777 (if landed, drop all `.env.vault*` references entirely).\n"
-  },
-  {
-    "action": "add_label",
-    "issue": 778,
+    "issue": 773,
     "label": "backlog"
   },
   {
     "action": "comment",
-    "issue": 758,
-    "body": "Vault item filed: [disinto-ops#33](http://forgejo:3000/disinto-admin/disinto-ops/pulls/33) — admin action required to unblock ops repo merges. Choose one of: (1) add planner-bot to merge allowlist in branch protection, (2) remove branch protection from disinto-ops main, or (3) create FORGE_ADMIN_TOKEN. See vault PR for details.\n"
+    "issue": 772,
+    "body": "All child issues have been resolved:\n- #768 (edge restart policy) — closed\n- #769 (agents-llama generator service) — closed\n- #770 (disinto up regenerate) — closed\n- #771 (deprecate docker/Caddyfile) — closed\n\nClosing tracker as all decomposed work is complete."
+  },
+  {
+    "action": "close",
+    "issue": 772,
+    "reason": "all child issues 768-771 closed"
+  },
+  {
+    "action": "edit_body",
+    "issue": 778,
+    "body": "## Problem\n\n`formulas/rent-a-human-caddy-ssh.toml` step 3 tells the operator:\n\n```\necho \"CADDY_SSH_KEY=$(base64 -w0 caddy-collect)\" >> .env.vault.enc\n```\n\n**You cannot append plaintext to a sops-encrypted file.** The append silently corrupts `.env.vault.enc` — subsequent `sops -d` fails, all vault secrets become unrecoverable. Any operator who followed the docs verbatim has broken their vault.\n\nSteps 4 (`CADDY_HOST`) and 5 (`CADDY_ACCESS_LOG`) have the same bug.\n\n## Proposed fix\n\nRewrite the `>>` steps to use the stdin-piped `disinto secrets add` (from issue A):\n\n```\ncat caddy-collect | disinto secrets add CADDY_SSH_KEY\necho '159.89.14.107' | disinto secrets add CADDY_SSH_HOST\necho 'debian'        | disinto secrets add CADDY_SSH_USER\necho '/var/log/caddy/access.log' | disinto secrets add CADDY_ACCESS_LOG\n```\n\nAlso:\n- Remove the `base64 -w0` step — the new `secrets add` stores multi-line keys verbatim.\n- Remove the `shred -u caddy-collect` step from the happy path — let the operator keep the backup until they have verified the edge container picks it up.\n- Add a recovery note: operators with a corrupted vault from the old docs must `rm .env.vault.enc` (or `migrate-from-vault` if issue B landed) before re-running.\n\n## Context\n\n- Parent: sprint PR `disinto-admin/disinto-ops#10`.\n- Depends on: #776 (piped `secrets add`) — now closed.\n- Soft-depends on: #777 (if landed, drop all `.env.vault*` references entirely).\n\n## Acceptance criteria\n\n- [ ] Formula runs end-to-end without touching `.env.vault.enc` or `.env.vault` by hand\n- [ ] Re-running is idempotent (upsert via `disinto secrets add -f`)\n- [ ] Edge container starts cleanly with the imported secrets and the daily collect-engagement cron fires without `\"CADDY_SSH_KEY not set, skipping\"`\n\n## Affected files\n\n- `formulas/rent-a-human-caddy-ssh.toml` — replace `>> .env.vault.enc` steps with `disinto secrets add` calls\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 778,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 778,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 777,
+    "body": "## Problem\n\nTwo parallel secret stores:\n\n1. `secrets/<NAME>.enc` — per-key, age-encrypted. Populated by `disinto secrets add`. **No runtime consumer today.** Only `disinto secrets show` ever decrypts these.\n2. `.env.vault.enc` — monolithic, sops/dotenv-encrypted. The only store actually loaded into containers (via `docker/edge/dispatcher.sh` → `sops -d --output-type dotenv`).\n\nTwo mental models, redundant subcommands (`edit-vault`, `show-vault`, `migrate-vault`), and today's `disinto secrets add` silently deposits secrets into a dead-letter directory. Operator runs the command, edge container still logs `CADDY_SSH_KEY not set, skipping` (docker/edge/entrypoint-edge.sh:207).\n\n## Proposed solution\n\nConsolidate on `secrets/<NAME>.enc` as THE store. One file per secret, granular, small surface.\n\n**1. Wire container dispatchers to load `secrets/*.enc` into env**\n\n- `docker/edge/dispatcher.sh` (and agent / ops dispatchers) decrypt declared secrets at startup and export them.\n- Granular per-secret — not a bulk dump.\n\n**2. Containers declare required secrets**\n\n- `secrets.required = [\"CADDY_SSH_KEY\", \"CADDY_SSH_HOST\", ...]` in the container's TOML, or equivalent in compose.\n- Missing required secret → **hard fail** with clear message. Replaces today's silent-skip branch at `entrypoint-edge.sh:207`.\n\n**3. Deprecate the monolithic vault**\n\n- Remove `.env.vault`, `.env.vault.enc`, and subcommands `edit-vault` / `show-vault` / `migrate-vault` from `bin/disinto`.\n- Remove sops round-trip from `docker/edge/dispatcher.sh` (lines 32-40 currently).\n\n**4. One-shot migration for existing operators**\n\n- `disinto secrets migrate-from-vault` splits an existing `.env.vault.enc` into `secrets/<KEY>.enc` files, verifies each, then removes the old vault on success.\n- Idempotent: safe to run multiple times.\n\n## Context\n\n- Parent: sprint PR `disinto-admin/disinto-ops#10`.\n- Depends on: #776 (`secrets add` must accept piped stdin before we can deprecate `edit-vault`) — now closed.\n- Rationale (operator quote): *\"containers should have option to load single secrets, granular. no 2 mental models, only 1 thing that works well and has small surface.\"*\n\n## Acceptance criteria\n\n- [ ] Edge container declares `secrets.required = [\"CADDY_SSH_KEY\", \"CADDY_SSH_HOST\", \"CADDY_SSH_USER\", \"CADDY_ACCESS_LOG\"]`; dispatcher exports them; `collect-engagement.sh` runs without additional env wiring\n- [ ] Container refuses to start when a required secret is missing (fail loudly, not skip silently)\n- [ ] `.env.vault*` files and all vault-specific subcommands removed from `bin/disinto` and all formulas / docs\n- [ ] `migrate-from-vault` converts an existing monolithic vault correctly (verified by round-trip test)\n- [ ] `disinto secrets` help text shows one store, four verbs: `add`, `show`, `remove`, `list`\n\n## Affected files\n\n- `bin/disinto` — remove `edit-vault`, `show-vault`, `migrate-vault` subcommands; add `migrate-from-vault`\n- `docker/edge/dispatcher.sh` — replace sops round-trip with per-secret age decryption (lines 32-40)\n- `docker/edge/entrypoint-edge.sh` — replace silent-skip at line 207 with hard fail on missing required secrets\n- `lib/vault.sh` — update or remove vault-env.sh wiring now that `.env.vault.enc` is deprecated\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 777,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 777,
+    "label": "backlog"
   }
 ]

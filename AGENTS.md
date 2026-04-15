@@ -1,4 +1,4 @@
-<!-- last-reviewed: be463c5b439aec1ef0d4acfafc47e94896f5dc57 -->
+<!-- last-reviewed: 18190874cae869527f675f717423ded735f2c555 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -187,8 +187,6 @@ Humans write these. Agents read and enforce them.
 - **Planner** plans within the architecture; does not create issues that violate ADs.
 - **Dev-agent** reads AGENTS.md before implementing; refuses work that violates ADs.
 - **AD-002 is a runtime invariant; nothing for the gardener to check at issue-groom time.** OAuth concurrency is handled by per-session `CLAUDE_CONFIG_DIR` isolation (with `CLAUDE_EXTERNAL_LOCK` as a rollback flag). Per-issue work is enforced by `issue_claim`. A violation manifests as a 401 or VRAM OOM in agent logs, not as a malformed issue.
-
----
 
 ## Phase-Signaling Protocol
 
