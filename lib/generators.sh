@@ -652,7 +652,11 @@ _generate_agent_docker_impl() {
   fi
 }
 
-# Generate docker/Caddyfile template for edge proxy.
+# Generate docker/Caddyfile for the edge proxy.
+# **CANONICAL SOURCE**: This generator is the single source of truth for the Caddyfile.
+# Output path: ${FACTORY_ROOT}/docker/Caddyfile (gitignored — generated artifact).
+# The edge compose service mounts this path as /etc/caddy/Caddyfile.
+# On a fresh clone, `disinto init` calls generate_caddyfile before first `disinto up`.
 _generate_caddyfile_impl() {
   local docker_dir="${FACTORY_ROOT}/docker"
   local caddyfile="${docker_dir}/Caddyfile"
