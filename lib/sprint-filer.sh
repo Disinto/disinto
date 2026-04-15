@@ -43,29 +43,10 @@ filer_log() {
 : "${FORGE_API:?sprint-filer.sh requires FORGE_API}"
 
 # ── Paginated Forgejo API fetch ──────────────────────────────────────────
-# Fetches all pages of a Forgejo API list endpoint and merges into one JSON array.
+# Reuses forge_api_all from lib/env.sh with FORGE_FILER_TOKEN.
 # Args: api_path (e.g. /issues?state=all&type=issues)
 # Output: merged JSON array to stdout
-filer_api_all() {
-  local path_prefix="$1"
-  local sep page page_items count all_items="[]"
-  case "$path_prefix" in
-    *"?"*) sep="&" ;;
-    *) sep="?" ;;
-  esac
-  page=1
-  while true; do
-    page_items=$(curl -sf -H "Authorization: token ${FORGE_FILER_TOKEN}" \
-      "${FORGE_API}${path_prefix}${sep}limit=50&page=${page}" 2>/dev/null) || page_items="[]"
-    count=$(printf '%s' "$page_items" | jq 'length' 2>/dev/null) || count=0
-    [ -z "$count" ] && count=0
-    [ "$count" -eq 0 ] && break
-    all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
-    [ "$count" -lt 50 ] && break
-    page=$((page + 1))
-  done
-  printf '%s' "$all_items"
-}
+filer_api_all() { forge_api_all "$1" "$FORGE_FILER_TOKEN"; }
 
 # ── Parse sub-issues block from a sprint markdown file ───────────────────
 # Extracts the YAML-in-markdown between <!-- filer:begin --> and <!-- filer:end -->
