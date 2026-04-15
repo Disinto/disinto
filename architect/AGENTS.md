@@ -10,9 +10,9 @@ converses with humans through PR comments.
 ## Role
 
 - **Input**: Vision issues from VISION.md, prerequisite tree from ops repo
-- **Output**: Sprint proposals as PRs on the ops repo, sub-issue files
+- **Output**: Sprint proposals as PRs on the ops repo (with embedded `## Sub-issues` blocks)
 - **Mechanism**: Bash-driven orchestration in `architect-run.sh`, pitching formula via `formulas/run-architect.toml`
-- **Identity**: `architect-bot` on Forgejo
+- **Identity**: `architect-bot` on Forgejo (READ-ONLY on project repo, write on ops repo only — #764)
 
 ## Responsibilities
 
@@ -24,16 +24,17 @@ converses with humans through PR comments.
    acceptance criteria and dependencies
 4. **Human conversation**: Respond to PR comments, refine sprint proposals based
    on human feedback
-5. **Sub-issue filing**: After design forks are resolved, file concrete sub-issues
-   for implementation
+5. **Sub-issue definition**: Define concrete sub-issues in the `## Sub-issues`
+   block of the sprint spec. Filing is handled by `filer-bot` after sprint PR
+   merge (#764)
 
 ## Formula
 
 The architect pitching is driven by `formulas/run-architect.toml`. This formula defines
 the steps for:
 - Research: analyzing vision items and prerequisite tree
-- Pitch: creating structured sprint PRs
-- Sub-issue filing: creating concrete implementation issues
+- Pitch: creating structured sprint PRs with embedded `## Sub-issues` blocks
+- Design Q&A: refining the sprint via PR comments after human ACCEPT
 
 ## Bash-driven orchestration
 
@@ -57,22 +58,31 @@ APPROVED review → start design questions (model posts Q1:, adds Design forks s
   ↓
 Answers received → continue Q&A (model processes answers, posts follow-ups)
   ↓
-All forks resolved → sub-issue filing (model files implementation issues)
+All forks resolved → finalize ## Sub-issues section in sprint spec
+  ↓
+Sprint PR merged → filer-bot files sub-issues on project repo (#764)
   ↓
 REJECT review → close PR + journal (model processes rejection, bash merges PR)
 ```
 
 ### Vision issue lifecycle
 
-Vision issues decompose into sprint sub-issues tracked via "Decomposed from #N" in sub-issue bodies. The architect automatically closes vision issues when all sub-issues are closed:
+Vision issues decompose into sprint sub-issues. Sub-issues are defined in the
+`## Sub-issues` block of the sprint spec (between `<!-- filer:begin -->` and
+`<!-- filer:end -->` markers) and filed by `filer-bot` after the sprint PR merges
+on the ops repo (#764).
 
-1. Before picking new vision issues, the architect checks each open vision issue
-2. For each, it queries merged sprint PRs — **only PRs whose title or body reference the specific vision issue** (matched via `#N` pattern, filtering out unrelated PRs that happen to close unrelated issues) (#735/#736)
-3. Extracts sub-issue numbers from those PRs, excluding the vision issue itself
-4. If all sub-issues are closed, posts a summary comment listing completed sub-issues (with an idempotency guard: checks both comment presence AND `.state == "closed"` — if the comment exists but the issue is still open, retries the close rather than returning early) (#737)
-5. The vision issue is then closed automatically
+Each filer-created sub-issue carries a `<!-- decomposed-from: #<vision>, sprint: <slug>, id: <id> -->`
+marker in its body for idempotency and traceability.
 
-This ensures vision issues transition from `open` → `closed` once their work is complete, without manual intervention. The #N-scoped matching prevents false positives where unrelated sub-issues would incorrectly trigger vision issue closure.
+The filer-bot (via `lib/sprint-filer.sh`) handles vision lifecycle:
+1. After filing sub-issues, adds `in-progress` label to the vision issue
+2. On each run, checks if all sub-issues for a vision are closed
+3. If all closed, posts a summary comment and closes the vision issue
+
+The architect no longer writes to the project repo — it is read-only (#764).
+All project-repo writes (issue filing, label management, vision closure) are
+handled by filer-bot with its narrowly-scoped `FORGE_FILER_TOKEN`.
 
 ### Session management
 
@@ -95,7 +105,9 @@ Run via `architect/architect-run.sh`, which:
   - Selects up to `pitch_budget` (3 - open architect PRs) remaining vision issues
   - For each selected issue, invokes stateless `claude -p` with issue body + context
   - Creates PRs directly from pitch content (no scratch files)
-- Agent is invoked only for response processing (ACCEPT/REJECT handling)
+- Agent is invoked for stateless pitch generation and response processing (ACCEPT/REJECT handling)
+- NOTE: architect-bot is read-only on the project repo (#764) — sub-issue filing
+  and in-progress label management are handled by filer-bot after sprint PR merge
 
 **Multi-sprint pitching**: The architect pitches up to 3 sprints per run. Bash handles all state management:
 - Fetches Forgejo API data (vision issues, open PRs, merged PRs)
@@ -120,4 +132,5 @@ empty file not created, just document it).
 - #100: Architect formula — research + design fork identification
 - #101: Architect formula — sprint PR creation with questions
 - #102: Architect formula — answer parsing + sub-issue filing
+- #764: Permission scoping — architect read-only on project repo, filer-bot files sub-issues
 - #491: Refactor — bash-driven design phase with stateful session resumption

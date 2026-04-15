@@ -42,6 +42,31 @@ filer_log() {
 : "${FORGE_FILER_TOKEN:?sprint-filer.sh requires FORGE_FILER_TOKEN}"
 : "${FORGE_API:?sprint-filer.sh requires FORGE_API}"
 
+# ── Paginated Forgejo API fetch ──────────────────────────────────────────
+# Fetches all pages of a Forgejo API list endpoint and merges into one JSON array.
+# Args: api_path (e.g. /issues?state=all&type=issues)
+# Output: merged JSON array to stdout
+filer_api_all() {
+  local path_prefix="$1"
+  local sep page page_items count all_items="[]"
+  case "$path_prefix" in
+    *"?"*) sep="&" ;;
+    *) sep="?" ;;
+  esac
+  page=1
+  while true; do
+    page_items=$(curl -sf -H "Authorization: token ${FORGE_FILER_TOKEN}" \
+      "${FORGE_API}${path_prefix}${sep}limit=50&page=${page}" 2>/dev/null) || page_items="[]"
+    count=$(printf '%s' "$page_items" | jq 'length' 2>/dev/null) || count=0
+    [ -z "$count" ] && count=0
+    [ "$count" -eq 0 ] && break
+    all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
+    [ "$count" -lt 50 ] && break
+    page=$((page + 1))
+  done
+  printf '%s' "$all_items"
+}
+
 # ── Parse sub-issues block from a sprint markdown file ───────────────────
 # Extracts the YAML-in-markdown between <!-- filer:begin --> and <!-- filer:end -->
 # Args: sprint_file_path
@@ -93,11 +118,36 @@ parse_subissues_block() {
 }
 
 # ── Extract vision issue number from sprint file ─────────────────────────
-# Looks for "## Vision issues" section with "#N" references
+# Looks for "#N" references specifically in the "## Vision issues" section
+# to avoid picking up cross-links or related-issue mentions earlier in the file.
+# Falls back to first #N in the file if no "## Vision issues" section found.
 # Args: sprint_file_path
 # Output: first vision issue number found
 extract_vision_issue() {
   local sprint_file="$1"
+
+  # Try to extract from "## Vision issues" section first
+  local in_section=false
+  local result=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^##[[:space:]]+Vision[[:space:]]+issues ]]; then
+      in_section=true
+      continue
+    fi
+    # Stop at next heading
+    if [ "$in_section" = true ] && [[ "$line" =~ ^## ]]; then
+      break
+    fi
+    if [ "$in_section" = true ]; then
+      result=$(printf '%s' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+      if [ -n "$result" ]; then
+        printf '%s' "$result"
+        return 0
+      fi
+    fi
+  done < "$sprint_file"
+
+  # Fallback: first #N in the entire file
   grep -oE '#[0-9]+' "$sprint_file" | head -1 | tr -d '#'
 }
 
@@ -255,10 +305,9 @@ subissue_exists() {
 
   local marker="<!-- decomposed-from: #${vision_issue}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
 
-  # Search for issues with this exact marker
+  # Search all issues (paginated) for the exact marker
   local issues_json
-  issues_json=$(curl -sf -H "Authorization: token ${FORGE_FILER_TOKEN}" \
-    "${FORGE_API}/issues?state=all&limit=50&type=issues" 2>/dev/null) || issues_json="[]"
+  issues_json=$(filer_api_all "/issues?state=all&type=issues")
 
   if printf '%s' "$issues_json" | jq -e --arg marker "$marker" \
     '[.[] | select(.body // "" | contains($marker))] | length > 0' >/dev/null 2>&1; then
@@ -444,8 +493,7 @@ check_and_close_completed_visions() {
   filer_log "Checking for vision issues with all sub-issues complete..."
 
   local vision_issues_json
-  vision_issues_json=$(curl -sf -H "Authorization: token ${FORGE_FILER_TOKEN}" \
-    "${FORGE_API}/issues?labels=vision&state=open&limit=100" 2>/dev/null) || vision_issues_json="[]"
+  vision_issues_json=$(filer_api_all "/issues?labels=vision&state=open")
 
   if [ "$vision_issues_json" = "[]" ] || [ "$vision_issues_json" = "null" ]; then
     filer_log "No open vision issues found"
@@ -453,8 +501,7 @@ check_and_close_completed_visions() {
   fi
 
   local all_issues
-  all_issues=$(curl -sf -H "Authorization: token ${FORGE_FILER_TOKEN}" \
-    "${FORGE_API}/issues?state=all&limit=200&type=issues" 2>/dev/null) || all_issues="[]"
+  all_issues=$(filer_api_all "/issues?state=all&type=issues")
 
   local vision_nums
   vision_nums=$(printf '%s' "$vision_issues_json" | jq -r '.[].number' 2>/dev/null) || return 0
