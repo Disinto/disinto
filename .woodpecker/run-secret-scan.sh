@@ -23,7 +23,9 @@ SECRET_PATH_PATTERNS=(
 path_regex=$(printf '%s|' "${SECRET_PATH_PATTERNS[@]}")
 path_regex="${path_regex%|}"
 
-# Get files changed in this PR vs target branch
+# Get files changed in this PR vs target branch.
+# Note: shallow clone (depth 50) may lack the merge base for very large PRs,
+# causing git diff to fail — || true means the gate skips rather than blocks.
 changed_files=$(git diff --name-only --diff-filter=ACMR "origin/${CI_COMMIT_TARGET_BRANCH}...HEAD" || true)
 
 if [ -z "$changed_files" ]; then
