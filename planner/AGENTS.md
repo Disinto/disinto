@@ -34,7 +34,9 @@ will then sections) and marks the prerequisite as blocked-on-vault in the tree.
 Deduplication: checks pending/ + approved/ + fired/ before creating.
 Phase 4 (journal-and-memory): write updated prerequisite tree + daily journal
 entry (committed to ops repo) and update `$OPS_REPO_ROOT/knowledge/planner-memory.md`.
-Phase 5 (commit-ops): commit all ops repo changes, push directly.
+Phase 5 (commit-ops): commit all ops repo changes to a `planner/run-YYYY-MM-DD`
+branch, then create a PR and walk it to merge via review-bot (`pr_create` →
+`pr_walk_to_merge`), mirroring the architect's ops flow. No direct push to main.
 AGENTS.md maintenance is handled by the Gardener.
 
 **Artifacts use `$OPS_REPO_ROOT`**: All planner artifacts (journal,
@@ -55,7 +57,7 @@ nervous system component, not work.
   creates tmux session, injects formula prompt, monitors phase file, handles crash recovery, cleans up
 - `formulas/run-planner.toml` — Execution spec: six steps (preflight,
   prediction-triage, update-prerequisite-tree, file-at-constraints,
-  journal-and-memory, commit-and-pr) with `needs` dependencies. Claude
+  journal-and-memory, commit-ops-changes) with `needs` dependencies. Claude
   executes all steps in a single interactive session with tool access
 - `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
   grooming. (Note: the planner no longer dispatches breakdown mode — complex
