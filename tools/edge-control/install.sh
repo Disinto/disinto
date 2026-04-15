@@ -225,13 +225,19 @@ EOF
 chmod 600 "$GANDI_ENV"
 
 # Create Caddyfile with admin API and wildcard cert
+# The "servers" global option names the auto-generated server "edge" so that
+# lib/caddy.sh (which discovers the server dynamically) finds a predictable
+# name — defense-in-depth alongside the dynamic discovery in add_route.
 CADDYFILE="/etc/caddy/Caddyfile"
-cat > "$CADDYFILE" <<EOF
+cat > "$CADDYFILE" <<'CADDYEOF'
 # Caddy configuration for edge control plane
 # Admin API enabled on 127.0.0.1:2019
 
 {
   admin localhost:2019
+  servers {
+    name edge
+  }
 }
 
 # Default site (reverse proxy for edge tunnels will be added dynamically)
@@ -240,7 +246,7 @@ cat > "$CADDYFILE" <<EOF
     dns gandi {env.GANDI_API_KEY}
   }
 }
-EOF
+CADDYEOF
 
 # Start Caddy
 systemctl restart caddy 2>/dev/null || {
