@@ -1,0 +1,64 @@
+# .woodpecker/publish-images.yml — Build and push versioned container images
+# Triggered on tag pushes (e.g. v1.2.3). Builds and pushes:
+#   - ghcr.io/disinto/agents:<tag>
+#   - ghcr.io/disinto/reproduce:<tag>
+#   - ghcr.io/disinto/edge:<tag>
+#
+# Requires GHCR_TOKEN secret configured in Woodpecker with push access
+# to ghcr.io/disinto.
+
+when:
+  event: tag
+  ref: refs/tags/v*
+
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:$FORGE_TOKEN@|")
+      - git clone --depth 1 "$AUTH_URL" .
+      - git fetch --depth 1 origin "$CI_COMMIT_REF"
+      - git checkout FETCH_HEAD
+
+steps:
+  - name: build-and-push-agents
+    image: plugins/docker
+    settings:
+      repo: ghcr.io/disinto/agents
+      registry: ghcr.io
+      dockerfile: docker/agents/Dockerfile
+      context: .
+      tags:
+        - ${CI_COMMIT_TAG}
+        - latest
+      username: disinto
+      password:
+        from_secret: GHCR_TOKEN
+
+  - name: build-and-push-reproduce
+    image: plugins/docker
+    settings:
+      repo: ghcr.io/disinto/reproduce
+      registry: ghcr.io
+      dockerfile: docker/reproduce/Dockerfile
+      context: .
+      tags:
+        - ${CI_COMMIT_TAG}
+        - latest
+      username: disinto
+      password:
+        from_secret: GHCR_TOKEN
+
+  - name: build-and-push-edge
+    image: plugins/docker
+    settings:
+      repo: ghcr.io/disinto/edge
+      registry: ghcr.io
+      dockerfile: docker/edge/Dockerfile
+      context: docker/edge
+      tags:
+        - ${CI_COMMIT_TAG}
+        - latest
+      username: disinto
+      password:
+        from_secret: GHCR_TOKEN

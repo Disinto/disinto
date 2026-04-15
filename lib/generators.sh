@@ -100,9 +100,7 @@ _generate_local_model_services() {
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
-    build:
-      context: .
-      dockerfile: docker/agents/Dockerfile
+    image: ghcr.io/disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-agents-${service_name}
     restart: unless-stopped
     security_opt:
@@ -233,6 +231,7 @@ for name, config in agents.items():
 # to materialize a working stack on a fresh checkout.
 _generate_compose_impl() {
   local forge_port="${1:-3000}"
+  local use_build="${2:-false}"
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
 
   # Check if compose file already exists
@@ -324,9 +323,7 @@ services:
       - woodpecker
 
   agents:
-    build:
-      context: .
-      dockerfile: docker/agents/Dockerfile
+    image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-agents
     restart: unless-stopped
     security_opt:
@@ -340,6 +337,9 @@ services:
       - ${HOME}/.ssh:/home/agent/.ssh:ro
       - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - ./.env:/home/agent/disinto/.env:ro
+      - ./state:/home/agent/disinto/state
     environment:
       FORGE_URL: http://forgejo:3000
       FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
@@ -382,9 +382,7 @@ services:
       - disinto-net
 
   runner:
-    build:
-      context: .
-      dockerfile: docker/agents/Dockerfile
+    image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}
     profiles: ["vault"]
     security_opt:
       - apparmor=unconfined
@@ -405,7 +403,7 @@ services:
   # Edge proxy — reverse proxy to Forgejo, Woodpecker, and staging
   # Serves on ports 80/443, routes based on path
   edge:
-    build: ./docker/edge
+    image: ghcr.io/disinto/edge:${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-edge
     restart: unless-stopped
     security_opt:
@@ -571,6 +569,13 @@ COMPOSEEOF
   else
     echo "Warning: claude CLI not found in PATH — update docker-compose.yml volumes manually" >&2
     sed -i "s|CLAUDE_BIN_PLACEHOLDER|/usr/local/bin/claude|g" "$compose_file"
+  fi
+
+  # In build mode, replace image: with build: for locally-built images
+  if [ "$use_build" = true ]; then
+    sed -i 's|^\(  agents:\)|\1|' "$compose_file"
+    sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile|}' "$compose_file"
+    sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build: ./docker/edge|}' "$compose_file"
   fi
 
   echo "Created: ${compose_file}"
