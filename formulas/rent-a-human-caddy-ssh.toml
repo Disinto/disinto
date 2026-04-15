@@ -79,28 +79,23 @@ AND set CADDY_ACCESS_LOG in the factory environment to match.
 
 [[steps]]
 id    = "store-private-key"
-title = "Add the private key to .env.vault.enc as CADDY_SSH_KEY"
+title = "Add the private key as CADDY_SSH_KEY secret"
 needs = ["generate-keypair"]
 description = """
-Store the private key in the factory's encrypted vault secrets.
+Store the private key in the factory's encrypted secrets store.
 
-1. Read the private key:
-     cat caddy-collect
+1. Add the private key using `disinto secrets add`:
 
-2. Add it to .env.vault.enc (or .env.vault for plaintext fallback) as
-   CADDY_SSH_KEY. The key is multi-line, so use the base64-encoded form:
+     cat caddy-collect | disinto secrets add CADDY_SSH_KEY
 
-     echo "CADDY_SSH_KEY=$(base64 -w0 caddy-collect)" >> .env.vault.enc
+   This encrypts the key with age and stores it as secrets/CADDY_SSH_KEY.enc.
 
-   Or, if using SOPS-encrypted vault, decrypt first, add the variable,
-   then re-encrypt.
-
-3. IMPORTANT: After storing, securely delete the local private key file:
+2. IMPORTANT: After storing, securely delete the local private key file:
      shred -u caddy-collect 2>/dev/null || rm -f caddy-collect
      rm -f caddy-collect.pub
 
    The public key is already installed on the Caddy host; the private key
-   now lives only in the vault.
+   now lives only in secrets/CADDY_SSH_KEY.enc.
 
 Never commit the private key to any git repository.
 """
@@ -109,20 +104,19 @@ Never commit the private key to any git repository.
 
 [[steps]]
 id    = "store-caddy-host"
-title = "Add the Caddy host address to .env.vault.enc as CADDY_HOST"
+title = "Add the Caddy host details as secrets"
 needs = ["install-public-key"]
 description = """
-Store the Caddy host connection string so collect-engagement.sh knows
+Store the Caddy connection details so collect-engagement.sh knows
 where to SSH.
 
-1. Add to .env.vault.enc (or .env.vault for plaintext fallback):
+1. Add each value using `disinto secrets add`:
 
-     echo "CADDY_HOST=user@caddy-host-ip-or-domain" >> .env.vault.enc
+     echo 'disinto.ai' | disinto secrets add CADDY_SSH_HOST
+     echo 'debian' | disinto secrets add CADDY_SSH_USER
+     echo '/var/log/caddy/access.log' | disinto secrets add CADDY_ACCESS_LOG
 
-   Replace user@caddy-host-ip-or-domain with the actual SSH user and host
-   (e.g. debian@203.0.113.42 or deploy@caddy.disinto.ai).
-
-2. If using SOPS, decrypt/add/re-encrypt as above.
+   Replace values with the actual SSH host, user, and log path for your setup.
 """
 
 # ── Step 5: Test the connection ──────────────────────────────────────────────

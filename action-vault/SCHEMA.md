@@ -50,7 +50,7 @@ blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium
 
 ## Secret Names
 
-Secret names must be defined in `.env.vault.enc` on the ops repo. The vault validates that requested secrets exist in the allowlist before execution.
+Secret names must have a corresponding `secrets/<NAME>.enc` file (age-encrypted). The vault validates that requested secrets exist in the allowlist before execution.
 
 Common secret names:
 - `CLAWHUB_TOKEN` - Token for ClawHub skill publishing

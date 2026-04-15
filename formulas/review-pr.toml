@@ -213,7 +213,7 @@ should file a vault item instead of executing directly.
 **Exceptions** (do NOT flag these):
 - Code inside `vault/` — the vault system itself is allowed to handle secrets
 - References in comments or documentation explaining the architecture
-- `bin/disinto` setup commands that manage `.env.vault.enc` and the `run` subcommand
+- `bin/disinto` setup commands that manage `secrets/*.enc` and the `run` subcommand
 - Local operations (git push to forge, forge API calls with `FORGE_TOKEN`)
 
 ## 6. Re-review (if previous review is provided)

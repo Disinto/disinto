@@ -50,7 +50,7 @@ description = """
 Fetch today's Caddy access log segment from the remote host using SCP.
 
 The SSH key is read from the environment (CADDY_SSH_KEY), which is
-decrypted from .env.vault.enc by the dispatcher. It is NEVER hardcoded.
+decrypted from secrets/CADDY_SSH_KEY.enc by the edge entrypoint. It is NEVER hardcoded.
 
 1. Write the SSH key to a temporary file with restricted permissions:
      _ssh_key_file=$(mktemp)

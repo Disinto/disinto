@@ -8,7 +8,7 @@
 # 2. Scan vault/actions/ for TOML files without .result.json
 # 3. Verify TOML arrived via merged PR with admin merger (Forgejo API)
 # 4. Validate TOML using vault-env.sh validator
-# 5. Decrypt .env.vault.enc and extract only declared secrets
+# 5. Decrypt declared secrets from secrets/<NAME>.enc (age-encrypted)
 # 6. Launch: docker run --rm disinto/agents:latest <action-id>
 # 7. Write <action-id>.result.json with exit code, timestamp, logs summary
 #
@@ -27,19 +27,34 @@ source "${SCRIPT_ROOT}/../lib/env.sh"
 # the shallow clone only has .toml.example files.
 PROJECTS_DIR="${PROJECTS_DIR:-${FACTORY_ROOT:-/opt/disinto}-projects}"
 
-# Load vault secrets after env.sh (env.sh unsets them for agent security)
-# Vault secrets must be available to the dispatcher
-if [ -f "$FACTORY_ROOT/.env.vault.enc" ] && command -v sops &>/dev/null; then
-  set -a
-  eval "$(sops -d --output-type dotenv "$FACTORY_ROOT/.env.vault.enc" 2>/dev/null)" \
-    || echo "Warning: failed to decrypt .env.vault.enc — vault secrets not loaded" >&2
-  set +a
-elif [ -f "$FACTORY_ROOT/.env.vault" ]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$FACTORY_ROOT/.env.vault"
-  set +a
-fi
+# Load granular secrets from secrets/*.enc (age-encrypted, one file per key).
+# These are decrypted on demand and exported so the dispatcher can pass them
+# to runner containers. Replaces the old monolithic .env.vault.enc store (#777).
+_AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
+_SECRETS_DIR="${FACTORY_ROOT}/secrets"
+
+# decrypt_secret <NAME> — decrypt secrets/<NAME>.enc and print the plaintext value
+decrypt_secret() {
+  local name="$1"
+  local enc_path="${_SECRETS_DIR}/${name}.enc"
+  if [ ! -f "$enc_path" ]; then
+    return 1
+  fi
+  age -d -i "$_AGE_KEY_FILE" "$enc_path" 2>/dev/null
+}
+
+# load_secrets <NAME ...> — decrypt each secret and export it
+load_secrets() {
+  if [ ! -f "$_AGE_KEY_FILE" ]; then
+    echo "Warning: age key not found at ${_AGE_KEY_FILE} — secrets not loaded" >&2
+    return 1
+  fi
+  for name in "$@"; do
+    local val
+    val=$(decrypt_secret "$name") || continue
+    export "$name=$val"
+  done
+}
 
 # Ops repo location (vault/actions directory)
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/debian/disinto-ops}"
@@ -452,17 +467,18 @@ launch_runner() {
   fi
 
   # Add environment variables for secrets (if any declared)
+  # Secrets are decrypted per-key from secrets/<NAME>.enc (#777)
   if [ -n "$secrets_array" ]; then
     for secret in $secrets_array; do
       secret=$(echo "$secret" | xargs)
       if [ -n "$secret" ]; then
-        # Verify secret exists in vault
-        if [ -z "${!secret:-}" ]; then
-          log "ERROR: Secret '${secret}' not found in vault for action ${action_id}"
-          write_result "$action_id" 1 "Secret not found in vault: ${secret}"
+        local secret_val
+        secret_val=$(decrypt_secret "$secret") || {
+          log "ERROR: Secret '${secret}' not found in secrets/*.enc for action ${action_id}"
+          write_result "$action_id" 1 "Secret not found: ${secret} (expected secrets/${secret}.enc)"
           return 1
-        fi
-        cmd+=(-e "${secret}=${!secret}")
+        }
+        cmd+=(-e "${secret}=${secret_val}")
       fi
     done
   else

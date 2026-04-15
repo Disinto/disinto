@@ -1133,8 +1133,6 @@ disinto_secrets() {
   local subcmd="${1:-}"
   local enc_file="${FACTORY_ROOT}/.env.enc"
   local env_file="${FACTORY_ROOT}/.env"
-  local vault_enc_file="${FACTORY_ROOT}/.env.vault.enc"
-  local vault_env_file="${FACTORY_ROOT}/.env.vault"
 
   # Shared helper: ensure sops+age and .sops.yaml exist
   _secrets_ensure_sops() {
@@ -1257,6 +1255,37 @@ disinto_secrets() {
         sops -d "$enc_file"
       fi
       ;;
+    remove)
+      local name="${2:-}"
+      if [ -z "$name" ]; then
+        echo "Usage: disinto secrets remove <NAME>" >&2
+        exit 1
+      fi
+      local enc_path="${secrets_dir}/${name}.enc"
+      if [ ! -f "$enc_path" ]; then
+        echo "Error: ${enc_path} not found" >&2
+        exit 1
+      fi
+      rm -f "$enc_path"
+      echo "Removed: ${enc_path}"
+      ;;
+    list)
+      if [ ! -d "$secrets_dir" ]; then
+        echo "No secrets directory found." >&2
+        exit 0
+      fi
+      local found=false
+      for enc_file_path in "${secrets_dir}"/*.enc; do
+        [ -f "$enc_file_path" ] || continue
+        found=true
+        local secret_name
+        secret_name=$(basename "$enc_file_path" .enc)
+        echo "$secret_name"
+      done
+      if [ "$found" = false ]; then
+        echo "No secrets stored." >&2
+      fi
+      ;;
     edit)
       if [ ! -f "$enc_file" ]; then
         echo "Error: ${enc_file} not found. Run 'disinto secrets migrate' first." >&2
@@ -1280,54 +1309,100 @@ disinto_secrets() {
       rm -f "$env_file"
       echo "Migrated: .env -> .env.enc (plaintext removed)"
       ;;
-    edit-vault)
-      if [ ! -f "$vault_enc_file" ]; then
-        echo "Error: ${vault_enc_file} not found. Run 'disinto secrets migrate-vault' first." >&2
+    migrate-from-vault)
+      # One-shot migration: split .env.vault.enc into secrets/<KEY>.enc files (#777)
+      local vault_enc_file="${FACTORY_ROOT}/.env.vault.enc"
+      local vault_env_file="${FACTORY_ROOT}/.env.vault"
+      local source_file=""
+
+      if [ -f "$vault_enc_file" ] && command -v sops &>/dev/null; then
+        source_file="$vault_enc_file"
+      elif [ -f "$vault_env_file" ]; then
+        source_file="$vault_env_file"
+      else
+        echo "Error: neither .env.vault.enc nor .env.vault found — nothing to migrate." >&2
         exit 1
       fi
-      sops "$vault_enc_file"
-      ;;
-    show-vault)
-      if [ ! -f "$vault_enc_file" ]; then
-        echo "Error: ${vault_enc_file} not found." >&2
+
+      _secrets_ensure_age_key
+      mkdir -p "$secrets_dir"
+
+      # Decrypt vault to temp dotenv
+      local tmp_dotenv
+      tmp_dotenv=$(mktemp /tmp/disinto-vault-migrate-XXXXXX)
+      trap 'rm -f "$tmp_dotenv"' RETURN
+
+      if [ "$source_file" = "$vault_enc_file" ]; then
+        if ! sops -d --output-type dotenv "$vault_enc_file" > "$tmp_dotenv" 2>/dev/null; then
+          rm -f "$tmp_dotenv"
+          echo "Error: failed to decrypt .env.vault.enc" >&2
+          exit 1
+        fi
+      else
+        cp "$vault_env_file" "$tmp_dotenv"
+      fi
+
+      # Parse each KEY=VALUE and encrypt into secrets/<KEY>.enc
+      local count=0
+      local failed=0
+      while IFS='=' read -r key value; do
+        # Skip empty lines and comments
+        [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+        # Trim whitespace from key
+        key=$(echo "$key" | xargs)
+        [ -z "$key" ] && continue
+
+        local enc_path="${secrets_dir}/${key}.enc"
+        if printf '%s' "$value" | age -r "$AGE_PUBLIC_KEY" -o "$enc_path" 2>/dev/null; then
+          # Verify round-trip
+          local check
+          check=$(age -d -i "$age_key_file" "$enc_path" 2>/dev/null) || { failed=$((failed + 1)); echo "  FAIL (verify): ${key}" >&2; continue; }
+          if [ "$check" = "$value" ]; then
+            echo "  OK: ${key} -> secrets/${key}.enc"
+            count=$((count + 1))
+          else
+            echo "  FAIL (mismatch): ${key}" >&2
+            failed=$((failed + 1))
+          fi
+        else
+          echo "  FAIL (encrypt): ${key}" >&2
+          failed=$((failed + 1))
+        fi
+      done < "$tmp_dotenv"
+
+      rm -f "$tmp_dotenv"
+
+      if [ "$failed" -gt 0 ]; then
+        echo "Error: ${failed} secret(s) failed migration. Vault files NOT removed." >&2
         exit 1
       fi
-      sops -d "$vault_enc_file"
-      ;;
-    migrate-vault)
-      if [ ! -f "$vault_env_file" ]; then
-        echo "Error: ${vault_env_file} not found — nothing to migrate." >&2
-        echo "  Create .env.vault with vault secrets (GITHUB_TOKEN, deploy keys, etc.)" >&2
-        exit 1
+
+      if [ "$count" -eq 0 ]; then
+        echo "Warning: no secrets found in vault file." >&2
+      else
+        echo "Migrated ${count} secret(s) to secrets/*.enc"
+        # Remove old vault files on success
+        rm -f "$vault_enc_file" "$vault_env_file"
+        echo "Removed: .env.vault.enc / .env.vault"
       fi
-      _secrets_ensure_sops
-      encrypt_env_file "$vault_env_file" "$vault_enc_file"
-      # Verify decryption works before removing plaintext
-      if ! sops -d "$vault_enc_file" >/dev/null 2>&1; then
-        echo "Error: failed to verify .env.vault.enc decryption" >&2
-        rm -f "$vault_enc_file"
-        exit 1
-      fi
-      rm -f "$vault_env_file"
-      echo "Migrated: .env.vault -> .env.vault.enc (plaintext removed)"
       ;;
     *)
       cat <<EOF >&2
 Usage: disinto secrets <subcommand>
 
-Individual secrets (secrets/<NAME>.enc):
-  add <NAME>     Prompt for value, encrypt, store in secrets/<NAME>.enc
-  show <NAME>    Decrypt and print an individual secret
+Secrets (secrets/<NAME>.enc — age-encrypted, one file per key):
+  add <NAME>          Prompt for value, encrypt, store in secrets/<NAME>.enc
+  show <NAME>         Decrypt and print a secret
+  remove <NAME>       Remove a secret
+  list                List all stored secrets
 
-Agent secrets (.env.enc):
-  edit           Edit agent secrets (FORGE_TOKEN, CLAUDE_API_KEY, etc.)
-  show           Show decrypted agent secrets (no argument)
-  migrate        Encrypt .env -> .env.enc
+Agent secrets (.env.enc — sops-encrypted dotenv):
+  edit                Edit agent secrets (FORGE_TOKEN, CLAUDE_API_KEY, etc.)
+  show                Show decrypted agent secrets (no argument)
+  migrate             Encrypt .env -> .env.enc
 
-Vault secrets (.env.vault.enc):
-  edit-vault     Edit vault secrets (GITHUB_TOKEN, deploy keys, etc.)
-  show-vault     Show decrypted vault secrets
-  migrate-vault  Encrypt .env.vault -> .env.vault.enc
+Migration:
+  migrate-from-vault  Split .env.vault.enc into secrets/<KEY>.enc (one-shot)
 EOF
       exit 1
       ;;
@@ -1339,7 +1414,8 @@ EOF
 disinto_run() {
   local action_id="${1:?Usage: disinto run <action-id>}"
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
-  local vault_enc="${FACTORY_ROOT}/.env.vault.enc"
+  local secrets_dir="${FACTORY_ROOT}/secrets"
+  local age_key_file="${HOME}/.config/sops/age/keys.txt"
 
   if [ ! -f "$compose_file" ]; then
     echo "Error: docker-compose.yml not found" >&2
@@ -1347,29 +1423,42 @@ disinto_run() {
     exit 1
   fi
 
-  if [ ! -f "$vault_enc" ]; then
-    echo "Error: .env.vault.enc not found — create vault secrets first" >&2
-    echo "  Run 'disinto secrets migrate-vault' after creating .env.vault" >&2
+  if [ ! -d "$secrets_dir" ]; then
+    echo "Error: secrets/ directory not found — create secrets first" >&2
+    echo "  Run 'disinto secrets add <NAME>' to add secrets" >&2
     exit 1
   fi
 
-  if ! command -v sops &>/dev/null; then
-    echo "Error: sops not found — required to decrypt vault secrets" >&2
+  if ! command -v age &>/dev/null; then
+    echo "Error: age not found — required to decrypt secrets" >&2
     exit 1
   fi
 
-  # Decrypt vault secrets to temp file
+  if [ ! -f "$age_key_file" ]; then
+    echo "Error: age key not found at ${age_key_file}" >&2
+    exit 1
+  fi
+
+  # Decrypt all secrets/*.enc into a temp env file for the runner
   local tmp_env
-  tmp_env=$(mktemp /tmp/disinto-vault-XXXXXX)
+  tmp_env=$(mktemp /tmp/disinto-secrets-XXXXXX)
   trap 'rm -f "$tmp_env"' EXIT
 
-  if ! sops -d --output-type dotenv "$vault_enc" > "$tmp_env" 2>/dev/null; then
-    rm -f "$tmp_env"
-    echo "Error: failed to decrypt .env.vault.enc" >&2
-    exit 1
-  fi
+  local count=0
+  for enc_path in "${secrets_dir}"/*.enc; do
+    [ -f "$enc_path" ] || continue
+    local key
+    key=$(basename "$enc_path" .enc)
+    local val
+    val=$(age -d -i "$age_key_file" "$enc_path" 2>/dev/null) || {
+      echo "Warning: failed to decrypt ${enc_path}" >&2
+      continue
+    }
+    printf '%s=%s\n' "$key" "$val" >> "$tmp_env"
+    count=$((count + 1))
+  done
 
-  echo "Vault secrets decrypted to tmpfile"
+  echo "Decrypted ${count} secret(s) to tmpfile"
 
   # Run action in ephemeral runner container
   local rc=0

@@ -173,9 +173,40 @@ PROJECT_TOML="${PROJECT_TOML:-projects/disinto.toml}"
   sleep 1200  # 20 minutes
 done) &
 
+# ── Load required secrets from secrets/*.enc (#777) ────────────────────
+# Edge container declares its required secrets; missing ones cause a hard fail.
+_AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
+_SECRETS_DIR="/opt/disinto/secrets"
+EDGE_REQUIRED_SECRETS="CADDY_SSH_KEY CADDY_SSH_HOST CADDY_SSH_USER CADDY_ACCESS_LOG"
+
+_edge_decrypt_secret() {
+  local enc_path="${_SECRETS_DIR}/${1}.enc"
+  [ -f "$enc_path" ] || return 1
+  age -d -i "$_AGE_KEY_FILE" "$enc_path" 2>/dev/null
+}
+
+if [ -f "$_AGE_KEY_FILE" ] && [ -d "$_SECRETS_DIR" ]; then
+  _missing=""
+  for _secret_name in $EDGE_REQUIRED_SECRETS; do
+    _val=$(_edge_decrypt_secret "$_secret_name") || { _missing="${_missing} ${_secret_name}"; continue; }
+    export "$_secret_name=$_val"
+  done
+  if [ -n "$_missing" ]; then
+    echo "FATAL: required secrets missing from secrets/*.enc:${_missing}" >&2
+    echo "  Run 'disinto secrets add <NAME>' for each missing secret." >&2
+    echo "  If migrating from .env.vault.enc, run 'disinto secrets migrate-from-vault' first." >&2
+    exit 1
+  fi
+  echo "edge: loaded required secrets: ${EDGE_REQUIRED_SECRETS}" >&2
+else
+  echo "FATAL: age key (${_AGE_KEY_FILE}) or secrets dir (${_SECRETS_DIR}) not found — cannot load required secrets" >&2
+  echo "  Ensure age is installed and secrets/*.enc files are present." >&2
+  exit 1
+fi
+
 # Start daily engagement collection cron loop in background (#745)
 # Runs collect-engagement.sh daily at ~23:50 UTC via a sleep loop that
-# calculates seconds until the next 23:50 window. SSH key from .env.vault.enc.
+# calculates seconds until the next 23:50 window. SSH key from secrets/*.enc (#777).
 (while true; do
   # Calculate seconds until next 23:50 UTC
   _now=$(date -u +%s)
@@ -186,26 +217,21 @@ done) &
   _sleep_secs=$(( _target - _now ))
   echo "edge: collect-engagement scheduled in ${_sleep_secs}s (next 23:50 UTC)" >&2
   sleep "$_sleep_secs"
-  # Set CADDY_ACCESS_LOG so the script reads from the fetched local copy
   _fetch_log="/tmp/caddy-access-log-fetch.log"
-  if [ -n "${CADDY_SSH_KEY:-}" ]; then
-    _ssh_key_file=$(mktemp)
-    printf '%s\n' "$CADDY_SSH_KEY" > "$_ssh_key_file"
-    chmod 0600 "$_ssh_key_file"
-    scp -i "$_ssh_key_file" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes \
-      "${CADDY_SSH_USER:-debian}@${CADDY_SSH_HOST:-disinto.ai}:${CADDY_ACCESS_LOG:-/var/log/caddy/access.log}" \
-      "$_fetch_log" 2>&1 | tee -a /opt/disinto-logs/collect-engagement.log || true
-    rm -f "$_ssh_key_file"
-    if [ -s "$_fetch_log" ]; then
-      CADDY_ACCESS_LOG="$_fetch_log" bash /opt/disinto/site/collect-engagement.sh 2>&1 \
-        | tee -a /opt/disinto-logs/collect-engagement.log || true
-    else
-      echo "edge: collect-engagement: fetched log is empty, skipping parse" >&2
-    fi
-    rm -f "$_fetch_log"
+  _ssh_key_file=$(mktemp)
+  printf '%s\n' "$CADDY_SSH_KEY" > "$_ssh_key_file"
+  chmod 0600 "$_ssh_key_file"
+  scp -i "$_ssh_key_file" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes \
+    "${CADDY_SSH_USER}@${CADDY_SSH_HOST}:${CADDY_ACCESS_LOG}" \
+    "$_fetch_log" 2>&1 | tee -a /opt/disinto-logs/collect-engagement.log || true
+  rm -f "$_ssh_key_file"
+  if [ -s "$_fetch_log" ]; then
+    CADDY_ACCESS_LOG="$_fetch_log" bash /opt/disinto/site/collect-engagement.sh 2>&1 \
+      | tee -a /opt/disinto-logs/collect-engagement.log || true
   else
-    echo "edge: collect-engagement: CADDY_SSH_KEY not set, skipping" >&2
+    echo "edge: collect-engagement: fetched log is empty, skipping parse" >&2
   fi
+  rm -f "$_fetch_log"
 done) &
 
 # Caddy as main process — run in foreground via wait so background jobs survive
