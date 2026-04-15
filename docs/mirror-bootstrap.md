@@ -8,7 +8,7 @@ How to populate an empty Forgejo repo from an external source using
 | Variable | Example | Purpose |
 |---|---|---|
 | `FORGE_URL` | `http://forgejo:3000` | Forgejo instance base URL |
-| `FORGE_API` | `${FORGE_URL}/api/v1` | API base (set by `lib/env.sh`) |
+| `FORGE_API_BASE` | `${FORGE_URL}/api/v1` | Global API base (set by `lib/env.sh`) |
 | `FORGE_TOKEN` | (admin or org-owner token) | Must have `repo:create` scope |
 
 The target org/user must already exist on the Forgejo instance.
