@@ -109,9 +109,9 @@ _generate_local_model_services() {
       - agents-${service_name}-data:/home/agent/data
       - project-repos:/home/agent/repos
       - \${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:\${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - \${HOME}/.claude.json:/home/agent/.claude.json:ro
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - \${HOME}/.ssh:/home/agent/.ssh:ro
+      - \${CLAUDE_CONFIG_FILE:-\${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - \${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - \${AGENT_SSH_DIR:-\${HOME}/.ssh}:/home/agent/.ssh:ro
     environment:
       FORGE_URL: http://forgejo:3000
       FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
@@ -339,10 +339,10 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - ${HOME}/.ssh:/home/agent/.ssh:ro
-      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
       - ./projects:/home/agent/disinto/projects:ro
       - ./.env:/home/agent/disinto/.env:ro
@@ -414,10 +414,10 @@ COMPOSEEOF
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - ${HOME}/.ssh:/home/agent/.ssh:ro
-      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
     environment:
       FORGE_URL: http://forgejo:3000
@@ -516,7 +516,7 @@ LLAMAEOF
       - /var/run/docker.sock:/var/run/docker.sock
       - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:2019/config/"]
       interval: 30s
@@ -586,7 +586,7 @@ LLAMAEOF
     memswap_limit: 512m
     volumes:
       # Mount claude binary from host (same as agents)
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
       # Throwaway named volume for chat config (isolated from host ~/.claude)
       - chat-config:/var/chat/config
       # Chat history persistence: per-user NDJSON files on bind-mounted host volume
@@ -649,20 +649,28 @@ COMPOSEEOF
   fi
 
   # Append local-model agent services if any are configured
-  # (must run before CLAUDE_BIN_PLACEHOLDER substitution so the placeholder
-  # in local-model services is also resolved)
   _generate_local_model_services "$compose_file"
 
-  # Patch the Claude CLI binary path — resolve from host PATH at init time.
+  # Resolve the Claude CLI binary path and persist as CLAUDE_BIN_DIR in .env.
+  # docker-compose.yml references ${CLAUDE_BIN_DIR} so the value must be set.
   local claude_bin
   claude_bin="$(command -v claude 2>/dev/null || true)"
   if [ -n "$claude_bin" ]; then
-    # Resolve symlinks to get the real binary path
     claude_bin="$(readlink -f "$claude_bin")"
-    sed -i "s|CLAUDE_BIN_PLACEHOLDER|${claude_bin}|g" "$compose_file"
   else
-    echo "Warning: claude CLI not found in PATH — update docker-compose.yml volumes manually" >&2
-    sed -i "s|CLAUDE_BIN_PLACEHOLDER|/usr/local/bin/claude|g" "$compose_file"
+    echo "Warning: claude CLI not found in PATH — set CLAUDE_BIN_DIR in .env manually" >&2
+    claude_bin="/usr/local/bin/claude"
+  fi
+  # Persist CLAUDE_BIN_DIR into .env so docker-compose can resolve it.
+  local env_file="${FACTORY_ROOT}/.env"
+  if [ -f "$env_file" ]; then
+    if grep -q "^CLAUDE_BIN_DIR=" "$env_file" 2>/dev/null; then
+      sed -i "s|^CLAUDE_BIN_DIR=.*|CLAUDE_BIN_DIR=${claude_bin}|" "$env_file"
+    else
+      printf 'CLAUDE_BIN_DIR=%s\n' "$claude_bin" >> "$env_file"
+    fi
+  else
+    printf 'CLAUDE_BIN_DIR=%s\n' "$claude_bin" > "$env_file"
   fi
 
   # In build mode, replace image: with build: for locally-built images

@@ -14,10 +14,10 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - ${HOME}/.ssh:/home/agent/.ssh:ro
-      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
     environment:
       - FORGE_URL=http://forgejo:3000
@@ -76,10 +76,10 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${HOME}/.claude.json:/home/agent/.claude.json:ro
-      - CLAUDE_BIN_PLACEHOLDER:/usr/local/bin/claude:ro
-      - ${HOME}/.ssh:/home/agent/.ssh:ro
-      - ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
     environment:
       - FORGE_URL=http://forgejo:3000
@@ -134,9 +134,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
-      - ${HOME}/.claude:/home/agent/.claude
-      - /usr/local/bin/claude:/usr/local/bin/claude:ro
-      - ${HOME}/.ssh:/home/agent/.ssh:ro
+      - ${CLAUDE_DIR:-${HOME}/.claude}:/home/agent/.claude
+      - ${CLAUDE_BIN_DIR:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
     env_file:
       - .env
 
@@ -150,9 +150,9 @@ services:
       - apparmor=unconfined
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/local/bin/claude:/usr/local/bin/claude:ro
-      - ${HOME}/.claude.json:/root/.claude.json:ro
-      - ${HOME}/.claude:/root/.claude:ro
+      - ${CLAUDE_BIN_DIR:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/root/.claude.json:ro
+      - ${CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
