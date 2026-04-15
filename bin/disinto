@@ -85,6 +85,7 @@ Init options:
   --build              Use local docker build instead of registry images (dev mode)
   --yes                Skip confirmation prompts
   --rotate-tokens      Force regeneration of all bot tokens/passwords (idempotent by default)
+  --dry-run            Print every intended action without executing
 
 Hire an agent options:
   --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
@@ -653,7 +654,7 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
@@ -664,6 +665,7 @@ disinto_init() {
       --build)         use_build=true; shift ;;
       --yes)           auto_yes=true; shift ;;
       --rotate-tokens) rotate_tokens=true; shift ;;
+      --dry-run)       dry_run=true; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
@@ -738,6 +740,86 @@ p.write_text(text)
         echo "Updated: repo_root in ${toml_path}"
       fi
     fi
+  fi
+
+  # ── Dry-run mode: report intended actions and exit ─────────────────────────
+  if [ "$dry_run" = true ]; then
+    echo ""
+    echo "── Dry-run: intended actions ────────────────────────────"
+    local env_file="${FACTORY_ROOT}/.env"
+    local rr="${repo_root:-/home/${USER}/${project_name}}"
+
+    if [ "$bare" = false ]; then
+      [ -f "${FACTORY_ROOT}/docker-compose.yml" ] \
+        && echo "[skip]   docker-compose.yml (exists)" \
+        || echo "[create] docker-compose.yml"
+    fi
+
+    [ -f "$env_file" ] \
+      && echo "[exists] .env" \
+      || echo "[create] .env"
+
+    # Report token state from .env
+    if [ -f "$env_file" ]; then
+      local _var
+      for _var in FORGE_ADMIN_TOKEN HUMAN_TOKEN FORGE_TOKEN FORGE_REVIEW_TOKEN \
+                  FORGE_PLANNER_TOKEN FORGE_GARDENER_TOKEN FORGE_VAULT_TOKEN \
+                  FORGE_SUPERVISOR_TOKEN FORGE_PREDICTOR_TOKEN FORGE_ARCHITECT_TOKEN; do
+        if grep -q "^${_var}=" "$env_file" 2>/dev/null; then
+          echo "[keep]   ${_var} (preserved)"
+        else
+          echo "[create] ${_var}"
+        fi
+      done
+    else
+      echo "[create] all tokens and passwords"
+    fi
+
+    echo ""
+    echo "[ensure] Forgejo admin user 'disinto-admin'"
+    echo "[ensure] 8 bot users: dev-bot, review-bot, planner-bot, gardener-bot, vault-bot, supervisor-bot, predictor-bot, architect-bot"
+    echo "[ensure] 2 llama bot users: dev-qwen, dev-qwen-nightly"
+    echo "[ensure] .profile repos for all bots"
+    echo "[ensure] repo ${forge_repo} on Forgejo with collaborators"
+    echo "[run]    preflight checks"
+
+    [ -d "${rr}/.git" ] \
+      && echo "[skip]   clone ${rr} (exists)" \
+      || echo "[clone]  ${repo_url} -> ${rr}"
+
+    echo "[push]   to local Forgejo"
+    echo "[ensure] ops repo disinto-admin/${project_name}-ops"
+    echo "[ensure] branch protection on ${forge_repo}"
+
+    [ "$toml_exists" = true ] \
+      && echo "[skip]   ${toml_path} (exists)" \
+      || echo "[create] ${toml_path}"
+
+    if [ "$bare" = false ]; then
+      echo "[ensure] Woodpecker OAuth2 app"
+      echo "[ensure] Chat OAuth2 app"
+      echo "[ensure] WOODPECKER_AGENT_SECRET in .env"
+    fi
+
+    echo "[ensure] labels on ${forge_repo}"
+
+    [ -f "${rr}/VISION.md" ] \
+      && echo "[skip]   VISION.md (exists)" \
+      || echo "[create] VISION.md"
+
+    echo "[copy]   issue templates"
+    echo "[ensure] scheduling (cron or compose polling)"
+
+    if [ "$bare" = false ]; then
+      echo "[start]  docker compose stack"
+      echo "[ensure] Woodpecker token + repo activation"
+    fi
+
+    echo "[ensure] CLAUDE_CONFIG_DIR"
+    echo "[ensure] state files (.dev-active, .reviewer-active, .gardener-active)"
+    echo ""
+    echo "Dry run complete — no changes made."
+    exit 0
   fi
 
   # Generate compose files (unless --bare)

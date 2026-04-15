@@ -29,7 +29,8 @@ cleanup() {
   pkill -f "mock-forgejo.py" 2>/dev/null || true
   rm -rf "$MOCK_BIN" /tmp/smoke-test-repo \
          "${FACTORY_ROOT}/projects/smoke-repo.toml" \
-         /tmp/smoke-claude-shared /tmp/smoke-home-claude
+         /tmp/smoke-claude-shared /tmp/smoke-home-claude \
+         /tmp/smoke-env-before-rerun /tmp/smoke-env-before-dryrun
   # Restore .env only if we created the backup
   if [ -f "${FACTORY_ROOT}/.env.smoke-backup" ]; then
     mv "${FACTORY_ROOT}/.env.smoke-backup" "${FACTORY_ROOT}/.env"
@@ -178,8 +179,30 @@ else
   fail "disinto init exited non-zero"
 fi
 
-# ── Idempotency test: run init again ───────────────────────────────────────
+# ── Dry-run test: must not modify state ────────────────────────────────────
+echo "=== Dry-run test ==="
+cp "${FACTORY_ROOT}/.env" /tmp/smoke-env-before-dryrun
+if bash "${FACTORY_ROOT}/bin/disinto" init \
+  "${TEST_SLUG}" \
+  --bare --yes --dry-run \
+  --forge-url "$FORGE_URL" \
+  --repo-root "/tmp/smoke-test-repo" 2>&1 | grep -q "Dry run complete"; then
+  pass "disinto init --dry-run exited successfully"
+else
+  fail "disinto init --dry-run did not complete"
+fi
+
+# Verify --dry-run did not modify .env
+if diff -q /tmp/smoke-env-before-dryrun "${FACTORY_ROOT}/.env" >/dev/null 2>&1; then
+  pass "dry-run: .env unchanged"
+else
+  fail "dry-run: .env was modified (should be read-only)"
+fi
+rm -f /tmp/smoke-env-before-dryrun
+
+# ── Idempotency test: run init again, verify .env is stable ────────────────
 echo "=== Idempotency test: running disinto init again ==="
+cp "${FACTORY_ROOT}/.env" /tmp/smoke-env-before-rerun
 if bash "${FACTORY_ROOT}/bin/disinto" init \
   "${TEST_SLUG}" \
   --bare --yes \
@@ -188,6 +211,29 @@ if bash "${FACTORY_ROOT}/bin/disinto" init \
   pass "disinto init (re-run) completed successfully"
 else
   fail "disinto init (re-run) exited non-zero"
+fi
+
+# Verify .env is stable across re-runs (no token churn)
+if diff -q /tmp/smoke-env-before-rerun "${FACTORY_ROOT}/.env" >/dev/null 2>&1; then
+  pass "idempotency: .env unchanged on re-run"
+else
+  fail "idempotency: .env changed on re-run (token churn detected)"
+  diff /tmp/smoke-env-before-rerun "${FACTORY_ROOT}/.env" >&2 || true
+fi
+rm -f /tmp/smoke-env-before-rerun
+
+# Verify FORGE_ADMIN_TOKEN is stored in .env
+if grep -q '^FORGE_ADMIN_TOKEN=' "${FACTORY_ROOT}/.env"; then
+  pass ".env contains FORGE_ADMIN_TOKEN"
+else
+  fail ".env missing FORGE_ADMIN_TOKEN"
+fi
+
+# Verify HUMAN_TOKEN is stored in .env
+if grep -q '^HUMAN_TOKEN=' "${FACTORY_ROOT}/.env"; then
+  pass ".env contains HUMAN_TOKEN"
+else
+  fail ".env missing HUMAN_TOKEN"
 fi
 
 # ── 4. Verify Forgejo state ─────────────────────────────────────────────────
