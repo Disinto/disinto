@@ -129,7 +129,7 @@ parse_subissue_entries() {
   BEGIN {
     printf "["
     first = 1
-    in_body = 0
+    inbody = 0
     id = ""; title = ""; labels = ""; depends = ""; body = ""
   }
 
@@ -154,7 +154,7 @@ parse_subissue_entries() {
     printf "{\"id\":\"%s\",\"title\":\"%s\",\"labels\":%s,\"depends_on\":%s,\"body\":\"%s\"}", id, title, labels, depends, body
 
     id = ""; title = ""; labels = "[]"; depends = "[]"; body = ""
-    in_body = 0
+    inbody = 0
   }
 
   /^- id:/ {
@@ -213,19 +213,19 @@ parse_subissue_entries() {
   }
 
   /^  body: *\|/ {
-    in_body = 1
+    inbody = 1
     body = ""
     next
   }
 
-  in_body && /^    / {
+  inbody && /^    / {
     sub(/^    /, "")
     body = body $0 "\n"
     next
   }
 
-  in_body && !/^    / && !/^$/ {
-    in_body = 0
+  inbody && !/^    / && !/^$/ {
+    inbody = 0
     # This line starts a new field or entry — re-process it
     # (awk does not support re-scanning, so handle common cases)
     if ($0 ~ /^- id:/) {
@@ -485,7 +485,8 @@ check_and_close_completed_visions() {
     # All sub-issues closed — close the vision issue
     filer_log "All ${sub_count} sub-issues for vision #${vid} are closed — closing vision"
 
-    local comment_body="## Vision Issue Completed
+    local comment_body
+    comment_body="## Vision Issue Completed
 
 All sub-issues have been implemented and merged. This vision issue is now closed.
 
