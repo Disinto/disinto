@@ -31,8 +31,9 @@ _load_init_context() {
 # Execute a command in the Forgejo container (for admin operations)
 _forgejo_exec() {
   local use_bare="${DISINTO_BARE:-false}"
+  local cname="${FORGEJO_CONTAINER_NAME:-disinto-forgejo}"
   if [ "$use_bare" = true ]; then
-    docker exec -u git disinto-forgejo "$@"
+    docker exec -u git "$cname" "$@"
   else
     docker compose -f "${FACTORY_ROOT}/docker-compose.yml" exec -T -u git forgejo "$@"
   fi
@@ -94,11 +95,12 @@ setup_forge() {
       # Bare-metal mode: standalone docker run
       mkdir -p "${FORGEJO_DATA_DIR}"
 
-      if docker ps -a --format '{{.Names}}' | grep -q '^disinto-forgejo$'; then
-        docker start disinto-forgejo >/dev/null 2>&1 || true
+      local cname="${FORGEJO_CONTAINER_NAME:-disinto-forgejo}"
+      if docker ps -a --format '{{.Names}}' | grep -q "^${cname}$"; then
+        docker start "$cname" >/dev/null 2>&1 || true
       else
         docker run -d \
-          --name disinto-forgejo \
+          --name "$cname" \
           --restart unless-stopped \
           -p "${forge_port}:3000" \
           -p 2222:22 \

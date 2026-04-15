@@ -318,7 +318,7 @@ services:
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_GRPC_SECURE: "false"
       WOODPECKER_HEALTHCHECK_ADDR: ":3333"
-      WOODPECKER_BACKEND_DOCKER_NETWORK: disinto_disinto-net
+      WOODPECKER_BACKEND_DOCKER_NETWORK: ${WOODPECKER_CI_NETWORK:-disinto_disinto-net}
       WOODPECKER_MAX_WORKFLOWS: 1
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/healthz"]
