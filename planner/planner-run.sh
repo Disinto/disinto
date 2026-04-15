@@ -10,7 +10,9 @@
 #   2. Load formula (formulas/run-planner.toml)
 #   3. Context: VISION.md, AGENTS.md, ops:RESOURCES.md, structural graph,
 #      planner memory, journal entries
-#   4. agent_run(worktree, prompt) → Claude plans, may push knowledge updates
+#   4. Create ops branch planner/run-YYYY-MM-DD for changes
+#   5. agent_run(worktree, prompt) → Claude plans, commits to ops branch
+#   6. If ops branch has commits: pr_create → pr_walk_to_merge (review-bot)
 #
 # Usage:
 #   planner-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -35,6 +37,10 @@ source "$FACTORY_ROOT/lib/worktree.sh"
 source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
+# shellcheck source=../lib/ci-helpers.sh
+source "$FACTORY_ROOT/lib/ci-helpers.sh"
+# shellcheck source=../lib/pr-lifecycle.sh
+source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/planner/planner.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -146,11 +152,68 @@ ${PROMPT_FOOTER}"
 # ── Create worktree ──────────────────────────────────────────────────────
 formula_worktree_setup "$WORKTREE"
 
+# ── Prepare ops branch for PR-based merge (#765) ────────────────────────
+PLANNER_OPS_BRANCH="planner/run-$(date -u +%Y-%m-%d)"
+(
+  cd "$OPS_REPO_ROOT"
+  git fetch origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+  git checkout "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+  git pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+  # Create (or reset to) a fresh branch from PRIMARY_BRANCH
+  git checkout -B "$PLANNER_OPS_BRANCH" "origin/${PRIMARY_BRANCH}" --quiet 2>/dev/null || \
+    git checkout -b "$PLANNER_OPS_BRANCH" --quiet 2>/dev/null || true
+)
+log "ops branch: ${PLANNER_OPS_BRANCH}"
+
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="opus"
 
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# ── PR lifecycle: create PR on ops repo and walk to merge (#765) ─────────
+OPS_FORGE_API="${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}"
+ops_has_commits=false
+if ! git -C "$OPS_REPO_ROOT" diff --quiet "origin/${PRIMARY_BRANCH}..${PLANNER_OPS_BRANCH}" 2>/dev/null; then
+  ops_has_commits=true
+fi
+
+if [ "$ops_has_commits" = "true" ]; then
+  log "ops branch has commits — creating PR"
+  # Push the branch to the ops remote
+  git -C "$OPS_REPO_ROOT" push origin "$PLANNER_OPS_BRANCH" --quiet 2>/dev/null || \
+    git -C "$OPS_REPO_ROOT" push --force-with-lease origin "$PLANNER_OPS_BRANCH" 2>/dev/null
+
+  # Temporarily point FORGE_API at the ops repo for pr-lifecycle functions
+  ORIG_FORGE_API="$FORGE_API"
+  export FORGE_API="$OPS_FORGE_API"
+  # Ops repo typically has no Woodpecker CI — skip CI polling
+  ORIG_WOODPECKER_REPO_ID="${WOODPECKER_REPO_ID:-2}"
+  export WOODPECKER_REPO_ID="0"
+
+  PR_NUM=$(pr_create "$PLANNER_OPS_BRANCH" \
+    "chore: planner run $(date -u +%Y-%m-%d)" \
+    "Automated planner run — updates prerequisite tree, memory, and vault items." \
+    "${PRIMARY_BRANCH}" \
+    "$OPS_FORGE_API") || true
+
+  if [ -n "$PR_NUM" ]; then
+    log "ops PR #${PR_NUM} created — walking to merge"
+    SESSION_ID=$(cat "$SID_FILE" 2>/dev/null || echo "planner-$$")
+    pr_walk_to_merge "$PR_NUM" "$SESSION_ID" "$OPS_REPO_ROOT" 1 2 || {
+      log "ops PR #${PR_NUM} walk finished: ${_PR_WALK_EXIT_REASON:-unknown}"
+    }
+    log "ops PR #${PR_NUM} result: ${_PR_WALK_EXIT_REASON:-unknown}"
+  else
+    log "WARNING: failed to create ops PR for branch ${PLANNER_OPS_BRANCH}"
+  fi
+
+  # Restore original FORGE_API
+  export FORGE_API="$ORIG_FORGE_API"
+  export WOODPECKER_REPO_ID="$ORIG_WOODPECKER_REPO_ID"
+else
+  log "no ops changes — skipping PR creation"
+fi
 
 # Persist watermarks so next run can skip if nothing changed
 mkdir -p "$FACTORY_ROOT/state"

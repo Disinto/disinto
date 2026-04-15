@@ -243,7 +243,7 @@ needs = ["preflight"]
 
 [[steps]]
 id    = "commit-ops-changes"
-title = "Write tree, memory, and journal; commit and push"
+title = "Write tree, memory, and journal; commit and push branch"
 description = """
 ### 1. Write prerequisite tree
 Write to: $OPS_REPO_ROOT/prerequisites.md
@@ -256,14 +256,16 @@ If (count - N) >= 5 or planner-memory.md missing, write to:
 Include: run counter marker, date, constraint focus, patterns, direction.
 Keep under 100 lines. Replace entire file.
 
-### 3. Commit ops repo changes
-Commit the ops repo changes (prerequisites, memory, vault items):
+### 3. Commit ops repo changes to the planner branch
+Commit the ops repo changes (prerequisites, memory, vault items) and push the
+branch. Do NOT push directly to $PRIMARY_BRANCH — planner-run.sh will create a
+PR and walk it to merge via review-bot.
   cd "$OPS_REPO_ROOT"
   git add prerequisites.md knowledge/planner-memory.md vault/pending/
   git add -u
   if ! git diff --cached --quiet; then
     git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
-    git push origin "$PRIMARY_BRANCH"
+    git push origin HEAD
   fi
   cd "$PROJECT_REPO_ROOT"
 
