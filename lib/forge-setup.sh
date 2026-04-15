@@ -212,8 +212,8 @@ setup_forge() {
 
   # Create human user (disinto-admin) as site admin if it doesn't exist
   local human_user="disinto-admin"
-  local human_pass
-  human_pass="admin-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+  # human_user == admin_user; reuse admin_pass for basic-auth operations
+  local human_pass="$admin_pass"
 
   if ! curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN:-}" "${forge_url}/api/v1/users/${human_user}" >/dev/null 2>&1; then
     echo "Creating human user: ${human_user}"
@@ -245,63 +245,89 @@ setup_forge() {
     echo "Human user: ${human_user} (already exists)"
   fi
 
-  # Delete existing admin token if present (token sha1 is only returned at creation time)
-  local existing_token_id
-  existing_token_id=$(curl -sf \
-    -u "${admin_user}:${admin_pass}" \
-    "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
-    | jq -r '.[] | select(.name == "disinto-admin-token") | .id') || existing_token_id=""
-  if [ -n "$existing_token_id" ]; then
-    curl -sf -X DELETE \
-      -u "${admin_user}:${admin_pass}" \
-      "${forge_url}/api/v1/users/${admin_user}/tokens/${existing_token_id}" >/dev/null 2>&1 || true
+  # Preserve admin token if already stored in .env (idempotent re-run)
+  local admin_token=""
+  if _token_exists_in_env "FORGE_ADMIN_TOKEN" "$env_file" && [ "$rotate_tokens" = false ]; then
+    admin_token=$(grep '^FORGE_ADMIN_TOKEN=' "$env_file" | head -1 | cut -d= -f2-)
+    [ -n "$admin_token" ] && echo "Admin token: preserved (use --rotate-tokens to force)"
   fi
-
-  # Create admin token (fresh, so sha1 is returned)
-  local admin_token
-  admin_token=$(curl -sf -X POST \
-    -u "${admin_user}:${admin_pass}" \
-    -H "Content-Type: application/json" \
-    "${forge_url}/api/v1/users/${admin_user}/tokens" \
-    -d '{"name":"disinto-admin-token","scopes":["all"]}' 2>/dev/null \
-    | jq -r '.sha1 // empty') || admin_token=""
 
   if [ -z "$admin_token" ]; then
-    echo "Error: failed to obtain admin API token" >&2
-    exit 1
-  fi
-
-  # Get or create human user token
-  local human_token=""
-  # Delete existing human token if present (token sha1 is only returned at creation time)
-  local existing_human_token_id
-  existing_human_token_id=$(curl -sf \
-    -u "${human_user}:${human_pass}" \
-    "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
-    | jq -r '.[] | select(.name == "disinto-human-token") | .id') || existing_human_token_id=""
-  if [ -n "$existing_human_token_id" ]; then
-    curl -sf -X DELETE \
-      -u "${human_user}:${human_pass}" \
-      "${forge_url}/api/v1/users/${human_user}/tokens/${existing_human_token_id}" >/dev/null 2>&1 || true
-  fi
-
-  # Create human token (fresh, so sha1 is returned)
-  human_token=$(curl -sf -X POST \
-    -u "${human_user}:${human_pass}" \
-    -H "Content-Type: application/json" \
-    "${forge_url}/api/v1/users/${human_user}/tokens" \
-    -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
-    | jq -r '.sha1 // empty') || human_token=""
-
-  if [ -n "$human_token" ]; then
-    # Store human token in .env
-    if grep -q '^HUMAN_TOKEN=' "$env_file" 2>/dev/null; then
-      sed -i "s|^HUMAN_TOKEN=.*|HUMAN_TOKEN=${human_token}|" "$env_file"
-    else
-      printf 'HUMAN_TOKEN=%s\n' "$human_token" >> "$env_file"
+    # Delete existing admin token if present (token sha1 is only returned at creation time)
+    local existing_token_id
+    existing_token_id=$(curl -sf \
+      -u "${admin_user}:${admin_pass}" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+      | jq -r '.[] | select(.name == "disinto-admin-token") | .id') || existing_token_id=""
+    if [ -n "$existing_token_id" ]; then
+      curl -sf -X DELETE \
+        -u "${admin_user}:${admin_pass}" \
+        "${forge_url}/api/v1/users/${admin_user}/tokens/${existing_token_id}" >/dev/null 2>&1 || true
     fi
-    export HUMAN_TOKEN="$human_token"
-    echo "  Human token saved (HUMAN_TOKEN)"
+
+    # Create admin token (fresh, so sha1 is returned)
+    admin_token=$(curl -sf -X POST \
+      -u "${admin_user}:${admin_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" \
+      -d '{"name":"disinto-admin-token","scopes":["all"]}' 2>/dev/null \
+      | jq -r '.sha1 // empty') || admin_token=""
+
+    if [ -z "$admin_token" ]; then
+      echo "Error: failed to obtain admin API token" >&2
+      exit 1
+    fi
+
+    # Store admin token for idempotent re-runs
+    if grep -q '^FORGE_ADMIN_TOKEN=' "$env_file" 2>/dev/null; then
+      sed -i "s|^FORGE_ADMIN_TOKEN=.*|FORGE_ADMIN_TOKEN=${admin_token}|" "$env_file"
+    else
+      printf 'FORGE_ADMIN_TOKEN=%s\n' "$admin_token" >> "$env_file"
+    fi
+    echo "Admin token: generated and saved (FORGE_ADMIN_TOKEN)"
+  fi
+
+  # Get or create human user token (human_user == admin_user; use admin_pass)
+  local human_token=""
+  if _token_exists_in_env "HUMAN_TOKEN" "$env_file" && [ "$rotate_tokens" = false ]; then
+    human_token=$(grep '^HUMAN_TOKEN=' "$env_file" | head -1 | cut -d= -f2-)
+    if [ -n "$human_token" ]; then
+      export HUMAN_TOKEN="$human_token"
+      echo "  Human token preserved (use --rotate-tokens to force)"
+    fi
+  fi
+
+  if [ -z "$human_token" ]; then
+    # Delete existing human token if present (token sha1 is only returned at creation time)
+    local existing_human_token_id
+    existing_human_token_id=$(curl -sf \
+      -u "${admin_user}:${admin_pass}" \
+      "${forge_url}/api/v1/users/${human_user}/tokens" 2>/dev/null \
+      | jq -r '.[] | select(.name == "disinto-human-token") | .id') || existing_human_token_id=""
+    if [ -n "$existing_human_token_id" ]; then
+      curl -sf -X DELETE \
+        -u "${admin_user}:${admin_pass}" \
+        "${forge_url}/api/v1/users/${human_user}/tokens/${existing_human_token_id}" >/dev/null 2>&1 || true
+    fi
+
+    # Create human token (use admin_pass since human_user == admin_user)
+    human_token=$(curl -sf -X POST \
+      -u "${admin_user}:${admin_pass}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${human_user}/tokens" \
+      -d '{"name":"disinto-human-token","scopes":["all"]}' 2>/dev/null \
+      | jq -r '.sha1 // empty') || human_token=""
+
+    if [ -n "$human_token" ]; then
+      # Store human token in .env
+      if grep -q '^HUMAN_TOKEN=' "$env_file" 2>/dev/null; then
+        sed -i "s|^HUMAN_TOKEN=.*|HUMAN_TOKEN=${human_token}|" "$env_file"
+      else
+        printf 'HUMAN_TOKEN=%s\n' "$human_token" >> "$env_file"
+      fi
+      export HUMAN_TOKEN="$human_token"
+      echo "  Human token generated and saved (HUMAN_TOKEN)"
+    fi
   fi
 
   # Create bot users and tokens
