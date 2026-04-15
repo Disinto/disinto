@@ -1,4 +1,4 @@
-<!-- last-reviewed: 10c7a88416b14e849f80ad3fe7ea8e51d26177e8 -->
+<!-- last-reviewed: be463c5b439aec1ef0d4acfafc47e94896f5dc57 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -198,5 +198,4 @@ at each phase boundary by writing to a phase file (e.g.
 
 Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`.
 Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
-
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec, orchestrator reaction matrix, sequence diagram, and crash recovery.
