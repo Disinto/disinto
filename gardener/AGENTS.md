@@ -1,4 +1,4 @@
-<!-- last-reviewed: cdb0408466d875cdd893c712e3b3f0d0b909d4ef -->
+<!-- last-reviewed: 10c7a88416b14e849f80ad3fe7ea8e51d26177e8 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -32,7 +32,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
 
 **Environment variables consumed**:
-- `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`
+- `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
