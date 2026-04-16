@@ -1,0 +1,88 @@
+# =============================================================================
+# .woodpecker/nomad-validate.yml — Static validation for Nomad+Vault artifacts
+#
+# Part of the Nomad+Vault migration (S0.5, issue #825). Locks in the
+# "no-ad-hoc-steps" principle: every HCL/shell artifact under nomad/ or
+# lib/init/nomad/, plus the `disinto init` dispatcher, gets checked
+# before it can land.
+#
+# Triggers on PRs (and pushes) that touch any of:
+#   nomad/**              — HCL configs (server, client, vault)
+#   lib/init/nomad/**     — cluster-up / install / systemd / vault-init
+#   bin/disinto           — `disinto init --backend=nomad` dispatcher
+#   tests/disinto-init-nomad.bats — the bats suite itself
+#   .woodpecker/nomad-validate.yml — the pipeline definition
+#
+# Steps (all fail-closed — any error blocks merge):
+#   1. nomad-config-validate  — `nomad config validate` on server + client HCL
+#   2. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
+#   3. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
+#   4. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
+#
+# Pinned image versions match lib/init/nomad/install.sh (nomad 1.9.5 /
+# vault 1.18.5). Bump there AND here together — drift = CI passing on
+# syntax the runtime would reject.
+# =============================================================================
+
+when:
+  - event: [push, pull_request]
+    path:
+      - "nomad/**"
+      - "lib/init/nomad/**"
+      - "bin/disinto"
+      - "tests/disinto-init-nomad.bats"
+      - ".woodpecker/nomad-validate.yml"
+
+# Authenticated clone — same pattern as .woodpecker/ci.yml. Forgejo is
+# configured with REQUIRE_SIGN_IN, so anonymous git clones fail (exit 128).
+# FORGE_TOKEN is injected globally via WOODPECKER_ENVIRONMENT.
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:$FORGE_TOKEN@|")
+      - git clone --depth 1 "$AUTH_URL" .
+      - git fetch --depth 1 origin "$CI_COMMIT_REF"
+      - git checkout FETCH_HEAD
+
+steps:
+  # ── 1. Nomad HCL syntax check ────────────────────────────────────────────
+  # `nomad config validate` parses server.hcl + client.hcl and fails on any
+  # HCL/semantic error (unknown block, invalid port range, bad driver cfg).
+  # vault.hcl is excluded — it's a Vault config, not Nomad, so it goes
+  # through the vault-operator-diagnose step instead.
+  - name: nomad-config-validate
+    image: hashicorp/nomad:1.9.5
+    commands:
+      - nomad config validate nomad/server.hcl nomad/client.hcl
+
+  # ── 2. Vault HCL syntax check ────────────────────────────────────────────
+  # `vault operator diagnose` loads the config and runs a suite of checks.
+  # -skip=storage and -skip=listener disable the runtime-only checks (the
+  # /var/lib/vault/data dir and 127.0.0.1:8200 bind aren't available inside
+  # a vanilla CI container); the parse + mlock/seal-shape checks still run,
+  # so any syntax or schema error in vault.hcl surfaces here.
+  - name: vault-operator-diagnose
+    image: hashicorp/vault:1.18.5
+    commands:
+      - vault operator diagnose -config=nomad/vault.hcl -skip=storage -skip=listener
+
+  # ── 3. Shellcheck ────────────────────────────────────────────────────────
+  # Covers the new lib/init/nomad/*.sh scripts plus bin/disinto (which owns
+  # the backend dispatcher). bin/disinto has no .sh extension so the
+  # repo-wide shellcheck in .woodpecker/ci.yml skips it — this step is the
+  # one place it gets checked.
+  - name: shellcheck-nomad
+    image: koalaman/shellcheck-alpine:stable
+    commands:
+      - shellcheck --severity=warning lib/init/nomad/*.sh bin/disinto
+
+  # ── 4. bats: `disinto init --backend=nomad --dry-run` ────────────────────
+  # Smoke-tests the CLI dispatcher: both --backend=nomad variants exit 0
+  # with the expected step list, and --backend=docker stays on the docker
+  # path (regression guard). Pure dry-run — no sudo, no network.
+  - name: bats-init-nomad
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache bash bats
+      - bats tests/disinto-init-nomad.bats
