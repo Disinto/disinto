@@ -178,8 +178,8 @@ log "Tagged disinto/agents:${RELEASE_VERSION}"
 
 log "Step 6/6: Restarting agent containers"
 
-docker compose stop agents agents-llama 2>/dev/null || true
-docker compose up -d agents agents-llama
+docker compose stop agents 2>/dev/null || true
+docker compose up -d agents
 log "Agent containers restarted"
 
 # ── Done ─────────────────────────────────────────────────────────────────
