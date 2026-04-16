@@ -85,8 +85,22 @@ if mirrors:
 # environment.  The TOML carries host-perspective values (localhost, /home/admin/…)
 # that would break container API calls and path resolution.  Skip overriding
 # any env var that is already set when running inside the container.
+#
+# #852 defence: validate that $_key is a legal shell identifier before
+# `export`.  A hand-edited TOML can smuggle in keys that survive the
+# Python emitter but fail `export`'s identifier rule — e.g.
+# `[mirrors] my-mirror = "..."` becomes `MIRROR_MY-MIRROR` because the
+# MIRROR_<NAME> emitter only upper-cases, it does not dash-to-underscore.
+# Without this guard `export "MIRROR_MY-MIRROR=…"` returns non-zero, and
+# under `set -euo pipefail` in the caller the whole file aborts — which
+# is how the original #852 crash-loop presented.  Warn-and-skip keeps
+# the rest of the TOML loadable.
 while IFS='=' read -r _key _val; do
   [ -z "$_key" ] && continue
+  if ! [[ "$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "WARNING: load-project: skipping invalid shell identifier from TOML: $_key" >&2
+    continue
+  fi
   if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${!_key:-}" ]; then
     continue
   fi
@@ -152,8 +166,16 @@ for name, config in agents.items():
 " "$_PROJECT_TOML" 2>/dev/null) || true
 
   if [ -n "$_AGENT_VARS" ]; then
+    # #852 defence: same warn-and-skip guard as the main loop above.  The
+    # Python emitter already normalizes dashed agent names (#862), but a
+    # quoted TOML section like `[agents."weird name"]` could still produce
+    # an invalid identifier.  Fail loudly but keep other agents loadable.
     while IFS='=' read -r _key _val; do
       [ -z "$_key" ] && continue
+      if ! [[ "$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "WARNING: load-project: skipping invalid shell identifier from [agents.*]: $_key" >&2
+        continue
+      fi
       export "$_key=$_val"
     done <<< "$_AGENT_VARS"
   fi
