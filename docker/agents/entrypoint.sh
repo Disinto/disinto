@@ -7,14 +7,15 @@ set -euo pipefail
 # poll scripts.  All Docker Compose env vars are inherited (PATH, FORGE_TOKEN,
 # ANTHROPIC_API_KEY, etc.).
 #
-# AGENT_ROLES env var controls which scripts run: "review,dev,gardener,architect,planner,predictor"
-# (default: all six). Uses while-true loop with staggered intervals:
+# AGENT_ROLES env var controls which scripts run: "review,dev,gardener,architect,planner,predictor,supervisor"
+# (default: all seven). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
 #   - gardener: every GARDENER_INTERVAL seconds (default: 21600 = 6 hours)
 #   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
 #   - planner: every PLANNER_INTERVAL seconds (default: 43200 = 12 hours)
 #   - predictor: every 24 hours (288 iterations * 5 min)
+#   - supervisor: every SUPERVISOR_INTERVAL seconds (default: 1200 = 20 min)
 
 DISINTO_BAKED="/home/agent/disinto"
 DISINTO_LIVE="/home/agent/repos/_factory"
@@ -328,7 +329,7 @@ init_state_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor}"
+AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)
@@ -338,9 +339,10 @@ POLL_INTERVAL="${POLL_INTERVAL:-300}"
 GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
 ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
 PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
+SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
-log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s"
+log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s, Supervisor interval: ${SUPERVISOR_INTERVAL}s"
 
 # Main polling loop using iteration counter for gardener scheduling
 iteration=0
@@ -460,6 +462,19 @@ print(cfg.get('primary_branch', 'main'))
           gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/predictor.log" 2>&1 &
         else
           log "Skipping predictor — already running"
+        fi
+      fi
+    fi
+
+    # Supervisor (interval configurable via SUPERVISOR_INTERVAL env var, default 20 min)
+    if [[ ",${AGENT_ROLES}," == *",supervisor,"* ]]; then
+      supervisor_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((supervisor_iteration % SUPERVISOR_INTERVAL)) -eq 0 ] && [ "$now" -ge "$supervisor_iteration" ]; then
+        if ! pgrep -f "supervisor-run.sh" >/dev/null; then
+          log "Running supervisor (iteration ${iteration}, ${SUPERVISOR_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor.log" 2>&1 &
+        else
+          log "Skipping supervisor — already running"
         fi
       fi
     fi

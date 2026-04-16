@@ -1,9 +1,16 @@
-# agents-llama — Local-Qwen Dev Agent
+# agents-llama — Local-Qwen Agents
 
-The `agents-llama` service is an optional compose service that runs a dev agent
+The `agents-llama` service is an optional compose service that runs agents
 backed by a local llama-server instance (e.g. Qwen) instead of the Anthropic
 API. It uses the same Docker image as the main `agents` service but connects to
 a local inference endpoint via `ANTHROPIC_BASE_URL`.
+
+Two profiles are available:
+
+| Profile | Service | Roles | Use case |
+|---------|---------|-------|----------|
+| _(default)_ | `agents-llama` | `dev` only | Conservative: single-role soak test |
+| `agents-llama-all` | `agents-llama-all` | all 7 (review, dev, gardener, architect, planner, predictor, supervisor) | Pre-migration: validate every role on llama before Nomad cutover |
 
 ## Enabling
 
@@ -19,6 +26,17 @@ ANTHROPIC_BASE_URL=http://host.docker.internal:8081   # llama-server endpoint
 
 Then regenerate the compose file (`disinto init ...`) and bring the stack up.
 
+### Running all 7 roles (agents-llama-all)
+
+```bash
+docker compose --profile agents-llama-all up -d
+```
+
+This starts the `agents-llama-all` container with all 7 bot roles against the
+local llama endpoint. The per-role forge tokens (`FORGE_REVIEW_TOKEN`,
+`FORGE_GARDENER_TOKEN`, etc.) must be set in `.env` — they are the same tokens
+used by the Claude-backed `agents` container.
+
 ## Prerequisites
 
 - **llama-server** (or compatible OpenAI-API endpoint) running on the host,
@@ -28,11 +46,10 @@ Then regenerate the compose file (`disinto init ...`) and bring the stack up.
 
 ## Behaviour
 
-- `AGENT_ROLES=dev` — the llama agent only picks up dev work.
+- `agents-llama`: `AGENT_ROLES=dev` — only picks up dev work.
+- `agents-llama-all`: `AGENT_ROLES=review,dev,gardener,architect,planner,predictor,supervisor` — runs all 7 roles.
 - `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60` — more aggressive compaction for smaller
   context windows.
-- `depends_on: forgejo (service_healthy)` — does **not** depend on Woodpecker
-  (the llama agent doesn't need CI).
 - Serialises on the llama-server's single KV cache (AD-002).
 
 ## Disabling

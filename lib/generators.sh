@@ -140,6 +140,7 @@ _generate_local_model_services() {
       GARDENER_INTERVAL: "${GARDENER_INTERVAL:-21600}"
       ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
       PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
+      SUPERVISOR_INTERVAL: "${SUPERVISOR_INTERVAL:-1200}"
     depends_on:
       forgejo:
         condition: service_healthy
@@ -449,6 +450,72 @@ COMPOSEEOF
     depends_on:
       forgejo:
         condition: service_healthy
+    networks:
+      - disinto-net
+
+  agents-llama-all:
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    container_name: disinto-agents-llama-all
+    restart: unless-stopped
+    profiles: ["agents-llama-all"]
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
+      - woodpecker-data:/woodpecker-data:ro
+    environment:
+      FORGE_URL: http://forgejo:3000
+      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
+      FORGE_TOKEN: ${FORGE_TOKEN_LLAMA:-}
+      FORGE_PASS: ${FORGE_PASS_LLAMA:-}
+      FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
+      FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
+      FORGE_GARDENER_TOKEN: ${FORGE_GARDENER_TOKEN:-}
+      FORGE_VAULT_TOKEN: ${FORGE_VAULT_TOKEN:-}
+      FORGE_SUPERVISOR_TOKEN: ${FORGE_SUPERVISOR_TOKEN:-}
+      FORGE_PREDICTOR_TOKEN: ${FORGE_PREDICTOR_TOKEN:-}
+      FORGE_ARCHITECT_TOKEN: ${FORGE_ARCHITECT_TOKEN:-}
+      FORGE_FILER_TOKEN: ${FORGE_FILER_TOKEN:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "60"
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
+      DISINTO_CONTAINER: "1"
+      PROJECT_NAME: ${PROJECT_NAME:-project}
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      WOODPECKER_DATA_DIR: /woodpecker-data
+      WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      POLL_INTERVAL: ${POLL_INTERVAL:-300}
+      GARDENER_INTERVAL: ${GARDENER_INTERVAL:-21600}
+      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
+      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
+      SUPERVISOR_INTERVAL: ${SUPERVISOR_INTERVAL:-1200}
+      AGENT_ROLES: review,dev,gardener,architect,planner,predictor,supervisor
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
     networks:
       - disinto-net
 LLAMAEOF
