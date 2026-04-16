@@ -145,6 +145,15 @@ job "forgejo" {
       # better than forgejo silently regenerating SECRET_KEY on every
       # restart and invalidating every prior session. Seed the path with
       # tools/vault-seed-forgejo.sh to replace the placeholders.
+      #
+      # Placeholder values are kept short on purpose: the repo-wide
+      # secret-scan (.woodpecker/secret-scan.yml → lib/secret-scan.sh)
+      # flags `TOKEN=<16+ non-space chars>` as a plaintext secret, so a
+      # descriptive long placeholder (e.g. "run-tools-vault-seed-...") on
+      # the INTERNAL_TOKEN line would fail CI on every PR that touched
+      # this file. "seed-me" is < 16 chars and still distinctive enough
+      # to surface in a `grep FORGEJO__security__` audit. The template
+      # comment below carries the operator-facing fix pointer.
       template {
         destination = "secrets/forgejo.env"
         env         = true
@@ -155,8 +164,8 @@ FORGEJO__security__SECRET_KEY={{ .Data.data.secret_key }}
 FORGEJO__security__INTERNAL_TOKEN={{ .Data.data.internal_token }}
 {{- else -}}
 # WARNING: kv/disinto/shared/forgejo is empty — run tools/vault-seed-forgejo.sh
-FORGEJO__security__SECRET_KEY=VAULT-EMPTY-run-tools-vault-seed-forgejo-sh
-FORGEJO__security__INTERNAL_TOKEN=VAULT-EMPTY-run-tools-vault-seed-forgejo-sh
+FORGEJO__security__SECRET_KEY=seed-me
+FORGEJO__security__INTERNAL_TOKEN=seed-me
 {{- end -}}
 EOT
       }
