@@ -783,9 +783,29 @@ _disinto_init_nomad() {
     fi
 
     if [ -n "$with_services" ]; then
+      # Vault seed plan (S2.6, #928): one line per service whose
+      # tools/vault-seed-<svc>.sh ships. Services without a seeder are
+      # silently skipped — the real-run loop below mirrors this,
+      # making `--with woodpecker` in Step 3 auto-invoke
+      # tools/vault-seed-woodpecker.sh once that file lands without
+      # any further change to bin/disinto.
+      local seed_hdr_printed=false
+      local IFS=','
+      for svc in $with_services; do
+        svc=$(echo "$svc" | xargs)  # trim whitespace
+        local seed_script="${FACTORY_ROOT}/tools/vault-seed-${svc}.sh"
+        if [ -x "$seed_script" ]; then
+          if [ "$seed_hdr_printed" = false ]; then
+            echo "── Vault seed dry-run ─────────────────────────────────"
+            seed_hdr_printed=true
+          fi
+          echo "[seed] [dry-run] ${seed_script} --dry-run"
+        fi
+      done
+      [ "$seed_hdr_printed" = true ] && echo ""
+
       echo "── Deploy services dry-run ────────────────────────────"
       echo "[deploy] services to deploy: ${with_services}"
-      local IFS=','
       for svc in $with_services; do
         svc=$(echo "$svc" | xargs)  # trim whitespace
         # Validate known services first
@@ -891,6 +911,50 @@ _disinto_init_nomad() {
   else
     echo ""
     echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
+  fi
+
+  # Seed Vault for services that ship their own seeder (S2.6, #928).
+  # Convention: tools/vault-seed-<svc>.sh — auto-invoked when --with <svc>
+  # is requested. Runs AFTER vault-import so that real imported values
+  # win over generated seeds when both are present; each seeder is
+  # idempotent on a per-key basis (see vault-seed-forgejo.sh's
+  # "missing → generate, present → unchanged" contract), so re-running
+  # init does not rotate existing keys. Services without a seeder are
+  # silently skipped — keeps this loop forward-compatible with Step 3+
+  # services that may ship their own seeder without touching bin/disinto.
+  #
+  # VAULT_ADDR is passed explicitly because cluster-up.sh writes the
+  # profile.d export *during* this same init run, so the current shell
+  # hasn't sourced it yet; sibling vault-* scripts (engines/policies/
+  # auth/import) default VAULT_ADDR internally via _hvault_default_env,
+  # but vault-seed-forgejo.sh requires the caller to set it.
+  #
+  # The non-root branch invokes the seeder as `sudo -n -- env VAR=val
+  # script` rather than `sudo -n VAR=val -- script`: sudo treats bare
+  # `VAR=val` args as sudoers env-assignments, which the default
+  # `env_reset=on` policy silently discards unless the variable is in
+  # `env_keep` (VAULT_ADDR is not). Using `env` as the actual command
+  # sets VAULT_ADDR in the child process regardless of sudoers policy.
+  if [ -n "$with_services" ]; then
+    local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
+    local IFS=','
+    for svc in $with_services; do
+      svc=$(echo "$svc" | xargs)  # trim whitespace
+      local seed_script="${FACTORY_ROOT}/tools/vault-seed-${svc}.sh"
+      if [ -x "$seed_script" ]; then
+        echo ""
+        echo "── Seeding Vault for ${svc} ───────────────────────────"
+        if [ "$(id -u)" -eq 0 ]; then
+          VAULT_ADDR="$vault_addr" "$seed_script" || exit $?
+        else
+          if ! command -v sudo >/dev/null 2>&1; then
+            echo "Error: vault-seed-${svc}.sh must run as root and sudo is not installed" >&2
+            exit 1
+          fi
+          sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" || exit $?
+        fi
+      fi
+    done
   fi
 
   # Deploy services if requested

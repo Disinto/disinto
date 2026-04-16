@@ -155,6 +155,44 @@ setup_file() {
   [[ "$output" == *"[deploy] dry-run complete"* ]]
 }
 
+# S2.6 / #928 — every --with <svc> that ships tools/vault-seed-<svc>.sh
+# must auto-invoke the seeder before deploy.sh runs. forgejo is the
+# only service with a seeder today, so the dry-run plan must include
+# its seed line when --with forgejo is set. The seed block must also
+# appear BEFORE the deploy block (seeded secrets must exist before
+# nomad reads the template stanza) — pinned here by scanning output
+# order. Services without a seeder (e.g. unknown hypothetical future
+# ones) are silently skipped by the loop convention.
+@test "disinto init --backend=nomad --with forgejo --dry-run prints seed plan before deploy plan" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Vault seed dry-run"* ]]
+  [[ "$output" == *"tools/vault-seed-forgejo.sh --dry-run"* ]]
+  # Order: seed header must appear before deploy header.
+  local seed_line deploy_line
+  seed_line=$(echo "$output" | grep -n "Vault seed dry-run" | head -1 | cut -d: -f1)
+  deploy_line=$(echo "$output" | grep -n "Deploy services dry-run" | head -1 | cut -d: -f1)
+  [ -n "$seed_line" ]
+  [ -n "$deploy_line" ]
+  [ "$seed_line" -lt "$deploy_line" ]
+}
+
+# Regression guard (PR #929 review): `sudo -n VAR=val -- cmd` is subject
+# to sudoers env_reset policy and silently drops VAULT_ADDR unless it's
+# in env_keep (it isn't in default configs). vault-seed-forgejo.sh
+# requires VAULT_ADDR and dies at its own precondition check if unset,
+# so the non-root branch MUST invoke `sudo -n -- env VAR=val cmd` so
+# that `env` sets the variable in the child process regardless of
+# sudoers policy. This grep-level guard catches a revert to the unsafe
+# form that silently broke non-root seed runs on a fresh LXC.
+@test "seed loop invokes sudo via 'env VAR=val' (bypasses sudoers env_reset)" {
+  run grep -F 'sudo -n -- env "VAULT_ADDR=' "$DISINTO_BIN"
+  [ "$status" -eq 0 ]
+  # Negative: no bare `sudo -n "VAR=val" --` form anywhere in the file.
+  run grep -F 'sudo -n "VAULT_ADDR=' "$DISINTO_BIN"
+  [ "$status" -ne 0 ]
+}
+
 @test "disinto init --backend=nomad --with forgejo,forgejo --dry-run handles comma-separated services" {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo,forgejo --dry-run
   [ "$status" -eq 0 ]
