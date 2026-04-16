@@ -254,7 +254,11 @@ agent_recover_session
 # WORKTREE SETUP
 # =============================================================================
 status "setting up worktree"
-cd "$REPO_ROOT"
+if ! cd "$REPO_ROOT"; then
+  log "ERROR: REPO_ROOT=${REPO_ROOT} does not exist — cannot cd"
+  log "Check PROJECT_REPO_ROOT vs compose PROJECT_NAME vs TOML name mismatch"
+  exit 1
+fi
 
 # Determine forge remote by matching FORGE_URL host against git remotes
 _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
