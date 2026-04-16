@@ -68,15 +68,15 @@ steps:
   #
   # Validation is offline: no running Nomad server is required (exit 0 on
   # valid HCL, 1 on syntax/semantic error). The CLI takes a single path
-  # argument so we loop over every `*.nomad.hcl` file under nomad/jobs/ —
+  # argument so we loop over every `*.hcl` file under nomad/jobs/ —
   # that way a new jobspec PR gets CI coverage automatically (no separate
-  # "edit the pipeline" step to forget). The `.nomad.hcl` suffix is the
-  # naming convention documented in nomad/AGENTS.md; anything else in
-  # nomad/jobs/ is deliberately not validated by this step.
+  # "edit the pipeline" step to forget). The `.hcl` suffix is the naming
+  # convention: anything else in nomad/jobs/ is deliberately not validated
+  # by this step.
   #
   # `[ -f "$f" ]` guards against the no-match case: POSIX sh does not
   # nullglob, so an empty jobs/ directory would leave the literal glob in
-  # "$f" and fail. Today forgejo.nomad.hcl exists, but the guard keeps the
+  # "$f" and fail. Today forgejo.hcl exists, but the guard keeps the
   # step safe during any future transient empty state.
   #
   # Scope note: offline validate catches jobspec-level errors (unknown
@@ -91,7 +91,7 @@ steps:
     commands:
       - |
         set -e
-        for f in nomad/jobs/*.nomad.hcl; do
+        for f in nomad/jobs/*.hcl; do
           [ -f "$f" ] || continue
           echo "validating jobspec: $f"
           nomad job validate "$f"
