@@ -81,7 +81,8 @@ Init options:
   --repo-root <path>   Local clone path (default: ~/name)
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
-  --backend <value>    Orchestration backend: docker (default) | nomad (stub, S0.1)
+  --backend <value>    Orchestration backend: docker (default) | nomad
+  --empty              (nomad) Bring up cluster only, no jobs (S0.4)
   --bare               Skip compose generation (bare-metal setup)
   --build              Use local docker build instead of registry images (dev mode)
   --yes                Skip confirmation prompts
@@ -645,17 +646,61 @@ prompt_admin_password() {
 
 # ── init command ─────────────────────────────────────────────────────────────
 
-# Nomad backend init — stub for the Nomad+Vault migration (issue #821, S0.1).
-# Real implementation lands across S0.2–S0.5. Exists so --backend=nomad fails
-# loud instead of silently routing through the docker path.
+# Nomad backend init — dispatcher (Nomad+Vault migration, S0.4, issue #824).
+#
+# Today `--empty` and the default (no flag) both bring up an empty
+# single-node Nomad+Vault cluster via lib/init/nomad/cluster-up.sh. Step 1
+# will extend the default path to also deploy jobs; `--empty` will remain
+# the "cluster only, no workloads" escape hatch.
+#
+# Uses `sudo -n` when not already root — cluster-up.sh mutates /etc/,
+# /srv/, and systemd state, so it has to run as root. The `-n` keeps the
+# failure mode legible (no hanging TTY-prompted sudo inside a factory
+# init run); operators running without sudo-NOPASSWD should invoke
+# `sudo disinto init ...` directly.
 _disinto_init_nomad() {
-  local dry_run="${1:-false}"
-  if [ "$dry_run" = "true" ]; then
-    echo "nomad backend: stub — will be implemented by S0.2–S0.5"
-    exit 0
+  local dry_run="${1:-false}" empty="${2:-false}"
+  local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
+
+  if [ ! -x "$cluster_up" ]; then
+    echo "Error: ${cluster_up} not found or not executable" >&2
+    exit 1
   fi
-  echo "ERROR: nomad backend not yet implemented (stub)" >&2
-  exit 99
+
+  # --empty and default both invoke cluster-up today. Log the requested
+  # mode so the dispatch is visible in factory bootstrap logs — Step 1
+  # will branch on $empty to gate the job-deployment path.
+  if [ "$empty" = "true" ]; then
+    echo "nomad backend: --empty (cluster-up only, no jobs)"
+  else
+    echo "nomad backend: default (cluster-up; jobs deferred to Step 1)"
+  fi
+
+  # Dry-run forwards straight through; cluster-up.sh prints its own step
+  # list and exits 0 without touching the box.
+  local -a cmd=("$cluster_up")
+  if [ "$dry_run" = "true" ]; then
+    cmd+=("--dry-run")
+    "${cmd[@]}"
+    exit $?
+  fi
+
+  # Real run — needs root. Invoke via sudo if we're not already root so
+  # the command's exit code propagates directly. We don't distinguish
+  # "sudo denied" from "cluster-up.sh failed" here; both surface as a
+  # non-zero exit, and cluster-up.sh's own error messages cover the
+  # latter case.
+  local rc=0
+  if [ "$(id -u)" -eq 0 ]; then
+    "${cmd[@]}" || rc=$?
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Error: cluster-up.sh must run as root and sudo is not installed" >&2
+      exit 1
+    fi
+    sudo -n -- "${cmd[@]}" || rc=$?
+  fi
+  exit "$rc"
 }
 
 disinto_init() {
@@ -668,7 +713,7 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker"
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker" empty=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
@@ -679,6 +724,7 @@ disinto_init() {
       --backend=*)     backend="${1#--backend=}"; shift ;;
       --bare)          bare=true; shift ;;
       --build)         use_build=true; shift ;;
+      --empty)         empty=true; shift ;;
       --yes)           auto_yes=true; shift ;;
       --rotate-tokens) rotate_tokens=true; shift ;;
       --dry-run)       dry_run=true; shift ;;
@@ -692,11 +738,19 @@ disinto_init() {
     *) echo "Error: invalid --backend value '${backend}' (expected: docker|nomad)" >&2; exit 1 ;;
   esac
 
-  # Dispatch on backend — nomad path is a stub for now (issue #821, S0.1).
-  # Subsequent S0.x issues will replace _disinto_init_nomad with real logic
-  # without touching flag parsing or this dispatch.
+  # --empty is nomad-only today (the docker path has no concept of an
+  # "empty cluster"). Reject explicitly rather than letting it silently
+  # do nothing on --backend=docker.
+  if [ "$empty" = true ] && [ "$backend" != "nomad" ]; then
+    echo "Error: --empty is only valid with --backend=nomad" >&2
+    exit 1
+  fi
+
+  # Dispatch on backend — the nomad path runs lib/init/nomad/cluster-up.sh
+  # (S0.4). The default and --empty variants are identical today; Step 1
+  # will branch on $empty to add job deployment to the default path.
   if [ "$backend" = "nomad" ]; then
-    _disinto_init_nomad "$dry_run"
+    _disinto_init_nomad "$dry_run" "$empty"
     # shellcheck disable=SC2317  # _disinto_init_nomad always exits today;
     # `return` is defensive against future refactors.
     return
