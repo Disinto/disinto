@@ -136,12 +136,39 @@ _kv_put_secret() {
   done
 
   # Use curl directly for KV v2 write with versioning
-  curl -s -w '%{http_code}' \
+  local tmpfile http_code
+  tmpfile="$(mktemp)"
+  http_code="$(curl -s -w '%{http_code}' \
     -H "X-Vault-Token: ${VAULT_TOKEN}" \
     -H "Content-Type: application/json" \
     -X POST \
     -d "$payload" \
-    "${VAULT_ADDR}/v1/secret/data/${path}" >/dev/null
+    -o "$tmpfile" \
+    "${VAULT_ADDR}/v1/secret/data/${path}")" || {
+    rm -f "$tmpfile"
+    _err "Failed to write to Vault at secret/data/${path}: curl error"
+    return 1
+  }
+  rm -f "$tmpfile"
+
+  # Check HTTP status — 2xx is success
+  case "$http_code" in
+    2[0-9][0-9])
+      return 0
+      ;;
+    404)
+      _err "KV path not found: secret/data/${path}"
+      return 1
+      ;;
+    403)
+      _err "Permission denied writing to secret/data/${path}"
+      return 1
+      ;;
+    *)
+      _err "Failed to write to Vault at secret/data/${path}: HTTP $http_code"
+      return 1
+      ;;
+  esac
 }
 
 # _format_status — format the status string for a key
@@ -298,8 +325,8 @@ EOF
     local pass_val="${!pass_var:-}"
 
     if [ -n "$token_val" ] && [ -n "$pass_val" ]; then
-      operations+=("bots:$role:token:$env_file:$token_var")
-      operations+=("bots:$role:pass:$env_file:$pass_var")
+      operations+=("bots|$role|token|$env_file|$token_var")
+      operations+=("bots|$role|pass|$env_file|$pass_var")
     elif [ -n "$token_val" ] || [ -n "$pass_val" ]; then
       _err "Warning: $role bot has token but no password (or vice versa), skipping"
     fi
@@ -309,8 +336,8 @@ EOF
   local llama_token="${FORGE_TOKEN_LLAMA:-}"
   local llama_pass="${FORGE_PASS_LLAMA:-}"
   if [ -n "$llama_token" ] && [ -n "$llama_pass" ]; then
-    operations+=("bots:dev-qwen:token:$env_file:FORGE_TOKEN_LLAMA")
-    operations+=("bots:dev-qwen:pass:$env_file:FORGE_PASS_LLAMA")
+    operations+=("bots|dev-qwen|token|$env_file|FORGE_TOKEN_LLAMA")
+    operations+=("bots|dev-qwen|pass|$env_file|FORGE_PASS_LLAMA")
   elif [ -n "$llama_token" ] || [ -n "$llama_pass" ]; then
     _err "Warning: dev-qwen bot has token but no password (or vice versa), skipping"
   fi
@@ -319,14 +346,14 @@ EOF
   local forge_token="${FORGE_TOKEN:-}"
   local forge_pass="${FORGE_PASS:-}"
   if [ -n "$forge_token" ] && [ -n "$forge_pass" ]; then
-    operations+=("forge:token:$env_file:FORGE_TOKEN")
-    operations+=("forge:pass:$env_file:FORGE_PASS")
+    operations+=("forge|token|$env_file|FORGE_TOKEN")
+    operations+=("forge|pass|$env_file|FORGE_PASS")
   fi
 
   # Forge admin token: FORGE_ADMIN_TOKEN
   local forge_admin_token="${FORGE_ADMIN_TOKEN:-}"
   if [ -n "$forge_admin_token" ]; then
-    operations+=("forge:admin_token:$env_file:FORGE_ADMIN_TOKEN")
+    operations+=("forge|admin_token|$env_file|FORGE_ADMIN_TOKEN")
   fi
 
   # Woodpecker secrets: WOODPECKER_*
@@ -341,7 +368,7 @@ EOF
     local val="${!key}"
     if [ -n "$val" ]; then
       local lowercase_key="${key,,}"
-      operations+=("woodpecker:$lowercase_key:$env_file:$key")
+      operations+=("woodpecker|$lowercase_key|$env_file|$key")
     fi
   done
 
@@ -350,7 +377,7 @@ EOF
     local val="${!key:-}"
     if [ -n "$val" ]; then
       local lowercase_key="${key,,}"
-      operations+=("chat:$lowercase_key:$env_file:$key")
+      operations+=("chat|$lowercase_key|$env_file|$key")
     fi
   done
 
@@ -360,7 +387,7 @@ EOF
   for token_name in "${RUNNER_TOKENS[@]}"; do
     local token_val="${!token_name:-}"
     if [ -n "$token_val" ]; then
-      operations+=("runner:${token_name}:value:$sops_file:$token_name")
+      operations+=("runner|$token_name|$sops_file|$token_name")
     fi
   done
 
@@ -393,41 +420,41 @@ EOF
   local unchanged=0
 
   for op in "${operations[@]}"; do
-    IFS=':' read -r category source_type source_file source_key <<< "$op"
+    # Parse operation: category|field|file|key (4 fields for most, 5 for bots/runner)
+    IFS='|' read -r category field file key <<< "$op"
     local source_value=""
 
-    if [ "$source_file" = "$env_file" ]; then
-      source_value="${!source_key:-}"
+    if [ "$file" = "$env_file" ]; then
+      source_value="${!key:-}"
     else
       # Source from sops-decrypted env
-      # We need to extract just this key from the sops_env
-      source_value="$(printf '%s' "$sops_env" | grep "^${source_key}=" | sed "s/^${source_key=}//" || true)"
+      source_value="$(printf '%s' "$sops_env" | grep "^${key}=" | sed "s/^${key=}//" || true)"
     fi
 
-    # Determine Vault path
+    # Determine Vault path and key based on category
     local vault_path=""
-    local vault_key=""
+    local vault_key="$key"
 
     case "$category" in
       bots)
-        vault_path="disinto/bots/${source_type}"
-        vault_key="${source_file##*:}"
+        vault_path="disinto/bots/${field}"
+        vault_key="$field"
         ;;
       forge)
         vault_path="disinto/shared/forge"
-        vault_key="$source_type"
+        vault_key="$field"
         ;;
       woodpecker)
         vault_path="disinto/shared/woodpecker"
-        vault_key="$source_type"
+        vault_key="$field"
         ;;
       chat)
         vault_path="disinto/shared/chat"
-        vault_key="$source_type"
+        vault_key="$field"
         ;;
       runner)
-        vault_path="disinto/runner"
-        vault_key="$source_type"
+        vault_path="disinto/runner/${field}"
+        vault_key="value"
         ;;
       *)
         _err "Unknown category: $category"
@@ -457,7 +484,10 @@ EOF
 
     # Write if not unchanged
     if [ "$status" != "unchanged" ]; then
-      _kv_put_secret "$vault_path" "${vault_key}=${source_value}"
+      if ! _kv_put_secret "$vault_path" "${vault_key}=${source_value}"; then
+        _err "Failed to write $vault_key to $vault_path"
+        exit 1
+      fi
       case "$status" in
         updated) ((updated++)) || true ;;
         created) ((created++)) || true ;;
