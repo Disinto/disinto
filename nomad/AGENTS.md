@@ -24,7 +24,7 @@ it owns.
 ## What does NOT live here yet
 
 - **Jobspecs.** Step 0 brings up an *empty* cluster. Step 1 (and later)
-  adds `*.nomad.hcl` job files for forgejo, woodpecker, agents, caddy,
+  adds `*.hcl` job files for forgejo, woodpecker, agents, caddy,
   etc. When that lands, jobspecs will live in `nomad/jobs/` and each
   will get its own header comment pointing to the `host_volume` names
   it consumes (`volume = "forgejo-data"`, etc. — declared in
@@ -35,11 +35,11 @@ it owns.
 
 ## Adding a jobspec (Step 1 and later)
 
-1. Drop a file in `nomad/jobs/<service>.nomad.hcl`. The `.nomad.hcl`
-   suffix is load-bearing: `.woodpecker/nomad-validate.yml` globs on
-   exactly that suffix to auto-pick up new jobspecs (see step 2 in
-   "How CI validates these files" below). Anything else in
-   `nomad/jobs/` is silently skipped by CI.
+1. Drop a file in `nomad/jobs/<service>.hcl`. The `.hcl` suffix is
+   load-bearing: `.woodpecker/nomad-validate.yml` globs on exactly that
+   suffix to auto-pick up new jobspecs (see step 2 in "How CI validates
+   these files" below). Anything else in `nomad/jobs/` is silently
+   skipped by CI.
 2. If it needs persistent state, reference a `host_volume` already
    declared in `client.hcl` — *don't* add ad-hoc host paths in the
    jobspec. If a new volume is needed, add it to **both**:
@@ -52,9 +52,9 @@ it owns.
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
 4. No pipeline edit required — step 2 of `nomad-validate.yml` globs
-   over `nomad/jobs/*.nomad.hcl` and validates every match. Just make
-   sure the existing `nomad/**` trigger path still covers your file
-   (it does for anything under `nomad/jobs/`).
+   over `nomad/jobs/*.hcl` and validates every match. Just make sure
+   the existing `nomad/**` trigger path still covers your file (it
+   does for anything under `nomad/jobs/`).
 
 ## How CI validates these files
 
@@ -67,7 +67,7 @@ fail-closed steps:
    driver config. Vault HCL is excluded (different tool). Jobspecs are
    excluded too — agent-config and jobspec are disjoint HCL grammars;
    running this step on a jobspec rejects it with "unknown block 'job'".
-2. **`nomad job validate nomad/jobs/*.nomad.hcl`** (loop, one call per file)
+2. **`nomad job validate nomad/jobs/*.hcl`** (loop, one call per file)
    — parses each jobspec's HCL, fails on unknown stanzas, missing
    required fields, wrong value types, invalid driver config. Runs
    offline (no Nomad server needed) so CI exit 0 ≠ "this will schedule
@@ -79,7 +79,7 @@ fail-closed steps:
      - image reachability — `image = "codeberg.org/forgejo/forgejo:11.0"`
        is accepted even if the registry is down or the tag is wrong.
    New jobspecs are picked up automatically by the glob — no pipeline
-   edit needed as long as the file is named `<name>.nomad.hcl`.
+   edit needed as long as the file is named `<name>.hcl`.
 3. **`vault operator diagnose -config=nomad/vault.hcl -skip=storage -skip=listener`**
    — Vault's equivalent syntax + schema check. `-skip=storage/listener`
    disables the runtime checks (CI containers don't have
