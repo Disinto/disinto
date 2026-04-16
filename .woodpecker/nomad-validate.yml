@@ -58,14 +58,28 @@ steps:
 
   # ── 2. Vault HCL syntax check ────────────────────────────────────────────
   # `vault operator diagnose` loads the config and runs a suite of checks.
-  # -skip=storage and -skip=listener disable the runtime-only checks (the
-  # /var/lib/vault/data dir and 127.0.0.1:8200 bind aren't available inside
-  # a vanilla CI container); the parse + mlock/seal-shape checks still run,
-  # so any syntax or schema error in vault.hcl surfaces here.
+  # Exit codes:
+  #   0 — all checks green
+  #   1 — at least one hard failure (bad HCL, bad schema, unreachable storage)
+  #   2 — advisory warnings only (no hard failure)
+  # Our factory dev-box vault.hcl deliberately runs TLS-disabled on a
+  # localhost-only listener (documented in nomad/vault.hcl), which triggers
+  # an advisory "Check Listener TLS" warning → exit 2. The config still
+  # parses, so we tolerate exit 2 and fail only on exit 1 or crashes.
+  # -skip=storage/-skip=listener disables the runtime-only checks (vault's
+  # container has /vault/file so storage is fine, but explicit skip is cheap
+  # insurance against future container-image drift).
   - name: vault-operator-diagnose
     image: hashicorp/vault:1.18.5
     commands:
-      - vault operator diagnose -config=nomad/vault.hcl -skip=storage -skip=listener
+      - |
+        rc=0
+        vault operator diagnose -config=nomad/vault.hcl -skip=storage -skip=listener || rc=$?
+        case "$rc" in
+          0) echo "vault config: all checks green" ;;
+          2) echo "vault config: parse OK (rc=2 — advisory warnings only; TLS-disabled on localhost listener is by design)" ;;
+          *) echo "vault config: hard failure (rc=$rc)" >&2; exit "$rc" ;;
+        esac
 
   # ── 3. Shellcheck ────────────────────────────────────────────────────────
   # Covers the new lib/init/nomad/*.sh scripts plus bin/disinto (which owns
