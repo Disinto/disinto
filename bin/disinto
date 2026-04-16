@@ -81,6 +81,7 @@ Init options:
   --repo-root <path>   Local clone path (default: ~/name)
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
+  --backend <value>    Orchestration backend: docker (default) | nomad (stub, S0.1)
   --bare               Skip compose generation (bare-metal setup)
   --build              Use local docker build instead of registry images (dev mode)
   --yes                Skip confirmation prompts
@@ -644,6 +645,19 @@ prompt_admin_password() {
 
 # ── init command ─────────────────────────────────────────────────────────────
 
+# Nomad backend init — stub for the Nomad+Vault migration (issue #821, S0.1).
+# Real implementation lands across S0.2–S0.5. Exists so --backend=nomad fails
+# loud instead of silently routing through the docker path.
+_disinto_init_nomad() {
+  local dry_run="${1:-false}"
+  if [ "$dry_run" = "true" ]; then
+    echo "nomad backend: stub — will be implemented by S0.2–S0.5"
+    exit 0
+  fi
+  echo "ERROR: nomad backend not yet implemented (stub)" >&2
+  exit 99
+}
+
 disinto_init() {
   local repo_url="${1:-}"
   if [ -z "$repo_url" ]; then
@@ -654,13 +668,15 @@ disinto_init() {
   shift
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker"
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
       --repo-root)     repo_root="$2"; shift 2 ;;
       --ci-id)         ci_id="$2"; shift 2 ;;
       --forge-url)     forge_url_flag="$2"; shift 2 ;;
+      --backend)       backend="$2"; shift 2 ;;
+      --backend=*)     backend="${1#--backend=}"; shift ;;
       --bare)          bare=true; shift ;;
       --build)         use_build=true; shift ;;
       --yes)           auto_yes=true; shift ;;
@@ -669,6 +685,22 @@ disinto_init() {
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
+
+  # Validate backend
+  case "$backend" in
+    docker|nomad) ;;
+    *) echo "Error: invalid --backend value '${backend}' (expected: docker|nomad)" >&2; exit 1 ;;
+  esac
+
+  # Dispatch on backend — nomad path is a stub for now (issue #821, S0.1).
+  # Subsequent S0.x issues will replace _disinto_init_nomad with real logic
+  # without touching flag parsing or this dispatch.
+  if [ "$backend" = "nomad" ]; then
+    _disinto_init_nomad "$dry_run"
+    # shellcheck disable=SC2317  # _disinto_init_nomad always exits today;
+    # `return` is defensive against future refactors.
+    return
+  fi
 
   # Export bare-metal flag for setup_forge
   export DISINTO_BARE="$bare"
