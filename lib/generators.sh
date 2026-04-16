@@ -114,7 +114,15 @@ _generate_local_model_services() {
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
-    image: ghcr.io/disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
+    # Local image ref (#853): registry-less name matches what \`disinto init --build\`
+    # and the legacy agents-llama stanza produce. Paired with build: so hosts without
+    # a pre-built image can rebuild locally; ghcr.io/disinto/agents is not publicly
+    # pullable, and emitting that prefix caused \`docker compose up\` to fail with
+    # \`denied\` on every hired agent.
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-agents-${service_name}
     restart: unless-stopped
     security_opt:
