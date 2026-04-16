@@ -78,6 +78,19 @@ setup_file() {
   [[ "$output" == *"── Dry-run: intended actions ────"* ]]
 }
 
+# ── Flag syntax: --flag=value vs --flag value ────────────────────────────────
+
+# Both forms must work. The bin/disinto flag loop has separate cases for
+# `--backend value` and `--backend=value`; a regression in either would
+# silently route to the docker default, which is the worst failure mode
+# for a mid-migration dispatcher ("loud-failing stub" lesson from S0.4).
+@test "disinto init --backend nomad (space-separated) dispatches to nomad" {
+  run "$DISINTO_BIN" init placeholder/repo --backend nomad --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nomad backend: default"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+}
+
 # ── Flag validation ──────────────────────────────────────────────────────────
 
 @test "--backend=bogus is rejected with a clear error" {
