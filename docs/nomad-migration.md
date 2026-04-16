@@ -60,6 +60,9 @@ This runs, in order:
 - `--age-key` without `--import-sops` → error.
 - `--import-env` alone (no sops) → OK (imports just the plaintext `.env`).
 - `--backend=docker` with any `--import-*` flag → error.
+- `--empty` with any `--import-*` flag → error (mutually exclusive: `--empty`
+  skips the import step, so pairing them silently discards the import
+  intent).
 
 ## Idempotency
 

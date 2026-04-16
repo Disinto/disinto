@@ -280,3 +280,33 @@ setup_file() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"env file:  /tmp/.env"* ]]
 }
+
+# --empty short-circuits after cluster-up: no policies, no auth, no
+# import, no deploy. The dry-run plan must match that — cluster-up plan
+# appears, but none of the S2.x section banners do.
+@test "disinto init --backend=nomad --empty --dry-run skips policies/auth/import sections" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --dry-run
+  [ "$status" -eq 0 ]
+  # Cluster-up still runs (it's what --empty brings up).
+  [[ "$output" == *"Cluster-up dry-run"* ]]
+  # Policies + auth + import must NOT appear under --empty.
+  [[ "$output" != *"Vault policies dry-run"* ]]
+  [[ "$output" != *"Vault auth dry-run"* ]]
+  [[ "$output" != *"Vault import dry-run"* ]]
+  [[ "$output" != *"no --import-env/--import-sops"* ]]
+}
+
+# --empty + any --import-* flag silently does nothing (import is skipped),
+# so the CLI rejects the combination up front rather than letting it
+# look like the import "succeeded".
+@test "disinto init --backend=nomad --empty --import-env errors" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --import-env /tmp/.env --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--empty and --import-env/--import-sops/--age-key are mutually exclusive"* ]]
+}
+
+@test "disinto init --backend=nomad --empty --import-sops --age-key errors" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --import-sops /tmp/.env.vault.enc --age-key /tmp/keys.txt --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--empty and --import-env/--import-sops/--age-key are mutually exclusive"* ]]
+}

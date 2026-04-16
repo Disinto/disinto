@@ -684,13 +684,21 @@ _disinto_init_nomad() {
     exit 1
   fi
 
-  # Step 2/3/4 scripts must exist as soon as any --import-* flag is set,
-  # since we unconditionally invoke policies+auth and optionally import.
+  # --empty short-circuits after cluster-up: no policies, no auth, no
+  # import, no deploy. It's the "cluster-only escape hatch" for debugging
+  # (docs/nomad-migration.md). Caller-side validation already rejects
+  # --empty combined with --with or any --import-* flag, so reaching
+  # this branch with those set is a bug in the caller.
+  #
+  # On the default (non-empty) path, vault-apply-policies.sh and
+  # vault-nomad-auth.sh are invoked unconditionally — they are idempotent
+  # and cheap to re-run, and subsequent --with deployments depend on
+  # them. vault-import.sh is invoked only when an --import-* flag is set.
   local import_any=false
   if [ -n "$import_env" ] || [ -n "$import_sops" ]; then
     import_any=true
   fi
-  if [ "$import_any" = true ]; then
+  if [ "$empty" != "true" ]; then
     if [ ! -x "$vault_policies_sh" ]; then
       echo "Error: ${vault_policies_sh} not found or not executable" >&2
       exit 1
@@ -699,7 +707,7 @@ _disinto_init_nomad() {
       echo "Error: ${vault_auth_sh} not found or not executable" >&2
       exit 1
     fi
-    if [ ! -x "$vault_import_sh" ]; then
+    if [ "$import_any" = true ] && [ ! -x "$vault_import_sh" ]; then
       echo "Error: ${vault_import_sh} not found or not executable" >&2
       exit 1
     fi
@@ -721,6 +729,13 @@ _disinto_init_nomad() {
     local -a cmd=("$cluster_up" "--dry-run")
     "${cmd[@]}" || true
     echo ""
+
+    # --empty skips policies/auth/import/deploy — cluster-up only, no
+    # workloads. The operator-visible dry-run plan must match the real
+    # run, so short-circuit here too.
+    if [ "$empty" = "true" ]; then
+      exit 0
+    fi
 
     # Vault policies + auth are invoked on every nomad real-run path
     # regardless of --import-* flags (they're idempotent; S2.1 + S2.3).
@@ -791,6 +806,12 @@ _disinto_init_nomad() {
       exit 1
     fi
     sudo -n -- "${cluster_cmd[@]}" || exit $?
+  fi
+
+  # --empty short-circuits here: cluster-up only, no policies/auth/import
+  # and no deploy. Matches the dry-run plan above and the docs/runbook.
+  if [ "$empty" = "true" ]; then
+    exit 0
   fi
 
   # Apply Vault policies (S2.1) — idempotent, safe to re-run.
@@ -1002,6 +1023,15 @@ disinto_init() {
   if { [ -n "$import_env" ] || [ -n "$import_sops" ] || [ -n "$age_key" ]; } \
      && [ "$backend" != "nomad" ]; then
     echo "Error: --import-env, --import-sops, and --age-key require --backend=nomad" >&2
+    exit 1
+  fi
+
+  # --empty is the cluster-only escape hatch — it skips policies, auth,
+  # import, and deploy. Pairing it with --import-* silently does nothing,
+  # which is a worse failure mode than a clear error. Reject explicitly.
+  if [ "$empty" = true ] \
+     && { [ -n "$import_env" ] || [ -n "$import_sops" ] || [ -n "$age_key" ]; }; then
+    echo "Error: --empty and --import-env/--import-sops/--age-key are mutually exclusive" >&2
     exit 1
   fi
 
