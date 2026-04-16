@@ -1789,7 +1789,6 @@ _validate_env_vars() {
     while IFS='|' read -r service_name forge_user base_url _api_key; do
       [ -n "$service_name" ] || continue
       [ -n "$forge_user" ] || continue
-      [ -n "$base_url" ] || continue
 
       # Derive variable names (user -> USER_UPPER)
       local user_upper
@@ -1809,7 +1808,7 @@ _validate_env_vars() {
         errors=$((errors + 1))
       fi
 
-      # Check backend URL or API key
+      # Check backend URL or API key (conditional based on base_url presence)
       if [ -n "$base_url" ]; then
         # Local model: needs ANTHROPIC_BASE_URL
         if [ -z "${env_vars[ANTHROPIC_BASE_URL]:-}" ]; then

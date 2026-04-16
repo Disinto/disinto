@@ -262,8 +262,10 @@ disinto_hire_an_agent() {
     # Local model agent: write ANTHROPIC_BASE_URL
     local backend_var="ANTHROPIC_BASE_URL"
     local backend_val="$local_model"
+    local escaped_val
+    escaped_val=$(printf '%s\n' "$backend_val" | sed 's/[&/\]/\\&/g')
     if grep -q "^${backend_var}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${backend_var}=.*|${backend_var}=${backend_val}|" "$env_file"
+      sed -i "s|^${backend_var}=.*|${backend_var}=${escaped_val}|" "$env_file"
       echo "  ${backend_var} updated"
     else
       printf '%s=%s\n' "$backend_var" "$backend_val" >> "$env_file"
