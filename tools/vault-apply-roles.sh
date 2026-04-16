@@ -219,9 +219,10 @@ if [ "$dry_run" = true ]; then
 fi
 
 # ── Live run: Vault connectivity check ───────────────────────────────────────
-if [ -z "${VAULT_ADDR:-}" ]; then
-  die "VAULT_ADDR is not set — export VAULT_ADDR=http://127.0.0.1:8200"
-fi
+# Default the local-cluster Vault env (see lib/hvault.sh::_hvault_default_env).
+# Called transitively from vault-nomad-auth.sh during `disinto init`, which
+# does not export VAULT_ADDR in the common fresh-LXC case (issue #912).
+_hvault_default_env
 if ! hvault_token_lookup >/dev/null; then
   die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
 fi

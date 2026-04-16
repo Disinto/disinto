@@ -670,6 +670,7 @@ _disinto_init_nomad() {
   local import_env="${4:-}" import_sops="${5:-}" age_key="${6:-}"
   local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
   local deploy_sh="${FACTORY_ROOT}/lib/init/nomad/deploy.sh"
+  local vault_engines_sh="${FACTORY_ROOT}/lib/init/nomad/vault-engines.sh"
   local vault_policies_sh="${FACTORY_ROOT}/tools/vault-apply-policies.sh"
   local vault_auth_sh="${FACTORY_ROOT}/lib/init/nomad/vault-nomad-auth.sh"
   local vault_import_sh="${FACTORY_ROOT}/tools/vault-import.sh"
@@ -690,15 +691,22 @@ _disinto_init_nomad() {
   # --empty combined with --with or any --import-* flag, so reaching
   # this branch with those set is a bug in the caller.
   #
-  # On the default (non-empty) path, vault-apply-policies.sh and
-  # vault-nomad-auth.sh are invoked unconditionally — they are idempotent
-  # and cheap to re-run, and subsequent --with deployments depend on
-  # them. vault-import.sh is invoked only when an --import-* flag is set.
+  # On the default (non-empty) path, vault-engines.sh (enables the kv/
+  # mount), vault-apply-policies.sh, and vault-nomad-auth.sh are invoked
+  # unconditionally — they are idempotent and cheap to re-run, and
+  # subsequent --with deployments depend on them. vault-import.sh is
+  # invoked only when an --import-* flag is set. vault-engines.sh runs
+  # first because every policy and role below references kv/disinto/*
+  # paths, which 403 if the engine is not yet mounted (issue #912).
   local import_any=false
   if [ -n "$import_env" ] || [ -n "$import_sops" ]; then
     import_any=true
   fi
   if [ "$empty" != "true" ]; then
+    if [ ! -x "$vault_engines_sh" ]; then
+      echo "Error: ${vault_engines_sh} not found or not executable" >&2
+      exit 1
+    fi
     if [ ! -x "$vault_policies_sh" ]; then
       echo "Error: ${vault_policies_sh} not found or not executable" >&2
       exit 1
@@ -737,10 +745,15 @@ _disinto_init_nomad() {
       exit 0
     fi
 
-    # Vault policies + auth are invoked on every nomad real-run path
-    # regardless of --import-* flags (they're idempotent; S2.1 + S2.3).
-    # Mirror that ordering in the dry-run plan so the operator sees the
-    # full sequence Step 2 will execute.
+    # Vault engines + policies + auth are invoked on every nomad real-run
+    # path regardless of --import-* flags (they're idempotent; S2.1 + S2.3).
+    # Engines runs first because policies/roles/templates all reference the
+    # kv/ mount it enables (issue #912). Mirror that ordering in the
+    # dry-run plan so the operator sees the full sequence Step 2 will
+    # execute.
+    echo "── Vault engines dry-run ──────────────────────────────"
+    echo "[engines] [dry-run] ${vault_engines_sh} --dry-run"
+    echo ""
     echo "── Vault policies dry-run ─────────────────────────────"
     echo "[policies] [dry-run] ${vault_policies_sh} --dry-run"
     echo ""
@@ -812,6 +825,22 @@ _disinto_init_nomad() {
   # and no deploy. Matches the dry-run plan above and the docs/runbook.
   if [ "$empty" = "true" ]; then
     exit 0
+  fi
+
+  # Enable Vault secret engines (S2.1 / issue #912) — must precede
+  # policies/auth/import because every policy and every import target
+  # addresses paths under kv/. Idempotent, safe to re-run.
+  echo ""
+  echo "── Enabling Vault secret engines ──────────────────────"
+  local -a engines_cmd=("$vault_engines_sh")
+  if [ "$(id -u)" -eq 0 ]; then
+    "${engines_cmd[@]}" || exit $?
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Error: vault-engines.sh must run as root and sudo is not installed" >&2
+      exit 1
+    fi
+    sudo -n -- "${engines_cmd[@]}" || exit $?
   fi
 
   # Apply Vault policies (S2.1) — idempotent, safe to re-run.

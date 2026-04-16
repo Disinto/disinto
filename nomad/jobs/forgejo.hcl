@@ -154,11 +154,18 @@ job "forgejo" {
       # this file. "seed-me" is < 16 chars and still distinctive enough
       # to surface in a `grep FORGEJO__security__` audit. The template
       # comment below carries the operator-facing fix pointer.
+      # `error_on_missing_key = false` stops consul-template from blocking
+      # the alloc on template-pending when the Vault KV path exists but a
+      # referenced key is absent (or the path itself is absent and the
+      # else-branch placeholders are used). Without this, a fresh-LXC
+      # `disinto init --with forgejo` against an empty Vault hangs on
+      # template-pending until deploy.sh times out (issue #912, bug #4).
       template {
-        destination = "secrets/forgejo.env"
-        env         = true
-        change_mode = "restart"
-        data        = <<EOT
+        destination          = "secrets/forgejo.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        data                 = <<EOT
 {{- with secret "kv/data/disinto/shared/forgejo" -}}
 FORGEJO__security__SECRET_KEY={{ .Data.data.secret_key }}
 FORGEJO__security__INTERNAL_TOKEN={{ .Data.data.internal_token }}
