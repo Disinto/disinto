@@ -126,11 +126,21 @@ issue_claim() {
   # Assign to self BEFORE adding in-progress label (issue #471).
   # This ordering ensures the assignee is set by the time other pollers
   # see the in-progress label, reducing the stale-detection race window.
-  curl -sf -X PATCH \
+  #
+  # Capture the HTTP status instead of silently swallowing failures (#856).
+  # A 403 here means the bot user is not a write collaborator on the repo —
+  # previously the silent failure fell through to the post-PATCH verify which
+  # only reported "claim lost to <none>", hiding the real root cause.
+  local patch_code
+  patch_code=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
     -H "Content-Type: application/json" \
     "${FORGE_API}/issues/${issue}" \
-    -d "{\"assignees\":[\"${me}\"]}" >/dev/null 2>&1 || return 1
+    -d "{\"assignees\":[\"${me}\"]}")
+  if [ "$patch_code" != "201" ] && [ "$patch_code" != "200" ]; then
+    _ilc_log "issue #${issue} PATCH assignee failed: HTTP ${patch_code} (403 = missing write collaborator permission on ${FORGE_REPO:-repo})"
+    return 1
+  fi
 
   # Verify the PATCH stuck.  Forgejo's assignees PATCH is last-write-wins, so
   # under concurrent claims from multiple dev agents two invocations can both
