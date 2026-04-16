@@ -928,6 +928,13 @@ _disinto_init_nomad() {
   # hasn't sourced it yet; sibling vault-* scripts (engines/policies/
   # auth/import) default VAULT_ADDR internally via _hvault_default_env,
   # but vault-seed-forgejo.sh requires the caller to set it.
+  #
+  # The non-root branch invokes the seeder as `sudo -n -- env VAR=val
+  # script` rather than `sudo -n VAR=val -- script`: sudo treats bare
+  # `VAR=val` args as sudoers env-assignments, which the default
+  # `env_reset=on` policy silently discards unless the variable is in
+  # `env_keep` (VAULT_ADDR is not). Using `env` as the actual command
+  # sets VAULT_ADDR in the child process regardless of sudoers policy.
   if [ -n "$with_services" ]; then
     local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
     local IFS=','
@@ -944,7 +951,7 @@ _disinto_init_nomad() {
             echo "Error: vault-seed-${svc}.sh must run as root and sudo is not installed" >&2
             exit 1
           fi
-          sudo -n "VAULT_ADDR=$vault_addr" -- "$seed_script" || exit $?
+          sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" || exit $?
         fi
       fi
     done

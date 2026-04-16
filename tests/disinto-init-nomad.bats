@@ -177,6 +177,22 @@ setup_file() {
   [ "$seed_line" -lt "$deploy_line" ]
 }
 
+# Regression guard (PR #929 review): `sudo -n VAR=val -- cmd` is subject
+# to sudoers env_reset policy and silently drops VAULT_ADDR unless it's
+# in env_keep (it isn't in default configs). vault-seed-forgejo.sh
+# requires VAULT_ADDR and dies at its own precondition check if unset,
+# so the non-root branch MUST invoke `sudo -n -- env VAR=val cmd` so
+# that `env` sets the variable in the child process regardless of
+# sudoers policy. This grep-level guard catches a revert to the unsafe
+# form that silently broke non-root seed runs on a fresh LXC.
+@test "seed loop invokes sudo via 'env VAR=val' (bypasses sudoers env_reset)" {
+  run grep -F 'sudo -n -- env "VAULT_ADDR=' "$DISINTO_BIN"
+  [ "$status" -eq 0 ]
+  # Negative: no bare `sudo -n "VAR=val" --` form anywhere in the file.
+  run grep -F 'sudo -n "VAULT_ADDR=' "$DISINTO_BIN"
+  [ "$status" -ne 0 ]
+}
+
 @test "disinto init --backend=nomad --with forgejo,forgejo --dry-run handles comma-separated services" {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo,forgejo --dry-run
   [ "$status" -eq 0 ]
