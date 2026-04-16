@@ -52,12 +52,13 @@ setup() {
   # canned responses per endpoint. Every call gets logged as
   # `METHOD URL` (one line) to $CALLS_LOG for later grep-based asserts.
   curl() {
-    local method="GET" url="" arg
+    local method="GET" url="" arg want_code=""
     while [ $# -gt 0 ]; do
       arg="$1"
       case "$arg" in
         -X) method="$2"; shift 2 ;;
         -H|-d|--data-binary|-o) shift 2 ;;
+        -w) want_code="$2"; shift 2 ;;
         -sf|-s|-f|--silent|--fail) shift ;;
         *) url="$arg"; shift ;;
       esac
@@ -89,7 +90,13 @@ setup() {
         fi
         ;;
       "PATCH ${FORGE_API}/issues/"*)
-        : # accept any PATCH; body is ignored by the mock
+        # Accept any PATCH; body ignored. When caller asked for the HTTP
+        # status via `-w '%{http_code}'` (issue_claim does this since #856
+        # to surface 403s from missing collaborator permission), emit the
+        # code configured by the scenario (default 200).
+        if [ "$want_code" = '%{http_code}' ]; then
+          printf '%s' "${MOCK_PATCH_CODE:-200}"
+        fi
         ;;
       "GET ${FORGE_API}/labels")
         printf '[]'
@@ -163,6 +170,28 @@ count_calls() {
   # (No need to roll back what was never written.)
   [ "$(count_calls POST "${FORGE_API}/issues/42/labels")" -eq 0 ]
   [ "$(count_calls GET "${FORGE_API}/labels")" -eq 0 ]
+}
+
+# ── PATCH HTTP error surfacing (#856) ───────────────────────────────────────
+
+@test "issue_claim logs specific HTTP code on PATCH failure (403 = missing collaborator)" {
+  export MOCK_ME="bot"
+  export MOCK_INITIAL_ASSIGNEE=""
+  export MOCK_RECHECK_ASSIGNEE=""
+  export MOCK_PATCH_CODE="403"
+
+  run issue_claim 42
+  [ "$status" -eq 1 ]
+
+  # The new log message names the HTTP code explicitly — without this,
+  # a missing-collaborator setup (#856) falls through to the post-PATCH
+  # verify and masquerades as "claim lost to <none>".
+  [[ "$output" == *"PATCH assignee failed: HTTP 403"* ]]
+
+  # No re-read on PATCH failure (we bail before reaching the verify step).
+  [ "$(count_calls GET "${FORGE_API}/issues/42")" -eq 1 ]
+  [ "$(count_calls PATCH "${FORGE_API}/issues/42")" -eq 1 ]
+  [ "$(count_calls POST "${FORGE_API}/issues/42/labels")" -eq 0 ]
 }
 
 # ── pre-check skip ──────────────────────────────────────────────────────────

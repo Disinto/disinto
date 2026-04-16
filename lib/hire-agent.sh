@@ -229,6 +229,37 @@ disinto_hire_an_agent() {
     export "${pass_var}=${user_pass}"
   fi
 
+  # Step 1.6: Add the new agent as a write collaborator on the project repo (#856).
+  # Without this, PATCH /issues/{n} {assignees:[agent]} returns 403 Forbidden and
+  # the dev-agent polls forever logging "claim lost to <none> — skipping" (see
+  # issue_claim()'s post-PATCH verify).  Mirrors the collaborator setup applied
+  # to the canonical bot users in lib/forge-setup.sh.  Idempotent: Forgejo's PUT
+  # returns 204 whether the user is being added for the first time or already a
+  # collaborator at the same permission.
+  if [ -n "${FORGE_REPO:-}" ]; then
+    echo ""
+    echo "Step 1.6: Adding '${agent_name}' as write collaborator on '${FORGE_REPO}'..."
+    local collab_code
+    collab_code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+      -H "Authorization: token ${admin_token}" \
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/repos/${FORGE_REPO}/collaborators/${agent_name}" \
+      -d '{"permission":"write"}')
+    case "$collab_code" in
+      204|201|200)
+        echo "  ${agent_name} is a write collaborator on ${FORGE_REPO} (HTTP ${collab_code})"
+        ;;
+      *)
+        echo "  Warning: failed to add '${agent_name}' as collaborator on '${FORGE_REPO}' (HTTP ${collab_code})" >&2
+        echo "  The agent will not be able to claim issues until this is fixed." >&2
+        ;;
+    esac
+  else
+    echo ""
+    echo "Step 1.6: FORGE_REPO not set — skipping collaborator step" >&2
+    echo "  Warning: the agent will not be able to claim issues on the project repo" >&2
+  fi
+
   # Step 2: Create .profile repo on Forgejo
   echo ""
   echo "Step 2: Creating '${agent_name}/.profile' repo (if not exists)..."
