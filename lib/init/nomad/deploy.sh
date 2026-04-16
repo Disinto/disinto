@@ -78,12 +78,21 @@ _wait_job_running() {
 
   log "waiting for job '${job_name}' to become healthy (timeout: ${timeout}s)..."
 
-  # Get the latest deployment ID for this job
-  local deployment_id
-  deployment_id=$(nomad job deployments -json "$job_name" 2>/dev/null | jq -r '.[0].ID' 2>/dev/null) || deployment_id=""
+  # Get the latest deployment ID for this job (retry until available)
+  local deployment_id=""
+  local retry_count=0
+  local max_retries=12
+
+  while [ -z "$deployment_id" ] && [ "$retry_count" -lt "$max_retries" ]; do
+    deployment_id=$(nomad job deployments -json "$job_name" 2>/dev/null | jq -r '.[0].ID' 2>/dev/null) || deployment_id=""
+    if [ -z "$deployment_id" ]; then
+      sleep 5
+      retry_count=$((retry_count + 1))
+    fi
+  done
 
   if [ -z "$deployment_id" ]; then
-    log "ERROR: no deployment found for job '${job_name}'"
+    log "ERROR: no deployment found for job '${job_name}' after ${max_retries} attempts"
     return 1
   fi
 
@@ -99,7 +108,7 @@ _wait_job_running() {
     }
 
     local status
-    status=$(printf '%s' "$deploy_status_json" | jq -r '.[0].Status' 2>/dev/null) || {
+    status=$(printf '%s' "$deploy_status_json" | jq -r '.Status' 2>/dev/null) || {
       sleep 5
       elapsed=$((elapsed + 5))
       continue
@@ -114,15 +123,10 @@ _wait_job_running() {
         log "deployment '${deployment_id}' failed for job '${job_name}'"
         log "showing last 50 lines of allocation logs (stderr):"
 
-        # Get allocation IDs from the deployment
+        # Get allocation IDs from job status
         local alloc_ids
-        alloc_ids=$(printf '%s' "$deploy_status_json" | jq -r '.[0].AllocStatus.AllocsNotYetRunning // empty' 2>/dev/null) || alloc_ids=""
-
-        # Fallback: get allocs from job status
-        if [ -z "$alloc_ids" ]; then
-          alloc_ids=$(nomad job status -json "$job_name" 2>/dev/null \
-            | jq -r '.Evaluations[].Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
-        fi
+        alloc_ids=$(nomad job status -json "$job_name" 2>/dev/null \
+          | jq -r '.Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
 
         if [ -n "$alloc_ids" ]; then
           for alloc_id in $alloc_ids; do
@@ -152,7 +156,7 @@ _wait_job_running() {
   # Get allocation IDs from job status
   local alloc_ids
   alloc_ids=$(nomad job status -json "$job_name" 2>/dev/null \
-    | jq -r '.Evaluations[].Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
+    | jq -r '.Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
 
   if [ -n "$alloc_ids" ]; then
     for alloc_id in $alloc_ids; do
