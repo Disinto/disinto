@@ -427,6 +427,7 @@ _launch_runner_docker() {
       secret_val=$(load_secret "$secret") || true
       if [ -z "$secret_val" ]; then
         log "ERROR: Secret '${secret}' could not be resolved for action ${action_id}"
+        write_result "$action_id" 1 "Secret not found: ${secret}"
         return 1
       fi
       cmd+=(-e "${secret}=${secret_val}")
@@ -451,6 +452,7 @@ _launch_runner_docker() {
           ;;
         *)
           log "ERROR: Unknown mount alias '${mount_alias}' for action ${action_id}"
+          write_result "$action_id" 1 "Unknown mount alias: ${mount_alias}"
           return 1
           ;;
       esac
