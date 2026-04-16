@@ -346,15 +346,19 @@ bootstrap_factory_repo
 # This prevents the silent-zombie mode where the polling loop matches zero files
 # and does nothing forever.
 validate_projects_dir() {
-  local toml_count
-  toml_count=$(compgen -G "${DISINTO_DIR}/projects/*.toml" 2>/dev/null | wc -l)
-  if [ "$toml_count" -eq 0 ]; then
+  # NOTE: compgen -G exits non-zero when no matches exist, so piping it through
+  # `wc -l` under `set -eo pipefail` aborts the script before the FATAL branch
+  # can log a diagnostic (#877).  Use the conditional form already adopted at
+  # lines above (see bootstrap_factory_repo, PROJECT_NAME parsing).
+  if ! compgen -G "${DISINTO_DIR}/projects/*.toml" >/dev/null 2>&1; then
     log "FATAL: No real .toml files found in ${DISINTO_DIR}/projects/"
     log "Expected at least one project config file (e.g., disinto.toml)"
     log "The directory only contains *.toml.example template files."
     log "Mount the host ./projects volume or copy real .toml files into the container."
     exit 1
   fi
+  local toml_count
+  toml_count=$(compgen -G "${DISINTO_DIR}/projects/*.toml" | wc -l)
   log "Projects directory validated: ${toml_count} real .toml file(s) found"
 }
 
