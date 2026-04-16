@@ -1,0 +1,40 @@
+# Test fixture .env file for vault-import.sh
+# This file contains all expected keys for the import test
+
+# Generic forge creds
+FORGE_TOKEN=generic-forge-token
+FORGE_PASS=generic-forge-pass
+FORGE_ADMIN_TOKEN=generic-admin-token
+
+# Bot tokens (review, dev, gardener, architect, planner, predictor, supervisor, vault)
+FORGE_REVIEW_TOKEN=review-token
+FORGE_REVIEW_PASS=review-pass
+FORGE_DEV_TOKEN=dev-token
+FORGE_DEV_PASS=dev-pass
+FORGE_GARDENER_TOKEN=gardener-token
+FORGE_GARDENER_PASS=gardener-pass
+FORGE_ARCHITECT_TOKEN=architect-token
+FORGE_ARCHITECT_PASS=architect-pass
+FORGE_PLANNER_TOKEN=planner-token
+FORGE_PLANNER_PASS=planner-pass
+FORGE_PREDICTOR_TOKEN=predictor-token
+FORGE_PREDICTOR_PASS=predictor-pass
+FORGE_SUPERVISOR_TOKEN=supervisor-token
+FORGE_SUPERVISOR_PASS=supervisor-pass
+FORGE_VAULT_TOKEN=vault-token
+FORGE_VAULT_PASS=vault-pass
+
+# Llama bot
+FORGE_TOKEN_LLAMA=llama-token
+FORGE_PASS_LLAMA=llama-pass
+
+# Woodpecker secrets
+WOODPECKER_AGENT_SECRET=wp-agent-secret
+WP_FORGEJO_CLIENT=wp-forgejo-client
+WP_FORGEJO_SECRET=wp-forgejo-secret
+WOODPECKER_TOKEN=wp-token
+
+# Chat secrets
+FORWARD_AUTH_SECRET=forward-auth-secret
+CHAT_OAUTH_CLIENT_ID=chat-client-id
+CHAT_OAUTH_CLIENT_SECRET=chat-client-secret

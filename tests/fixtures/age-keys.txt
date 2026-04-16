@@ -1,0 +1,5 @@
+# Test age key for sops
+# Generated: 2026-04-16
+# Public key: age1ztkm8yvdk42m2cn4dj2v9ptfknq8wpgr3ry9dpmtmlaeas6p7yyqft0ldg
+
+AGE-SECRET-KEY-1PCQQX37MTZDGES76H9TGQN5XTG2ZZX2UUR87KR784NZ4MQ3NJ56S0Z23SF
