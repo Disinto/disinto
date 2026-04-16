@@ -535,7 +535,10 @@ EOF
     local interval="${poll_interval:-60}"
     echo "  Writing [agents.${section_name}] to ${toml_file}..."
     python3 -c '
-import sys, re, pathlib
+import sys
+import tomlkit
+import re
+import pathlib
 
 toml_path = sys.argv[1]
 section_name = sys.argv[2]
@@ -548,38 +551,39 @@ poll_interval = sys.argv[7]
 p = pathlib.Path(toml_path)
 text = p.read_text()
 
-# Build the new section
-new_section = f"""
-[agents.{section_name}]
-base_url = "{base_url}"
-model = "{model}"
-api_key = "sk-no-key-required"
-roles = ["{role}"]
-forge_user = "{agent_name}"
-compact_pct = 60
-poll_interval = {poll_interval}
-"""
+# Step 1: Remove any commented-out [agents.X] blocks (they cause parse issues)
+# Match # [agents.section_name] followed by lines that are not section headers
+# Use negative lookahead to stop before a real section header (# [ or [)
+commented_pattern = rf"(?:^|\n)# \[agents\.{re.escape(section_name)}\](?:\n(?!# \[|\[)[^\n]*)*"
+text = re.sub(commented_pattern, "", text, flags=re.DOTALL)
 
-# Check if section already exists and replace it
-pattern = rf"\[agents\.{re.escape(section_name)}\][^\[]*"
-if re.search(pattern, text):
-    text = re.sub(pattern, new_section.strip() + "\n", text)
-else:
-    # Remove commented-out example [agents.llama] block if present
-    text = re.sub(
-        r"\n# Local-model agents \(optional\).*?(?=\n# \[mirrors\]|\n\[mirrors\]|\Z)",
-        "",
-        text,
-        flags=re.DOTALL,
-    )
-    # Append before [mirrors] if it exists, otherwise at end
-    mirrors_match = re.search(r"\n(# )?\[mirrors\]", text)
-    if mirrors_match:
-        text = text[:mirrors_match.start()] + "\n" + new_section + text[mirrors_match.start():]
-    else:
-        text = text.rstrip() + "\n" + new_section
+# Step 2: Parse TOML with tomlkit (preserves comments and formatting)
+try:
+    doc = tomlkit.parse(text)
+except Exception as e:
+    print(f"Error: Invalid TOML in {toml_path}: {e}", file=sys.stderr)
+    sys.exit(1)
 
-p.write_text(text)
+# Step 3: Ensure agents table exists
+if "agents" not in doc:
+    doc.add("agents", tomlkit.table())
+
+# Step 4: Update the specific agent section
+doc["agents"][section_name] = {
+    "base_url": base_url,
+    "model": model,
+    "api_key": "sk-no-key-required",
+    "roles": [role],
+    "forge_user": agent_name,
+    "compact_pct": 60,
+    "poll_interval": int(poll_interval),
+}
+
+# Step 5: Serialize back to TOML (preserves comments)
+output = tomlkit.dumps(doc)
+
+# Step 6: Write back
+p.write_text(output)
 ' "$toml_file" "$section_name" "$local_model" "$model" "$agent_name" "$role" "$interval"
 
     echo "  Agent config written to TOML"
