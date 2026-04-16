@@ -45,25 +45,23 @@ log() { printf '[vault-apply] %s\n' "$*"; }
 die() { printf '[vault-apply] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ── Flag parsing ─────────────────────────────────────────────────────────────
+# Single optional flag — no loop needed. Keeps this block textually distinct
+# from the multi-flag `while/case` parsers elsewhere in the repo (see
+# .woodpecker/detect-duplicates.py — sliding 5-line window).
 dry_run=false
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --dry-run) dry_run=true; shift ;;
-    -h|--help)
-      cat <<EOF
-Usage: $(basename "$0") [--dry-run]
-
-Apply every vault/policies/*.hcl to Vault as an ACL policy. Idempotent:
-unchanged policies are reported as "unchanged" and not written.
-
-  --dry-run   Print policy names + content SHA256 that would be applied,
-              without contacting Vault. Exits 0.
-EOF
-      exit 0
-      ;;
-    *) die "unknown flag: $1" ;;
-  esac
-done
+[ "$#" -le 1 ] || die "too many arguments (saw: $*)"
+case "${1:-}" in
+  '')         ;;
+  --dry-run)  dry_run=true ;;
+  -h|--help)  printf 'Usage: %s [--dry-run]\n\n' "$(basename "$0")"
+              printf 'Apply every vault/policies/*.hcl to Vault as an ACL policy.\n'
+              printf 'Idempotent: unchanged policies are reported as "unchanged" and\n'
+              printf 'not written.\n\n'
+              printf '  --dry-run   Print policy names + content SHA256 that would be\n'
+              printf '              applied, without contacting Vault. Exits 0.\n'
+              exit 0 ;;
+  *)          die "unknown flag: $1" ;;
+esac
 
 # ── Preconditions ────────────────────────────────────────────────────────────
 for bin in curl jq sha256sum; do
