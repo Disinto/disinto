@@ -33,13 +33,11 @@ NOMAD_DATA_DIR="/var/lib/nomad"
 log() { printf '[systemd-nomad] %s\n' "$*"; }
 die() { printf '[systemd-nomad] ERROR: %s\n' "$*" >&2; exit 1; }
 
-# ── Preconditions ────────────────────────────────────────────────────────────
-if [ "$(id -u)" -ne 0 ]; then
-  die "must run as root (needs write access to ${UNIT_PATH})"
-fi
+# shellcheck source=lib-systemd.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib-systemd.sh"
 
-command -v systemctl >/dev/null 2>&1 \
-  || die "systemctl not found (systemd is required)"
+# ── Preconditions ────────────────────────────────────────────────────────────
+systemd_require_preconditions "$UNIT_PATH"
 
 NOMAD_BIN="$(command -v nomad 2>/dev/null || true)"
 [ -n "$NOMAD_BIN" ] \
@@ -98,33 +96,7 @@ for d in "$NOMAD_CONFIG_DIR" "$NOMAD_DATA_DIR"; do
   fi
 done
 
-# ── Install unit file only if content differs ────────────────────────────────
-needs_reload=0
-if [ ! -f "$UNIT_PATH" ] \
-   || ! printf '%s\n' "$DESIRED_UNIT" | cmp -s - "$UNIT_PATH"; then
-  log "writing unit → ${UNIT_PATH}"
-  tmp="$(mktemp)"
-  trap 'rm -f "$tmp"' EXIT
-  printf '%s\n' "$DESIRED_UNIT" > "$tmp"
-  install -m 0644 -o root -g root "$tmp" "$UNIT_PATH"
-  rm -f "$tmp"
-  trap - EXIT
-  needs_reload=1
-else
-  log "unit file already up to date"
-fi
-
-# ── Reload + enable ──────────────────────────────────────────────────────────
-if [ "$needs_reload" -eq 1 ]; then
-  log "systemctl daemon-reload"
-  systemctl daemon-reload
-fi
-
-if systemctl is-enabled --quiet nomad.service 2>/dev/null; then
-  log "nomad.service already enabled"
-else
-  log "systemctl enable nomad"
-  systemctl enable nomad.service >/dev/null
-fi
+# ── Install + reload + enable (shared with systemd-vault.sh via lib-systemd) ─
+systemd_install_unit "$UNIT_PATH" "nomad.service" "$DESIRED_UNIT"
 
 log "done — unit installed and enabled (NOT started; S0.4 brings the cluster up)"
