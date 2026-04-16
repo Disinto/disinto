@@ -151,9 +151,9 @@ _kv_put_secret() {
     -X POST \
     -d "$payload" \
     -o "$tmpfile" \
-    "${VAULT_ADDR}/v1/secret/data/${path}")" || {
+    "${VAULT_ADDR}/v1/kv/data/${path}")" || {
     rm -f "$tmpfile"
-    _err "Failed to write to Vault at secret/data/${path}: curl error"
+    _err "Failed to write to Vault at kv/data/${path}: curl error"
     return 1
   }
   rm -f "$tmpfile"
@@ -164,15 +164,15 @@ _kv_put_secret() {
       return 0
       ;;
     404)
-      _err "KV path not found: secret/data/${path}"
+      _err "KV path not found: kv/data/${path}"
       return 1
       ;;
     403)
-      _err "Permission denied writing to secret/data/${path}"
+      _err "Permission denied writing to kv/data/${path}"
       return 1
       ;;
     *)
-      _err "Failed to write to Vault at secret/data/${path}: HTTP $http_code"
+      _err "Failed to write to Vault at kv/data/${path}: HTTP $http_code"
       return 1
       ;;
   esac
