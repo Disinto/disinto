@@ -191,3 +191,92 @@ setup_file() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"--empty and --with are mutually exclusive"* ]]
 }
+
+# ── --import-env / --import-sops / --age-key (S2.5, #883) ────────────────────
+#
+# Step 2.5 wires Vault policies + JWT auth + optional KV import into
+# `disinto init --backend=nomad`. The tests below exercise the flag
+# grammar (who-requires-whom + who-requires-backend=nomad) and the
+# dry-run plan shape (each --import-* flag prints its own path line,
+# independently). A prior attempt at this issue regressed the "print
+# every set flag" invariant by using if/elif — covered by the
+# "--import-env --import-sops --age-key" case.
+
+@test "disinto init --backend=nomad --import-env only is accepted" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env /tmp/.env --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--import-env"* ]]
+  [[ "$output" == *"env file:  /tmp/.env"* ]]
+}
+
+@test "disinto init --backend=nomad --import-sops without --age-key errors" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-sops /tmp/.env.vault.enc --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--import-sops requires --age-key"* ]]
+}
+
+@test "disinto init --backend=nomad --age-key without --import-sops errors" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --age-key /tmp/keys.txt --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--age-key requires --import-sops"* ]]
+}
+
+@test "disinto init --backend=docker --import-env errors with backend requirement" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=docker --import-env /tmp/.env
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--import-env, --import-sops, and --age-key require --backend=nomad"* ]]
+}
+
+@test "disinto init --backend=nomad --import-sops --age-key --dry-run shows import plan" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-sops /tmp/.env.vault.enc --age-key /tmp/keys.txt --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Vault import dry-run"* ]]
+  [[ "$output" == *"--import-sops"* ]]
+  [[ "$output" == *"--age-key"* ]]
+  [[ "$output" == *"sops file: /tmp/.env.vault.enc"* ]]
+  [[ "$output" == *"age key:   /tmp/keys.txt"* ]]
+}
+
+# When all three flags are set, each one must print its own path line —
+# if/elif regressed this to "only one printed" in a prior attempt (#883).
+@test "disinto init --backend=nomad --import-env --import-sops --age-key --dry-run shows full import plan" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env /tmp/.env --import-sops /tmp/.env.vault.enc --age-key /tmp/keys.txt --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Vault import dry-run"* ]]
+  [[ "$output" == *"env file:  /tmp/.env"* ]]
+  [[ "$output" == *"sops file: /tmp/.env.vault.enc"* ]]
+  [[ "$output" == *"age key:   /tmp/keys.txt"* ]]
+}
+
+@test "disinto init --backend=nomad without import flags shows skip message" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no --import-env/--import-sops"* ]]
+  [[ "$output" == *"skipping"* ]]
+}
+
+@test "disinto init --backend=nomad --import-env --import-sops --age-key --with forgejo --dry-run shows all plans" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env /tmp/.env --import-sops /tmp/.env.vault.enc --age-key /tmp/keys.txt --with forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Vault import dry-run"* ]]
+  [[ "$output" == *"Vault policies dry-run"* ]]
+  [[ "$output" == *"Vault auth dry-run"* ]]
+  [[ "$output" == *"Deploy services dry-run"* ]]
+}
+
+@test "disinto init --backend=nomad --dry-run prints policies + auth plan even without --import-*" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
+  [ "$status" -eq 0 ]
+  # Policies + auth run on every nomad path (idempotent), so the dry-run
+  # plan always lists them — regardless of whether --import-* is set.
+  [[ "$output" == *"Vault policies dry-run"* ]]
+  [[ "$output" == *"Vault auth dry-run"* ]]
+  [[ "$output" != *"Vault import dry-run"* ]]
+}
+
+# --import-env=PATH (=-form) must work alongside --import-env PATH.
+@test "disinto init --backend=nomad --import-env=PATH (equals form) works" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env=/tmp/.env --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"env file:  /tmp/.env"* ]]
+}
