@@ -1,0 +1,6 @@
+GITHUB_TOKEN=github-test-token-abc123
+CODEBERG_TOKEN=codeberg-test-token-def456
+CLAWHUB_TOKEN=clawhub-test-token-ghi789
+DEPLOY_KEY=deploy-key-test-jkl012
+NPM_TOKEN=npm-test-token-mno345
+DOCKER_HUB_TOKEN=dockerhub-test-token-pqr678

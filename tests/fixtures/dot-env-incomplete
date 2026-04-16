@@ -1,0 +1,27 @@
+# Test fixture .env file with missing required keys
+# This file is intentionally missing some keys to test error handling
+
+# Generic forge creds - missing FORGE_ADMIN_TOKEN
+FORGE_TOKEN=generic-forge-token
+FORGE_PASS=generic-forge-pass
+
+# Bot tokens - missing several roles
+FORGE_REVIEW_TOKEN=review-token
+FORGE_REVIEW_PASS=review-pass
+FORGE_DEV_TOKEN=dev-token
+FORGE_DEV_PASS=dev-pass
+
+# Llama bot - missing (only token, no pass)
+FORGE_TOKEN_LLAMA=llama-token
+# FORGE_PASS_LLAMA=llama-pass
+
+# Woodpecker secrets - missing some
+WOODPECKER_AGENT_SECRET=wp-agent-secret
+# WP_FORGEJO_CLIENT=wp-forgejo-client
+# WP_FORGEJO_SECRET=wp-forgejo-secret
+# WOODPECKER_TOKEN=wp-token
+
+# Chat secrets - missing some
+FORWARD_AUTH_SECRET=forward-auth-secret
+# CHAT_OAUTH_CLIENT_ID=chat-client-id
+# CHAT_OAUTH_CLIENT_SECRET=chat-client-secret
