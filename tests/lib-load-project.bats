@@ -184,3 +184,70 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"invalid agent name"* ]]
 }
+
+# -------------------------------------------------------------------------
+# #852 defence: the export loops must warn-and-skip invalid identifiers
+# rather than tank `set -euo pipefail`. Hire-agent's up-front reject
+# (tests above) is the primary line of defence, but a hand-edited TOML —
+# e.g. [mirrors] my-mirror = "…" or a quoted [agents."weird name"] — can
+# still produce invalid shell identifiers downstream. The guard keeps
+# the factory loading the rest of the file instead of crash-looping.
+# -------------------------------------------------------------------------
+
+@test "[mirrors] dashed key: warn-and-skip, does not crash under set -e" {
+  cat > "$TOML" <<EOF
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+
+[mirrors]
+good = "https://example.com/good"
+bad-name = "https://example.com/bad"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    source '${ROOT}/lib/load-project.sh' '$TOML' 2>&1
+    echo \"GOOD=\${MIRROR_GOOD:-MISSING}\"
+  "
+
+  # Whole load did not abort under set -e.
+  [ "$status" -eq 0 ]
+  # The valid mirror still loads.
+  [[ "$output" == *"GOOD=https://example.com/good"* ]]
+  # The invalid one triggers a warning; load continues instead of crashing.
+  [[ "$output" == *"skipping invalid shell identifier"* ]]
+  [[ "$output" == *"MIRROR_BAD-NAME"* ]]
+}
+
+@test "[agents.*] quoted section with space: warn-and-skip, does not crash" {
+  # TOML permits quoted keys with arbitrary characters. A hand-edited
+  # `[agents."weird name"]` would survive the Python .replace('-', '_')
+  # (because it has no dash) but still contains a space, which would
+  # yield AGENT_WEIRD NAME_BASE_URL — not a valid identifier.
+  cat > "$TOML" <<'EOF'
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+
+[agents.llama]
+base_url = "http://10.10.10.1:8081"
+model    = "qwen"
+
+[agents."weird name"]
+base_url = "http://10.10.10.1:8082"
+model    = "qwen-bad"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    source '${ROOT}/lib/load-project.sh' '$TOML' 2>&1
+    echo \"LLAMA=\${AGENT_LLAMA_BASE_URL:-MISSING}\"
+  "
+
+  # The sane sibling must still be loaded despite the malformed neighbour.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LLAMA=http://10.10.10.1:8081"* ]]
+  # The invalid agent's identifier triggers a warning and is skipped.
+  [[ "$output" == *"skipping invalid shell identifier"* ]]
+}
