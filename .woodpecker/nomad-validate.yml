@@ -15,9 +15,10 @@
 #
 # Steps (all fail-closed — any error blocks merge):
 #   1. nomad-config-validate  — `nomad config validate` on server + client HCL
-#   2. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
-#   3. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
-#   4. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
+#   2. nomad-job-validate      — `nomad job validate` on every nomad/jobs/*.nomad.hcl
+#   3. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
+#   4. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
+#   5. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
 #
 # Pinned image versions match lib/init/nomad/install.sh (nomad 1.9.5 /
 # vault 1.18.5). Bump there AND here together — drift = CI passing on
@@ -56,7 +57,24 @@ steps:
     commands:
       - nomad config validate nomad/server.hcl nomad/client.hcl
 
-  # ── 2. Vault HCL syntax check ────────────────────────────────────────────
+  # ── 2. Nomad jobspec HCL syntax check ────────────────────────────────────
+  # `nomad job validate` is a *different* tool from `nomad config validate` —
+  # the former parses jobspec HCL (job/group/task blocks, driver config,
+  # volume refs, network ports), the latter parses agent config HCL
+  # (server/client blocks). Running step 1 on a jobspec would reject it
+  # with "unknown block 'job'", and vice versa. Hence two separate steps.
+  #
+  # Validation is offline: no running Nomad server is required (exit 0 on
+  # valid HCL, 1 on syntax/semantic error). One invocation per file — the
+  # CLI takes a single path argument. New jobspecs get explicit lines here
+  # so bringing one up is a conscious CI edit, matching step 1's pattern
+  # and this file's "no-ad-hoc-steps" principle.
+  - name: nomad-job-validate
+    image: hashicorp/nomad:1.9.5
+    commands:
+      - nomad job validate nomad/jobs/forgejo.nomad.hcl
+
+  # ── 3. Vault HCL syntax check ────────────────────────────────────────────
   # `vault operator diagnose` loads the config and runs a suite of checks.
   # Exit codes:
   #   0 — all checks green
@@ -81,7 +99,7 @@ steps:
           *) echo "vault config: hard failure (rc=$rc)" >&2; exit "$rc" ;;
         esac
 
-  # ── 3. Shellcheck ────────────────────────────────────────────────────────
+  # ── 4. Shellcheck ────────────────────────────────────────────────────────
   # Covers the new lib/init/nomad/*.sh scripts plus bin/disinto (which owns
   # the backend dispatcher). bin/disinto has no .sh extension so the
   # repo-wide shellcheck in .woodpecker/ci.yml skips it — this step is the
@@ -91,7 +109,7 @@ steps:
     commands:
       - shellcheck --severity=warning lib/init/nomad/*.sh bin/disinto
 
-  # ── 4. bats: `disinto init --backend=nomad --dry-run` ────────────────────
+  # ── 5. bats: `disinto init --backend=nomad --dry-run` ────────────────────
   # Smoke-tests the CLI dispatcher: both --backend=nomad variants exit 0
   # with the expected step list, and --backend=docker stays on the docker
   # path (regression guard). Pure dry-run — no sudo, no network.
