@@ -89,6 +89,9 @@ Init options:
   --yes                Skip confirmation prompts
   --rotate-tokens      Force regeneration of all bot tokens/passwords (idempotent by default)
   --dry-run            Print every intended action without executing
+  --import-env <path>  (nomad) Path to .env file for import into Vault KV (S2.5)
+  --import-sops <path> (nomad) Path to sops-encrypted .env.vault.enc for import (S2.5)
+  --age-key <path>     (nomad) Path to age keyfile (required with --import-sops) (S2.5)
 
 Hire an agent options:
   --formula <path>     Path to role formula TOML (default: formulas/<role>.toml)
@@ -664,8 +667,12 @@ prompt_admin_password() {
 # `sudo disinto init ...` directly.
 _disinto_init_nomad() {
   local dry_run="${1:-false}" empty="${2:-false}" with_services="${3:-}"
+  local import_env="${4:-}" import_sops="${5:-}" age_key="${6:-}"
   local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
   local deploy_sh="${FACTORY_ROOT}/lib/init/nomad/deploy.sh"
+  local vault_policies_sh="${FACTORY_ROOT}/tools/vault-apply-policies.sh"
+  local vault_auth_sh="${FACTORY_ROOT}/lib/init/nomad/vault-nomad-auth.sh"
+  local vault_import_sh="${FACTORY_ROOT}/tools/vault-import.sh"
 
   if [ ! -x "$cluster_up" ]; then
     echo "Error: ${cluster_up} not found or not executable" >&2
@@ -677,6 +684,35 @@ _disinto_init_nomad() {
     exit 1
   fi
 
+  # --empty short-circuits after cluster-up: no policies, no auth, no
+  # import, no deploy. It's the "cluster-only escape hatch" for debugging
+  # (docs/nomad-migration.md). Caller-side validation already rejects
+  # --empty combined with --with or any --import-* flag, so reaching
+  # this branch with those set is a bug in the caller.
+  #
+  # On the default (non-empty) path, vault-apply-policies.sh and
+  # vault-nomad-auth.sh are invoked unconditionally — they are idempotent
+  # and cheap to re-run, and subsequent --with deployments depend on
+  # them. vault-import.sh is invoked only when an --import-* flag is set.
+  local import_any=false
+  if [ -n "$import_env" ] || [ -n "$import_sops" ]; then
+    import_any=true
+  fi
+  if [ "$empty" != "true" ]; then
+    if [ ! -x "$vault_policies_sh" ]; then
+      echo "Error: ${vault_policies_sh} not found or not executable" >&2
+      exit 1
+    fi
+    if [ ! -x "$vault_auth_sh" ]; then
+      echo "Error: ${vault_auth_sh} not found or not executable" >&2
+      exit 1
+    fi
+    if [ "$import_any" = true ] && [ ! -x "$vault_import_sh" ]; then
+      echo "Error: ${vault_import_sh} not found or not executable" >&2
+      exit 1
+    fi
+  fi
+
   # --empty and default both invoke cluster-up today. Log the requested
   # mode so the dispatch is visible in factory bootstrap logs — Step 1
   # will branch on $empty to gate the job-deployment path.
@@ -686,13 +722,52 @@ _disinto_init_nomad() {
     echo "nomad backend: default (cluster-up; jobs deferred to Step 1)"
   fi
 
-  # Dry-run: print cluster-up plan + deploy.sh plan
+  # Dry-run: print cluster-up plan + policies/auth/import plan + deploy.sh plan
   if [ "$dry_run" = "true" ]; then
     echo ""
     echo "── Cluster-up dry-run ─────────────────────────────────"
     local -a cmd=("$cluster_up" "--dry-run")
     "${cmd[@]}" || true
     echo ""
+
+    # --empty skips policies/auth/import/deploy — cluster-up only, no
+    # workloads. The operator-visible dry-run plan must match the real
+    # run, so short-circuit here too.
+    if [ "$empty" = "true" ]; then
+      exit 0
+    fi
+
+    # Vault policies + auth are invoked on every nomad real-run path
+    # regardless of --import-* flags (they're idempotent; S2.1 + S2.3).
+    # Mirror that ordering in the dry-run plan so the operator sees the
+    # full sequence Step 2 will execute.
+    echo "── Vault policies dry-run ─────────────────────────────"
+    echo "[policies] [dry-run] ${vault_policies_sh} --dry-run"
+    echo ""
+    echo "── Vault auth dry-run ─────────────────────────────────"
+    echo "[auth] [dry-run] ${vault_auth_sh}"
+    echo ""
+
+    # Import plan: one line per --import-* flag that is actually set.
+    # Printing independently (not in an if/elif chain) means that all
+    # three flags appearing together each echo their own path — the
+    # regression that bit prior implementations of this issue (#883).
+    if [ "$import_any" = true ]; then
+      echo "── Vault import dry-run ───────────────────────────────"
+      [ -n "$import_env" ]  && echo "[import] --import-env   env file:  ${import_env}"
+      [ -n "$import_sops" ] && echo "[import] --import-sops  sops file: ${import_sops}"
+      [ -n "$age_key" ]     && echo "[import] --age-key      age key:   ${age_key}"
+      local -a import_dry_cmd=("$vault_import_sh")
+      [ -n "$import_env" ]  && import_dry_cmd+=("--env" "$import_env")
+      [ -n "$import_sops" ] && import_dry_cmd+=("--sops" "$import_sops")
+      [ -n "$age_key" ]     && import_dry_cmd+=("--age-key" "$age_key")
+      import_dry_cmd+=("--dry-run")
+      echo "[import] [dry-run] ${import_dry_cmd[*]}"
+      echo ""
+    else
+      echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
+      echo ""
+    fi
 
     if [ -n "$with_services" ]; then
       echo "── Deploy services dry-run ────────────────────────────"
@@ -721,7 +796,7 @@ _disinto_init_nomad() {
     exit 0
   fi
 
-  # Real run: cluster-up + deploy services
+  # Real run: cluster-up + policies + auth + (optional) import + deploy
   local -a cluster_cmd=("$cluster_up")
   if [ "$(id -u)" -eq 0 ]; then
     "${cluster_cmd[@]}" || exit $?
@@ -731,6 +806,62 @@ _disinto_init_nomad() {
       exit 1
     fi
     sudo -n -- "${cluster_cmd[@]}" || exit $?
+  fi
+
+  # --empty short-circuits here: cluster-up only, no policies/auth/import
+  # and no deploy. Matches the dry-run plan above and the docs/runbook.
+  if [ "$empty" = "true" ]; then
+    exit 0
+  fi
+
+  # Apply Vault policies (S2.1) — idempotent, safe to re-run.
+  echo ""
+  echo "── Applying Vault policies ────────────────────────────"
+  local -a policies_cmd=("$vault_policies_sh")
+  if [ "$(id -u)" -eq 0 ]; then
+    "${policies_cmd[@]}" || exit $?
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Error: vault-apply-policies.sh must run as root and sudo is not installed" >&2
+      exit 1
+    fi
+    sudo -n -- "${policies_cmd[@]}" || exit $?
+  fi
+
+  # Configure Vault JWT auth + Nomad workload identity (S2.3) — idempotent.
+  echo ""
+  echo "── Configuring Vault JWT auth ─────────────────────────"
+  local -a auth_cmd=("$vault_auth_sh")
+  if [ "$(id -u)" -eq 0 ]; then
+    "${auth_cmd[@]}" || exit $?
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Error: vault-nomad-auth.sh must run as root and sudo is not installed" >&2
+      exit 1
+    fi
+    sudo -n -- "${auth_cmd[@]}" || exit $?
+  fi
+
+  # Import secrets if any --import-* flag is set (S2.2).
+  if [ "$import_any" = true ]; then
+    echo ""
+    echo "── Importing secrets into Vault ───────────────────────"
+    local -a import_cmd=("$vault_import_sh")
+    [ -n "$import_env" ]  && import_cmd+=("--env" "$import_env")
+    [ -n "$import_sops" ] && import_cmd+=("--sops" "$import_sops")
+    [ -n "$age_key" ]     && import_cmd+=("--age-key" "$age_key")
+    if [ "$(id -u)" -eq 0 ]; then
+      "${import_cmd[@]}" || exit $?
+    else
+      if ! command -v sudo >/dev/null 2>&1; then
+        echo "Error: vault-import.sh must run as root and sudo is not installed" >&2
+        exit 1
+      fi
+      sudo -n -- "${import_cmd[@]}" || exit $?
+    fi
+  else
+    echo ""
+    echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
   fi
 
   # Deploy services if requested
@@ -777,6 +908,16 @@ _disinto_init_nomad() {
     echo ""
     echo "── Summary ────────────────────────────────────────────"
     echo "Cluster:     Nomad+Vault cluster is up"
+    echo "Policies:    applied (Vault ACL)"
+    echo "Auth:        Vault JWT auth + Nomad workload identity configured"
+    if [ "$import_any" = true ]; then
+      local import_desc=""
+      [ -n "$import_env" ]  && import_desc+="${import_env} "
+      [ -n "$import_sops" ] && import_desc+="${import_sops} "
+      echo "Imported:    ${import_desc% }"
+    else
+      echo "Imported:    (none — seed kv/disinto/* manually before deploying secret-dependent services)"
+    fi
     echo "Deployed:    ${with_services}"
     if echo "$with_services" | grep -q "forgejo"; then
       echo "Ports:       forgejo: 3000"
@@ -803,6 +944,7 @@ disinto_init() {
 
   # Parse flags
   local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker" empty=false with_services=""
+  local import_env="" import_sops="" age_key=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
@@ -819,6 +961,12 @@ disinto_init() {
       --yes)           auto_yes=true; shift ;;
       --rotate-tokens) rotate_tokens=true; shift ;;
       --dry-run)       dry_run=true; shift ;;
+      --import-env)    import_env="$2"; shift 2 ;;
+      --import-env=*)  import_env="${1#--import-env=}"; shift ;;
+      --import-sops)   import_sops="$2"; shift 2 ;;
+      --import-sops=*) import_sops="${1#--import-sops=}"; shift ;;
+      --age-key)       age_key="$2"; shift 2 ;;
+      --age-key=*)     age_key="${1#--age-key=}"; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
   done
@@ -859,11 +1007,40 @@ disinto_init() {
     exit 1
   fi
 
+  # --import-* flag validation (S2.5). These three flags form an import
+  # triple and must be consistent before dispatch: sops encryption is
+  # useless without the age key to decrypt it, so either both --import-sops
+  # and --age-key are present or neither is. --import-env alone is fine
+  # (it just imports the plaintext dotenv). All three flags are nomad-only.
+  if [ -n "$import_sops" ] && [ -z "$age_key" ]; then
+    echo "Error: --import-sops requires --age-key" >&2
+    exit 1
+  fi
+  if [ -n "$age_key" ] && [ -z "$import_sops" ]; then
+    echo "Error: --age-key requires --import-sops" >&2
+    exit 1
+  fi
+  if { [ -n "$import_env" ] || [ -n "$import_sops" ] || [ -n "$age_key" ]; } \
+     && [ "$backend" != "nomad" ]; then
+    echo "Error: --import-env, --import-sops, and --age-key require --backend=nomad" >&2
+    exit 1
+  fi
+
+  # --empty is the cluster-only escape hatch — it skips policies, auth,
+  # import, and deploy. Pairing it with --import-* silently does nothing,
+  # which is a worse failure mode than a clear error. Reject explicitly.
+  if [ "$empty" = true ] \
+     && { [ -n "$import_env" ] || [ -n "$import_sops" ] || [ -n "$age_key" ]; }; then
+    echo "Error: --empty and --import-env/--import-sops/--age-key are mutually exclusive" >&2
+    exit 1
+  fi
+
   # Dispatch on backend — the nomad path runs lib/init/nomad/cluster-up.sh
   # (S0.4). The default and --empty variants are identical today; Step 1
   # will branch on $empty to add job deployment to the default path.
   if [ "$backend" = "nomad" ]; then
-    _disinto_init_nomad "$dry_run" "$empty" "$with_services"
+    _disinto_init_nomad "$dry_run" "$empty" "$with_services" \
+                        "$import_env" "$import_sops" "$age_key"
     # shellcheck disable=SC2317  # _disinto_init_nomad always exits today;
     # `return` is defensive against future refactors.
     return
