@@ -977,7 +977,6 @@ p.write_text(text)
     echo ""
     echo "[ensure] Forgejo admin user 'disinto-admin'"
     echo "[ensure] 8 bot users: dev-bot, review-bot, planner-bot, gardener-bot, vault-bot, supervisor-bot, predictor-bot, architect-bot"
-    echo "[ensure] 2 llama bot users: dev-qwen, dev-qwen-nightly"
     echo "[ensure] .profile repos for all bots"
     echo "[ensure] repo ${forge_repo} on Forgejo with collaborators"
     echo "[run]    preflight checks"
@@ -1171,19 +1170,6 @@ p.write_text(text)
   if ! grep -q '^CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=' "$env_file" 2>/dev/null; then
     printf 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1\n' >> "$env_file"
     echo "Config:  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 saved to .env"
-  fi
-
-  # Write local-Qwen dev agent env keys with safe defaults (#769)
-  if ! grep -q '^ENABLE_LLAMA_AGENT=' "$env_file" 2>/dev/null; then
-    cat >> "$env_file" <<'LLAMAENVEOF'
-
-# Local Qwen dev agent (optional) — set to 1 to enable
-ENABLE_LLAMA_AGENT=0
-FORGE_TOKEN_LLAMA=
-FORGE_PASS_LLAMA=
-ANTHROPIC_BASE_URL=
-LLAMAENVEOF
-    echo "Config:  ENABLE_LLAMA_AGENT keys written to .env (disabled by default)"
   fi
 
   # Create labels on remote

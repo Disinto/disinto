@@ -189,10 +189,10 @@ Restart agent containers to use the new image.
    - docker compose pull agents
 
 2. Stop and remove existing agent containers:
-   - docker compose down agents agents-llama 2>/dev/null || true
+   - docker compose down agents
 
 3. Start agents with new image:
-   - docker compose up -d agents agents-llama
+   - docker compose up -d agents
 
 4. Wait for containers to be healthy:
    - for i in {1..30}; do
@@ -203,7 +203,7 @@ Restart agent containers to use the new image.
    - done
 
 5. Verify containers are running:
-   - docker compose ps agents agents-llama
+   - docker compose ps agents
 
 6. Log restart:
    - echo "Restarted agents containers"
