@@ -536,8 +536,7 @@ EOF
     echo "  Writing [agents.${section_name}] to ${toml_file}..."
     python3 -c '
 import sys
-import tomllib
-import tomli_w
+import tomlkit
 import re
 import pathlib
 
@@ -558,19 +557,19 @@ text = p.read_text()
 commented_pattern = rf"(?:^|\n)# \[agents\.{re.escape(section_name)}\](?:\n(?!# \[|\[)[^\n]*)*"
 text = re.sub(commented_pattern, "", text, flags=re.DOTALL)
 
-# Step 2: Parse TOML with tomllib
+# Step 2: Parse TOML with tomlkit (preserves comments and formatting)
 try:
-    data = tomllib.loads(text)
-except tomllib.TOMLDecodeError as e:
+    doc = tomlkit.parse(text)
+except Exception as e:
     print(f"Error: Invalid TOML in {toml_path}: {e}", file=sys.stderr)
     sys.exit(1)
 
 # Step 3: Ensure agents table exists
-if "agents" not in data:
-    data["agents"] = {}
+if "agents" not in doc:
+    doc.add("agents", tomlkit.table())
 
 # Step 4: Update the specific agent section
-data["agents"][section_name] = {
+doc["agents"][section_name] = {
     "base_url": base_url,
     "model": model,
     "api_key": "sk-no-key-required",
@@ -580,8 +579,8 @@ data["agents"][section_name] = {
     "poll_interval": int(poll_interval),
 }
 
-# Step 5: Serialize back to TOML
-output = tomli_w.dumps(data)
+# Step 5: Serialize back to TOML (preserves comments)
+output = tomlkit.dumps(doc)
 
 # Step 6: Write back
 p.write_text(output)

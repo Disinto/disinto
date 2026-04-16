@@ -2,7 +2,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu \
-    && pip3 install --break-system-packages networkx \
+    && pip3 install --break-system-packages networkx tomlkit \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-built binaries (copied from docker/agents/bin/)
