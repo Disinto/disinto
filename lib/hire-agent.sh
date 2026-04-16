@@ -30,6 +30,29 @@ disinto_hire_an_agent() {
     echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>]" >&2
     exit 1
   fi
+
+  # Validate agent name before any side effects (Forgejo user creation, TOML
+  # write, token issuance). The name flows through several systems that have
+  # stricter rules than the raw TOML spec:
+  #   - load-project.sh emits shell vars keyed by the name (dashes are mapped
+  #     to underscores via tr 'a-z-' 'A-Z_')
+  #   - generators.sh emits a docker-compose service name `agents-<name>` and
+  #     uppercases it for env var keys (#852 tracks the `^^` bug; we keep the
+  #     grammar tight here so that fix can happen without re-validation)
+  #   - Forgejo usernames are lowercase alnum + dash
+  # Constraint: start with a lowercase letter, contain only [a-z0-9-], end
+  # with a lowercase letter or digit (no trailing dash), no consecutive
+  # dashes. Rejecting at hire-time prevents unparseable TOML sections like
+  # [agents.dev-qwen2] from landing on disk and crashing load-project.sh on
+  # the next `disinto up` (#862).
+  if ! [[ "$agent_name" =~ ^[a-z]([a-z0-9]|-[a-z0-9])*$ ]]; then
+    echo "Error: invalid agent name '${agent_name}'" >&2
+    echo "  Agent names must match: ^[a-z]([a-z0-9]|-[a-z0-9])*$" >&2
+    echo "  (lowercase letters/digits/single dashes, starts with letter, ends with alphanumeric)" >&2
+    echo "  Examples: dev, dev-qwen2, review-qwen, planner" >&2
+    exit 1
+  fi
+
   shift 2
 
   # Parse flags
