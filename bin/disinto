@@ -762,7 +762,6 @@ _disinto_init_nomad() {
       fi
       deploy_cmd+=("$svc")
     done
-    deploy_cmd+=("--dry-run")  # deploy.sh supports --dry-run
 
     if [ "$(id -u)" -eq 0 ]; then
       "${deploy_cmd[@]}" || exit $?
@@ -837,6 +836,14 @@ disinto_init() {
   if [ "$backend" = "docker" ] && [ -z "$repo_url" ]; then
     echo "Error: repo URL required" >&2
     echo "Usage: disinto init <repo-url> [options]" >&2
+    exit 1
+  fi
+
+  # --empty is nomad-only today (the docker path has no concept of an
+  # "empty cluster"). Reject explicitly rather than letting it silently
+  # do nothing on --backend=docker.
+  if [ "$empty" = true ] && [ "$backend" != "nomad" ]; then
+    echo "Error: --empty is only valid with --backend=nomad" >&2
     exit 1
   fi
 
