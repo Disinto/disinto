@@ -149,7 +149,7 @@ _generate_local_model_services() {
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
       WOODPECKER_DATA_DIR: /woodpecker-data
       WOODPECKER_REPO_ID: "${wp_repo_id}"
-      FORGE_BOT_USER_${service_name^^}: "${forge_user}"
+      FORGE_BOT_USER_${user_upper}: "${forge_user}"
       POLL_INTERVAL: "${poll_interval_val}"
       GARDENER_INTERVAL: "${GARDENER_INTERVAL:-21600}"
       ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
