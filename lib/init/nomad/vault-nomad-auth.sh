@@ -63,7 +63,11 @@ if [ "$(id -u)" -ne 0 ]; then
   die "must run as root (writes ${SERVER_HCL_DST} + signals nomad)"
 fi
 
-for bin in curl jq vault systemctl; do
+# curl + jq are used directly; hvault.sh's helpers are also curl-based, so
+# the `vault` CLI is NOT required here — don't add it to this list, or a
+# Vault-server-present / vault-CLI-absent box (e.g. a Nomad-client-only
+# node) would die spuriously. systemctl is required for SIGHUPing nomad.
+for bin in curl jq systemctl; do
   command -v "$bin" >/dev/null 2>&1 \
     || die "required binary not found: ${bin}"
 done
