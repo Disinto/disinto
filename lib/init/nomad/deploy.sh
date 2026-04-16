@@ -2,7 +2,7 @@
 # =============================================================================
 # lib/init/nomad/deploy.sh — Dependency-ordered Nomad job deploy + wait
 #
-# Runs a list of jobspecs in order, waiting for each to reach "running" state
+# Runs a list of jobspecs in order, waiting for each to reach healthy state
 # before starting the next. Step-1 uses it for forgejo-only; Steps 3–6 extend
 # the job list.
 #
@@ -16,22 +16,24 @@
 # Environment:
 #   REPO_ROOT              — absolute path to repo root (defaults to parent of
 #                            this script's parent directory)
-#   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 120)
+#   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 240)
+#   JOB_READY_TIMEOUT_<JOBNAME> — per-job timeout override (e.g.,
+#                            JOB_READY_TIMEOUT_FORGEJO=300)
 #
 # Exit codes:
-#   0  success (all jobs deployed and running, or dry-run completed)
+#   0  success (all jobs deployed and healthy, or dry-run completed)
 #   1  failure (validation error, timeout, or nomad command failure)
 #
 # Idempotency:
 #   Running twice back-to-back on a healthy cluster is a no-op. Jobs that are
-#   already running print "[deploy] <name> already running" and continue.
+#   already healthy print "[deploy] <name> already healthy" and continue.
 # =============================================================================
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_ROOT}/../../.." && pwd)}"
-JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-120}"
+JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-240}"
 
 DRY_RUN=0
 
@@ -61,11 +63,12 @@ if [ "${#JOBS[@]}" -eq 0 ]; then
 fi
 
 # ── Helper: _wait_job_running <name> <timeout> ───────────────────────────────
-# Polls `nomad job status -json <name>` until:
-#   - Status == "running", OR
-#   - All allocations are in "running" state
+# Polls `nomad deployment status -json <deployment-id>` until:
+#   - Status == "successful"
+#   - Status == "failed"
 #
-# On timeout: prints last 50 lines of stderr from all allocations and exits 1.
+# On deployment failure: prints last 50 lines of stderr from allocations and exits 1.
+# On timeout: prints last 50 lines of stderr from allocations and exits 1.
 #
 # This is a named, reusable helper for future init scripts.
 _wait_job_running() {
@@ -73,39 +76,68 @@ _wait_job_running() {
   local timeout="$2"
   local elapsed=0
 
-  log "waiting for job '${job_name}' to become running (timeout: ${timeout}s)..."
+  log "waiting for job '${job_name}' to become healthy (timeout: ${timeout}s)..."
+
+  # Get the latest deployment ID for this job
+  local deployment_id
+  deployment_id=$(nomad job deployments -json "$job_name" 2>/dev/null | jq -r '.[0].ID' 2>/dev/null) || deployment_id=""
+
+  if [ -z "$deployment_id" ]; then
+    log "ERROR: no deployment found for job '${job_name}'"
+    return 1
+  fi
+
+  log "tracking deployment '${deployment_id}'..."
 
   while [ "$elapsed" -lt "$timeout" ]; do
-    local status_json
-    status_json=$(nomad job status -json "$job_name" 2>/dev/null) || {
-      # Job may not exist yet — keep waiting
+    local deploy_status_json
+    deploy_status_json=$(nomad deployment status -json "$deployment_id" 2>/dev/null) || {
+      # Deployment may not exist yet — keep waiting
       sleep 5
       elapsed=$((elapsed + 5))
       continue
     }
 
     local status
-    status=$(printf '%s' "$status_json" | jq -r '.Status' 2>/dev/null) || {
+    status=$(printf '%s' "$deploy_status_json" | jq -r '.[0].Status' 2>/dev/null) || {
       sleep 5
       elapsed=$((elapsed + 5))
       continue
     }
 
     case "$status" in
-      running)
-        log "job '${job_name}' is now running"
+      successful)
+        log "${job_name} healthy after ${elapsed}s"
         return 0
         ;;
-      complete)
-        log "job '${job_name}' reached terminal state: ${status}"
-        return 0
-        ;;
-      dead|failed)
-        log "job '${job_name}' reached terminal state: ${status}"
+      failed)
+        log "deployment '${deployment_id}' failed for job '${job_name}'"
+        log "showing last 50 lines of allocation logs (stderr):"
+
+        # Get allocation IDs from the deployment
+        local alloc_ids
+        alloc_ids=$(printf '%s' "$deploy_status_json" | jq -r '.[0].AllocStatus.AllocsNotYetRunning // empty' 2>/dev/null) || alloc_ids=""
+
+        # Fallback: get allocs from job status
+        if [ -z "$alloc_ids" ]; then
+          alloc_ids=$(nomad job status -json "$job_name" 2>/dev/null \
+            | jq -r '.Evaluations[].Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
+        fi
+
+        if [ -n "$alloc_ids" ]; then
+          for alloc_id in $alloc_ids; do
+            log "--- Allocation ${alloc_id} logs (stderr) ---"
+            nomad alloc logs -stderr -short "$alloc_id" 2>/dev/null | tail -50 || true
+          done
+        fi
+
         return 1
         ;;
+      running|progressing)
+        log "deployment '${deployment_id}' status: ${status} (waiting for ${job_name}...)"
+        ;;
       *)
-        log "job '${job_name}' status: ${status} (waiting...)"
+        log "deployment '${deployment_id}' status: ${status} (waiting for ${job_name}...)"
         ;;
     esac
 
@@ -114,10 +146,10 @@ _wait_job_running() {
   done
 
   # Timeout — print last 50 lines of alloc logs
-  log "TIMEOUT: job '${job_name}' did not reach running state within ${timeout}s"
+  log "TIMEOUT: deployment '${deployment_id}' did not reach successful state within ${timeout}s"
   log "showing last 50 lines of allocation logs (stderr):"
 
-  # Get allocation IDs
+  # Get allocation IDs from job status
   local alloc_ids
   alloc_ids=$(nomad job status -json "$job_name" 2>/dev/null \
     | jq -r '.Evaluations[].Allocations[]?.ID // empty' 2>/dev/null) || alloc_ids=""
@@ -140,10 +172,15 @@ for job_name in "${JOBS[@]}"; do
     die "Jobspec not found: ${jobspec_path}"
   fi
 
+  # Per-job timeout override: JOB_READY_TIMEOUT_<UPPERCASE_JOBNAME>
+  job_upper=$(printf '%s' "$job_name" | tr '[:lower:]' '[:upper:]')
+  timeout_var="JOB_READY_TIMEOUT_${job_upper}"
+  job_timeout="${!timeout_var:-$JOB_READY_TIMEOUT_SECS}"
+
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[dry-run] nomad job validate ${jobspec_path}"
     log "[dry-run] nomad job run -detach ${jobspec_path}"
-    log "[dry-run] (would wait for '${job_name}' to become running for ${JOB_READY_TIMEOUT_SECS}s)"
+    log "[dry-run] (would wait for '${job_name}' to become healthy for ${job_timeout}s)"
     continue
   fi
 
@@ -155,12 +192,12 @@ for job_name in "${JOBS[@]}"; do
     die "validation failed for: ${jobspec_path}"
   fi
 
-  # 2. Check if already running (idempotency)
+  # 2. Check if already healthy (idempotency)
   job_status_json=$(nomad job status -json "$job_name" 2>/dev/null || true)
   if [ -n "$job_status_json" ]; then
     current_status=$(printf '%s' "$job_status_json" | jq -r '.Status' 2>/dev/null || true)
     if [ "$current_status" = "running" ]; then
-      log "${job_name} already running"
+      log "${job_name} already healthy"
       continue
     fi
   fi
@@ -171,9 +208,9 @@ for job_name in "${JOBS[@]}"; do
     die "failed to run job: ${job_name}"
   fi
 
-  # 4. Wait for running state
-  if ! _wait_job_running "$job_name" "$JOB_READY_TIMEOUT_SECS"; then
-    die "timeout waiting for job '${job_name}' to become running"
+  # 4. Wait for healthy state
+  if ! _wait_job_running "$job_name" "$job_timeout"; then
+    die "deployment for job '${job_name}' did not reach successful state"
   fi
 done
 
