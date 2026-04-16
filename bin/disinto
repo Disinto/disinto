@@ -207,18 +207,21 @@ generate_compose() {
 
 # Generate docker/agents/ files if they don't already exist.
 # (Implementation in lib/generators.sh)
+# shellcheck disable=SC2120  # passthrough wrapper; forwards any future args to impl
 generate_agent_docker() {
   _generate_agent_docker_impl "$@"
 }
 
 # Generate docker/Caddyfile template for edge proxy.
 # (Implementation in lib/generators.sh)
+# shellcheck disable=SC2120  # passthrough wrapper; forwards any future args to impl
 generate_caddyfile() {
   _generate_caddyfile_impl "$@"
 }
 
 # Generate docker/index.html default page.
 # (Implementation in lib/generators.sh)
+# shellcheck disable=SC2120  # passthrough wrapper; forwards any future args to impl
 generate_staging_index() {
   _generate_staging_index_impl "$@"
 }
