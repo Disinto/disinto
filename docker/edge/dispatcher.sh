@@ -8,8 +8,8 @@
 # 2. Scan vault/actions/ for TOML files without .result.json
 # 3. Verify TOML arrived via merged PR with admin merger (Forgejo API)
 # 4. Validate TOML using vault-env.sh validator
-# 5. Decrypt declared secrets from secrets/<NAME>.enc (age-encrypted)
-# 6. Launch: docker run --rm disinto/agents:latest <action-id>
+# 5. Decrypt declared secrets via load_secret (lib/env.sh)
+# 6. Launch: delegate to _launch_runner_{docker,nomad} backend
 # 7. Write <action-id>.result.json with exit code, timestamp, logs summary
 #
 # Part of #76.
@@ -19,7 +19,7 @@ set -euo pipefail
 # Resolve script root (parent of lib/)
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Source shared environment
+# Source shared environment (provides load_secret, log helpers, etc.)
 source "${SCRIPT_ROOT}/../lib/env.sh"
 
 # Project TOML location: prefer mounted path, fall back to cloned path
@@ -27,34 +27,11 @@ source "${SCRIPT_ROOT}/../lib/env.sh"
 # the shallow clone only has .toml.example files.
 PROJECTS_DIR="${PROJECTS_DIR:-${FACTORY_ROOT:-/opt/disinto}-projects}"
 
-# Load granular secrets from secrets/*.enc (age-encrypted, one file per key).
-# These are decrypted on demand and exported so the dispatcher can pass them
-# to runner containers. Replaces the old monolithic .env.vault.enc store (#777).
-_AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
-_SECRETS_DIR="${FACTORY_ROOT}/secrets"
-
-# decrypt_secret <NAME> — decrypt secrets/<NAME>.enc and print the plaintext value
-decrypt_secret() {
-  local name="$1"
-  local enc_path="${_SECRETS_DIR}/${name}.enc"
-  if [ ! -f "$enc_path" ]; then
-    return 1
-  fi
-  age -d -i "$_AGE_KEY_FILE" "$enc_path" 2>/dev/null
-}
-
-# load_secrets <NAME ...> — decrypt each secret and export it
-load_secrets() {
-  if [ ! -f "$_AGE_KEY_FILE" ]; then
-    echo "Warning: age key not found at ${_AGE_KEY_FILE} — secrets not loaded" >&2
-    return 1
-  fi
-  for name in "$@"; do
-    local val
-    val=$(decrypt_secret "$name") || continue
-    export "$name=$val"
-  done
-}
+# -----------------------------------------------------------------------------
+# Backend selection: DISPATCHER_BACKEND={docker,nomad}
+# Default: docker.  nomad lands as a pure addition during migration Step 5.
+# -----------------------------------------------------------------------------
+DISPATCHER_BACKEND="${DISPATCHER_BACKEND:-docker}"
 
 # Ops repo location (vault/actions directory)
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/debian/disinto-ops}"
@@ -391,47 +368,21 @@ write_result() {
   log "Result written: ${result_file}"
 }
 
-# Launch runner for the given action
-# Usage: launch_runner <toml_file>
-launch_runner() {
-  local toml_file="$1"
-  local action_id
-  action_id=$(basename "$toml_file" .toml)
+# -----------------------------------------------------------------------------
+# Pluggable launcher backends
+# -----------------------------------------------------------------------------
 
-  log "Launching runner for action: ${action_id}"
+# _launch_runner_docker ACTION_ID SECRETS_CSV MOUNTS_CSV
+#
+# Builds and executes a `docker run` command for the vault runner.
+# Secrets are resolved via load_secret (lib/env.sh).
+# Returns: exit code of the docker run.  Stdout/stderr are captured to a temp
+#          log file whose path is printed to stdout (caller reads it).
+_launch_runner_docker() {
+  local action_id="$1"
+  local secrets_csv="$2"
+  local mounts_csv="$3"
 
-  # Validate TOML
-  if ! validate_action "$toml_file"; then
-    log "ERROR: Action validation failed for ${action_id}"
-    write_result "$action_id" 1 "Validation failed: see logs above"
-    return 1
-  fi
-
-  # Check dispatch mode to determine if admin verification is needed
-  local dispatch_mode
-  dispatch_mode=$(get_dispatch_mode "$toml_file")
-
-  if [ "$dispatch_mode" = "direct" ]; then
-    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — skipping admin merge verification (direct commit)"
-  else
-    # Verify admin merge for PR-based actions
-    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — verifying admin merge"
-    if ! verify_admin_merged "$toml_file"; then
-      log "ERROR: Admin merge verification failed for ${action_id}"
-      write_result "$action_id" 1 "Admin merge verification failed: see logs above"
-      return 1
-    fi
-    log "Action ${action_id}: admin merge verified"
-  fi
-
-  # Extract secrets from validated action
-  local secrets_array
-  secrets_array="${VAULT_ACTION_SECRETS:-}"
-
-  # Build docker run command (self-contained, no compose context needed).
-  # The edge container has the Docker socket but not the host's compose project,
-  # so docker compose run would fail with exit 125. docker run is self-contained:
-  # the dispatcher knows the image, network, env vars, and entrypoint.
   local -a cmd=(docker run --rm
     --name "vault-runner-${action_id}"
     --network host
@@ -466,30 +417,27 @@ launch_runner() {
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
   fi
 
-  # Add environment variables for secrets (if any declared)
-  # Secrets are decrypted per-key from secrets/<NAME>.enc (#777)
-  if [ -n "$secrets_array" ]; then
-    for secret in $secrets_array; do
+  # Add environment variables for secrets (resolved via load_secret)
+  if [ -n "$secrets_csv" ]; then
+    local secret
+    for secret in $(echo "$secrets_csv" | tr ',' ' '); do
       secret=$(echo "$secret" | xargs)
-      if [ -n "$secret" ]; then
-        local secret_val
-        secret_val=$(decrypt_secret "$secret") || {
-          log "ERROR: Secret '${secret}' not found in secrets/*.enc for action ${action_id}"
-          write_result "$action_id" 1 "Secret not found: ${secret} (expected secrets/${secret}.enc)"
-          return 1
-        }
-        cmd+=(-e "${secret}=${secret_val}")
+      [ -n "$secret" ] || continue
+      local secret_val
+      secret_val=$(load_secret "$secret") || true
+      if [ -z "$secret_val" ]; then
+        log "ERROR: Secret '${secret}' could not be resolved for action ${action_id}"
+        write_result "$action_id" 1 "Secret not found: ${secret}"
+        return 1
       fi
+      cmd+=(-e "${secret}=${secret_val}")
     done
-  else
-    log "Action ${action_id} has no secrets declared — runner will execute without extra env vars"
   fi
 
-  # Add volume mounts for file-based credentials (if any declared)
-  local mounts_array
-  mounts_array="${VAULT_ACTION_MOUNTS:-}"
-  if [ -n "$mounts_array" ]; then
-    for mount_alias in $mounts_array; do
+  # Add volume mounts for file-based credentials
+  if [ -n "$mounts_csv" ]; then
+    local mount_alias
+    for mount_alias in $(echo "$mounts_csv" | tr ',' ' '); do
       mount_alias=$(echo "$mount_alias" | xargs)
       [ -n "$mount_alias" ] || continue
       case "$mount_alias" in
@@ -517,7 +465,7 @@ launch_runner() {
   # Image and entrypoint arguments: runner entrypoint + action-id
   cmd+=(disinto/agents:latest /home/agent/disinto/docker/runner/entrypoint-runner.sh "$action_id")
 
-  log "Running: docker run --rm vault-runner-${action_id} (secrets: ${secrets_array:-none}, mounts: ${mounts_array:-none})"
+  log "Running: docker run --rm vault-runner-${action_id} (secrets: ${secrets_csv:-none}, mounts: ${mounts_csv:-none})"
 
   # Create temp file for logs
   local log_file
@@ -525,7 +473,6 @@ launch_runner() {
   trap 'rm -f "$log_file"' RETURN
 
   # Execute with array expansion (safe from shell injection)
-  # Capture stdout and stderr to log file
   "${cmd[@]}" > "$log_file" 2>&1
   local exit_code=$?
 
@@ -543,6 +490,137 @@ launch_runner() {
   fi
 
   return $exit_code
+}
+
+# _launch_runner_nomad ACTION_ID SECRETS_CSV MOUNTS_CSV
+#
+# Nomad backend stub — will be implemented in migration Step 5.
+_launch_runner_nomad() {
+  echo "nomad backend not yet implemented" >&2
+  return 1
+}
+
+# Launch runner for the given action (backend-agnostic orchestrator)
+# Usage: launch_runner <toml_file>
+launch_runner() {
+  local toml_file="$1"
+  local action_id
+  action_id=$(basename "$toml_file" .toml)
+
+  log "Launching runner for action: ${action_id}"
+
+  # Validate TOML
+  if ! validate_action "$toml_file"; then
+    log "ERROR: Action validation failed for ${action_id}"
+    write_result "$action_id" 1 "Validation failed: see logs above"
+    return 1
+  fi
+
+  # Check dispatch mode to determine if admin verification is needed
+  local dispatch_mode
+  dispatch_mode=$(get_dispatch_mode "$toml_file")
+
+  if [ "$dispatch_mode" = "direct" ]; then
+    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — skipping admin merge verification (direct commit)"
+  else
+    # Verify admin merge for PR-based actions
+    log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — verifying admin merge"
+    if ! verify_admin_merged "$toml_file"; then
+      log "ERROR: Admin merge verification failed for ${action_id}"
+      write_result "$action_id" 1 "Admin merge verification failed: see logs above"
+      return 1
+    fi
+    log "Action ${action_id}: admin merge verified"
+  fi
+
+  # Build CSV lists from validated action metadata
+  local secrets_csv=""
+  if [ -n "${VAULT_ACTION_SECRETS:-}" ]; then
+    # Convert space-separated to comma-separated
+    secrets_csv=$(echo "${VAULT_ACTION_SECRETS}" | xargs | tr ' ' ',')
+  fi
+
+  local mounts_csv=""
+  if [ -n "${VAULT_ACTION_MOUNTS:-}" ]; then
+    mounts_csv=$(echo "${VAULT_ACTION_MOUNTS}" | xargs | tr ' ' ',')
+  fi
+
+  # Delegate to the selected backend
+  "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv"
+}
+
+# -----------------------------------------------------------------------------
+# Pluggable sidecar launcher (reproduce / triage / verify)
+# -----------------------------------------------------------------------------
+
+# _dispatch_sidecar_docker CONTAINER_NAME ISSUE_NUM PROJECT_TOML IMAGE [FORMULA]
+#
+# Launches a sidecar container via docker run (background, pid-tracked).
+# Prints the background PID to stdout.
+_dispatch_sidecar_docker() {
+  local container_name="$1"
+  local issue_number="$2"
+  local project_toml="$3"
+  local image="$4"
+  local formula="${5:-}"
+
+  local -a cmd=(docker run --rm
+    --name "${container_name}"
+    --network host
+    --security-opt apparmor=unconfined
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v agent-data:/home/agent/data
+    -v project-repos:/home/agent/repos
+    -e "FORGE_URL=${FORGE_URL}"
+    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_REPO=${FORGE_REPO}"
+    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
+    -e DISINTO_CONTAINER=1
+  )
+
+  # Set formula if provided
+  if [ -n "$formula" ]; then
+    cmd+=(-e "DISINTO_FORMULA=${formula}")
+  fi
+
+  # Pass through ANTHROPIC_API_KEY if set
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  fi
+
+  # Mount shared Claude config dir and ~/.ssh from the runtime user's home
+  local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
+  if [ -d "${runtime_home}/.ssh" ]; then
+    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+  fi
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
+  fi
+
+  # Mount the project TOML into the container at a stable path
+  local container_toml="/home/agent/project.toml"
+  cmd+=(-v "${project_toml}:${container_toml}:ro")
+
+  cmd+=("${image}" "$container_toml" "$issue_number")
+
+  # Launch in background
+  "${cmd[@]}" &
+  echo $!
+}
+
+# _dispatch_sidecar_nomad CONTAINER_NAME ISSUE_NUM PROJECT_TOML IMAGE [FORMULA]
+#
+# Nomad sidecar backend stub — will be implemented in migration Step 5.
+_dispatch_sidecar_nomad() {
+  echo "nomad backend not yet implemented" >&2
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -623,52 +701,13 @@ dispatch_reproduce() {
 
   log "Dispatching reproduce-agent for issue #${issue_number} (project: ${project_toml})"
 
-  # Build docker run command using array (safe from injection)
-  local -a cmd=(docker run --rm
-    --name "disinto-reproduce-${issue_number}"
-    --network host
-    --security-opt apparmor=unconfined
-    -v /var/run/docker.sock:/var/run/docker.sock
-    -v agent-data:/home/agent/data
-    -v project-repos:/home/agent/repos
-    -e "FORGE_URL=${FORGE_URL}"
-    -e "FORGE_TOKEN=${FORGE_TOKEN}"
-    -e "FORGE_REPO=${FORGE_REPO}"
-    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
-    -e DISINTO_CONTAINER=1
-  )
+  local bg_pid
+  bg_pid=$("_dispatch_sidecar_${DISPATCHER_BACKEND}" \
+    "disinto-reproduce-${issue_number}" \
+    "$issue_number" \
+    "$project_toml" \
+    "disinto-reproduce:latest")
 
-  # Pass through ANTHROPIC_API_KEY if set
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-  fi
-
-  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
-  local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
-    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
-    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
-  fi
-  if [ -f "${runtime_home}/.claude.json" ]; then
-    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
-  fi
-  if [ -d "${runtime_home}/.ssh" ]; then
-    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
-  fi
-  # Mount claude CLI binary if present on host
-  if [ -f /usr/local/bin/claude ]; then
-    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
-  fi
-
-  # Mount the project TOML into the container at a stable path
-  local container_toml="/home/agent/project.toml"
-  cmd+=(-v "${project_toml}:${container_toml}:ro")
-
-  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
-
-  # Launch in background; write pid-file so we don't double-launch
-  "${cmd[@]}" &
-  local bg_pid=$!
   echo "$bg_pid" > "$(_reproduce_lockfile "$issue_number")"
   log "Reproduce container launched (pid ${bg_pid}) for issue #${issue_number}"
 }
@@ -748,53 +787,14 @@ dispatch_triage() {
 
   log "Dispatching triage-agent for issue #${issue_number} (project: ${project_toml})"
 
-  # Build docker run command using array (safe from injection)
-  local -a cmd=(docker run --rm
-    --name "disinto-triage-${issue_number}"
-    --network host
-    --security-opt apparmor=unconfined
-    -v /var/run/docker.sock:/var/run/docker.sock
-    -v agent-data:/home/agent/data
-    -v project-repos:/home/agent/repos
-    -e "FORGE_URL=${FORGE_URL}"
-    -e "FORGE_TOKEN=${FORGE_TOKEN}"
-    -e "FORGE_REPO=${FORGE_REPO}"
-    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
-    -e DISINTO_CONTAINER=1
-    -e DISINTO_FORMULA=triage
-  )
+  local bg_pid
+  bg_pid=$("_dispatch_sidecar_${DISPATCHER_BACKEND}" \
+    "disinto-triage-${issue_number}" \
+    "$issue_number" \
+    "$project_toml" \
+    "disinto-reproduce:latest" \
+    "triage")
 
-  # Pass through ANTHROPIC_API_KEY if set
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-  fi
-
-  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
-  local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
-    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
-    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
-  fi
-  if [ -f "${runtime_home}/.claude.json" ]; then
-    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
-  fi
-  if [ -d "${runtime_home}/.ssh" ]; then
-    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
-  fi
-  # Mount claude CLI binary if present on host
-  if [ -f /usr/local/bin/claude ]; then
-    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
-  fi
-
-  # Mount the project TOML into the container at a stable path
-  local container_toml="/home/agent/project.toml"
-  cmd+=(-v "${project_toml}:${container_toml}:ro")
-
-  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
-
-  # Launch in background; write pid-file so we don't double-launch
-  "${cmd[@]}" &
-  local bg_pid=$!
   echo "$bg_pid" > "$(_triage_lockfile "$issue_number")"
   log "Triage container launched (pid ${bg_pid}) for issue #${issue_number}"
 }
@@ -950,53 +950,14 @@ dispatch_verify() {
 
   log "Dispatching verification-agent for issue #${issue_number} (project: ${project_toml})"
 
-  # Build docker run command using array (safe from injection)
-  local -a cmd=(docker run --rm
-    --name "disinto-verify-${issue_number}"
-    --network host
-    --security-opt apparmor=unconfined
-    -v /var/run/docker.sock:/var/run/docker.sock
-    -v agent-data:/home/agent/data
-    -v project-repos:/home/agent/repos
-    -e "FORGE_URL=${FORGE_URL}"
-    -e "FORGE_TOKEN=${FORGE_TOKEN}"
-    -e "FORGE_REPO=${FORGE_REPO}"
-    -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
-    -e DISINTO_CONTAINER=1
-    -e DISINTO_FORMULA=verify
-  )
+  local bg_pid
+  bg_pid=$("_dispatch_sidecar_${DISPATCHER_BACKEND}" \
+    "disinto-verify-${issue_number}" \
+    "$issue_number" \
+    "$project_toml" \
+    "disinto-reproduce:latest" \
+    "verify")
 
-  # Pass through ANTHROPIC_API_KEY if set
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-  fi
-
-  # Mount shared Claude config dir and ~/.ssh from the runtime user's home if available
-  local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
-    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
-    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
-  fi
-  if [ -f "${runtime_home}/.claude.json" ]; then
-    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
-  fi
-  if [ -d "${runtime_home}/.ssh" ]; then
-    cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
-  fi
-  # Mount claude CLI binary if present on host
-  if [ -f /usr/local/bin/claude ]; then
-    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
-  fi
-
-  # Mount the project TOML into the container at a stable path
-  local container_toml="/home/agent/project.toml"
-  cmd+=(-v "${project_toml}:${container_toml}:ro")
-
-  cmd+=(disinto-reproduce:latest "$container_toml" "$issue_number")
-
-  # Launch in background; write pid-file so we don't double-launch
-  "${cmd[@]}" &
-  local bg_pid=$!
   echo "$bg_pid" > "$(_verify_lockfile "$issue_number")"
   log "Verification container launched (pid ${bg_pid}) for issue #${issue_number}"
 }
@@ -1018,9 +979,24 @@ ensure_ops_repo() {
 
 # Main dispatcher loop
 main() {
-  log "Starting dispatcher..."
+  log "Starting dispatcher (backend=${DISPATCHER_BACKEND})..."
   log "Polling ops repo: ${VAULT_ACTIONS_DIR}"
   log "Admin users: ${ADMIN_USERS}"
+
+  # Validate backend selection at startup
+  case "$DISPATCHER_BACKEND" in
+    docker) ;;
+    nomad)
+      log "ERROR: nomad backend not yet implemented"
+      echo "nomad backend not yet implemented" >&2
+      exit 1
+      ;;
+    *)
+      log "ERROR: unknown DISPATCHER_BACKEND=${DISPATCHER_BACKEND}"
+      echo "unknown DISPATCHER_BACKEND=${DISPATCHER_BACKEND} (expected: docker, nomad)" >&2
+      exit 1
+      ;;
+  esac
 
   while true; do
     # Refresh ops repo at the start of each poll cycle
