@@ -128,7 +128,6 @@ vault_request() {
   # Validate TOML content
   local tmp_toml
   tmp_toml=$(mktemp /tmp/vault-XXXXXX.toml)
-  trap 'rm -f "$tmp_toml"' RETURN
 
   printf '%s' "$toml_content" > "$tmp_toml"
 
@@ -136,6 +135,7 @@ vault_request() {
   local vault_env="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/action-vault/vault-env.sh"
   if [ ! -f "$vault_env" ]; then
     echo "ERROR: vault-env.sh not found at $vault_env" >&2
+    rm -f "$tmp_toml"
     return 1
   fi
 
@@ -145,10 +145,14 @@ vault_request() {
   if ! source "$vault_env"; then
     FORGE_TOKEN="${_saved_forge_token:-}"
     echo "ERROR: failed to source vault-env.sh" >&2
+    rm -f "$tmp_toml"
     return 1
   fi
   # Restore caller's FORGE_TOKEN after validation
   FORGE_TOKEN="${_saved_forge_token:-}"
+
+  # Set trap AFTER sourcing vault-env.sh to avoid RETURN trap firing during source
+  trap 'rm -f "$tmp_toml"' RETURN
 
   # Run validation
   if ! validate_vault_action "$tmp_toml"; then
