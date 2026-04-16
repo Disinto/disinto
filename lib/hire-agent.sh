@@ -167,10 +167,14 @@ disinto_hire_an_agent() {
   echo ""
   echo "Step 1.5: Generating Forge token for '${agent_name}'..."
 
-  # Convert role to uppercase token variable name (e.g., architect -> FORGE_ARCHITECT_TOKEN)
-  local role_upper
-  role_upper=$(echo "$role" | tr '[:lower:]' '[:upper:]')
-  local token_var="FORGE_${role_upper}_TOKEN"
+  # Key per-agent credentials by *agent name*, not role (#834 Gap 1).
+  # Two agents with the same role (e.g. two `dev` agents) must not collide on
+  # FORGE_<ROLE>_TOKEN — the compose generator looks up FORGE_TOKEN_<USER_UPPER>
+  # where USER_UPPER = tr 'a-z-' 'A-Z_' of the agent's forge_user.
+  local agent_upper
+  agent_upper=$(echo "$agent_name" | tr 'a-z-' 'A-Z_')
+  local token_var="FORGE_TOKEN_${agent_upper}"
+  local pass_var="FORGE_PASS_${agent_upper}"
 
   # Generate token using the user's password (basic auth)
   local agent_token=""
@@ -194,7 +198,7 @@ disinto_hire_an_agent() {
   if [ -z "$agent_token" ]; then
     echo "  Warning: failed to create API token for '${agent_name}'" >&2
   else
-    # Store token in .env under the role-specific variable name
+    # Store token in .env under the per-agent variable name
     if grep -q "^${token_var}=" "$env_file" 2>/dev/null; then
       # Use sed with alternative delimiter and proper escaping for special chars in token
       local escaped_token
@@ -206,6 +210,23 @@ disinto_hire_an_agent() {
       echo "  ${agent_name} token saved (${token_var})"
     fi
     export "${token_var}=${agent_token}"
+  fi
+
+  # Persist FORGE_PASS_<AGENT_UPPER> to .env (#834 Gap 2).
+  # The container's git credential helper (docker/agents/entrypoint.sh) needs
+  # both FORGE_TOKEN_* and FORGE_PASS_* to pass HTTPS auth for git push
+  # (Forgejo 11.x rejects API tokens for git push, #361).
+  if [ -n "${user_pass:-}" ]; then
+    local escaped_pass
+    escaped_pass=$(printf '%s\n' "$user_pass" | sed 's/[&/\]/\\&/g')
+    if grep -q "^${pass_var}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${pass_var}=.*|${pass_var}=${escaped_pass}|" "$env_file"
+      echo "  ${agent_name} password updated (${pass_var})"
+    else
+      printf '%s=%s\n' "$pass_var" "$user_pass" >> "$env_file"
+      echo "  ${agent_name} password saved (${pass_var})"
+    fi
+    export "${pass_var}=${user_pass}"
   fi
 
   # Step 2: Create .profile repo on Forgejo
