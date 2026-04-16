@@ -1,4 +1,4 @@
-<!-- last-reviewed: 2a7ae0b7eae5979b2c53e3bd1c4280dfdc9df785 -->
+<!-- last-reviewed: 6bdbeb5bd2a200ff1b23724564da9383193f3e30 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -39,10 +39,12 @@ disinto/                 (code repo)
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, lib-systemd.sh (Nomad+Vault Step 0 installers, #821-#825)
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
+│                  jobs/ — Nomad jobspecs (forgejo.hcl reads Vault secrets via template stanza, S2.4)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh)
+│                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh, vault-seed-forgejo.sh — Vault provisioning (S2.1/S2.2)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, disinto-init-nomad.bats)
@@ -192,9 +194,7 @@ Humans write these. Agents read and enforce them.
 
 ## Phase-Signaling Protocol
 
-When running as a persistent tmux session, Claude must signal the orchestrator
-at each phase boundary by writing to a phase file (e.g.
-`/tmp/dev-session-{project}-{issue}.phase`).
+When running as a persistent tmux session, Claude must signal the orchestrator at each phase boundary by writing to a phase file (e.g. `/tmp/dev-session-{project}-{issue}.phase`).
 
 Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`. Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec, orchestrator reaction matrix, sequence diagram, and crash recovery.

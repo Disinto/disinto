@@ -1,37 +1,39 @@
-<!-- last-reviewed: 2a7ae0b7eae5979b2c53e3bd1c4280dfdc9df785 -->
+<!-- last-reviewed: 6bdbeb5bd2a200ff1b23724564da9383193f3e30 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
 the source of truth that `lib/init/nomad/cluster-up.sh` copies onto a
 factory box under `/etc/nomad.d/` and `/etc/vault.d/` at init time.
 
-This directory is part of the **Nomad+Vault migration (Step 0)** —
-see issues #821–#825 for the step breakdown. Jobspecs land in Step 1.
+This directory covers the **Nomad+Vault migration (Steps 0–2)** —
+see issues #821–#884 for the step breakdown.
 
 ## What lives here
 
-| File | Deployed to | Owned by |
+| File/Dir | Deployed to | Owned by |
 |---|---|---|
 | `server.hcl` | `/etc/nomad.d/server.hcl` | agent role, bind, ports, `data_dir` (S0.2) |
 | `client.hcl` | `/etc/nomad.d/client.hcl` | Docker driver cfg + `host_volume` declarations (S0.2) |
 | `vault.hcl`  | `/etc/vault.d/vault.hcl`  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
+| `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
 semantics. The top-of-file header in each config documents which blocks
 it owns.
 
-## What does NOT live here yet
+## Vault ACL policies
 
-- **Jobspecs.** Step 0 brings up an *empty* cluster. Step 1 (and later)
-  adds `*.hcl` job files for forgejo, woodpecker, agents, caddy,
-  etc. When that lands, jobspecs will live in `nomad/jobs/` and each
-  will get its own header comment pointing to the `host_volume` names
-  it consumes (`volume = "forgejo-data"`, etc. — declared in
-  `client.hcl`).
-- **TLS, ACLs, gossip encryption.** Deliberately absent in Step 0 —
-  factory traffic stays on localhost. These land in later migration
-  steps alongside multi-node support.
+`vault/policies/` holds one `.hcl` file per Vault policy; see
+[`vault/policies/AGENTS.md`](../vault/policies/AGENTS.md) for the naming
+convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
+
+## Not yet implemented
+
+- **Additional jobspecs** (woodpecker, agents, caddy) — Step 1 brought up
+  Forgejo; remaining services land in later steps.
+- **TLS, ACLs, gossip encryption** — deliberately absent for now; land
+  alongside multi-node support.
 
 ## Adding a jobspec (Step 1 and later)
 
