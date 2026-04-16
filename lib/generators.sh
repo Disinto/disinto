@@ -97,6 +97,13 @@ _generate_local_model_services() {
         POLL_INTERVAL) poll_interval_val="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
+            # Per-agent FORGE_TOKEN / FORGE_PASS lookup (#834 Gap 3).
+            # Two hired llama agents must not share the same Forgejo identity,
+            # so we key the env-var lookup by forge_user (which hire-agent.sh
+            # writes as the Forgejo username). Apply the same tr 'a-z-' 'A-Z_'
+            # convention as hire-agent.sh Gap 1 so the names match.
+            local user_upper
+            user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
@@ -107,7 +114,7 @@ _generate_local_model_services() {
       - apparmor=unconfined
     volumes:
       - agents-${service_name}-data:/home/agent/data
-      - project-repos:/home/agent/repos
+      - project-repos-${service_name}:/home/agent/repos
       - \${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:\${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - \${CLAUDE_CONFIG_FILE:-\${HOME}/.claude.json}:/home/agent/.claude.json:ro
       - \${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
@@ -115,9 +122,9 @@ _generate_local_model_services() {
     environment:
       FORGE_URL: http://forgejo:3000
       FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
-      # Use llama-specific credentials if available, otherwise fall back to main FORGE_TOKEN
-      FORGE_TOKEN: \${FORGE_TOKEN_LLAMA:-\${FORGE_TOKEN:-}}
-      FORGE_PASS: \${FORGE_PASS_LLAMA:-\${FORGE_PASS:-}}
+      # Per-agent credentials keyed by forge_user (#834 Gap 3).
+      FORGE_TOKEN: \${FORGE_TOKEN_${user_upper}:-}
+      FORGE_PASS: \${FORGE_PASS_${user_upper}:-}
       FORGE_REVIEW_TOKEN: \${FORGE_REVIEW_TOKEN:-}
       FORGE_BOT_USERNAMES: \${FORGE_BOT_USERNAMES:-}
       AGENT_ROLES: "${roles}"
@@ -153,13 +160,18 @@ _generate_local_model_services() {
 EOF
             has_services=true
           fi
-          # Collect volume name for later
-          local vol_name="  agents-${service_name}-data:"
+          # Collect per-agent volume names for later (#834 Gap 4: project-repos
+          # must be per-agent so concurrent llama devs don't race on
+          # /home/agent/repos/_factory or state/.dev-active).
+          local vol_data="  agents-${service_name}-data:"
+          local vol_repos="  project-repos-${service_name}:"
           if [ -n "$all_vols" ]; then
             all_vols="${all_vols}
-${vol_name}"
+${vol_data}
+${vol_repos}"
           else
-            all_vols="${vol_name}"
+            all_vols="${vol_data}
+${vol_repos}"
           fi
           service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val=""
           ;;
@@ -216,8 +228,14 @@ for name, config in agents.items():
 
     # Add local-model volumes to the volumes section
     if [ -n "$all_vols" ]; then
+      # Escape embedded newlines as literal \n so sed's s///  replacement
+      # tolerates multi-line $all_vols (needed once >1 local-model agent is
+      # configured — without this, the second agent's volume entry would
+      # unterminate the sed expression).
+      local all_vols_escaped
+      all_vols_escaped=$(printf '%s' "$all_vols" | sed ':a;N;$!ba;s/\n/\\n/g')
       # Find the volumes section and add the new volumes
-      sed -i "/^volumes:/{n;:a;n;/^[a-z]/!{s/$/\n$all_vols/;b};ba}" "$temp_compose"
+      sed -i "/^volumes:/{n;:a;n;/^[a-z]/!{s/$/\n$all_vols_escaped/;b};ba}" "$temp_compose"
     fi
 
     mv "$temp_compose" "$compose_file"
