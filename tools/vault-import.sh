@@ -420,25 +420,38 @@ EOF
   local unchanged=0
 
   for op in "${operations[@]}"; do
-    # Parse operation: category|field|file|key (4 fields for most, 5 for bots/runner)
-    IFS='|' read -r category field file key <<< "$op"
-    local source_value=""
+    # Parse operation: category|field|subkey|file|envvar (5 fields for bots/runner)
+    # or category|field|file|envvar (4 fields for forge/woodpecker/chat)
+    local category field subkey file envvar=""
+    local field_count
+    field_count="$(printf '%s' "$op" | awk -F'|' '{print NF}')"
 
-    if [ "$file" = "$env_file" ]; then
-      source_value="${!key:-}"
+    if [ "$field_count" -eq 5 ]; then
+      # 5 fields: category|role|subkey|file|envvar
+      IFS='|' read -r category field subkey file envvar <<< "$op"
     else
-      # Source from sops-decrypted env
-      source_value="$(printf '%s' "$sops_env" | grep "^${key}=" | sed "s/^${key=}//" || true)"
+      # 4 fields: category|field|file|envvar
+      IFS='|' read -r category field file envvar <<< "$op"
+      subkey="$field"  # For 4-field ops, field is the vault key
     fi
 
     # Determine Vault path and key based on category
     local vault_path=""
-    local vault_key="$key"
+    local vault_key="$subkey"
+    local source_value=""
+
+    if [ "$file" = "$env_file" ]; then
+      # Source from environment file (envvar contains the variable name)
+      source_value="${!envvar:-}"
+    else
+      # Source from sops-decrypted env (envvar contains the variable name)
+      source_value="$(printf '%s' "$sops_env" | grep "^${envvar}=" | sed "s/^${envvar}=//" || true)"
+    fi
 
     case "$category" in
       bots)
         vault_path="disinto/bots/${field}"
-        vault_key="$field"
+        vault_key="$subkey"
         ;;
       forge)
         vault_path="disinto/shared/forge"
