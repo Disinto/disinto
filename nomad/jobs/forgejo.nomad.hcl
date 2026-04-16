@@ -1,5 +1,5 @@
 # =============================================================================
-# nomad/jobs/forgejo.hcl — Forgejo git server (Nomad service job)
+# nomad/jobs/forgejo.nomad.hcl — Forgejo git server (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S1.1, issue #840). First jobspec to
 # land under nomad/jobs/ — proves the docker driver + host_volume plumbing
