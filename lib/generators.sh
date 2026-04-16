@@ -102,6 +102,13 @@ _generate_local_model_services() {
             # so we key the env-var lookup by forge_user (which hire-agent.sh
             # writes as the Forgejo username). Apply the same tr 'a-z-' 'A-Z_'
             # convention as hire-agent.sh Gap 1 so the names match.
+            #
+            # NOTE (#845): the emitted block has NO `profiles:` key. The
+            # [agents.<name>] TOML entry is already the activation gate —
+            # its presence is what drives emission here. Profile-gating
+            # the service caused `disinto up` (without COMPOSE_PROFILES)
+            # to treat the hired container as an orphan and silently
+            # remove it via --remove-orphans.
             local user_upper
             user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
             cat >> "$temp_file" <<EOF
@@ -155,7 +162,6 @@ _generate_local_model_services() {
         condition: service_started
     networks:
       - disinto-net
-    profiles: ["agents-${service_name}"]
 
 EOF
             has_services=true

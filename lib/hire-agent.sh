@@ -544,7 +544,7 @@ p.write_text(text)
     echo "  Model: ${model}"
     echo ""
     echo "  To start the agent, run:"
-    echo "    docker compose --profile ${service_name} up -d ${service_name}"
+    echo "    disinto up"
   fi
 
   echo ""
