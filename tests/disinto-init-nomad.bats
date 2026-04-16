@@ -143,3 +143,51 @@ setup_file() {
   [[ "$output" == *"repo URL required"* ]]
   [[ "$output" != *"Unknown option"* ]]
 }
+
+# ── --with flag tests ─────────────────────────────────────────────────────────
+
+@test "disinto init --backend=nomad --with forgejo --dry-run prints deploy plan" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"services to deploy: forgejo"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job run -detach"* ]]
+  [[ "$output" == *"[deploy] dry-run complete"* ]]
+}
+
+@test "disinto init --backend=nomad --with forgejo,forgejo --dry-run handles comma-separated services" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo,forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"services to deploy: forgejo,forgejo"* ]]
+}
+
+@test "disinto init --backend=docker --with forgejo errors with '--with requires --backend=nomad'" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=docker --with forgejo
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--with requires --backend=nomad"* ]]
+}
+
+@test "disinto init --backend=nomad --empty --with forgejo errors with mutually exclusive" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --with forgejo
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--empty and --with are mutually exclusive"* ]]
+}
+
+@test "disinto init --backend=nomad --with unknown-service errors with unknown service" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown service"* ]]
+  [[ "$output" == *"known: forgejo"* ]]
+}
+
+@test "disinto init --backend=nomad --with forgejo (flag=value syntax) works" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with=forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"services to deploy: forgejo"* ]]
+}
+
+@test "disinto init --backend=nomad --with forgejo --empty --dry-run rejects in any order" {
+  run "$DISINTO_BIN" init placeholder/repo --with forgejo --backend=nomad --empty --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--empty and --with are mutually exclusive"* ]]
+}

@@ -82,6 +82,7 @@ Init options:
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --backend <value>    Orchestration backend: docker (default) | nomad
+  --with <services>    (nomad) Deploy services: forgejo[,...] (S1.3)
   --empty              (nomad) Bring up cluster only, no jobs (S0.4)
   --bare               Skip compose generation (bare-metal setup)
   --build              Use local docker build instead of registry images (dev mode)
@@ -662,11 +663,17 @@ prompt_admin_password() {
 # init run); operators running without sudo-NOPASSWD should invoke
 # `sudo disinto init ...` directly.
 _disinto_init_nomad() {
-  local dry_run="${1:-false}" empty="${2:-false}"
+  local dry_run="${1:-false}" empty="${2:-false}" with_services="${3:-}"
   local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
+  local deploy_sh="${FACTORY_ROOT}/lib/init/nomad/deploy.sh"
 
   if [ ! -x "$cluster_up" ]; then
     echo "Error: ${cluster_up} not found or not executable" >&2
+    exit 1
+  fi
+
+  if [ -n "$with_services" ] && [ ! -x "$deploy_sh" ]; then
+    echo "Error: ${deploy_sh} not found or not executable" >&2
     exit 1
   fi
 
@@ -679,31 +686,105 @@ _disinto_init_nomad() {
     echo "nomad backend: default (cluster-up; jobs deferred to Step 1)"
   fi
 
-  # Dry-run forwards straight through; cluster-up.sh prints its own step
-  # list and exits 0 without touching the box.
-  local -a cmd=("$cluster_up")
+  # Dry-run: print cluster-up plan + deploy.sh plan
   if [ "$dry_run" = "true" ]; then
-    cmd+=("--dry-run")
-    "${cmd[@]}"
-    exit $?
+    echo ""
+    echo "── Cluster-up dry-run ─────────────────────────────────"
+    local -a cmd=("$cluster_up" "--dry-run")
+    "${cmd[@]}" || true
+    echo ""
+
+    if [ -n "$with_services" ]; then
+      echo "── Deploy services dry-run ────────────────────────────"
+      echo "[deploy] services to deploy: ${with_services}"
+      local IFS=','
+      for svc in $with_services; do
+        svc=$(echo "$svc" | xargs)  # trim whitespace
+        # Validate known services first
+        case "$svc" in
+          forgejo) ;;
+          *)
+            echo "Error: unknown service '${svc}' — known: forgejo" >&2
+            exit 1
+            ;;
+        esac
+        local jobspec_path="${FACTORY_ROOT}/nomad/jobs/${svc}.hcl"
+        if [ ! -f "$jobspec_path" ]; then
+          echo "Error: jobspec not found: ${jobspec_path}" >&2
+          exit 1
+        fi
+        echo "[deploy] [dry-run] nomad job validate ${jobspec_path}"
+        echo "[deploy] [dry-run] nomad job run -detach ${jobspec_path}"
+      done
+      echo "[deploy] dry-run complete"
+    fi
+    exit 0
   fi
 
-  # Real run — needs root. Invoke via sudo if we're not already root so
-  # the command's exit code propagates directly. We don't distinguish
-  # "sudo denied" from "cluster-up.sh failed" here; both surface as a
-  # non-zero exit, and cluster-up.sh's own error messages cover the
-  # latter case.
-  local rc=0
+  # Real run: cluster-up + deploy services
+  local -a cluster_cmd=("$cluster_up")
   if [ "$(id -u)" -eq 0 ]; then
-    "${cmd[@]}" || rc=$?
+    "${cluster_cmd[@]}" || exit $?
   else
     if ! command -v sudo >/dev/null 2>&1; then
       echo "Error: cluster-up.sh must run as root and sudo is not installed" >&2
       exit 1
     fi
-    sudo -n -- "${cmd[@]}" || rc=$?
+    sudo -n -- "${cluster_cmd[@]}" || exit $?
   fi
-  exit "$rc"
+
+  # Deploy services if requested
+  if [ -n "$with_services" ]; then
+    echo ""
+    echo "── Deploying services ─────────────────────────────────"
+    local -a deploy_cmd=("$deploy_sh")
+    # Split comma-separated service list into positional args
+    local IFS=','
+    for svc in $with_services; do
+      svc=$(echo "$svc" | xargs)  # trim whitespace
+      if ! echo "$svc" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+        echo "Error: invalid service name '${svc}' — must match ^[a-zA-Z0-9_-]+$" >&2
+        exit 1
+      fi
+      # Validate known services FIRST (before jobspec check)
+      case "$svc" in
+        forgejo) ;;
+        *)
+          echo "Error: unknown service '${svc}' — known: forgejo" >&2
+          exit 1
+          ;;
+      esac
+      # Check jobspec exists
+      local jobspec_path="${FACTORY_ROOT}/nomad/jobs/${svc}.hcl"
+      if [ ! -f "$jobspec_path" ]; then
+        echo "Error: jobspec not found: ${jobspec_path}" >&2
+        exit 1
+      fi
+      deploy_cmd+=("$svc")
+    done
+
+    if [ "$(id -u)" -eq 0 ]; then
+      "${deploy_cmd[@]}" || exit $?
+    else
+      if ! command -v sudo >/dev/null 2>&1; then
+        echo "Error: deploy.sh must run as root and sudo is not installed" >&2
+        exit 1
+      fi
+      sudo -n -- "${deploy_cmd[@]}" || exit $?
+    fi
+
+    # Print final summary
+    echo ""
+    echo "── Summary ────────────────────────────────────────────"
+    echo "Cluster:     Nomad+Vault cluster is up"
+    echo "Deployed:    ${with_services}"
+    if echo "$with_services" | grep -q "forgejo"; then
+      echo "Ports:       forgejo: 3000"
+    fi
+    echo "────────────────────────────────────────────────────────"
+  fi
+
+  exit 0
 }
 
 disinto_init() {
@@ -721,7 +802,7 @@ disinto_init() {
   fi
 
   # Parse flags
-  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker" empty=false
+  local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker" empty=false with_services=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --branch)        branch="$2"; shift 2 ;;
@@ -730,6 +811,8 @@ disinto_init() {
       --forge-url)     forge_url_flag="$2"; shift 2 ;;
       --backend)       backend="$2"; shift 2 ;;
       --backend=*)     backend="${1#--backend=}"; shift ;;
+      --with)          with_services="$2"; shift 2 ;;
+      --with=*)        with_services="${1#--with=}"; shift ;;
       --bare)          bare=true; shift ;;
       --build)         use_build=true; shift ;;
       --empty)         empty=true; shift ;;
@@ -764,11 +847,23 @@ disinto_init() {
     exit 1
   fi
 
+  # --with requires --backend=nomad
+  if [ -n "$with_services" ] && [ "$backend" != "nomad" ]; then
+    echo "Error: --with requires --backend=nomad" >&2
+    exit 1
+  fi
+
+  # --empty and --with are mutually exclusive
+  if [ "$empty" = true ] && [ -n "$with_services" ]; then
+    echo "Error: --empty and --with are mutually exclusive" >&2
+    exit 1
+  fi
+
   # Dispatch on backend — the nomad path runs lib/init/nomad/cluster-up.sh
   # (S0.4). The default and --empty variants are identical today; Step 1
   # will branch on $empty to add job deployment to the default path.
   if [ "$backend" = "nomad" ]; then
-    _disinto_init_nomad "$dry_run" "$empty"
+    _disinto_init_nomad "$dry_run" "$empty" "$with_services"
     # shellcheck disable=SC2317  # _disinto_init_nomad always exits today;
     # `return` is defensive against future refactors.
     return
