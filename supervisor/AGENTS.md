@@ -1,4 +1,4 @@
-<!-- last-reviewed: 18190874cae869527f675f717423ded735f2c555 -->
+<!-- last-reviewed: c363ee0aea2ae447daab28c2c850d6abefc8c6b5 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -7,13 +7,11 @@ then runs an interactive Claude session (sonnet) that assesses health, auto-fixe
 issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
-**Trigger**: `supervisor-run.sh` is invoked by the polling loop in `docker/edge/entrypoint-edge.sh`
-every 20 minutes (line 50-53). Sources `lib/guard.sh` and calls `check_active supervisor` first
-— skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p` via
-`agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context,
-and cleans up on completion or timeout (20 min max session). Note: the supervisor runs in the
-**edge container** (`entrypoint-edge.sh`), not the agent container — this distinction matters
-for operators debugging the factory.
+**Trigger**: `supervisor-run.sh` is invoked by two polling loops:
+- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `supervisor.log` in the agents container.
+- **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
+
+Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
@@ -39,6 +37,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
+- `SUPERVISOR_INTERVAL` — polling interval in seconds for agents container (default 1200 = 20 min)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
 **Degraded mode (Issue #544)**: When `OPS_REPO_ROOT` is not set or the directory doesn't exist, the supervisor runs in degraded mode:
