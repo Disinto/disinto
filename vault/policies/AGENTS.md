@@ -48,12 +48,17 @@ validation.
 1. Drop a file matching one of the four naming patterns above. Use an
    existing file in the same family as the template — comment header,
    capability list, and KV path layout should match the family.
-2. Run `tools/vault-apply-policies.sh --dry-run` to confirm the new
+2. Run `vault policy fmt <file>` locally so the formatting matches what
+   the CI fmt-check (step 4 of `.woodpecker/nomad-validate.yml`) will
+   accept. The fmt check runs non-destructively in CI but a dirty file
+   fails the step; running `fmt` locally before pushing is the fastest
+   path.
+3. Add the matching entry to `../roles.yaml` (see "JWT-auth roles" below)
+   so the CI role-reference check (step 6) stays green.
+4. Run `tools/vault-apply-policies.sh --dry-run` to confirm the new
    basename appears in the planned-work list with the expected SHA.
-3. Run `tools/vault-apply-policies.sh` against a Vault instance to
+5. Run `tools/vault-apply-policies.sh` against a Vault instance to
    create it; re-run to confirm it reports `unchanged`.
-4. The CI fmt + validate step lands in S2.6 (#884). Until then
-   `vault policy fmt <file>` locally is the fastest sanity check.
 
 ## JWT-auth roles (S2.3)
 
@@ -117,6 +122,56 @@ would let one service's tokens outlive the others — add a field to
 `vault/roles.yaml` and the applier at the same time if that ever
 becomes necessary.
 
+## Policy lifecycle
+
+Adding a policy that an actual workload consumes is a three-step chain;
+the CI pipeline guards each link.
+
+1. **Add the policy HCL** — `vault/policies/<name>.hcl`, formatted with
+   `vault policy fmt`. Capabilities must be drawn from the Vault-recognized
+   set (`read`, `list`, `create`, `update`, `delete`, `patch`, `sudo`,
+   `deny`); a typo fails CI step 5 (HCL written to an inline dev-mode Vault
+   via `vault policy write` — a real parser, not a regex).
+2. **Update `../roles.yaml`** — add a JWT-auth role entry whose `policy:`
+   field matches the new basename (without `.hcl`). CI step 6 re-checks
+   every role in this file against the policy set, so a drift between the
+   two directories fails the step.
+3. **Reference from a Nomad jobspec** — add `vault { role = "<name>" }` in
+   `nomad/jobs/<service>.hcl` (owned by S2.4). Policies do not take effect
+   until a Nomad job asks for a token via that role.
+
+See the "Adding a new service" walkthrough below for the applier-script
+flow once steps 1–3 are committed.
+
+## CI enforcement (`.woodpecker/nomad-validate.yml`)
+
+The pipeline triggers on any PR touching `vault/policies/**`,
+`vault/roles.yaml`, or `lib/init/nomad/vault-*.sh` and runs four
+vault-scoped checks (in addition to the nomad-scoped steps already in
+place):
+
+| Step | Tool | What it catches |
+|---|---|---|
+| 4. `vault-policy-fmt` | `vault policy fmt` + `diff` | formatting drift — trailing whitespace, wrong indentation, missing newlines |
+| 5. `vault-policy-validate` | `vault policy write` against inline dev Vault | HCL syntax errors, unknown stanzas, invalid capability names (e.g. `"frobnicate"`), malformed `path "..." {}` blocks |
+| 6. `vault-roles-validate` | yamllint + PyYAML | roles.yaml syntax drift, missing required fields, role→policy references with no matching `.hcl` |
+| P11 | `lib/secret-scan.sh` via `.woodpecker/secret-scan.yml` | literal secret leaked into a policy HCL (rare copy-paste mistake) — already covers `vault/**/*`, no duplicate step here |
+
+All four steps are fail-closed — any error blocks merge. The pipeline
+pins `hashicorp/vault:1.18.5` (matching `lib/init/nomad/install.sh`);
+bumping the runtime version without bumping the CI image is a CI-caught
+drift.
+
+## Common failure modes
+
+| Symptom in CI logs | Root cause | Fix |
+|---|---|---|
+| `vault-policy-fmt: … is not formatted — run 'vault policy fmt <file>'` | Trailing whitespace / mixed indent in an HCL file | `vault policy fmt <file>` locally and re-commit |
+| `vault-policy-validate: … failed validation` plus a `policy` error from Vault | Unknown capability (e.g. `"frobnicate"`), unknown stanza, malformed `path` block | Fix the HCL; valid capabilities are `read`, `list`, `create`, `update`, `delete`, `patch`, `sudo`, `deny` |
+| `vault-roles-validate: ERROR: role 'X' references policy 'Y' but vault/policies/Y.hcl does not exist` | A role's `policy:` field does not match any file basename in `vault/policies/` | Either add the missing policy HCL or fix the typo in `roles.yaml` |
+| `vault-roles-validate: ERROR: role entry missing required field 'Z'` | A role in `roles.yaml` is missing one of `name`, `policy`, `namespace`, `job_id` | Add the field; all four are required |
+| P11 `secret-scan: detected potential secret …` on a `.hcl` file | A literal token/password was pasted into a policy | Policies must name KV paths, not carry secret values — move the literal into KV (S2.2) and have the policy grant `read` on the path |
+
 ## What this directory does NOT own
 
 - **Attaching policies to Nomad jobs.** That's S2.4 (#882) via the
@@ -124,4 +179,3 @@ becomes necessary.
   name in `vault { role = "..." }` is what binds the policy.
 - **Writing the secret values themselves.** That's S2.2 (#880) via
   `tools/vault-import.sh`.
-- **CI policy fmt + validate + roles.yaml check.** That's S2.6 (#884).

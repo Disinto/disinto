@@ -1,16 +1,21 @@
 # =============================================================================
 # .woodpecker/nomad-validate.yml — Static validation for Nomad+Vault artifacts
 #
-# Part of the Nomad+Vault migration (S0.5, issue #825). Locks in the
-# "no-ad-hoc-steps" principle: every HCL/shell artifact under nomad/ or
-# lib/init/nomad/, plus the `disinto init` dispatcher, gets checked
-# before it can land.
+# Part of the Nomad+Vault migration (S0.5, issue #825; extended in S2.6,
+# issue #884). Locks in the "no-ad-hoc-steps" principle: every HCL/shell
+# artifact under nomad/, lib/init/nomad/, vault/policies/, plus the
+# `disinto init` dispatcher and vault/roles.yaml, gets checked before it
+# can land.
 #
 # Triggers on PRs (and pushes) that touch any of:
 #   nomad/**              — HCL configs (server, client, vault)
-#   lib/init/nomad/**     — cluster-up / install / systemd / vault-init
+#   lib/init/nomad/**     — cluster-up / install / systemd / vault-init /
+#                            vault-nomad-auth (S2.6 trigger: vault-*.sh
+#                            is a subset of this glob)
 #   bin/disinto           — `disinto init --backend=nomad` dispatcher
 #   tests/disinto-init-nomad.bats — the bats suite itself
+#   vault/policies/**     — Vault ACL policy HCL files (S2.1, S2.6)
+#   vault/roles.yaml      — JWT-auth role bindings (S2.3, S2.6)
 #   .woodpecker/nomad-validate.yml — the pipeline definition
 #
 # Steps (all fail-closed — any error blocks merge):
@@ -19,8 +24,22 @@
 #                                 nomad/jobs/*.hcl (new jobspecs get
 #                                 CI coverage automatically)
 #   3. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
-#   4. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
-#   5. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
+#   4. vault-policy-fmt        — `vault policy fmt` idempotence check on
+#                                 every vault/policies/*.hcl (format drift =
+#                                 CI fail; non-destructive via cp+diff)
+#   5. vault-policy-validate   — HCL syntax + capability validation for every
+#                                 vault/policies/*.hcl via `vault policy write`
+#                                 against an inline dev-mode Vault server
+#   6. vault-roles-validate    — yamllint + role→policy reference check on
+#                                 vault/roles.yaml (every referenced policy
+#                                 must exist as vault/policies/<name>.hcl)
+#   7. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
+#   8. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
+#
+# Secret-scan coverage: vault/policies/*.hcl is already scanned by the
+# P11 gate (.woodpecker/secret-scan.yml, issue #798) — its trigger path
+# `vault/**/*` covers everything under this directory. We intentionally
+# do NOT duplicate that gate here; one scanner, one source of truth.
 #
 # Pinned image versions match lib/init/nomad/install.sh (nomad 1.9.5 /
 # vault 1.18.5). Bump there AND here together — drift = CI passing on
@@ -34,6 +53,8 @@ when:
       - "lib/init/nomad/**"
       - "bin/disinto"
       - "tests/disinto-init-nomad.bats"
+      - "vault/policies/**"
+      - "vault/roles.yaml"
       - ".woodpecker/nomad-validate.yml"
 
 # Authenticated clone — same pattern as .woodpecker/ci.yml. Forgejo is
@@ -123,7 +144,176 @@ steps:
           *) echo "vault config: hard failure (rc=$rc)" >&2; exit "$rc" ;;
         esac
 
-  # ── 4. Shellcheck ────────────────────────────────────────────────────────
+  # ── 4. Vault policy fmt idempotence check ────────────────────────────────
+  # `vault policy fmt <file>` formats a local HCL policy file in place.
+  # There's no `-check`/dry-run flag (vault 1.18.5), so we implement a
+  # non-destructive check as cp → fmt-on-copy → diff against original.
+  # Any diff means the committed file would be rewritten by `vault policy
+  # fmt` — failure steers the author to run `vault policy fmt <file>`
+  # locally before pushing.
+  #
+  # Scope: vault/policies/*.hcl only. The `[ -f "$f" ]` guard handles the
+  # no-match case (POSIX sh does not nullglob) so an empty policies/
+  # directory does not fail this step.
+  #
+  # Note: `vault policy fmt` is purely local (HCL text transform) and does
+  # not require a running Vault server, which is why this step can run
+  # without starting one.
+  - name: vault-policy-fmt
+    image: hashicorp/vault:1.18.5
+    commands:
+      - |
+        set -e
+        failed=0
+        for f in vault/policies/*.hcl; do
+          [ -f "$f" ] || continue
+          tmp="/tmp/$(basename "$f").fmt"
+          cp "$f" "$tmp"
+          vault policy fmt "$tmp" >/dev/null 2>&1
+          if ! diff -u "$f" "$tmp"; then
+            echo "ERROR: $f is not formatted — run 'vault policy fmt $f' locally" >&2
+            failed=1
+          fi
+        done
+        if [ "$failed" -gt 0 ]; then
+          echo "vault-policy-fmt: formatting drift detected" >&2
+          exit 1
+        fi
+        echo "vault-policy-fmt: all policies formatted correctly"
+
+  # ── 5. Vault policy HCL syntax + capability validation ───────────────────
+  # Vault has no offline `vault policy validate` subcommand — the closest
+  # in-CLI validator is `vault policy write`, which sends the HCL to a
+  # running server which parses it, checks capability names against the
+  # known set (read, list, create, update, delete, patch, sudo, deny),
+  # and rejects unknown stanzas / malformed path blocks. We start an
+  # inline dev-mode Vault (in-memory, no persistence, root token = "root")
+  # for the duration of this step and loop `vault policy write` over every
+  # vault/policies/*.hcl; the policies never leave the ephemeral dev
+  # server, so this is strictly a validator — not a deploy.
+  #
+  # Exit-code handling:
+  #   - `vault policy write` exits 0 on success, non-zero on any parse /
+  #     semantic error. We aggregate failures across all files so a single
+  #     CI run surfaces every broken policy (not just the first).
+  #   - The dev server is killed on any step exit via EXIT trap so the
+  #     step tears down cleanly even on failure.
+  #
+  # Why dev-mode is sufficient: we're not persisting secrets, only asking
+  # Vault to parse policy text. The factory's production Vault is NOT
+  # contacted.
+  - name: vault-policy-validate
+    image: hashicorp/vault:1.18.5
+    commands:
+      - |
+        set -e
+        vault server -dev -dev-root-token-id=root -dev-listen-address=127.0.0.1:8200 >/tmp/vault-dev.log 2>&1 &
+        VAULT_PID=$!
+        trap 'kill "$VAULT_PID" 2>/dev/null || true' EXIT INT TERM
+        export VAULT_ADDR=http://127.0.0.1:8200
+        export VAULT_TOKEN=root
+        ready=0
+        i=0
+        while [ "$i" -lt 30 ]; do
+          if vault status >/dev/null 2>&1; then
+            ready=1
+            break
+          fi
+          i=$((i + 1))
+          sleep 0.5
+        done
+        if [ "$ready" -ne 1 ]; then
+          echo "vault-policy-validate: dev server failed to start after 15s" >&2
+          cat /tmp/vault-dev.log >&2 || true
+          exit 1
+        fi
+        failed=0
+        for f in vault/policies/*.hcl; do
+          [ -f "$f" ] || continue
+          name=$(basename "$f" .hcl)
+          echo "validate: $f"
+          if ! vault policy write "$name" "$f"; then
+            echo "  ERROR: $f failed validation" >&2
+            failed=1
+          fi
+        done
+        if [ "$failed" -gt 0 ]; then
+          echo "vault-policy-validate: validation errors found" >&2
+          exit 1
+        fi
+        echo "vault-policy-validate: all policies valid"
+
+  # ── 6. vault/roles.yaml validator ────────────────────────────────────────
+  # Validates the JWT-auth role bindings file (S2.3). Two checks:
+  #
+  #   a. `yamllint` — catches YAML syntax errors and indentation drift.
+  #      Uses a relaxed config (line length bumped to 200) because
+  #      roles.yaml's comments are wide by design.
+  #   b. role → policy reference check — every role's `policy:` field
+  #      must match a basename in vault/policies/*.hcl. A role pointing
+  #      at a non-existent policy = runtime "permission denied" at job
+  #      placement; catching the drift here turns it into a CI failure.
+  #      Also verifies each role entry has the four required fields
+  #      (name, policy, namespace, job_id) per the file's documented
+  #      format.
+  #
+  # Parsing is done with PyYAML (the roles.yaml format is a strict
+  # subset that awk-level parsing in tools/vault-apply-roles.sh handles
+  # too, but PyYAML in CI gives us structural validation for free). If
+  # roles.yaml is ever absent (e.g. reverted), the step skips rather
+  # than fails — presence is enforced by S2.3's own tooling, not here.
+  - name: vault-roles-validate
+    image: python:3.12-alpine
+    commands:
+      - pip install --quiet --disable-pip-version-check pyyaml yamllint
+      - |
+        set -e
+        if [ ! -f vault/roles.yaml ]; then
+          echo "vault-roles-validate: vault/roles.yaml not present, skipping"
+          exit 0
+        fi
+        yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' vault/roles.yaml
+        echo "vault-roles-validate: yamllint OK"
+        python3 - <<'PY'
+        import os
+        import sys
+        import yaml
+
+        with open('vault/roles.yaml') as f:
+            data = yaml.safe_load(f) or {}
+        roles = data.get('roles') or []
+        if not roles:
+            print("vault-roles-validate: no roles defined in vault/roles.yaml", file=sys.stderr)
+            sys.exit(1)
+        existing = {
+            os.path.splitext(e)[0]
+            for e in os.listdir('vault/policies')
+            if e.endswith('.hcl')
+        }
+        required = ('name', 'policy', 'namespace', 'job_id')
+        failed = 0
+        for r in roles:
+            if not isinstance(r, dict):
+                print(f"ERROR: role entry is not a mapping: {r!r}", file=sys.stderr)
+                failed = 1
+                continue
+            for field in required:
+                if r.get(field) in (None, ''):
+                    print(f"ERROR: role entry missing required field '{field}': {r}", file=sys.stderr)
+                    failed = 1
+            policy = r.get('policy')
+            if policy and policy not in existing:
+                print(
+                    f"ERROR: role '{r.get('name')}' references policy '{policy}' "
+                    f"but vault/policies/{policy}.hcl does not exist",
+                    file=sys.stderr,
+                )
+                failed = 1
+        sys.exit(failed)
+        PY
+        echo "vault-roles-validate: all role→policy references valid"
+
+  # ── 7. Shellcheck ────────────────────────────────────────────────────────
   # Covers the new lib/init/nomad/*.sh scripts plus bin/disinto (which owns
   # the backend dispatcher). bin/disinto has no .sh extension so the
   # repo-wide shellcheck in .woodpecker/ci.yml skips it — this step is the
@@ -133,7 +323,7 @@ steps:
     commands:
       - shellcheck --severity=warning lib/init/nomad/*.sh bin/disinto
 
-  # ── 5. bats: `disinto init --backend=nomad --dry-run` ────────────────────
+  # ── 8. bats: `disinto init --backend=nomad --dry-run` ────────────────────
   # Smoke-tests the CLI dispatcher: both --backend=nomad variants exit 0
   # with the expected step list, and --backend=docker stays on the docker
   # path (regression guard). Pure dry-run — no sudo, no network.
