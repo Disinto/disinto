@@ -14,8 +14,10 @@
 #   .woodpecker/nomad-validate.yml — the pipeline definition
 #
 # Steps (all fail-closed — any error blocks merge):
-#   1. nomad-config-validate  — `nomad config validate` on server + client HCL
-#   2. nomad-job-validate      — `nomad job validate` on every nomad/jobs/*.nomad.hcl
+#   1. nomad-config-validate   — `nomad config validate` on server + client HCL
+#   2. nomad-job-validate      — `nomad job validate` looped over every
+#                                 nomad/jobs/*.nomad.hcl (new jobspecs get
+#                                 CI coverage automatically)
 #   3. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
 #   4. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
 #   5. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
@@ -65,14 +67,35 @@ steps:
   # with "unknown block 'job'", and vice versa. Hence two separate steps.
   #
   # Validation is offline: no running Nomad server is required (exit 0 on
-  # valid HCL, 1 on syntax/semantic error). One invocation per file — the
-  # CLI takes a single path argument. New jobspecs get explicit lines here
-  # so bringing one up is a conscious CI edit, matching step 1's pattern
-  # and this file's "no-ad-hoc-steps" principle.
+  # valid HCL, 1 on syntax/semantic error). The CLI takes a single path
+  # argument so we loop over every `*.nomad.hcl` file under nomad/jobs/ —
+  # that way a new jobspec PR gets CI coverage automatically (no separate
+  # "edit the pipeline" step to forget). The `.nomad.hcl` suffix is the
+  # naming convention documented in nomad/AGENTS.md; anything else in
+  # nomad/jobs/ is deliberately not validated by this step.
+  #
+  # `[ -f "$f" ]` guards against the no-match case: POSIX sh does not
+  # nullglob, so an empty jobs/ directory would leave the literal glob in
+  # "$f" and fail. Today forgejo.nomad.hcl exists, but the guard keeps the
+  # step safe during any future transient empty state.
+  #
+  # Scope note: offline validate catches jobspec-level errors (unknown
+  # stanzas, missing required fields, wrong value types, invalid driver
+  # config). It does NOT resolve cross-file references like host_volume
+  # source names against nomad/client.hcl — that mismatch surfaces at
+  # scheduling time on the live cluster, not here. The paired-write rule
+  # in nomad/AGENTS.md ("add to both client.hcl and cluster-up.sh") is the
+  # primary guardrail for that class of drift.
   - name: nomad-job-validate
     image: hashicorp/nomad:1.9.5
     commands:
-      - nomad job validate nomad/jobs/forgejo.nomad.hcl
+      - |
+        set -e
+        for f in nomad/jobs/*.nomad.hcl; do
+          [ -f "$f" ] || continue
+          echo "validating jobspec: $f"
+          nomad job validate "$f"
+        done
 
   # ── 3. Vault HCL syntax check ────────────────────────────────────────────
   # `vault operator diagnose` loads the config and runs a suite of checks.
