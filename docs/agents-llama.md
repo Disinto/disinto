@@ -2,8 +2,11 @@
 
 Local-model agents run the same agent code as the Claude-backed agents, but
 connect to a local llama-server (or compatible OpenAI-API endpoint) instead of
-the Anthropic API. This document describes the current activation flow using
+the Anthropic API. This document describes the canonical activation flow using
 `disinto hire-an-agent` and `[agents.X]` TOML configuration.
+
+> **Note:** The legacy `ENABLE_LLAMA_AGENT=1` env flag has been removed (#846).
+> Activation is now done exclusively via `[agents.X]` sections in project TOML.
 
 ## Overview
 

@@ -17,6 +17,38 @@ set -euo pipefail
 #   - predictor: every 24 hours (288 iterations * 5 min)
 #   - supervisor: every SUPERVISOR_INTERVAL seconds (default: 1200 = 20 min)
 
+# ── Migration check: reject ENABLE_LLAMA_AGENT ───────────────────────────────
+# #846: The legacy ENABLE_LLAMA_AGENT env flag is no longer supported.
+# Activation is now done exclusively via [agents.X] sections in project TOML.
+# If this legacy flag is detected, fail immediately with a migration message.
+if [ "${ENABLE_LLAMA_AGENT:-}" = "1" ]; then
+  cat <<'MIGRATION_ERR'
+FATAL: ENABLE_LLAMA_AGENT is no longer supported.
+
+The legacy ENABLE_LLAMA_AGENT=1 flag has been removed (#846).
+Activation is now done exclusively via [agents.X] sections in projects/*.toml.
+
+To migrate:
+  1. Remove ENABLE_LLAMA_AGENT from your .env or .env.enc file
+  2. Add an [agents.<name>] section to your project TOML:
+
+     [agents.dev-qwen]
+     base_url = "http://your-llama-server:8081"
+     model = "unsloth/Qwen3.5-35B-A3B"
+     api_key = "sk-no-key-required"
+     roles = ["dev"]
+     forge_user = "dev-qwen"
+     compact_pct = 60
+     poll_interval = 60
+
+  3. Run: disinto init
+  4. Start the agent: docker compose up -d agents-dev-qwen
+
+See docs/agents-llama.md for full details.
+MIGRATION_ERR
+  exit 1
+fi
+
 DISINTO_BAKED="/home/agent/disinto"
 DISINTO_LIVE="/home/agent/repos/_factory"
 DISINTO_DIR="$DISINTO_BAKED"  # start with baked copy; switched to live checkout after bootstrap
