@@ -123,6 +123,11 @@ _generate_local_model_services() {
       context: .
       dockerfile: docker/agents/Dockerfile
     image: disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
+    # Rebuild on every up (#887): without this, \`docker compose up -d --force-recreate\`
+    # reuses the cached image and silently keeps running stale docker/agents/ code
+    # even after the repo is updated. \`pull_policy: build\` makes Compose rebuild
+    # the image on every up; BuildKit layer cache makes unchanged rebuilds fast.
+    pull_policy: build
     container_name: disinto-agents-${service_name}
     restart: unless-stopped
     security_opt:
@@ -443,6 +448,9 @@ COMPOSEEOF
     build:
       context: .
       dockerfile: docker/agents/Dockerfile
+    # Rebuild on every up (#887): makes docker/agents/ source changes reach this
+    # container without a manual \`docker compose build\`. Cache-fast when clean.
+    pull_policy: build
     container_name: disinto-agents-llama
     restart: unless-stopped
     security_opt:
@@ -493,6 +501,9 @@ COMPOSEEOF
     build:
       context: .
       dockerfile: docker/agents/Dockerfile
+    # Rebuild on every up (#887): makes docker/agents/ source changes reach this
+    # container without a manual \`docker compose build\`. Cache-fast when clean.
+    pull_policy: build
     container_name: disinto-agents-llama-all
     restart: unless-stopped
     profiles: ["agents-llama-all"]

@@ -97,6 +97,38 @@ EOF
   [[ "$output" == *'dockerfile: docker/agents/Dockerfile'* ]]
 }
 
+@test "local-model agent service emits pull_policy: build so docker compose up rebuilds on source change (#887)" {
+  # Without pull_policy: build, `docker compose up -d --force-recreate` reuses
+  # the cached `disinto/agents:latest` image and silently runs stale
+  # docker/agents/entrypoint.sh even after the repo is updated. `pull_policy:
+  # build` forces a rebuild on every up; BuildKit layer cache makes unchanged
+  # rebuilds near-instant. The alternative was requiring every operator to
+  # remember `--build` on every invocation, which was the bug that prompted
+  # #887 (2h of debugging a fix that was merged but never reached the container).
+  cat > "${FACTORY_ROOT}/projects/test.toml" <<'EOF'
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+
+[agents.dev-qwen2]
+base_url   = "http://10.10.10.1:8081"
+model      = "qwen"
+api_key    = "sk-no-key-required"
+roles      = ["dev"]
+forge_user = "dev-qwen2"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    source '${ROOT}/lib/generators.sh'
+    _generate_local_model_services '${FACTORY_ROOT}/docker-compose.yml'
+    cat '${FACTORY_ROOT}/docker-compose.yml'
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'pull_policy: build'* ]]
+}
+
 @test "local-model agent service keys FORGE_BOT_USER to forge_user even when it differs from service name (#849)" {
   # Exercise the case the issue calls out: two agents in the same factory
   # whose service names are identical (`[agents.llama]`) but whose
