@@ -30,9 +30,10 @@ _SECRET_PATTERNS=(
 _SAFE_PATTERNS=(
   # Shell variable references: $VAR, ${VAR}, ${VAR:-default}
   '\$\{?[A-Z_]+\}?'
-  # Git SHAs in typical git contexts (commit refs, not standalone secrets)
+  # Git SHAs in typical git contexts (commit refs, watermarks, not standalone secrets)
   'commit [0-9a-f]{40}'
   'Merge [0-9a-f]{40}'
+  'last-reviewed: [0-9a-f]{40}'
   # Forge/GitHub URLs with short hex (PR refs, commit links)
   'codeberg\.org/[^[:space:]]+'
   'localhost:3000/[^[:space:]]+'

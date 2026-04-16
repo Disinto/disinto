@@ -1,4 +1,4 @@
-<!-- last-reviewed: c363ee0aea2ae447daab28c2c850d6abefc8c6b5 -->
+<!-- last-reviewed: 2a7ae0b7eae5979b2c53e3bd1c4280dfdc9df785 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -37,13 +37,15 @@ disinto/                 (code repo)
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
 ├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
+│                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, lib-systemd.sh (Nomad+Vault Step 0 installers, #821-#825)
+├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
-├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats)
+├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, disinto-init-nomad.bats)
 ├── templates/     Issue templates
 ├── bin/           The `disinto` CLI script
 ├── disinto-factory/  Setup documentation and skill
@@ -184,8 +186,7 @@ Humans write these. Agents read and enforce them.
 | AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `secrets/<NAME>.enc` and are decrypted into the ephemeral runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. (Vault redesign in progress: PR-based approval on ops repo, see #73-#77) |
 
 **Who enforces what:**
-- **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment referencing the AD number.
-- **Planner** plans within the architecture; does not create issues that violate ADs.
+- **Gardener** checks open backlog issues against ADs during grooming; closes violations with a comment. **Planner** plans within the architecture; does not create issues that violate ADs.
 - **Dev-agent** reads AGENTS.md before implementing; refuses work that violates ADs.
 - **AD-002 is a runtime invariant; nothing for the gardener to check at issue-groom time.** OAuth concurrency is handled by per-session `CLAUDE_CONFIG_DIR` isolation (with `CLAUDE_EXTERNAL_LOCK` as a rollback flag). Per-issue work is enforced by `issue_claim`. A violation manifests as a 401 or VRAM OOM in agent logs, not as a malformed issue.
 
@@ -195,6 +196,5 @@ When running as a persistent tmux session, Claude must signal the orchestrator
 at each phase boundary by writing to a phase file (e.g.
 `/tmp/dev-session-{project}-{issue}.phase`).
 
-Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`.
-Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
+Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`. Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec, orchestrator reaction matrix, sequence diagram, and crash recovery.
