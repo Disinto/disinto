@@ -132,6 +132,21 @@ issue_claim() {
     "${FORGE_API}/issues/${issue}" \
     -d "{\"assignees\":[\"${me}\"]}" >/dev/null 2>&1 || return 1
 
+  # Verify the PATCH stuck.  Forgejo's assignees PATCH is last-write-wins, so
+  # under concurrent claims from multiple dev agents two invocations can both
+  # see .assignee == null at the pre-check, both PATCH, and the loser's write
+  # gets silently overwritten (issue #830).  Re-reading the assignee closes
+  # that TOCTOU window: only the actual winner observes its own login.
+  # Labels are intentionally applied AFTER this check so the losing claim
+  # leaves no stray "in-progress" label to roll back.
+  local actual
+  actual=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue}" | jq -r '.assignee.login // ""') || return 1
+  if [ "$actual" != "$me" ]; then
+    _ilc_log "issue #${issue} claim lost to ${actual:-<none>} — skipping"
+    return 1
+  fi
+
   local ip_id bl_id
   ip_id=$(_ilc_in_progress_id)
   bl_id=$(_ilc_backlog_id)
