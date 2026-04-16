@@ -16,7 +16,7 @@
 # Steps (all fail-closed — any error blocks merge):
 #   1. nomad-config-validate   — `nomad config validate` on server + client HCL
 #   2. nomad-job-validate      — `nomad job validate` looped over every
-#                                 nomad/jobs/*.nomad.hcl (new jobspecs get
+#                                 nomad/jobs/*.hcl (new jobspecs get
 #                                 CI coverage automatically)
 #   3. vault-operator-diagnose — `vault operator diagnose` syntax check on vault.hcl
 #   4. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
@@ -57,6 +57,7 @@ steps:
   - name: nomad-config-validate
     image: hashicorp/nomad:1.9.5
     commands:
+      - nomad version
       - nomad config validate nomad/server.hcl nomad/client.hcl
 
   # ── 2. Nomad jobspec HCL syntax check ────────────────────────────────────
