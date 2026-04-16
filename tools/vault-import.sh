@@ -133,8 +133,8 @@ _kv_put_secret() {
   for kv in "${kv_pairs[@]}"; do
     local k="${kv%%=*}"
     local v="${kv#*=}"
-    # Use jq to merge the new pair into the data object
-    payload="$(printf '%s' "$payload" | jq ". * {\"data\": {\"$k\": \"$v\"}}")"
+    # Use jq with --arg for safe string interpolation (handles quotes/backslashes)
+    payload="$(printf '%s' "$payload" | jq --arg k "$k" --arg v "$v" '. * {"data": {($k): $v}}')"
   done
 
   # Use curl directly for KV v2 write with versioning
@@ -499,8 +499,11 @@ EOF
   done
 
   # Second pass: group by vault_path and write
+  # IMPORTANT: Always write ALL keys for a path, not just changed ones.
+  # KV v2 POST replaces the entire document, so we must include unchanged keys
+  # to avoid dropping them. The idempotency guarantee comes from KV v2 versioning.
   declare -A paths_to_write
-  declare -A path_statuses
+  declare -A path_has_changes
 
   for key in "${!ops_data[@]}"; do
     local data="${ops_data[$key]}"
@@ -509,25 +512,26 @@ EOF
     local vault_path="${key%:*}"
     local vault_key="${key#*:}"
 
-    if [ "$status" = "unchanged" ]; then
-      _format_status "$status" "$vault_path" "$vault_key"
-      printf '\n'
-      ((unchanged++)) || true
+    # Always add to paths_to_write (all keys for this path)
+    if [ -z "${paths_to_write[$vault_path]:-}" ]; then
+      paths_to_write[$vault_path]="${vault_key}=${source_value}"
     else
-      # Add to paths_to_write for this vault_path
-      if [ -z "${paths_to_write[$vault_path]:-}" ]; then
-        paths_to_write[$vault_path]="${vault_key}=${source_value}"
-      else
-        paths_to_write[$vault_path]="${paths_to_write[$vault_path]}|${vault_key}=${source_value}"
-      fi
-      # Track status for counting (use last status for the path)
-      path_statuses[$vault_path]="$status"
+      paths_to_write[$vault_path]="${paths_to_write[$vault_path]}|${vault_key}=${source_value}"
+    fi
+
+    # Track if this path has any changes (for status reporting)
+    if [ "$status" != "unchanged" ]; then
+      path_has_changes[$vault_path]=1
     fi
   done
 
   # Write each path with all its key-value pairs
   for vault_path in "${!paths_to_write[@]}"; do
-    local status="${path_statuses[$vault_path]}"
+    # Determine effective status for this path (updated if any key changed)
+    local effective_status="unchanged"
+    if [ "${path_has_changes[$vault_path]:-}" = "1" ]; then
+      effective_status="updated"
+    fi
 
     # Read pipe-separated key-value pairs and write them
     local pairs_string="${paths_to_write[$vault_path]}"
@@ -543,14 +547,14 @@ EOF
     # Output status for each key in this path
     for kv in "${pairs_array[@]}"; do
       local kv_key="${kv%%=*}"
-      _format_status "$status" "$vault_path" "$kv_key"
+      _format_status "$effective_status" "$vault_path" "$kv_key"
       printf '\n'
     done
 
-    case "$status" in
-      updated) ((updated++)) || true ;;
-      created) ((created++)) || true ;;
-    esac
+    # Count only if path has changes
+    if [ "$effective_status" = "updated" ]; then
+      ((updated++)) || true
+    fi
   done
 
   _log ""
