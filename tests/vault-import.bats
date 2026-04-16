@@ -199,6 +199,46 @@ setup() {
   echo "$output" | jq -e '.data.data.token == "MODIFIED-LLAMA-TOKEN"'
 }
 
+# --- Delimiter-in-value regression (#898) ────────────────────────────────────
+
+@test "preserves secret values that contain a pipe character" {
+  # Regression: previous accumulator packed values into "value|status" and
+  # joined per-path kv pairs with '|', so any value containing '|' was
+  # silently truncated or misrouted.
+  local piped_env="${BATS_TEST_TMPDIR}/dot-env-piped"
+  cp "$FIXTURES_DIR/dot-env-complete" "$piped_env"
+
+  # Swap in values that contain the old delimiter. Exercise both:
+  #  - a paired bot path (token + pass on same vault path, hitting the
+  #    per-path kv-pair join)
+  #  - a single-key path (admin token)
+  # Values are single-quoted so they survive `source` of the .env file;
+  # `|` is a shell metachar and unquoted would start a pipeline. That is
+  # orthogonal to the accumulator bug under test — users are expected to
+  # quote such values in .env, and the accumulator must then preserve them.
+  sed -i "s#^FORGE_REVIEW_TOKEN=.*#FORGE_REVIEW_TOKEN='abc|xyz'#" "$piped_env"
+  sed -i "s#^FORGE_REVIEW_PASS=.*#FORGE_REVIEW_PASS='p1|p2|p3'#" "$piped_env"
+  sed -i "s#^FORGE_ADMIN_TOKEN=.*#FORGE_ADMIN_TOKEN='admin|with|pipes'#" "$piped_env"
+
+  run "$IMPORT_SCRIPT" \
+    --env "$piped_env" \
+    --sops "$FIXTURES_DIR/.env.vault.enc" \
+    --age-key "$FIXTURES_DIR/age-keys.txt"
+  [ "$status" -eq 0 ]
+
+  # Verify each value round-trips intact.
+  run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+    "${VAULT_ADDR}/v1/secret/data/disinto/bots/review"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.data.data.token == "abc|xyz"'
+  echo "$output" | jq -e '.data.data.pass == "p1|p2|p3"'
+
+  run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+    "${VAULT_ADDR}/v1/secret/data/disinto/shared/forge"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.data.data.admin_token == "admin|with|pipes"'
+}
+
 # --- Incomplete fixture ───────────────────────────────────────────────────────
 
 @test "handles incomplete fixture gracefully" {
