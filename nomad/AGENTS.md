@@ -61,8 +61,8 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 ## How CI validates these files
 
 `.woodpecker/nomad-validate.yml` runs on every PR that touches `nomad/`
-(including `nomad/jobs/`), `lib/init/nomad/`, or `bin/disinto`. Five
-fail-closed steps:
+(including `nomad/jobs/`), `lib/init/nomad/`, `bin/disinto`,
+`vault/policies/`, or `vault/roles.yaml`. Eight fail-closed steps:
 
 1. **`nomad config validate nomad/server.hcl nomad/client.hcl`**
    — parses the HCL, fails on unknown blocks, bad port ranges, invalid
@@ -87,19 +87,47 @@ fail-closed steps:
    disables the runtime checks (CI containers don't have
    `/var/lib/vault/data` or port 8200). Exit 2 (advisory warnings only,
    e.g. TLS-disabled listener) is tolerated; exit 1 blocks merge.
-4. **`shellcheck --severity=warning lib/init/nomad/*.sh bin/disinto`**
+4. **`vault policy fmt` idempotence check on every `vault/policies/*.hcl`**
+   (S2.6) — `vault policy fmt` has no `-check` flag in 1.18.5, so the
+   step copies each file to `/tmp`, runs `vault policy fmt` on the copy,
+   and diffs against the original. Any non-empty diff means the
+   committed file would be rewritten by `fmt` and the step fails — the
+   author is pointed at `vault policy fmt <file>` to heal the drift.
+5. **`vault policy write`-based validation against an inline dev-mode Vault**
+   (S2.6) — Vault 1.18.5 has no offline `policy validate` subcommand;
+   the CI step starts a dev-mode server, loops `vault policy write
+   <basename> <file>` over each `vault/policies/*.hcl`, and aggregates
+   failures so one CI run surfaces every broken policy. The server is
+   ephemeral and torn down on step exit — no persistence, no real
+   secrets. Catches unknown capability names (e.g. `"frobnicate"`),
+   malformed `path` blocks, and other semantic errors `fmt` does not.
+6. **`vault/roles.yaml` validator** (S2.6) — yamllint + a PyYAML-based
+   check that every role's `policy:` field matches a basename under
+   `vault/policies/`, and that every role entry carries all four
+   required fields (`name`, `policy`, `namespace`, `job_id`). Drift
+   between the two directories is a scheduling-time "permission denied"
+   in production; this step turns it into a CI failure at PR time.
+7. **`shellcheck --severity=warning lib/init/nomad/*.sh bin/disinto`**
    — all init/dispatcher shell clean. `bin/disinto` has no `.sh`
    extension so the repo-wide shellcheck in `.woodpecker/ci.yml` skips
    it — this is the one place it gets checked.
-5. **`bats tests/disinto-init-nomad.bats`**
+8. **`bats tests/disinto-init-nomad.bats`**
    — exercises the dispatcher: `disinto init --backend=nomad --dry-run`,
    `… --empty --dry-run`, and the `--backend=docker` regression guard.
+
+**Secret-scan coverage.** Policy HCL files under `vault/policies/` are
+already swept by the P11 secret-scan gate
+(`.woodpecker/secret-scan.yml`, #798), whose `vault/**/*` trigger path
+covers everything in this directory. `nomad-validate.yml` intentionally
+does NOT duplicate that gate — one scanner, one source of truth.
 
 If a PR breaks `nomad/server.hcl` (e.g. typo in a block name), step 1
 fails with a clear error; if it breaks a jobspec (e.g. misspells
 `task` as `tsak`, or adds a `volume` stanza without a `source`), step
-2 fails instead. The fix makes it pass. PRs that don't touch any of
-the trigger paths skip this pipeline entirely.
+2 fails; a typo in a `path "..."` block in a vault policy fails step 5
+with the Vault parser's error; a `roles.yaml` entry that points at a
+policy basename that does not exist fails step 6. PRs that don't touch
+any of the trigger paths skip this pipeline entirely.
 
 ## Version pinning
 
@@ -119,5 +147,13 @@ accept (or vice versa).
 
 - `lib/init/nomad/` — installer + systemd units + cluster-up orchestrator.
 - `.woodpecker/nomad-validate.yml` — this directory's CI pipeline.
+- `vault/policies/` — Vault ACL policy HCL files (S2.1); the
+  `vault-policy-fmt` / `vault-policy-validate` CI steps above enforce
+  their shape. See [`../vault/policies/AGENTS.md`](../vault/policies/AGENTS.md)
+  for the policy lifecycle, CI enforcement details, and common failure
+  modes.
+- `vault/roles.yaml` — JWT-auth role → policy bindings (S2.3); the
+  `vault-roles-validate` CI step above keeps it in lockstep with the
+  policies directory.
 - Top-of-file headers in `server.hcl` / `client.hcl` / `vault.hcl`
   document the per-file ownership contract.
