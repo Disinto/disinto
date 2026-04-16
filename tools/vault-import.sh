@@ -421,13 +421,21 @@ EOF
   local updated=0
   local unchanged=0
 
-  # First pass: collect all operations with their parsed values
-  # Store as: ops_data["vault_path:kv_key"] = "source_value|status"
-  declare -A ops_data
+  # First pass: collect all operations with their parsed values.
+  # Store value and status in separate associative arrays keyed by
+  # "vault_path:kv_key". Secret values may contain any character, so we
+  # never pack them into a delimited string — the previous `value|status`
+  # encoding silently truncated values containing '|' (see issue #898).
+  declare -A ops_value
+  declare -A ops_status
+  declare -A path_seen
 
   for op in "${operations[@]}"; do
     # Parse operation: category|field|subkey|file|envvar (5 fields for bots/runner)
-    # or category|field|file|envvar (4 fields for forge/woodpecker/chat)
+    # or category|field|file|envvar (4 fields for forge/woodpecker/chat).
+    # These metadata strings are built from safe identifiers (role names,
+    # env-var names, file paths) and do not carry secret values, so '|' is
+    # still fine as a separator here.
     local category field subkey file envvar=""
     local field_count
     field_count="$(printf '%s' "$op" | awk -F'|' '{print NF}')"
@@ -494,50 +502,39 @@ EOF
       fi
     fi
 
-    # Store operation data: key = "vault_path:kv_key", value = "source_value|status"
-    ops_data["${vault_path}:${vault_key}"]="${source_value}|${status}"
+    # vault_path and vault_key are identifier-safe (no ':' in either), so
+    # the composite key round-trips cleanly via ${ck%:*} / ${ck#*:}.
+    local ck="${vault_path}:${vault_key}"
+    ops_value["$ck"]="$source_value"
+    ops_status["$ck"]="$status"
+    path_seen["$vault_path"]=1
   done
 
-  # Second pass: group by vault_path and write
+  # Second pass: group by vault_path and write.
   # IMPORTANT: Always write ALL keys for a path, not just changed ones.
   # KV v2 POST replaces the entire document, so we must include unchanged keys
   # to avoid dropping them. The idempotency guarantee comes from KV v2 versioning.
-  declare -A paths_to_write
-  declare -A path_has_changes
+  for vault_path in "${!path_seen[@]}"; do
+    # Collect this path's "vault_key=source_value" pairs into a bash
+    # indexed array. Each element is one kv pair; '=' inside the value is
+    # preserved because _kv_put_secret splits on the *first* '=' only.
+    local pairs_array=()
+    local path_has_changes=0
 
-  for key in "${!ops_data[@]}"; do
-    local data="${ops_data[$key]}"
-    local source_value="${data%%|*}"
-    local status="${data##*|}"
-    local vault_path="${key%:*}"
-    local vault_key="${key#*:}"
+    for ck in "${!ops_value[@]}"; do
+      [ "${ck%:*}" = "$vault_path" ] || continue
+      local vault_key="${ck#*:}"
+      pairs_array+=("${vault_key}=${ops_value[$ck]}")
+      if [ "${ops_status[$ck]}" != "unchanged" ]; then
+        path_has_changes=1
+      fi
+    done
 
-    # Always add to paths_to_write (all keys for this path)
-    if [ -z "${paths_to_write[$vault_path]:-}" ]; then
-      paths_to_write[$vault_path]="${vault_key}=${source_value}"
-    else
-      paths_to_write[$vault_path]="${paths_to_write[$vault_path]}|${vault_key}=${source_value}"
-    fi
-
-    # Track if this path has any changes (for status reporting)
-    if [ "$status" != "unchanged" ]; then
-      path_has_changes[$vault_path]=1
-    fi
-  done
-
-  # Write each path with all its key-value pairs
-  for vault_path in "${!paths_to_write[@]}"; do
     # Determine effective status for this path (updated if any key changed)
     local effective_status="unchanged"
-    if [ "${path_has_changes[$vault_path]:-}" = "1" ]; then
+    if [ "$path_has_changes" = 1 ]; then
       effective_status="updated"
     fi
-
-    # Read pipe-separated key-value pairs and write them
-    local pairs_string="${paths_to_write[$vault_path]}"
-    local pairs_array=()
-    local IFS='|'
-    read -r -a pairs_array <<< "$pairs_string"
 
     if ! _kv_put_secret "$vault_path" "${pairs_array[@]}"; then
       _err "Failed to write to $vault_path"
