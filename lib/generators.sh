@@ -660,7 +660,7 @@ COMPOSEEOF
   # In build mode, replace image: with build: for locally-built images
   if [ "$use_build" = true ]; then
     sed -i 's|^\(  agents:\)|\1|' "$compose_file"
-    sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile|}' "$compose_file"
+    sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile\n    pull_policy: build|}' "$compose_file"
     sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build: ./docker/edge|}' "$compose_file"
   fi
 
