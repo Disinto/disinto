@@ -134,9 +134,13 @@ _generate_local_model_services() {
       - \${CLAUDE_CONFIG_FILE:-\${HOME}/.claude.json}:/home/agent/.claude.json:ro
       - \${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
       - \${AGENT_SSH_DIR:-\${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - ./.env:/home/agent/disinto/.env:ro
+      - ./state:/home/agent/disinto/state
     environment:
       FORGE_URL: http://forgejo:3000
       FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
+      FACTORY_REPO: ${FORGE_REPO:-disinto-admin/disinto}
       # Per-agent credentials keyed by forge_user (#834 Gap 3).
       FORGE_TOKEN: \${FORGE_TOKEN_${user_upper}:-}
       FORGE_PASS: \${FORGE_PASS_${user_upper}:-}
