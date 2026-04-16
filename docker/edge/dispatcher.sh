@@ -342,30 +342,96 @@ get_dispatch_mode() {
   fi
 }
 
-# Write result file for an action
-# Usage: write_result <action_id> <exit_code> <logs>
-write_result() {
+# Commit result.json to the ops repo via git push (portable, no bind-mount).
+#
+# Clones the ops repo into a scratch directory, writes the result file,
+# commits as vault-bot, and pushes to the primary branch.
+# Idempotent: skips if result.json already exists upstream.
+# Retries on push conflict with rebase-and-push (handles concurrent merges).
+#
+# Usage: commit_result_via_git <action_id> <exit_code> <logs>
+commit_result_via_git() {
   local action_id="$1"
   local exit_code="$2"
   local logs="$3"
 
-  local result_file="${VAULT_ACTIONS_DIR}/${action_id}.result.json"
+  local result_relpath="vault/actions/${action_id}.result.json"
+  local ops_clone_url="${FORGE_URL}/${FORGE_OPS_REPO}.git"
+  local branch="${PRIMARY_BRANCH:-main}"
+  local scratch_dir
+  scratch_dir=$(mktemp -d /tmp/dispatcher-result-XXXXXX)
+  # shellcheck disable=SC2064
+  trap "rm -rf '${scratch_dir}'" RETURN
+
+  # Shallow clone of the ops repo — only the primary branch
+  if ! git clone --depth 1 --branch "$branch" \
+    "$ops_clone_url" "$scratch_dir" 2>/dev/null; then
+    log "ERROR: Failed to clone ops repo for result commit (action ${action_id})"
+    return 1
+  fi
+
+  # Idempotency: skip if result.json already exists upstream
+  if [ -f "${scratch_dir}/${result_relpath}" ]; then
+    log "Result already exists upstream for ${action_id} — skipping commit"
+    return 0
+  fi
+
+  # Configure git identity as vault-bot
+  git -C "$scratch_dir" config user.name "vault-bot"
+  git -C "$scratch_dir" config user.email "vault-bot@disinto.local"
 
   # Truncate logs if too long (keep last 1000 chars)
   if [ ${#logs} -gt 1000 ]; then
     logs="${logs: -1000}"
   fi
 
-  # Write result JSON
+  # Write result JSON via jq (never string-interpolate into JSON)
+  mkdir -p "$(dirname "${scratch_dir}/${result_relpath}")"
   jq -n \
     --arg id "$action_id" \
     --argjson exit_code "$exit_code" \
     --arg timestamp "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --arg logs "$logs" \
     '{id: $id, exit_code: $exit_code, timestamp: $timestamp, logs: $logs}' \
-    > "$result_file"
+    > "${scratch_dir}/${result_relpath}"
 
-  log "Result written: ${result_file}"
+  git -C "$scratch_dir" add "$result_relpath"
+  git -C "$scratch_dir" commit -q -m "vault: result for ${action_id}"
+
+  # Push with retry on conflict (rebase-and-push pattern).
+  # Common case: admin merges another action PR between our clone and push.
+  local attempt
+  for attempt in 1 2 3; do
+    if git -C "$scratch_dir" push origin "$branch" 2>/dev/null; then
+      log "Result committed and pushed for ${action_id} (attempt ${attempt})"
+      return 0
+    fi
+
+    log "Push conflict for ${action_id} (attempt ${attempt}/3) — rebasing"
+
+    if ! git -C "$scratch_dir" pull --rebase origin "$branch" 2>/dev/null; then
+      # Rebase conflict — check if result was pushed by another process
+      git -C "$scratch_dir" rebase --abort 2>/dev/null || true
+      if git -C "$scratch_dir" fetch origin "$branch" 2>/dev/null && \
+         git -C "$scratch_dir" show "origin/${branch}:${result_relpath}" >/dev/null 2>&1; then
+        log "Result already exists upstream for ${action_id} (pushed by another process)"
+        return 0
+      fi
+    fi
+  done
+
+  log "ERROR: Failed to push result for ${action_id} after 3 attempts"
+  return 1
+}
+
+# Write result file for an action via git push to the ops repo.
+# Usage: write_result <action_id> <exit_code> <logs>
+write_result() {
+  local action_id="$1"
+  local exit_code="$2"
+  local logs="$3"
+
+  commit_result_via_git "$action_id" "$exit_code" "$logs"
 }
 
 # -----------------------------------------------------------------------------
