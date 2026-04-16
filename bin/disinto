@@ -707,13 +707,18 @@ _disinto_init_nomad() {
 }
 
 disinto_init() {
-  local repo_url="${1:-}"
-  if [ -z "$repo_url" ]; then
-    echo "Error: repo URL required" >&2
-    echo "Usage: disinto init <repo-url>" >&2
-    exit 1
+  # Only consume $1 as repo_url if it looks like a positional arg (not a
+  # flag). The nomad backend (#835) takes no positional — the LXC already
+  # has the repo cloned by the operator, and repo_url is a docker-backend
+  # concept. Eagerly consuming `--backend=nomad` as repo_url produced the
+  # nonsense "--empty is only valid with --backend=nomad" error seen in
+  # S0.1 end-to-end testing on a fresh LXC. Defer the "repo URL required"
+  # check to after argparse, where we know the backend.
+  local repo_url=""
+  if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
+    repo_url="$1"
+    shift
   fi
-  shift
 
   # Parse flags
   local branch="" repo_root="" ci_id="0" auto_yes=false forge_url_flag="" bare=false rotate_tokens=false use_build=false dry_run=false backend="docker" empty=false
@@ -740,6 +745,16 @@ disinto_init() {
     docker|nomad) ;;
     *) echo "Error: invalid --backend value '${backend}' (expected: docker|nomad)" >&2; exit 1 ;;
   esac
+
+  # Docker backend requires a repo_url positional; nomad doesn't use one.
+  # This check must run *after* argparse so `--backend=docker` (with no
+  # positional) errors with a helpful message instead of the misleading
+  # "Unknown option: --backend=docker".
+  if [ "$backend" = "docker" ] && [ -z "$repo_url" ]; then
+    echo "Error: repo URL required" >&2
+    echo "Usage: disinto init <repo-url> [options]" >&2
+    exit 1
+  fi
 
   # --empty is nomad-only today (the docker path has no concept of an
   # "empty cluster"). Reject explicitly rather than letting it silently

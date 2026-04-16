@@ -104,3 +104,42 @@ setup_file() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"--empty is only valid with --backend=nomad"* ]]
 }
+
+# ── Positional vs flag-first invocation (#835) ───────────────────────────────
+#
+# Before the #835 fix, disinto_init eagerly consumed $1 as repo_url *before*
+# argparse ran. That swallowed `--backend=nomad` as a repo_url and then
+# complained that `--empty` required a nomad backend — the nonsense error
+# flagged during S0.1 end-to-end verification. The cases below pin the CLI
+# to the post-fix contract: the nomad path accepts flag-first invocation,
+# the docker path still errors helpfully on a missing repo_url.
+
+@test "disinto init --backend=nomad --empty --dry-run (no positional) dispatches to nomad" {
+  run "$DISINTO_BIN" init --backend=nomad --empty --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nomad backend: --empty (cluster-up only, no jobs)"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  # The bug symptom must be absent — backend was misdetected as docker
+  # when --backend=nomad got swallowed as repo_url.
+  [[ "$output" != *"--empty is only valid with --backend=nomad"* ]]
+}
+
+@test "disinto init --backend nomad --dry-run (space-separated, no positional) dispatches to nomad" {
+  run "$DISINTO_BIN" init --backend nomad --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nomad backend: default"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+}
+
+@test "disinto init (no args) still errors with 'repo URL required'" {
+  run "$DISINTO_BIN" init
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"repo URL required"* ]]
+}
+
+@test "disinto init --backend=docker (no positional) errors with 'repo URL required', not 'Unknown option'" {
+  run "$DISINTO_BIN" init --backend=docker
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"repo URL required"* ]]
+  [[ "$output" != *"Unknown option"* ]]
+}
