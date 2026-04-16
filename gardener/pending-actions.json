@@ -1,7 +1,117 @@
 [
   {
     "action": "edit_body",
-    "issue": 835,
-    "body": "Bugfix for S0.1 (#821). Discovered during Step 0 end-to-end verification on a fresh LXC.\n\n## Symptom\n\n```\n$ ./bin/disinto init --backend=nomad --empty\nError: --empty is only valid with --backend=nomad\n```\n\nThe error is nonsensical — `--backend=nomad` is right there.\n\n## Root cause\n\n`bin/disinto` → `disinto_init` (around line 710) consumes the first positional arg as `repo_url` **before** the argparse `while` loop runs:\n\n```bash\ndisinto_init() {\n  local repo_url=\"${1:-}\"\n  if [ -z \"$repo_url\" ]; then\n    echo \"Error: repo URL required\" >&2\n    ...\n  fi\n  shift\n  # ... then while-loop parses flags ...\n}\n```\n\nSo `disinto init --backend=nomad --empty` becomes:\n- `repo_url = \"--backend=nomad\"` (swallowed)\n- `--empty` seen by loop → `empty=true`\n- `backend` stays at default `\"docker\"`\n- Validation at line 747: `empty=true && backend != \"nomad\"` → error\n\n## Why repo_url is wrong for nomad\n\nFor `--backend=nomad`, the cluster-up flow doesn't clone anything — the LXC already has the repo cloned by the operator. `repo_url` is a docker-backend concept.\n\n## Fix\n\nIn `disinto_init`, move backend detection to **before** the `repo_url` consumption, and make `repo_url` conditional on `backend=docker`:\n\n```bash\ndisinto_init() {\n  # Pre-scan for --backend to know whether repo_url is required\n  local backend=\"docker\"\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      --backend) ;;                           # handled below\n      --backend=*) backend=\"${arg#--backend=}\" ;;\n    esac\n  done\n  # Also handle space-separated form\n  local i=1\n  while [ $i -le $# ]; do\n    if [ \"${!i}\" = \"--backend\" ]; then\n      i=$((i+1))\n      backend=\"${!i}\"\n    fi\n    i=$((i+1))\n  done\n\n  local repo_url=\"\"\n  if [ \"$backend\" = \"docker\" ]; then\n    repo_url=\"${1:-}\"\n    if [ -z \"$repo_url\" ] || [[ \"$repo_url\" == --* ]]; then\n      echo \"Error: repo URL required for docker backend\" >&2\n      echo \"Usage: disinto init <repo-url> [options]\" >&2\n      exit 1\n    fi\n    shift\n  fi\n  # ... rest of argparse unchanged, it re-reads --backend cleanly\n```\n\nSimpler alternative: if first arg starts with `--`, assume no positional and skip repo_url consumption entirely (covers nomad + any future `--help`-style invocation).\n\nEither shape is fine; pick the cleaner one.\n\n## Acceptance criteria\n\n- [ ] `./bin/disinto init --backend=nomad --empty` runs `lib/init/nomad/cluster-up.sh` without error on a clean LXC.\n- [ ] `./bin/disinto init --backend=nomad --empty --dry-run` prints the 9-step plan and exits 0.\n- [ ] `./bin/disinto init <repo-url>` (docker path) behaves identically to today — existing smoke path passes.\n- [ ] `./bin/disinto init` (no args, docker implied) still errors with the \"repo URL required\" message.\n- [ ] `./bin/disinto init --backend=docker` (no repo) errors helpfully — not \"Unknown option: --backend=docker\".\n- [ ] shellcheck clean.\n\n## Verified regression case from Step 0 testing\n\nOn a fresh Ubuntu 24.04 LXC, after `./lib/init/nomad/cluster-up.sh` was invoked directly (workaround), the cluster came up healthy end-to-end:\n\n- Nomad node status: 1 node ready\n- Vault status: Sealed=false, Initialized=true\n- Re-run of cluster-up.sh was fully idempotent\n\nSo the bug is isolated to `bin/disinto` argparse; the rest of the Step 0 code path is solid. This fix unblocks the formal Step 0 acceptance test.\n\n## Labels / meta\n\n- `[nomad-step-0] S0.1-fix` — no dependencies; gates Step 1.\n\n## Affected files\n\n- `bin/disinto` — `disinto_init()` function, around line 710: pre-scan for `--backend` before consuming `repo_url` positional argument\n"
+    "issue": 900,
+    "body": "Flagged by AI reviewer in PR #897.\n\n## Problem\n\nThe policy at `vault/policies/service-forgejo.hcl` grants:\n\n```hcl\npath \"kv/data/disinto/shared/forgejo/*\" {\n  capabilities = [\"read\"]\n}\n```\n\nBut the consul-template stanza in `nomad/jobs/forgejo.hcl` reads:\n\n```\n{{- with secret \"kv/data/disinto/shared/forgejo\" -}}\n```\n\nVault glob `/*` requires at least one path segment after `forgejo/` (e.g. `forgejo/subkey`). It does **not** match the bare path `kv/data/disinto/shared/forgejo` that the template actually calls. Vault ACL longest-prefix matching: `forgejo/*` is never hit for a request to `forgejo`.\n\nRuntime consequence: consul-template `with` block receives a 403 permission denied → evaluates to empty (false) → `else` branch renders `seed-me` placeholder values → Forgejo starts with obviously-wrong secrets despite `vault-seed-forgejo.sh` having run successfully.\n\n## Fix\n\nReplace the glob with an exact path in `vault/policies/service-forgejo.hcl`:\n\n```hcl\npath \"kv/data/disinto/shared/forgejo\" {\n  capabilities = [\"read\"]\n}\n\npath \"kv/metadata/disinto/shared/forgejo\" {\n  capabilities = [\"list\", \"read\"]\n}\n```\n\n(The `/*` glob is only useful if future subkeys are written under `forgejo/`; the current design stores both secrets in a single KV document at the `forgejo` path.)\n\nThis is a pre-existing defect in `vault/policies/service-forgejo.hcl`; that file was not changed by PR #897.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `vault/policies/service-forgejo.hcl` — replace glob path with exact path + metadata path\n\n## Acceptance criteria\n- [ ] `vault/policies/service-forgejo.hcl` grants exact path `kv/data/disinto/shared/forgejo` (not `forgejo/*`)\n- [ ] Metadata path `kv/metadata/disinto/shared/forgejo` is also granted read+list\n- [ ] consul-template `with secret \"kv/data/disinto/shared/forgejo\"` resolves without 403 (verified via `vault policy read service-forgejo`)\n- [ ] `shellcheck` clean (no shell changes expected)\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 900,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 898,
+    "body": "Flagged by AI reviewer in PR #889.\n\n## Problem\n\n`tools/vault-import.sh` serializes each entry in `ops_data` as `\"${source_value}|${status}\"` (line 498). Extraction at lines 510-511 uses `${data%%|*}` (first field) and `${data##*|}` (last field). If `source_value` contains a literal `|`, `${data%%|*}` truncates it to the first segment, silently writing a corrupted value to Vault.\n\nThe same separator is used in `paths_to_write` (line 519) to join multiple kv-pairs for a path. When `IFS=\"|\"` splits the string back into an array (line 540), a value containing `|` is split across array elements, corrupting the write.\n\n## Failure mode\n\nAny secret value with a pipe character (e.g. a generated password or composed token like `abc|xyz`) is silently truncated or misrouted on import. No error is emitted.\n\n## Fix\n\nReplace the `|`-delimited string with a bash indexed array for accumulating per-path kv pairs, eliminating the need for a delimiter that conflicts with possible value characters.\n\n---\n*Auto-created from AI review of PR #889*\n\n## Affected files\n- `tools/vault-import.sh` — replace pipe-delimited string accumulation with bash indexed arrays (lines ~498–540)\n\n## Acceptance criteria\n- [ ] A secret value containing `|` (e.g. `abc|xyz`) is imported to Vault without truncation or corruption\n- [ ] No regression for values without `|`\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 898,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 893,
+    "body": "Flagged by AI reviewer in PR #892.\n\n## Problem\n\n`disinto init --build` generates the `agents:` service by first emitting `image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}` and then running a `sed -i` substitution (`lib/generators.sh:793`) that replaces the `image:` line with a `build:` block. The substitution does not add `pull_policy: build`.\n\nResult: `docker compose up` with `--build`-generated compose files still uses the cached image for the base `agents:` service, even when `docker/agents/` source has changed — the same silent-stale-image bug that #887 fixed for the three local-model service stanzas.\n\n## Fix\n\nThe `sed` substitution on line 793 should also inject `pull_policy: build` after the emitted `build:` block.\n\n---\n*Auto-created from AI review of PR #892*\n\n## Affected files\n- `lib/generators.sh` (line ~793) — add `pull_policy: build` to the agents service sed substitution\n\n## Acceptance criteria\n- [ ] `disinto init --build`-generated compose file includes `pull_policy: build` in the `agents:` service stanza\n- [ ] `docker compose up` rebuilds the agents image from local source when `docker/agents/` changes\n- [ ] Non-`--build` compose generation is unchanged\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 893,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 890,
+    "body": "Flagged by AI reviewer in PR #888.\n\n## Problem\n\n`lib/hvault.sh` functions `hvault_kv_get`, `hvault_kv_put`, and `hvault_kv_list` all hardcode `secret/data/` and `secret/metadata/` as KV v2 path prefixes (lines 117, 157, 173).\n\nThe Nomad+Vault migration (S2.1, #879) establishes `kv/` as the mount name for all factory secrets — every policy in `vault/policies/*.hcl` grants ACL on `kv/data/disinto/...` paths.\n\nIf any agent calls `hvault_kv_get` after the migration, Vault will route the request to `secret/data/...` but the token only holds ACL for `kv/data/...`, producing a 403 Forbidden.\n\n## Fix\n\nChange the mount prefix in `hvault_kv_get`, `hvault_kv_put`, and `hvault_kv_list` from `secret/` to `kv/`, or make the mount name configurable via `VAULT_KV_MOUNT` (defaulting to `kv`). Coordinate with S2.2 (#880) which writes secrets into the `kv/` mount.\n\n---\n*Auto-created from AI review of PR #888*\n\n## Affected files\n- `lib/hvault.sh` — change `secret/data/` and `secret/metadata/` prefixes to `kv/data/` and `kv/metadata/` (lines ~117, 157, 173); optionally make configurable via `VAULT_KV_MOUNT`\n\n## Acceptance criteria\n- [ ] `hvault_kv_get`, `hvault_kv_put`, `hvault_kv_list` use `kv/` mount prefix (not `secret/`)\n- [ ] Agents can read/write KV paths that policies in `vault/policies/*.hcl` grant (no 403)\n- [ ] Optionally: `VAULT_KV_MOUNT` env var overrides the mount name (defaults to `kv`)\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 890,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 877,
+    "body": "Flagged by AI reviewer in PR #875.\n\n## Problem\n\n`validate_projects_dir()` in `docker/agents/entrypoint.sh` uses a command substitution that triggers `set -e` before the intended error-logging branch runs:\n\n```bash\ntoml_count=$(compgen -G \"${DISINTO_DIR}/projects/*.toml\" 2>/dev/null | wc -l)\n```\n\nWhen no `.toml` files are present, `compgen -G` exits 1. With `pipefail`, the pipeline exits 1. `set -e` causes the script to exit before `if [ \"$toml_count\" -eq 0 ]` is evaluated, so the FATAL diagnostic messages are never printed. The container still fast-fails (correct outcome), but the operator sees no explanation.\n\nEvery other `compgen -G` usage in the file uses the safer conditional pattern (lines 259, 322).\n\n## Fix\n\nReplace the `wc -l` pattern with:\n\n```bash\nif ! compgen -G \"${DISINTO_DIR}/projects/*.toml\" >/dev/null 2>&1; then\n  log \"FATAL: No real .toml files found in ${DISINTO_DIR}/projects/\"\n  ...\n  exit 1\nfi\n```\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `docker/agents/entrypoint.sh` — fix `validate_projects_dir()` to use conditional compgen pattern instead of `wc -l` pipeline\n\n## Acceptance criteria\n- [ ] When no `.toml` files are present, the FATAL message is printed before the container exits\n- [ ] Container still exits non-zero in that case\n- [ ] Matches the pattern already used at lines 259 and 322\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 877,
+    "label": "backlog"
+  },
+  {
+    "action": "add_label",
+    "issue": 773,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 883,
+    "body": "Part of the Nomad+Vault migration. **Step 2 — Vault policies + workload identity + secrets import.**\n\n~~**Blocked by: #880 (S2.2), #881 (S2.3).**~~ Dependencies closed; unblocked.\n\n## Goal\n\nWire the Step-2 building blocks (import, auth, policies) into `bin/disinto init --backend=nomad` so a single command on a fresh LXC provisions cluster + policies + auth + imports secrets + deploys services.\n\n## Scope\n\nAdd flags to `disinto init --backend=nomad`:\n\n- `--import-env PATH` — points at an existing `.env` (from old stack).\n- `--import-sops PATH` — points at the sops-encrypted `.env.vault.enc`.\n- `--age-key PATH` — points at the sops age keyfile (required if `--import-sops` is set).\n\nFlow when any of `--import-*` is set:\n\n1. `cluster-up.sh` (Step 0, unchanged).\n2. `tools/vault-apply-policies.sh` (S2.1, idempotent).\n3. `lib/init/nomad/vault-nomad-auth.sh` (S2.3, idempotent).\n4. `tools/vault-import.sh --env PATH --sops PATH --age-key PATH` (S2.2).\n5. If `--with <service>` was also passed, `lib/init/nomad/deploy.sh <service>` (Step 1, unchanged).\n6. Final summary: cluster + policies + auth + imported secrets count + deployed services + ports.\n\nFlow when **no** import flags are set:\n- Skip step 4; still apply policies + auth.\n- Log: `[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services`.\n\nFlag validation:\n- `--import-sops` without `--age-key` → error.\n- `--age-key` without `--import-sops` → error.\n- `--import-env` alone (no sops) → OK.\n- `--backend=docker` + any `--import-*` → error.\n\n## Affected files\n- `bin/disinto` — add `--import-env`, `--import-sops`, `--age-key` flags to `init --backend=nomad`\n- `docs/nomad-migration.md` (new) — cutover-day invocation shape\n- `lib/init/nomad/vault-nomad-auth.sh` (S2.3) — called as step 3\n- `tools/vault-import.sh` (S2.2) — called as step 4\n- `tools/vault-apply-policies.sh` (S2.1) — called as step 2\n\n## Acceptance criteria\n- [ ] `disinto init --backend=nomad --import-env /tmp/.env --import-sops /tmp/.enc --age-key /tmp/keys.txt --with forgejo` completes: cluster up, policies applied, JWT auth configured, KV populated, Forgejo deployed reading Vault secrets\n- [ ] Re-running is a no-op at every layer\n- [ ] `--import-sops` without `--age-key` exits with a clear error\n- [ ] `--backend=docker` with `--import-env` exits with a clear error\n- [ ] `--dry-run` prints the full plan, touches nothing\n- [ ] Never logs a secret value\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 883,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 883,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 884,
+    "body": "Part of the Nomad+Vault migration. **Step 2 — Vault policies + workload identity + secrets import.**\n\nS2.1 (#879) is now closed; this step has no blocking dependencies.\n\n## Goal\n\nExtend the Woodpecker CI to validate Vault policy HCL files under `vault/policies/` and role definitions.\n\n## Scope\n\nExtend `.woodpecker/nomad-validate.yml`:\n\n- `vault policy fmt -check vault/policies/*.hcl` — fails on unformatted HCL.\n- `for f in vault/policies/*.hcl; do vault policy validate \"$f\"; done` — syntax + semantic validation (requires a dev-mode vault spun inline).\n- If `vault/roles.yaml` exists: yamllint check + custom validator that each role references a policy file that actually exists in `vault/policies/`.\n- Secret-scan gate: ensure no policy file contains what looks like a literal secret.\n- Trigger: on any PR touching `vault/policies/`, `vault/roles.yaml`, or `lib/init/nomad/vault-*.sh`.\n\nAlso:\n- Add `vault/policies/AGENTS.md` cross-reference: policy lifecycle (add policy HCL → update roles.yaml → add Vault KV path), what CI enforces, common failure modes.\n\n## Non-goals\n\n- No runtime check against a real cluster.\n- No enforcement of specific naming conventions beyond what S2.1 docs describe.\n\n## Affected files\n- `.woodpecker/nomad-validate.yml` — add vault policy fmt + validate + roles.yaml gates\n- `vault/policies/AGENTS.md` (new) — policy lifecycle documentation\n\n## Acceptance criteria\n- [ ] Deliberately broken policy HCL (typo in `path` block) fails CI with the vault-fmt error\n- [ ] Policy that references a non-existent capability (e.g. `\"frobnicate\"`) fails validation\n- [ ] `vault/roles.yaml` referencing a policy not in `vault/policies/` fails CI\n- [ ] Clean PRs pass within normal pipeline time budget\n- [ ] Existing S0.5 + S1.4 CI gates unaffected\n- [ ] `shellcheck` clean on any shell added\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 884,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 884,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 846,
+    "body": "## Problem\n\nLlama-backed sidecar agents can be activated through two different mechanisms:\n\n1. **Legacy:** `ENABLE_LLAMA_AGENT=1` env flag toggles a hardcoded `agents-llama` service block in `docker-compose.yml`.\n2. **Modern:** `[agents.X]` TOML block consumed by `hire-an-agent`, emitting a service per block.\n\nNeither the docs nor the CLI explain which path wins. Setting both produces a YAML `mapping key \"agents-llama\" already defined` error from compose because the service block is duplicated.\n\n## Sub-symptom: env-var naming collision\n\nThe two paths key secrets differently:\n\n- Legacy: `FORGE_TOKEN_LLAMA`, `FORGE_PASS_LLAMA`.\n- Modern: `FORGE_TOKEN_<FORGE_USER_UPPER>` — e.g. `FORGE_TOKEN_DEV_QWEN`.\n\nA user migrating between paths ends up with two sets of secrets in `.env`, neither cleanly mapped to the currently-active service block. Silent auth failures (401 from Forgejo) follow.\n\n## Proposal\n\n- Pick the TOML `[agents.X]` path as canonical.\n- Remove the `ENABLE_LLAMA_AGENT` branch and its hardcoded service block from the generator.\n- Detection of `ENABLE_LLAMA_AGENT` in `.env` at `disinto up` time: hard-fail immediately with a migration message (option (a) — simpler, no external consumers depend on this flag).\n\n~~Dependencies: #845, #847~~ — both now closed; unblocked.\n\nRelated: #845, #847.\n\n## Affected files\n- `lib/generators.sh` — remove `ENABLE_LLAMA_AGENT` branch and hardcoded `agents-llama:` service block\n- `docker/agents/entrypoint.sh` — detect `ENABLE_LLAMA_AGENT` in env, emit migration error\n- `.env.example` — remove `ENABLE_LLAMA_AGENT`\n- `docs/agents-llama.md` — update to document TOML `[agents.X]` as the one canonical path\n\n## Acceptance criteria\n- [ ] One documented activation path: TOML `[agents.X]` block\n- [ ] `ENABLE_LLAMA_AGENT` removed from compose generator; presence in `.env` at startup triggers a clear migration error naming the replacement\n- [ ] `.env.example` and `docs/agents-llama.md` updated\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 846,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 846,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 850,
+    "body": "## Problem\n\nWhen the compose generator emits the same service name twice — e.g. both the legacy `ENABLE_LLAMA_AGENT=1` branch and a matching `[agents.llama]` TOML block produce an `agents-llama:` key — the failure is deferred all the way to `docker compose` YAML parsing:\n\n```\nfailed to parse /home/johba/disinto/docker-compose.yml: yaml: construct errors:\n  line 4: line 431: mapping key \"agents-llama\" already defined at line 155\n```\n\nBy then, the user has already paid the cost of: pre-build binary downloads, generator run, Caddyfile regeneration. The only hint about what went wrong is a line number in a generated file. Root cause (dual activation) is not surfaced.\n\n## Fix\n\nAdd a generate-time guard to `lib/generators.sh`:\n\n- After collecting all service blocks to emit, compare the set of service names against duplicates.\n- If a duplicate is detected, abort with a clear message naming both source of truth (e.g. `\"agents-llama\" emitted twice — from ENABLE_LLAMA_AGENT=1 and from [agents.llama] in projects/disinto.toml; remove one`).\n\nEven after #846 resolves (one canonical activation path), this guard remains valuable as a safety net against future regressions or user misconfiguration (e.g. two TOML blocks with same `forge_user`).\n\n## Prior art: PR #872 (closed, branch `fix/issue-850` retained)\n\ndev-qwen's first attempt (`db009e3`) landed the dup-detection logic in `lib/generators.sh` correctly (unit test `tests/test-duplicate-service-detection.sh` passes all 3 cases), but the smoke test fails on CI.\n\n**Why the smoke test fails:** sections 1-7 of `smoke-init.sh` already run `bin/disinto init`, materializing `docker-compose.yml`. Section 8 re-invokes `bin/disinto init` to verify the dup guard fires — but `_generate_compose_impl` early-returns with `\"Compose: already exists, skipping\"` before reaching the dup-check.\n\n**Suggested fix:** in `tests/smoke-init.sh` section 8 (around line 452, before the second `bin/disinto init` invocation), add:\n\n```bash\nrm -f \"${FACTORY_ROOT}/docker-compose.yml\"\n```\n\nso the generator actually runs and the dup-detection path is exercised. Do **not** hoist the dup-check above the early-return.\n\nThe branch `fix/issue-850` is preserved as a starting point — pick up from `db009e3` and patch the smoke-test cleanup.\n\nRelated: #846.\n\n## Affected files\n- `lib/generators.sh` — duplicate service name check after collecting all service blocks\n- `tests/smoke-init.sh` — section 8: add `rm -f docker-compose.yml` before second `disinto init`\n- `tests/test-duplicate-service-detection.sh` (likely already correct from prior art)\n\n## Acceptance criteria\n- [ ] Running `disinto up` with a known duplicate activation produces a clear generator-time error naming both conflicting sources\n- [ ] Exit code non-zero before `docker compose` is invoked\n- [ ] Smoke test section 8 passes on CI (dup guard is actually exercised)\n- [ ] `shellcheck` clean\n"
+  },
+  {
+    "action": "remove_label",
+    "issue": 850,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 850,
+    "label": "backlog"
   }
 ]
