@@ -49,7 +49,7 @@ setup() {
   export VAULT_ADDR VAULT_TOKEN
 }
 
-# ── Security checks ──────────────────────────────────────────────────────────
+# --- Security checks ---
 
 @test "refuses to run if VAULT_ADDR is not localhost" {
   export VAULT_ADDR="http://prod-vault.example.com:8200"
@@ -75,7 +75,7 @@ setup() {
   echo "$output" | grep -q "permissions"
 }
 
-# ── Dry-run mode ─────────────────────────────────────────────────────────────
+# --- Dry-run mode ─────────────────────────────────────────────────────────────
 
 @test "--dry-run prints plan without writing to Vault" {
   run "$IMPORT_SCRIPT" \
@@ -94,7 +94,7 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-# ── Complete fixture import ─────────────────────────────────────────────────
+# --- Complete fixture import ─────────────────────────────────────────────────
 
 @test "imports all keys from complete fixture" {
   run "$IMPORT_SCRIPT" \
@@ -149,7 +149,7 @@ setup() {
   echo "$output" | jq -e '.data.data.value == "github-test-token-abc123"'
 }
 
-# ── Idempotency ──────────────────────────────────────────────────────────────
+# --- Idempotency ──────────────────────────────────────────────────────────────
 
 @test "re-run with unchanged fixtures reports all unchanged" {
   # First run
@@ -199,7 +199,7 @@ setup() {
   echo "$output" | jq -e '.data.data.token == "MODIFIED-LLAMA-TOKEN"'
 }
 
-# ── Incomplete fixture ───────────────────────────────────────────────────────
+# --- Incomplete fixture ───────────────────────────────────────────────────────
 
 @test "handles incomplete fixture gracefully" {
   # The incomplete fixture is missing some keys, but that should be OK
@@ -219,7 +219,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-# ── Security: no secrets in output ───────────────────────────────────────────
+# --- Security: no secrets in output ───────────────────────────────────────────
 
 @test "never logs secret values in stdout" {
   # Run the import
@@ -259,7 +259,7 @@ setup() {
   done
 }
 
-# ── Error handling ───────────────────────────────────────────────────────────
+# --- Error handling ───────────────────────────────────────────────────────────
 
 @test "fails with missing --env argument" {
   run "$IMPORT_SCRIPT" \
