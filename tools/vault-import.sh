@@ -127,12 +127,14 @@ _kv_put_secret() {
   local path="$1"
   shift
   local kv_pairs=("$@")
-  local payload='{"data":{}}'
 
+  # Build JSON payload with all key-value pairs
+  local payload='{"data":{}}'
   for kv in "${kv_pairs[@]}"; do
     local k="${kv%%=*}"
     local v="${kv#*=}"
-    payload="$(printf '%s' "$payload" | jq -n --arg k "$k" --arg v "$v" '.data[$k] = $v')"
+    # Use jq to merge the new pair into the data object
+    payload="$(printf '%s' "$payload" | jq ". * {\"data\": {\"$k\": \"$v\"}}")"
   done
 
   # Use curl directly for KV v2 write with versioning
@@ -419,6 +421,10 @@ EOF
   local updated=0
   local unchanged=0
 
+  # First pass: collect all operations with their parsed values
+  # Store as: ops_data["vault_path:kv_key"] = "source_value|status"
+  declare -A ops_data
+
   for op in "${operations[@]}"; do
     # Parse operation: category|field|subkey|file|envvar (5 fields for bots/runner)
     # or category|field|file|envvar (4 fields for forge/woodpecker/chat)
@@ -475,10 +481,9 @@ EOF
         ;;
     esac
 
-    # Check if path exists
+    # Determine status for this key
     local status="created"
     if _kv_path_exists "$vault_path"; then
-      # Check if key exists in path
       local existing_value
       if existing_value="$(_kv_get_value "$vault_path" "$vault_key")" 2>/dev/null; then
         if [ "$existing_value" = "$source_value" ]; then
@@ -486,28 +491,66 @@ EOF
         else
           status="updated"
         fi
-      else
-        status="created"
       fi
     fi
 
-    # Output status
-    _format_status "$status" "$vault_path" "$vault_key"
-    printf '\n'
+    # Store operation data: key = "vault_path:kv_key", value = "source_value|status"
+    ops_data["${vault_path}:${vault_key}"]="${source_value}|${status}"
+  done
 
-    # Write if not unchanged
-    if [ "$status" != "unchanged" ]; then
-      if ! _kv_put_secret "$vault_path" "${vault_key}=${source_value}"; then
-        _err "Failed to write $vault_key to $vault_path"
-        exit 1
-      fi
-      case "$status" in
-        updated) ((updated++)) || true ;;
-        created) ((created++)) || true ;;
-      esac
-    else
+  # Second pass: group by vault_path and write
+  declare -A paths_to_write
+  declare -A path_statuses
+
+  for key in "${!ops_data[@]}"; do
+    local data="${ops_data[$key]}"
+    local source_value="${data%%|*}"
+    local status="${data##*|}"
+    local vault_path="${key%:*}"
+    local vault_key="${key#*:}"
+
+    if [ "$status" = "unchanged" ]; then
+      _format_status "$status" "$vault_path" "$vault_key"
+      printf '\n'
       ((unchanged++)) || true
+    else
+      # Add to paths_to_write for this vault_path
+      if [ -z "${paths_to_write[$vault_path]:-}" ]; then
+        paths_to_write[$vault_path]="${vault_key}=${source_value}"
+      else
+        paths_to_write[$vault_path]="${paths_to_write[$vault_path]}|${vault_key}=${source_value}"
+      fi
+      # Track status for counting (use last status for the path)
+      path_statuses[$vault_path]="$status"
     fi
+  done
+
+  # Write each path with all its key-value pairs
+  for vault_path in "${!paths_to_write[@]}"; do
+    local status="${path_statuses[$vault_path]}"
+
+    # Read pipe-separated key-value pairs and write them
+    local pairs_string="${paths_to_write[$vault_path]}"
+    local pairs_array=()
+    local IFS='|'
+    read -r -a pairs_array <<< "$pairs_string"
+
+    if ! _kv_put_secret "$vault_path" "${pairs_array[@]}"; then
+      _err "Failed to write to $vault_path"
+      exit 1
+    fi
+
+    # Output status for each key in this path
+    for kv in "${pairs_array[@]}"; do
+      local kv_key="${kv%%=*}"
+      _format_status "$status" "$vault_path" "$kv_key"
+      printf '\n'
+    done
+
+    case "$status" in
+      updated) ((updated++)) || true ;;
+      created) ((created++)) || true ;;
+    esac
   done
 
   _log ""
