@@ -62,6 +62,41 @@ EOF
   [[ "$output" != *'FORGE_BOT_USER_LLAMA'* ]]
 }
 
+@test "local-model agent service emits local image ref + build: fallback (#853)" {
+  # Before #853 the generator emitted `image: ghcr.io/disinto/agents:<tag>` for
+  # every hired agent. The ghcr image isn't publicly pullable and the running
+  # deployment has no credentials, so `docker compose up` failed with `denied`.
+  # The fix: emit the registry-less local name (matches `disinto init --build`
+  # and the legacy agents-llama stanza) plus a build: directive so hosts
+  # without a pre-built image can rebuild locally.
+  cat > "${FACTORY_ROOT}/projects/test.toml" <<'EOF'
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+
+[agents.dev-qwen2]
+base_url   = "http://10.10.10.1:8081"
+model      = "qwen"
+api_key    = "sk-no-key-required"
+roles      = ["dev"]
+forge_user = "dev-qwen2"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    source '${ROOT}/lib/generators.sh'
+    _generate_local_model_services '${FACTORY_ROOT}/docker-compose.yml'
+    cat '${FACTORY_ROOT}/docker-compose.yml'
+  "
+
+  [ "$status" -eq 0 ]
+  # Local image ref — no ghcr prefix.
+  [[ "$output" == *'image: disinto/agents:${DISINTO_IMAGE_TAG:-latest}'* ]]
+  [[ "$output" != *'image: ghcr.io/disinto/agents'* ]]
+  # build: fallback so hosts without a pre-built image can rebuild.
+  [[ "$output" == *'dockerfile: docker/agents/Dockerfile'* ]]
+}
+
 @test "local-model agent service keys FORGE_BOT_USER to forge_user even when it differs from service name (#849)" {
   # Exercise the case the issue calls out: two agents in the same factory
   # whose service names are identical (`[agents.llama]`) but whose
