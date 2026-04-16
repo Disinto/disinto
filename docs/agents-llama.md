@@ -26,6 +26,51 @@ ANTHROPIC_BASE_URL=http://host.docker.internal:8081   # llama-server endpoint
 
 Then regenerate the compose file (`disinto init ...`) and bring the stack up.
 
+## Hiring a new agent
+
+Use `disinto hire-an-agent` to create a Forgejo user, API token, and password,
+and write all required credentials to `.env`:
+
+```bash
+# Local model agent
+disinto hire-an-agent dev-qwen dev \
+  --local-model http://10.10.10.1:8081 \
+  --model unsloth/Qwen3.5-35B-A3B
+
+# Anthropic backend agent (requires ANTHROPIC_API_KEY in environment)
+disinto hire-an-agent dev-qwen dev
+```
+
+The command writes the following to `.env`:
+- `FORGE_TOKEN_<USER_UPPER>` — derived from the agent's Forgejo username (e.g., `FORGE_TOKEN_DEV_QWEN`)
+- `FORGE_PASS_<USER_UPPER>` — the agent's Forgejo password
+- `ANTHROPIC_BASE_URL` (local model) or `ANTHROPIC_API_KEY` (Anthropic backend)
+
+## Rotation
+
+Re-running `disinto hire-an-agent <same-name>` rotates credentials idempotently:
+
+```bash
+# Re-hire the same agent to rotate token and password
+disinto hire-an-agent dev-qwen dev \
+  --local-model http://10.10.10.1:8081 \
+  --model unsloth/Qwen3.5-35B-A3B
+
+# The command will:
+# 1. Detect the user already exists
+# 2. Reset the password to a new random value
+# 3. Create a new API token
+# 4. Update .env with the new credentials
+```
+
+This is the recommended way to rotate agent credentials. The `.env` file is
+updated in place, so no manual editing is required.
+
+If you need to manually rotate credentials, you can:
+1. Generate a new token in Forgejo admin UI
+2. Edit `.env` and replace `FORGE_TOKEN_<USER_UPPER>` and `FORGE_PASS_<USER_UPPER>`
+3. Restart the agent service: `docker compose restart disinto-agents-<name>`
+
 ### Running all 7 roles (agents-llama-all)
 
 ```bash

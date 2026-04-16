@@ -60,7 +60,7 @@ Usage:
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
-                                     Hire a new agent (create user + .profile repo)
+                                     Hire a new agent (create user + .profile repo; re-run to rotate credentials)
   disinto agent <subcommand>           Manage agent state (enable/disable)
   disinto edge <verb> [options]        Manage edge tunnel registrations
 
@@ -1757,6 +1757,118 @@ _regen_file() {
   fi
 }
 
+# Validate that required environment variables are present for all services
+# that reference them in docker-compose.yml
+_validate_env_vars() {
+  local env_file="${FACTORY_ROOT}/.env"
+  local errors=0
+  local -a missing_vars=()
+
+  # Load env vars from .env file into associative array
+  declare -A env_vars
+  if [ -f "$env_file" ]; then
+    while IFS='=' read -r key value; do
+      # Skip empty lines and comments
+      [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+      env_vars["$key"]="$value"
+    done < "$env_file"
+  fi
+
+  # Check for local-model agent services
+  # Each [agents.*] section in projects/*.toml requires:
+  # - FORGE_TOKEN_<USER_UPPER>
+  # - FORGE_PASS_<USER_UPPER>
+  # - ANTHROPIC_BASE_URL (local model) OR ANTHROPIC_API_KEY (Anthropic backend)
+
+  # Parse projects/*.toml for [agents.*] sections
+  local projects_dir="${FACTORY_ROOT}/projects"
+  for toml in "${projects_dir}"/*.toml; do
+    [ -f "$toml" ] || continue
+
+    # Extract agent config using Python
+    while IFS='|' read -r service_name forge_user base_url _api_key; do
+      [ -n "$service_name" ] || continue
+      [ -n "$forge_user" ] || continue
+
+      # Derive variable names (user -> USER_UPPER)
+      local user_upper
+      user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
+      local token_var="FORGE_TOKEN_${user_upper}"
+      local pass_var="FORGE_PASS_${user_upper}"
+
+      # Check token
+      if [ -z "${env_vars[$token_var]:-}" ]; then
+        missing_vars+=("$token_var (for agent ${service_name}/${forge_user})")
+        errors=$((errors + 1))
+      fi
+
+      # Check password
+      if [ -z "${env_vars[$pass_var]:-}" ]; then
+        missing_vars+=("$pass_var (for agent ${service_name}/${forge_user})")
+        errors=$((errors + 1))
+      fi
+
+      # Check backend URL or API key (conditional based on base_url presence)
+      if [ -n "$base_url" ]; then
+        # Local model: needs ANTHROPIC_BASE_URL
+        if [ -z "${env_vars[ANTHROPIC_BASE_URL]:-}" ]; then
+          missing_vars+=("ANTHROPIC_BASE_URL (for agent ${service_name})")
+          errors=$((errors + 1))
+        fi
+      else
+        # Anthropic backend: needs ANTHROPIC_API_KEY
+        if [ -z "${env_vars[ANTHROPIC_API_KEY]:-}" ]; then
+          missing_vars+=("ANTHROPIC_API_KEY (for agent ${service_name})")
+          errors=$((errors + 1))
+        fi
+      fi
+
+    done < <(python3 -c '
+import sys, tomllib, re
+
+with open(sys.argv[1], "rb") as f:
+    cfg = tomllib.load(f)
+
+agents = cfg.get("agents", {})
+for name, config in agents.items():
+    if not isinstance(config, dict):
+        continue
+
+    base_url = config.get("base_url", "")
+    model = config.get("model", "")
+    api_key = config.get("api_key", "")
+    forge_user = config.get("forge_user", f"{name}-bot")
+
+    safe_name = name.lower()
+    safe_name = re.sub(r"[^a-z0-9]", "-", safe_name)
+
+    print(f"{safe_name}|{forge_user}|{base_url}|{api_key}")
+' "$toml" 2>/dev/null)
+  done
+
+  # Check for legacy ENABLE_LLAMA_AGENT services
+  if [ "${env_vars[ENABLE_LLAMA_AGENT]:-0}" = "1" ]; then
+    if [ -z "${env_vars[FORGE_TOKEN_LLAMA]:-}" ]; then
+      missing_vars+=("FORGE_TOKEN_LLAMA (ENABLE_LLAMA_AGENT=1)")
+      errors=$((errors + 1))
+    fi
+    if [ -z "${env_vars[FORGE_PASS_LLAMA]:-}" ]; then
+      missing_vars+=("FORGE_PASS_LLAMA (ENABLE_LLAMA_AGENT=1)")
+      errors=$((errors + 1))
+    fi
+  fi
+
+  if [ "$errors" -gt 0 ]; then
+    echo "Error: missing required environment variables:" >&2
+    for var in "${missing_vars[@]}"; do
+      echo "  - $var" >&2
+    done
+    echo "" >&2
+    echo "Run 'disinto hire-an-agent <name> <role>' to create the agent and write credentials to .env" >&2
+    exit 1
+  fi
+}
+
 disinto_up() {
   local compose_file="${FACTORY_ROOT}/docker-compose.yml"
   local caddyfile="${FACTORY_ROOT}/docker/Caddyfile"
@@ -1765,6 +1877,9 @@ disinto_up() {
     echo "  Run 'disinto init <repo-url>' first (without --bare)" >&2
     exit 1
   fi
+
+  # Validate environment variables before proceeding
+  _validate_env_vars
 
   # Parse --no-regen flag; remaining args pass through to docker compose
   local no_regen=false

@@ -252,6 +252,46 @@ disinto_hire_an_agent() {
     export "${pass_var}=${user_pass}"
   fi
 
+  # Step 1.7: Write backend credentials to .env (#847).
+  # Local-model agents need ANTHROPIC_BASE_URL; Anthropic-backend agents need ANTHROPIC_API_KEY.
+  # These must be persisted so the container can start with valid credentials.
+  echo ""
+  echo "Step 1.7: Writing backend credentials to .env..."
+
+  if [ -n "$local_model" ]; then
+    # Local model agent: write ANTHROPIC_BASE_URL
+    local backend_var="ANTHROPIC_BASE_URL"
+    local backend_val="$local_model"
+    local escaped_val
+    escaped_val=$(printf '%s\n' "$backend_val" | sed 's/[&/\]/\\&/g')
+    if grep -q "^${backend_var}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${backend_var}=.*|${backend_var}=${escaped_val}|" "$env_file"
+      echo "  ${backend_var} updated"
+    else
+      printf '%s=%s\n' "$backend_var" "$backend_val" >> "$env_file"
+      echo "  ${backend_var} saved"
+    fi
+    export "${backend_var}=${backend_val}"
+  else
+    # Anthropic backend: check if ANTHROPIC_API_KEY is set, write it if present
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+      local backend_var="ANTHROPIC_API_KEY"
+      local backend_val="$ANTHROPIC_API_KEY"
+      local escaped_key
+      escaped_key=$(printf '%s\n' "$backend_val" | sed 's/[&/\]/\\&/g')
+      if grep -q "^${backend_var}=" "$env_file" 2>/dev/null; then
+        sed -i "s|^${backend_var}=.*|${backend_var}=${escaped_key}|" "$env_file"
+        echo "  ${backend_var} updated"
+      else
+        printf '%s=%s\n' "$backend_var" "$backend_val" >> "$env_file"
+        echo "  ${backend_var} saved"
+      fi
+      export "${backend_var}=${backend_val}"
+    else
+      echo "  Note: ANTHROPIC_API_KEY not set — required for Anthropic backend agents"
+    fi
+  fi
+
   # Step 1.6: Add the new agent as a write collaborator on the project repo (#856).
   # Without this, PATCH /issues/{n} {assignees:[agent]} returns 403 Forbidden and
   # the dev-agent polls forever logging "claim lost to <none> — skipping" (see
