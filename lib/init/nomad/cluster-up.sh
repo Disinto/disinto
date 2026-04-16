@@ -206,6 +206,43 @@ nomad_ready_count() {
     || printf '0'
 }
 
+# nomad_has_ready_node — true iff nomad_ready_count ≥ 1. Wrapper exists
+# so poll_until_healthy can call it as a single-arg command name.
+nomad_has_ready_node() { [ "$(nomad_ready_count)" -ge 1 ]; }
+
+# _die_with_service_status SVC REASON
+#   Log + dump `systemctl status SVC` to stderr + die with REASON. Factored
+#   out so the poll helper doesn't carry three copies of the same dump.
+_die_with_service_status() {
+  local svc="$1" reason="$2"
+  log "${svc}.service ${reason} — systemctl status follows:"
+  systemctl --no-pager --full status "$svc" >&2 || true
+  die "${svc}.service ${reason}"
+}
+
+# poll_until_healthy SVC CHECK_CMD TIMEOUT
+#   Tick once per second for up to TIMEOUT seconds, invoking CHECK_CMD as a
+#   command name (no arguments). Returns 0 on the first successful check.
+#   Fails fast via _die_with_service_status if SVC enters systemd "failed"
+#   state, and dies with a status dump if TIMEOUT elapses before CHECK_CMD
+#   succeeds. Replaces the two in-line ready=1/break/sleep poll loops that
+#   would otherwise each duplicate the same pattern already in vault-init.sh.
+poll_until_healthy() {
+  local svc="$1" check="$2" timeout="$3"
+  local waited=0
+  until [ "$waited" -ge "$timeout" ]; do
+    systemctl is-failed --quiet "$svc" \
+      && _die_with_service_status "$svc" "entered failed state during startup"
+    if "$check"; then
+      log "${svc} healthy after ${waited}s"
+      return 0
+    fi
+    waited=$((waited + 1))
+    sleep 1
+  done
+  _die_with_service_status "$svc" "not healthy within ${timeout}s"
+}
+
 # ── Step 1/9: install.sh (nomad + vault binaries) ────────────────────────────
 log "── Step 1/9: install nomad + vault binaries ──"
 "$INSTALL_SH"
@@ -250,58 +287,22 @@ log "── Step 6/9: vault-init (no-op after first run) ──"
 
 # ── Step 7/9: systemctl start vault + poll until unsealed ────────────────────
 log "── Step 7/9: start vault + poll until unsealed ──"
+# Fast-path when vault.service is already active and Vault reports
+# initialized=true,sealed=false — re-runs are a no-op.
 if systemctl is-active --quiet vault && vault_is_unsealed; then
   log "vault already active + unsealed — skip start"
 else
   systemctl start vault
-  ready=0
-  for i in $(seq 1 "$VAULT_POLL_SECS"); do
-    # Fail fast if systemd has already marked the unit as failed — usually
-    # ExecStartPost tripping because unseal.key is absent / corrupted.
-    if systemctl is-failed --quiet vault; then
-      log "vault.service entered failed state — systemctl status follows:"
-      systemctl --no-pager --full status vault >&2 || true
-      die "vault.service failed to start"
-    fi
-    if vault_is_unsealed; then
-      log "vault unsealed after ${i}s"
-      ready=1
-      break
-    fi
-    sleep 1
-  done
-  if [ "$ready" -ne 1 ]; then
-    log "vault did not unseal within ${VAULT_POLL_SECS}s — status follows:"
-    systemctl --no-pager --full status vault >&2 || true
-    die "vault failed to become unsealed"
-  fi
+  poll_until_healthy vault vault_is_unsealed "$VAULT_POLL_SECS"
 fi
 
 # ── Step 8/9: systemctl start nomad + poll until ≥1 node ready ───────────────
 log "── Step 8/9: start nomad + poll until ≥1 node ready ──"
-if systemctl is-active --quiet nomad && [ "$(nomad_ready_count)" -ge 1 ]; then
+if systemctl is-active --quiet nomad && nomad_has_ready_node; then
   log "nomad already active + ≥1 node ready — skip start"
 else
   systemctl start nomad
-  ready=0
-  for i in $(seq 1 "$NOMAD_POLL_SECS"); do
-    if systemctl is-failed --quiet nomad; then
-      log "nomad.service entered failed state — systemctl status follows:"
-      systemctl --no-pager --full status nomad >&2 || true
-      die "nomad.service failed to start"
-    fi
-    if [ "$(nomad_ready_count)" -ge 1 ]; then
-      log "nomad has ready node after ${i}s"
-      ready=1
-      break
-    fi
-    sleep 1
-  done
-  if [ "$ready" -ne 1 ]; then
-    log "nomad had no ready nodes within ${NOMAD_POLL_SECS}s — status follows:"
-    systemctl --no-pager --full status nomad >&2 || true
-    die "nomad failed to reach ≥1 ready node"
-  fi
+  poll_until_healthy nomad nomad_has_ready_node "$NOMAD_POLL_SECS"
 fi
 
 # ── Step 9/9: /etc/profile.d/disinto-nomad.sh ────────────────────────────────
