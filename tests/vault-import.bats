@@ -34,6 +34,13 @@ setup_file() {
       return 1
     fi
   done
+
+  # Enable kv-v2 at path=kv (production mount per S2 migration). Dev-mode
+  # vault only auto-mounts kv-v2 at secret/; tests must mirror the real
+  # cluster layout so vault-import.sh writes land where we read them.
+  curl -sf -H "X-Vault-Token: test-root-token" \
+    -X POST -d '{"type":"kv","options":{"version":"2"}}' \
+    "${VAULT_ADDR}/v1/sys/mounts/kv" >/dev/null
 }
 
 teardown_file() {
@@ -90,7 +97,7 @@ setup() {
 
   # Verify nothing was written to Vault
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/bots/review"
+    "${VAULT_ADDR}/v1/kv/data/disinto/bots/review"
   [ "$status" -ne 0 ]
 }
 
@@ -105,21 +112,21 @@ setup() {
 
   # Check bots/review
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/bots/review"
+    "${VAULT_ADDR}/v1/kv/data/disinto/bots/review"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "review-token"
   echo "$output" | grep -q "review-pass"
 
   # Check bots/dev-qwen
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/bots/dev-qwen"
+    "${VAULT_ADDR}/v1/kv/data/disinto/bots/dev-qwen"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "llama-token"
   echo "$output" | grep -q "llama-pass"
 
   # Check forge
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/shared/forge"
+    "${VAULT_ADDR}/v1/kv/data/disinto/shared/forge"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "generic-forge-token"
   echo "$output" | grep -q "generic-forge-pass"
@@ -127,7 +134,7 @@ setup() {
 
   # Check woodpecker
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/shared/woodpecker"
+    "${VAULT_ADDR}/v1/kv/data/disinto/shared/woodpecker"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "wp-agent-secret"
   echo "$output" | grep -q "wp-forgejo-client"
@@ -136,7 +143,7 @@ setup() {
 
   # Check chat
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/shared/chat"
+    "${VAULT_ADDR}/v1/kv/data/disinto/shared/chat"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "forward-auth-secret"
   echo "$output" | grep -q "chat-client-id"
@@ -144,7 +151,7 @@ setup() {
 
   # Check runner tokens from sops
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/runner/GITHUB_TOKEN"
+    "${VAULT_ADDR}/v1/kv/data/disinto/runner/GITHUB_TOKEN"
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.data.data.value == "github-test-token-abc123"'
 }
@@ -194,7 +201,7 @@ setup() {
 
   # Verify the new value was written (path is disinto/bots/dev-qwen, key is token)
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/bots/dev-qwen"
+    "${VAULT_ADDR}/v1/kv/data/disinto/bots/dev-qwen"
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.data.data.token == "MODIFIED-LLAMA-TOKEN"'
 }
@@ -228,13 +235,13 @@ setup() {
 
   # Verify each value round-trips intact.
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/bots/review"
+    "${VAULT_ADDR}/v1/kv/data/disinto/bots/review"
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.data.data.token == "abc|xyz"'
   echo "$output" | jq -e '.data.data.pass == "p1|p2|p3"'
 
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/secret/data/disinto/shared/forge"
+    "${VAULT_ADDR}/v1/kv/data/disinto/shared/forge"
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.data.data.admin_token == "admin|with|pipes"'
 }
