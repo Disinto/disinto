@@ -51,3 +51,26 @@ advertise {
 ui {
   enabled = true
 }
+
+# ─── Vault integration (S2.3, issue #881) ───────────────────────────────────
+# Nomad jobs exchange their short-lived workload-identity JWT (signed by
+# nomad's built-in signer at /.well-known/jwks.json on :4646) for a Vault
+# token carrying the policies named by the role in `vault { role = "..." }`
+# of each jobspec — no shared VAULT_TOKEN in job env.
+#
+# The JWT auth path (jwt-nomad) + per-role bindings live on the Vault
+# side, written by lib/init/nomad/vault-nomad-auth.sh + tools/vault-apply-roles.sh.
+# Roles are defined in vault/roles.yaml.
+#
+# `default_identity.aud = ["vault.io"]` matches bound_audiences on every
+# role in vault/roles.yaml — a drift here would silently break every job's
+# Vault token exchange at placement time.
+vault {
+  enabled = true
+  address = "http://127.0.0.1:8200"
+
+  default_identity {
+    aud = ["vault.io"]
+    ttl = "1h"
+  }
+}

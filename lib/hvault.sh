@@ -178,6 +178,51 @@ hvault_kv_list() {
   }
 }
 
+# hvault_get_or_empty PATH
+#   GET /v1/PATH. On 200, prints the raw response body to stdout (caller
+#   parses with jq). On 404, prints nothing and returns 0 — caller treats
+#   the empty string as "resource absent, needs create". Any other HTTP
+#   status is a hard error: response body is logged to stderr as a
+#   structured JSON error and the function returns 1.
+#
+#   Used by the sync scripts (tools/vault-apply-*.sh +
+#   lib/init/nomad/vault-nomad-auth.sh) to read existing policies, roles,
+#   auth-method listings, and per-role configs without triggering errexit
+#   on the expected absent-resource case. `_hvault_request` is not a
+#   substitute — it treats 404 as a hard error, which is correct for
+#   writes but wrong for "does this already exist?" checks.
+#
+#   Subshell + EXIT trap: the RETURN trap does NOT fire on set-e abort,
+#   so tmpfile cleanup from a function-scoped RETURN trap would leak on
+#   jq/curl errors under `set -eo pipefail`. The subshell + EXIT trap
+#   is the reliable cleanup boundary.
+hvault_get_or_empty() {
+  local path="${1:-}"
+
+  if [ -z "$path" ]; then
+    _hvault_err "hvault_get_or_empty" "PATH is required" \
+      "usage: hvault_get_or_empty PATH"
+    return 1
+  fi
+  _hvault_check_prereqs "hvault_get_or_empty" || return 1
+
+  (
+    local tmp http_code
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    http_code="$(curl -sS -o "$tmp" -w '%{http_code}' \
+      -H "X-Vault-Token: ${VAULT_TOKEN}" \
+      "${VAULT_ADDR}/v1/${path}")" \
+      || { _hvault_err "hvault_get_or_empty" "curl failed" "path=$path"; exit 1; }
+    case "$http_code" in
+      2[0-9][0-9]) cat "$tmp" ;;
+      404)         printf '' ;;
+      *)           _hvault_err "hvault_get_or_empty" "HTTP $http_code" "$(cat "$tmp")"
+                   exit 1 ;;
+    esac
+  )
+}
+
 # hvault_policy_apply NAME FILE
 #   Idempotent policy upsert — create or update a Vault policy.
 hvault_policy_apply() {
