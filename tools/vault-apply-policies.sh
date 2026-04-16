@@ -103,37 +103,6 @@ fi
 hvault_token_lookup >/dev/null \
   || die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
 
-# ── Helper: fetch the on-server policy text, or empty if absent ──────────────
-# Echoes the current policy content on stdout. A 404 (policy does not exist
-# yet) is a non-error — we print nothing and exit 0 so the caller can treat
-# the empty string as "needs create". Any other non-2xx is a hard failure.
-#
-# Uses a subshell + EXIT trap (not RETURN) for tmpfile cleanup: the RETURN
-# trap does NOT fire on set-e abort, so if jq below tripped errexit the
-# tmpfile would leak. Subshell exit propagates via the function's last-
-# command exit status.
-fetch_current_policy() {
-  local name="$1"
-  (
-    local tmp http_code
-    tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
-    http_code="$(curl -sS -o "$tmp" -w '%{http_code}' \
-      -H "X-Vault-Token: ${VAULT_TOKEN}" \
-      "${VAULT_ADDR}/v1/sys/policies/acl/${name}")" \
-      || { printf '[vault-apply] ERROR: curl failed for policy %s\n' "$name" >&2; exit 1; }
-    case "$http_code" in
-      200) jq -r '.data.policy // ""' < "$tmp" ;;
-      404) printf '' ;;  # absent — caller treats as "create"
-      *)
-        printf '[vault-apply] ERROR: HTTP %s fetching policy %s:\n' "$http_code" "$name" >&2
-        cat "$tmp" >&2
-        exit 1
-        ;;
-    esac
-  )
-}
-
 # ── Apply each policy, reporting created/updated/unchanged ───────────────────
 log "syncing ${#POLICY_FILES[@]} polic(y|ies) from ${POLICIES_DIR}"
 
@@ -141,8 +110,17 @@ for f in "${POLICY_FILES[@]}"; do
   name="$(basename "$f" .hcl)"
 
   desired="$(cat "$f")"
-  current="$(fetch_current_policy "$name")" \
+  # hvault_get_or_empty returns the raw JSON body on 200 or empty on 404.
+  # Extract the .data.policy field here (jq on "" yields "", so the
+  # empty-string-means-create branch below still works).
+  raw="$(hvault_get_or_empty "sys/policies/acl/${name}")" \
     || die "failed to read existing policy: ${name}"
+  if [ -n "$raw" ]; then
+    current="$(printf '%s' "$raw" | jq -r '.data.policy // ""')" \
+      || die "failed to parse policy response: ${name}"
+  else
+    current=""
+  fi
 
   if [ -z "$current" ]; then
     hvault_policy_apply "$name" "$f" \

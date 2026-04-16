@@ -1,0 +1,150 @@
+# =============================================================================
+# vault/roles.yaml — Vault JWT-auth role bindings for Nomad workload identity
+#
+# Part of the Nomad+Vault migration (S2.3, issue #881). One entry per
+# vault/policies/*.hcl policy. Each entry pairs:
+#
+#   - the Vault role name (what a Nomad job references via
+#     `vault { role = "..." }` in its jobspec), with
+#   - the ACL policy attached to tokens it mints, and
+#   - the bound claims that gate which Nomad workloads may authenticate
+#     through that role (prevents a jobspec named "woodpecker" from
+#     asking for role "service-forgejo").
+#
+# The source of truth for *what* secrets each role's token can read is
+# vault/policies/<policy>.hcl. This file only wires role→policy→claims.
+# Keeping the two side-by-side in the repo means an S2.1↔S2.3 drift
+# (new policy without a role, or vice versa) shows up in one directory
+# review, not as a runtime "permission denied" at job placement.
+#
+# All roles share the same constants (hardcoded in tools/vault-apply-roles.sh):
+#   - bound_audiences = ["vault.io"]      — Nomad's default workload-identity aud
+#   - token_type      = "service"         — revoked when task exits
+#   - token_ttl       = "1h"              — token lifetime
+#   - token_max_ttl   = "24h"             — hard cap across renewals
+#
+# Format (strict — parsed line-by-line by tools/vault-apply-roles.sh with
+# awk; keep the "- name:" prefix + two-space nested indent exactly as
+# shown below):
+#
+#   roles:
+#     - name:      <vault-role-name>    # path: auth/jwt-nomad/role/<name>
+#       policy:    <acl-policy-name>    # must match vault/policies/<name>.hcl
+#       namespace: <nomad-namespace>    # bound_claims.nomad_namespace
+#       job_id:    <nomad-job-id>       # bound_claims.nomad_job_id
+#
+# All four fields are required. Comments (#) and blank lines are ignored.
+#
+# Adding a new role:
+#   1. Land the companion vault/policies/<name>.hcl in S2.1 style.
+#   2. Add a block here with all four fields.
+#   3. Run tools/vault-apply-roles.sh to upsert it.
+#   4. Re-run to confirm "role <name> unchanged".
+# =============================================================================
+roles:
+  # ── Long-running services (nomad/jobs/<name>.hcl) ──────────────────────────
+  # The jobspec's nomad job name is the bound job_id, e.g. `job "forgejo"`
+  # in nomad/jobs/forgejo.hcl → job_id: forgejo. The policy name stays
+  # `service-<name>` so the directory layout under vault/policies/ groups
+  # platform services under a single prefix.
+  - name:      service-forgejo
+    policy:    service-forgejo
+    namespace: default
+    job_id:    forgejo
+
+  - name:      service-woodpecker
+    policy:    service-woodpecker
+    namespace: default
+    job_id:    woodpecker
+
+  # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
+  # job_id placeholders match the policy name 1:1 until each bot's jobspec
+  # lands. When a bot's jobspec is added under nomad/jobs/, update the
+  # corresponding job_id here to match the jobspec's `job "<name>"` — and
+  # CI's S2.6 roles.yaml check will confirm the pairing.
+  - name:      bot-dev
+    policy:    bot-dev
+    namespace: default
+    job_id:    bot-dev
+
+  - name:      bot-dev-qwen
+    policy:    bot-dev-qwen
+    namespace: default
+    job_id:    bot-dev-qwen
+
+  - name:      bot-review
+    policy:    bot-review
+    namespace: default
+    job_id:    bot-review
+
+  - name:      bot-gardener
+    policy:    bot-gardener
+    namespace: default
+    job_id:    bot-gardener
+
+  - name:      bot-planner
+    policy:    bot-planner
+    namespace: default
+    job_id:    bot-planner
+
+  - name:      bot-predictor
+    policy:    bot-predictor
+    namespace: default
+    job_id:    bot-predictor
+
+  - name:      bot-supervisor
+    policy:    bot-supervisor
+    namespace: default
+    job_id:    bot-supervisor
+
+  - name:      bot-architect
+    policy:    bot-architect
+    namespace: default
+    job_id:    bot-architect
+
+  - name:      bot-vault
+    policy:    bot-vault
+    namespace: default
+    job_id:    bot-vault
+
+  # ── Edge dispatcher ────────────────────────────────────────────────────────
+  - name:      dispatcher
+    policy:    dispatcher
+    namespace: default
+    job_id:    dispatcher
+
+  # ── Per-secret runner roles ────────────────────────────────────────────────
+  # vault-runner (Step 5) composes runner-<NAME> policies onto each
+  # ephemeral dispatch token based on the action TOML's `secrets = [...]`.
+  # The per-dispatch runner jobspec job_id follows the same `runner-<NAME>`
+  # convention (one jobspec per secret, minted per dispatch) so the bound
+  # claim matches the role name directly.
+  - name:      runner-GITHUB_TOKEN
+    policy:    runner-GITHUB_TOKEN
+    namespace: default
+    job_id:    runner-GITHUB_TOKEN
+
+  - name:      runner-CODEBERG_TOKEN
+    policy:    runner-CODEBERG_TOKEN
+    namespace: default
+    job_id:    runner-CODEBERG_TOKEN
+
+  - name:      runner-CLAWHUB_TOKEN
+    policy:    runner-CLAWHUB_TOKEN
+    namespace: default
+    job_id:    runner-CLAWHUB_TOKEN
+
+  - name:      runner-DEPLOY_KEY
+    policy:    runner-DEPLOY_KEY
+    namespace: default
+    job_id:    runner-DEPLOY_KEY
+
+  - name:      runner-NPM_TOKEN
+    policy:    runner-NPM_TOKEN
+    namespace: default
+    job_id:    runner-NPM_TOKEN
+
+  - name:      runner-DOCKER_HUB_TOKEN
+    policy:    runner-DOCKER_HUB_TOKEN
+    namespace: default
+    job_id:    runner-DOCKER_HUB_TOKEN
