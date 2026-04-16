@@ -34,7 +34,7 @@ setup_file() {
   [[ "$output" == *"nomad backend: default (cluster-up; jobs deferred to Step 1)"* ]]
 
   # All nine cluster-up dry-run steps, in order.
-  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
   [[ "$output" == *"[dry-run] Step 2/9: write + enable nomad.service (NOT started)"* ]]
   [[ "$output" == *"[dry-run] Step 3/9: write + enable vault.service + vault.hcl (NOT started)"* ]]
   [[ "$output" == *"[dry-run] Step 4/9: create host-volume dirs under /srv/disinto/"* ]]
@@ -57,7 +57,7 @@ setup_file() {
   # of the migration will branch on $empty to gate job deployment; today
   # both modes invoke the same cluster-up dry-run.
   [[ "$output" == *"nomad backend: --empty (cluster-up only, no jobs)"* ]]
-  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
   [[ "$output" == *"Dry run complete — no changes made."* ]]
 }
 
@@ -69,7 +69,7 @@ setup_file() {
 
   # Negative assertion: the nomad dispatcher banners must be absent.
   [[ "$output" != *"nomad backend:"* ]]
-  [[ "$output" != *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" != *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
 
   # Positive assertion: docker-path output still appears — the existing
   # docker dry-run printed "=== disinto init ===" before listing the
@@ -88,7 +88,7 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend nomad --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"nomad backend: default"* ]]
-  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
 }
 
 # ── Flag validation ──────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ setup_file() {
   run "$DISINTO_BIN" init --backend=nomad --empty --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"nomad backend: --empty (cluster-up only, no jobs)"* ]]
-  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
   # The bug symptom must be absent — backend was misdetected as docker
   # when --backend=nomad got swallowed as repo_url.
   [[ "$output" != *"--empty is only valid with --backend=nomad"* ]]
@@ -128,7 +128,7 @@ setup_file() {
   run "$DISINTO_BIN" init --backend nomad --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"nomad backend: default"* ]]
-  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries"* ]]
+  [[ "$output" == *"[dry-run] Step 1/9: install nomad + vault binaries + docker daemon"* ]]
 }
 
 @test "disinto init (no args) still errors with 'repo URL required'" {

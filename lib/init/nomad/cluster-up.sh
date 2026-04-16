@@ -5,7 +5,7 @@
 # Wires together the S0.1–S0.3 building blocks into one idempotent
 # "bring up a single-node Nomad+Vault cluster" script:
 #
-#   1. install.sh                  (nomad + vault binaries)
+#   1. install.sh                  (nomad + vault binaries + docker daemon)
 #   2. systemd-nomad.sh            (nomad.service — unit + enable, not started)
 #   3. systemd-vault.sh            (vault.service — unit + vault.hcl + enable)
 #   4. Host-volume dirs            (/srv/disinto/* matching nomad/client.hcl)
@@ -104,7 +104,7 @@ done
 # ── Dry-run: print step list + exit ──────────────────────────────────────────
 if [ "$dry_run" = true ]; then
   cat <<EOF
-[dry-run] Step 1/9: install nomad + vault binaries
+[dry-run] Step 1/9: install nomad + vault binaries + docker daemon
   → sudo ${INSTALL_SH}
 
 [dry-run] Step 2/9: write + enable nomad.service (NOT started)
@@ -129,7 +129,7 @@ EOF
 
 [dry-run] Step 7/9: systemctl start vault + poll until unsealed (≤${VAULT_POLL_SECS}s)
 
-[dry-run] Step 8/9: systemctl start nomad + poll until ≥1 node ready (≤${NOMAD_POLL_SECS}s)
+[dry-run] Step 8/9: systemctl start nomad + poll until ≥1 node ready + docker driver healthy (≤${NOMAD_POLL_SECS}s each)
 
 [dry-run] Step 9/9: write ${PROFILE_D_FILE}
   → export VAULT_ADDR=${VAULT_ADDR_DEFAULT}
@@ -210,6 +210,21 @@ nomad_ready_count() {
 # so poll_until_healthy can call it as a single-arg command name.
 nomad_has_ready_node() { [ "$(nomad_ready_count)" -ge 1 ]; }
 
+# nomad_docker_driver_healthy — true iff the nomad self-node reports the
+# docker driver as Detected=true AND Healthy=true. Required by Step-1's
+# forgejo jobspec (the first docker-driver consumer) — without this the
+# node reaches "ready" while docker fingerprinting is still in flight,
+# and the first `nomad job run forgejo` times out with an opaque
+# "missing drivers" placement failure (#871).
+nomad_docker_driver_healthy() {
+  local out detected healthy
+  out="$(NOMAD_ADDR="$NOMAD_ADDR_DEFAULT" nomad node status -self -json 2>/dev/null || true)"
+  [ -n "$out" ] || return 1
+  detected="$(printf '%s' "$out" | jq -r '.Drivers.docker.Detected // false' 2>/dev/null)" || detected=""
+  healthy="$(printf '%s' "$out" | jq -r '.Drivers.docker.Healthy // false' 2>/dev/null)" || healthy=""
+  [ "$detected" = "true" ] && [ "$healthy" = "true" ]
+}
+
 # _die_with_service_status SVC REASON
 #   Log + dump `systemctl status SVC` to stderr + die with REASON. Factored
 #   out so the poll helper doesn't carry three copies of the same dump.
@@ -243,8 +258,8 @@ poll_until_healthy() {
   _die_with_service_status "$svc" "not healthy within ${timeout}s"
 }
 
-# ── Step 1/9: install.sh (nomad + vault binaries) ────────────────────────────
-log "── Step 1/9: install nomad + vault binaries ──"
+# ── Step 1/9: install.sh (nomad + vault binaries + docker daemon) ────────────
+log "── Step 1/9: install nomad + vault binaries + docker daemon ──"
 "$INSTALL_SH"
 
 # ── Step 2/9: systemd-nomad.sh (unit + enable, not started) ──────────────────
@@ -296,13 +311,25 @@ else
   poll_until_healthy vault vault_is_unsealed "$VAULT_POLL_SECS"
 fi
 
-# ── Step 8/9: systemctl start nomad + poll until ≥1 node ready ───────────────
-log "── Step 8/9: start nomad + poll until ≥1 node ready ──"
-if systemctl is-active --quiet nomad && nomad_has_ready_node; then
-  log "nomad already active + ≥1 node ready — skip start"
+# ── Step 8/9: systemctl start nomad + poll until ≥1 node ready + docker up ──
+log "── Step 8/9: start nomad + poll until ≥1 node ready + docker driver healthy ──"
+# Three conditions gate this step:
+#   (a) nomad.service active
+#   (b) ≥1 nomad node in "ready" state
+#   (c) nomad's docker task driver fingerprinted as Detected+Healthy
+# (c) can lag (a)+(b) briefly because driver fingerprinting races with
+# dockerd startup — polling it explicitly prevents Step-1 deploys from
+# hitting "missing drivers" placement failures on a cold-booted host (#871).
+if systemctl is-active --quiet nomad \
+   && nomad_has_ready_node \
+   && nomad_docker_driver_healthy; then
+  log "nomad already active + ≥1 node ready + docker driver healthy — skip start"
 else
-  systemctl start nomad
+  if ! systemctl is-active --quiet nomad; then
+    systemctl start nomad
+  fi
   poll_until_healthy nomad nomad_has_ready_node "$NOMAD_POLL_SECS"
+  poll_until_healthy nomad nomad_docker_driver_healthy "$NOMAD_POLL_SECS"
 fi
 
 # ── Step 9/9: /etc/profile.d/disinto-nomad.sh ────────────────────────────────
