@@ -100,6 +100,11 @@ _hvault_request() {
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+# VAULT_KV_MOUNT — KV v2 mount point (default: "kv")
+#   Override with: export VAULT_KV_MOUNT=secret
+#   Used by: hvault_kv_get, hvault_kv_put, hvault_kv_list
+: "${VAULT_KV_MOUNT:=kv}"
+
 # hvault_kv_get PATH [KEY]
 #   Read a KV v2 secret at PATH, optionally extract a single KEY.
 #   Outputs: JSON value (full data object, or single key value)
@@ -114,7 +119,7 @@ hvault_kv_get() {
   _hvault_check_prereqs "hvault_kv_get" || return 1
 
   local response
-  response="$(_hvault_request GET "secret/data/${path}")" || return 1
+  response="$(_hvault_request GET "${VAULT_KV_MOUNT}/data/${path}")" || return 1
 
   if [ -n "$key" ]; then
     printf '%s' "$response" | jq -e -r --arg key "$key" '.data.data[$key]' 2>/dev/null || {
@@ -154,7 +159,7 @@ hvault_kv_put() {
     payload="$(printf '%s' "$payload" | jq --arg k "$k" --arg v "$v" '.data[$k] = $v')"
   done
 
-  _hvault_request POST "secret/data/${path}" "$payload" >/dev/null
+  _hvault_request POST "${VAULT_KV_MOUNT}/data/${path}" "$payload" >/dev/null
 }
 
 # hvault_kv_list PATH
@@ -170,7 +175,7 @@ hvault_kv_list() {
   _hvault_check_prereqs "hvault_kv_list" || return 1
 
   local response
-  response="$(_hvault_request LIST "secret/metadata/${path}")" || return 1
+  response="$(_hvault_request LIST "${VAULT_KV_MOUNT}/metadata/${path}")" || return 1
 
   printf '%s' "$response" | jq -e '.data.keys' 2>/dev/null || {
     _hvault_err "hvault_kv_list" "failed to parse response" "path=$path"

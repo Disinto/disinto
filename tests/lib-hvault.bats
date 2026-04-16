@@ -126,7 +126,7 @@ setup() {
 @test "hvault_policy_apply creates a policy" {
   local pfile="${BATS_TEST_TMPDIR}/test-policy.hcl"
   cat > "$pfile" <<'HCL'
-path "secret/data/test/*" {
+path "kv/data/test/*" {
   capabilities = ["read"]
 }
 HCL
@@ -138,12 +138,12 @@ HCL
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/sys/policies/acl/test-reader"
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.data.policy' | grep -q "secret/data/test"
+  echo "$output" | jq -e '.data.policy' | grep -q "kv/data/test"
 }
 
 @test "hvault_policy_apply is idempotent" {
   local pfile="${BATS_TEST_TMPDIR}/idem-policy.hcl"
-  printf 'path "secret/*" { capabilities = ["list"] }\n' > "$pfile"
+  printf 'path "kv/*" { capabilities = ["list"] }\n' > "$pfile"
 
   run hvault_policy_apply "idem-policy" "$pfile"
   [ "$status" -eq 0 ]
