@@ -38,6 +38,30 @@ _hvault_resolve_token() {
   return 1
 }
 
+# _hvault_default_env — set the local-cluster Vault env if unset
+#
+# Idempotent helper used by every Vault-touching script that runs during
+# `disinto init` (S2). On the local-cluster common case, operators (and
+# the init dispatcher in bin/disinto) have not exported VAULT_ADDR or
+# VAULT_TOKEN — the server is reachable on localhost:8200 and the root
+# token lives at /etc/vault.d/root.token. Scripts must Just Work in that
+# shape.
+#
+#   - If VAULT_ADDR is unset, defaults to http://127.0.0.1:8200.
+#   - If VAULT_TOKEN is unset, resolves from /etc/vault.d/root.token via
+#     _hvault_resolve_token. A missing token file is not an error here —
+#     downstream hvault_token_lookup() probes connectivity and emits the
+#     operator-facing "VAULT_ADDR + VAULT_TOKEN" diagnostic.
+#
+# Centralised to keep the defaulting stanza in one place — copy-pasting
+# the 5-line block into each init script trips the repo-wide 5-line
+# sliding-window duplicate detector (.woodpecker/detect-duplicates.py).
+_hvault_default_env() {
+  VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
+  export VAULT_ADDR
+  _hvault_resolve_token || :
+}
+
 # _hvault_check_prereqs — validate VAULT_ADDR and VAULT_TOKEN are set
 # Args: caller function name
 _hvault_check_prereqs() {

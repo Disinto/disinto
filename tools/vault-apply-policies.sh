@@ -94,8 +94,11 @@ if [ "$dry_run" = true ]; then
 fi
 
 # ── Live run: Vault connectivity check ───────────────────────────────────────
-[ -n "${VAULT_ADDR:-}" ] \
-  || die "VAULT_ADDR is not set — export VAULT_ADDR=http://127.0.0.1:8200"
+# Default the local-cluster Vault env (see lib/hvault.sh::_hvault_default_env).
+# `disinto init` does not export VAULT_ADDR before calling this script — the
+# server is reachable on 127.0.0.1:8200 and the root token lives at
+# /etc/vault.d/root.token in the common fresh-LXC case (issue #912).
+_hvault_default_env
 
 # hvault_token_lookup both resolves the token (env or /etc/vault.d/root.token)
 # and confirms the server is reachable with a valid token. Fail fast here so

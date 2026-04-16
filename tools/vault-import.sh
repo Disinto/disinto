@@ -8,8 +8,13 @@
 # Usage:
 #   vault-import.sh \
 #     --env /path/to/.env \
-#     --sops /path/to/.env.vault.enc \
-#     --age-key /path/to/age/keys.txt
+#     [--sops /path/to/.env.vault.enc] \
+#     [--age-key /path/to/age/keys.txt]
+#
+# Flag validation (S2.5, issue #883):
+#   --import-sops without --age-key → error.
+#   --age-key without --import-sops → error.
+#   --env alone (no sops) → OK; imports only the plaintext half.
 #
 # Mapping:
 #   From .env:
@@ -236,14 +241,15 @@ vault-import.sh — Import .env and sops-decrypted secrets into Vault KV
 Usage:
   vault-import.sh \
     --env /path/to/.env \
-    --sops /path/to/.env.vault.enc \
-    --age-key /path/to/age/keys.txt \
+    [--sops /path/to/.env.vault.enc] \
+    [--age-key /path/to/age/keys.txt] \
     [--dry-run]
 
 Options:
   --env       Path to .env file (required)
-  --sops      Path to sops-encrypted .env.vault.enc file (required)
-  --age-key   Path to age keys file (required)
+  --sops      Path to sops-encrypted .env.vault.enc file (optional;
+              requires --age-key when set)
+  --age-key   Path to age keys file (required when --sops is set)
   --dry-run   Print import plan without writing to Vault (optional)
   --help      Show this help message
 
@@ -272,47 +278,62 @@ EOF
     esac
   done
 
-  # Validate required arguments
+  # Validate required arguments. --sops and --age-key are paired: if one
+  # is set, the other must be too. --env alone (no sops half) is valid —
+  # imports only the plaintext dotenv. Spec: S2.5 / issue #883 / #912.
   if [ -z "$env_file" ]; then
     _die "Missing required argument: --env"
   fi
-  if [ -z "$sops_file" ]; then
-    _die "Missing required argument: --sops"
+  if [ -n "$sops_file" ] && [ -z "$age_key_file" ]; then
+    _die "--sops requires --age-key"
   fi
-  if [ -z "$age_key_file" ]; then
-    _die "Missing required argument: --age-key"
+  if [ -n "$age_key_file" ] && [ -z "$sops_file" ]; then
+    _die "--age-key requires --sops"
   fi
 
   # Validate files exist
   if [ ! -f "$env_file" ]; then
     _die "Environment file not found: $env_file"
   fi
-  if [ ! -f "$sops_file" ]; then
+  if [ -n "$sops_file" ] && [ ! -f "$sops_file" ]; then
     _die "Sops file not found: $sops_file"
   fi
-  if [ ! -f "$age_key_file" ]; then
+  if [ -n "$age_key_file" ] && [ ! -f "$age_key_file" ]; then
     _die "Age key file not found: $age_key_file"
   fi
 
-  # Security check: age key permissions
-  _validate_age_key_perms "$age_key_file"
+  # Security check: age key permissions (only when an age key is provided —
+  # --env-only imports never touch the age key).
+  if [ -n "$age_key_file" ]; then
+    _validate_age_key_perms "$age_key_file"
+  fi
+
+  # Source the Vault helpers and default the local-cluster VAULT_ADDR +
+  # VAULT_TOKEN before the localhost safety check runs. `disinto init`
+  # does not export these in the common fresh-LXC case (issue #912).
+  source "$(dirname "$0")/../lib/hvault.sh"
+  _hvault_default_env
 
   # Security check: VAULT_ADDR must be localhost
   _check_vault_addr
-
-  # Source the Vault helpers
-  source "$(dirname "$0")/../lib/hvault.sh"
 
   # Load .env file
   _log "Loading environment from: $env_file"
   _load_env_file "$env_file"
 
-  # Decrypt sops file
-  _log "Decrypting sops file: $sops_file"
-  local sops_env
-  sops_env="$(_decrypt_sops "$sops_file" "$age_key_file")"
-  # shellcheck disable=SC2086
-  eval "$sops_env"
+  # Decrypt sops file when --sops was provided. On the --env-only path
+  # (empty $sops_file) the sops_env stays empty and the per-token loop
+  # below silently skips runner-token imports — exactly the "only
+  # plaintext half" spec from S2.5.
+  local sops_env=""
+  if [ -n "$sops_file" ]; then
+    _log "Decrypting sops file: $sops_file"
+    sops_env="$(_decrypt_sops "$sops_file" "$age_key_file")"
+    # shellcheck disable=SC2086
+    eval "$sops_env"
+  else
+    _log "No --sops flag — skipping sops decryption (importing plaintext .env only)"
+  fi
 
   # Collect all import operations
   declare -a operations=()
@@ -397,8 +418,12 @@ EOF
   if $dry_run; then
     _log "=== DRY-RUN: Import plan ==="
     _log "Environment file: $env_file"
-    _log "Sops file: $sops_file"
-    _log "Age key: $age_key_file"
+    if [ -n "$sops_file" ]; then
+      _log "Sops file: $sops_file"
+      _log "Age key: $age_key_file"
+    else
+      _log "Sops file: (none — --env-only import)"
+    fi
     _log ""
     _log "Planned operations:"
     for op in "${operations[@]}"; do
@@ -413,8 +438,12 @@ EOF
 
   _log "=== Starting Vault import ==="
   _log "Environment file: $env_file"
-  _log "Sops file: $sops_file"
-  _log "Age key: $age_key_file"
+  if [ -n "$sops_file" ]; then
+    _log "Sops file: $sops_file"
+    _log "Age key: $age_key_file"
+  else
+    _log "Sops file: (none — --env-only import)"
+  fi
   _log ""
 
   local created=0

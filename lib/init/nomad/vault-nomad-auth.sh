@@ -49,11 +49,13 @@ APPLY_ROLES_SH="${REPO_ROOT}/tools/vault-apply-roles.sh"
 SERVER_HCL_SRC="${REPO_ROOT}/nomad/server.hcl"
 SERVER_HCL_DST="/etc/nomad.d/server.hcl"
 
-VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
-export VAULT_ADDR
-
 # shellcheck source=../../hvault.sh
 source "${REPO_ROOT}/lib/hvault.sh"
+
+# Default the local-cluster Vault env (see lib/hvault.sh::_hvault_default_env).
+# Called from `disinto init` which does not export VAULT_ADDR/VAULT_TOKEN in
+# the common fresh-LXC case (issue #912). Must run after hvault.sh is sourced.
+_hvault_default_env
 
 log() { printf '[vault-auth] %s\n' "$*"; }
 die() { printf '[vault-auth] ERROR: %s\n' "$*" >&2; exit 1; }
