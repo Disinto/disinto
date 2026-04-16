@@ -315,6 +315,24 @@ _setup_git_creds
 configure_git_identity
 configure_tea_login
 
+# Parse first available project TOML to get the project name for cloning.
+# This ensures PROJECT_NAME matches the TOML 'name' field, not the compose
+# default of 'project'. The clone will land at /home/agent/repos/<toml_name>
+# and subsequent env exports in the main loop will be consistent.
+if compgen -G "${DISINTO_DIR}/projects/*.toml" >/dev/null 2>&1; then
+  _first_toml=$(compgen -G "${DISINTO_DIR}/projects/*.toml" | head -1)
+  _pname=$(python3 -c "
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    print(tomllib.load(f).get('name', ''))
+" "$_first_toml" 2>/dev/null) || _pname=""
+  if [ -n "$_pname" ]; then
+    export PROJECT_NAME="$_pname"
+    export PROJECT_REPO_ROOT="/home/agent/repos/${_pname}"
+    log "Parsed PROJECT_NAME=${PROJECT_NAME} from ${_first_toml}"
+  fi
+fi
+
 # Clone project repo on first run (makes agents self-healing, #589)
 ensure_project_clone
 
