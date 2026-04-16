@@ -129,20 +129,26 @@ agents = cfg.get('agents', {})
 for name, config in agents.items():
     if not isinstance(config, dict):
         continue
+    # Normalize the TOML section key into a valid shell identifier fragment.
+    # TOML allows dashes in bare keys (e.g. [agents.dev-qwen2]), but POSIX
+    # shell var names cannot contain '-'. Match the 'tr a-z- A-Z_' convention
+    # used in hire-agent.sh (#834) and generators.sh (#852) so the var names
+    # stay consistent across the stack.
+    safe = name.upper().replace('-', '_')
     # Emit variables in uppercase with the agent name
     if 'base_url' in config:
-        print(f'AGENT_{name.upper()}_BASE_URL={config[\"base_url\"]}')
+        print(f'AGENT_{safe}_BASE_URL={config[\"base_url\"]}')
     if 'model' in config:
-        print(f'AGENT_{name.upper()}_MODEL={config[\"model\"]}')
+        print(f'AGENT_{safe}_MODEL={config[\"model\"]}')
     if 'api_key' in config:
-        print(f'AGENT_{name.upper()}_API_KEY={config[\"api_key\"]}')
+        print(f'AGENT_{safe}_API_KEY={config[\"api_key\"]}')
     if 'roles' in config:
         roles = ' '.join(config['roles']) if isinstance(config['roles'], list) else config['roles']
-        print(f'AGENT_{name.upper()}_ROLES={roles}')
+        print(f'AGENT_{safe}_ROLES={roles}')
     if 'forge_user' in config:
-        print(f'AGENT_{name.upper()}_FORGE_USER={config[\"forge_user\"]}')
+        print(f'AGENT_{safe}_FORGE_USER={config[\"forge_user\"]}')
     if 'compact_pct' in config:
-        print(f'AGENT_{name.upper()}_COMPACT_PCT={config[\"compact_pct\"]}')
+        print(f'AGENT_{safe}_COMPACT_PCT={config[\"compact_pct\"]}')
 " "$_PROJECT_TOML" 2>/dev/null) || true
 
   if [ -n "$_AGENT_VARS" ]; then
