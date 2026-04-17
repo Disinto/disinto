@@ -783,39 +783,8 @@ _disinto_init_nomad() {
     fi
 
     if [ -n "$with_services" ]; then
-      # Vault seed plan (S2.6, #928): one line per service whose
-      # tools/vault-seed-<svc>.sh ships. Sub-services (woodpecker-server,
-      # woodpecker-agent) map to their parent seeder (vault-seed-woodpecker.sh).
-      # Deduplicated so the seeder runs once even when both sub-services
-      # are present.
-      local seed_hdr_printed=false
-      local _seed_seen=""
-      local IFS=','
-      for svc in $with_services; do
-        svc=$(echo "$svc" | xargs)  # trim whitespace
-        # Map sub-services to parent seed name
-        local seed_name="$svc"
-        case "$svc" in
-          woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
-          agents) seed_name="agents" ;;
-        esac
-        # Deduplicate
-        if echo ",$_seed_seen," | grep -q ",$seed_name,"; then continue; fi
-        _seed_seen="${_seed_seen:+${_seed_seen},}${seed_name}"
-        local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
-        if [ -x "$seed_script" ]; then
-          if [ "$seed_hdr_printed" = false ]; then
-            echo "── Vault seed dry-run ─────────────────────────────────"
-            seed_hdr_printed=true
-          fi
-          echo "[seed] [dry-run] ${seed_script} --dry-run"
-        fi
-      done
-      [ "$seed_hdr_printed" = true ] && echo ""
-
-      echo "── Deploy services dry-run ────────────────────────────"
-      echo "[deploy] services to deploy: ${with_services}"
-
+      # Interleaved seed/deploy per service (S2.6, #928, #948): match the
+      # real-run path so dry-run output accurately represents execution order.
       # Build ordered deploy list: only include services present in with_services
       local DEPLOY_ORDER=""
       for ordered_svc in forgejo woodpecker-server woodpecker-agent agents; do
@@ -823,10 +792,26 @@ _disinto_init_nomad() {
           DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
         fi
       done
-      echo "[deploy] deployment order: ${DEPLOY_ORDER}"
 
       local IFS=' '
+      echo "[deploy] deployment order: ${DEPLOY_ORDER}"
       for svc in $DEPLOY_ORDER; do
+        # Seed this service (if seed script exists)
+        local seed_name="$svc"
+        case "$svc" in
+          woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
+          agents) seed_name="agents" ;;
+        esac
+        local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
+        if [ -x "$seed_script" ]; then
+          echo "── Vault seed dry-run ─────────────────────────────────"
+          echo "[seed] [dry-run] ${seed_script} --dry-run"
+          echo ""
+        fi
+
+        # Deploy this service
+        echo "── Deploy services dry-run ────────────────────────────"
+        echo "[deploy] services to deploy: ${with_services}"
         local jobspec_path="${FACTORY_ROOT}/nomad/jobs/${svc}.hcl"
         if [ ! -f "$jobspec_path" ]; then
           echo "Error: jobspec not found: ${jobspec_path}" >&2
