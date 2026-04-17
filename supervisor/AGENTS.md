@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8ad5aca6bbee77634b3c63523042b1d39cefa96a -->
+<!-- last-reviewed: a7a046b81a7f454ebec43bab643067bd952d50b0 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -24,12 +24,18 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
   is confirmed closed (24h grace period after closure to avoid races). Reports
   **stale crashed worktrees** (worktrees preserved after crash) — supervisor
-  housekeeping removes them after 24h. Also collects **Woodpecker agent health**:
-  container status, gRPC error count (last 20m), fast-failure pipelines (<60s,
-  last 15m), and overall health determination.
+  housekeeping removes them after 24h. Collects **Woodpecker agent health**
+  (added #933): container `disinto-woodpecker-agent` health/running status,
+  gRPC error count in last 20 min, fast-failure pipeline count (<60s, last 15 min),
+  and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
+  automatic container restart + `blocked:ci_exhausted` issue recovery in
+  `supervisor-run.sh` before the Claude session starts.
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
-  Claude evaluates all metrics and takes actions in a single interactive session
+  Claude evaluates all metrics and takes actions in a single interactive session.
+  Health-assessment now includes P2 **Woodpecker agent unhealthy** classification
+  (container not running, ≥3 gRPC errors/20m, or ≥3 fast-failure pipelines/15m);
+  decide-actions documents the pre-session auto-recovery path
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 
