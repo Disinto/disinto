@@ -391,7 +391,13 @@ EOF
     local val="${!key}"
     if [ -n "$val" ]; then
       local lowercase_key="${key,,}"
-      operations+=("woodpecker|$lowercase_key|$env_file|$key")
+      # Normalize WP_FORGEJO_* → forgejo_* (strip wp_ prefix to match template)
+      if [[ "$lowercase_key" =~ ^wp_(.+)$ ]]; then
+        vault_key="${BASH_REMATCH[1]}"
+      else
+        vault_key="$lowercase_key"
+      fi
+      operations+=("woodpecker|$vault_key|$env_file|$key")
     fi
   done
 

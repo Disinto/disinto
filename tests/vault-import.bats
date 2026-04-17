@@ -137,6 +137,7 @@ setup() {
     "${VAULT_ADDR}/v1/kv/data/disinto/shared/woodpecker"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "wp-agent-secret"
+  # Forgejo keys are normalized: WP_FORGEJO_* → forgejo_* (no wp_ prefix in key name)
   echo "$output" | grep -q "wp-forgejo-client"
   echo "$output" | grep -q "wp-forgejo-secret"
   echo "$output" | grep -q "wp-token"
@@ -294,6 +295,8 @@ setup() {
     "deploy-key-test"
     "npm-test-token"
     "dockerhub-test-token"
+    # Note: forgejo-client and forgejo-secret are NOT in the output
+    # because they are read from Vault, not logged
   )
 
   for pattern in "${secret_patterns[@]}"; do
