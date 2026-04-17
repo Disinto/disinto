@@ -7,8 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pre-built binaries (copied from docker/agents/bin/)
 # SOPS — encrypted data decryption tool
-COPY docker/agents/bin/sops /usr/local/bin/sops
-RUN chmod +x /usr/local/bin/sops
+# Download sops binary (replaces manual COPY of vendored binary)
+ARG SOPS_VERSION=3.9.4
+RUN curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64" \
+    -o /usr/local/bin/sops && chmod +x /usr/local/bin/sops
 
 # tea CLI — official Gitea/Forgejo CLI for issue/label/comment operations
 COPY docker/agents/bin/tea /usr/local/bin/tea
