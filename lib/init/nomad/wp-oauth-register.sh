@@ -60,7 +60,7 @@ log() { printf '%s %s\n' "$LOG_TAG" "$*"; }
 die() { printf '%s ERROR: %s\n' "$LOG_TAG" "$*" >&2; exit 1; }
 
 # ── Flag parsing ─────────────────────────────────────────────────────────────
-DRY_RUN=0
+DRY_RUN="${DRY_RUN:-0}"
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
