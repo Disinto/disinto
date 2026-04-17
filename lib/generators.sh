@@ -661,7 +661,7 @@ COMPOSEEOF
   if [ "$use_build" = true ]; then
     sed -i 's|^\(  agents:\)|\1|' "$compose_file"
     sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile\n    pull_policy: build|}' "$compose_file"
-    sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build: ./docker/edge|}' "$compose_file"
+    sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build: ./docker/edge\n    pull_policy: build|}' "$compose_file"
   fi
 
   echo "Created: ${compose_file}"
