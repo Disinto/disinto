@@ -822,6 +822,13 @@ _disinto_init_nomad() {
       done
       echo "[deploy] dry-run complete"
     fi
+
+    # Build custom images dry-run (if agents service is included)
+    if echo ",$with_services," | grep -q ",agents,"; then
+      echo ""
+      echo "── Build images dry-run ──────────────────────────────"
+      echo "[build] [dry-run] docker build -t disinto/agents:latest -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
+    fi
     exit 0
   fi
 
@@ -907,6 +914,17 @@ _disinto_init_nomad() {
   else
     echo ""
     echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
+  fi
+
+  # Build custom images required by Nomad jobs (S4.2) — before deploy.
+  # Single-node factory dev box: no multi-node pull needed, no registry auth.
+  # Can upgrade to approach B (registry push/pull) later if multi-node.
+  if echo ",$with_services," | grep -q ",agents,"; then
+    echo ""
+    echo "── Building custom images ─────────────────────────────"
+    local tag="disinto/agents:latest"
+    echo "── Building $tag ─────────────────────────────"
+    docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
   fi
 
   # Interleaved seed/deploy per service (S2.6, #928, #948).
