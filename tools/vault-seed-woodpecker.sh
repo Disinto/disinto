@@ -39,29 +39,23 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
+SEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SEED_DIR}/.." && pwd)"
 # shellcheck source=../lib/hvault.sh
 source "${REPO_ROOT}/lib/hvault.sh"
 
-# KV v2 mount + logical path. Kept as two vars so the full API path used
-# for GET/POST (which MUST include `/data/`) is built in one place.
 KV_MOUNT="kv"
 KV_LOGICAL_PATH="disinto/shared/woodpecker"
 KV_API_PATH="${KV_MOUNT}/data/${KV_LOGICAL_PATH}"
+AGENT_SECRET_BYTES=32   # 32 bytes → 64 hex chars
 
-# 32 bytes → 64 hex chars. Matches the agent secret length used by
-# woodpecker-server's own `woodpecker-server secret` generation.
-AGENT_SECRET_BYTES=32
-
-log() { printf '[vault-seed-woodpecker] %s\n' "$*"; }
-die() { printf '[vault-seed-woodpecker] ERROR: %s\n' "$*" >&2; exit 1; }
+LOG_TAG="[vault-seed-woodpecker]"
+log() { printf '%s %s\n' "$LOG_TAG" "$*"; }
+die() { printf '%s ERROR: %s\n' "$LOG_TAG" "$*" >&2; exit 1; }
 
 # ── Flag parsing ─────────────────────────────────────────────────────────────
-# Single optional `--dry-run`. Uses a for-over-"$@" loop so the 5-line
-# sliding-window dup detector sees a shape distinct from vault-seed-forgejo.sh
-# (arity:value case) and vault-apply-roles.sh (if/elif).
+# for-over-"$@" loop — shape distinct from vault-seed-forgejo.sh (arity:value
+# case) and vault-apply-roles.sh (if/elif).
 DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
@@ -78,49 +72,19 @@ for arg in "$@"; do
   esac
 done
 
-# ── Preconditions ────────────────────────────────────────────────────────────
-for bin in curl jq openssl; do
-  command -v "$bin" >/dev/null 2>&1 \
-    || die "required binary not found: ${bin}"
+# ── Preconditions — binary + Vault connectivity checks ───────────────────────
+required_bins=(curl jq openssl)
+for bin in "${required_bins[@]}"; do
+  command -v "$bin" >/dev/null 2>&1 || die "required binary not found: ${bin}"
 done
-
-[ -n "${VAULT_ADDR:-}" ] \
-  || die "VAULT_ADDR unset — e.g. export VAULT_ADDR=http://127.0.0.1:8200"
-hvault_token_lookup >/dev/null \
-  || die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
+[ -n "${VAULT_ADDR:-}" ] || die "VAULT_ADDR unset — export VAULT_ADDR=http://127.0.0.1:8200"
+hvault_token_lookup >/dev/null || die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
 
 # ── Step 1/2: ensure kv/ mount exists and is KV v2 ───────────────────────────
 log "── Step 1/2: ensure ${KV_MOUNT}/ is KV v2 ──"
-mounts_json="$(hvault_get_or_empty "sys/mounts")" \
-  || die "failed to list Vault mounts"
-
-mount_exists=false
-if printf '%s' "$mounts_json" | jq -e --arg m "${KV_MOUNT}/" '.[$m]' >/dev/null 2>&1; then
-  mount_exists=true
-fi
-
-if [ "$mount_exists" = true ]; then
-  mount_type="$(printf '%s' "$mounts_json" \
-    | jq -r --arg m "${KV_MOUNT}/" '.[$m].type // ""')"
-  mount_version="$(printf '%s' "$mounts_json" \
-    | jq -r --arg m "${KV_MOUNT}/" '.[$m].options.version // "1"')"
-  if [ "$mount_type" != "kv" ]; then
-    die "${KV_MOUNT}/ is mounted as type='${mount_type}', expected 'kv' — refuse to re-mount"
-  fi
-  if [ "$mount_version" != "2" ]; then
-    die "${KV_MOUNT}/ is KV v${mount_version}, expected v2 — refuse to upgrade in place (manual fix required)"
-  fi
-  log "${KV_MOUNT}/ already mounted (kv v2) — skipping enable"
-else
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "[dry-run] would enable ${KV_MOUNT}/ as kv v2"
-  else
-    payload="$(jq -n '{type:"kv",options:{version:"2"},description:"disinto shared KV v2 (S2.4)"}')"
-    _hvault_request POST "sys/mounts/${KV_MOUNT}" "$payload" >/dev/null \
-      || die "failed to enable ${KV_MOUNT}/ as kv v2"
-    log "${KV_MOUNT}/ enabled as kv v2"
-  fi
-fi
+export DRY_RUN
+hvault_ensure_kv_v2 "$KV_MOUNT" "[vault-seed-woodpecker]" \
+  || die "KV mount check failed"
 
 # ── Step 2/2: seed agent_secret at kv/data/disinto/shared/woodpecker ─────────
 log "── Step 2/2: seed ${KV_API_PATH} ──"
