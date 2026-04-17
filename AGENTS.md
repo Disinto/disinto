@@ -1,4 +1,4 @@
-<!-- last-reviewed: 6bdbeb5bd2a200ff1b23724564da9383193f3e30 -->
+<!-- last-reviewed: 8ad5aca6bbee77634b3c63523042b1d39cefa96a -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -44,12 +44,13 @@ disinto/                 (code repo)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh)
-│                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh, vault-seed-forgejo.sh — Vault provisioning (S2.1/S2.2)
+│                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
+│                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>` (add a new file to support a new service)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
-├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, disinto-init-nomad.bats)
+├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)
 ├── templates/     Issue templates
-├── bin/           The `disinto` CLI script
+├── bin/           The `disinto` CLI script (`--with <svc>` deploys services + runs their Vault seeders)
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
