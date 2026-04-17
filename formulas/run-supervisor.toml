@@ -29,7 +29,7 @@ and injected into your prompt above. Review them now.
 
 1. Read the injected metrics data carefully (System Resources, Docker,
    Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
-   CI Pipelines, Open PRs, Issue Status, Stale Worktrees).
+   CI Pipelines, Open PRs, Issue Status, Stale Worktrees, **Woodpecker Agent Health**).
    Note: preflight.sh auto-removes PHASE:escalate files for closed issues
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
@@ -75,6 +75,10 @@ Categorize every finding from the metrics into priority levels.
 - Dev/action sessions in PHASE:escalate for > 24h (session timeout)
   (Note: PHASE:escalate files for closed issues are auto-cleaned by preflight;
   this check covers sessions where the issue is still open)
+- **Woodpecker agent unhealthy** — see "Woodpecker Agent Health" section in preflight:
+  - Container not running or in unhealthy state
+  - gRPC errors >= 3 in last 20 minutes
+  - Fast-failure pipelines (duration < 60s) >= 3 in last 15 minutes
 
 ### P3 — Factory degraded
 - PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed
@@ -99,6 +103,17 @@ description = """
 For each finding from the health assessment, decide and execute an action.
 
 ### Auto-fixable (execute these directly)
+
+**P2 Woodpecker agent unhealthy:**
+The supervisor-run.sh script automatically handles WP agent recovery:
+- Detects unhealthy state via preflight.sh health checks
+- Restarts container via `docker restart`
+- Scans for `blocked: ci_exhausted` issues updated in last 30 minutes
+- Unassigns and removes blocked label from affected issues
+- Posts recovery comment with infra-flake context
+- Avoids duplicate restarts via 5-minute cooldown in history file
+
+**P0 Memory crisis:**
 
 **P0 Memory crisis:**
   # Kill stale one-shot claude processes (>3h old)
@@ -247,6 +262,11 @@ Format:
   ### Actions taken
   - <what was fixed>
   (or "No actions needed")
+
+  ### WP Agent Recovery (if applicable)
+  - WP agent restart: <time of restart or "none">
+  - Issues recovered: <count>
+  - Reason: <health check reason or "healthy">
 
   ### Vault items filed
   - vault/pending/<id>.md — <reason>
