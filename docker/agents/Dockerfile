@@ -13,8 +13,10 @@ RUN curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSIO
     -o /usr/local/bin/sops && chmod +x /usr/local/bin/sops
 
 # tea CLI — official Gitea/Forgejo CLI for issue/label/comment operations
-COPY docker/agents/bin/tea /usr/local/bin/tea
-RUN chmod +x /usr/local/bin/tea
+# Download tea binary (replaces manual COPY of vendored binary)
+ARG TEA_VERSION=0.9.2
+RUN curl -fsSL "https://dl.gitea.com/tea/${TEA_VERSION}/tea-${TEA_VERSION}-linux-amd64" \
+    -o /usr/local/bin/tea && chmod +x /usr/local/bin/tea
 
 # Claude CLI is mounted from the host via docker-compose volume.
 # No internet access to cli.anthropic.com required at build time.
