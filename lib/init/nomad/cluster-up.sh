@@ -116,7 +116,7 @@ if [ "$dry_run" = true ]; then
 [dry-run] Step 4/9: create host-volume dirs under /srv/disinto/
 EOF
   for d in "${HOST_VOLUME_DIRS[@]}"; do
-    printf '  → install -d -m 0755 %s\n' "$d"
+    printf '  → install -d -m 0777 %s\n' "$d"
   done
   cat <<EOF
 
@@ -280,8 +280,10 @@ for d in "${HOST_VOLUME_DIRS[@]}"; do
     log "unchanged: ${d}"
   else
     log "creating: ${d}"
-    install -d -m 0755 -o root -g root "$d"
+    install -d -m 0777 -o root -g root "$d"
   fi
+  # Ensure correct permissions (fixes pre-existing 0755 dirs on re-run)
+  chmod 0777 "$d"
 done
 
 # ── Step 5/9: /etc/nomad.d/server.hcl + client.hcl ───────────────────────────
