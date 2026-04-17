@@ -88,7 +88,6 @@ fi
 FORGE_TOKEN="${FORGE_TOKEN:-}"
 if [ -z "$FORGE_TOKEN" ]; then
   log "reading FORGE_TOKEN from Vault at kv/${KV_PATH}/token"
-  token_raw
   token_raw="$(hvault_get_or_empty "${KV_MOUNT}/data/disinto/shared/forge/token")" || {
     die "failed to read forge token from Vault"
   }
@@ -118,6 +117,7 @@ oauth_apps_raw=$(curl -sf --max-time 10 \
 
 oauth_app_exists=false
 existing_client_id=""
+forgejo_secret=""
 
 # Parse the OAuth2 apps list
 if [ -n "$oauth_apps_raw" ]; then
@@ -189,12 +189,18 @@ if [ -n "$existing_raw" ]; then
   existing_secret_in_vault="$(printf '%s' "$existing_raw" | jq -r '.data.data.forgejo_secret // ""')"
 fi
 
-# Check if credentials already exist and match
-if [ "$existing_client_id_in_vault" = "$existing_client_id" ] \
-   && [ "$existing_secret_in_vault" = "$forgejo_secret" ]; then
-  log "credentials already in Vault"
+# Idempotency check: if Vault already has credentials for this app, use them
+# This handles the case where the OAuth app exists but we don't have the secret
+if [ "$existing_client_id_in_vault" = "$existing_client_id" ] && [ -n "$existing_secret_in_vault" ]; then
+  log "credentials already in Vault for '${FORGE_OAUTH_APP_NAME}'"
   log "done — OAuth2 app registered + credentials in Vault"
   exit 0
+fi
+
+# Use existing secret from Vault if available (app exists, secret in Vault)
+if [ -n "$existing_secret_in_vault" ]; then
+  log "using existing secret from Vault for '${FORGE_OAUTH_APP_NAME}'"
+  forgejo_secret="$existing_secret_in_vault"
 fi
 
 # Prepare the payload with new credentials

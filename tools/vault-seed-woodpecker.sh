@@ -132,16 +132,14 @@ fi
 # ── Step 3/3: register Forgejo OAuth app and store credentials ───────────────
 log "── Step 3/3: register Forgejo OAuth app ──"
 
-# Call the OAuth registration script
-if [ "$DRY_RUN" -eq 1 ]; then
-  log "[dry-run] would call wp-oauth-register.sh"
-else
-  # Export required env vars for the OAuth script
-  export DRY_RUN
-  "${LIB_DIR}/wp-oauth-register.sh" --dry-run || {
-    log "OAuth registration check failed (Forgejo may not be running)"
-    log "This is expected if Forgejo is not available"
-  }
+# Export DRY_RUN for the OAuth script and call it
+export DRY_RUN
+if "${LIB_DIR}/wp-oauth-register.sh" || [ "$DRY_RUN" -eq 1 ]; then
+  :
+elif [ -n "${FORGE_URL:-}" ]; then
+  # Forgejo was configured but unavailable
+  log "OAuth registration check failed (Forgejo may not be running)"
+  log "This is expected if Forgejo is not available"
 fi
 
 log "done — agent_secret + OAuth credentials seeded"
