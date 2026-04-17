@@ -62,6 +62,14 @@ roles:
     namespace: default
     job_id:    woodpecker-agent
 
+  # ── Agents composite (nomad/jobs/agents.hcl — S4.1) ──────────────────────
+  # Single job running all 7 agent roles. Uses a composite policy
+  # (vault/policies/service-agents.hcl) that unions all bot KV paths.
+  - name:      service-agents
+    policy:    service-agents
+    namespace: default
+    job_id:    agents
+
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the
