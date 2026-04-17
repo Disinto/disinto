@@ -1,4 +1,4 @@
-<!-- last-reviewed: a7a046b81a7f454ebec43bab643067bd952d50b0 -->
+<!-- last-reviewed: edf7a28bd3c85d4f72d28fd986fd2af3dcb885c1 -->
 # vault/policies/ — Agent Instructions
 
 HashiCorp Vault ACL policies for the disinto factory. One `.hcl` file per
@@ -30,6 +30,7 @@ KV v2). Vault addresses KV v2 data at `kv/data/<path>` and metadata at
 |---|---|
 | `service-forgejo` | `kv/data/disinto/shared/forgejo/*` |
 | `service-woodpecker` | `kv/data/disinto/shared/woodpecker/*` |
+| `service-agents` | All 7 `kv/data/disinto/bots/<role>/*` namespaces + `kv/data/disinto/shared/forge/*`; composite policy for the `agents` Nomad job (S4.1) |
 | `bot-<role>` (dev, review, gardener, architect, planner, predictor, supervisor, vault, dev-qwen) | `kv/data/disinto/bots/<role>/*` + `kv/data/disinto/shared/forge/*` |
 | `runner-<TOKEN>` (GITHUB\_TOKEN, CODEBERG\_TOKEN, CLAWHUB\_TOKEN, DEPLOY\_KEY, NPM\_TOKEN, DOCKER\_HUB\_TOKEN) | `kv/data/disinto/runner/<TOKEN>` (exactly one) |
 | `dispatcher` | `kv/data/disinto/runner/*` + `kv/data/disinto/shared/ops-repo/*` |

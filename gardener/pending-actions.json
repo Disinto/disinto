@@ -1,1 +1,37 @@
-[]
+[
+  {
+    "action": "edit_body",
+    "issue": 947,
+    "body": "Flagged by AI reviewer in PR #945.\n\n## Problem\n\n`lib/init/nomad/wp-oauth-register.sh` line 46 computes REPO_ROOT with only two `../` levels:\n\n```bash\nREPO_ROOT=\"$(cd \"${SCRIPT_DIR}/../..\" && pwd)\"\n```\n\nBut the script lives at `lib/init/nomad/` — three levels deep — so `../../..` is required. Every sibling script in the same directory (`vault-engines.sh`, `vault-nomad-auth.sh`, `cluster-up.sh`, `systemd-vault.sh`) uses `../../..`.\n\nWith this bug, REPO_ROOT resolves to `lib/` (not the repo root). The subsequent `source \"${REPO_ROOT}/lib/hvault.sh\"` then looks for `lib/lib/hvault.sh` — a path that does not exist. The script fails at startup.\n\n## Fix\n\n```bash\nREPO_ROOT=\"$(cd \"${SCRIPT_DIR}/../../..\" && pwd)\"\n```\n\n*Auto-created from AI review*\n\n## Affected files\n- `lib/init/nomad/wp-oauth-register.sh` (line 46 — REPO_ROOT path depth)\n\n## Acceptance criteria\n- [ ] `REPO_ROOT` in `wp-oauth-register.sh` uses `../../..` (three levels up), matching all sibling scripts\n- [ ] `source \"${REPO_ROOT}/lib/hvault.sh\"` resolves correctly at runtime\n- [ ] `shellcheck` clean\n- [ ] CI green\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 947,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 950,
+    "body": "Flagged by AI reviewer in PR #949.\n\n## Problem\n\nAfter PR #949 the real run path in `_disinto_init_nomad` interleaves seed+deploy per service (seed-forgejo → deploy-forgejo → seed-woodpecker → deploy-woodpecker-…). However the dry-run preview block (`bin/disinto` ~lines 785–839) still displays the old batch pattern: all seeds listed first, then all deploys.\n\nBefore #949 both paths were consistent. Now dry-run output misrepresents what will actually execute, which can mislead operators planning or auditing a run.\n\n## Fix\nUpdate the dry-run block to emit one \"[dry-run] seed X → deploy X\" pair per service in canonical order, matching the real-run interleaved sequence.\n\n*Auto-created from AI review*\n\n## Affected files\n- `bin/disinto` (dry-run preview block, ~lines 785–839)\n\n## Acceptance criteria\n- [ ] `disinto init --dry-run` output shows one `[dry-run] seed X → deploy X` pair per service, in canonical order\n- [ ] Dry-run output matches the real-run execution order from `_disinto_init_nomad`\n- [ ] No behavior change to real run path\n- [ ] `shellcheck` clean\n- [ ] CI green\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 950,
+    "label": "backlog"
+  },
+  {
+    "action": "remove_label",
+    "issue": 850,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 850,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 850,
+    "body": "Gardener: removing blocked label — prior PRs (#872, #908) failed due to implementation issues (TEST_DIR unbound variable, compose early-return), not external dependencies. Fix path is fully documented in the issue body. Re-queueing as backlog for dev-agent pickup."
+  }
+]

@@ -1,23 +1,24 @@
-<!-- last-reviewed: a7a046b81a7f454ebec43bab643067bd952d50b0 -->
+<!-- last-reviewed: edf7a28bd3c85d4f72d28fd986fd2af3dcb885c1 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
 the source of truth that `lib/init/nomad/cluster-up.sh` copies onto a
 factory box under `/etc/nomad.d/` and `/etc/vault.d/` at init time.
 
-This directory covers the **Nomad+Vault migration (Steps 0–3)** —
-see issues #821–#937 for the step breakdown.
+This directory covers the **Nomad+Vault migration (Steps 0–4)** —
+see issues #821–#962 for the step breakdown.
 
 ## What lives here
 
 | File/Dir | Deployed to | Owned by |
 |---|---|---|
 | `server.hcl` | `/etc/nomad.d/server.hcl` | agent role, bind, ports, `data_dir` (S0.2) |
-| `client.hcl` | `/etc/nomad.d/client.hcl` | Docker driver cfg + `host_volume` declarations (S0.2) |
+| `client.hcl` | `/etc/nomad.d/client.hcl` | Docker driver cfg + `host_volume` declarations (S0.2); `allow_privileged = true` for woodpecker-agent Docker-in-Docker (S3-fix-5, #961) |
 | `vault.hcl`  | `/etc/vault.d/vault.hcl`  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
 | `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 | `jobs/woodpecker-server.hcl` | submitted via Nomad API | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `jobs/woodpecker-agent.hcl` | submitted via Nomad API | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET` (S3.2) |
+| `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy (S4.1, #955) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
@@ -32,8 +33,8 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 
 ## Not yet implemented
 
-- **Additional jobspecs** (agents, caddy) — Woodpecker is now deployed (S3.1-S3.2);
-  agents and caddy land in later steps.
+- **Additional jobspecs** (caddy) — Woodpecker (S3.1-S3.2) and agents (S4.1) are now deployed;
+  caddy lands in a later step.
 - **TLS, ACLs, gossip encryption** — deliberately absent for now; land
   alongside multi-node support.
 
