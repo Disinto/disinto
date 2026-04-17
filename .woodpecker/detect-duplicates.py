@@ -301,6 +301,13 @@ def main() -> int:
         "9a57368f3c1dfd29ec328596b86962a0": "Flag parsing loop + case start (vault-seed-woodpecker + wp-oauth-register)",
         "9d72d40ff303cbed0b7e628fc15381c3": "Case loop + dry-run handler (vault-seed-woodpecker + wp-oauth-register)",
         "5b52ddbbf47948e3cbc1b383f0909588": "Help + invalid arg handler end (vault-seed-woodpecker + wp-oauth-register)",
+        # Common vault-seed script preamble + precondition patterns
+        # Shared across tools/vault-seed-{forgejo,agents,woodpecker}.sh
+        "dff3675c151fcdbd2fef798826ae919b": "Vault-seed preamble: set -euo + path setup + source hvault.sh + KV_MOUNT",
+        "1cd9f0d083e24e6e6b2071db9b6dae09": "Vault-seed preconditions: binary check loop + VAULT_ADDR guard",
+        "63bfa88d71764c95c65a9a248f3e40ab": "Vault-seed preconditions: binary check end + VAULT_ADDR die",
+        "34873ad3570b211ce1d90468ab6ac94c": "Vault-seed preconditions: VAULT_ADDR die + hvault_token_lookup",
+        "71a52270f249e843cda48ad896d9f781": "Vault-seed preconditions: VAULT_ADDR + hvault_token_lookup + die",
     }
 
     if not sh_files:
