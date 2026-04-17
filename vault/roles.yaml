@@ -57,6 +57,11 @@ roles:
     namespace: default
     job_id:    woodpecker-server
 
+  - name:      service-woodpecker-agent
+    policy:    service-woodpecker
+    namespace: default
+    job_id:    woodpecker-agent
+
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the
