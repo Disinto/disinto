@@ -294,6 +294,13 @@ def main() -> int:
         "9f6ae8e7811575b964279d8820494eb0": "Verification helper: for loop done pattern",
         # Standard lib source block shared across formula-driven agent run scripts
         "330e5809a00b95ade1a5fce2d749b94b": "Standard lib source block (env.sh, formula-session.sh, worktree.sh, guard.sh, agent-sdk.sh)",
+        # Common vault-seed script patterns: logging helpers + flag parsing
+        # Used in tools/vault-seed-woodpecker.sh + lib/init/nomad/wp-oauth-register.sh
+        "843a1cbf987952697d4e05e96ed2b2d5": "Logging helpers + DRY_RUN init (vault-seed-woodpecker + wp-oauth-register)",
+        "ee51df9642f2ef37af73b0c15f4d8406": "Logging helpers + DRY_RUN loop start (vault-seed-woodpecker + wp-oauth-register)",
+        "9a57368f3c1dfd29ec328596b86962a0": "Flag parsing loop + case start (vault-seed-woodpecker + wp-oauth-register)",
+        "9d72d40ff303cbed0b7e628fc15381c3": "Case loop + dry-run handler (vault-seed-woodpecker + wp-oauth-register)",
+        "5b52ddbbf47948e3cbc1b383f0909588": "Help + invalid arg handler end (vault-seed-woodpecker + wp-oauth-register)",
     }
 
     if not sh_files:
