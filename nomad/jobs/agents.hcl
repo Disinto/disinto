@@ -84,7 +84,8 @@ job "agents" {
       driver = "docker"
 
       config {
-        image = "disinto/agents:latest"
+        image      = "disinto/agents:latest"
+        force_pull = false
 
         # apparmor=unconfined matches docker-compose — Claude Code needs
         # ptrace for node.js inspector and /proc access.
