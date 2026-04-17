@@ -177,7 +177,8 @@ for job_name in "${JOBS[@]}"; do
   fi
 
   # Per-job timeout override: JOB_READY_TIMEOUT_<UPPERCASE_JOBNAME>
-  job_upper=$(printf '%s' "$job_name" | tr '[:lower:]' '[:upper:]')
+  # Sanitize job name: replace hyphens with underscores (bash vars can't have hyphens)
+  job_upper=$(printf '%s' "$job_name" | tr '[:lower:]-' '[:upper:]_' | tr ' ' '_')
   timeout_var="JOB_READY_TIMEOUT_${job_upper}"
   job_timeout="${!timeout_var:-$JOB_READY_TIMEOUT_SECS}"
 

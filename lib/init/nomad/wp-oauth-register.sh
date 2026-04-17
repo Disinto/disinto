@@ -44,7 +44,7 @@ set -euo pipefail
 # Source the hvault module for Vault helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-# shellcheck source=../../lib/hvault.sh
+# shellcheck source=../../../lib/hvault.sh
 source "${REPO_ROOT}/lib/hvault.sh"
 
 # Configuration
