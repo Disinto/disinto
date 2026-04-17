@@ -224,3 +224,108 @@ for _vf in "${_va_root}"/*.md; do
 done
 [ "$_found_vault" = false ] && echo "  None"
 echo ""
+
+# ── Woodpecker Agent Health ────────────────────────────────────────────────
+
+echo "## Woodpecker Agent Health"
+
+# Check WP agent container health status
+_wp_container="disinto-woodpecker-agent"
+_wp_health_status="unknown"
+_wp_health_start=""
+
+if command -v docker &>/dev/null; then
+  # Get health status via docker inspect
+  _wp_health_status=$(docker inspect "$_wp_container" --format '{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+  if [ "$_wp_health_status" = "not_found" ] || [ -z "$_wp_health_status" ]; then
+    # Container may not exist or not have health check configured
+    _wp_health_status=$(docker inspect "$_wp_container" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
+  fi
+
+  # Get container start time for age calculation
+  _wp_start_time=$(docker inspect "$_wp_container" --format '{{.State.StartedAt}}' 2>/dev/null || echo "")
+  if [ -n "$_wp_start_time" ] && [ "$_wp_start_time" != "0001-01-01T00:00:00Z" ]; then
+    _wp_health_start=$(date -d "$_wp_start_time" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "$_wp_start_time")
+  fi
+fi
+
+echo "Container: $_wp_container"
+echo "Status: $_wp_health_status"
+[ -n "$_wp_health_start" ] && echo "Started: $_wp_health_start"
+
+# Check for gRPC errors in agent logs (last 20 minutes)
+_wp_grpc_errors=0
+if [ "$_wp_health_status" != "not_found" ] && [ -n "$_wp_health_status" ]; then
+  _wp_grpc_errors=$(docker logs --since 20m "$_wp_container" 2>&1 | grep -c 'grpc error' || echo "0")
+  echo "gRPC errors (last 20m): $_wp_grpc_errors"
+fi
+
+# Fast-failure heuristic: check for pipelines completing in <60s
+_wp_fast_failures=0
+_wp_recent_failures=""
+if [ -n "${WOODPECKER_REPO_ID:-}" ] && [ "${WOODPECKER_REPO_ID}" != "0" ]; then
+  _now=$(date +%s)
+  _pipelines=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines?perPage=100" 2>/dev/null || echo '[]')
+
+  # Count failures with duration < 60s in last 15 minutes
+  _wp_fast_failures=$(echo "$_pipelines" | jq --argjson now "$_now" '
+    [.[] | select(.status == "failure") | select((.finished - .started) < 60) | select(($now - .finished) < 900)]
+    | length' 2>/dev/null || echo "0")
+
+  if [ "$_wp_fast_failures" -gt 0 ]; then
+    _wp_recent_failures=$(echo "$_pipelines" | jq -r --argjson now "$_now" '
+      [.[] | select(.status == "failure") | select((.finished - .started) < 60) | select(($now - .finished) < 900)]
+      | .[] | "\(.number)\t\((.finished - .started))s"' 2>/dev/null || echo "")
+  fi
+fi
+
+echo "Fast-fail pipelines (<60s, last 15m): $_wp_fast_failures"
+if [ -n "$_wp_recent_failures" ] && [ "$_wp_fast_failures" -gt 0 ]; then
+  echo "Recent failures:"
+  echo "$_wp_recent_failures" | while IFS=$'\t' read -r _num _dur; do
+    echo "  #$_num: ${_dur}"
+  done
+fi
+
+# Determine overall WP agent health
+_wp_agent_healthy=true
+_wp_health_reason=""
+
+if [ "$_wp_health_status" = "not_found" ]; then
+  _wp_agent_healthy=false
+  _wp_health_reason="Container not running"
+elif [ "$_wp_health_status" = "unhealthy" ]; then
+  _wp_agent_healthy=false
+  _wp_health_reason="Container health check failed"
+elif [ "$_wp_health_status" != "running" ]; then
+  _wp_agent_healthy=false
+  _wp_health_reason="Container not in running state: $_wp_health_status"
+elif [ "$_wp_grpc_errors" -ge 3 ]; then
+  _wp_agent_healthy=false
+  _wp_health_reason="High gRPC error count (>=3 in 20m)"
+elif [ "$_wp_fast_failures" -ge 3 ]; then
+  _wp_agent_healthy=false
+  _wp_health_reason="High fast-failure count (>=3 in 15m)"
+fi
+
+echo ""
+echo "WP Agent Health: $([ "$_wp_agent_healthy" = true ] && echo "healthy" || echo "UNHEALTHY")"
+[ -n "$_wp_health_reason" ] && echo "Reason: $_wp_health_reason"
+echo ""
+
+# ── WP Agent Health History (for idempotency) ──────────────────────────────
+
+echo "## WP Agent Health History"
+# Track last restart timestamp to avoid duplicate restarts in same run
+_WP_HEALTH_HISTORY_FILE="${DISINTO_LOG_DIR}/supervisor/wp-agent-health.history"
+_wp_last_restart="never"
+_wp_last_restart_ts=0
+
+if [ -f "$_WP_HEALTH_HISTORY_FILE" ]; then
+  _wp_last_restart_ts=$(grep -m1 '^LAST_RESTART_TS=' "$_WP_HEALTH_HISTORY_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
+  if [ -n "$_wp_last_restart_ts" ] && [ "$_wp_last_restart_ts" -gt 0 ] 2>/dev/null; then
+    _wp_last_restart=$(date -d "@$_wp_last_restart_ts" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "$_wp_last_restart_ts")
+  fi
+fi
+echo "Last restart: $_wp_last_restart"
+echo ""

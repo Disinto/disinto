@@ -24,7 +24,9 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
   is confirmed closed (24h grace period after closure to avoid races). Reports
   **stale crashed worktrees** (worktrees preserved after crash) — supervisor
-  housekeeping removes them after 24h
+  housekeeping removes them after 24h. Also collects **Woodpecker agent health**:
+  container status, gRPC error count (last 20m), fast-failure pipelines (<60s,
+  last 15m), and overall health determination.
 - `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
   health-assessment, decide-actions, report, journal) with `needs` dependencies.
   Claude evaluates all metrics and takes actions in a single interactive session
@@ -47,5 +49,6 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Logs a WARNING message at startup indicating degraded mode
 
 **Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
-→ lock + memory guard → run preflight.sh (collect metrics) → load formula + context → run
+→ lock + memory guard → run preflight.sh (collect metrics) → **WP agent health recovery**
+(if unhealthy: restart container + recover ci_exhausted issues) → load formula + context → run
 claude -p via agent-sdk.sh → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.
