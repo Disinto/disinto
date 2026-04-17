@@ -215,7 +215,44 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown service"* ]]
-  [[ "$output" == *"known: forgejo"* ]]
+  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent"* ]]
+}
+
+# S3.4: woodpecker auto-expansion and forgejo auto-inclusion
+@test "disinto init --backend=nomad --with woodpecker auto-expands to server+agent" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with woodpecker --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"services to deploy: forgejo,woodpecker-server,woodpecker-agent"* ]]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent"* ]]
+}
+
+@test "disinto init --backend=nomad --with woodpecker auto-includes forgejo with note" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with woodpecker --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Note: --with woodpecker implies --with forgejo"* ]]
+}
+
+@test "disinto init --backend=nomad --with forgejo,woodpecker expands woodpecker" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo,woodpecker --dry-run
+  [ "$status" -eq 0 ]
+  # Order follows input: forgejo first, then woodpecker expanded
+  [[ "$output" == *"services to deploy: forgejo,woodpecker-server,woodpecker-agent"* ]]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent"* ]]
+}
+
+@test "disinto init --backend=nomad --with woodpecker seeds both forgejo and woodpecker" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with woodpecker --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tools/vault-seed-forgejo.sh --dry-run"* ]]
+  [[ "$output" == *"tools/vault-seed-woodpecker.sh --dry-run"* ]]
+}
+
+@test "disinto init --backend=nomad --with forgejo,woodpecker deploys all three services" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with forgejo,woodpecker --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"forgejo.hcl"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"woodpecker-server.hcl"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"woodpecker-agent.hcl"* ]]
 }
 
 @test "disinto init --backend=nomad --with forgejo (flag=value syntax) works" {
