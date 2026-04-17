@@ -1,12 +1,12 @@
-<!-- last-reviewed: 8ad5aca6bbee77634b3c63523042b1d39cefa96a -->
+<!-- last-reviewed: a7a046b81a7f454ebec43bab643067bd952d50b0 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
 the source of truth that `lib/init/nomad/cluster-up.sh` copies onto a
 factory box under `/etc/nomad.d/` and `/etc/vault.d/` at init time.
 
-This directory covers the **Nomad+Vault migration (Steps 0–2)** —
-see issues #821–#884 for the step breakdown.
+This directory covers the **Nomad+Vault migration (Steps 0–3)** —
+see issues #821–#937 for the step breakdown.
 
 ## What lives here
 
@@ -16,6 +16,8 @@ see issues #821–#884 for the step breakdown.
 | `client.hcl` | `/etc/nomad.d/client.hcl` | Docker driver cfg + `host_volume` declarations (S0.2) |
 | `vault.hcl`  | `/etc/vault.d/vault.hcl`  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
 | `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
+| `jobs/woodpecker-server.hcl` | submitted via Nomad API | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
+| `jobs/woodpecker-agent.hcl` | submitted via Nomad API | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET` (S3.2) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
@@ -30,8 +32,8 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 
 ## Not yet implemented
 
-- **Additional jobspecs** (woodpecker, agents, caddy) — Step 1 brought up
-  Forgejo; remaining services land in later steps.
+- **Additional jobspecs** (agents, caddy) — Woodpecker is now deployed (S3.1-S3.2);
+  agents and caddy land in later steps.
 - **TLS, ACLs, gossip encryption** — deliberately absent for now; land
   alongside multi-node support.
 
