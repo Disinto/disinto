@@ -20,10 +20,10 @@ path "kv/metadata/disinto/runner/*" {
   capabilities = ["list", "read"]
 }
 
-path "kv/data/disinto/shared/ops-repo/*" {
+path "kv/data/disinto/shared/ops-repo" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/disinto/shared/ops-repo/*" {
+path "kv/metadata/disinto/shared/ops-repo" {
   capabilities = ["list", "read"]
 }

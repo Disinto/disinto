@@ -7,14 +7,14 @@
 # NOTE: distinct from the runner-* policies, which gate per-secret access
 # for vault-runner ephemeral dispatches (Step 5).
 
-path "kv/data/disinto/bots/vault/*" {
+path "kv/data/disinto/bots/vault" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/disinto/bots/vault/*" {
+path "kv/metadata/disinto/bots/vault" {
   capabilities = ["list", "read"]
 }
 
-path "kv/data/disinto/shared/forge/*" {
+path "kv/data/disinto/shared/forge" {
   capabilities = ["read"]
 }
