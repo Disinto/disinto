@@ -129,6 +129,60 @@ _hvault_request() {
 #   Used by: hvault_kv_get, hvault_kv_put, hvault_kv_list
 : "${VAULT_KV_MOUNT:=kv}"
 
+# hvault_ensure_kv_v2 MOUNT [LOG_PREFIX]
+#   Assert that the given KV mount is present and KV v2. If absent, enable
+#   it. If present as wrong type/version, exit 1. Callers must have already
+#   checked VAULT_ADDR / VAULT_TOKEN.
+#
+#   DRY_RUN (env, default 0): when 1, log intent without writing.
+#   LOG_PREFIX (optional): label for log lines, e.g. "[vault-seed-forgejo]".
+#
+#   Extracted here because every vault-seed-*.sh script needs this exact
+#   sequence, and the 5-line sliding-window dup detector flags the
+#   copy-paste. One place, one implementation.
+hvault_ensure_kv_v2() {
+  local mount="${1:?hvault_ensure_kv_v2: MOUNT required}"
+  local prefix="${2:-[hvault]}"
+  local dry_run="${DRY_RUN:-0}"
+  local mounts_json mount_exists mount_type mount_version
+
+  mounts_json="$(hvault_get_or_empty "sys/mounts")" \
+    || { printf '%s ERROR: failed to list Vault mounts\n' "$prefix" >&2; return 1; }
+
+  mount_exists=false
+  if printf '%s' "$mounts_json" | jq -e --arg m "${mount}/" '.[$m]' >/dev/null 2>&1; then
+    mount_exists=true
+  fi
+
+  if [ "$mount_exists" = true ]; then
+    mount_type="$(printf '%s' "$mounts_json" \
+      | jq -r --arg m "${mount}/" '.[$m].type // ""')"
+    mount_version="$(printf '%s' "$mounts_json" \
+      | jq -r --arg m "${mount}/" '.[$m].options.version // "1"')"
+    if [ "$mount_type" != "kv" ]; then
+      printf '%s ERROR: %s/ is mounted as type=%q, expected kv — refuse to re-mount\n' \
+        "$prefix" "$mount" "$mount_type" >&2
+      return 1
+    fi
+    if [ "$mount_version" != "2" ]; then
+      printf '%s ERROR: %s/ is KV v%s, expected v2 — refuse to upgrade in place\n' \
+        "$prefix" "$mount" "$mount_version" >&2
+      return 1
+    fi
+    printf '%s %s/ already mounted (kv v2) — skipping enable\n' "$prefix" "$mount"
+  else
+    if [ "$dry_run" -eq 1 ]; then
+      printf '%s [dry-run] would enable %s/ as kv v2\n' "$prefix" "$mount"
+    else
+      local payload
+      payload="$(jq -n '{type:"kv",options:{version:"2"},description:"disinto shared KV v2 (S2.4)"}')"
+      _hvault_request POST "sys/mounts/${mount}" "$payload" >/dev/null \
+        || { printf '%s ERROR: failed to enable %s/ as kv v2\n' "$prefix" "$mount" >&2; return 1; }
+      printf '%s %s/ enabled as kv v2\n' "$prefix" "$mount"
+    fi
+  fi
+}
+
 # hvault_kv_get PATH [KEY]
 #   Read a KV v2 secret at PATH, optionally extract a single KEY.
 #   Outputs: JSON value (full data object, or single key value)

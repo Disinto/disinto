@@ -118,36 +118,9 @@ hvault_token_lookup >/dev/null \
 # wrong version or a different backend, fail loudly — silently
 # re-enabling would destroy existing secrets.
 log "── Step 1/2: ensure ${KV_MOUNT}/ is KV v2 ──"
-mounts_json="$(hvault_get_or_empty "sys/mounts")" \
-  || die "failed to list Vault mounts"
-
-mount_exists=false
-if printf '%s' "$mounts_json" | jq -e --arg m "${KV_MOUNT}/" '.[$m]' >/dev/null 2>&1; then
-  mount_exists=true
-fi
-
-if [ "$mount_exists" = true ]; then
-  mount_type="$(printf '%s' "$mounts_json" \
-    | jq -r --arg m "${KV_MOUNT}/" '.[$m].type // ""')"
-  mount_version="$(printf '%s' "$mounts_json" \
-    | jq -r --arg m "${KV_MOUNT}/" '.[$m].options.version // "1"')"
-  if [ "$mount_type" != "kv" ]; then
-    die "${KV_MOUNT}/ is mounted as type='${mount_type}', expected 'kv' — refuse to re-mount"
-  fi
-  if [ "$mount_version" != "2" ]; then
-    die "${KV_MOUNT}/ is KV v${mount_version}, expected v2 — refuse to upgrade in place (manual fix required)"
-  fi
-  log "${KV_MOUNT}/ already mounted (kv v2) — skipping enable"
-else
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "[dry-run] would enable ${KV_MOUNT}/ as kv v2"
-  else
-    payload="$(jq -n '{type:"kv",options:{version:"2"},description:"disinto shared KV v2 (S2.4)"}')"
-    _hvault_request POST "sys/mounts/${KV_MOUNT}" "$payload" >/dev/null \
-      || die "failed to enable ${KV_MOUNT}/ as kv v2"
-    log "${KV_MOUNT}/ enabled as kv v2"
-  fi
-fi
+export DRY_RUN
+hvault_ensure_kv_v2 "$KV_MOUNT" "[vault-seed-forgejo]" \
+  || die "KV mount check failed"
 
 # ── Step 2/2: seed missing keys at kv/data/disinto/shared/forgejo ────────────
 log "── Step 2/2: seed ${KV_API_PATH} ──"
