@@ -1,4 +1,4 @@
-<!-- last-reviewed: edf7a28bd3c85d4f72d28fd986fd2af3dcb885c1 -->
+<!-- last-reviewed: 71e770b8ae41f4496a03f0d810787072fcf298c8 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -17,8 +17,8 @@ see issues #821–#962 for the step breakdown.
 | `vault.hcl`  | `/etc/vault.d/vault.hcl`  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
 | `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 | `jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
-| `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET` (S3.2) |
-| `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy (S4.1, #955) |
+| `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
+| `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
