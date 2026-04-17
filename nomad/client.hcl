@@ -64,11 +64,11 @@ client {
 
 # Docker task driver. `volumes.enabled = true` is required so jobspecs
 # can mount host_volume declarations defined above. `allow_privileged`
-# stays false — no factory workload needs privileged containers today,
-# and flipping it is an audit-worthy change.
+# is true — woodpecker-agent requires `privileged = true` to access
+# docker.sock and spawn CI pipeline containers.
 plugin "docker" {
   config {
-    allow_privileged = false
+    allow_privileged = true
 
     volumes {
       enabled = true
