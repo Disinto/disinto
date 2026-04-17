@@ -6,10 +6,10 @@
 # Scope: kv/disinto/shared/woodpecker/* — entries owned by the operator
 # and consumed by woodpecker-server + woodpecker-agent.
 
-path "kv/data/disinto/shared/woodpecker/*" {
+path "kv/data/disinto/shared/woodpecker" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/disinto/shared/woodpecker/*" {
+path "kv/metadata/disinto/shared/woodpecker" {
   capabilities = ["list", "read"]
 }

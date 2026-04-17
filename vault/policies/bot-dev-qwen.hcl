@@ -5,14 +5,14 @@
 # via workload identity (S2.4). KV path mirrors the bot basename:
 # kv/disinto/bots/dev-qwen/*.
 
-path "kv/data/disinto/bots/dev-qwen/*" {
+path "kv/data/disinto/bots/dev-qwen" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/disinto/bots/dev-qwen/*" {
+path "kv/metadata/disinto/bots/dev-qwen" {
   capabilities = ["list", "read"]
 }
 
-path "kv/data/disinto/shared/forge/*" {
+path "kv/data/disinto/shared/forge" {
   capabilities = ["read"]
 }
