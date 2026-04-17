@@ -256,7 +256,7 @@ echo "Status: $_wp_health_status"
 # Check for gRPC errors in agent logs (last 20 minutes)
 _wp_grpc_errors=0
 if [ "$_wp_health_status" != "not_found" ] && [ -n "$_wp_health_status" ]; then
-  _wp_grpc_errors=$(docker logs --since 20m "$_wp_container" 2>&1 2>/dev/null | grep -c 'grpc error' || echo "0")
+  _wp_grpc_errors=$(docker logs --since 20m "$_wp_container" 2>&1 | grep -c 'grpc error' || echo "0")
   echo "gRPC errors (last 20m): $_wp_grpc_errors"
 fi
 

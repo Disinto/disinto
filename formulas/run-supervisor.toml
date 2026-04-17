@@ -114,8 +114,6 @@ The supervisor-run.sh script automatically handles WP agent recovery:
 - Avoids duplicate restarts via 5-minute cooldown in history file
 
 **P0 Memory crisis:**
-
-**P0 Memory crisis:**
   # Kill stale one-shot claude processes (>3h old)
   pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
   # Drop filesystem caches

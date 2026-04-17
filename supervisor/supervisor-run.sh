@@ -175,7 +175,8 @@ _WP_HEALTH_CHECK_FILE="${DISINTO_LOG_DIR}/supervisor/wp-agent-health-check.md"
 echo "$PREFLIGHT_OUTPUT" > "$_WP_HEALTH_CHECK_FILE"
 
 # Extract WP agent health status from preflight output
-_wp_agent_healthy=$(grep "^WP Agent Health:" "$_WP_HEALTH_CHECK_FILE" 2>/dev/null | grep -q "healthy" && echo "true" || echo "false")
+# Note: match exact "healthy" not "UNHEALTHY" (substring issue)
+_wp_agent_healthy=$(grep "^WP Agent Health: healthy$" "$_WP_HEALTH_CHECK_FILE" 2>/dev/null && echo "true" || echo "false")
 _wp_health_reason=$(grep "^Reason:" "$_WP_HEALTH_CHECK_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
 
 if [ "$_wp_agent_healthy" = "false" ] && [ -n "$_wp_health_reason" ]; then
@@ -201,7 +202,7 @@ if [ "$_wp_agent_healthy" = "false" ] && [ -n "$_wp_health_reason" ]; then
     # Restart the WP agent container
     if docker restart "$WP_AGENT_CONTAINER_NAME" >/dev/null 2>&1; then
       _restart_time=$(date -u '+%Y-%m-%d %H:%M UTC')
-      log "Successfully restarted WP agent container: $_wp_agent_healthy"
+      log "Successfully restarted WP agent container: $WP_AGENT_CONTAINER_NAME"
 
       # Update history file
       echo "LAST_RESTART_TS=$_current_ts" > "$_WP_HEALTH_HISTORY_FILE"
@@ -306,7 +307,7 @@ EOF
               -H "Authorization: token ${FORGE_SUPERVISOR_TOKEN:-$FORGE_TOKEN}" \
               -H "Content-Type: application/json" \
               "${FORGE_API}/issues/$_issue_num/comments" \
-              -d "{\"body\":$_recovery_comment}" >/dev/null 2>&1 || true
+              -d "$(jq -n --arg body "$_recovery_comment" '{body: $body}')" >/dev/null 2>&1 || true
 
             log "Recovered issue #$_issue_num - returned to pool"
           fi
