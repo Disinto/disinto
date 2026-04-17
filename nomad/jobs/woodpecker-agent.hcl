@@ -8,8 +8,9 @@
 #
 # Host networking:
 #   Uses network_mode = "host" to match the compose setup. The Woodpecker
-#   server gRPC endpoint is addressed as "localhost:9000" since both
-#   server and agent run on the same host.
+#   server gRPC endpoint is addressed via Nomad service discovery using
+#   the host's IP address (10.10.10.x:9000), since the server's port
+#   binding in Nomad binds to the allocation's IP, not localhost.
 #
 # Vault integration:
 #   - vault { role = "service-woodpecker-agent" } at the group scope — the
@@ -82,8 +83,13 @@ job "woodpecker-agent" {
 
       # Non-secret env — server address, gRPC security, concurrency limit,
       # and health check endpoint. Nothing sensitive here.
+      #
+      # WOODPECKER_SERVER uses Nomad's attribute template to get the host's
+      # IP address (10.10.10.x). The server's gRPC port 9000 is bound via
+      # Nomad's port stanza to the allocation's IP (not localhost), so the
+      # agent must use the LXC's eth0 IP, not 127.0.0.1.
       env {
-        WOODPECKER_SERVER         = "localhost:9000"
+        WOODPECKER_SERVER         = "{{ env \"attr.unique.network.ip-address\" }}:9000"
         WOODPECKER_GRPC_SECURE    = "false"
         WOODPECKER_MAX_WORKFLOWS  = "1"
         WOODPECKER_HEALTHCHECK_ADDR = ":3333"
