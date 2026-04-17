@@ -68,6 +68,24 @@ job "agents" {
       mode     = "delay"
     }
 
+    # ── Health check ─────────────────────────────────────────────────────────
+    # Script-based check matching docker-compose's pgrep healthcheck.
+    # Group-level service with `task` attribute on the check to run the
+    # script inside the agents container.
+    service {
+      name     = "agents"
+      provider = "nomad"
+
+      check {
+        type     = "script"
+        task     = "agents"
+        command  = "/usr/bin/pgrep"
+        args     = ["-f", "entrypoint.sh"]
+        interval = "60s"
+        timeout  = "5s"
+      }
+    }
+
     task "agents" {
       driver = "docker"
 
@@ -175,22 +193,6 @@ FORGE_VAULT_TOKEN={{ .Data.data.token }}
 FORGE_VAULT_TOKEN=seed-me
 {{- end }}
 EOT
-      }
-
-      # ── Health check ───────────────────────────────────────────────────────
-      # Script-based check matching docker-compose's pgrep healthcheck.
-      # Nomad script checks run inside the container.
-      service {
-        name     = "agents"
-        provider = "nomad"
-
-        check {
-          type     = "script"
-          command  = "/usr/bin/pgrep"
-          args     = ["-f", "entrypoint.sh"]
-          interval = "60s"
-          timeout  = "5s"
-        }
       }
 
       # Agents run Claude/llama sessions — need CPU + memory headroom.
