@@ -215,7 +215,7 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown service"* ]]
-  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent"* ]]
+  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents"* ]]
 }
 
 # S3.4: woodpecker auto-expansion and forgejo auto-inclusion
@@ -384,4 +384,45 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --import-sops /tmp/.env.vault.enc --age-key /tmp/keys.txt --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"--empty and --import-env/--import-sops/--age-key are mutually exclusive"* ]]
+}
+
+# S4.2: agents service auto-expansion and dependencies
+@test "disinto init --backend=nomad --with agents auto-includes forgejo and woodpecker" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with agents --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"services to deploy: forgejo,agents,woodpecker-server,woodpecker-agent"* ]]
+  [[ "$output" == *"Note: --with agents implies --with forgejo"* ]]
+  [[ "$output" == *"Note: --with agents implies --with woodpecker"* ]]
+}
+
+@test "disinto init --backend=nomad --with agents deploys in correct order" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with agents --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents"* ]]
+}
+
+@test "disinto init --backend=nomad --with agents seeds agents service" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with agents --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tools/vault-seed-forgejo.sh --dry-run"* ]]
+  [[ "$output" == *"tools/vault-seed-woodpecker.sh --dry-run"* ]]
+  [[ "$output" == *"tools/vault-seed-agents.sh --dry-run"* ]]
+}
+
+@test "disinto init --backend=nomad --with agents deploys all four services" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with agents --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"forgejo.hcl"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"woodpecker-server.hcl"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"woodpecker-agent.hcl"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"agents.hcl"* ]]
+}
+
+@test "disinto init --backend=nomad --with woodpecker,agents expands correctly" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with woodpecker,agents --dry-run
+  [ "$status" -eq 0 ]
+  # woodpecker expands to server+agent, agents is already explicit
+  # forgejo is auto-included by agents
+  [[ "$output" == *"services to deploy: forgejo,woodpecker-server,woodpecker-agent,agents"* ]]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents"* ]]
 }
