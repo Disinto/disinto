@@ -84,6 +84,18 @@ hvault_ensure_kv_v2 "$KV_MOUNT" "${LOG_TAG}" \
 # ── Step 2: seed each bot role ───────────────────────────────────────────────
 total_generated=0
 
+# Check if shared forge credentials exist for dev role fallback
+shared_forge_exists=0
+shared_forge_raw="$(hvault_get_or_empty "${KV_MOUNT}/data/disinto/shared/forge")" \
+  || true
+if [ -n "$shared_forge_raw" ]; then
+  shared_forge_token="$(printf '%s' "$shared_forge_raw" | jq -r '.data.data.token // ""')"
+  shared_forge_pass="$(printf '%s' "$shared_forge_raw" | jq -r '.data.data.pass // ""')"
+  if [ -n "$shared_forge_token" ] && [ -n "$shared_forge_pass" ]; then
+    shared_forge_exists=1
+  fi
+fi
+
 for role in "${BOT_ROLES[@]}"; do
   kv_logical="disinto/bots/${role}"
   kv_api="${KV_MOUNT}/data/${kv_logical}"
@@ -103,12 +115,35 @@ for role in "${BOT_ROLES[@]}"; do
   fi
 
   generated=()
+  desired_token="$existing_token"
+  desired_pass="$existing_pass"
 
-  if [ -z "$existing_token" ]; then
-    generated+=("token")
-  fi
-  if [ -z "$existing_pass" ]; then
-    generated+=("pass")
+  # Special case: dev role uses shared forge credentials if available
+  if [ "$role" = "dev" ] && [ "$shared_forge_exists" -eq 1 ]; then
+    # Use shared FORGE_TOKEN + FORGE_PASS for dev role
+    if [ -z "$existing_token" ]; then
+      desired_token="$shared_forge_token"
+      generated+=("token")
+    fi
+    if [ -z "$existing_pass" ]; then
+      desired_pass="$shared_forge_pass"
+      generated+=("pass")
+    fi
+  else
+    # Generate random values for missing keys
+    if [ -z "$existing_token" ]; then
+      generated+=("token")
+    fi
+    if [ -z "$existing_pass" ]; then
+      generated+=("pass")
+    fi
+
+    for key in "${generated[@]}"; do
+      case "$key" in
+        token) desired_token="$(openssl rand -hex "$TOKEN_BYTES")" ;;
+        pass)  desired_pass="$(openssl rand -hex "$PASS_BYTES")" ;;
+      esac
+    done
   fi
 
   if [ "${#generated[@]}" -eq 0 ]; then
@@ -121,16 +156,6 @@ for role in "${BOT_ROLES[@]}"; do
     total_generated=$(( total_generated + ${#generated[@]} ))
     continue
   fi
-
-  desired_token="$existing_token"
-  desired_pass="$existing_pass"
-
-  for key in "${generated[@]}"; do
-    case "$key" in
-      token) desired_token="$(openssl rand -hex "$TOKEN_BYTES")" ;;
-      pass)  desired_pass="$(openssl rand -hex "$PASS_BYTES")" ;;
-    esac
-  done
 
   # Merge new keys into existing data to preserve any keys we don't own.
   payload="$(printf '%s' "$existing_data" \
