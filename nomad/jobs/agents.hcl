@@ -68,22 +68,16 @@ job "agents" {
       mode     = "delay"
     }
 
-    # ── Health check ─────────────────────────────────────────────────────────
-    # Script-based check matching docker-compose's pgrep healthcheck.
-    # Group-level service with `task` attribute on the check to run the
-    # script inside the agents container.
+    # ── Service registration ────────────────────────────────────────────────
+    # Agents are outbound-only (poll forgejo, call llama) — no HTTP/TCP
+    # endpoint to probe. The Nomad native provider only supports tcp/http
+    # checks, not script checks. Registering without a check block means
+    # Nomad tracks health via task lifecycle: task running = healthy,
+    # task dead = service deregistered. This matches the docker-compose
+    # pgrep healthcheck semantics (process alive = healthy).
     service {
       name     = "agents"
       provider = "nomad"
-
-      check {
-        type     = "script"
-        task     = "agents"
-        command  = "/usr/bin/pgrep"
-        args     = ["-f", "entrypoint.sh"]
-        interval = "60s"
-        timeout  = "5s"
-      }
     }
 
     task "agents" {
