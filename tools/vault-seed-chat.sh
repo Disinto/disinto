@@ -98,12 +98,13 @@ for key in "${SEED_KEYS[@]}"; do
       log "[dry-run] ${key} unchanged"
     fi
   else
-    if _hvault_seed_key "$KV_LOGICAL_PATH" "$key"; then
-      generated+=("$key")
-      log "${key} generated"
-    else
-      log "${key} unchanged"
-    fi
+    rc=0
+    _hvault_seed_key "$KV_LOGICAL_PATH" "$key" || rc=$?
+    case "$rc" in
+      0) generated+=("$key"); log "${key} generated" ;;
+      1) log "${key} unchanged" ;;
+      *) die "API error seeding ${key} (rc=${rc})" ;;
+    esac
   fi
 done
 
