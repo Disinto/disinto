@@ -94,27 +94,32 @@ GITHUB_TOKEN={{ .Data.data.value }}
 {{- else -}}
 GITHUB_TOKEN=
 {{- end }}
-{{- with secret "kv/data/disinto/runner/CODEBERG_TOKEN" -}}
+
+{{ with secret "kv/data/disinto/runner/CODEBERG_TOKEN" -}}
 CODEBERG_TOKEN={{ .Data.data.value }}
 {{- else -}}
 CODEBERG_TOKEN=
 {{- end }}
-{{- with secret "kv/data/disinto/runner/CLAWHUB_TOKEN" -}}
+
+{{ with secret "kv/data/disinto/runner/CLAWHUB_TOKEN" -}}
 CLAWHUB_TOKEN={{ .Data.data.value }}
 {{- else -}}
 CLAWHUB_TOKEN=
 {{- end }}
-{{- with secret "kv/data/disinto/runner/DEPLOY_KEY" -}}
+
+{{ with secret "kv/data/disinto/runner/DEPLOY_KEY" -}}
 DEPLOY_KEY={{ .Data.data.value }}
 {{- else -}}
 DEPLOY_KEY=
 {{- end }}
-{{- with secret "kv/data/disinto/runner/NPM_TOKEN" -}}
+
+{{ with secret "kv/data/disinto/runner/NPM_TOKEN" -}}
 NPM_TOKEN={{ .Data.data.value }}
 {{- else -}}
 NPM_TOKEN=
 {{- end }}
-{{- with secret "kv/data/disinto/runner/DOCKER_HUB_TOKEN" -}}
+
+{{ with secret "kv/data/disinto/runner/DOCKER_HUB_TOKEN" -}}
 DOCKER_HUB_TOKEN={{ .Data.data.value }}
 {{- else -}}
 DOCKER_HUB_TOKEN=

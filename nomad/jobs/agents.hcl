@@ -152,37 +152,44 @@ FORGE_PASS={{ .Data.data.pass }}
 FORGE_TOKEN=seed-me
 FORGE_PASS=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/review" -}}
+
+{{ with secret "kv/data/disinto/bots/review" -}}
 FORGE_REVIEW_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_REVIEW_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/gardener" -}}
+
+{{ with secret "kv/data/disinto/bots/gardener" -}}
 FORGE_GARDENER_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_GARDENER_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/architect" -}}
+
+{{ with secret "kv/data/disinto/bots/architect" -}}
 FORGE_ARCHITECT_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_ARCHITECT_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/planner" -}}
+
+{{ with secret "kv/data/disinto/bots/planner" -}}
 FORGE_PLANNER_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_PLANNER_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/predictor" -}}
+
+{{ with secret "kv/data/disinto/bots/predictor" -}}
 FORGE_PREDICTOR_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_PREDICTOR_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/supervisor" -}}
+
+{{ with secret "kv/data/disinto/bots/supervisor" -}}
 FORGE_SUPERVISOR_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_SUPERVISOR_TOKEN=seed-me
 {{- end }}
-{{- with secret "kv/data/disinto/bots/vault" -}}
+
+{{ with secret "kv/data/disinto/bots/vault" -}}
 FORGE_VAULT_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_VAULT_TOKEN=seed-me
