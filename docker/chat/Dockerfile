@@ -1,6 +1,6 @@
 # disinto-chat — minimal HTTP backend for Claude chat UI
 #
-# Small Debian slim base with Python runtime.
+# Small Debian slim base with Python runtime and Node.js.
 # Chosen for simplicity and small image size (~100MB).
 #
 # Image size: ~100MB (well under the 200MB ceiling)
@@ -10,10 +10,13 @@
 
 FROM debian:bookworm-slim
 
-# Install Python (no build-time network access needed)
+# Install Node.js (required for Claude CLI) and Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
+    nodejs npm python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI — chat backend runtime
+RUN npm install -g @anthropic-ai/claude-code@2.1.84
 
 # Non-root user — fixed UID 10001 for sandbox hardening (#706)
 RUN useradd -m -u 10001 -s /bin/bash chat
