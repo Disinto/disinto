@@ -1002,6 +1002,23 @@ _disinto_init_nomad() {
       # Deploy this service
       echo ""
       echo "── Deploying ${svc} ───────────────────────────────────────"
+
+      # Seed host volumes before deployment (if needed)
+      case "$svc" in
+        staging)
+          # Seed site-content host volume (/srv/disinto/docker) with static content
+          # The staging jobspec mounts this volume read-only to /srv/site
+          local site_content_src="${FACTORY_ROOT}/docker/index.html"
+          local site_content_dst="/srv/disinto/docker"
+          if [ -f "$site_content_src" ] && [ -d "$site_content_dst" ]; then
+            if ! cmp -s "$site_content_src" "${site_content_dst}/index.html" 2>/dev/null; then
+              echo "[staging] seeding site-content volume..."
+              cp "$site_content_src" "${site_content_dst}/index.html"
+            fi
+          fi
+          ;;
+      esac
+
       local jobspec_path="${FACTORY_ROOT}/nomad/jobs/${svc}.hcl"
       if [ ! -f "$jobspec_path" ]; then
         echo "Error: jobspec not found: ${jobspec_path}" >&2
