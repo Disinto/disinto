@@ -39,7 +39,7 @@ disinto/                 (code repo)
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, lib-systemd.sh (Nomad+Vault Step 0 installers, #821-#825); wp-oauth-register.sh (Forgejo OAuth2 app + Vault KV seeder for Woodpecker, S3.3); deploy.sh (dependency-ordered Nomad job deploy + health-wait, S4)
 ├── nomad/         server.hcl, client.hcl (allow_privileged for woodpecker-agent, S3-fix-5), vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
-│                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1)
+│                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1); vault-runner.hcl (parameterized batch dispatch, S5.3)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
