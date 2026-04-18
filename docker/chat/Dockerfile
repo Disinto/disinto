@@ -5,8 +5,7 @@
 #
 # Image size: ~100MB (well under the 200MB ceiling)
 #
-# The claude binary is mounted from the host at runtime via docker-compose,
-# not baked into the image — same pattern as the agents container.
+# Claude CLI is baked into the image — same pattern as the agents container.
 
 FROM debian:bookworm-slim
 
