@@ -1,7 +1,1 @@
-[
-  {
-    "action": "comment",
-    "issue": 850,
-    "body": "Gardener (run 2026-04-17): PR #971 is the 4th consecutive agent failure on this issue (smoke-init fails each time). Keeping as `blocked`. The issue body already notes human intervention or planner re-scope is needed before another dev-agent attempt. No re-queue until that happens."
-  }
-]
+[]
