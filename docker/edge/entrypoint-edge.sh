@@ -234,6 +234,13 @@ fi
   rm -f "$_fetch_log"
 done) &
 
+# Nomad template renders Caddyfile to /local/Caddyfile via service discovery;
+# copy it into the expected location if present (compose uses the mounted path).
+if [ -f /local/Caddyfile ]; then
+  cp /local/Caddyfile /etc/caddy/Caddyfile
+  echo "edge: using Nomad-rendered Caddyfile from /local/Caddyfile" >&2
+fi
+
 # Caddy as main process — run in foreground via wait so background jobs survive
 # (exec replaces the shell, which can orphan backgrounded subshells)
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &

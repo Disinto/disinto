@@ -114,6 +114,58 @@ job "edge" {
         read_only   = false
       }
 
+      # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018) ────
+      # Renders staging upstream from Nomad service registration instead of
+      # hardcoded staging:80. Caddy picks up /local/Caddyfile via entrypoint.
+      template {
+        destination = "local/Caddyfile"
+        change_mode = "restart"
+        data        = <<EOT
+# Caddyfile — edge proxy configuration (Nomad-rendered)
+# Staging upstream discovered via Nomad service registration.
+
+:80 {
+    # Redirect root to Forgejo
+    handle / {
+        redir /forge/ 302
+    }
+
+    # Reverse proxy to Forgejo
+    handle /forge/* {
+        reverse_proxy forgejo:3000
+    }
+
+    # Reverse proxy to Woodpecker CI
+    handle /ci/* {
+        reverse_proxy woodpecker:8000
+    }
+
+    # Reverse proxy to staging — dynamic port via Nomad service discovery
+    handle /staging/* {
+{{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
+
+    # Chat service — reverse proxy to disinto-chat backend (#705)
+    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
+    handle /chat/login {
+        reverse_proxy chat:8080
+    }
+    handle /chat/oauth/callback {
+        reverse_proxy chat:8080
+    }
+    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
+    handle /chat/* {
+        forward_auth chat:8080 {
+            uri /chat/auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
+        reverse_proxy chat:8080
+    }
+}
+EOT
+      }
+
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         FORGE_URL       = "http://forgejo:3000"
