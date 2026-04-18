@@ -84,7 +84,7 @@ job "agents" {
       driver = "docker"
 
       config {
-        image      = "disinto/agents:latest"
+        image      = "disinto/agents:local"
         force_pull = false
 
         # apparmor=unconfined matches docker-compose — Claude Code needs

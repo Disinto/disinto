@@ -827,7 +827,7 @@ _disinto_init_nomad() {
     if echo ",$with_services," | grep -q ",agents,"; then
       echo ""
       echo "── Build images dry-run ──────────────────────────────"
-      echo "[build] [dry-run] docker build -t disinto/agents:latest -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
+      echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
     fi
     exit 0
   fi
@@ -922,7 +922,7 @@ _disinto_init_nomad() {
   if echo ",$with_services," | grep -q ",agents,"; then
     echo ""
     echo "── Building custom images ─────────────────────────────"
-    local tag="disinto/agents:latest"
+    local tag="disinto/agents:local"
     echo "── Building $tag ─────────────────────────────"
     docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
   fi
