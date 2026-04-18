@@ -1,4 +1,4 @@
-<!-- last-reviewed: c872f282428861a735fbbb00609f77d063ad92b3 -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # vault/policies/ — Agent Instructions
 
 HashiCorp Vault ACL policies for the disinto factory. One `.hcl` file per
@@ -31,6 +31,8 @@ KV v2). Vault addresses KV v2 data at `kv/data/<path>` and metadata at
 | `service-forgejo` | `kv/data/disinto/shared/forgejo/*` |
 | `service-woodpecker` | `kv/data/disinto/shared/woodpecker/*` |
 | `service-agents` | All 7 `kv/data/disinto/bots/<role>/*` namespaces + `kv/data/disinto/shared/forge/*`; composite policy for the `agents` Nomad job (S4.1) |
+| `service-chat` | `kv/data/disinto/shared/chat/*`; read-only OAuth client config + forward-auth secret for the chat Nomad job (S5.2, #989) |
+| `service-dispatcher` | `kv/data/disinto/runner/*` (list+read) + `kv/data/disinto/shared/ops-repo/*` (read); used by edge dispatcher sidecar (S5.1, #988) |
 | `bot-<role>` (dev, review, gardener, architect, planner, predictor, supervisor, vault, dev-qwen) | `kv/data/disinto/bots/<role>/*` + `kv/data/disinto/shared/forge/*` |
 | `runner-<TOKEN>` (GITHUB\_TOKEN, CODEBERG\_TOKEN, CLAWHUB\_TOKEN, DEPLOY\_KEY, NPM\_TOKEN, DOCKER\_HUB\_TOKEN) | `kv/data/disinto/runner/<TOKEN>` (exactly one) |
 | `dispatcher` | `kv/data/disinto/runner/*` + `kv/data/disinto/shared/ops-repo/*` |

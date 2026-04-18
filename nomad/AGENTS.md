@@ -1,12 +1,12 @@
-<!-- last-reviewed: c872f282428861a735fbbb00609f77d063ad92b3 -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
 the source of truth that `lib/init/nomad/cluster-up.sh` copies onto a
 factory box under `/etc/nomad.d/` and `/etc/vault.d/` at init time.
 
-This directory covers the **Nomad+Vault migration (Steps 0–4)** —
-see issues #821–#962 for the step breakdown.
+This directory covers the **Nomad+Vault migration (Steps 0–5)** —
+see issues #821–#992 for the step breakdown.
 
 ## What lives here
 
@@ -21,6 +21,7 @@ see issues #821–#962 for the step breakdown.
 | `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
 | `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; internal-only via edge proxy (S5.2, #989) |
 | `jobs/chat.hcl` | submitted via `lib/init/nomad/deploy.sh` | Claude chat UI; custom `disinto/chat:local` image; sandbox hardening (cap_drop ALL, tmpfs, pids_limit 128); Vault-templated OAuth secrets via `service-chat` policy (S5.2, #989) |
+| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
@@ -35,8 +36,6 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 
 ## Not yet implemented
 
-- **Additional jobspecs** (caddy) — Woodpecker (S3.1-S3.2) and agents (S4.1) are now deployed;
-  caddy lands in a later step.
 - **TLS, ACLs, gossip encryption** — deliberately absent for now; land
   alongside multi-node support.
 

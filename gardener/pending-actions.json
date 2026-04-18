@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "action": "edit_body",
+    "issue": 996,
+    "body": "Flagged by AI reviewer in PR #993.\n\n## Problem\n\nThe consul-template with/else/end pattern using aggressive whitespace trimming (e.g. `{{- with secret ... -}}` / `{{- else -}}` / `{{- end }}` then immediately `{{- with`) strips all newlines between consecutive single-variable env blocks at parse time. This would render the secrets env file as one concatenated line (`GITHUB_TOKEN=valCODEBERG_TOKEN=val...`), which Nomad's `env = true` cannot parse correctly.\n\n## Why not blocked\n\nagents.hcl has been runtime-tested (S4-fix-6 and S4-fix-7 made observable runtime fixes). If the env file were broken, all bot tokens would be absent — a loud, observable failure. This suggests consul-template may handle whitespace trimming differently from raw Go text/template. Needs runtime verification.\n\n## Verification\n\nDeploy either job and inspect the rendered secrets file:\n```\nnomad alloc exec <alloc-id> cat /secrets/bots.env\n```\nConfirm each KEY=VALUE pair is on its own line.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `nomad/jobs/agents.hcl` — bots.env template (lines 147-189)\n- `nomad/jobs/vault-runner.hcl` — runner.env template (PR #993)\n\n## Acceptance criteria\n- [ ] Deploy `agents` or `vault-runner` job on factory host\n- [ ] Inspect rendered secrets file: `nomad alloc exec <alloc-id> cat /secrets/bots.env`\n- [ ] Confirm each KEY=VALUE pair is on its own line (not concatenated)\n- [ ] If broken: fix whitespace trimming to preserve newlines between blocks; if fine, close as not-a-bug"
+  },
+  {
+    "action": "add_label",
+    "issue": 996,
+    "label": "backlog"
+  }
+]
