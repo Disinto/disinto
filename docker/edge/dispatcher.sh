@@ -575,13 +575,12 @@ _launch_runner_nomad() {
 
   # Dispatch the parameterized batch job
   # The vault-runner job expects meta: action_id, secrets_csv
-  # mounts_csv is passed as env var for the nomad task to consume
+  # Note: mounts_csv is not passed as meta (not declared in vault-runner.hcl)
   local dispatch_output
   dispatch_output=$(nomad job dispatch \
     -detach \
     -meta action_id="$action_id" \
     -meta secrets_csv="$secrets_csv" \
-    -meta mounts_csv="${mounts_csv:-}" \
     vault-runner 2>&1) || {
     log "ERROR: Failed to dispatch vault-runner job for ${action_id}"
     log "Dispatch output: ${dispatch_output}"
@@ -589,18 +588,18 @@ _launch_runner_nomad() {
     return 1
   }
 
-  # Extract dispatch ID from output (UUID format)
-  local dispatch_id
-  dispatch_id=$(echo "$dispatch_output" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' || true)
+  # Extract dispatched job ID from output (format: "vault-runner/dispatch-<timestamp>-<uuid>")
+  local dispatched_job_id
+  dispatched_job_id=$(echo "$dispatch_output" | grep -oP '(?<=Dispatched Job ID = ).+' || true)
 
-  if [ -z "$dispatch_id" ]; then
-    log "ERROR: Could not extract dispatch ID from nomad output"
+  if [ -z "$dispatched_job_id" ]; then
+    log "ERROR: Could not extract dispatched job ID from nomad output"
     log "Dispatch output: ${dispatch_output}"
-    write_result "$action_id" 1 "Could not extract dispatch ID from nomad output"
+    write_result "$action_id" 1 "Could not extract dispatched job ID from nomad output"
     return 1
   fi
 
-  log "Dispatched vault-runner with ID: ${dispatch_id}"
+  log "Dispatched vault-runner with job ID: ${dispatched_job_id}"
 
   # Poll job status until terminal state
   # Batch jobs transition: running -> completed/failed
@@ -609,35 +608,24 @@ _launch_runner_nomad() {
   local poll_interval=5
   local alloc_id=""
 
-  log "Polling nomad job status for dispatch ${dispatch_id}..."
+  log "Polling nomad job status for ${dispatched_job_id}..."
 
   while [ "$elapsed" -lt "$max_wait" ]; do
-    # Get job status with JSON output
+    # Get job status with JSON output for the dispatched child job
     local job_status_json
-    job_status_json=$(nomad job status -json "vault-runner" 2>/dev/null) || {
-      log "ERROR: Failed to get job status for vault-runner"
-      write_result "$action_id" 1 "Failed to get job status"
+    job_status_json=$(nomad job status -json "$dispatched_job_id" 2>/dev/null) || {
+      log "ERROR: Failed to get job status for ${dispatched_job_id}"
+      write_result "$action_id" 1 "Failed to get job status for ${dispatched_job_id}"
       return 1
     }
 
-    # Check evaluation state
-    local eval_status
-    eval_status=$(echo "$job_status_json" | jq -r '.EvalID // empty' 2>/dev/null) || eval_status=""
-
-    if [ -z "$eval_status" ]; then
-      sleep "$poll_interval"
-      elapsed=$((elapsed + poll_interval))
-      continue
-    fi
-
-    # Get allocation ID from the job status
-    alloc_id=$(echo "$job_status_json" | jq -r '.Allocations[0]?.ID // empty' 2>/dev/null) || alloc_id=""
-
-    # Alternative: check job status field
+    # Check job status field (transitions to "dead" on completion)
     local job_state
-    job_state=$(echo "$job_status_json" | jq -r '.State // empty' 2>/dev/null) || job_state=""
+    job_state=$(echo "$job_status_json" | jq -r '.Status // empty' 2>/dev/null) || job_state=""
 
     # Check allocation state directly
+    alloc_id=$(echo "$job_status_json" | jq -r '.Allocations[0]?.ID // empty' 2>/dev/null) || alloc_id=""
+
     if [ -n "$alloc_id" ]; then
       local alloc_state
       alloc_state=$(nomad alloc status -short "$alloc_id" 2>/dev/null || true)
@@ -659,12 +647,12 @@ _launch_runner_nomad() {
 
     # Also check job-level state
     case "$job_state" in
-      complete|dead)
-        log "Job vault-runner reached terminal state: ${job_state}"
+      dead)
+        log "Job ${dispatched_job_id} reached terminal state: ${job_state}"
         break
         ;;
       failed)
-        log "Job vault-runner failed"
+        log "Job ${dispatched_job_id} failed"
         break
         ;;
     esac
@@ -681,7 +669,7 @@ _launch_runner_nomad() {
 
   # Get final job status and exit code
   local final_status_json
-  final_status_json=$(nomad job status -json "vault-runner" 2>/dev/null) || {
+  final_status_json=$(nomad job status -json "$dispatched_job_id" 2>/dev/null) || {
     log "ERROR: Failed to get final job status"
     write_result "$action_id" 1 "Failed to get final job status"
     return 1
@@ -692,31 +680,23 @@ _launch_runner_nomad() {
   local logs=""
 
   if [ -n "$alloc_id" ]; then
-    # Get allocation exit code
-    local alloc_exit_code
-    alloc_exit_code=$(nomad alloc status -short "$alloc_id" 2>/dev/null | grep -oE 'exit_code=[0-9]+' | cut -d= -f2 || true)
-
-    if [ -n "$alloc_exit_code" ]; then
-      exit_code="$alloc_exit_code"
-    else
-      # Try JSON parsing
-      alloc_exit_code=$(nomad alloc status -json "$alloc_id" 2>/dev/null | jq -r '.TaskState.LastState // empty' 2>/dev/null) || alloc_exit_code=""
-      if [ -z "$alloc_exit_code" ]; then
-        alloc_exit_code=$(nomad alloc status -json "$alloc_id" 2>/dev/null | jq -r '.ExitCode // empty' 2>/dev/null) || alloc_exit_code=""
-      fi
-      if [ -n "$alloc_exit_code" ] && [ "$alloc_exit_code" != "null" ]; then
-        exit_code="$alloc_exit_code"
-      fi
-    fi
-
     # Get allocation logs
     logs=$(nomad alloc logs -short "$alloc_id" 2>/dev/null || true)
+
+    # Try to get exit code from JSON output
+    # Nomad alloc status -json has .TaskStates["<task_name>].Events[].ExitCode
+    local alloc_exit_code
+    alloc_exit_code=$(echo "$final_status_json" | jq -r '.TaskStates["runner"].Events[-1].ExitCode // empty' 2>/dev/null) || alloc_exit_code=""
+
+    if [ -n "$alloc_exit_code" ] && [ "$alloc_exit_code" != "null" ]; then
+      exit_code="$alloc_exit_code"
+    fi
   fi
 
-  # If we couldn't get exit code from alloc, check job state
+  # If we couldn't get exit code from alloc, check job state as fallback
   if [ "$exit_code" -eq 0 ]; then
     local final_state
-    final_state=$(echo "$final_status_json" | jq -r '.State // empty' 2>/dev/null) || final_state=""
+    final_state=$(echo "$final_status_json" | jq -r '.Status // empty' 2>/dev/null) || final_state=""
 
     case "$final_state" in
       failed|dead)
