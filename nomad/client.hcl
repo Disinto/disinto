@@ -49,6 +49,12 @@ client {
     read_only = false
   }
 
+  # staging static content (docker/ directory with images, HTML, etc.)
+  host_volume "site-content" {
+    path      = "/srv/disinto/docker"
+    read_only = true
+  }
+
   # disinto chat transcripts + attachments.
   host_volume "chat-history" {
     path      = "/srv/disinto/chat-history"

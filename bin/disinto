@@ -787,7 +787,7 @@ _disinto_init_nomad() {
       # real-run path so dry-run output accurately represents execution order.
       # Build ordered deploy list: only include services present in with_services
       local DEPLOY_ORDER=""
-      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents; do
+      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat; do
         if echo ",$with_services," | grep -q ",$ordered_svc,"; then
           DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
         fi
@@ -801,6 +801,7 @@ _disinto_init_nomad() {
         case "$svc" in
           woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
           agents) seed_name="agents" ;;
+          chat) seed_name="chat" ;;
         esac
         local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
         if [ -x "$seed_script" ]; then
@@ -823,11 +824,16 @@ _disinto_init_nomad() {
       echo "[deploy] dry-run complete"
     fi
 
-    # Build custom images dry-run (if agents service is included)
-    if echo ",$with_services," | grep -q ",agents,"; then
+    # Build custom images dry-run (if agents or chat services are included)
+    if echo ",$with_services," | grep -qE ",(agents|chat),"; then
       echo ""
       echo "── Build images dry-run ──────────────────────────────"
-      echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
+      if echo ",$with_services," | grep -q ",agents,"; then
+        echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
+      fi
+      if echo ",$with_services," | grep -q ",chat,"; then
+        echo "[build] [dry-run] docker build -t disinto/chat:local -f ${FACTORY_ROOT}/docker/chat/Dockerfile ${FACTORY_ROOT}"
+      fi
     fi
     exit 0
   fi
@@ -916,15 +922,22 @@ _disinto_init_nomad() {
     echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
   fi
 
-  # Build custom images required by Nomad jobs (S4.2) — before deploy.
+  # Build custom images required by Nomad jobs (S4.2, S5.2) — before deploy.
   # Single-node factory dev box: no multi-node pull needed, no registry auth.
   # Can upgrade to approach B (registry push/pull) later if multi-node.
-  if echo ",$with_services," | grep -q ",agents,"; then
+  if echo ",$with_services," | grep -qE ",(agents|chat),"; then
     echo ""
     echo "── Building custom images ─────────────────────────────"
-    local tag="disinto/agents:local"
-    echo "── Building $tag ─────────────────────────────"
-    docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+    if echo ",$with_services," | grep -q ",agents,"; then
+      local tag="disinto/agents:local"
+      echo "── Building $tag ─────────────────────────────"
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+    fi
+    if echo ",$with_services," | grep -q ",chat,"; then
+      local tag="disinto/chat:local"
+      echo "── Building $tag ─────────────────────────────"
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/chat/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+    fi
   fi
 
   # Interleaved seed/deploy per service (S2.6, #928, #948).
@@ -935,9 +948,9 @@ _disinto_init_nomad() {
   if [ -n "$with_services" ]; then
     local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
 
-    # Build ordered deploy list (S3.4, S4.2): forgejo → woodpecker-server → woodpecker-agent → agents
+    # Build ordered deploy list (S3.4, S4.2, S5.2): forgejo → woodpecker-server → woodpecker-agent → agents → staging → chat
     local DEPLOY_ORDER=""
-    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents; do
+    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat; do
       if echo ",$with_services," | grep -q ",$ordered_svc,"; then
         DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
       fi
@@ -950,6 +963,7 @@ _disinto_init_nomad() {
       case "$svc" in
         woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
         agents) seed_name="agents" ;;
+        chat) seed_name="chat" ;;
       esac
       local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
       if [ -x "$seed_script" ]; then
@@ -1013,6 +1027,12 @@ _disinto_init_nomad() {
     fi
     if echo ",$with_services," | grep -q ",agents,"; then
       echo "             agents: (polling loop running)"
+    fi
+    if echo ",$with_services," | grep -q ",staging,"; then
+      echo "             staging: (internal, no external port)"
+    fi
+    if echo ",$with_services," | grep -q ",chat,"; then
+      echo "             chat: 8080"
     fi
     echo "────────────────────────────────────────────────────────"
   fi
@@ -1142,9 +1162,9 @@ disinto_init() {
     for _svc in $with_services; do
       _svc=$(echo "$_svc" | xargs)
       case "$_svc" in
-        forgejo|woodpecker-server|woodpecker-agent|agents) ;;
+        forgejo|woodpecker-server|woodpecker-agent|agents|staging|chat) ;;
         *)
-          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents" >&2
+          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat" >&2
           exit 1
           ;;
       esac

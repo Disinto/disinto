@@ -215,7 +215,7 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown service"* ]]
-  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents"* ]]
+  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat"* ]]
 }
 
 # S3.4: woodpecker auto-expansion and forgejo auto-inclusion
