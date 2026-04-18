@@ -66,6 +66,7 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/agent-data"
   "/srv/disinto/project-repos"
   "/srv/disinto/caddy-data"
+  "/srv/disinto/docker"
   "/srv/disinto/chat-history"
   "/srv/disinto/ops-repo"
 )
