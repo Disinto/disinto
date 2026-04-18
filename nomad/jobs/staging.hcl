@@ -10,8 +10,8 @@
 #   served to staging environment users.
 #
 # Network:
-#   No external port exposed — edge proxy routes to it internally.
-#   Service discovery via Nomad native provider for internal routing.
+#   Dynamic host port — edge discovers via Nomad service registration.
+#   No static port to avoid collisions with edge (which owns 80/443).
 #
 # Not the runtime yet: docker-compose.yml is still the factory's live stack
 # until cutover. This file exists so CI can validate it and S5.2 can wire
@@ -27,11 +27,10 @@ job "staging" {
 
     # No Vault integration needed — no secrets required (static file server)
 
-    # Internal service — no external port. Edge proxy routes internally.
+    # Internal service — dynamic host port. Edge discovers via Nomad service.
     network {
       port "http" {
-        static = 80
-        to     = 80
+        to = 80
       }
     }
 
