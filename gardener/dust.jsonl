@@ -1,1 +1,0 @@
-{"issue":915,"group":"lib/generators.sh","title":"remove no-op sed in generate_compose --build mode","reason":"sed replaces agents: with itself — no behavior change; single-line removal","ts":"2026-04-17T01:04:05Z"}

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
+<!-- last-reviewed: b05a31197cc78aa28f3c3e6365e782032bfb25af -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -19,8 +19,8 @@ see issues #821–#992 for the step breakdown.
 | `jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
 | `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
-| `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; internal-only via edge proxy (S5.2, #989) |
-| `jobs/chat.hcl` | submitted via `lib/init/nomad/deploy.sh` | Claude chat UI; custom `disinto/chat:local` image; sandbox hardening (cap_drop ALL, tmpfs, pids_limit 128); Vault-templated OAuth secrets via `service-chat` policy (S5.2, #989) |
+| `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
+| `jobs/chat.hcl` | submitted via `lib/init/nomad/deploy.sh` | Claude chat UI; custom `disinto/chat:local` image; sandbox hardening (cap_drop ALL, **tmpfs via mount block** not `tmpfs=` arg — S5-fix-5 #1012, pids_limit 128); Vault-templated OAuth secrets via `service-chat` policy (S5.2, #989) |
 | `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
