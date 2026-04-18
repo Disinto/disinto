@@ -1,4 +1,4 @@
-<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
+<!-- last-reviewed: b05a31197cc78aa28f3c3e6365e782032bfb25af -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -39,7 +39,7 @@ disinto/                 (code repo)
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, lib-systemd.sh (Nomad+Vault Step 0 installers, #821-#825); wp-oauth-register.sh (Forgejo OAuth2 app + Vault KV seeder for Woodpecker, S3.3); deploy.sh (dependency-ordered Nomad job deploy + health-wait, S4)
 ├── nomad/         server.hcl, client.hcl (allow_privileged for woodpecker-agent, S3-fix-5), vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
-│                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1); vault-runner.hcl (parameterized batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); chat.hcl (Claude chat UI, Vault OAuth secrets, S5.2); edge.hcl (Caddy proxy + dispatcher sidecar, S5.1)
+│                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1); vault-runner.hcl (parameterized batch dispatch, S5.3); staging.hcl (Caddy file-server, dynamic port — edge discovers via service registration, S5.2); chat.hcl (Claude chat UI, tmpfs via mount block, Vault OAuth secrets, S5.2); edge.hcl (Caddy proxy + dispatcher sidecar, S5.1)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge dispatcher, chat (server.py, entrypoint-chat.sh, Dockerfile, ui/)
