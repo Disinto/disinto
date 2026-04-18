@@ -1,12 +1,1 @@
-[
-  {
-    "action": "edit_body",
-    "issue": 915,
-    "body": "Flagged by AI reviewer in PR \\#911.\n\n## Problem\n\n`lib/generators.sh` line 660 contains a no-op `sed` invocation:\n```\nsed -i 's|^\\(  agents:\\)|\\1|' \"$compose_file\"\n```\n\nThis replaces `  agents:` with itself — it does nothing. It is dead code left over from a prior iteration.\n\n## Fix\n\nRemove the no-op `sed` line at line 660 of `lib/generators.sh`.\n\n## Affected files\n- `lib/generators.sh` (line 660 — the no-op sed invocation in generate_compose --build mode)\n\n## Acceptance criteria\n- [ ] The no-op sed line is removed from `lib/generators.sh`\n- [ ] `shellcheck` clean on `lib/generators.sh`\n- [ ] CI green\n\n---\n*Auto-created from AI review*"
-  },
-  {
-    "action": "add_label",
-    "issue": 915,
-    "label": "backlog"
-  }
-]
+[]
