@@ -405,3 +405,36 @@ hvault_token_lookup() {
     return 1
   }
 }
+
+# _hvault_seed_key — Seed a single KV key if it doesn't exist.
+# Reads existing data and merges to preserve sibling keys (KV v2 replaces
+# .data atomically). Returns 0=created, 1=unchanged, 2=API error.
+# Args:
+#   path:      KV v2 logical path (e.g. "disinto/shared/chat")
+#   key:       key name within the path (e.g. "chat_oauth_client_id")
+#   generator: shell command that outputs a random value (default: openssl rand -hex 32)
+# Usage:
+#   _hvault_seed_key "disinto/shared/chat" "chat_oauth_client_id"
+#   rc=$?  # 0=created, 1=unchanged
+_hvault_seed_key() {
+  local path="$1" key="$2" generator="${3:-openssl rand -hex 32}"
+  local existing
+  existing=$(hvault_kv_get "$path" "$key" 2>/dev/null) || true
+  if [ -n "$existing" ]; then
+    return 1  # unchanged
+  fi
+
+  local value
+  value=$(eval "$generator")
+
+  # Read existing data to preserve sibling keys (KV v2 replaces atomically)
+  local kv_api="${VAULT_KV_MOUNT}/data/${path}"
+  local raw existing_data payload
+  raw="$(hvault_get_or_empty "$kv_api")" || return 2
+  existing_data="{}"
+  [ -n "$raw" ] && existing_data="$(printf '%s' "$raw" | jq '.data.data // {}')"
+  payload="$(printf '%s' "$existing_data" \
+    | jq --arg k "$key" --arg v "$value" '{data: (. + {($k): $v})}')"
+  _hvault_request POST "$kv_api" "$payload" >/dev/null
+  return 0  # created
+}
