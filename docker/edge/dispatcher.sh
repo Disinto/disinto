@@ -560,10 +560,168 @@ _launch_runner_docker() {
 
 # _launch_runner_nomad ACTION_ID SECRETS_CSV MOUNTS_CSV
 #
-# Nomad backend stub — will be implemented in migration Step 5.
+# Dispatches a vault-runner batch job via `nomad job dispatch`.
+# Polls `nomad job status` until terminal state (completed/failed).
+# Reads exit code from allocation and writes <action-id>.result.json.
+#
+# Usage: _launch_runner_nomad <action_id> <secrets_csv> <mounts_csv>
+# Returns: exit code of the nomad job (0=success, non-zero=failure)
 _launch_runner_nomad() {
-  echo "nomad backend not yet implemented" >&2
-  return 1
+  local action_id="$1"
+  local secrets_csv="$2"
+  local mounts_csv="$3"
+
+  log "Dispatching vault-runner batch job via Nomad for action: ${action_id}"
+
+  # Dispatch the parameterized batch job
+  # The vault-runner job expects meta: action_id, secrets_csv
+  # Note: mounts_csv is not passed as meta (not declared in vault-runner.hcl)
+  local dispatch_output
+  dispatch_output=$(nomad job dispatch \
+    -detach \
+    -meta action_id="$action_id" \
+    -meta secrets_csv="$secrets_csv" \
+    vault-runner 2>&1) || {
+    log "ERROR: Failed to dispatch vault-runner job for ${action_id}"
+    log "Dispatch output: ${dispatch_output}"
+    write_result "$action_id" 1 "Nomad dispatch failed: ${dispatch_output}"
+    return 1
+  }
+
+  # Extract dispatched job ID from output (format: "vault-runner/dispatch-<timestamp>-<uuid>")
+  local dispatched_job_id
+  dispatched_job_id=$(echo "$dispatch_output" | grep -oP '(?<=Dispatched Job ID = ).+' || true)
+
+  if [ -z "$dispatched_job_id" ]; then
+    log "ERROR: Could not extract dispatched job ID from nomad output"
+    log "Dispatch output: ${dispatch_output}"
+    write_result "$action_id" 1 "Could not extract dispatched job ID from nomad output"
+    return 1
+  fi
+
+  log "Dispatched vault-runner with job ID: ${dispatched_job_id}"
+
+  # Poll job status until terminal state
+  # Batch jobs transition: running -> completed/failed
+  local max_wait=300  # 5 minutes max wait
+  local elapsed=0
+  local poll_interval=5
+  local alloc_id=""
+
+  log "Polling nomad job status for ${dispatched_job_id}..."
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    # Get job status with JSON output for the dispatched child job
+    local job_status_json
+    job_status_json=$(nomad job status -json "$dispatched_job_id" 2>/dev/null) || {
+      log "ERROR: Failed to get job status for ${dispatched_job_id}"
+      write_result "$action_id" 1 "Failed to get job status for ${dispatched_job_id}"
+      return 1
+    }
+
+    # Check job status field (transitions to "dead" on completion)
+    local job_state
+    job_state=$(echo "$job_status_json" | jq -r '.Status // empty' 2>/dev/null) || job_state=""
+
+    # Check allocation state directly
+    alloc_id=$(echo "$job_status_json" | jq -r '.Allocations[0]?.ID // empty' 2>/dev/null) || alloc_id=""
+
+    if [ -n "$alloc_id" ]; then
+      local alloc_state
+      alloc_state=$(nomad alloc status -short "$alloc_id" 2>/dev/null || true)
+
+      case "$alloc_state" in
+        *completed*|*success*|*dead*)
+          log "Allocation ${alloc_id} reached terminal state: ${alloc_state}"
+          break
+          ;;
+        *running*|*pending*|*starting*)
+          log "Allocation ${alloc_id} still running (state: ${alloc_state})..."
+          ;;
+        *failed*|*crashed*)
+          log "Allocation ${alloc_id} failed (state: ${alloc_state})"
+          break
+          ;;
+      esac
+    fi
+
+    # Also check job-level state
+    case "$job_state" in
+      dead)
+        log "Job ${dispatched_job_id} reached terminal state: ${job_state}"
+        break
+        ;;
+      failed)
+        log "Job ${dispatched_job_id} failed"
+        break
+        ;;
+    esac
+
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+  done
+
+  if [ "$elapsed" -ge "$max_wait" ]; then
+    log "ERROR: Timeout waiting for vault-runner job to complete"
+    write_result "$action_id" 1 "Timeout waiting for nomad job to complete"
+    return 1
+  fi
+
+  # Get final job status and exit code
+  local final_status_json
+  final_status_json=$(nomad job status -json "$dispatched_job_id" 2>/dev/null) || {
+    log "ERROR: Failed to get final job status"
+    write_result "$action_id" 1 "Failed to get final job status"
+    return 1
+  }
+
+  # Get allocation exit code
+  local exit_code=0
+  local logs=""
+
+  if [ -n "$alloc_id" ]; then
+    # Get allocation logs
+    logs=$(nomad alloc logs -short "$alloc_id" 2>/dev/null || true)
+
+    # Try to get exit code from alloc status JSON
+    # Nomad alloc status -json has .TaskStates["<task_name>"].Events[].ExitCode
+    local alloc_exit_code
+    alloc_exit_code=$(nomad alloc status -json "$alloc_id" 2>/dev/null | jq -r '.TaskStates["runner"].Events[-1].ExitCode // empty' 2>/dev/null) || alloc_exit_code=""
+
+    if [ -n "$alloc_exit_code" ] && [ "$alloc_exit_code" != "null" ]; then
+      exit_code="$alloc_exit_code"
+    fi
+  fi
+
+  # If we couldn't get exit code from alloc, check job state as fallback
+  # Note: "dead" = terminal state for batch jobs (includes successful completion)
+  # Only "failed" indicates actual failure
+  if [ "$exit_code" -eq 0 ]; then
+    local final_state
+    final_state=$(echo "$final_status_json" | jq -r '.Status // empty' 2>/dev/null) || final_state=""
+
+    case "$final_state" in
+      failed)
+        exit_code=1
+        ;;
+    esac
+  fi
+
+  # Truncate logs if too long
+  if [ ${#logs} -gt 1000 ]; then
+    logs="${logs: -1000}"
+  fi
+
+  # Write result file
+  write_result "$action_id" "$exit_code" "$logs"
+
+  if [ "$exit_code" -eq 0 ]; then
+    log "Vault-runner job completed successfully for action: ${action_id}"
+  else
+    log "Vault-runner job failed for action: ${action_id} (exit code: ${exit_code})"
+  fi
+
+  return "$exit_code"
 }
 
 # Launch runner for the given action (backend-agnostic orchestrator)
@@ -1051,11 +1209,8 @@ main() {
 
   # Validate backend selection at startup
   case "$DISPATCHER_BACKEND" in
-    docker) ;;
-    nomad)
-      log "ERROR: nomad backend not yet implemented"
-      echo "nomad backend not yet implemented" >&2
-      exit 1
+    docker|nomad)
+      log "Using ${DISPATCHER_BACKEND} backend for vault-runner dispatch"
       ;;
     *)
       log "ERROR: unknown DISPATCHER_BACKEND=${DISPATCHER_BACKEND}"
