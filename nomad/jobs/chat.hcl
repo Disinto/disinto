@@ -89,13 +89,18 @@ job "chat" {
       config {
         image      = "disinto/chat:local"
         force_pull = false
-        # Sandbox hardening (#706): cap_drop ALL (no Linux capabilities)
-        # tmpfs /tmp for runtime files (64MB)
-        # pids_limit 128 (prevent fork bombs)
+        # Sandbox hardening (#706): cap_drop ALL, pids_limit 128, tmpfs /tmp
         # ReadonlyRootfs enforced via entrypoint script (fails if running as root)
         cap_drop   = ["ALL"]
-        tmpfs      = ["/tmp:size=64m"]
         pids_limit = 128
+        mount {
+          type     = "tmpfs"
+          target   = "/tmp"
+          readonly = false
+          tmpfs_options {
+            size = 67108864  # 64MB in bytes
+          }
+        }
         # Security options for sandbox hardening
         # apparmor=unconfined needed for Claude CLI ptrace access
         # no-new-privileges prevents privilege escalation
