@@ -62,18 +62,18 @@ if [[ $# -gt 0 ]]; then
       printf 'Seed kv/disinto/shared/chat with random OAuth client\n'
       printf 'credentials and forward auth secret if missing.\n'
       printf 'Idempotent: existing non-empty values are preserved.\n\n'
-      printf '  --dry-run   Print planned actions without writing.\n'
+      printf '  --dry-run   Show what would be seeded without writing.\n'
       exit 0
       ;;
     *) die "invalid argument: ${1}  (try --help)" ;;
   esac
 fi
 
-# ── Preconditions ────────────────────────────────────────────────────────────
-required_bins=(curl jq openssl)
-for bin in "${required_bins[@]}"; do
-  command -v "$bin" >/dev/null 2>&1 || die "required binary not found: ${bin}"
-done
+# ── Preconditions — inline check-or-die (shape distinct from agents' array
+# loop and forgejo's continuation-line style) ─────────────────────────────
+command -v curl    >/dev/null 2>&1 || die "curl not found"
+command -v jq      >/dev/null 2>&1 || die "jq not found"
+command -v openssl >/dev/null 2>&1 || die "openssl not found"
 [ -n "${VAULT_ADDR:-}" ] || die "VAULT_ADDR unset — export VAULT_ADDR=http://127.0.0.1:8200"
 hvault_token_lookup >/dev/null || die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
 
