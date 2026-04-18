@@ -121,10 +121,10 @@ roles:
     job_id:    bot-vault
 
   # ── Edge dispatcher ────────────────────────────────────────────────────────
-  - name:      dispatcher
-    policy:    dispatcher
+  - name:      service-dispatcher
+    policy:    service-dispatcher
     namespace: default
-    job_id:    dispatcher
+    job_id:    edge
 
   # ── Per-secret runner roles ────────────────────────────────────────────────
   # vault-runner (Step 5) composes runner-<NAME> policies onto each
