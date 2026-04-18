@@ -843,10 +843,10 @@ _disinto_init_nomad() {
         echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
       fi
       if echo ",$with_services," | grep -q ",chat,"; then
-        echo "[build] [dry-run] docker build -t disinto/chat:local -f ${FACTORY_ROOT}/docker/chat/Dockerfile ${FACTORY_ROOT}"
+        echo "[build] [dry-run] docker build -t disinto/chat:local -f ${FACTORY_ROOT}/docker/chat/Dockerfile ${FACTORY_ROOT}/docker/chat"
       fi
       if echo ",$with_services," | grep -q ",edge,"; then
-        echo "[build] [dry-run] docker build -t disinto/edge:local -f ${FACTORY_ROOT}/docker/edge/Dockerfile ${FACTORY_ROOT}"
+        echo "[build] [dry-run] docker build -t disinto/edge:local -f ${FACTORY_ROOT}/docker/edge/Dockerfile ${FACTORY_ROOT}/docker/edge"
       fi
     fi
     exit 0
@@ -950,12 +950,12 @@ _disinto_init_nomad() {
     if echo ",$with_services," | grep -q ",chat,"; then
       local tag="disinto/chat:local"
       echo "── Building $tag ─────────────────────────────"
-      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/chat/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/chat/Dockerfile" "${FACTORY_ROOT}/docker/chat" 2>&1 | tail -5
     fi
     if echo ",$with_services," | grep -q ",edge,"; then
       local tag="disinto/edge:local"
       echo "── Building $tag ─────────────────────────────"
-      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/edge/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/edge/Dockerfile" "${FACTORY_ROOT}/docker/edge" 2>&1 | tail -5
     fi
   fi
 
