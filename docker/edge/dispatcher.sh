@@ -683,10 +683,10 @@ _launch_runner_nomad() {
     # Get allocation logs
     logs=$(nomad alloc logs -short "$alloc_id" 2>/dev/null || true)
 
-    # Try to get exit code from JSON output
-    # Nomad alloc status -json has .TaskStates["<task_name>].Events[].ExitCode
+    # Try to get exit code from alloc status JSON
+    # Nomad alloc status -json has .TaskStates["<task_name>"].Events[].ExitCode
     local alloc_exit_code
-    alloc_exit_code=$(echo "$final_status_json" | jq -r '.TaskStates["runner"].Events[-1].ExitCode // empty' 2>/dev/null) || alloc_exit_code=""
+    alloc_exit_code=$(nomad alloc status -json "$alloc_id" 2>/dev/null | jq -r '.TaskStates["runner"].Events[-1].ExitCode // empty' 2>/dev/null) || alloc_exit_code=""
 
     if [ -n "$alloc_exit_code" ] && [ "$alloc_exit_code" != "null" ]; then
       exit_code="$alloc_exit_code"
@@ -694,12 +694,14 @@ _launch_runner_nomad() {
   fi
 
   # If we couldn't get exit code from alloc, check job state as fallback
+  # Note: "dead" = terminal state for batch jobs (includes successful completion)
+  # Only "failed" indicates actual failure
   if [ "$exit_code" -eq 0 ]; then
     local final_state
     final_state=$(echo "$final_status_json" | jq -r '.Status // empty' 2>/dev/null) || final_state=""
 
     case "$final_state" in
-      failed|dead)
+      failed)
         exit_code=1
         ;;
     esac
