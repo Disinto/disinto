@@ -65,9 +65,10 @@ job "staging" {
       driver = "docker"
 
       config {
-        image = "caddy:alpine"
-        ports = ["http"]
-        args  = ["file-server", "--root", "/srv/site"]
+        image   = "caddy:alpine"
+        ports   = ["http"]
+        command = "caddy"
+        args    = ["file-server", "--root", "/srv/site"]
       }
 
       # Mount docker/ directory as /srv/site:ro (static content)
