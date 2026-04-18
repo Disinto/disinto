@@ -137,7 +137,6 @@ _generate_local_model_services() {
       - project-repos-${service_name}:/home/agent/repos
       - \${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:\${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - \${CLAUDE_CONFIG_FILE:-\${HOME}/.claude.json}:/home/agent/.claude.json:ro
-      - \${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
       - \${AGENT_SSH_DIR:-\${HOME}/.ssh}:/home/agent/.ssh:ro
       - ./projects:/home/agent/disinto/projects:ro
       - ./.env:/home/agent/disinto/.env:ro
@@ -382,7 +381,6 @@ services:
       - project-repos:/home/agent/repos
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
-      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
       - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
       - ${SOPS_AGE_DIR:-${HOME}/.config/sops/age}:/home/agent/.config/sops/age:ro
       - woodpecker-data:/woodpecker-data:ro
@@ -636,13 +634,13 @@ COMPOSEEOF
   _generate_local_model_services "$compose_file"
 
   # Resolve the Claude CLI binary path and persist as CLAUDE_BIN_DIR in .env.
-  # docker-compose.yml references ${CLAUDE_BIN_DIR} so the value must be set.
+  # Only used by reproduce and edge services which still use host-mounted CLI.
   local claude_bin
   claude_bin="$(command -v claude 2>/dev/null || true)"
   if [ -n "$claude_bin" ]; then
     claude_bin="$(readlink -f "$claude_bin")"
   else
-    echo "Warning: claude CLI not found in PATH — set CLAUDE_BIN_DIR in .env manually" >&2
+    echo "Warning: claude CLI not found in PATH — reproduce/edge services will fail to start" >&2
     claude_bin="/usr/local/bin/claude"
   fi
   # Persist CLAUDE_BIN_DIR into .env so docker-compose can resolve it.
