@@ -57,7 +57,7 @@ job "woodpecker-agent" {
       check {
         type     = "http"
         path     = "/healthz"
-        interval = "15s"
+        interval = "10s"
         timeout  = "3s"
       }
     }
@@ -89,10 +89,13 @@ job "woodpecker-agent" {
       # Nomad's port stanza to the allocation's IP (not localhost), so the
       # agent must use the LXC's eth0 IP, not 127.0.0.1.
       env {
-        WOODPECKER_SERVER         = "${attr.unique.network.ip-address}:9000"
-        WOODPECKER_GRPC_SECURE    = "false"
-        WOODPECKER_MAX_WORKFLOWS  = "1"
-        WOODPECKER_HEALTHCHECK_ADDR = ":3333"
+        WOODPECKER_SERVER                   = "${attr.unique.network.ip-address}:9000"
+        WOODPECKER_GRPC_SECURE              = "false"
+        WOODPECKER_GRPC_KEEPALIVE_TIME      = "10s"
+        WOODPECKER_GRPC_KEEPALIVE_TIMEOUT   = "20s"
+        WOODPECKER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS = "true"
+        WOODPECKER_MAX_WORKFLOWS            = "1"
+        WOODPECKER_HEALTHCHECK_ADDR         = ":3333"
       }
 
       # ── Vault-templated agent secret ──────────────────────────────────
