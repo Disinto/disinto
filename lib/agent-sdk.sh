@@ -52,8 +52,9 @@ claude_run_with_watchdog() {
   out_file=$(mktemp) || return 1
   trap 'rm -f "$out_file"' RETURN
 
-  # Start claude in background, capturing stdout to temp file
-  "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
+  # Start claude in new process group (setsid creates new session, $pid is PGID leader)
+  # All children of claude will inherit this process group
+  setsid "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
   pid=$!
 
   # Background watchdog: poll for final result marker
@@ -84,12 +85,12 @@ claude_run_with_watchdog() {
       sleep "$grace"
       if kill -0 "$pid" 2>/dev/null; then
         log "watchdog: claude -p idle for ${grace}s after final result; SIGTERM"
-        kill -TERM "$pid" 2>/dev/null || true
+        kill -TERM -- "-$pid" 2>/dev/null || true
         # Give it a moment to clean up
         sleep 5
         if kill -0 "$pid" 2>/dev/null; then
           log "watchdog: force kill after SIGTERM timeout"
-          kill -KILL "$pid" 2>/dev/null || true
+          kill -KILL -- "-$pid" 2>/dev/null || true
         fi
       fi
     fi
@@ -100,16 +101,16 @@ claude_run_with_watchdog() {
   timeout --foreground "${CLAUDE_TIMEOUT:-7200}" tail --pid="$pid" -f /dev/null 2>/dev/null
   rc=$?
 
-  # Clean up the watchdog
-  kill "$grace_pid" 2>/dev/null || true
+  # Clean up the watchdog (target process group if it spawned children)
+  kill -- "-$grace_pid" 2>/dev/null || true
   wait "$grace_pid" 2>/dev/null || true
 
-  # When timeout fires (rc=124), explicitly kill the orphaned claude process
+  # When timeout fires (rc=124), explicitly kill the orphaned claude process group
   # tail --pid is a passive waiter, not a supervisor
   if [ "$rc" -eq 124 ]; then
-    kill "$pid" 2>/dev/null || true
+    kill -TERM -- "-$pid" 2>/dev/null || true
     sleep 1
-    kill -KILL "$pid" 2>/dev/null || true
+    kill -KILL -- "-$pid" 2>/dev/null || true
   fi
 
   # Output the captured stdout
