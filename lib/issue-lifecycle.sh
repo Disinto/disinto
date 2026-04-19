@@ -157,9 +157,10 @@ issue_claim() {
     return 1
   fi
 
-  local ip_id bl_id
+  local ip_id bl_id bk_id
   ip_id=$(_ilc_in_progress_id)
   bl_id=$(_ilc_backlog_id)
+  bk_id=$(_ilc_blocked_id)
   if [ -n "$ip_id" ]; then
     curl -sf -X POST \
       -H "Authorization: token ${FORGE_TOKEN}" \
@@ -171,6 +172,12 @@ issue_claim() {
     curl -sf -X DELETE \
       -H "Authorization: token ${FORGE_TOKEN}" \
       "${FORGE_API}/issues/${issue}/labels/${bl_id}" >/dev/null 2>&1 || true
+  fi
+  # Clear blocked label on re-claim — starting work is implicit resolution of prior block
+  if [ -n "$bk_id" ]; then
+    curl -sf -X DELETE \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${issue}/labels/${bk_id}" >/dev/null 2>&1 || true
   fi
   _ilc_log "claimed issue #${issue}"
   return 0
