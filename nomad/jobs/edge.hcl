@@ -193,8 +193,9 @@ EOT
 
       config {
         # Use same disinto/agents:local image as other agents.
-        image      = "disinto/agents:local"
-        force_pull = false
+        image        = "disinto/agents:local"
+        force_pull   = false
+        network_mode = "host"
 
         # apparmor=unconfined matches docker-compose.
         security_opt = ["apparmor=unconfined"]
