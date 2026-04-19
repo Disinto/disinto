@@ -123,6 +123,19 @@ job "edge" {
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018) ────
       # Renders staging upstream from Nomad service registration instead of
       # hardcoded staging:80. Caddy picks up /local/Caddyfile via entrypoint.
+      # Forge URL via Nomad service discovery (issue #1034) — resolves forgejo
+      # service address/port dynamically for bridge network compatibility.
+      template {
+        destination = "local/forge.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range service "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
       template {
         destination = "local/Caddyfile"
         change_mode = "restart"
@@ -174,7 +187,6 @@ EOT
 
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
-        FORGE_URL         = "http://127.0.0.1:3000"
         FORGE_REPO        = "disinto-admin/disinto"
         DISINTO_CONTAINER = "1"
         PROJECT_NAME      = "disinto"
@@ -213,6 +225,21 @@ EOT
         read_only   = false
       }
 
+      # ── Forge URL via Nomad service discovery (issue #1034) ──────────
+      # Resolves forgejo service address/port dynamically for bridge network
+      # compatibility. Template-scoped to dispatcher task (Nomad doesn't
+      # propagate templates across tasks).
+      template {
+        destination = "local/forge.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range service "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
       # ── Vault-templated secrets (S5.1, issue #988) ──────────────────────
       # Renders FORGE_TOKEN from Vault KV v2 for ops repo access.
       template {
@@ -233,7 +260,6 @@ EOT
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         DISPATCHER_BACKEND   = "nomad"
-        FORGE_URL            = "http://127.0.0.1:3000"
         FORGE_REPO           = "disinto-admin/disinto"
         FORGE_OPS_REPO       = "disinto-admin/disinto-ops"
         PRIMARY_BRANCH       = "main"
