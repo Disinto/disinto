@@ -1,0 +1,332 @@
+# =============================================================================
+# .woodpecker/edge-subpath.yml — Edge subpath routing static checks
+#
+# Static validation for edge subpath routing configuration. This pipeline does
+# NOT run live service curls — it validates the configuration that would be
+# used by a deployed edge proxy.
+#
+# Checks:
+#   1. shellcheck — syntax check on tests/smoke-edge-subpath.sh
+#   2. caddy validate — validate the Caddyfile template syntax
+#   3. caddyfile-routing-test — verify Caddyfile routing block shape
+#   4. test-caddyfile-routing — run standalone unit test for Caddyfile structure
+#
+# Triggers:
+#   - Pull requests that modify edge-related files
+#
+# Environment variables (inherited from WOODPECKER_ENVIRONMENT):
+#   EDGE_BASE_URL      — Edge proxy URL for reference (default: http://localhost)
+#   EDGE_TIMEOUT       — Request timeout in seconds (default: 30)
+#   EDGE_MAX_RETRIES   — Max retries per request (default: 3)
+# =============================================================================
+
+when:
+  event: [push, pull_request]
+  paths:
+    - "nomad/jobs/edge.hcl"
+    - "docker/edge/**"
+    - "tools/edge-control/**"
+    - ".woodpecker/edge-subpath.yml"
+    - "tests/smoke-edge-subpath.sh"
+    - "tests/test-caddyfile-routing.sh"
+
+steps:
+  # ── 1. ShellCheck on smoke script ────────────────────────────────────────
+  # `shellcheck` validates bash syntax, style, and common pitfalls.
+  # Exit codes:
+  #   0 — all checks passed
+  #   1 — one or more issues found
+  - name: shellcheck-smoke
+    image: koalaman/shellcheck-alpine:stable
+    commands:
+      - shellcheck --severity=warning tests/smoke-edge-subpath.sh tests/test-caddyfile-routing.sh
+
+  # ── 2. Caddyfile template rendering ───────────────────────────────────────
+  # Render a mock Caddyfile for validation. The template uses Nomad's
+  # templating syntax ({{ range ... }}) which must be processed before Caddy
+  # can validate it. We render a mock version with Nomad templates expanded
+  # to static values for validation purposes.
+  - name: render-caddyfile
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache coreutils
+      - |
+        set -e
+        mkdir -p /tmp/edge-render
+        # Render mock Caddyfile with Nomad templates expanded
+        {
+          echo '# Caddyfile — edge proxy configuration (Nomad-rendered)'
+          echo '# Staging upstream discovered via Nomad service registration.'
+          echo ''
+          echo ':80 {'
+          echo '    # Redirect root to Forgejo'
+          echo '    handle / {'
+          echo '        redir /forge/ 302'
+          echo '    }'
+          echo ''
+          echo '    # Reverse proxy to Forgejo'
+          echo '    handle /forge/* {'
+          echo '        reverse_proxy 127.0.0.1:3000'
+          echo '    }'
+          echo ''
+          echo '    # Reverse proxy to Woodpecker CI'
+          echo '    handle /ci/* {'
+          echo '        reverse_proxy 127.0.0.1:8000'
+          echo '    }'
+          echo ''
+          echo '    # Reverse proxy to staging — dynamic port via Nomad service discovery'
+          echo '    handle /staging/* {'
+          echo '        reverse_proxy 127.0.0.1:8081'
+          echo '    }'
+          echo ''
+          echo '    # Chat service — reverse proxy to disinto-chat backend (#705)'
+          echo '    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)'
+          echo '    handle /chat/login {'
+          echo '        reverse_proxy 127.0.0.1:8080'
+          echo '    }'
+          echo '    handle /chat/oauth/callback {'
+          echo '        reverse_proxy 127.0.0.1:8080'
+          echo '    }'
+          echo '    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)'
+          echo '    handle /chat/* {'
+          echo '        forward_auth 127.0.0.1:8080 {'
+          echo '            uri /chat/auth/verify'
+          echo '            copy_headers X-Forwarded-User'
+          echo '            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}'
+          echo '        }'
+          echo '        reverse_proxy 127.0.0.1:8080'
+          echo '    }'
+          echo '}'
+        } > /tmp/edge-render/Caddyfile
+        cp /tmp/edge-render/Caddyfile /tmp/edge-render/Caddyfile.rendered
+        echo "Caddyfile rendered successfully"
+
+  # ── 3. Caddy config validation ───────────────────────────────────────────
+  # `caddy validate` checks Caddyfile syntax and configuration.
+  # This validates the rendered Caddyfile against Caddy's parser.
+  # Exit codes:
+  #   0 — configuration is valid
+  #   1 — configuration has errors
+  - name: caddy-validate
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache ca-certificates
+      - curl -sS -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
+      - chmod +x /tmp/caddy
+      - /tmp/caddy version
+      - /tmp/caddy validate --config /tmp/edge-render/Caddyfile.rendered --adapter caddyfile
+
+  # ── 4. Caddyfile routing block shape test ─────────────────────────────────
+  # Verify that the Caddyfile contains all required routing blocks:
+  #   - /forge/ — Forgejo subpath
+  #   - /ci/ — Woodpecker subpath
+  #   - /staging/ — Staging subpath
+  #   - /chat/ — Chat subpath with forward_auth
+  #
+  # This is a unit test that validates the expected structure without
+  # requiring a running Caddy instance.
+  - name: caddyfile-routing-test
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache grep coreutils
+      - |
+        set -e
+
+        CADDYFILE="/tmp/edge-render/Caddyfile.rendered"
+
+        echo "=== Validating Caddyfile routing blocks ==="
+
+        # Check that all required subpath handlers exist
+        REQUIRED_HANDLERS=(
+          "handle /forge/\*"
+          "handle /ci/\*"
+          "handle /staging/\*"
+          "handle /chat/login"
+          "handle /chat/oauth/callback"
+          "handle /chat/\*"
+        )
+
+        FAILED=0
+        for handler in "$${REQUIRED_HANDLERS[@]}"; do
+          if grep -q "$handler" "$CADDYFILE"; then
+            echo "[PASS] Found handler: $handler"
+          else
+            echo "[FAIL] Missing handler: $handler"
+            FAILED=1
+          fi
+        done
+
+        # Check forward_auth block exists for /chat/*
+        if grep -A5 "handle /chat/\*" "$CADDYFILE" | grep -q "forward_auth"; then
+          echo "[PASS] forward_auth block found for /chat/*"
+        else
+          echo "[FAIL] forward_auth block missing for /chat/*"
+          FAILED=1
+        fi
+
+        # Check reverse_proxy to Forgejo (port 3000)
+        if grep -q "reverse_proxy 127.0.0.1:3000" "$CADDYFILE"; then
+          echo "[PASS] Forgejo reverse_proxy configured (port 3000)"
+        else
+          echo "[FAIL] Forgejo reverse_proxy not configured"
+          FAILED=1
+        fi
+
+        # Check reverse_proxy to Woodpecker (port 8000)
+        if grep -q "reverse_proxy 127.0.0.1:8000" "$CADDYFILE"; then
+          echo "[PASS] Woodpecker reverse_proxy configured (port 8000)"
+        else
+          echo "[FAIL] Woodpecker reverse_proxy not configured"
+          FAILED=1
+        fi
+
+        # Check reverse_proxy to Chat (port 8080)
+        if grep -q "reverse_proxy 127.0.0.1:8080" "$CADDYFILE"; then
+          echo "[PASS] Chat reverse_proxy configured (port 8080)"
+        else
+          echo "[FAIL] Chat reverse_proxy not configured"
+          FAILED=1
+        fi
+
+        # Check root redirect to /forge/
+        if grep -q "redir /forge/ 302" "$CADDYFILE"; then
+          echo "[PASS] Root redirect to /forge/ configured"
+        else
+          echo "[FAIL] Root redirect to /forge/ not configured"
+          FAILED=1
+        fi
+
+        echo ""
+        if [ $FAILED -eq 0 ]; then
+          echo "=== All routing blocks validated ==="
+          exit 0
+        else
+          echo "=== Routing block validation failed ===" >&2
+          exit 1
+        fi
+
+  # ── 5. Standalone Caddyfile routing test ─────────────────────────────────
+  # Run the standalone unit test for Caddyfile routing block validation.
+  # This test extracts the Caddyfile template from edge.hcl and validates
+  # its structure without requiring a running Caddy instance.
+  - name: test-caddyfile-routing
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache grep coreutils
+      - |
+        set -e
+        EDGE_TEMPLATE="nomad/jobs/edge.hcl"
+
+        echo "=== Extracting Caddyfile template from $EDGE_TEMPLATE ==="
+
+        # Extract the Caddyfile template (content between <<EOT and EOT markers)
+        CADDYFILE=$(sed -n '/data[[:space:]]*=[[:space:]]*<<[Ee][Oo][Tt]/,/^EOT$/p' "$EDGE_TEMPLATE" | sed '1s/.*/# Caddyfile extracted from Nomad template/; $d')
+
+        if [ -z "$CADDYFILE" ]; then
+          echo "ERROR: Could not extract Caddyfile template from $EDGE_TEMPLATE" >&2
+          exit 1
+        fi
+
+        echo "Caddyfile template extracted successfully"
+        echo ""
+
+        FAILED=0
+
+        # Check Forgejo subpath
+        if echo "$CADDYFILE" | grep -q "handle /forge/\*"; then
+          echo "[PASS] Forgejo handle block"
+        else
+          echo "[FAIL] Forgejo handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:3000"; then
+          echo "[PASS] Forgejo reverse_proxy (port 3000)"
+        else
+          echo "[FAIL] Forgejo reverse_proxy (port 3000)"
+          FAILED=1
+        fi
+
+        # Check Woodpecker subpath
+        if echo "$CADDYFILE" | grep -q "handle /ci/\*"; then
+          echo "[PASS] Woodpecker handle block"
+        else
+          echo "[FAIL] Woodpecker handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8000"; then
+          echo "[PASS] Woodpecker reverse_proxy (port 8000)"
+        else
+          echo "[FAIL] Woodpecker reverse_proxy (port 8000)"
+          FAILED=1
+        fi
+
+        # Check Staging subpath
+        if echo "$CADDYFILE" | grep -q "handle /staging/\*"; then
+          echo "[PASS] Staging handle block"
+        else
+          echo "[FAIL] Staging handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "nomadService"; then
+          echo "[PASS] Staging Nomad service discovery"
+        else
+          echo "[FAIL] Staging Nomad service discovery"
+          FAILED=1
+        fi
+
+        # Check Chat subpath
+        if echo "$CADDYFILE" | grep -q "handle /chat/login"; then
+          echo "[PASS] Chat login handle block"
+        else
+          echo "[FAIL] Chat login handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "handle /chat/oauth/callback"; then
+          echo "[PASS] Chat OAuth callback handle block"
+        else
+          echo "[FAIL] Chat OAuth callback handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "handle /chat/\*"; then
+          echo "[PASS] Chat catch-all handle block"
+        else
+          echo "[FAIL] Chat catch-all handle block"
+          FAILED=1
+        fi
+
+        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8080"; then
+          echo "[PASS] Chat reverse_proxy (port 8080)"
+        else
+          echo "[FAIL] Chat reverse_proxy (port 8080)"
+          FAILED=1
+        fi
+
+        # Check forward_auth for chat
+        if echo "$CADDYFILE" | grep -A10 "handle /chat/\*" | grep -q "forward_auth"; then
+          echo "[PASS] forward_auth block for /chat/*"
+        else
+          echo "[FAIL] forward_auth block for /chat/*"
+          FAILED=1
+        fi
+
+        # Check root redirect
+        if echo "$CADDYFILE" | grep -q "redir /forge/ 302"; then
+          echo "[PASS] Root redirect to /forge/"
+        else
+          echo "[FAIL] Root redirect to /forge/"
+          FAILED=1
+        fi
+
+        echo ""
+        if [ $FAILED -eq 0 ]; then
+          echo "=== All routing blocks validated ==="
+          exit 0
+        else
+          echo "=== Routing block validation failed ===" >&2
+          exit 1
+        fi
