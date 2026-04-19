@@ -313,6 +313,10 @@ _generate_compose_impl() {
     return 0
   fi
 
+  # Reset duplicate detection state for fresh run
+  _seen_services=()
+  _service_sources=()
+
   # Initialize duplicate detection with base services defined in the template
   _record_service "forgejo" "base compose template" || return 1
   _record_service "woodpecker" "base compose template" || return 1
