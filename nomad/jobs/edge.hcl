@@ -225,6 +225,21 @@ EOT
         read_only   = false
       }
 
+      # ── Forge URL via Nomad service discovery (issue #1034) ──────────
+      # Resolves forgejo service address/port dynamically for bridge network
+      # compatibility. Template-scoped to dispatcher task (Nomad doesn't
+      # propagate templates across tasks).
+      template {
+        destination = "local/forge.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range service "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
       # ── Vault-templated secrets (S5.1, issue #988) ──────────────────────
       # Renders FORGE_TOKEN from Vault KV v2 for ops repo access.
       template {
