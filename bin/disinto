@@ -802,6 +802,7 @@ _disinto_init_nomad() {
           woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
           agents) seed_name="agents" ;;
           chat) seed_name="chat" ;;
+          edge) seed_name="ops-repo" ;;
         esac
         local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
         if [ -x "$seed_script" ]; then
@@ -983,6 +984,7 @@ _disinto_init_nomad() {
         woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
         agents) seed_name="agents" ;;
         chat) seed_name="chat" ;;
+        edge) seed_name="ops-repo" ;;
       esac
       local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
       if [ -x "$seed_script" ]; then
