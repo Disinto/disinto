@@ -16,7 +16,7 @@
 # Environment:
 #   REPO_ROOT              — absolute path to repo root (defaults to parent of
 #                            this script's parent directory)
-#   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 240)
+#   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 360)
 #   JOB_READY_TIMEOUT_<JOBNAME> — per-job timeout override (e.g.,
 #                            JOB_READY_TIMEOUT_FORGEJO=300)
 #
@@ -33,7 +33,7 @@ set -euo pipefail
 # ── Configuration ────────────────────────────────────────────────────────────
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_ROOT}/../../.." && pwd)}"
-JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-240}"
+JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-360}"
 
 DRY_RUN=0
 
