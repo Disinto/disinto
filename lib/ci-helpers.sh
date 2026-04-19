@@ -247,6 +247,31 @@ ci_promote() {
   echo "$new_num"
 }
 
+# ci_get_step_logs <pipeline_num> <step_id>
+# Fetches logs for a single CI step via the Woodpecker API.
+# Requires: WOODPECKER_REPO_ID, woodpecker_api() (from env.sh)
+# Returns: 0 on success, 1 on failure. Outputs log text to stdout.
+#
+# Usage:
+#   ci_get_step_logs 1423 5    # Get logs for step ID 5 in pipeline 1423
+ci_get_step_logs() {
+  local pipeline_num="$1" step_id="$2"
+
+  if [ -z "$pipeline_num" ] || [ -z "$step_id" ]; then
+    echo "Usage: ci_get_step_logs <pipeline_num> <step_id>" >&2
+    return 1
+  fi
+
+  if [ -z "${WOODPECKER_REPO_ID:-}" ] || [ "${WOODPECKER_REPO_ID}" = "0" ]; then
+    echo "ERROR: WOODPECKER_REPO_ID not set or zero" >&2
+    return 1
+  fi
+
+  woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${pipeline_num}/${step_id}" \
+    --max-time 15 2>/dev/null \
+    | jq -r '.[].data // empty' 2>/dev/null
+}
+
 # ci_get_logs <pipeline_number> [--step <step_name>]
 # Reads CI logs from the Woodpecker SQLite database.
 # Requires: WOODPECKER_DATA_DIR env var or mounted volume at /woodpecker-data

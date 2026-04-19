@@ -429,19 +429,100 @@ pr_walk_to_merge() {
 
       _prl_log "CI failed — invoking agent (attempt ${ci_fix_count}/${max_ci_fixes})"
 
-      # Get CI logs from SQLite database if available
-      local ci_logs=""
-      if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${FACTORY_ROOT:-}" ]; then
-        ci_logs=$(ci_get_logs "$_PR_CI_PIPELINE" 2>/dev/null | tail -50) || ci_logs=""
+      # Build per-workflow/per-step CI diagnostics prompt
+      local ci_prompt_body=""
+      local passing_workflows=""
+      local built_diagnostics=false
+
+      if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${WOODPECKER_REPO_ID:-}" ]; then
+        local pip_json
+        pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${_PR_CI_PIPELINE}" 2>/dev/null) || pip_json=""
+
+        if [ -n "$pip_json" ]; then
+          local wf_count
+          wf_count=$(printf '%s' "$pip_json" | jq '[.workflows[]?] | length' 2>/dev/null) || wf_count=0
+
+          if [ "$wf_count" -gt 0 ]; then
+            built_diagnostics=true
+            local wf_idx=0
+            while [ "$wf_idx" -lt "$wf_count" ]; do
+              local wf_name wf_state
+              wf_name=$(printf '%s' "$pip_json" | jq -r ".workflows[$wf_idx].name // \"workflow-$wf_idx\"" 2>/dev/null)
+              wf_state=$(printf '%s' "$pip_json" | jq -r ".workflows[$wf_idx].state // \"unknown\"" 2>/dev/null)
+
+              if [ "$wf_state" = "failure" ] || [ "$wf_state" = "error" ] || [ "$wf_state" = "killed" ]; then
+                # Collect failed children for this workflow
+                local failed_children
+                failed_children=$(printf '%s' "$pip_json" | jq -r "
+                  .workflows[$wf_idx].children[]? |
+                  select(.state == \"failure\" or .state == \"error\" or .state == \"killed\") |
+                  \"\(.name)\t\(.exit_code)\t\(.pid)\"" 2>/dev/null) || failed_children=""
+
+                ci_prompt_body="${ci_prompt_body}
+--- Failed workflow: ${wf_name} ---"
+                if [ -n "$failed_children" ]; then
+                  while IFS=$'\t' read -r step_name step_exit step_pid; do
+                    [ -z "$step_name" ] && continue
+                    local exit_annotation=""
+                    case "$step_exit" in
+                      126) exit_annotation=" (permission denied or not executable)" ;;
+                      127) exit_annotation=" (command not found)" ;;
+                      128) exit_annotation=" (invalid exit argument / signal+128)" ;;
+                    esac
+                    ci_prompt_body="${ci_prompt_body}
+  Step: ${step_name}
+  Exit code: ${step_exit}${exit_annotation}"
+
+                    # Fetch per-step logs
+                    if [ -n "$step_pid" ] && [ "$step_pid" != "null" ]; then
+                      local step_logs
+                      step_logs=$(ci_get_step_logs "$_PR_CI_PIPELINE" "$step_pid" 2>/dev/null | tail -50) || step_logs=""
+                      if [ -n "$step_logs" ]; then
+                        ci_prompt_body="${ci_prompt_body}
+  Log tail (last 50 lines):
+\`\`\`
+${step_logs}
+\`\`\`"
+                      fi
+                    fi
+                  done <<< "$failed_children"
+                else
+                  ci_prompt_body="${ci_prompt_body}
+  (no failed step details available)"
+                fi
+              else
+                # Track passing/other workflows
+                if [ -n "$passing_workflows" ]; then
+                  passing_workflows="${passing_workflows}, ${wf_name}"
+                else
+                  passing_workflows="${wf_name}"
+                fi
+              fi
+              wf_idx=$((wf_idx + 1))
+            done
+          fi
+        fi
       fi
 
-      local logs_section=""
-      if [ -n "$ci_logs" ]; then
-        logs_section="
+      # Fallback: use legacy log fetch if per-workflow diagnostics unavailable
+      if [ "$built_diagnostics" = false ]; then
+        local ci_logs=""
+        if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${FACTORY_ROOT:-}" ]; then
+          ci_logs=$(ci_get_logs "$_PR_CI_PIPELINE" 2>/dev/null | tail -50) || ci_logs=""
+        fi
+        if [ -n "$ci_logs" ]; then
+          ci_prompt_body="
 CI Log Output (last 50 lines):
 \`\`\`
 ${ci_logs}
-\`\`\`
+\`\`\`"
+        fi
+      fi
+
+      local passing_line=""
+      if [ -n "$passing_workflows" ]; then
+        passing_line="
+Passing workflows (do not modify): ${passing_workflows}
 "
       fi
 
@@ -450,9 +531,10 @@ ${ci_logs}
 
 Pipeline: #${_PR_CI_PIPELINE:-?}
 Failure type: ${_PR_CI_FAILURE_TYPE:-unknown}
-
+${passing_line}
 Error log:
-${_PR_CI_ERROR_LOG:-No logs available.}${logs_section}
+${_PR_CI_ERROR_LOG:-No logs available.}
+${ci_prompt_body}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
