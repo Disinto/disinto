@@ -15,6 +15,7 @@
 set -euo pipefail
 
 FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export FACTORY_ROOT_REAL="$FACTORY_ROOT"
 # Always use localhost for mock Forgejo (in case FORGE_URL is set from docker-compose)
 export FORGE_URL="http://localhost:3000"
 MOCK_BIN="/tmp/smoke-mock-bin"
@@ -30,7 +31,8 @@ cleanup() {
   rm -rf "$MOCK_BIN" /tmp/smoke-test-repo \
          "${FACTORY_ROOT}/projects/smoke-repo.toml" \
          /tmp/smoke-claude-shared /tmp/smoke-home-claude \
-         /tmp/smoke-env-before-rerun /tmp/smoke-env-before-dryrun
+         /tmp/smoke-env-before-rerun /tmp/smoke-env-before-dryrun \
+         "${FACTORY_ROOT}/docker-compose.yml"
   # Restore .env only if we created the backup
   if [ -f "${FACTORY_ROOT}/.env.smoke-backup" ]; then
     mv "${FACTORY_ROOT}/.env.smoke-backup" "${FACTORY_ROOT}/.env"
@@ -422,6 +424,51 @@ export HOME="$ORIG_HOME"
 export CLAUDE_SHARED_DIR="$ORIG_CLAUDE_SHARED_DIR"
 export CLAUDE_CONFIG_DIR="$ORIG_CLAUDE_CONFIG_DIR"
 rm -rf /tmp/smoke-claude-shared /tmp/smoke-home-claude
+
+# ── 8. Test duplicate service name detection ──────────────────────────────
+echo "=== 8/8 Testing duplicate service name detection ==="
+
+# Isolated factory root — do NOT touch the real ${FACTORY_ROOT}/projects/
+SMOKE_DUP_ROOT=$(mktemp -d)
+mkdir -p "$SMOKE_DUP_ROOT/projects"
+cat > "$SMOKE_DUP_ROOT/projects/duplicate-test.toml" <<'TOMLEOF'
+name = "duplicate-test"
+description = "dup-detection smoke"
+
+[ci]
+woodpecker_repo_id = "999"
+
+[agents.llama]
+base_url = "http://localhost:8080"
+model = "qwen:latest"
+roles = ["dev"]
+forge_user = "llama-bot"
+TOMLEOF
+
+# Call the generator directly — no `disinto init` to overwrite the TOML.
+# FACTORY_ROOT tells generators.sh where projects/ + compose_file live.
+(
+  export FACTORY_ROOT="$SMOKE_DUP_ROOT"
+  export ENABLE_LLAMA_AGENT=1
+  # shellcheck disable=SC1091
+  source "${FACTORY_ROOT_REAL:-$(cd "$(dirname "$0")/.." && pwd)}/lib/generators.sh"
+  # Use a temp file to capture output since pipefail will kill the pipeline
+  # when _generate_compose_impl returns non-zero
+  _generate_compose_impl > /tmp/smoke-dup-output.txt 2>&1 || true
+  if grep -q "Duplicate service name" /tmp/smoke-dup-output.txt; then
+    pass "Duplicate service detection: conflict between ENABLE_LLAMA_AGENT and [agents.llama] reported"
+    rm -f /tmp/smoke-dup-output.txt
+    exit 0
+  else
+    fail "Duplicate service detection: no error raised for ENABLE_LLAMA_AGENT + [agents.llama]"
+    cat /tmp/smoke-dup-output.txt >&2
+    rm -f /tmp/smoke-dup-output.txt
+    exit 1
+  fi
+) || FAILED=1
+
+rm -rf "$SMOKE_DUP_ROOT"
+unset ENABLE_LLAMA_AGENT
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

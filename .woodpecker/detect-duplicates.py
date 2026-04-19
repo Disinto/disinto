@@ -294,6 +294,10 @@ def main() -> int:
         "9f6ae8e7811575b964279d8820494eb0": "Verification helper: for loop done pattern",
         # Standard lib source block shared across formula-driven agent run scripts
         "330e5809a00b95ade1a5fce2d749b94b": "Standard lib source block (env.sh, formula-session.sh, worktree.sh, guard.sh, agent-sdk.sh)",
+        # Test data for duplicate service detection tests (#850)
+        # Intentionally duplicated TOML blocks in smoke-init.sh and test-duplicate-service-detection.sh
+        "334967b8b4f1a8d3b0b9b8e0912f3bfb": "Test TOML: [agents.llama] block header (smoke-init.sh + test-duplicate-service-detection.sh)",
+        "d82f30077e5bb23b5fc01db003033d5d": "Test TOML: [agents.llama] block body (smoke-init.sh + test-duplicate-service-detection.sh)",
         # Common vault-seed script patterns: logging helpers + flag parsing
         # Used in tools/vault-seed-woodpecker.sh + lib/init/nomad/wp-oauth-register.sh
         "843a1cbf987952697d4e05e96ed2b2d5": "Logging helpers + DRY_RUN init (vault-seed-woodpecker + wp-oauth-register)",
