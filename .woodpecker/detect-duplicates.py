@@ -308,6 +308,21 @@ def main() -> int:
         "63bfa88d71764c95c65a9a248f3e40ab": "Vault-seed preconditions: binary check end + VAULT_ADDR die",
         "34873ad3570b211ce1d90468ab6ac94c": "Vault-seed preconditions: VAULT_ADDR die + hvault_token_lookup",
         "71a52270f249e843cda48ad896d9f781": "Vault-seed preconditions: VAULT_ADDR + hvault_token_lookup + die",
+        # Common vault-seed script flag parsing patterns
+        # Shared across tools/vault-seed-{forgejo,ops-repo}.sh
+        "6906b7787796c2ccb8dd622e2ad4e7bf": "vault-seed DRY_RUN init + case pattern (forgejo + ops-repo)",
+        "a0df5283b616b964f8bc32fd99ec1b5a": "vault-seed case pattern start (forgejo + ops-repo)",
+        "e15e3272fdd9f0f46ce9e726aea9f853": "vault-seed case pattern dry-run handler (forgejo + ops-repo)",
+        "c9f22385cc49a3dac1d336bc14c6315b": "vault-seed DRY_RUN assignment (forgejo + ops-repo)",
+        "106f4071e88f841b3208b01144cd1c39": "vault-seed case pattern dry-run end (forgejo + ops-repo)",
+        "c15506dcb6bb340b25d1c39d442dd2e6": "vault-seed help text + invalid arg handler (forgejo + ops-repo)",
+        "1feecd3b3caf00045fae938ddf2811de": "vault-seed invalid arg handler (forgejo + ops-repo)",
+        "919780d5e7182715344f5aa02b191294": "vault-seed invalid arg + esac pattern (forgejo + ops-repo)",
+        "8dce1d292bce8e60ef4c0665b62945b0": "vault-seed esac + binary check loop (forgejo + ops-repo)",
+        "ca043687143a5b47bd54e65a99ce8ee8": "vault-seed binary check loop start (forgejo + ops-repo)",
+        "aefd9f655411a955395e6e5995ddbe6f": "vault-seed binary check pattern (forgejo + ops-repo)",
+        "60f0c46deb5491599457efb4048918e5": "vault-seed VAULT_ADDR + hvault_token_lookup check (forgejo + ops-repo)",
+        "f6838f581ef6b4d82b55268389032769": "vault-seed VAULT_ADDR + hvault_token_lookup die (forgejo + ops-repo)",
     }
 
     if not sh_files:

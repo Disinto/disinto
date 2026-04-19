@@ -248,10 +248,10 @@ EOT
         change_mode          = "restart"
         error_on_missing_key = false
         data                 = <<EOT
-{{- with secret "kv/data/disinto/bots/vault" -}}
+{{- with secret "kv/data/disinto/shared/ops-repo" -}}
 FORGE_TOKEN={{ .Data.data.token }}
 {{- else -}}
-# WARNING: kv/disinto/bots/vault is empty — run tools/vault-seed-agents.sh
+# WARNING: kv/disinto/shared/ops-repo is empty — run tools/vault-seed-ops-repo.sh
 FORGE_TOKEN=seed-me
 {{- end }}
 EOT
