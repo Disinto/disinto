@@ -1,4 +1,4 @@
-<!-- last-reviewed: a467d613a44b9b475a60c14c4162621e846969ea -->
+<!-- last-reviewed: 0bb04545d47fb43b2cab0a1f4406c2a2b57f4eba -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -21,7 +21,7 @@ see issues #821–#992 for the step breakdown.
 | `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
 | `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
 | `jobs/chat.hcl` | submitted via `lib/init/nomad/deploy.sh` | Claude chat UI; custom `disinto/chat:local` image; sandbox hardening (cap_drop ALL, **tmpfs via mount block** not `tmpfs=` arg — S5-fix-5 #1012, pids_limit 128); Vault-templated OAuth secrets via `service-chat` policy (S5.2, #989) |
-| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988) |
+| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; **both Caddy and dispatcher tasks use `network_mode = "host"`** — upstreams are `127.0.0.1:<port>` (forgejo :3000, woodpecker :8000, chat :8080), not Docker hostnames (#1031, #1034); `FORGE_URL` rendered via Nomad service discovery template (not static env) to handle bridge vs. host network differences (#1034); dispatcher Vault secret path changed to `kv/data/disinto/shared/ops-repo` (#1041); Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
