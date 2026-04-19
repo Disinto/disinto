@@ -12,6 +12,7 @@
 #   disinto secrets <subcommand>        Manage encrypted secrets
 #   disinto run <action-id>              Run action in ephemeral runner container
 #   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
+#   disinto backup create <outfile>     Export factory state for migration
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -39,6 +40,7 @@ source "${FACTORY_ROOT}/lib/generators.sh"
 source "${FACTORY_ROOT}/lib/forge-push.sh"
 source "${FACTORY_ROOT}/lib/ci-setup.sh"
 source "${FACTORY_ROOT}/lib/release.sh"
+source "${FACTORY_ROOT}/lib/backup.sh"
 source "${FACTORY_ROOT}/lib/claude-config.sh"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ Usage:
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
   disinto agent <subcommand>           Manage agent state (enable/disable)
+  disinto backup create <outfile>      Export factory state (issues + ops bundle)
   disinto edge <verb> [options]        Manage edge tunnel registrations
 
 Edge subcommands:
@@ -2893,6 +2896,23 @@ EOF
   esac
 }
 
+# ── backup command ────────────────────────────────────────────────────────────
+# Usage: disinto backup create <outfile.tar.gz>
+disinto_backup() {
+  local subcmd="${1:-}"
+  shift || true
+
+  case "$subcmd" in
+    create)
+      backup_create "$@"
+      ;;
+    *)
+      echo "Usage: disinto backup create <outfile.tar.gz>" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -2909,6 +2929,7 @@ case "${1:-}" in
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   agent)           shift; disinto_agent "$@" ;;
   edge)            shift; disinto_edge "$@" ;;
+  backup)          shift; disinto_backup "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
