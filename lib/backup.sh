@@ -128,4 +128,9 @@ backup_create() {
   local size
   size=$(du -h "$outfile" | cut -f1)
   echo "=== Backup complete: ${outfile} (${size}) ==="
+
+  # Clean up before returning — the EXIT trap references the local $tmpdir
+  # which goes out of scope after return, causing 'unbound variable' under set -u.
+  trap - EXIT
+  rm -rf "$tmpdir"
 }
