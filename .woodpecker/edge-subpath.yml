@@ -21,14 +21,7 @@
 # =============================================================================
 
 when:
-  - event: [push, pull_request]
-    paths:
-      - "nomad/jobs/edge.hcl"
-      - "docker/edge/**"
-      - "tools/edge-control/**"
-      - ".woodpecker/edge-subpath.yml"
-      - "tests/smoke-edge-subpath.sh"
-      - "tests/test-caddyfile-routing.sh"
+  event: pull_request
 
 steps:
   # ── 1. ShellCheck on smoke script ────────────────────────────────────────
