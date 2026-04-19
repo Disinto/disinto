@@ -42,6 +42,7 @@ source "${FACTORY_ROOT}/lib/ci-setup.sh"
 source "${FACTORY_ROOT}/lib/release.sh"
 source "${FACTORY_ROOT}/lib/backup.sh"
 source "${FACTORY_ROOT}/lib/claude-config.sh"
+source "${FACTORY_ROOT}/lib/disinto/backup.sh"  # backup create/import
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ Usage:
   disinto agent <subcommand>           Manage agent state (enable/disable)
   disinto backup create <outfile>      Export factory state (issues + ops bundle)
   disinto edge <verb> [options]        Manage edge tunnel registrations
+  disinto backup <subcommand>          Backup and restore factory state
 
 Edge subcommands:
   register [project]    Register a new tunnel (generates keypair if needed)
@@ -104,6 +106,18 @@ Hire an agent options:
 
 CI logs options:
   --step <name>        Filter logs to a specific step (e.g., smoke-init)
+
+Backup subcommands:
+  create <file>        Create backup of factory state to tarball
+  import <file>        Restore factory state from backup tarball
+
+Import behavior:
+  - Unpacks tarball to temp directory
+  - Creates disinto repo via Forgejo API (mirror config is manual)
+  - Creates disinto-ops repo and pushes refs from bundle
+  - Imports issues from issues/*.json (idempotent - skips existing)
+  - Logs issue number mapping (Forgejo auto-assigns numbers)
+  - Prints summary: created X repos, pushed Y refs, imported Z issues, skipped W
 EOF
   exit 1
 }
@@ -2897,7 +2911,10 @@ EOF
 }
 
 # ── backup command ────────────────────────────────────────────────────────────
-# Usage: disinto backup create <outfile.tar.gz>
+# Usage: disinto backup <subcommand> [args]
+# Subcommands:
+#   create <outfile.tar.gz>  Create backup of factory state
+#   import <infile.tar.gz>   Restore factory state from backup
 disinto_backup() {
   local subcmd="${1:-}"
   shift || true
@@ -2906,8 +2923,15 @@ disinto_backup() {
     create)
       backup_create "$@"
       ;;
+    import)
+      backup_import "$@"
+      ;;
     *)
-      echo "Usage: disinto backup create <outfile.tar.gz>" >&2
+      echo "Usage: disinto backup <subcommand> [args]" >&2
+      echo "" >&2
+      echo "Subcommands:" >&2
+      echo "  create <outfile.tar.gz>  Create backup of factory state" >&2
+      echo "  import <infile.tar.gz>   Restore factory state from backup" >&2
       exit 1
       ;;
   esac
