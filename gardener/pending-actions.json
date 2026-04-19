@@ -2,7 +2,12 @@
   {
     "action": "edit_body",
     "issue": 1025,
-    "body": "## Goal\nVerify that Forgejo, Woodpecker, and chat all function correctly when served\nunder /forge/, /ci/, and /chat/ subpaths on a single domain. Catch redirect\nloops, OAuth callback failures, and asset 404s before they hit production.\n\n## Sprint\nPart of sprint [edge-subpath-chat](https://forgejo:3000/disinto-admin/disinto-ops/pulls/37) — vision issue #623.\n\n## Acceptance criteria\n- [ ] Forgejo login at /forge/ completes without redirect loops\n- [ ] Forgejo OAuth callback for Woodpecker succeeds under subpath\n- [ ] Woodpecker dashboard loads all assets at /ci/ (no 404s on JS/CSS)\n- [ ] Chat OAuth login flow works at /chat/login\n- [ ] Forward_auth on /chat/* rejects unauthenticated requests with 401\n- [ ] Staging content loads at /staging/\n- [ ] Root / redirects to /forge/\n- [ ] CI pipeline added to .woodpecker/ to run this test on edge-related changes\n\n## Affected files\n- `nomad/jobs/edge.hcl` — edge Caddy routing config under test\n- `docker/edge/` — edge container and Caddyfile template\n- `tools/edge-control/register.sh` — route registration\n- `.woodpecker/` — CI pipeline for edge smoke test\n\n## Dependencies\nNone — first issue in sprint.\n"
+    "body": "## Prior art: PR #1033 (open, branch `fix/issue-1025` retained)\n\nFirst attempt by dev-qwen2 (head `f692dd2`). Test script (`tests/smoke-edge-subpath.sh`, 13.8 KB) and pipeline (`.woodpecker/edge-subpath.yml`) both landed and look reasonable, but the **CI harness design is wrong**: the pipeline boots a bare `alpine:3.19` container and runs the smoke script directly against `BASE_URL=http://localhost`, with no stack to test against.\n\n**This is a harness design gap, not a script bug.** The smoke script itself is a reasonable post-deploy tool — the mistake was trying to exercise it as a hermetic CI step.\n\n**Approach (Option 1 — split the work):**\n\nKeep `tests/smoke-edge-subpath.sh` as an out-of-CI post-deploy tool (accepts `BASE_URL` env var). Replace the CI pipeline step that tries to curl a live stack with static checks only: `shellcheck`, `caddy validate` on the generated Caddyfile, and a template-substitution unit test that verifies routing block shape.\n\nBranch `fix/issue-1025` is preserved at `f692dd2` — the smoke script body is reusable; only the pipeline harness needs a rethink.\n\n**Timeline:**\n- 2026-04-19 09:14 — dev-qwen2 last pushed `f692dd2`\n- 3 pipelines (#1378/#1380/#1382) all fail: no service to curl (connection refused)\n\n## Acceptance criteria\n- [ ] `.woodpecker/edge-subpath.yml` pipeline runs `shellcheck` on `tests/smoke-edge-subpath.sh` with no live service curl\n- [ ] `caddy validate` runs on the generated Caddyfile in CI (template-substitution unit test)\n- [ ] A template-substitution test verifies the Caddyfile routing block shape (forge/ci/staging/chat paths)\n- [ ] `tests/smoke-edge-subpath.sh` accepts `BASE_URL` env var for post-deploy staging runs\n- [ ] CI green (no connection-refused failures on Woodpecker)\n\n## Affected files\n- `.woodpecker/edge-subpath.yml` — pipeline config (static checks only, no service curl)\n- `tests/smoke-edge-subpath.sh` — out-of-CI smoke script (reusable from PR #1033)\n\n## Dependencies\n- #1038 should land first to unblock local edge staging runs (optional — CI fix is independent)"
+  },
+  {
+    "action": "remove_label",
+    "issue": 1025,
+    "label": "blocked"
   },
   {
     "action": "add_label",
@@ -11,32 +16,37 @@
   },
   {
     "action": "edit_body",
-    "issue": 1026,
-    "body": "## Goal\nReplace the blocking one-shot claude --print invocation in the chat backend with\na WebSocket connection that streams tokens to the UI as they arrive.\n\n## Sprint\nPart of sprint [edge-subpath-chat](https://forgejo:3000/disinto-admin/disinto-ops/pulls/37) — vision issue #623.\n\n## Acceptance criteria\n- [ ] /chat/ws endpoint accepts WebSocket upgrade with valid session cookie\n- [ ] /chat/ws rejects upgrade if session cookie is missing or expired\n- [ ] Chat backend streams claude output over WebSocket as text frames\n- [ ] UI renders tokens incrementally as they arrive\n- [ ] Rate limiting still enforced on WebSocket messages\n- [ ] Caddy proxies WebSocket upgrade correctly through /chat/ws with forward_auth\n\n## Affected files\n- `docker/chat/server.py` — chat backend WebSocket endpoint\n- `docker/chat/ui/` — frontend WebSocket client rendering\n- `nomad/jobs/edge.hcl` — Caddy WebSocket proxy config\n- `nomad/jobs/chat.hcl` — chat Nomad job\n\n## Dependencies\n- Depends on #1025 — subpath routing smoke test\n"
+    "issue": 1038,
+    "body": "## Problem\n\n`disinto-edge` crashloops on any deployment that has not opted into the age-encrypted secret store (#777), because the edge entrypoint treats four secrets as unconditionally required:\n\n```\nFATAL: age key (/home/agent/.config/sops/age/keys.txt) or secrets dir (/opt/disinto/secrets) not found — cannot load required secrets\n```\n\nObserved on `disinto-dev-box` (container `disinto-edge`, restarting every ~30s), which blocks PR #1033 (edge-subpath smoke test) and any other work that depends on a running edge.\n\n## Root cause\n\n`docker/edge/entrypoint-edge.sh:176-205` requires:\n\n- `~/.config/sops/age/keys.txt`\n- `/opt/disinto/secrets/` with `.enc` files for `CADDY_SSH_KEY`, `CADDY_SSH_HOST`, `CADDY_SSH_USER`, `CADDY_ACCESS_LOG`.\n\nThese four secrets feed exactly one feature: the daily 23:50 UTC `collect-engagement.sh` cron (#745), which SCPs Caddy access logs from a **remote production edge host** for engagement parsing. On a local factory box or any deployment that has not set up a remote edge, this code path has no target — yet its absence kills the whole edge container.\n\n## Fix\n\nMake the secrets block **optional**. When age key or secrets dir is missing, or any of the four CADDY_ secrets fail to decrypt, log a warning and skip the `collect-engagement` cron loop. Caddy itself does not depend on these secrets and should start normally.\n\nThe concrete edit is around lines 176-205 of `docker/edge/entrypoint-edge.sh` — guard the secret-loading block with a check for the age key and secrets dir, set `EDGE_ENGAGEMENT_READY=0` on failure, and skip cron registration when `EDGE_ENGAGEMENT_READY != 1`.\n\n## Acceptance criteria\n- [ ] `docker/edge/entrypoint-edge.sh` loads CADDY_ secrets optionally — missing age key or secrets dir logs a warning and continues, does not FATAL\n- [ ] Caddy starts normally when CADDY_ secrets are absent\n- [ ] `collect-engagement` cron is skipped (not registered) when engagement secrets are unavailable\n- [ ] On deployments WITH secrets configured, behavior is unchanged (collect-engagement cron still fires at 23:50 UTC)\n- [ ] CI green\n\n## Affected files\n- `docker/edge/entrypoint-edge.sh` — lines 176-205, secrets loading block made optional"
+  },
+  {
+    "action": "remove_label",
+    "issue": 1038,
+    "label": "blocked"
   },
   {
     "action": "add_label",
-    "issue": 1026,
+    "issue": 1038,
     "label": "backlog"
   },
   {
     "action": "edit_body",
-    "issue": 1027,
-    "body": "## Goal\nGive the chat container Claude session read-write access to the project working\ntree so the operator can inspect, explain, or modify code — scoped to that tree\nonly, with no access to factory internals, secrets, or Docker socket.\n\n## Sprint\nPart of sprint [edge-subpath-chat](https://forgejo:3000/disinto-admin/disinto-ops/pulls/37) — vision issue #623.\n\n## Acceptance criteria\n- [ ] Chat container bind-mounts the project working tree as a named volume\n- [ ] Claude invocation in server.py sets cwd to the workspace directory\n- [ ] Claude permission mode is acceptEdits (not bypassPermissions)\n- [ ] verify-chat-sandbox.sh updated to assert workspace mount exists\n- [ ] Compose generator adds the workspace volume conditionally\n\n## Affected files\n- `docker/chat/server.py` — Claude invocation and cwd setup\n- `tools/edge-control/verify-chat-sandbox.sh` — sandbox verification\n- `lib/generators.sh` — Compose generator workspace volume\n- `nomad/jobs/chat.hcl` — chat container bind-mount config\n\n## Dependencies\n- Depends on #1025 — subpath routing smoke test\n"
+    "issue": 850,
+    "body": "## Problem\n\nWhen the compose generator emits the same service name twice — e.g. both the legacy `ENABLE_LLAMA_AGENT=1` branch and a matching `[agents.llama]` TOML block produce an `agents-llama:` key — the failure is deferred all the way to `docker compose` YAML parsing:\n\n```\nfailed to parse /home/johba/disinto/docker-compose.yml: yaml: construct errors:\n  line 4: line 431: mapping key \"agents-llama\" already defined at line 155\n```\n\nBy then, the user has already paid the cost of: pre-build binary downloads, generator run, Caddyfile regeneration. The only hint about what went wrong is a line number in a generated file. Root cause (dual activation) is not surfaced.\n\n## Fix\n\nAdd a generate-time guard to `lib/generators.sh`:\n\n- After collecting all service blocks to emit, compare the set of service names against duplicates.\n- If a duplicate is detected, abort with a clear message naming both sources of truth (e.g. `\"agents-llama\" emitted twice — from ENABLE_LLAMA_AGENT=1 and from [agents.llama] in projects/disinto.toml; remove one`).\n\n## Prior art: PR #872 (closed, branch `fix/issue-850` retained)\n\ndev-qwen's first attempt (`db009e3`) landed the dup-detection logic in `lib/generators.sh` correctly (unit test `tests/test-duplicate-service-detection.sh` passes all 3 cases), but the smoke test fails on CI.\n\n**Why the smoke test fails:** sections 1-7 of `smoke-init.sh` already run `bin/disinto init`, materializing `docker-compose.yml`. Section 8 re-invokes `bin/disinto init` to verify the dup guard fires — but `_generate_compose_impl` early-returns with `\"Compose: already exists, skipping\"` before reaching the dup-check.\n\n**Suggested fix:** in `tests/smoke-init.sh` section 8 (around line 452, before the second `bin/disinto init` invocation), add:\n\n```bash\nrm -f \"${FACTORY_ROOT}/docker-compose.yml\"\n```\n\nso the generator actually runs and the dup-detection path is exercised. Do **not** hoist the dup-check above the early-return.\n\nThe branch `fix/issue-850` is preserved as a starting point — pick up from `db009e3` and patch the smoke-test cleanup.\n\nRelated: #846.\n\n## Acceptance criteria\n- [ ] `bin/disinto init` with a config that would produce duplicate service names aborts with a clear error message naming both sources (e.g. `ENABLE_LLAMA_AGENT=1` and `[agents.llama]` TOML block)\n- [ ] `tests/smoke-init.sh` section 8 removes `docker-compose.yml` before re-invoking `disinto init` so the dup guard is exercised\n- [ ] Unit test `tests/test-duplicate-service-detection.sh` passes all 3 cases\n- [ ] CI green (smoke-init.sh section 8 no longer skips dup detection)\n\n## Affected files\n- `lib/generators.sh` — duplicate service name check after collecting all service blocks\n- `tests/smoke-init.sh` — section 8: add `rm -f \\${FACTORY_ROOT}/docker-compose.yml` before second `disinto init`"
+  },
+  {
+    "action": "remove_label",
+    "issue": 850,
+    "label": "blocked"
   },
   {
     "action": "add_label",
-    "issue": 1027,
+    "issue": 850,
     "label": "backlog"
   },
   {
-    "action": "edit_body",
-    "issue": 1028,
-    "body": "## Goal\nIf the smoke test reveals unfixable subpath issues, automate the pivot to\nper-service subdomains so the switch is a single config change.\n\n## Sprint\nPart of sprint [edge-subpath-chat](https://forgejo:3000/disinto-admin/disinto-ops/pulls/37) — vision issue #623.\n\n## Acceptance criteria\n- [ ] generators.sh _generate_caddyfile_impl accepts EDGE_ROUTING_MODE env var\n- [ ] In subdomain mode, Caddyfile emits four host blocks per edge-routing-fallback.md\n- [ ] register.sh registers additional subdomain routes when EDGE_ROUTING_MODE=subdomain\n- [ ] OAuth redirect URIs in ci-setup.sh respect routing mode\n- [ ] .env template documents EDGE_ROUTING_MODE with a comment referencing the fallback doc\n\n## Affected files\n- `lib/generators.sh` — _generate_caddyfile_impl routing mode switch\n- `tools/edge-control/register.sh` — subdomain route registration\n- `lib/ci-setup.sh` — OAuth redirect URI handling\n- `projects/*.toml.example` — .env template documentation\n\n## Dependencies\n- Depends on #1025 — subpath routing smoke test\n"
-  },
-  {
-    "action": "add_label",
-    "issue": 1028,
-    "label": "backlog"
+    "action": "comment",
+    "issue": 758,
+    "body": "This issue is the critical path blocker for #820 (ops repo re-seed) and #982 (collect-engagement commit fix). Both are in the backlog and ready to merge, but cannot run until ops repo branch protection is resolved. Needs admin/human action to change Forgejo branch protection settings on disinto-ops — no code change can unblock this."
   }
 ]
