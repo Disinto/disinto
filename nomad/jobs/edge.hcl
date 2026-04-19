@@ -6,6 +6,11 @@
 # dispatcher sidecar polls disinto-ops for vault actions and dispatches them
 # via Nomad batch jobs.
 #
+# Host networking (issue #1031):
+#   Caddy uses network_mode = "host" so upstreams are reached at
+#   127.0.0.1:<port> (forgejo :3000, woodpecker :8000, chat :8080).
+#   Staging uses Nomad service discovery (S5-fix-7, issue #1018).
+#
 # Host_volume contract:
 #   This job mounts caddy-data from nomad/client.hcl. Path
 #   /srv/disinto/caddy-data is created by lib/init/nomad/cluster-up.sh before
@@ -97,9 +102,10 @@ job "edge" {
       config {
         # Use pre-built disinto/edge:local image (custom Dockerfile adds
         # bash, jq, curl, git, docker-cli, python3, openssh-client, autossh).
-        image      = "disinto/edge:local"
-        force_pull = false
-        ports      = ["http", "https"]
+        image        = "disinto/edge:local"
+        force_pull   = false
+        network_mode = "host"
+        ports        = ["http", "https"]
 
         # apparmor=unconfined matches docker-compose — needed for autossh
         # in the entrypoint script.
@@ -132,12 +138,12 @@ job "edge" {
 
     # Reverse proxy to Forgejo
     handle /forge/* {
-        reverse_proxy forgejo:3000
+        reverse_proxy 127.0.0.1:3000
     }
 
     # Reverse proxy to Woodpecker CI
     handle /ci/* {
-        reverse_proxy woodpecker:8000
+        reverse_proxy 127.0.0.1:8000
     }
 
     # Reverse proxy to staging — dynamic port via Nomad service discovery
@@ -148,19 +154,19 @@ job "edge" {
     # Chat service — reverse proxy to disinto-chat backend (#705)
     # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
     handle /chat/login {
-        reverse_proxy chat:8080
+        reverse_proxy 127.0.0.1:8080
     }
     handle /chat/oauth/callback {
-        reverse_proxy chat:8080
+        reverse_proxy 127.0.0.1:8080
     }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
-        forward_auth chat:8080 {
+        forward_auth 127.0.0.1:8080 {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy chat:8080
+        reverse_proxy 127.0.0.1:8080
     }
 }
 EOT
@@ -168,10 +174,10 @@ EOT
 
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
-        FORGE_URL       = "http://forgejo:3000"
-        FORGE_REPO      = "disinto-admin/disinto"
+        FORGE_URL         = "http://127.0.0.1:3000"
+        FORGE_REPO        = "disinto-admin/disinto"
         DISINTO_CONTAINER = "1"
-        PROJECT_NAME    = "disinto"
+        PROJECT_NAME      = "disinto"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
@@ -226,7 +232,7 @@ EOT
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         DISPATCHER_BACKEND   = "nomad"
-        FORGE_URL            = "http://forgejo:3000"
+        FORGE_URL            = "http://127.0.0.1:3000"
         FORGE_REPO           = "disinto-admin/disinto"
         FORGE_OPS_REPO       = "disinto-admin/disinto-ops"
         PRIMARY_BRANCH       = "main"
