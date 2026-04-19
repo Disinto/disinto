@@ -115,21 +115,21 @@ http_request() {
 # Make a GET request and return status code
 http_get() {
   local url="$1"
-  shift
+  shift || true
   http_request "GET" "$url" "$@"
 }
 
 # Make a HEAD request (no body)
 http_head() {
   local url="$1"
-  shift
+  shift || true
   http_request "HEAD" "$url" "$@"
 }
 
 # Make a GET request and return the response body
 http_get_body() {
   local url="$1"
-  shift
+  shift || true
   curl -sS --max-time "$EDGE_TIMEOUT" "$@" "$url"
 }
 
