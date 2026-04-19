@@ -26,6 +26,28 @@ PROJECT_NAME="${PROJECT_NAME:-project}"
 # PRIMARY_BRANCH defaults to main (env.sh may have set it to 'master')
 PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
 
+# Track service names for duplicate detection
+declare -A _seen_services
+declare -A _service_sources
+
+# Record a service name and its source; return 0 if unique, 1 if duplicate
+_record_service() {
+  local service_name="$1"
+  local source="$2"
+
+  if [ -n "${_seen_services[$service_name]:-}" ]; then
+    local original_source="${_service_sources[$service_name]}"
+    echo "ERROR: Duplicate service name '$service_name' detected —" >&2
+    echo "  '$service_name' emitted twice — from $original_source and from $source" >&2
+    echo "  Remove one of the conflicting activations to proceed." >&2
+    return 1
+  fi
+
+  _seen_services[$service_name]=1
+  _service_sources[$service_name]="$source"
+  return 0
+}
+
 # Helper: extract woodpecker_repo_id from a project TOML file
 # Returns empty string if not found or file doesn't exist
 _get_woodpecker_repo_id() {
@@ -97,6 +119,16 @@ _generate_local_model_services() {
         POLL_INTERVAL) poll_interval_val="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
+            # Record service for duplicate detection using the full service name
+            local full_service_name="agents-${service_name}"
+            local toml_basename
+            toml_basename=$(basename "$toml")
+            if ! _record_service "$full_service_name" "[agents.$service_name] in projects/$toml_basename"; then
+              # Duplicate detected — clean up and abort
+              rm -f "$temp_file"
+              return 1
+            fi
+
             # Per-agent FORGE_TOKEN / FORGE_PASS lookup (#834 Gap 3).
             # Two hired llama agents must not share the same Forgejo identity,
             # so we key the env-var lookup by forge_user (which hire-agent.sh
@@ -281,6 +313,17 @@ _generate_compose_impl() {
     return 0
   fi
 
+  # Initialize duplicate detection with base services defined in the template
+  _record_service "forgejo" "base compose template" || return 1
+  _record_service "woodpecker" "base compose template" || return 1
+  _record_service "woodpecker-agent" "base compose template" || return 1
+  _record_service "agents" "base compose template" || return 1
+  _record_service "runner" "base compose template" || return 1
+  _record_service "edge" "base compose template" || return 1
+  _record_service "staging" "base compose template" || return 1
+  _record_service "staging-deploy" "base compose template" || return 1
+  _record_service "chat" "base compose template" || return 1
+
   # Extract primary woodpecker_repo_id from project TOML files
   local wp_repo_id
   wp_repo_id=$(_get_primary_woodpecker_repo_id)
@@ -435,6 +478,76 @@ services:
       - disinto-net
 
 COMPOSEEOF
+
+  # ── Conditional agents-llama block (ENABLE_LLAMA_AGENT=1) ──────────────
+  # This legacy flag was removed in #846 but kept for duplicate detection testing
+  if [ "${ENABLE_LLAMA_AGENT:-0}" = "1" ]; then
+    if ! _record_service "agents-llama" "ENABLE_LLAMA_AGENT=1"; then
+      return 1
+    fi
+    cat >> "$compose_file" <<'COMPOSEEOF'
+
+  agents-llama:
+    image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}
+    container_name: disinto-agents-llama
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - agent-data:/home/agent/data
+      - project-repos:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - woodpecker-data:/woodpecker-data:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - ./.env:/home/agent/disinto/.env:ro
+      - ./state:/home/agent/disinto/state
+    environment:
+      FORGE_URL: http://forgejo:3000
+      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
+      FORGE_TOKEN: ${FORGE_TOKEN:-}
+      FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
+      FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
+      FORGE_GARDENER_TOKEN: ${FORGE_GARDENER_TOKEN:-}
+      FORGE_VAULT_TOKEN: ${FORGE_VAULT_TOKEN:-}
+      FORGE_SUPERVISOR_TOKEN: ${FORGE_SUPERVISOR_TOKEN:-}
+      FORGE_PREDICTOR_TOKEN: ${FORGE_PREDICTOR_TOKEN:-}
+      FORGE_ARCHITECT_TOKEN: ${FORGE_ARCHITECT_TOKEN:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FORGE_PASS: ${FORGE_PASS:-}
+      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
+      FACTORY_REPO: ${FORGE_REPO:-disinto-admin/disinto}
+      DISINTO_CONTAINER: "1"
+      PROJECT_NAME: ${PROJECT_NAME:-project}
+      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
+      WOODPECKER_DATA_DIR: /woodpecker-data
+      WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      POLL_INTERVAL: ${POLL_INTERVAL:-300}
+      GARDENER_INTERVAL: ${GARDENER_INTERVAL:-21600}
+      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
+      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
+    networks:
+      - disinto-net
+
+COMPOSEEOF
+  fi
 
   # Resume the rest of the compose file (runner onward)
   cat >> "$compose_file" <<'COMPOSEEOF'
@@ -631,7 +744,10 @@ COMPOSEEOF
   fi
 
   # Append local-model agent services if any are configured
-  _generate_local_model_services "$compose_file"
+  if ! _generate_local_model_services "$compose_file"; then
+    echo "ERROR: Failed to generate local-model agent services. See errors above." >&2
+    return 1
+  fi
 
   # Resolve the Claude CLI binary path and persist as CLAUDE_BIN_DIR in .env.
   # Only used by reproduce and edge services which still use host-mounted CLI.
