@@ -426,3 +426,19 @@ setup_file() {
   [[ "$output" == *"services to deploy: forgejo,woodpecker-server,woodpecker-agent,agents"* ]]
   [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents"* ]]
 }
+
+# S5.1 / #1035 — edge service seeds ops-repo (dispatcher FORGE_TOKEN)
+@test "disinto init --backend=nomad --with edge deploys edge" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with edge --dry-run
+  [ "$status" -eq 0 ]
+  # edge depends on all backend services, so all are included
+  [[ "$output" == *"services to deploy: edge,forgejo"* ]]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents staging chat edge"* ]]
+  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"edge.hcl"* ]]
+}
+
+@test "disinto init --backend=nomad --with edge seeds ops-repo" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with edge --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tools/vault-seed-ops-repo.sh --dry-run"* ]]
+}
