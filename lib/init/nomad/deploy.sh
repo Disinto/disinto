@@ -19,10 +19,12 @@
 #   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 360)
 #   JOB_READY_TIMEOUT_<JOBNAME> — per-job timeout override (e.g.,
 #                            JOB_READY_TIMEOUT_FORGEJO=300)
+#                            Built-in: JOB_READY_TIMEOUT_CHAT=600
 #
 # Exit codes:
 #   0  success (all jobs deployed and healthy, or dry-run completed)
-#   1  failure (validation error, timeout, or nomad command failure)
+#   1  failure (validation error, or one or more jobs unhealthy after all
+#      jobs submitted — deploy does NOT cascade-skip on timeout)
 #
 # Idempotency:
 #   Running twice back-to-back on a healthy cluster is a no-op. Jobs that are
@@ -35,7 +37,11 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_ROOT}/../../.." && pwd)}"
 JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-360}"
 
+# Per-job built-in defaults (override with JOB_READY_TIMEOUT_<JOBNAME> env var)
+JOB_READY_TIMEOUT_CHAT="${JOB_READY_TIMEOUT_CHAT:-600}"
+
 DRY_RUN=0
+FAILED_JOBS=()  # jobs that timed out or failed deployment
 
 log() { printf '[deploy] %s\n' "$*" >&2; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -215,12 +221,26 @@ for job_name in "${JOBS[@]}"; do
 
   # 4. Wait for healthy state
   if ! _wait_job_running "$job_name" "$job_timeout"; then
-    die "deployment for job '${job_name}' did not reach successful state"
+    log "WARNING: deployment for job '${job_name}' did not reach successful state — continuing with remaining jobs"
+    FAILED_JOBS+=("$job_name")
   fi
 done
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log "dry-run complete"
+fi
+
+# ── Final health summary ─────────────────────────────────────────────────────
+if [ "${#FAILED_JOBS[@]}" -gt 0 ]; then
+  log ""
+  log "=== DEPLOY SUMMARY ==="
+  log "The following jobs did NOT reach healthy state:"
+  for failed in "${FAILED_JOBS[@]}"; do
+    log "  - ${failed}"
+  done
+  log "All other jobs were submitted and healthy."
+  log "======================"
+  exit 1
 fi
 
 exit 0
