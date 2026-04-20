@@ -41,7 +41,7 @@ import base64
 import hashlib
 
 # Configuration
-HOST = os.environ.get("CHAT_HOST", "0.0.0.0")
+HOST = os.environ.get("CHAT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHAT_PORT", 8080))
 UI_DIR = "/var/chat/ui"
 STATIC_DIR = os.path.join(UI_DIR, "static")
