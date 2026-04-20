@@ -54,13 +54,14 @@ _registry_write() {
 }
 
 # Allocate a port for a project
-# Usage: allocate_port <project> <pubkey> <fqdn>
+# Usage: allocate_port <project> <pubkey> <fqdn> [<registered_by>]
 # Returns: port number on stdout
 # Writes: registry.json with project entry
 allocate_port() {
   local project="$1"
   local pubkey="$2"
   local fqdn="$3"
+  local registered_by="${4:-unknown}"
 
   _ensure_registry_dir
 
@@ -116,11 +117,13 @@ allocate_port() {
     --arg pubkey "$pubkey" \
     --arg fqdn "$fqdn" \
     --arg timestamp "$timestamp" \
+    --arg registered_by "$registered_by" \
     '.projects[$project] = {
       "port": $port,
       "fqdn": $fqdn,
       "pubkey": $pubkey,
-      "registered_at": $timestamp
+      "registered_at": $timestamp,
+      "registered_by": $registered_by
     }')
 
   _registry_write "$new_registry"
@@ -184,7 +187,7 @@ list_ports() {
   local registry
   registry=$(_registry_read)
 
-  echo "$registry" | jq -r '.projects | to_entries | map({name: .key, port: .value.port, fqdn: .value.fqdn}) | .[] | @json' 2>/dev/null
+  echo "$registry" | jq -r '.projects | to_entries | map({name: .key, port: .value.port, fqdn: .value.fqdn, registered_by: (.value.registered_by // "unknown")}) | .[] | @json' 2>/dev/null
 }
 
 # Get full project info from registry

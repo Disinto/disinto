@@ -5,6 +5,10 @@
 # This script runs as a forced command for the disinto-register SSH user.
 # It parses SSH_ORIGINAL_COMMAND and dispatches to register|deregister|list.
 #
+# Per-caller attribution: each admin key's forced-command passes --as <tag>,
+# which is stored as registered_by in the registry. Missing --as defaults to
+# "unknown" for backwards compatibility.
+#
 # Usage (via SSH):
 #   ssh disinto-register@edge "register <project> <pubkey>"
 #   ssh disinto-register@edge "deregister <project>"
@@ -37,16 +41,31 @@ AUDIT_LOG="${AUDIT_LOG:-/var/log/disinto/edge-register.log}"
 # Captured error from check_allowlist (used for JSON response)
 _ALLOWLIST_ERROR=""
 
+# Caller tag (set via --as <tag> in forced command)
+CALLER="unknown"
+
+# Parse script arguments (from forced command, not SSH_ORIGINAL_COMMAND)
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --as)
+      CALLER="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
 # Append one line to the audit log.
 # Usage: audit_log <action> <project> <port> <pubkey_fp>
 # Fails silently — write errors are warned but never abort.
 audit_log() {
   local action="$1" project="$2" port="$3" pubkey_fp="$4"
-  local timestamp caller
+  local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  caller="${SSH_USERNAME:-${SUDO_USER:-${USER:-unknown}}}"
 
-  local line="${timestamp} ${action} project=${project} port=${port} pubkey_fp=${pubkey_fp} caller=${caller}"
+  local line="${timestamp} ${action} project=${project} port=${port} pubkey_fp=${pubkey_fp} caller=${CALLER}"
 
   # Ensure log directory exists
   local log_dir
@@ -176,7 +195,7 @@ do_register() {
 
   # Allocate port (idempotent - returns existing if already registered)
   local port
-  port=$(allocate_port "$project" "$full_pubkey" "${project}.${DOMAIN_SUFFIX}")
+  port=$(allocate_port "$project" "$full_pubkey" "${project}.${DOMAIN_SUFFIX}" "$CALLER")
 
   # Add Caddy route for main project domain
   add_route "$project" "$port"
@@ -215,6 +234,9 @@ do_register() {
 # Usage: do_deregister <project>
 do_deregister() {
   local project="$1"
+
+  # Record who is deregistering before removal
+  local deregistered_by="$CALLER"
 
   # Get current port and pubkey before removing
   local port pubkey_fp
@@ -257,7 +279,7 @@ do_deregister() {
   audit_log "deregister" "$project" "$port" "$pubkey_fp"
 
   # Return JSON response
-  echo "{\"removed\":true,\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\"}"
+  echo "{\"removed\":true,\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\",\"deregistered_by\":\"${deregistered_by}\"}"
 }
 
 # List all registered tunnels
