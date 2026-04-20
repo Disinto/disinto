@@ -198,6 +198,7 @@ setup_ops_repo() {
   [ -f "${ops_root}/evidence/holdout/.gitkeep" ] || { touch "${ops_root}/evidence/holdout/.gitkeep"; seeded=true; }
   [ -f "${ops_root}/evidence/evolution/.gitkeep" ] || { touch "${ops_root}/evidence/evolution/.gitkeep"; seeded=true; }
   [ -f "${ops_root}/evidence/user-test/.gitkeep" ] || { touch "${ops_root}/evidence/user-test/.gitkeep"; seeded=true; }
+  [ -f "${ops_root}/knowledge/.gitkeep" ] || { touch "${ops_root}/knowledge/.gitkeep"; seeded=true; }
 
   if [ ! -f "${ops_root}/README.md" ]; then
     cat > "${ops_root}/README.md" <<OPSEOF
@@ -362,13 +363,54 @@ migrate_ops_repo() {
     if [ ! -f "$tfile" ]; then
       local title
       title=$(basename "$tfile" | sed 's/\.md$//; s/_/ /g' | sed 's/\b\(.\)/\u\1/g')
-      {
-        echo "# ${title}"
-        echo ""
-        echo "## Overview"
-        echo ""
-        echo "<!-- Add content here -->"
-      } > "$tfile"
+      case "$tfile" in
+        portfolio.md)
+          {
+            echo "# ${title}"
+            echo ""
+            echo "## Addressables"
+            echo ""
+            echo "<!-- Add addressables here -->"
+            echo ""
+            echo "## Observables"
+            echo ""
+            echo "<!-- Add observables here -->"
+          } > "$tfile"
+          ;;
+        RESOURCES.md)
+          {
+            echo "# ${title}"
+            echo ""
+            echo "## Accounts"
+            echo ""
+            echo "<!-- Add account references here -->"
+            echo ""
+            echo "## Tokens"
+            echo ""
+            echo "<!-- Add token references here -->"
+            echo ""
+            echo "## Infrastructure"
+            echo ""
+            echo "<!-- Add infrastructure inventory here -->"
+          } > "$tfile"
+          ;;
+        prerequisites.md)
+          {
+            echo "# ${title}"
+            echo ""
+            echo "<!-- Add dependency graph here -->"
+          } > "$tfile"
+          ;;
+        *)
+          {
+            echo "# ${title}"
+            echo ""
+            echo "## Overview"
+            echo ""
+            echo "<!-- Add content here -->"
+          } > "$tfile"
+          ;;
+      esac
       echo "  + Created: ${tfile}"
       migrated=true
     fi
