@@ -838,6 +838,11 @@ _disinto_init_nomad() {
         fi
         echo "[deploy] [dry-run] nomad job validate ${jobspec_path}"
         echo "[deploy] [dry-run] nomad job run -detach ${jobspec_path}"
+        # Post-deploy: forgejo-bootstrap
+        if [ "$svc" = "forgejo" ]; then
+          local bootstrap_script="${FACTORY_ROOT}/lib/init/nomad/forgejo-bootstrap.sh"
+          echo "[deploy] [dry-run] [post-deploy] would run ${bootstrap_script}"
+        fi
       done
       echo "[deploy] dry-run complete"
     fi
@@ -1052,7 +1057,27 @@ _disinto_init_nomad() {
           echo "Error: deploy.sh must run as root and sudo is not installed" >&2
           exit 1
         fi
-        sudo -n -- "${deploy_cmd[@]}" || exit $?
+        sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "${deploy_cmd[@]}" || exit $?
+      fi
+
+      # Post-deploy: bootstrap Forgejo admin user after forgejo deployment
+      if [ "$svc" = "forgejo" ]; then
+        echo ""
+        echo "── Bootstrapping Forgejo admin user ───────────────────────"
+        local bootstrap_script="${FACTORY_ROOT}/lib/init/nomad/forgejo-bootstrap.sh"
+        if [ -x "$bootstrap_script" ]; then
+          if [ "$(id -u)" -eq 0 ]; then
+            "$bootstrap_script" || exit $?
+          else
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "Error: forgejo-bootstrap.sh must run as root and sudo is not installed" >&2
+              exit 1
+            fi
+            sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "$bootstrap_script" || exit $?
+          fi
+        else
+          echo "warning: forgejo-bootstrap.sh not found or not executable" >&2
+        fi
       fi
     done
 
