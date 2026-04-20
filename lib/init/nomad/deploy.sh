@@ -174,6 +174,43 @@ _wait_job_running() {
   return 1
 }
 
+# ── Helper: _run_post_deploy <job_name> ─────────────────────────────────────
+# Runs post-deploy scripts for a job after it becomes healthy.
+# Currently supports: forgejo → run forgejo-bootstrap.sh
+#
+# Args:
+#   job_name — name of the deployed job
+#
+# Returns:
+#   0 on success (script ran or not applicable)
+#   1 on failure
+# ─────────────────────────────────────────────────────────────────────────────
+_run_post_deploy() {
+  local job_name="$1"
+  local post_deploy_script
+
+  case "$job_name" in
+    forgejo)
+      post_deploy_script="${SCRIPT_ROOT}/forgejo-bootstrap.sh"
+      if [ -x "$post_deploy_script" ]; then
+        log "running post-deploy script for ${job_name}"
+        if ! "$post_deploy_script"; then
+          log "ERROR: post-deploy script failed for ${job_name}"
+          return 1
+        fi
+        log "post-deploy script completed for ${job_name}"
+      else
+        log "no post-deploy script found for ${job_name}, skipping"
+      fi
+      ;;
+    *)
+      log "no post-deploy script for ${job_name}, skipping"
+      ;;
+  esac
+
+  return 0
+}
+
 # ── Main: deploy each job in order ───────────────────────────────────────────
 for job_name in "${JOBS[@]}"; do
   jobspec_path="${REPO_ROOT}/nomad/jobs/${job_name}.hcl"
@@ -192,6 +229,9 @@ for job_name in "${JOBS[@]}"; do
     log "[dry-run] nomad job validate ${jobspec_path}"
     log "[dry-run] nomad job run -detach ${jobspec_path}"
     log "[dry-run] (would wait for '${job_name}' to become healthy for ${job_timeout}s)"
+    case "$job_name" in
+      forgejo) log "[dry-run] [post-deploy] would run forgejo-bootstrap.sh" ;;
+    esac
     continue
   fi
 
@@ -223,6 +263,11 @@ for job_name in "${JOBS[@]}"; do
   if ! _wait_job_running "$job_name" "$job_timeout"; then
     log "WARNING: deployment for job '${job_name}' did not reach successful state — continuing with remaining jobs"
     FAILED_JOBS+=("$job_name")
+  fi
+
+  # 5. Run post-deploy scripts
+  if ! _run_post_deploy "$job_name"; then
+    die "post-deploy script failed for job '${job_name}'"
   fi
 done
 
