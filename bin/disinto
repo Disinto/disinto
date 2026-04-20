@@ -1474,24 +1474,15 @@ p.write_text(text)
     exit 0
   fi
 
-  # Generate compose files (unless --bare)
-  if [ "$bare" = false ]; then
-    local forge_port
-    forge_port=$(printf '%s' "$forge_url" | sed -E 's|.*:([0-9]+)/?$|\1|')
-    forge_port="${forge_port:-3000}"
-    generate_compose "$forge_port" "$use_build"
-    generate_agent_docker
-    generate_caddyfile
-    generate_staging_index
-    # Create empty .env so docker compose can parse the agents service
-    # env_file reference before setup_forge generates the real tokens (#769)
-    touch "${FACTORY_ROOT}/.env"
-  fi
-
   # Configure Forgejo and Woodpecker URLs when EDGE_TUNNEL_FQDN is set.
   # In subdomain mode, uses per-service FQDNs at root path instead of subpath URLs.
+  # Must run BEFORE generate_compose so the .env file is available for variable substitution.
   if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
     local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+    # Create .env file if it doesn't exist yet (needed before compose generation)
+    if [ "$bare" = false ] && [ ! -f "${FACTORY_ROOT}/.env" ]; then
+      touch "${FACTORY_ROOT}/.env"
+    fi
     if [ "$routing_mode" = "subdomain" ]; then
       # Subdomain mode: Forgejo at forge.<project>.disinto.ai (root path)
       if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
@@ -1511,6 +1502,20 @@ p.write_text(text)
         echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
       fi
     fi
+  fi
+
+  # Generate compose files (unless --bare)
+  if [ "$bare" = false ]; then
+    local forge_port
+    forge_port=$(printf '%s' "$forge_url" | sed -E 's|.*:([0-9]+)/?$|\1|')
+    forge_port="${forge_port:-3000}"
+    generate_compose "$forge_port" "$use_build"
+    generate_agent_docker
+    generate_caddyfile
+    generate_staging_index
+    # Create empty .env so docker compose can parse the agents service
+    # env_file reference before setup_forge generates the real tokens (#769)
+    touch "${FACTORY_ROOT}/.env"
   fi
 
   # Prompt for FORGE_ADMIN_PASS before setup_forge
