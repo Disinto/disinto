@@ -172,6 +172,12 @@ EOT
     handle /chat/oauth/callback {
         reverse_proxy 127.0.0.1:8080
     }
+    # WebSocket endpoint for streaming (#1026)
+    handle /chat/ws {
+        header_up Upgrade $http.upgrade
+        header_up Connection $http.connection
+        reverse_proxy 127.0.0.1:8080
+    }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
         forward_auth 127.0.0.1:8080 {
