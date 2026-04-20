@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "action": "edit_body",
+    "issue": 1087,
+    "body": "Flagged by AI reviewer in PR #1085.\n\n## Problem\n\n`tools/edge-control/verify-chat-sandbox.sh` targets container `disinto-chat` (line 9: `CONTAINER=\"disinto-chat\"`). PR #1085 removed the separate chat container — chat now runs as a background process inside the edge container. Running this script will fail immediately with \"container not found\".\n\nThe script also asserts `ReadonlyRootfs`, `cap_drop`, `no-new-privileges` constraints that were intentionally reverted by #1085. Even if the container existed, all checks would fail.\n\n## Fix\n\nDelete or replace `tools/edge-control/verify-chat-sandbox.sh`. If chat-in-edge process health verification is desired, a new tool targeting the edge container process would be needed.\n\n## Acceptance criteria\n- [ ] `tools/edge-control/verify-chat-sandbox.sh` is deleted or replaced so running it no longer fails with \"container not found\"\n- [ ] If replaced: the replacement targets the edge container or its chat subprocess, not `disinto-chat`\n- [ ] CI still passes (ShellCheck on remaining .sh files)\n\n## Affected files\n- `tools/edge-control/verify-chat-sandbox.sh` — delete or replace\n\n## Related\n- #1027 (sibling — also touches verify-chat-sandbox.sh for workspace scope)\n\n---\n*Auto-created from AI review*"
+  },
+  {
+    "action": "add_label",
+    "issue": 1087,
+    "label": "backlog"
+  },
+  {
+    "action": "add_label",
+    "issue": 1027,
+    "label": "backlog"
+  }
+]
