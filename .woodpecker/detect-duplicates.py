@@ -331,6 +331,8 @@ def main() -> int:
         "aefd9f655411a955395e6e5995ddbe6f": "vault-seed binary check pattern (forgejo + ops-repo)",
         "60f0c46deb5491599457efb4048918e5": "vault-seed VAULT_ADDR + hvault_token_lookup check (forgejo + ops-repo)",
         "f6838f581ef6b4d82b55268389032769": "vault-seed VAULT_ADDR + hvault_token_lookup die (forgejo + ops-repo)",
+        # Common shell control-flow: if → return 1 → fi → fi (env.sh + register.sh)
+        "a8bdb7f1a5d8cbd0a5921b17b6cf6f4d": "Common shell control-flow (return 1 / fi / fi / return 0 / }) (env.sh + register.sh)",
     }
 
     if not sh_files:
