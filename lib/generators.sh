@@ -860,6 +860,7 @@ _generate_caddyfile_subpath() {
 
     # Reverse proxy to staging
     handle /staging/* {
+        uri strip_prefix /staging
         reverse_proxy staging:80
     }
 

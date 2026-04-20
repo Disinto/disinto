@@ -161,6 +161,7 @@ EOT
 
     # Reverse proxy to staging — dynamic port via Nomad service discovery
     handle /staging/* {
+        uri strip_prefix /staging
 {{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
 {{ end }}    }
 
