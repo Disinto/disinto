@@ -208,8 +208,8 @@ services:
 
   edge:
     build:
-      context: docker/edge
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/edge/Dockerfile
     image: disinto/edge:latest
     container_name: disinto-edge
     security_opt:
@@ -220,6 +220,8 @@ services:
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/root/.claude.json:ro
       - ${CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
+      # Chat history persistence (merged from chat container, #1083)
+      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -231,6 +233,20 @@ services:
       - PRIMARY_BRANCH=main
       - DISINTO_CONTAINER=1
       - FORGE_ADMIN_USERS=disinto-admin,vault-bot,admin
+      # Chat env vars (merged from chat container into edge, #1083)
+      - CHAT_HOST=127.0.0.1
+      - CHAT_PORT=8080
+      - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
+      - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
+      - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
+      - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
+      - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
+      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
+      - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
+      # Cost caps / rate limiting (#711)
+      - CHAT_MAX_REQUESTS_PER_HOUR=${CHAT_MAX_REQUESTS_PER_HOUR:-60}
+      - CHAT_MAX_REQUESTS_PER_DAY=${CHAT_MAX_REQUESTS_PER_DAY:-500}
+      - CHAT_MAX_TOKENS_PER_DAY=${CHAT_MAX_TOKENS_PER_DAY:-1000000}
     ports:
       - "80:80"
       - "443:443"

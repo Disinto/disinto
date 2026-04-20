@@ -244,6 +244,9 @@ else
   echo "edge: collect-engagement cron skipped (EDGE_ENGAGEMENT_READY=0)" >&2
 fi
 
+# Start chat server in background (#1083 — merged from docker/chat into edge)
+(python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &
+
 # Nomad template renders Caddyfile to /local/Caddyfile via service discovery;
 # copy it into the expected location if present (compose uses the mounted path).
 if [ -f /local/Caddyfile ]; then
