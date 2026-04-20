@@ -28,6 +28,12 @@ DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-disinto.ai}"
 # Reserved project names — operator-adjacent, internal roles, and subdomain-mode prefixes
 RESERVED_NAMES=(www api admin root mail chat forge ci edge caddy disinto register tunnel)
 
+# Allowlist path (root-owned, never mutated by this script)
+ALLOWLIST_FILE="${ALLOWLIST_FILE:-/var/lib/disinto/allowlist.json}"
+
+# Captured error from check_allowlist (used for JSON response)
+_ALLOWLIST_ERROR=""
+
 # Print usage
 usage() {
   cat <<EOF
@@ -40,6 +46,51 @@ Example:
   ssh disinto-register@edge "register myproject ssh-ed25519 AAAAC3..."
 EOF
   exit 1
+}
+
+# Check whether the project/pubkey pair is allowed by the allowlist.
+# Usage: check_allowlist <project> <pubkey>
+# Returns: 0 if allowed, 1 if denied (prints error JSON to stderr)
+check_allowlist() {
+  local project="$1"
+  local pubkey="$2"
+
+  # If allowlist file does not exist, allow all (opt-in policy)
+  if [ ! -f "$ALLOWLIST_FILE" ]; then
+    return 0
+  fi
+
+  # Look up the project in the allowlist
+  local entry
+  entry=$(jq -c --arg p "$project" '.allowed[$p] // empty' "$ALLOWLIST_FILE" 2>/dev/null) || entry=""
+
+  if [ -z "$entry" ]; then
+    # Project not in allowlist at all
+    _ALLOWLIST_ERROR="name not approved"
+    return 1
+  fi
+
+  # Project found — check pubkey fingerprint binding
+  local bound_fingerprint
+  bound_fingerprint=$(echo "$entry" | jq -r '.pubkey_fingerprint // ""' 2>/dev/null)
+
+  if [ -n "$bound_fingerprint" ]; then
+    # Fingerprint is bound — verify caller's pubkey matches
+    local caller_fingerprint
+    caller_fingerprint=$(ssh-keygen -lf /dev/stdin <<<"$pubkey" 2>/dev/null | awk '{print $2}') || caller_fingerprint=""
+
+    if [ -z "$caller_fingerprint" ]; then
+      _ALLOWLIST_ERROR="invalid pubkey for fingerprint check"
+      return 1
+    fi
+
+    if [ "$caller_fingerprint" != "$bound_fingerprint" ]; then
+      _ALLOWLIST_ERROR="pubkey does not match allowed key for this project"
+      return 1
+    fi
+  fi
+
+  return 0
 }
 
 # Register a new tunnel
@@ -84,6 +135,12 @@ do_register() {
 
   # Full pubkey for registry
   local full_pubkey="${key_type} ${key}"
+
+  # Check allowlist (opt-in: no file = allow all)
+  if ! check_allowlist "$project" "$full_pubkey"; then
+    echo "{\"error\":\"${_ALLOWLIST_ERROR}\"}"
+    exit 1
+  fi
 
   # Allocate port (idempotent - returns existing if already registered)
   local port
