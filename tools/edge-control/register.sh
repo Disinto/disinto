@@ -31,8 +31,40 @@ RESERVED_NAMES=(www api admin root mail chat forge ci edge caddy disinto registe
 # Allowlist path (root-owned, never mutated by this script)
 ALLOWLIST_FILE="${ALLOWLIST_FILE:-/var/lib/disinto/allowlist.json}"
 
+# Audit log path
+AUDIT_LOG="${AUDIT_LOG:-/var/log/disinto/edge-register.log}"
+
 # Captured error from check_allowlist (used for JSON response)
 _ALLOWLIST_ERROR=""
+
+# Append one line to the audit log.
+# Usage: audit_log <action> <project> <port> <pubkey_fp>
+# Fails silently — write errors are warned but never abort.
+audit_log() {
+  local action="$1" project="$2" port="$3" pubkey_fp="$4"
+  local timestamp caller
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  caller="${SSH_USERNAME:-${SUDO_USER:-${USER:-unknown}}}"
+
+  local line="${timestamp} ${action} project=${project} port=${port} pubkey_fp=${pubkey_fp} caller=${caller}"
+
+  # Ensure log directory exists
+  local log_dir
+  log_dir=$(dirname "$AUDIT_LOG")
+  if [ ! -d "$log_dir" ]; then
+    mkdir -p "$log_dir" 2>/dev/null || {
+      echo "[WARN] audit log: cannot create ${log_dir}" >&2
+      return 0
+    }
+    chown root:disinto-register "$log_dir" 2>/dev/null || true
+    chmod 0750 "$log_dir"
+  fi
+
+  # Append — write failure is non-fatal
+  if ! printf '%s\n' "$line" >> "$AUDIT_LOG" 2>/dev/null; then
+    echo "[WARN] audit log: failed to write to ${AUDIT_LOG}" >&2
+  fi
+}
 
 # Print usage
 usage() {
@@ -164,6 +196,11 @@ do_register() {
   # Reload Caddy
   reload_caddy
 
+  # Audit log
+  local pubkey_fp
+  pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$full_pubkey" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
+  audit_log "register" "$project" "$port" "$pubkey_fp"
+
   # Build JSON response
   local response="{\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\""
   if [ "$routing_mode" = "subdomain" ]; then
@@ -179,13 +216,20 @@ do_register() {
 do_deregister() {
   local project="$1"
 
-  # Get current port before removing
-  local port
+  # Get current port and pubkey before removing
+  local port pubkey_fp
   port=$(get_port "$project")
 
   if [ -z "$port" ]; then
     echo '{"error":"project not found"}'
     exit 1
+  fi
+
+  pubkey_fp=$(get_project_info "$project" | jq -r '.pubkey // empty' 2>/dev/null) || pubkey_fp=""
+  if [ -n "$pubkey_fp" ]; then
+    pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$pubkey_fp" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
+  else
+    pubkey_fp="unknown"
   fi
 
   # Remove from registry
@@ -208,6 +252,9 @@ do_deregister() {
 
   # Reload Caddy
   reload_caddy
+
+  # Audit log
+  audit_log "deregister" "$project" "$port" "$pubkey_fp"
 
   # Return JSON response
   echo "{\"removed\":true,\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\"}"

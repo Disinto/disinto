@@ -162,7 +162,43 @@ if [ ! -f "$ALLOWLIST_FILE" ]; then
 fi
 
 # =============================================================================
-# Step 3: Install Caddy with Gandi DNS plugin
+# Step 3: Create audit log directory and logrotate config
+# =============================================================================
+log_info "Setting up audit log..."
+
+LOG_DIR="/var/log/disinto"
+LOG_FILE="${LOG_DIR}/edge-register.log"
+
+mkdir -p "$LOG_DIR"
+chown root:disinto-register "$LOG_DIR"
+chmod 0750 "$LOG_DIR"
+
+# Touch the log file so it exists from day one
+touch "$LOG_FILE"
+chmod 0640 "$LOG_FILE"
+chown root:disinto-register "$LOG_FILE"
+
+# Install logrotate config (daily rotation, 30 days retention)
+LOGROTATE_CONF="/etc/logrotate.d/disinto-edge"
+cat > "$LOGROTATE_CONF" <<EOF
+${LOG_FILE} {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root disinto-register
+    copytruncate
+}
+EOF
+chmod 0644 "$LOGROTATE_CONF"
+
+log_info "Audit log: ${LOG_FILE}"
+log_info "Logrotate config: ${LOGROTATE_CONF}"
+
+# =============================================================================
+# Step 4: Install Caddy with Gandi DNS plugin
 # =============================================================================
 log_info "Installing Caddy ${CADDY_VERSION} with Gandi DNS plugin..."
 
@@ -293,7 +329,7 @@ systemctl restart caddy 2>/dev/null || {
 log_info "Caddy configured with admin API on 127.0.0.1:2019"
 
 # =============================================================================
-# Step 4: Install control plane scripts
+# Step 5: Install control plane scripts
 # =============================================================================
 log_info "Installing control plane scripts to ${INSTALL_DIR}..."
 
@@ -315,7 +351,7 @@ chmod 750 "${INSTALL_DIR}/lib"
 log_info "Control plane scripts installed"
 
 # =============================================================================
-# Step 5: Set up SSH authorized_keys
+# Step 6: Set up SSH authorized_keys
 # =============================================================================
 log_info "Setting up SSH authorized_keys..."
 
@@ -357,7 +393,7 @@ source "${INSTALL_DIR}/lib/authorized_keys.sh"
 rebuild_authorized_keys
 
 # =============================================================================
-# Step 6: Configure forced command for disinto-register
+# Step 7: Configure forced command for disinto-register
 # =============================================================================
 log_info "Configuring forced command for disinto-register..."
 
@@ -380,7 +416,7 @@ if [ -n "$ADMIN_PUBKEY" ]; then
 fi
 
 # =============================================================================
-# Step 7: Final configuration
+# Step 8: Final configuration
 # =============================================================================
 log_info "Configuring domain suffix: ${DOMAIN_SUFFIX}"
 
