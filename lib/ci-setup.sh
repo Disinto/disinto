@@ -142,6 +142,7 @@ _create_forgejo_oauth_app() {
 
 # Set up Woodpecker CI to use Forgejo as its forge backend.
 # Creates an OAuth2 app on Forgejo for Woodpecker, activates the repo.
+# Respects EDGE_ROUTING_MODE: in subdomain mode, uses EDGE_TUNNEL_FQDN_CI for redirect URI.
 # Usage: create_woodpecker_oauth <forge_url> <repo_slug>
 _create_woodpecker_oauth_impl() {
   local forge_url="$1"
@@ -150,7 +151,13 @@ _create_woodpecker_oauth_impl() {
   echo ""
   echo "── Woodpecker OAuth2 setup ────────────────────────────"
 
-  _create_forgejo_oauth_app "woodpecker-ci" "http://localhost:8000/authorize" || return 0
+  local wp_redirect_uri="http://localhost:8000/authorize"
+  local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+  if [ "$routing_mode" = "subdomain" ] && [ -n "${EDGE_TUNNEL_FQDN_CI:-}" ]; then
+    wp_redirect_uri="https://${EDGE_TUNNEL_FQDN_CI}/authorize"
+  fi
+
+  _create_forgejo_oauth_app "woodpecker-ci" "$wp_redirect_uri" || return 0
   local client_id="${_OAUTH_CLIENT_ID}"
   local client_secret="${_OAUTH_CLIENT_SECRET}"
 
@@ -158,10 +165,15 @@ _create_woodpecker_oauth_impl() {
   # WP_FORGEJO_CLIENT/SECRET match the docker-compose.yml variable references
   # WOODPECKER_HOST must be host-accessible URL to match OAuth2 redirect_uri
   local env_file="${FACTORY_ROOT}/.env"
+  local wp_host="http://localhost:8000"
+  if [ "$routing_mode" = "subdomain" ] && [ -n "${EDGE_TUNNEL_FQDN_CI:-}" ]; then
+    wp_host="https://${EDGE_TUNNEL_FQDN_CI}"
+  fi
+
   local wp_vars=(
     "WOODPECKER_FORGEJO=true"
     "WOODPECKER_FORGEJO_URL=${forge_url}"
-    "WOODPECKER_HOST=http://localhost:8000"
+    "WOODPECKER_HOST=${wp_host}"
   )
   if [ -n "${client_id:-}" ]; then
     wp_vars+=("WP_FORGEJO_CLIENT=${client_id}")

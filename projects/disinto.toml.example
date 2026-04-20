@@ -59,6 +59,23 @@ check_pipeline_stall = false
 #   compact_pct = 60
 #   poll_interval = 60
 
+# Edge routing mode (default: subpath)
+#
+# Controls how services are exposed through the edge proxy.
+#   subpath   — all services under <project>.disinto.ai/{forge,ci,chat,staging}
+#   subdomain — per-service subdomains: forge.<project>, ci.<project>, chat.<project>
+#
+# Set to "subdomain" if subpath routing causes unfixable issues (redirect loops,
+# OAuth callback mismatches, cookie collisions). See docs/edge-routing-fallback.md.
+#
+# Set in .env (not TOML) since it's consumed by docker-compose and shell scripts:
+#   EDGE_ROUTING_MODE=subdomain
+#
+# In subdomain mode, `disinto edge register` also writes:
+#   EDGE_TUNNEL_FQDN_FORGE=forge.<project>.disinto.ai
+#   EDGE_TUNNEL_FQDN_CI=ci.<project>.disinto.ai
+#   EDGE_TUNNEL_FQDN_CHAT=chat.<project>.disinto.ai
+
 # [mirrors]
 # github   = "git@github.com:johba/disinto.git"
 # codeberg = "git@codeberg.org:johba/disinto.git"

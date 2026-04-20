@@ -39,13 +39,10 @@ EOF
   exit 1
 }
 
-# TODO(#713): Subdomain fallback — if subpath routing (#704/#708) fails, this
-# function would need to register additional routes for forge.<project>,
-# ci.<project>, chat.<project> subdomains (or accept a --subdomain parameter).
-# See docs/edge-routing-fallback.md for the full pivot plan.
-
 # Register a new tunnel
 # Usage: do_register <project> <pubkey>
+# When EDGE_ROUTING_MODE=subdomain, also registers forge.<project>, ci.<project>,
+# and chat.<project> subdomain routes (see docs/edge-routing-fallback.md).
 do_register() {
   local project="$1"
   local pubkey="$2"
@@ -79,8 +76,17 @@ do_register() {
   local port
   port=$(allocate_port "$project" "$full_pubkey" "${project}.${DOMAIN_SUFFIX}")
 
-  # Add Caddy route
+  # Add Caddy route for main project domain
   add_route "$project" "$port"
+
+  # Subdomain mode: register additional routes for per-service subdomains
+  local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+  if [ "$routing_mode" = "subdomain" ]; then
+    local subdomain
+    for subdomain in forge ci chat; do
+      add_route "${subdomain}.${project}" "$port"
+    done
+  fi
 
   # Rebuild authorized_keys for tunnel user
   rebuild_authorized_keys
@@ -88,8 +94,14 @@ do_register() {
   # Reload Caddy
   reload_caddy
 
-  # Return JSON response
-  echo "{\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\"}"
+  # Build JSON response
+  local response="{\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\""
+  if [ "$routing_mode" = "subdomain" ]; then
+    response="${response},\"routing_mode\":\"subdomain\""
+    response="${response},\"subdomains\":{\"forge\":\"forge.${project}.${DOMAIN_SUFFIX}\",\"ci\":\"ci.${project}.${DOMAIN_SUFFIX}\",\"chat\":\"chat.${project}.${DOMAIN_SUFFIX}\"}"
+  fi
+  response="${response}}"
+  echo "$response"
 }
 
 # Deregister a tunnel
@@ -109,8 +121,17 @@ do_deregister() {
   # Remove from registry
   free_port "$project" >/dev/null
 
-  # Remove Caddy route
+  # Remove Caddy route for main project domain
   remove_route "$project"
+
+  # Subdomain mode: also remove per-service subdomain routes
+  local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+  if [ "$routing_mode" = "subdomain" ]; then
+    local subdomain
+    for subdomain in forge ci chat; do
+      remove_route "${subdomain}.${project}"
+    done
+  fi
 
   # Rebuild authorized_keys for tunnel user
   rebuild_authorized_keys

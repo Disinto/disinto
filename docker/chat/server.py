@@ -45,6 +45,8 @@ FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
 CHAT_OAUTH_CLIENT_ID = os.environ.get("CHAT_OAUTH_CLIENT_ID", "")
 CHAT_OAUTH_CLIENT_SECRET = os.environ.get("CHAT_OAUTH_CLIENT_SECRET", "")
 EDGE_TUNNEL_FQDN = os.environ.get("EDGE_TUNNEL_FQDN", "")
+EDGE_TUNNEL_FQDN_CHAT = os.environ.get("EDGE_TUNNEL_FQDN_CHAT", "")
+EDGE_ROUTING_MODE = os.environ.get("EDGE_ROUTING_MODE", "subpath")
 
 # Shared secret for Caddy forward_auth verify endpoint (#709).
 # When set, only requests carrying this value in X-Forward-Auth-Secret are
@@ -102,6 +104,8 @@ MIME_TYPES = {
 
 def _build_callback_uri():
     """Build the OAuth callback URI based on tunnel configuration."""
+    if EDGE_ROUTING_MODE == "subdomain" and EDGE_TUNNEL_FQDN_CHAT:
+        return f"https://{EDGE_TUNNEL_FQDN_CHAT}/oauth/callback"
     if EDGE_TUNNEL_FQDN:
         return f"https://{EDGE_TUNNEL_FQDN}/chat/oauth/callback"
     return "http://localhost/chat/oauth/callback"
