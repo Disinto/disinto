@@ -252,32 +252,33 @@ backup_import_disinto_ops_repo() {
 }
 
 # ── Step 4: Import issues from backup ────────────────────────────────────────
-# Usage: backup_import_issues <slug> <issues_dir>
+# Usage: backup_import_issues <slug> <issues_file>
+#        issues_file is a JSON array of issues (per create schema)
 # Returns: 0 on success
 backup_import_issues() {
   local slug="$1"
-  local issues_dir="$2"
+  local issues_file="$2"
 
-  if [ ! -d "$issues_dir" ]; then
-    backup_log "No issues directory found, skipping"
+  if [ ! -f "$issues_file" ]; then
+    backup_log "No issues file found, skipping"
     return 0
   fi
+
+  local count
+  count=$(jq 'length' "$issues_file")
+  backup_log "Importing ${count} issues from ${issues_file}"
 
   local created=0
   local skipped=0
 
-  for issue_file in "${issues_dir}"/*.json; do
-    [ -f "$issue_file" ] || continue
-
-    backup_log "Processing issue file: $(basename "$issue_file")"
-
+  for i in $(seq 0 $((count - 1))); do
     local issue_num title body
-    issue_num=$(jq -r '.number // empty' "$issue_file")
-    title=$(jq -r '.title // empty' "$issue_file")
-    body=$(jq -r '.body // empty' "$issue_file")
+    issue_num=$(jq -r ".[${i}].number" "$issues_file")
+    title=$(jq -r ".[${i}].title" "$issues_file")
+    body=$(jq -r ".[${i}].body" "$issues_file")
 
     if [ -z "$issue_num" ] || [ "$issue_num" = "null" ]; then
-      backup_log "WARNING: skipping issue without number: $(basename "$issue_file")"
+      backup_log "WARNING: skipping issue without number at index ${i}"
       continue
     fi
 
@@ -292,7 +293,7 @@ backup_import_issues() {
     local -a labels=()
     while IFS= read -r label; do
       [ -n "$label" ] && labels+=("$label")
-    done < <(jq -r '.labels[]? // empty' "$issue_file")
+    done < <(jq -r ".[${i}].labels[]? // empty" "$issues_file")
 
     # Create issue
     local new_num
@@ -345,19 +346,24 @@ backup_import() {
     exit 1
   fi
 
-  # Step 4: Import issues for each repo with issues/*.json
-  for repo_dir in "${BACKUP_TEMP_DIR}/repos"/*/; do
-    [ -d "$repo_dir" ] || continue
+  # Step 4: Import issues — iterate issues/<slug>.json files, each is a JSON array
+  for issues_file in "${BACKUP_TEMP_DIR}/issues"/*.json; do
+    [ -f "$issues_file" ] || continue
 
+    local slug_filename
+    slug_filename=$(basename "$issues_file" .json)
+
+    # Map slug-filename → forgejo-slug: "disinto" → "disinto-admin/disinto",
+    #                                    "disinto-ops" → "disinto-admin/disinto-ops"
     local slug
-    slug=$(basename "$repo_dir")
+    case "$slug_filename" in
+      "disinto") slug="${FORGE_REPO}" ;;
+      "disinto-ops") slug="${FORGE_OPS_REPO}" ;;
+      *) slug="disinto-admin/${slug_filename}" ;;
+    esac
 
-    backup_log "Processing repo: ${slug}"
-
-    local issues_dir="${repo_dir}issues"
-    if [ -d "$issues_dir" ]; then
-      backup_import_issues "$slug" "$issues_dir"
-    fi
+    backup_log "Processing issues from ${slug_filename}.json (${slug})"
+    backup_import_issues "$slug" "$issues_file"
   done
 
   # Summary
