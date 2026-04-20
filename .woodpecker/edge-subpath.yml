@@ -45,7 +45,7 @@ steps:
       - apk add --no-cache coreutils
       - |
         set -e
-        mkdir -p /tmp/edge-render
+        mkdir -p edge-render
         # Render mock Caddyfile with Nomad templates expanded
         {
           echo '# Caddyfile — edge proxy configuration (Nomad-rendered)'
@@ -90,8 +90,8 @@ steps:
           echo '        reverse_proxy 127.0.0.1:8080'
           echo '    }'
           echo '}'
-        } > /tmp/edge-render/Caddyfile
-        cp /tmp/edge-render/Caddyfile /tmp/edge-render/Caddyfile.rendered
+        } > edge-render/Caddyfile
+        cp edge-render/Caddyfile edge-render/Caddyfile.rendered
         echo "Caddyfile rendered successfully"
 
   # ── 3. Caddy config validation ───────────────────────────────────────────
@@ -107,7 +107,7 @@ steps:
       - curl -sS -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
       - chmod +x /tmp/caddy
       - /tmp/caddy version
-      - /tmp/caddy validate --config /tmp/edge-render/Caddyfile.rendered --adapter caddyfile
+      - /tmp/caddy validate --config edge-render/Caddyfile.rendered --adapter caddyfile
 
   # ── 4. Caddyfile routing block shape test ─────────────────────────────────
   # Verify that the Caddyfile contains all required routing blocks:
@@ -125,7 +125,7 @@ steps:
       - |
         set -e
 
-        CADDYFILE="/tmp/edge-render/Caddyfile.rendered"
+        CADDYFILE="edge-render/Caddyfile.rendered"
 
         echo "=== Validating Caddyfile routing blocks ==="
 
