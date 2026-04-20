@@ -25,6 +25,9 @@ source "${SCRIPT_DIR}/lib/authorized_keys.sh"
 # Domain suffix
 DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-disinto.ai}"
 
+# Reserved project names — operator-adjacent, internal roles, and subdomain-mode prefixes
+RESERVED_NAMES=(www api admin root mail chat forge ci edge caddy disinto register tunnel)
+
 # Print usage
 usage() {
   cat <<EOF
@@ -47,11 +50,21 @@ do_register() {
   local project="$1"
   local pubkey="$2"
 
-  # Validate project name (alphanumeric, hyphens, underscores)
-  if ! [[ "$project" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  # Validate project name — strict DNS label: lowercase alphanumeric, inner hyphens,
+  # 3-63 chars, no leading/trailing hyphen, no underscore (RFC 1035)
+  if ! [[ "$project" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
     echo '{"error":"invalid project name"}'
     exit 1
   fi
+
+  # Check against reserved names
+  local reserved
+  for reserved in "${RESERVED_NAMES[@]}"; do
+    if [[ "$project" = "$reserved" ]]; then
+      echo '{"error":"name reserved"}'
+      exit 1
+    fi
+  done
 
   # Extract key type and key from pubkey (format: "ssh-ed25519 AAAAC3...")
   local key_type key
