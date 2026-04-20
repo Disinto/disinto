@@ -20,6 +20,12 @@ OAuth flow:
     6. Redirects to /chat/
 
 The claude binary is expected to be mounted from the host at /usr/local/bin/claude.
+
+Workspace access:
+    - CHAT_WORKSPACE_DIR environment variable: bind-mounted project working tree
+    - Claude invocation uses --permission-mode acceptEdits for code modification
+    - CWD is set to workspace directory when configured, enabling Claude to
+      inspect, explain, or modify code scoped to that tree only
 """
 
 import asyncio
@@ -45,6 +51,10 @@ PORT = int(os.environ.get("CHAT_PORT", 8080))
 UI_DIR = "/var/chat/ui"
 STATIC_DIR = os.path.join(UI_DIR, "static")
 CLAUDE_BIN = "/usr/local/bin/claude"
+
+# Workspace directory: bind-mounted project working tree for Claude access
+# Defaults to empty; when set, Claude can read/write to this directory
+WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "")
 
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
@@ -491,12 +501,18 @@ class _WebSocketHandler:
             return
 
         try:
+            # Build claude command with permission mode (acceptEdits allows file edits)
+            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", message]
+
             # Spawn claude --print with stream-json for streaming output
+            # Set cwd to workspace directory if configured, allowing Claude to access project code
+            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
             proc = subprocess.Popen(
-                [CLAUDE_BIN, "--print", "--output-format", "stream-json", message],
+                claude_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                cwd=cwd,
                 bufsize=1,
             )
 
@@ -1040,12 +1056,18 @@ class ChatHandler(BaseHTTPRequestHandler):
             # Save user message to history
             _write_message(user, conv_id, "user", message)
 
+            # Build claude command with permission mode (acceptEdits allows file edits)
+            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", message]
+
             # Spawn claude --print with stream-json for token tracking (#711)
+            # Set cwd to workspace directory if configured, allowing Claude to access project code
+            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
             proc = subprocess.Popen(
-                [CLAUDE_BIN, "--print", "--output-format", "stream-json", message],
+                claude_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                cwd=cwd,
                 bufsize=1,  # Line buffered
             )
 

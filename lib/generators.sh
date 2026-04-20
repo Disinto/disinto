@@ -705,6 +705,9 @@ COMPOSEEOF
       - chat-config:/var/chat/config
       # Chat history persistence: per-user NDJSON files on bind-mounted host volume
       - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
+      # Workspace directory: bind-mounted project working tree for Claude access (#1027)
+      # Mounted when CHAT_WORKSPACE_DIR is set (defaults to ./workspace)
+      - ${CHAT_WORKSPACE_DIR:-./workspace}:/var/workspace
     environment:
       CHAT_HOST: "0.0.0.0"
       CHAT_PORT: "8080"
@@ -718,6 +721,8 @@ COMPOSEEOF
       # Shared secret for Caddy forward_auth verify endpoint (#709)
       FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
       # Rate limiting removed (#1084)
+      # Workspace directory for Claude code access (#1027)
+      CHAT_WORKSPACE_DIR: ${CHAT_WORKSPACE_DIR:-./workspace}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s

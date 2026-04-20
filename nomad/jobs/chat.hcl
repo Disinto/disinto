@@ -21,8 +21,17 @@
 #     FORWARD_AUTH_SECRET from kv/disinto/shared/chat
 #   - Seeded on fresh boxes by tools/vault-seed-chat.sh
 #
-# Host volume:
+# Host volumes:
 #   - chat-history → /var/lib/chat/history (persists conversation history)
+#   - workspace → /var/workspace (project working tree for Claude access, #1027)
+#
+# Client-side host_volume registration (operator prerequisite):
+#   In nomad/client.hcl on each Nomad node:
+#     host_volume "chat-workspace" {
+#       path      = "/var/disinto/chat-workspace"
+#       read_only = false
+#     }
+# Nodes without the host_volume registered will not schedule the workspace mount.
 #
 # Not the runtime yet: docker-compose.yml is still the factory's live stack
 # until cutover. This file exists so CI can validate it and S5.2 can wire
@@ -59,6 +68,21 @@ job "chat" {
       type      = "host"
       source    = "chat-history"
       read_only = false
+    }
+
+    # Workspace volume: bind-mounted project working tree for Claude access (#1027)
+    # Source is a fixed logical name resolved by client-side host_volume registration.
+    volume "workspace" {
+      type      = "host"
+      source    = "chat-workspace"
+      read_only = false
+    }
+
+    # ── Metadata (per-dispatch env var via NOMAD_META_*) ──────────────────────
+    # CHAT_WORKSPACE_DIR: project working tree path, injected into task env
+    # as NOMAD_META_CHAT_WORKSPACE_DIR for the workspace volume mount target.
+    meta {
+      CHAT_WORKSPACE_DIR = "/var/workspace"
     }
 
     # ── Restart policy ───────────────────────────────────────────────────────
@@ -115,11 +139,20 @@ job "chat" {
         read_only   = false
       }
 
+      # Mount workspace directory for Claude code access (#1027)
+      # Binds project working tree so Claude can inspect/modify code
+      volume_mount {
+        volume      = "workspace"
+        destination = "/var/workspace"
+        read_only   = false
+      }
+
       # ── Environment: secrets from Vault (S5.2) ──────────────────────────────
       # CHAT_OAUTH_CLIENT_ID, CHAT_OAUTH_CLIENT_SECRET, FORWARD_AUTH_SECRET
       # rendered from kv/disinto/shared/chat via template stanza.
       env {
-        FORGE_URL = "http://forgejo:3000"
+        FORGE_URL              = "http://forgejo:3000"
+        CHAT_WORKSPACE_DIR     = "${NOMAD_META_CHAT_WORKSPACE_DIR}"
       }
 
       # ── Vault-templated secrets (S5.2, issue #989) ─────────────────────────
