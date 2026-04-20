@@ -125,6 +125,13 @@ check_staging_routing() {
     tr_fail "Missing Staging handle block (handle /staging/*)"
   fi
 
+  # Check for uri strip_prefix /staging directive
+  if echo "$CADDYFILE" | grep -q "uri strip_prefix /staging"; then
+    tr_pass "Staging uri strip_prefix configured (/staging)"
+  else
+    tr_fail "Missing uri strip_prefix /staging for staging"
+  fi
+
   # Check for nomadService discovery (dynamic port)
   if echo "$CADDYFILE" | grep -q "nomadService"; then
     tr_pass "Staging uses Nomad service discovery"
