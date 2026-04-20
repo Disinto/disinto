@@ -103,7 +103,7 @@ steps:
   - name: caddy-validate
     image: alpine:3.19
     commands:
-      - apk add --no-cache ca-certificates
+      - apk add --no-cache ca-certificates curl
       - curl -sS -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
       - chmod +x /tmp/caddy
       - /tmp/caddy version
