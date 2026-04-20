@@ -305,6 +305,10 @@ def main() -> int:
         "9a57368f3c1dfd29ec328596b86962a0": "Flag parsing loop + case start (vault-seed-woodpecker + wp-oauth-register)",
         "9d72d40ff303cbed0b7e628fc15381c3": "Case loop + dry-run handler (vault-seed-woodpecker + wp-oauth-register)",
         "5b52ddbbf47948e3cbc1b383f0909588": "Help + invalid arg handler end (vault-seed-woodpecker + wp-oauth-register)",
+        # forgejo-bootstrap.sh follows wp-oauth-register.sh pattern (issue #1069)
+        "2b80185e4ae2b54e2e01f33e5555c688": "Standard header (set -euo pipefail, SCRIPT_DIR, REPO_ROOT) (forgejo-bootstrap + wp-oauth-register)",
+        "38a1f20a60d69f0d6bfb06a0532b3bd7": "Logging helpers + DRY_RUN init (forgejo-bootstrap + wp-oauth-register)",
+        "4dd3c526fa29bdaa88b274c3d7d01032": "Flag parsing loop + case start (forgejo-bootstrap + wp-oauth-register)",
         # Common vault-seed script preamble + precondition patterns
         # Shared across tools/vault-seed-{forgejo,agents,woodpecker}.sh
         "dff3675c151fcdbd2fef798826ae919b": "Vault-seed preamble: set -euo + path setup + source hvault.sh + KV_MOUNT",
