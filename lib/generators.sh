@@ -620,10 +620,7 @@ COMPOSEEOF
       - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
       - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
       - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      # Cost caps / rate limiting (#711)
-      - CHAT_MAX_REQUESTS_PER_HOUR=${CHAT_MAX_REQUESTS_PER_HOUR:-60}
-      - CHAT_MAX_REQUESTS_PER_DAY=${CHAT_MAX_REQUESTS_PER_DAY:-500}
-      - CHAT_MAX_TOKENS_PER_DAY=${CHAT_MAX_TOKENS_PER_DAY:-1000000}
+      # Rate limiting removed (#1084)
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
