@@ -44,6 +44,7 @@ REGISTRY_DIR="/var/lib/disinto"
 CADDY_VERSION="2.8.4"
 DOMAIN_SUFFIX="disinto.ai"
 EXTRA_CADDYFILE="/etc/caddy/extra.d/*.caddy"
+ADMIN_TAG="admin"
 
 usage() {
   cat <<EOF
@@ -57,6 +58,7 @@ Options:
   --domain-suffix <suffix>    Domain suffix for tunnels (default: disinto.ai)
   --extra-caddyfile <path>    Import path for operator-owned Caddy config
                               (default: /etc/caddy/extra.d/*.caddy)
+  --admin-tag <name>          Caller tag for the initial admin key (default: admin)
   -h, --help                  Show this help
 
 Example:
@@ -89,6 +91,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --extra-caddyfile)
       EXTRA_CADDYFILE="$2"
+      shift 2
+      ;;
+    --admin-tag)
+      ADMIN_TAG="$2"
       shift 2
       ;;
     -h|--help)
@@ -404,8 +410,8 @@ if [ -n "$ADMIN_PUBKEY" ]; then
   KEY_TYPE="${ADMIN_PUBKEY%% *}"
   KEY_DATA="${ADMIN_PUBKEY#* }"
 
-  # Create forced command entry
-  FORCED_CMD="restrict,command=\"${INSTALL_DIR}/register.sh\" ${KEY_TYPE} ${KEY_DATA}"
+  # Create forced command entry with caller attribution tag
+  FORCED_CMD="restrict,command=\"${INSTALL_DIR}/register.sh --as ${ADMIN_TAG}\" ${KEY_TYPE} ${KEY_DATA}"
 
   # Replace the pubkey line
   echo "$FORCED_CMD" > /home/disinto-register/.ssh/authorized_keys
