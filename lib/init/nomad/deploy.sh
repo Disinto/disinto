@@ -263,11 +263,11 @@ for job_name in "${JOBS[@]}"; do
   if ! _wait_job_running "$job_name" "$job_timeout"; then
     log "WARNING: deployment for job '${job_name}' did not reach successful state — continuing with remaining jobs"
     FAILED_JOBS+=("$job_name")
-  fi
-
-  # 5. Run post-deploy scripts
-  if ! _run_post_deploy "$job_name"; then
-    die "post-deploy script failed for job '${job_name}'"
+  else
+    # 5. Run post-deploy scripts (only if job reached healthy state)
+    if ! _run_post_deploy "$job_name"; then
+      die "post-deploy script failed for job '${job_name}'"
+    fi
   fi
 done
 

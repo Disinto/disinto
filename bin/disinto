@@ -1057,7 +1057,7 @@ _disinto_init_nomad() {
           echo "Error: deploy.sh must run as root and sudo is not installed" >&2
           exit 1
         fi
-        sudo -n -- "${deploy_cmd[@]}" || exit $?
+        sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "${deploy_cmd[@]}" || exit $?
       fi
 
       # Post-deploy: bootstrap Forgejo admin user after forgejo deployment
@@ -1073,7 +1073,7 @@ _disinto_init_nomad() {
               echo "Error: forgejo-bootstrap.sh must run as root and sudo is not installed" >&2
               exit 1
             fi
-            sudo -n -- "$bootstrap_script" || exit $?
+            sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "$bootstrap_script" || exit $?
           fi
         else
           echo "warning: forgejo-bootstrap.sh not found or not executable" >&2

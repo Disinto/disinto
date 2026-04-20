@@ -95,7 +95,7 @@ fi
 if [ -z "$FORGE_TOKEN" ]; then
   log "reading FORGE_TOKEN from Vault at kv/disinto/shared/forge/token"
   _hvault_default_env
-  token_raw="$(hvault_get_or_empty "kv/data/disinto/shared/forge/token" 2>/dev/null) || true"
+  token_raw="$(hvault_get_or_empty "kv/data/disinto/shared/forge/token" 2>/dev/null)" || true
   if [ -n "$token_raw" ]; then
     FORGE_TOKEN="$(printf '%s' "$token_raw" | jq -r '.data.data.token // empty' 2>/dev/null)" || true
   fi
@@ -105,29 +105,34 @@ if [ -z "$FORGE_TOKEN" ]; then
   log "forge token loaded from Vault"
 fi
 
-# ── Step 1/2: Check if admin user already exists ─────────────────────────────
-log "── Step 1/2: check if admin user '${FORGE_ADMIN_USER}' exists ──"
+# ── Step 1/3: Check if admin user already exists ─────────────────────────────
+log "── Step 1/3: check if admin user '${FORGE_ADMIN_USER}' exists ──"
 
-# Search for the user via the public API (no auth needed for search)
-user_search_raw=$(curl -sf --max-time 10 \
-  "${FORGE_URL}/api/v1/users/search?q=${FORGE_ADMIN_USER}&limit=1" 2>/dev/null) || {
-  # If search fails (e.g., Forgejo not ready yet), we'll handle it
-  log "warning: failed to search users (Forgejo may not be ready yet)"
-  user_search_raw=""
+# Use exact match via GET /api/v1/users/{username} (returns 404 if absent)
+user_lookup_raw=$(curl -sf --max-time 10 \
+  "${FORGE_URL}/api/v1/users/${FORGE_ADMIN_USER}" 2>/dev/null) || {
+  # 404 means user doesn't exist
+  if [ $? -eq 7 ]; then
+    log "admin user '${FORGE_ADMIN_USER}' not found"
+    admin_user_exists=false
+    user_id=""
+  else
+    # Other curl errors (e.g., network, Forgejo down)
+    log "warning: failed to lookup user (Forgejo may not be ready yet)"
+    admin_user_exists=false
+    user_id=""
+  fi
 }
 
-admin_user_exists=false
-user_id=""
-
-if [ -n "$user_search_raw" ]; then
-  user_id=$(printf '%s' "$user_search_raw" | jq -r '.data[0].id // empty' 2>/dev/null) || true
+if [ -n "$user_lookup_raw" ]; then
+  admin_user_exists=true
+  user_id=$(printf '%s' "$user_lookup_raw" | jq -r '.id // empty' 2>/dev/null) || true
   if [ -n "$user_id" ]; then
-    admin_user_exists=true
     log "admin user '${FORGE_ADMIN_USER}' already exists (user_id: ${user_id})"
   fi
 fi
 
-# ── Step 2/2: Create admin user if needed ────────────────────────────────────
+# ── Step 2/3: Create admin user if needed ────────────────────────────────────
 if [ "$admin_user_exists" = false ]; then
   log "creating admin user '${FORGE_ADMIN_USER}'"
 
