@@ -1,47 +1,7 @@
 [
   {
-    "action": "add_label",
-    "issue": 1047,
-    "label": "backlog"
-  },
-  {
-    "action": "add_label",
-    "issue": 1047,
-    "label": "priority"
-  },
-  {
-    "action": "add_label",
-    "issue": 1044,
-    "label": "backlog"
-  },
-  {
-    "action": "remove_label",
-    "issue": 1025,
-    "label": "blocked"
-  },
-  {
-    "action": "add_label",
-    "issue": 1025,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 1025,
-    "body": "Gardener: removing `blocked` — fix path is well-defined (Option 1: static-checks-only pipeline). Promoting to backlog for next dev pick-up. Dev must follow the acceptance criteria literally — no live service curls, static checks only."
-  },
-  {
-    "action": "remove_label",
-    "issue": 850,
-    "label": "blocked"
-  },
-  {
-    "action": "add_label",
-    "issue": 850,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 850,
-    "body": "Gardener: removing `blocked` — 5th attempt recipe is at the top of this issue. Dev must follow the recipe exactly (call `_generate_compose_impl` directly in isolated FACTORY_ROOT, do NOT use `bin/disinto init`). Do not copy patterns from prior PRs."
+    "action": "close",
+    "issue": 1050,
+    "reason": "Already implemented by PR #1051 (merged 2026-04-19). lib/pr-lifecycle.sh and lib/ci-helpers.sh updated with per-workflow/per-step CI diagnostics."
   }
 ]
