@@ -430,6 +430,10 @@
             return div.innerHTML.replace(/\n/g, '<br>');
         }
 
+        // WebSocket connection for streaming
+        let ws = null;
+        let wsMessageId = null;
+
         // Send message handler
         async function sendMessage() {
             const message = textarea.value.trim();
@@ -449,6 +453,14 @@
                 await createNewConversation();
             }
 
+            // Try WebSocket streaming first, fall back to fetch
+            if (window.location.protocol === 'https:' || window.location.hostname === 'localhost') {
+                if (tryWebSocketSend(message)) {
+                    return;
+                }
+            }
+
+            // Fallback to fetch
             try {
                 // Use fetch with URLSearchParams for application/x-www-form-urlencoded
                 const params = new URLSearchParams();
@@ -482,6 +494,111 @@
 
                 // Refresh conversations list
                 await loadConversations();
+            }
+        }
+
+        // Try to send message via WebSocket streaming
+        function tryWebSocketSend(message) {
+            try {
+                // Generate a unique message ID for this request
+                wsMessageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+                // Connect to WebSocket
+                const wsUrl = window.location.protocol === 'https:'
+                    ? `wss://${window.location.host}/chat/ws`
+                    : `ws://${window.location.host}/chat/ws`;
+
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = function() {
+                    // Send the message as JSON with message ID
+                    const data = {
+                        type: 'chat_request',
+                        message_id: wsMessageId,
+                        message: message,
+                        conversation_id: currentConversationId
+                    };
+                    ws.send(JSON.stringify(data));
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'token') {
+                            // Stream a token to the UI
+                            addTokenToLastMessage(data.token);
+                        } else if (data.type === 'complete') {
+                            // Streaming complete
+                            closeWebSocket();
+                            textarea.disabled = false;
+                            sendBtn.disabled = false;
+                            sendBtn.textContent = 'Send';
+                            textarea.focus();
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                            loadConversations();
+                        } else if (data.type === 'error') {
+                            addSystemMessage(`Error: ${data.message}`);
+                            closeWebSocket();
+                            textarea.disabled = false;
+                            sendBtn.disabled = false;
+                            sendBtn.textContent = 'Send';
+                            textarea.focus();
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                ws.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                    addSystemMessage('WebSocket connection error. Falling back to regular chat.');
+                    closeWebSocket();
+                    sendMessage(); // Retry with fetch
+                };
+
+                ws.onclose = function() {
+                    wsMessageId = null;
+                };
+
+                return true; // WebSocket attempt started
+
+            } catch (error) {
+                console.error('Failed to create WebSocket:', error);
+                return false; // Fall back to fetch
+            }
+        }
+
+        // Add a token to the last assistant message (for streaming)
+        function addTokenToLastMessage(token) {
+            const messages = messagesDiv.querySelectorAll('.message.assistant');
+            if (messages.length === 0) {
+                // No assistant message yet, create one
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message assistant';
+                msgDiv.innerHTML = `
+                    <div class="role">assistant</div>
+                    <div class="content streaming"></div>
+                `;
+                messagesDiv.appendChild(msgDiv);
+            }
+
+            const lastMsg = messagesDiv.querySelector('.message.assistant .content.streaming');
+            if (lastMsg) {
+                lastMsg.textContent += token;
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+
+        // Close WebSocket connection
+        function closeWebSocket() {
+            if (ws) {
+                ws.onopen = null;
+                ws.onmessage = null;
+                ws.onerror = null;
+                ws.onclose = null;
+                ws.close();
+                ws = null;
             }
         }
 
