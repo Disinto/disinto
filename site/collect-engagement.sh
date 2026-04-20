@@ -209,3 +209,72 @@ jq -nc \
 
 log "Engagement report written to ${OUTPUT}: ${UNIQUE_VISITORS} visitors, ${PAGE_VIEWS} page views"
 echo "Engagement report: ${UNIQUE_VISITORS} unique visitors, ${PAGE_VIEWS} page views → ${OUTPUT}"
+
+# ── Commit evidence to ops repo via Forgejo API ─────────────────────────────
+
+commit_evidence_via_forgejo() {
+  local evidence_file="$1"
+  local report_date
+  report_date=$(basename "$evidence_file" .json)
+  local file_path="evidence/engagement/${report_date}.json"
+
+  # Check if ops repo is available
+  if [ -z "${OPS_REPO_ROOT:-}" ] || [ ! -d "${OPS_REPO_ROOT}/.git" ]; then
+    log "SKIP: OPS_REPO_ROOT not set or not a git repo — evidence file not committed"
+    return 0
+  fi
+
+  # Check if Forgejo credentials are available
+  if [ -z "${FORGE_TOKEN:-}" ] || [ -z "${FORGE_URL:-}" ] || [ -z "${FORGE_OPS_REPO:-}" ]; then
+    log "SKIP: Forgejo credentials not available (FORGE_TOKEN/FORGE_URL/FORGE_OPS_REPO) — evidence file not committed"
+    return 0
+  fi
+
+  # Read and encode the file content
+  local content
+  content=$(base64 < "$evidence_file")
+  local ops_owner="${OPS_FORGE_OWNER:-${FORGE_REPO%%/*}}"
+  local ops_repo="${OPS_FORGE_REPO:-${PROJECT_NAME:-disinto}-ops}"
+
+  # Check if file already exists in the ops repo
+  local existing
+  existing=$(curl -sf \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/repos/${ops_owner}/${ops_repo}/contents/${file_path}" \
+    2>/dev/null || echo "")
+
+  if [ -n "$existing" ] && printf '%s' "$existing" | jq -e '.sha' >/dev/null 2>&1; then
+    # Update existing file
+    local sha
+    sha=$(printf '%s' "$existing" | jq -r '.sha')
+    if curl -sf -X PUT \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_URL}/api/v1/repos/${ops_owner}/${ops_repo}/contents/${file_path}" \
+      -d "$(jq -nc --arg content "$content" --arg sha "$sha" --arg msg "evidence: engagement ${report_date}" \
+        '{message: $msg, content: $content, sha: $sha}')" >/dev/null 2>&1; then
+      log "Updated evidence file in ops repo: ${file_path}"
+      return 0
+    else
+      log "ERROR: failed to update evidence file in ops repo"
+      return 1
+    fi
+  else
+    # Create new file
+    if curl -sf -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_URL}/api/v1/repos/${ops_owner}/${ops_repo}/contents/${file_path}" \
+      -d "$(jq -nc --arg content "$content" --arg msg "evidence: engagement ${report_date}" \
+        '{message: $msg, content: $content}')" >/dev/null 2>&1; then
+      log "Created evidence file in ops repo: ${file_path}"
+      return 0
+    else
+      log "ERROR: failed to create evidence file in ops repo"
+      return 1
+    fi
+  fi
+}
+
+# Attempt to commit evidence (non-fatal — data collection succeeded even if commit fails)
+commit_evidence_via_forgejo "$OUTPUT" || log "WARNING: evidence commit skipped or failed — file exists locally at ${OUTPUT}"
