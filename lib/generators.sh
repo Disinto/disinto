@@ -620,10 +620,7 @@ COMPOSEEOF
       - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
       - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
       - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      # Cost caps / rate limiting (#711)
-      - CHAT_MAX_REQUESTS_PER_HOUR=${CHAT_MAX_REQUESTS_PER_HOUR:-60}
-      - CHAT_MAX_REQUESTS_PER_DAY=${CHAT_MAX_REQUESTS_PER_DAY:-500}
-      - CHAT_MAX_TOKENS_PER_DAY=${CHAT_MAX_TOKENS_PER_DAY:-1000000}
+      # Rate limiting removed (#1084)
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -680,6 +677,55 @@ COMPOSEEOF
     networks:
       - disinto-net
     command: ["echo", "staging slot — replace with project image"]
+
+  # Chat container — Claude chat UI backend (#705)
+  # Internal service only; edge proxy routes to chat:8080
+  # Sandbox hardened per #706 — no docker.sock, read-only rootfs, minimal caps
+  # Rate limiting removed (#1084)
+  chat:
+    build:
+      context: ./docker/chat
+      dockerfile: Dockerfile
+    container_name: disinto-chat
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    memswap_limit: 512m
+    volumes:
+      # Mount claude binary from host (same as agents)
+      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
+      # Throwaway named volume for chat config (isolated from host ~/.claude)
+      - chat-config:/var/chat/config
+      # Chat history persistence: per-user NDJSON files on bind-mounted host volume
+      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
+    environment:
+      CHAT_HOST: "0.0.0.0"
+      CHAT_PORT: "8080"
+      FORGE_URL: http://forgejo:3000
+      CHAT_OAUTH_CLIENT_ID: ${CHAT_OAUTH_CLIENT_ID:-}
+      CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
+      EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
+      EDGE_TUNNEL_FQDN_CHAT: ${EDGE_TUNNEL_FQDN_CHAT:-}
+      EDGE_ROUTING_MODE: ${EDGE_ROUTING_MODE:-subpath}
+      DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
+      # Shared secret for Caddy forward_auth verify endpoint (#709)
+      FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
+      # Rate limiting removed (#1084)
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - disinto-net
 
 volumes:
   forgejo-data:

@@ -23,7 +23,6 @@ The claude binary is expected to be mounted from the host at /usr/local/bin/clau
 """
 
 import asyncio
-import datetime
 import json
 import os
 import re
@@ -61,10 +60,6 @@ EDGE_ROUTING_MODE = os.environ.get("EDGE_ROUTING_MODE", "subpath")
 # (acceptable during local dev; production MUST set this).
 FORWARD_AUTH_SECRET = os.environ.get("FORWARD_AUTH_SECRET", "")
 
-# Rate limiting / cost caps (#711)
-CHAT_MAX_REQUESTS_PER_HOUR = int(os.environ.get("CHAT_MAX_REQUESTS_PER_HOUR", 60))
-CHAT_MAX_REQUESTS_PER_DAY = int(os.environ.get("CHAT_MAX_REQUESTS_PER_DAY", 500))
-CHAT_MAX_TOKENS_PER_DAY = int(os.environ.get("CHAT_MAX_TOKENS_PER_DAY", 1000000))
 
 # Allowed users - disinto-admin always allowed; CSV allowlist extends it
 _allowed_csv = os.environ.get("DISINTO_CHAT_ALLOWED_USERS", "")
@@ -90,11 +85,6 @@ _sessions = {}
 # Pending OAuth state tokens: state -> expires (float)
 _oauth_states = {}
 
-# Per-user rate limiting state (#711)
-# user -> list of request timestamps (for sliding-window hourly/daily caps)
-_request_log = {}
-# user -> {"tokens": int, "date": "YYYY-MM-DD"}
-_daily_tokens = {}
 
 # WebSocket message queues per user
 # user -> asyncio.Queue (for streaming messages to connected clients)
@@ -213,69 +203,9 @@ def _fetch_user(access_token):
         return None
 
 
-# =============================================================================
-# Rate Limiting Functions (#711)
-# =============================================================================
-
-def _check_rate_limit(user):
-    """Check per-user rate limits. Returns (allowed, retry_after, reason) (#711).
-
-    Checks hourly request cap, daily request cap, and daily token cap.
-    """
-    now = time.time()
-    one_hour_ago = now - 3600
-    today = datetime.date.today().isoformat()
-
-    # Prune old entries from request log
-    timestamps = _request_log.get(user, [])
-    timestamps = [t for t in timestamps if t > now - 86400]
-    _request_log[user] = timestamps
-
-    # Hourly request cap
-    hourly = [t for t in timestamps if t > one_hour_ago]
-    if len(hourly) >= CHAT_MAX_REQUESTS_PER_HOUR:
-        oldest_in_window = min(hourly)
-        retry_after = int(oldest_in_window + 3600 - now) + 1
-        return False, max(retry_after, 1), "hourly request limit"
-
-    # Daily request cap
-    start_of_day = time.mktime(datetime.date.today().timetuple())
-    daily = [t for t in timestamps if t >= start_of_day]
-    if len(daily) >= CHAT_MAX_REQUESTS_PER_DAY:
-        next_day = start_of_day + 86400
-        retry_after = int(next_day - now) + 1
-        return False, max(retry_after, 1), "daily request limit"
-
-    # Daily token cap
-    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
-    if token_info["date"] != today:
-        token_info = {"tokens": 0, "date": today}
-        _daily_tokens[user] = token_info
-    if token_info["tokens"] >= CHAT_MAX_TOKENS_PER_DAY:
-        next_day = start_of_day + 86400
-        retry_after = int(next_day - now) + 1
-        return False, max(retry_after, 1), "daily token limit"
-
-    return True, 0, ""
-
-
-def _record_request(user):
-    """Record a request timestamp for the user (#711)."""
-    _request_log.setdefault(user, []).append(time.time())
-
-
-def _record_tokens(user, tokens):
-    """Record token usage for the user (#711)."""
-    today = datetime.date.today().isoformat()
-    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
-    if token_info["date"] != today:
-        token_info = {"tokens": 0, "date": today}
-    token_info["tokens"] += tokens
-    _daily_tokens[user] = token_info
-
 
 def _parse_stream_json(output):
-    """Parse stream-json output from claude --print (#711).
+    """Parse stream-json output from claude --print.
 
     Returns (text_content, total_tokens).  Falls back gracefully if the
     usage event is absent or malformed.
@@ -1063,33 +993,12 @@ class ChatHandler(BaseHTTPRequestHandler):
         except IOError as e:
             self.send_error_page(500, f"Error reading file: {e}")
 
-    def _send_rate_limit_response(self, retry_after, reason):
-        """Send a 429 response with Retry-After header and HTMX fragment (#711)."""
-        body = (
-            f'<div class="rate-limit-error">'
-            f"Rate limit exceeded: {reason}. "
-            f"Please try again in {retry_after} seconds."
-            f"</div>"
-        )
-        self.send_response(429)
-        self.send_header("Retry-After", str(retry_after))
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body.encode("utf-8"))))
-        self.end_headers()
-        self.wfile.write(body.encode("utf-8"))
-
+ 
     def handle_chat(self, user):
         """
         Handle chat requests by spawning `claude --print` with the user message.
-        Enforces per-user rate limits and tracks token usage (#711).
         Streams tokens over WebSocket if connected.
         """
-
-        # Check rate limits before processing (#711)
-        allowed, retry_after, reason = _check_rate_limit(user)
-        if not allowed:
-            self._send_rate_limit_response(retry_after, reason)
-            return
 
         # Read request body
         content_length = int(self.headers.get("Content-Length", 0))
@@ -1126,9 +1035,6 @@ class ChatHandler(BaseHTTPRequestHandler):
         # Generate new conversation ID if not provided
         if not conv_id or not _validate_conversation_id(conv_id):
             conv_id = _generate_conversation_id()
-
-        # Record request for rate limiting (#711)
-        _record_request(user)
 
         try:
             # Save user message to history
@@ -1193,14 +1099,6 @@ class ChatHandler(BaseHTTPRequestHandler):
 
             # Combine response parts
             response = "".join(response_parts)
-
-            # Track token usage - does not block *this* request (#711)
-            if total_tokens > 0:
-                _record_tokens(user, total_tokens)
-                print(
-                    f"Token usage: user={user} tokens={total_tokens}",
-                    file=sys.stderr,
-                )
 
             # Fall back to raw output if stream-json parsing yielded no text
             if not response:
@@ -1293,18 +1191,6 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not user:
             self.send_error_page(401, "Unauthorized: no valid session")
             return
-
-        # Check rate limits before allowing WebSocket connection
-        allowed, retry_after, reason = _check_rate_limit(user)
-        if not allowed:
-            self.send_error_page(
-                429,
-                f"Rate limit exceeded: {reason}. Retry after {retry_after}s",
-            )
-            return
-
-        # Record request for rate limiting
-        _record_request(user)
 
         # Create message queue for this user
         _websocket_queues[user] = asyncio.Queue()
@@ -1421,12 +1307,6 @@ def main():
         print("forward_auth secret configured (#709)", file=sys.stderr)
     else:
         print("WARNING: FORWARD_AUTH_SECRET not set - verify endpoint unrestricted", file=sys.stderr)
-    print(
-        f"Rate limits (#711): {CHAT_MAX_REQUESTS_PER_HOUR}/hr, "
-        f"{CHAT_MAX_REQUESTS_PER_DAY}/day, "
-        f"{CHAT_MAX_TOKENS_PER_DAY} tokens/day",
-        file=sys.stderr,
-    )
     httpd.serve_forever()
 
 
