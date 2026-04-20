@@ -130,17 +130,9 @@ steps:
         echo "=== Validating Caddyfile routing blocks ==="
 
         # Check that all required subpath handlers exist
-        REQUIRED_HANDLERS=(
-          "handle /forge/\*"
-          "handle /ci/\*"
-          "handle /staging/\*"
-          "handle /chat/login"
-          "handle /chat/oauth/callback"
-          "handle /chat/\*"
-        )
-
+        # POSIX-safe loop (alpine /bin/sh has no arrays)
         FAILED=0
-        for handler in "$${REQUIRED_HANDLERS[@]}"; do
+        for handler in "handle /forge/\*" "handle /ci/\*" "handle /staging/\*" "handle /chat/login" "handle /chat/oauth/callback" "handle /chat/\*"; do
           if grep -q "$handler" "$CADDYFILE"; then
             echo "[PASS] Found handler: $handler"
           else
