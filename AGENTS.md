@@ -1,4 +1,4 @@
-<!-- last-reviewed: 0483e2b7d16f0f169d81aa4b7e527febf2b1a5a7 -->
+<!-- last-reviewed: 2c5fb6abc2b680cacf9a3c3e29dce9c3031fd535 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -43,7 +43,7 @@ disinto/                 (code repo)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge (Caddy + chat server subprocess + dispatcher), chat (server.py, ui/ — copied into edge image at build time)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh)
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; register.sh enforces: reserved-name blocklist, admin-approved allowlist via /var/lib/disinto/allowlist.json, per-caller attribution via --as <tag> forced-command arg stored as registered_by, append-only audit log at /var/log/disinto/edge-register.log, ownership check on deregister requiring pubkey match)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>` (add a new file to support a new service)
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
