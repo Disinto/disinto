@@ -119,9 +119,7 @@ job "chat" {
       # CHAT_OAUTH_CLIENT_ID, CHAT_OAUTH_CLIENT_SECRET, FORWARD_AUTH_SECRET
       # rendered from kv/disinto/shared/chat via template stanza.
       env {
-        FORGE_URL                      = "http://forgejo:3000"
-        CHAT_MAX_REQUESTS_PER_HOUR     = "60"
-        CHAT_MAX_REQUESTS_PER_DAY      = "1000"
+        FORGE_URL = "http://forgejo:3000"
       }
 
       # ── Vault-templated secrets (S5.2, issue #989) ─────────────────────────
