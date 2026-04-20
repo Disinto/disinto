@@ -7,7 +7,7 @@
 #
 # What it does:
 #   1. Creates users: disinto-register, disinto-tunnel
-#   2. Creates /var/lib/disinto/ with registry.json, registry.lock
+#   2. Creates /var/lib/disinto/ with registry.json, registry.lock, allowlist.json
 #   3. Installs Caddy with Gandi DNS plugin
 #   4. Sets up SSH authorized_keys for both users
 #   5. Installs control plane scripts to /opt/disinto-edge/
@@ -151,6 +151,15 @@ fi
 LOCK_FILE="${REGISTRY_DIR}/registry.lock"
 touch "$LOCK_FILE"
 chmod 0644 "$LOCK_FILE"
+
+# Initialize allowlist.json (empty = no restrictions until admin populates)
+ALLOWLIST_FILE="${REGISTRY_DIR}/allowlist.json"
+if [ ! -f "$ALLOWLIST_FILE" ]; then
+  echo '{"version":1,"allowed":{}}' > "$ALLOWLIST_FILE"
+  chmod 0644 "$ALLOWLIST_FILE"
+  chown root:root "$ALLOWLIST_FILE"
+  log_info "Initialized allowlist: ${ALLOWLIST_FILE}"
+fi
 
 # =============================================================================
 # Step 3: Install Caddy with Gandi DNS plugin
