@@ -1,7 +1,1 @@
-[
-  {
-    "action": "close",
-    "issue": 1050,
-    "reason": "Already implemented by PR #1051 (merged 2026-04-19). lib/pr-lifecycle.sh and lib/ci-helpers.sh updated with per-workflow/per-step CI diagnostics."
-  }
-]
+[]
