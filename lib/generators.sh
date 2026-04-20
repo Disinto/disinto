@@ -607,9 +607,12 @@ COMPOSEEOF
       - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
       - EDGE_TUNNEL_PORT=${EDGE_TUNNEL_PORT:-}
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
-      # Subdomain fallback (#713): if subpath routing (#704/#708) fails, add:
-      #   EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT
-      # See docs/edge-routing-fallback.md for the full pivot plan.
+      # Subdomain fallback (#1028): per-service FQDNs for subdomain routing mode.
+      # Set EDGE_ROUTING_MODE=subdomain to activate. See docs/edge-routing-fallback.md.
+      - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
+      - EDGE_TUNNEL_FQDN_FORGE=${EDGE_TUNNEL_FQDN_FORGE:-}
+      - EDGE_TUNNEL_FQDN_CI=${EDGE_TUNNEL_FQDN_CI:-}
+      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
       # Shared secret for Caddy ↔ chat forward_auth (#709)
       - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
     volumes:
@@ -700,6 +703,8 @@ COMPOSEEOF
       CHAT_OAUTH_CLIENT_ID: ${CHAT_OAUTH_CLIENT_ID:-}
       CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
       EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
+      EDGE_TUNNEL_FQDN_CHAT: ${EDGE_TUNNEL_FQDN_CHAT:-}
+      EDGE_ROUTING_MODE: ${EDGE_ROUTING_MODE:-subpath}
       DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
       # Shared secret for Caddy forward_auth verify endpoint (#709)
       FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
@@ -805,6 +810,11 @@ _generate_agent_docker_impl() {
 # Output path: ${FACTORY_ROOT}/docker/Caddyfile (gitignored — generated artifact).
 # The edge compose service mounts this path as /etc/caddy/Caddyfile.
 # On a fresh clone, `disinto init` calls generate_caddyfile before first `disinto up`.
+#
+# Routing mode (EDGE_ROUTING_MODE env var):
+#   subpath   — (default) all services under <project>.disinto.ai/{forge,ci,chat,staging}
+#   subdomain — per-service subdomains: forge.<project>, ci.<project>, chat.<project>
+# See docs/edge-routing-fallback.md for the full pivot plan.
 _generate_caddyfile_impl() {
   local docker_dir="${FACTORY_ROOT}/docker"
   local caddyfile="${docker_dir}/Caddyfile"
@@ -814,8 +824,22 @@ _generate_caddyfile_impl() {
     return
   fi
 
+  local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+
+  if [ "$routing_mode" = "subdomain" ]; then
+    _generate_caddyfile_subdomain "$caddyfile"
+  else
+    _generate_caddyfile_subpath "$caddyfile"
+  fi
+
+  echo "Created: ${caddyfile} (routing_mode=${routing_mode})"
+}
+
+# Subpath Caddyfile: all services under a single :80 block with path-based routing.
+_generate_caddyfile_subpath() {
+  local caddyfile="$1"
   cat > "$caddyfile" <<'CADDYFILEEOF'
-# Caddyfile — edge proxy configuration
+# Caddyfile — edge proxy configuration (subpath mode)
 # IP-only binding at bootstrap; domain + TLS added later via vault resource request
 
 :80 {
@@ -858,8 +882,50 @@ _generate_caddyfile_impl() {
     }
 }
 CADDYFILEEOF
+}
 
-  echo "Created: ${caddyfile}"
+# Subdomain Caddyfile: four host blocks per docs/edge-routing-fallback.md.
+# Uses env vars EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT,
+# and EDGE_TUNNEL_FQDN (main project domain → staging).
+_generate_caddyfile_subdomain() {
+  local caddyfile="$1"
+  cat > "$caddyfile" <<'CADDYFILEEOF'
+# Caddyfile — edge proxy configuration (subdomain mode)
+# Per-service subdomains; see docs/edge-routing-fallback.md
+
+# Main project domain — staging / landing
+{$EDGE_TUNNEL_FQDN} {
+    reverse_proxy staging:80
+}
+
+# Forgejo — root path, no subpath rewrite needed
+{$EDGE_TUNNEL_FQDN_FORGE} {
+    reverse_proxy forgejo:3000
+}
+
+# Woodpecker CI — root path
+{$EDGE_TUNNEL_FQDN_CI} {
+    reverse_proxy woodpecker:8000
+}
+
+# Chat — with forward_auth (#709, on its own host)
+{$EDGE_TUNNEL_FQDN_CHAT} {
+    handle /login {
+        reverse_proxy chat:8080
+    }
+    handle /oauth/callback {
+        reverse_proxy chat:8080
+    }
+    handle /* {
+        forward_auth chat:8080 {
+            uri /auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
+        reverse_proxy chat:8080
+    }
+}
+CADDYFILEEOF
 }
 
 # Generate docker/index.html default page.

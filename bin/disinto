@@ -1488,15 +1488,28 @@ p.write_text(text)
     touch "${FACTORY_ROOT}/.env"
   fi
 
-  # Configure Forgejo and Woodpecker subpath URLs when EDGE_TUNNEL_FQDN is set
+  # Configure Forgejo and Woodpecker URLs when EDGE_TUNNEL_FQDN is set.
+  # In subdomain mode, uses per-service FQDNs at root path instead of subpath URLs.
   if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
-    # Forgejo ROOT_URL with /forge/ subpath (note trailing slash - Forgejo needs it)
-    if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-      echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN}/forge/" >> "${FACTORY_ROOT}/.env"
-    fi
-    # Woodpecker WOODPECKER_HOST with /ci subpath (no trailing slash for v3)
-    if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-      echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
+    local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+    if [ "$routing_mode" = "subdomain" ]; then
+      # Subdomain mode: Forgejo at forge.<project>.disinto.ai (root path)
+      if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+        echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN_FORGE:-forge.${EDGE_TUNNEL_FQDN}}/" >> "${FACTORY_ROOT}/.env"
+      fi
+      # Subdomain mode: Woodpecker at ci.<project>.disinto.ai (root path)
+      if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+        echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN_CI:-ci.${EDGE_TUNNEL_FQDN}}" >> "${FACTORY_ROOT}/.env"
+      fi
+    else
+      # Subpath mode: Forgejo ROOT_URL with /forge/ subpath (trailing slash required)
+      if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+        echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN}/forge/" >> "${FACTORY_ROOT}/.env"
+      fi
+      # Subpath mode: Woodpecker WOODPECKER_HOST with /ci subpath (no trailing slash for v3)
+      if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+        echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
+      fi
     fi
   fi
 
@@ -1603,9 +1616,15 @@ p.write_text(text)
   create_woodpecker_oauth "$forge_url" "$forge_repo"
 
   # Create OAuth2 app on Forgejo for disinto-chat (#708)
+  # In subdomain mode, callback is at chat.<project> root instead of /chat/ subpath.
   local chat_redirect_uri
   if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
-    chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
+    local chat_routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+    if [ "$chat_routing_mode" = "subdomain" ]; then
+      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN_CHAT:-chat.${EDGE_TUNNEL_FQDN}}/oauth/callback"
+    else
+      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
+    fi
   else
     chat_redirect_uri="http://localhost/chat/oauth/callback"
   fi
@@ -2805,15 +2824,29 @@ disinto_edge() {
       # Write to .env (replace existing entries to avoid duplicates)
       local tmp_env
       tmp_env=$(mktemp)
-      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN|FQDN_FORGE|FQDN_CI|FQDN_CHAT)=" "$env_file" > "$tmp_env" 2>/dev/null || true
       mv "$tmp_env" "$env_file"
       echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
       echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
       echo "EDGE_TUNNEL_FQDN=${fqdn}" >> "$env_file"
 
+      # Subdomain mode: write per-service FQDNs (#1028)
+      local reg_routing_mode="${EDGE_ROUTING_MODE:-subpath}"
+      if [ "$reg_routing_mode" = "subdomain" ]; then
+        echo "EDGE_TUNNEL_FQDN_FORGE=forge.${fqdn}" >> "$env_file"
+        echo "EDGE_TUNNEL_FQDN_CI=ci.${fqdn}" >> "$env_file"
+        echo "EDGE_TUNNEL_FQDN_CHAT=chat.${fqdn}" >> "$env_file"
+      fi
+
       echo "Registered: ${project}"
       echo "  Port:    ${port}"
       echo "  FQDN:    ${fqdn}"
+      if [ "$reg_routing_mode" = "subdomain" ]; then
+        echo "  Mode:    subdomain"
+        echo "  Forge:   forge.${fqdn}"
+        echo "  CI:      ci.${fqdn}"
+        echo "  Chat:    chat.${fqdn}"
+      fi
       echo "  Saved to: ${env_file}"
       ;;
 
