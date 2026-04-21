@@ -6,10 +6,10 @@
 # dispatcher sidecar polls disinto-ops for vault actions and dispatches them
 # via Nomad batch jobs.
 #
-# Host networking (issue #1031):
-#   Caddy uses network_mode = "host" so upstreams are reached at
-#   127.0.0.1:<port> (forgejo :3000, woodpecker :8000, chat :8080).
-#   Staging uses Nomad service discovery (S5-fix-7, issue #1018).
+# All upstreams discovered via Nomad service discovery (issue #1156, S5-fix-7).
+# Caddy uses network_mode = "host" but upstreams run in separate alloc netns,
+# so loopback addresses are unreachable — nomadService templates resolve the
+# dynamic address:port for each backend.
 #
 # Host_volume contract:
 #   This job mounts caddy-data from nomad/client.hcl. Path
@@ -120,11 +120,9 @@ job "edge" {
         read_only   = false
       }
 
-      # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018) ────
-      # Renders staging upstream from Nomad service registration instead of
-      # hardcoded staging:80. Caddy picks up /local/Caddyfile via entrypoint.
-      # Forge URL via Nomad service discovery (issue #1034) — resolves forgejo
-      # service address/port dynamically for bridge network compatibility.
+      # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
+      # All upstreams rendered from Nomad service registration. Caddy picks up
+      # /local/Caddyfile via entrypoint.
       template {
         destination = "local/forge.env"
         env         = true
@@ -149,16 +147,16 @@ EOT
         redir /forge/ 302
     }
 
-    # Reverse proxy to Forgejo
+    # Reverse proxy to Forgejo — dynamic via Nomad service discovery (#1156)
     handle /forge/* {
         uri strip_prefix /forge
-        reverse_proxy 127.0.0.1:3000
-    }
+{{ range nomadService "forgejo" }}        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
 
-    # Reverse proxy to Woodpecker CI
+    # Reverse proxy to Woodpecker CI — dynamic via Nomad service discovery (#1156)
     handle /ci/* {
-        reverse_proxy 127.0.0.1:8000
-    }
+{{ range nomadService "woodpecker" }}        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
 
     # Reverse proxy to staging — dynamic port via Nomad service discovery
     handle /staging/* {
@@ -166,30 +164,30 @@ EOT
 {{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
 {{ end }}    }
 
-    # Chat service — reverse proxy to disinto-chat backend (#705)
+    # Chat service — reverse proxy to disinto-chat backend (#705, #1156)
     # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
     handle /chat/login {
-        reverse_proxy 127.0.0.1:8080
-    }
+{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
     handle /chat/oauth/callback {
-        reverse_proxy 127.0.0.1:8080
-    }
+{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
     # WebSocket endpoint for streaming (#1026)
     handle /chat/ws {
-        reverse_proxy 127.0.0.1:8080 {
+{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }} {
             header_up Upgrade {http.request.header.Upgrade}
             header_up Connection {http.request.header.Connection}
         }
-    }
+{{ end }}    }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
-        forward_auth 127.0.0.1:8080 {
+{{ range nomadService "chat" }}        forward_auth {{ .Address }}:{{ .Port }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy 127.0.0.1:8080
-    }
+        reverse_proxy {{ .Address }}:{{ .Port }}
+{{ end }}    }
 }
 EOT
       }
