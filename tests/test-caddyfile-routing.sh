@@ -89,6 +89,13 @@ check_forgejo_routing() {
     tr_fail "Missing Forgejo handle block (handle /forge/*)"
   fi
 
+  # Check uri strip_prefix /forge (required for Forgejo routing)
+  if echo "$CADDYFILE" | grep -q "uri strip_prefix /forge"; then
+    tr_pass "Forgejo strip_prefix configured (/forge)"
+  else
+    tr_fail "Missing Forgejo strip_prefix (/forge)"
+  fi
+
   # Check reverse_proxy to Forgejo on port 3000
   if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:3000"; then
     tr_pass "Forgejo reverse_proxy configured (127.0.0.1:3000)"

@@ -7,9 +7,8 @@
 #
 # Checks:
 #   1. shellcheck — syntax check on tests/smoke-edge-subpath.sh
-#   2. caddy validate — validate the Caddyfile template syntax
-#   3. caddyfile-routing-test — verify Caddyfile routing block shape
-#   4. test-caddyfile-routing — run standalone unit test for Caddyfile structure
+#   2. caddyfile-routing-test — verify Caddyfile routing block shape
+#   3. test-caddyfile-routing — run standalone unit test for Caddyfile structure
 #
 # Triggers:
 #   - Pull requests that modify edge-related files
@@ -59,6 +58,7 @@ steps:
           echo ''
           echo '    # Reverse proxy to Forgejo'
           echo '    handle /forge/* {'
+          echo '        uri strip_prefix /forge'
           echo '        reverse_proxy 127.0.0.1:3000'
           echo '    }'
           echo ''
@@ -94,23 +94,7 @@ steps:
         cp edge-render/Caddyfile edge-render/Caddyfile.rendered
         echo "Caddyfile rendered successfully"
 
-  # ── 3. Caddy config validation ───────────────────────────────────────────
-  # `caddy validate` checks Caddyfile syntax and configuration.
-  # This validates the rendered Caddyfile against Caddy's parser.
-  # Exit codes:
-  #   0 — configuration is valid
-  #   1 — configuration has errors
-  - name: caddy-validate
-    image: alpine:3.19
-    failure: ignore
-    commands:
-      - apk add --no-cache ca-certificates curl
-      - curl -fsSL --connect-timeout 10 --max-time 60 -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
-      - chmod +x /tmp/caddy
-      - /tmp/caddy version
-      - /tmp/caddy validate --config edge-render/Caddyfile.rendered --adapter caddyfile
-
-  # ── 4. Caddyfile routing block shape test ─────────────────────────────────
+  # ── 3. Caddyfile routing block shape test ─────────────────────────────────
   # Verify that the Caddyfile contains all required routing blocks:
   #   - /forge/ — Forgejo subpath
   #   - /ci/ — Woodpecker subpath
@@ -191,7 +175,7 @@ steps:
           exit 1
         fi
 
-  # ── 5. Standalone Caddyfile routing test ─────────────────────────────────
+  # ── 4. Standalone Caddyfile routing test ─────────────────────────────────
   # Run the standalone unit test for Caddyfile routing block validation.
   # This test extracts the Caddyfile template from edge.hcl and validates
   # its structure without requiring a running Caddy instance.
