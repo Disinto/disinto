@@ -114,7 +114,8 @@ job "forgejo" {
       # lives in the template stanza below and is merged into task env.
       env {
         FORGEJO__database__DB_TYPE             = "sqlite3"
-        FORGEJO__server__ROOT_URL              = "http://forgejo:3000/"
+        FORGEJO__server__ROOT_URL              = "https://self.disinto.ai/forge/"
+        FORGEJO__server__DOMAIN                = "self.disinto.ai"
         FORGEJO__server__HTTP_PORT             = "3000"
         FORGEJO__security__INSTALL_LOCK        = "true"
         FORGEJO__service__DISABLE_REGISTRATION = "true"
