@@ -8,7 +8,7 @@ issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `supervisor.log` in the agents container.
+- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `data/logs/supervisor/supervisor.log` (canonical sink — both `supervisor-run.sh` internal logging and entrypoint stderr redirect write to this single file).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
 Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
@@ -38,6 +38,11 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   decide-actions documents the pre-session auto-recovery path
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
+
+**Canonical log sink**: `data/logs/supervisor/supervisor.log` — all supervisor output
+(structured log from `supervisor-run.sh` and stderr from the entrypoint invocation)
+goes to this single file. Do not introduce a second path; see #1150 for the dual-sink
+incident that motivated unification.
 
 **Alert priorities**: P0 (memory crisis), P1 (disk), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).

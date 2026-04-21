@@ -124,7 +124,7 @@ if [ -f /opt/disinto/lib/git-creds.sh ]; then
 fi
 
 # Ensure log directory exists
-mkdir -p /opt/disinto-logs
+mkdir -p /opt/disinto-logs/supervisor
 
 # ── Reverse tunnel (optional) ──────────────────────────────────────────
 # When EDGE_TUNNEL_HOST is set, open a single reverse-SSH forward so the
@@ -169,7 +169,7 @@ bash /opt/disinto/docker/edge/dispatcher.sh &
 # Start supervisor loop in background
 PROJECT_TOML="${PROJECT_TOML:-projects/disinto.toml}"
 (while true; do
-  bash /opt/disinto/supervisor/supervisor-run.sh "/opt/disinto/${PROJECT_TOML}" 2>&1 | tee -a /opt/disinto-logs/supervisor.log || true
+  bash /opt/disinto/supervisor/supervisor-run.sh "/opt/disinto/${PROJECT_TOML}" 2>&1 | tee -a /opt/disinto-logs/supervisor/supervisor.log || true
   sleep 1200  # 20 minutes
 done) &
 
