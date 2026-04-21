@@ -119,6 +119,11 @@ You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 Your role: strategic decomposition of vision issues into development sprints.
 Propose sprints via PRs on the ops repo, converse with humans through PR comments.
 You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
+DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
+specification must go only into the filer:begin/filer:end block of the sprint pitch.
+If you think sub-issues should be filed, write them into the sprint file's filer:begin
+block only. You do not have permission to POST to the project repo and any such call
+will return 403 and fail this run.
 
 ## Project context
 ${CONTEXT_BLOCK}
@@ -147,6 +152,11 @@ You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 Your role: strategic decomposition of vision issues into development sprints.
 Propose sprints via PRs on the ops repo, converse with humans through PR comments.
 You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
+DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
+specification must go only into the filer:begin/filer:end block of the sprint pitch.
+If you think sub-issues should be filed, write them into the sprint file's filer:begin
+block only. You do not have permission to POST to the project repo and any such call
+will return 403 and fail this run.
 
 ## CURRENT STATE: Approved PR awaiting initial design questions
 
@@ -181,6 +191,11 @@ You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 Your role: strategic decomposition of vision issues into development sprints.
 Propose sprints via PRs on the ops repo, converse with humans through PR comments.
 You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
+DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
+specification must go only into the filer:begin/filer:end block of the sprint pitch.
+If you think sub-issues should be filed, write them into the sprint file's filer:begin
+block only. You do not have permission to POST to the project repo and any such call
+will return 403 and fail this run.
 
 ## CURRENT STATE: Design Q&A in progress
 
@@ -530,6 +545,11 @@ Instructions:
 IMPORTANT: Do NOT include design forks or questions. This is a go/no-go pitch.
 The ## Sub-issues block is parsed by the filer-bot pipeline after sprint PR merge.
 Each sub-issue between filer:begin/end markers becomes a Forgejo issue.
+
+CRITICAL: You are READ-ONLY on the project repo. DO NOT create issues, PRs, or
+POST to any /repos/${FORGE_REPO}/... endpoint. Sub-issues belong only inside the
+filer:begin/filer:end block above. Any direct API call to the project repo will
+return 403 and abort this run.
 
 ---
 
@@ -896,6 +916,27 @@ if [ "${has_responses_to_process:-false}" = "true" ]; then
     log "agent_run complete"
   fi
 fi
+
+# ── Regression guard: detect direct issue creation by architect session ──
+# Scans the architect log for any POST to the project repo's /issues endpoint.
+# This is a cheap guard — if the model used its Bash tool to curl POST /issues
+# on the project repo, it would appear in the log. Fails loudly on detection.
+check_architect_issue_filing() {
+  local project_repo_path
+  project_repo_path="/repos/${FORGE_REPO}/issues"
+
+  if grep -q "POST.*${project_repo_path}" "$LOG_FILE" 2>/dev/null; then
+    log "ERROR: regression detected — architect session attempted to POST to ${project_repo_path}"
+    log "This violates the read-only contract established in #764."
+    log "The architect-bot must NOT file issues directly on the project repo."
+    log "Sub-issues are filed exclusively by filer-bot after sprint PR merge."
+    echo "FATAL: architect-bot attempted direct issue creation on project repo" >&2
+    exit 1
+  fi
+}
+
+# Run regression guard before cleanup
+check_architect_issue_filing
 
 # ── Clean up scratch files (legacy single file + per-issue files) ──────────
 rm -f "$SCRATCH_FILE"
