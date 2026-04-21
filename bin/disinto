@@ -64,7 +64,7 @@ Usage:
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
-  disinto agent <subcommand>           Manage agent state (enable/disable)
+  disinto role <subcommand>            Manage agent roles (enable/disable)
   disinto backup create <outfile>      Export factory state (issues + ops bundle)
   disinto edge <verb> [options]        Manage edge tunnel registrations
   disinto backup <subcommand>          Backup and restore factory state
@@ -74,7 +74,7 @@ Edge subcommands:
   deregister <project>  Remove a tunnel registration
   status                Show registered tunnels
 
-Agent subcommands:
+Role subcommands:
   disable <agent>      Remove state file to disable agent
   enable <agent>       Create state file to enable agent
   disable --all        Disable all agents
@@ -2597,15 +2597,15 @@ disinto_ci_logs() {
   fi
 }
 
-# ── agent command ─────────────────────────────────────────────────────────────
+# ── role command ──────────────────────────────────────────────────────────────
 # Manage agent state files (enable/disable agents)
-# Usage: disinto agent <subcommand> [agent-name]
+# Usage: disinto role <subcommand> [agent-name]
 #   disable <agent>      Remove state file to disable agent
 #   enable <agent>       Create state file to enable agent
 #   disable --all        Disable all agents
 #   enable --all         Enable all agents
 #   status               Show enabled/disabled agents
-disinto_agent() {
+disinto_role() {
   local subcmd="${1:-}"
   local state_dir="${FACTORY_ROOT}/state"
   local all_agents=("dev" "reviewer" "gardener" "architect" "planner" "predictor")
@@ -2618,8 +2618,8 @@ disinto_agent() {
       local agent="${2:-}"
       if [ -z "$agent" ]; then
         echo "Error: agent name required" >&2
-        echo "Usage: disinto agent disable <agent-name>" >&2
-        echo "       disinto agent disable --all" >&2
+        echo "Usage: disinto role disable <agent-name>" >&2
+        echo "       disinto role disable --all" >&2
         exit 1
       fi
       if [ "$agent" = "--all" ]; then
@@ -2660,8 +2660,8 @@ disinto_agent() {
       local agent="${2:-}"
       if [ -z "$agent" ]; then
         echo "Error: agent name required" >&2
-        echo "Usage: disinto agent enable <agent-name>" >&2
-        echo "       disinto agent enable --all" >&2
+        echo "Usage: disinto role enable <agent-name>" >&2
+        echo "       disinto role enable --all" >&2
         exit 1
       fi
       if [ "$agent" = "--all" ]; then
@@ -2716,9 +2716,9 @@ disinto_agent() {
       ;;
     *)
       cat <<EOF >&2
-Usage: disinto agent <subcommand>
+Usage: disinto role <subcommand>
 
-Manage agent state files (enable/disable agents):
+Manage agent roles (enable/disable):
 
   disable <agent>      Remove state file to disable agent
   enable <agent>       Create state file to enable agent
@@ -2731,6 +2731,12 @@ EOF
       exit 1
       ;;
   esac
+}
+
+# ── agent command (deprecated — use 'role') ──────────────────────────────────
+disinto_agent() {
+  echo "Warning: 'disinto agent' is deprecated, use 'disinto role' instead" >&2
+  disinto_role "$@"
 }
 
 # ── edge command ──────────────────────────────────────────────────────────────
@@ -3025,6 +3031,7 @@ case "${1:-}" in
   ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
+  role)            shift; disinto_role "$@" ;;
   agent)           shift; disinto_agent "$@" ;;
   edge)            shift; disinto_edge "$@" ;;
   backup)          shift; disinto_backup "$@" ;;

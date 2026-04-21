@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # guard.sh — Active-state guard for polling-loop entry points
 #
-# Each agent checks for a state file before running. If the file
-# doesn't exist, the agent logs a skip and exits cleanly.
+# Each role checks for a state file before running. If the file
+# doesn't exist, the role logs a skip and exits cleanly.
 #
 # State files live in $FACTORY_ROOT/state/:
 #   .dev-active, .reviewer-active, .planner-active, etc.
