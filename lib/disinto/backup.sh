@@ -232,20 +232,49 @@ backup_import_disinto_ops_repo() {
     return 1
   fi
 
+  # Build authenticated push URL
+  local admin_user
+  admin_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/user" | jq -r '.login') || admin_user=""
+  if [ -z "$admin_user" ] || [ "$admin_user" = "null" ]; then
+    backup_log "ERROR: could not resolve admin username from token"
+    rm -rf "$clone_dir"
+    return 1
+  fi
+  # Inject credentials: http(s)://user:token@host/path
+  local push_url
+  local scheme="${FORGE_URL%%://*}"
+  local rest="${FORGE_URL#*://}"
+  push_url="${scheme}://${admin_user}:${FORGE_TOKEN}@${rest}"
+  push_url="${push_url}/disinto-admin/disinto-ops.git"
+
   # Push all refs to Forgejo
   backup_log "Pushing refs to Forgejo..."
-  if ! cd "$clone_dir/disinto-ops.git" && \
-     git push --mirror "${FORGE_URL}/disinto-admin/disinto-ops.git" 2>&1; then
-    backup_log "ERROR: failed to push refs"
+  local push_output
+  if ! push_output=$(git -C "$clone_dir/disinto-ops.git" push --mirror "$push_url" 2>&1); then
+    backup_log "ERROR: git push failed:"
+    backup_log "$push_output"
+    rm -rf "$clone_dir"
+    return 1
+  fi
+  backup_log "$push_output"
+
+  local ref_count
+  ref_count=$(git -C "$clone_dir/disinto-ops.git" show-ref | wc -l)
+  BACKUP_PUSHED_REFS=$((BACKUP_PUSHED_REFS + ref_count))
+
+  # Verify the target repo is not empty
+  local repo_empty
+  repo_empty=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/repos/disinto-admin/disinto-ops" \
+    | jq -r '.empty') || repo_empty="unknown"
+  if [ "$repo_empty" = "true" ]; then
+    backup_log "ERROR: push reported success but target repo is still empty"
     rm -rf "$clone_dir"
     return 1
   fi
 
-  local ref_count
-  ref_count=$(cd "$clone_dir/disinto-ops.git" && git show-ref | wc -l)
-  BACKUP_PUSHED_REFS=$((BACKUP_PUSHED_REFS + ref_count))
-
-  backup_log "Pushed ${ref_count} refs to disinto-ops"
+  backup_log "Pushed ${ref_count} refs to disinto-ops (verified: repo not empty)"
   rm -rf "$clone_dir"
 
   return 0
