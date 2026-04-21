@@ -4,9 +4,15 @@
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
+#
+# Timeouts:
+#   Workflow-level default (10m) applies to all steps unless overridden.
 
 when:
   event: [push, pull_request]
+
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 10m
 
 # Override default clone to authenticate against Forgejo using FORGE_TOKEN.
 # Required because Forgejo is configured with REQUIRE_SIGN_IN, so anonymous

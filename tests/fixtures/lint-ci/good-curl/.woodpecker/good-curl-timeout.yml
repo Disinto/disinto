@@ -1,0 +1,13 @@
+# Test fixture: curl with --max-time should pass cleanly
+# Used by tests/test-lint-ci.bats to verify the command-level timeout check
+
+when:
+  - event: pull_request
+
+timeout: 5m
+
+steps:
+  - name: good-curl
+    image: alpine:3
+    commands:
+      - curl --max-time 30 https://example.com

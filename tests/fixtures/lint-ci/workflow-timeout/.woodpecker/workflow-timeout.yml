@@ -1,0 +1,13 @@
+# Test fixture: workflow-level timeout should satisfy all steps
+# Used by tests/test-lint-ci.bats to verify workflow-level timeout propagation
+
+when:
+  - event: pull_request
+
+timeout: 10m
+
+steps:
+  - name: inherits-timeout
+    image: alpine:3
+    commands:
+      - echo "inherits workflow timeout"

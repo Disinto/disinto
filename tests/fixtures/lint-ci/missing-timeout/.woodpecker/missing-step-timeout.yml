@@ -1,0 +1,11 @@
+# Test fixture: step without timeout should trigger an error
+# Used by tests/test-lint-ci.bats to verify the step-level timeout check
+
+when:
+  - event: pull_request
+
+steps:
+  - name: no-timeout-step
+    image: alpine:3
+    commands:
+      - echo "this step has no timeout"
