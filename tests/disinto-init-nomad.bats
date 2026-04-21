@@ -215,7 +215,7 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown service"* ]]
-  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat, edge"* ]]
+  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, edge"* ]]
 }
 
 # S3.4: woodpecker auto-expansion and forgejo auto-inclusion
@@ -433,7 +433,7 @@ setup_file() {
   [ "$status" -eq 0 ]
   # edge depends on all backend services, so all are included
   [[ "$output" == *"services to deploy: edge,forgejo"* ]]
-  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents staging chat edge"* ]]
+  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents staging edge"* ]]
   [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"edge.hcl"* ]]
 }
 
