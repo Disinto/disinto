@@ -130,7 +130,7 @@ job "edge" {
         env         = true
         change_mode = "restart"
         data        = <<EOT
-{{ range service "forgejo" -}}
+{{ range nomadService "forgejo" -}}
 FORGE_URL=http://{{ .Address }}:{{ .Port }}
 {{- end }}
 EOT
@@ -241,7 +241,7 @@ EOT
         env         = true
         change_mode = "restart"
         data        = <<EOT
-{{ range service "forgejo" -}}
+{{ range nomadService "forgejo" -}}
 FORGE_URL=http://{{ .Address }}:{{ .Port }}
 {{- end }}
 EOT
