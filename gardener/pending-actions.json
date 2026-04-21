@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "action": "comment",
+    "issue": 1103,
+    "body": "### CI deadlock — root cause identified\n\nPR #1104 has been failing CI (exit 128 on git clone) due to a circular dependency:\n\n1. **#1080** set `FORGEJO__server__ROOT_URL=http://forgejo:3000/forge/`\n2. Forgejo now includes `/forge/` in the `clone_url` field of webhook payloads to Woodpecker\n3. Woodpecker uses that URL: `http://token@forgejo:3000/forge/disinto-admin/disinto.git`\n4. Caddy forwards `/forge/…` → `forgejo:3000/forge/…` but **without** `uri strip_prefix /forge`\n5. Forgejo's router returns 404 → git exits 128\n6. **This is the exact bug PR #1104 fixes** — the fix can't merge because CI can't clone to run the fix\n\nCaught from actual CI log:\n```\nfatal: repository '***/forge/disinto-admin/disinto.git/' not found\n```\n\nThe code change in PR #1104 (`lib/generators.sh`, `nomad/jobs/edge.hcl`) is correct and minimal. CI failure is environmental, not a code issue.\n\n**Resolution options:**\n- A: Operator manually merges PR #1104 (code is verified correct, 2-line change, same pattern as already-merged #1079)\n- B: Operator applies `uri strip_prefix /forge` live to the edge Caddy config to break the deadlock, then CI will pass on the next push\n\nFiled vault item for option A."
+  },
+  {
+    "action": "create_issue",
+    "title": "ops: manually merge PR #1104 — CI deadlock (Caddy /forge/ strip_prefix fix can't pass CI it fixes)",
+    "body": "## Situation\n\nPR #1104 fixes `lib/generators.sh` to add `uri strip_prefix /forge` before `reverse_proxy forgejo:3000` in the `/forge/*` Caddy handle block. This is required because Forgejo returns 404 for `/forge/*` paths without the prefix being stripped.\n\n## Circular dependency\n\nCI cannot clone the repo to run this PR because:\n\n1. `#1080` set `FORGEJO__server__ROOT_URL=http://forgejo:3000/forge/`\n2. Forgejo includes `/forge/` in the `clone_url` in webhook payloads → Woodpecker uses `http://token@forgejo:3000/forge/disinto-admin/disinto.git`\n3. Caddy forwards `/forge/...` to Forgejo **without** strip_prefix → Forgejo router returns 404\n4. `git clone` exits 128\n5. CI has failed on 4 consecutive runs (pipelines 1592–1595)\n\nVerified from actual CI log:\n```\nfatal: repository '***/forge/disinto-admin/disinto.git/' not found\n```\n\n## What needs to happen\n\nOne of:\n- **Option A (recommended):** Admin merges PR #1104 manually, bypassing CI. The code change is verified correct — identical pattern to already-merged `/staging/` strip (#1079). Once merged, the Caddy config regenerates and future PR clones work.\n- **Option B:** Operator applies `uri strip_prefix /forge` live to the edge Caddy config to break the deadlock, then pushes an empty commit to trigger CI retry.\n\n## Acceptance criteria\n\n- [ ] PR #1104 merged (manually or after CI passes post live-patch)\n- [ ] `curl http://localhost/forge/` returns 200\n- [ ] CI clone succeeds for subsequent PRs\n\n## Affected files\n\n- `lib/generators.sh` — the fix\n- PR #1104 on this repo",
+    "labels": [
+      "priority",
+      "backlog"
+    ]
+  }
+]
