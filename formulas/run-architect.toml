@@ -22,6 +22,8 @@
 #   architect-bot: READ-ONLY on project repo (GET issues/PRs/labels for context).
 #     Cannot POST/PUT/PATCH/DELETE any project-repo resource.
 #     Write access ONLY on ops repo (branches, PRs, comments).
+#     DO NOT create issues on the project repo. Sub-issues are filed by
+#     filer-bot after sprint PR merge via the ops-filer pipeline.
 #   filer-bot: issues:write on project repo. Files sub-issues from merged sprint
 #     PRs via ops-filer pipeline. Adds in-progress label to vision issues.
 #
@@ -172,6 +174,10 @@ decision for the human. Questions come only after acceptance.
 The ## Sub-issues block is parsed by the filer-bot pipeline after sprint PR merge.
 Each sub-issue between filer:begin/end markers becomes a Forgejo issue on the
 project repo. The filer appends a decomposed-from marker to each body automatically.
+
+CRITICAL: You DO NOT have access to the project repo API. Sub-issues are filed
+by filer-bot from the sprint file after merge. Do NOT attempt to create issues
+via API calls — the token will 403 and the run will fail.
 
 4. Bash creates PR:
    - Create branch: architect/sprint-{pitch-number}
