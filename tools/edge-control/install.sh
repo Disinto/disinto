@@ -8,9 +8,11 @@
 # What it does:
 #   1. Creates users: disinto-register, disinto-tunnel
 #   2. Creates /var/lib/disinto/ with registry.json, registry.lock, allowlist.json
-#   3. Installs Caddy with Gandi DNS plugin
-#   4. Sets up SSH authorized_keys for both users
-#   5. Installs control plane scripts to /opt/disinto-edge/
+#   3. On upgrade: auto-populates allowlist.json from existing registry entries
+#   4. On fresh install: seeds empty allowlist with warning (registration gated)
+#   5. Installs Caddy with Gandi DNS plugin
+#   6. Sets up SSH authorized_keys for both users
+#   7. Installs control plane scripts to /opt/disinto-edge/
 #
 # Requirements:
 #   - Fresh Debian 12 (Bookworm)
@@ -158,12 +160,39 @@ LOCK_FILE="${REGISTRY_DIR}/registry.lock"
 touch "$LOCK_FILE"
 chmod 0644 "$LOCK_FILE"
 
-# Initialize allowlist.json (empty = no restrictions until admin populates)
+# Initialize allowlist.json
 ALLOWLIST_FILE="${REGISTRY_DIR}/allowlist.json"
+_ALLOWLIST_MODE=""
 if [ ! -f "$ALLOWLIST_FILE" ]; then
-  echo '{"version":1,"allowed":{}}' > "$ALLOWLIST_FILE"
-  chmod 0644 "$ALLOWLIST_FILE"
-  chown root:root "$ALLOWLIST_FILE"
+  # Check whether the registry already has projects that need allowlisting
+  _EXISTING_PROJECTS=""
+  if [ -f "$REGISTRY_FILE" ]; then
+    _EXISTING_PROJECTS=$(jq -r '.projects // {} | keys[]' "$REGISTRY_FILE" 2>/dev/null) || _EXISTING_PROJECTS=""
+  fi
+
+  if [ -n "$_EXISTING_PROJECTS" ]; then
+    # Upgrade path: auto-populate allowlist with existing projects (unbound).
+    # This preserves current behavior — existing tunnels keep working.
+    # Operator can tighten pubkey bindings later.
+    _ALLOWED='{}'
+    _PROJECT_COUNT=0
+    while IFS= read -r _proj; do
+      _ALLOWED=$(echo "$_ALLOWED" | jq --arg p "$_proj" '. + {($p): {"pubkey_fingerprint": ""}}')
+      _PROJECT_COUNT=$((_PROJECT_COUNT + 1))
+    done <<< "$_EXISTING_PROJECTS"
+    echo "{\"version\":1,\"allowed\":${_ALLOWED}}" | jq '.' > "$ALLOWLIST_FILE"
+    chmod 0644 "$ALLOWLIST_FILE"
+    chown root:root "$ALLOWLIST_FILE"
+    _ALLOWLIST_MODE="upgraded:${_PROJECT_COUNT}"
+    log_info "Initialized allowlist with ${_PROJECT_COUNT} existing project(s): ${ALLOWLIST_FILE}"
+  else
+    # Fresh install: seed empty allowlist and warn the operator.
+    echo '{"version":1,"allowed":{}}' > "$ALLOWLIST_FILE"
+    chmod 0644 "$ALLOWLIST_FILE"
+    chown root:root "$ALLOWLIST_FILE"
+    _ALLOWLIST_MODE="fresh-empty"
+    log_warn "Allowlist seeded empty — no project can register until you add entries to ${ALLOWLIST_FILE}."
+  fi
   log_info "Initialized allowlist: ${ALLOWLIST_FILE}"
 fi
 
@@ -440,12 +469,30 @@ echo ""
 echo "Configuration:"
 echo "  Install directory: ${INSTALL_DIR}"
 echo "  Registry: ${REGISTRY_FILE}"
+echo "  Allowlist: ${ALLOWLIST_FILE}"
 echo "  Caddy admin API: http://127.0.0.1:2019"
 echo "  Operator site blocks: ${EXTRA_DIR}/ (import ${EXTRA_CADDYFILE})"
 echo ""
 echo "Users:"
 echo "  disinto-register - SSH forced command (runs ${INSTALL_DIR}/register.sh)"
 echo "  disinto-tunnel   - Reverse tunnel receiver (no shell)"
+echo ""
+echo "Allowlist:"
+case "${_ALLOWLIST_MODE:-}" in
+  upgraded:*)
+    echo "  Allowlist was auto-populated from existing registry entries."
+    echo "  Existing projects can register without further action."
+    ;;
+  fresh-empty)
+    echo "  Allowlist is empty — registration is GATED until you add entries."
+    echo "  Edit ${ALLOWLIST_FILE} as root:"
+    echo '    {"version":1,"allowed":{"myproject":{"pubkey_fingerprint":""}}}'
+    echo "  See ${INSTALL_DIR}/../README.md for the full workflow."
+    ;;
+  *)
+    echo "  Allowlist already existed (no changes made)."
+    ;;
+esac
 echo ""
 echo "Next steps:"
 echo "  1. Verify Caddy is running: systemctl status caddy"

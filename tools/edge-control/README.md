@@ -183,11 +183,16 @@ Shows all registered tunnels with their ports and FQDNs.
 
 ## Allowlist
 
-The allowlist prevents project name squatting by requiring admin approval before a name can be registered. It is **opt-in**: when `allowlist.json` is empty (no project entries), registration works as before. Once the admin adds entries, only approved names are accepted.
+The allowlist prevents project name squatting by requiring admin approval before a name can be registered. It is **opt-in**: when `allowlist.json` does not exist, registration is unrestricted. When the file exists, only project names listed in the `allowed` map can be registered.
 
-### Setup
+### Install-time behavior
 
-Edit `/var/lib/disinto/allowlist.json` as root:
+- **Fresh install**: `install.sh` seeds an empty allowlist (`{"version":1,"allowed":{}}`) and prints a warning that registration is now gated until entries are added.
+- **Upgrade onto an existing box**: if `registry.json` has registered projects but `allowlist.json` does not exist, `install.sh` auto-populates the allowlist with each existing project name (unbound — `pubkey_fingerprint: ""`). This preserves current behavior so existing tunnels keep working. The operator can tighten pubkey bindings later.
+
+### Format
+
+`/var/lib/disinto/allowlist.json` (root-owned, `0644`):
 
 ```json
 {
@@ -203,9 +208,9 @@ Edit `/var/lib/disinto/allowlist.json` as root:
 }
 ```
 
-- **With `pubkey_fingerprint`**: Only the specified SSH key can register this project name. The fingerprint is the SHA256 output of `ssh-keygen -lf <keyfile>`.
-- **With empty `pubkey_fingerprint`**: Any caller may register this project name (name reservation without key binding).
-- **Not listed**: Registration is refused with `{"error":"name not approved"}`.
+- **With `pubkey_fingerprint`** (non-empty): only the SSH key with that exact SHA256 fingerprint can register this project name.
+- **With empty `pubkey_fingerprint`**: any caller may register this project name (name reservation without key binding).
+- **Not listed in `allowed`**: registration is refused with `{"error":"name not approved"}`.
 
 ### Workflow
 
