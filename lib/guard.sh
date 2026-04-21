@@ -9,14 +9,14 @@
 #
 # Presence = permission to run. Absence = skip (factory off by default).
 
-# check_active <agent_name>
+# check_active <role_name>
 #   Exit 0 (skip) if the state file is absent.
 check_active() {
-  local agent_name="$1"
-  local state_file="${FACTORY_ROOT}/state/.${agent_name}-active"
+  local role_name="$1"
+  local state_file="${FACTORY_ROOT}/state/.${role_name}-active"
   if [ ! -f "$state_file" ]; then
-    echo "[check_active] SKIP: state file state/.${agent_name}-active not found — agent disabled" >&2
-    log "${agent_name} not active — skipping"
+    echo "[check_active] SKIP: state file state/.${role_name}-active not found — role disabled" >&2
+    log "${role_name} not active — skipping"
     exit 0
   fi
 }
