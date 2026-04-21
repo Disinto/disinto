@@ -181,7 +181,7 @@ chmod 0750 "$LOG_DIR"
 
 # Touch the log file so it exists from day one
 touch "$LOG_FILE"
-chmod 0640 "$LOG_FILE"
+chmod 0660 "$LOG_FILE"
 chown root:disinto-register "$LOG_FILE"
 
 # Install logrotate config (daily rotation, 30 days retention)
@@ -194,7 +194,7 @@ ${LOG_FILE} {
     delaycompress
     missingok
     notifempty
-    create 0640 root disinto-register
+    create 0660 root disinto-register
     copytruncate
 }
 EOF
