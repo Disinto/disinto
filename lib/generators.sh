@@ -860,6 +860,7 @@ _generate_caddyfile_subpath() {
 
     # Reverse proxy to Forgejo
     handle /forge/* {
+        uri strip_prefix /forge
         reverse_proxy forgejo:3000
     }
 

@@ -151,6 +151,7 @@ EOT
 
     # Reverse proxy to Forgejo
     handle /forge/* {
+        uri strip_prefix /forge
         reverse_proxy 127.0.0.1:3000
     }
 
