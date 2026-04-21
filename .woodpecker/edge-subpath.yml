@@ -104,7 +104,7 @@ steps:
     image: alpine:3.19
     commands:
       - apk add --no-cache ca-certificates curl
-      - curl -sS -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
+      - curl -fsSL --connect-timeout 10 --max-time 60 -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
       - chmod +x /tmp/caddy
       - /tmp/caddy version
       - /tmp/caddy validate --config edge-render/Caddyfile.rendered --adapter caddyfile
