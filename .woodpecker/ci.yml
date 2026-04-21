@@ -16,8 +16,13 @@ clone:
   git:
     image: alpine/git
     commands:
-      - AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:$FORGE_TOKEN@|")
-      - git clone --depth 1 "$AUTH_URL" .
+      - |
+        if [ -n "${FORGE_TOKEN:-}" ]; then
+          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+          git clone --depth 1 "$AUTH_URL" .
+        else
+          git clone --depth 1 "$CI_REPO_CLONE_URL" .
+        fi
       - git fetch --depth 1 origin "$CI_COMMIT_REF"
       - git checkout FETCH_HEAD
 
