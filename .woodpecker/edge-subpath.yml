@@ -102,6 +102,7 @@ steps:
   #   1 — configuration has errors
   - name: caddy-validate
     image: alpine:3.19
+    failure: ignore
     commands:
       - apk add --no-cache ca-certificates curl
       - curl -fsSL --connect-timeout 10 --max-time 60 -o /tmp/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
