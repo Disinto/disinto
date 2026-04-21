@@ -858,15 +858,12 @@ _disinto_init_nomad() {
       echo "[deploy] vault-runner: jobspec not found, skipping"
     fi
 
-    # Build custom images dry-run (if agents, chat, or edge services are included)
-    if echo ",$with_services," | grep -qE ",(agents|chat|edge),"; then
+    # Build custom images dry-run (if agents or edge services are included)
+    if echo ",$with_services," | grep -qE ",(agents|edge),"; then
       echo ""
       echo "── Build images dry-run ──────────────────────────────"
       if echo ",$with_services," | grep -q ",agents,"; then
         echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
-      fi
-      if echo ",$with_services," | grep -q ",chat,"; then
-        echo "[build] [dry-run] docker build -t disinto/chat:local -f ${FACTORY_ROOT}/docker/chat/Dockerfile ${FACTORY_ROOT}/docker/chat"
       fi
       if echo ",$with_services," | grep -q ",edge,"; then
         echo "[build] [dry-run] docker build -t disinto/edge:local -f ${FACTORY_ROOT}/docker/edge/Dockerfile ${FACTORY_ROOT}/docker/edge"
@@ -962,18 +959,13 @@ _disinto_init_nomad() {
   # Build custom images required by Nomad jobs (S4.2, S5.2, S5.5) — before deploy.
   # Single-node factory dev box: no multi-node pull needed, no registry auth.
   # Can upgrade to approach B (registry push/pull) later if multi-node.
-  if echo ",$with_services," | grep -qE ",(agents|chat|edge),"; then
+  if echo ",$with_services," | grep -qE ",(agents|edge),"; then
     echo ""
     echo "── Building custom images ─────────────────────────────"
     if echo ",$with_services," | grep -q ",agents,"; then
       local tag="disinto/agents:local"
       echo "── Building $tag ─────────────────────────────"
       docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
-    fi
-    if echo ",$with_services," | grep -q ",chat,"; then
-      local tag="disinto/chat:local"
-      echo "── Building $tag ─────────────────────────────"
-      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/chat/Dockerfile" "${FACTORY_ROOT}/docker/chat" 2>&1 | tail -5
     fi
     if echo ",$with_services," | grep -q ",edge,"; then
       local tag="disinto/edge:local"
@@ -1261,7 +1253,7 @@ disinto_init() {
     # Auto-include all dependencies when edge is requested (S5.5)
     if echo ",$with_services," | grep -q ",edge,"; then
       # Edge depends on all backend services
-      for dep in forgejo woodpecker-server woodpecker-agent agents staging chat; do
+      for dep in forgejo woodpecker-server woodpecker-agent agents staging; do
         if ! echo ",$with_services," | grep -q ",${dep},"; then
           echo "Note: --with edge implies --with ${dep} (edge depends on all backend services)"
           with_services="${with_services},${dep}"
