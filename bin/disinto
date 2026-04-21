@@ -1258,7 +1258,7 @@ disinto_init() {
     # Auto-include all dependencies when edge is requested (S5.5)
     if echo ",$with_services," | grep -q ",edge,"; then
       # Edge depends on all backend services
-      for dep in forgejo woodpecker-server woodpecker-agent agents staging; do
+      for dep in forgejo woodpecker-server woodpecker-agent agents staging chat; do
         if ! echo ",$with_services," | grep -q ",${dep},"; then
           echo "Note: --with edge implies --with ${dep} (edge depends on all backend services)"
           with_services="${with_services},${dep}"
