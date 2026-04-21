@@ -44,6 +44,10 @@
 # Pinned image versions match lib/init/nomad/install.sh (nomad 1.9.5 /
 # vault 1.18.5). Bump there AND here together — drift = CI passing on
 # syntax the runtime would reject.
+#
+# Timeouts:
+#   Workflow-level default (15m) applies to all steps unless overridden
+#   (vault-policy-validate needs longer for dev server startup).
 # =============================================================================
 
 when:
@@ -56,6 +60,9 @@ when:
       - "vault/policies/**"
       - "vault/roles.yaml"
       - ".woodpecker/nomad-validate.yml"
+
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 15m
 
 # Authenticated clone — same pattern as .woodpecker/ci.yml. Forgejo is
 # configured with REQUIRE_SIGN_IN, so anonymous git clones fail (exit 128).
@@ -265,7 +272,7 @@ steps:
   - name: vault-roles-validate
     image: python:3.12-alpine
     commands:
-      - pip install --quiet --disable-pip-version-check pyyaml yamllint
+      - pip install --quiet --disable-pip-version-check --default-timeout 30 pyyaml yamllint
       - |
         set -e
         if [ ! -f vault/roles.yaml ]; then

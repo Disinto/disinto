@@ -13,6 +13,7 @@
 #   disinto run <action-id>              Run action in ephemeral runner container
 #   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
 #   disinto backup create <outfile>     Export factory state for migration
+#   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -68,6 +69,10 @@ Usage:
   disinto backup create <outfile>      Export factory state (issues + ops bundle)
   disinto edge <verb> [options]        Manage edge tunnel registrations
   disinto backup <subcommand>          Backup and restore factory state
+  disinto validate <subcommand>        Validate factory artifacts
+
+Validate subcommands:
+  lint-ci                              Lint .woodpecker/*.yml for missing timeouts
 
 Edge subcommands:
   register [project]    Register a new tunnel (generates keypair if needed)
@@ -3017,6 +3022,214 @@ disinto_backup() {
   esac
 }
 
+# ── validate command ─────────────────────────────────────────────────────────
+# Validates CI pipeline configs and other factory artifacts.
+# Usage: disinto validate [subcommand]
+#   lint-ci        Lint .woodpecker/*.yml for missing timeouts and unsafe commands
+disinto_validate() {
+  local subcmd="${1:-lint-ci}"
+  shift || true
+
+  case "$subcmd" in
+    lint-ci)
+      _validate_lint_ci "$@"
+      ;;
+    *)
+      cat <<EOF >&2
+Usage: disinto validate <subcommand>
+
+Validate factory artifacts:
+
+  lint-ci        Lint .woodpecker/*.yml for missing timeouts and unsafe commands
+
+Subcommands:
+  lint-ci        Check CI pipeline files for:
+                   - Steps missing a timeout declaration
+                   - Network-fetch commands without per-command timeouts
+EOF
+      exit 1
+      ;;
+  esac
+}
+
+# Lint .woodpecker/*.yml files for missing timeouts and unsafe commands.
+#
+# Checks:
+#   1. Step-level timeout: every step must declare a `timeout:` value or
+#      inherit from a workflow-level default.
+#   2. Command-level timeout: network-fetch commands (curl, wget, pip, etc.)
+#      must include an explicit timeout flag (e.g. --max-time, --timeout).
+_validate_lint_ci() {
+  local lint_dir="${1:-.}"
+  local woodpecker_dir="${lint_dir}/.woodpecker"
+  local errors=0
+  local warnings=0
+
+  if [ ! -d "$woodpecker_dir" ]; then
+    echo "No .woodpecker/ directory found at ${woodpecker_dir}"
+    exit 0
+  fi
+
+  local -a yml_files=()
+  while IFS= read -r f; do
+    yml_files+=("$f")
+  done < <(find "$woodpecker_dir" -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null | sort)
+
+  if [ ${#yml_files[@]} -eq 0 ]; then
+    echo "No .woodpecker/*.yml files found"
+    exit 0
+  fi
+
+  echo "Linting CI pipeline files in ${woodpecker_dir}..."
+  echo ""
+
+  for yml in "${yml_files[@]}"; do
+    local rel_path
+    rel_path=$(realpath --relative-to="$(pwd)" "$yml" 2>/dev/null || echo "$yml")
+
+    # Use Python to parse YAML and check for timeouts
+    local result
+    result=$(python3 -c "
+import yaml, sys, re
+
+with open('$yml') as f:
+    try:
+        doc = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f'FATAL:YAML parse error: {e}', file=sys.stderr)
+        sys.exit(1)
+
+if not isinstance(doc, dict):
+    sys.exit(0)
+
+# Check workflow-level timeout default
+workflow_timeout = doc.get('timeout')
+if isinstance(workflow_timeout, (int, float)):
+    workflow_timeout = str(workflow_timeout)
+
+errors = []
+warnings = []
+
+steps = doc.get('steps', [])
+if not isinstance(steps, list):
+    sys.exit(0)
+
+for step in steps:
+    if not isinstance(step, dict):
+        continue
+    name = step.get('name', '<unnamed>')
+    commands = step.get('commands', [])
+    if not isinstance(commands, list):
+        continue
+
+    # Check step-level timeout (unless workflow default exists)
+    if 'timeout' not in step and workflow_timeout is None:
+        errors.append(f'error: {name} — step has no timeout; add \`timeout: 5m\` or inherit from workflow default')
+
+    # Check commands for network-fetch without timeout flags
+    cmd_text = ' '.join(str(c) for c in commands)
+    lines = commands  # check each command individually
+
+    for cmd in lines:
+        cmd_str = str(cmd)
+        # Skip comments and empty lines
+        stripped = cmd_str.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+
+        # Skip package manager installs (e.g., apk add ... curl)
+        if re.search(r'\b(apk|apt|yum|dnf|brew)\s+(add|install)\b', cmd_str):
+            continue
+
+        # Skip shell/python invocations (commands that execute scripts)
+        if re.match(r'\s*(bash|sh|zsh|python3?|node)\s', cmd_str):
+            continue
+
+        # Network-fetch binaries to check
+        # curl — check for --max-time, -m, or --connect-timeout
+        if re.search(r'\bcurl\b', cmd_str):
+            if not re.search(r'(--max-time|-m\s+\d|--connect-timeout)', cmd_str):
+                warnings.append(f'warning: {name}/command — curl without --max-time; consider: curl --max-time 30 ...')
+
+        # wget — check for --timeout
+        if re.search(r'\bwget\b', cmd_str):
+            if not re.search(r'--timeout=', cmd_str):
+                warnings.append(f'warning: {name}/command — wget without --timeout; consider: wget --timeout=30 ...')
+
+        # pip/pip3 — check for --default-timeout or --timeout
+        if re.search(r'\b(pip3?|pipenv)\b', cmd_str) and re.search(r'\b(install|i)\b', cmd_str):
+            if not re.search(r'(--default-timeout|--timeout)', cmd_str):
+                warnings.append(f'warning: {name}/command — pip install without --default-timeout; consider: --default-timeout 30')
+
+        # npm — check for --timeout
+        if re.search(r'\bnpm\b', cmd_str) and re.search(r'\b(install|add)\b', cmd_str):
+            if not re.search(r'--timeout', cmd_str):
+                warnings.append(f'warning: {name}/command — npm install without --timeout; consider: --timeout 30000')
+
+        # yarn — check for --timeout
+        if re.search(r'\byarn\b', cmd_str) and re.search(r'\b(add|install)\b', cmd_str):
+            if not re.search(r'--timeout', cmd_str):
+                warnings.append(f'warning: {name}/command — yarn add without --timeout; consider: --timeout 30000')
+
+        # go get — no direct timeout flag, but we warn about it
+        if re.search(r'\bgo\s+get\b', cmd_str):
+            warnings.append(f'warning: {name}/command — go get has no timeout flag; wrap in a timeout(1) command')
+
+        # cargo install — check for --timeout (cargo doesn't have one natively)
+        if re.search(r'\bcargo\s+install\b', cmd_str):
+            warnings.append(f'warning: {name}/command — cargo install has no timeout flag; wrap in a timeout(1) command')
+
+        # gem install — no timeout flag
+        if re.search(r'\bgem\s+install\b', cmd_str):
+            warnings.append(f'warning: {name}/command — gem install has no timeout flag; wrap in a timeout(1) command')
+
+        # brew install — no timeout flag
+        if re.search(r'\bbrew\s+install\b', cmd_str):
+            warnings.append(f'warning: {name}/command — brew install has no timeout flag; wrap in a timeout(1) command')
+
+if errors:
+    for e in errors:
+        print(f'E:{e}')
+if warnings:
+    for w in warnings:
+        print(f'W:{w}')
+" 2>&1) || {
+      echo "ERROR: failed to parse $rel_path" >&2
+      echo "$result" >&2
+      exit 1
+    }
+
+    # Parse Python output
+    while IFS= read -r line; do
+      case "$line" in
+        E:*)
+          echo "${line#E:}" >&2
+          errors=$((errors + 1))
+          ;;
+        W:*)
+          echo "${line#W:}"
+          warnings=$((warnings + 1))
+          ;;
+      esac
+    done <<< "$result"
+  done
+
+  echo ""
+  echo "lint-ci: ${errors} error(s), ${warnings} warning(s)"
+
+  if [ "$errors" -gt 0 ]; then
+    echo ""
+    echo "Fix: add \`timeout:\` to each step, or set a workflow-level default at the top of the pipeline file." >&2
+    exit 1
+  fi
+
+  if [ "$warnings" -gt 0 ]; then
+    echo "(warnings are non-blocking — add per-command timeouts for network calls)" >&2
+  fi
+
+  exit 0
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -3035,6 +3248,7 @@ case "${1:-}" in
   agent)           shift; disinto_agent "$@" ;;
   edge)            shift; disinto_edge "$@" ;;
   backup)          shift; disinto_backup "$@" ;;
+  validate)        shift; disinto_validate "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac

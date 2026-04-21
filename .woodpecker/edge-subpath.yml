@@ -13,6 +13,9 @@
 # Triggers:
 #   - Pull requests that modify edge-related files
 #
+# Timeouts:
+#   Workflow-level default (10m) applies to all steps unless overridden.
+#
 # Environment variables (inherited from WOODPECKER_ENVIRONMENT):
 #   EDGE_BASE_URL      — Edge proxy URL for reference (default: http://localhost)
 #   EDGE_TIMEOUT       — Request timeout in seconds (default: 30)
@@ -21,6 +24,9 @@
 
 when:
   event: pull_request
+
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 10m
 
 steps:
   # ── 1. ShellCheck on smoke script ────────────────────────────────────────

@@ -1,0 +1,13 @@
+# Test fixture: curl without --max-time should trigger a warning
+# Used by tests/test-lint-ci.bats to verify the command-level timeout check
+
+when:
+  - event: pull_request
+
+timeout: 5m
+
+steps:
+  - name: bad-curl
+    image: alpine:3
+    commands:
+      - curl https://example.com

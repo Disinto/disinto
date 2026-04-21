@@ -8,6 +8,9 @@ when:
       - "tests/**"
       - ".woodpecker/smoke-init.yml"
 
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 5m
+
 steps:
   - name: smoke-init
     image: python:3-alpine
