@@ -12,19 +12,25 @@
 #   - Checks if OAuth2 app named 'woodpecker' already exists via GET
 #     /api/v1/user/applications/oauth2
 #   - If not: POST /api/v1/user/applications/oauth2 with name=woodpecker,
-#     redirect_uris=["http://localhost:8000/authorize"]
+#     redirect_uris=["${WOODPECKER_HOST}/authorize"]
+#   - If exists: PATCH to update redirect_uris to the public callback URL;
+#     captures the (potentially rotated) client_secret from the response
+#     and re-seeds Vault to keep Woodpecker + Forgejo in sync
 #   - Writes forgejo_client + forgejo_secret to Vault KV
 #
 # Idempotency contract:
-#   - OAuth2 app 'woodpecker' exists → skip creation, log
-#     "[wp-oauth] woodpecker OAuth app already registered"
-#   - forgejo_client + forgejo_secret already in Vault → skip write, log
+#   - OAuth2 app 'woodpecker' exists → PATCH redirect_uris to current
+#     public callback URL; re-seed Vault if PATCH rotates client_secret
+#   - forgejo_client + forgejo_secret already in Vault (and no secret
+#     rotation detected) → skip write, log
 #     "[wp-oauth] credentials already in Vault"
 #
 # Preconditions:
 #   - Forgejo reachable at $FORGE_URL (default: http://127.0.0.1:3000)
 #   - Forgejo admin token at $FORGE_TOKEN (from Vault kv/disinto/shared/forge/token
 #     or env fallback)
+#   - WOODPECKER_HOST set to the public Woodpecker base URL
+#     (e.g. https://self.disinto.ai/ci) — used to build the OAuth callback URI
 #   - Vault reachable + unsealed at $VAULT_ADDR
 #   - VAULT_TOKEN set (env) or /etc/vault.d/root.token readable
 #
@@ -50,7 +56,8 @@ source "${REPO_ROOT}/lib/hvault.sh"
 # Configuration
 FORGE_URL="${FORGE_URL:-http://127.0.0.1:3000}"
 FORGE_OAUTH_APP_NAME="woodpecker"
-FORGE_REDIRECT_URIS='["http://localhost:8000/authorize"]'
+WOODPECKER_HOST="${WOODPECKER_HOST:?WOODPECKER_HOST must be set to the public Woodpecker URL (e.g. https://self.disinto.ai/ci)}"
+FORGE_REDIRECT_URIS="[\"${WOODPECKER_HOST}/authorize\"]"
 KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
 KV_PATH="disinto/shared/woodpecker"
 KV_API_PATH="${KV_MOUNT}/data/${KV_PATH}"
@@ -158,16 +165,40 @@ if [ "$oauth_app_exists" = false ]; then
     log "OAuth2 app '${FORGE_OAUTH_APP_NAME}' registered (client_id: ${existing_client_id:0:8}...)"
   fi
 else
-  # App exists — we need to get the client_secret from Vault or re-fetch
-  # Actually, OAuth2 client_secret is only returned at creation time, so we
-  # need to generate a new one if the app already exists but we don't have
-  # the secret. For now, we'll use a placeholder and note this in the log.
-  if [ -z "${forgejo_secret:-}" ]; then
-    # Generate a new secret for the existing app
-    # Note: This is a limitation — we can't retrieve the original secret
-    # from Forgejo API, so we generate a new one and update Vault
-    log "OAuth2 app exists but secret not available — generating new secret"
-    forgejo_secret="$(openssl rand -hex 32)"
+  # App exists — PATCH to update redirect_uris to the public callback URL.
+  # Note: on some Forgejo versions (observed 11.0.12+gitea-1.22.0), PATCH
+  # /api/v1/user/applications/oauth2/{id} rotates the client_secret even
+  # when client_secret is omitted from the body. We capture the response
+  # and always re-seed Vault with the returned secret.
+  existing_app_id=$(printf '%s' "$oauth_apps_raw" \
+    | jq -r --arg name "$FORGE_OAUTH_APP_NAME" \
+    '.[] | select(.name == $name) | .id // empty' 2>/dev/null) || true
+
+  if [ -z "$existing_app_id" ]; then
+    die "OAuth2 app '${FORGE_OAUTH_APP_NAME}' exists but could not extract app id"
+  fi
+
+  log "PATCHing OAuth2 app id=${existing_app_id} redirect_uris → ${FORGE_REDIRECT_URIS}"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] would PATCH OAuth2 app with redirect_uris: ${FORGE_REDIRECT_URIS}"
+  else
+    patch_response=$(curl -sf --max-time 10 -X PATCH \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_URL}/api/v1/user/applications/oauth2/${existing_app_id}" \
+      -d "{\"name\":\"${FORGE_OAUTH_APP_NAME}\",\"redirect_uris\":${FORGE_REDIRECT_URIS}}" 2>/dev/null) || {
+      die "failed to PATCH OAuth2 app in Forgejo"
+    }
+
+    # Capture the (potentially rotated) secret from the PATCH response
+    patch_secret=$(printf '%s' "$patch_response" | jq -r '.client_secret // empty')
+    if [ -n "$patch_secret" ]; then
+      log "PATCH returned a client_secret — capturing rotated value"
+      forgejo_secret="$patch_secret"
+    fi
+
+    log "OAuth2 app '${FORGE_OAUTH_APP_NAME}' redirect_uris updated"
   fi
 fi
 
@@ -189,18 +220,16 @@ if [ -n "$existing_raw" ]; then
   existing_secret_in_vault="$(printf '%s' "$existing_raw" | jq -r '.data.data.forgejo_secret // ""')"
 fi
 
-# Idempotency check: if Vault already has credentials for this app, use them
-# This handles the case where the OAuth app exists but we don't have the secret
-if [ "$existing_client_id_in_vault" = "$existing_client_id" ] && [ -n "$existing_secret_in_vault" ]; then
-  log "credentials already in Vault for '${FORGE_OAUTH_APP_NAME}'"
-  log "done — OAuth2 app registered + credentials in Vault"
-  exit 0
-fi
-
-# Use existing secret from Vault if available (app exists, secret in Vault)
-if [ -n "$existing_secret_in_vault" ]; then
-  log "using existing secret from Vault for '${FORGE_OAUTH_APP_NAME}'"
-  forgejo_secret="$existing_secret_in_vault"
+# If we have a fresh secret (from POST create or PATCH rotation), always write
+# it to Vault. If we have no secret (dry-run or PATCH returned none), fall back
+# to whatever Vault already has — but only if client_id matches.
+if [ -z "${forgejo_secret:-}" ]; then
+  if [ "$existing_client_id_in_vault" = "$existing_client_id" ] && [ -n "$existing_secret_in_vault" ]; then
+    log "credentials already in Vault for '${FORGE_OAUTH_APP_NAME}'"
+    log "done — OAuth2 app registered + credentials in Vault"
+    exit 0
+  fi
+  die "no client_secret available and none found in Vault — cannot seed credentials"
 fi
 
 # Prepare the payload with new credentials
