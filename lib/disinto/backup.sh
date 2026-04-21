@@ -301,10 +301,11 @@ backup_import_issues() {
   local skipped=0
 
   for i in $(seq 0 $((count - 1))); do
-    local issue_num title body
+    local issue_num title body src_state
     issue_num=$(jq -r ".[${i}].number" "$issues_file")
     title=$(jq -r ".[${i}].title" "$issues_file")
     body=$(jq -r ".[${i}].body" "$issues_file")
+    src_state=$(jq -r ".[${i}].state // \"open\"" "$issues_file")
 
     if [ -z "$issue_num" ] || [ "$issue_num" = "null" ]; then
       backup_log "WARNING: skipping issue without number at index ${i}"
@@ -328,6 +329,16 @@ backup_import_issues() {
     local new_num
     if new_num=$(backup_create_issue "$slug" "$issue_num" "$title" "$body" "${labels[@]}"); then
       created=$((created + 1))
+
+      # Forgejo POST /issues always creates open — PATCH closed issues
+      if [ "$src_state" = "closed" ]; then
+        curl -sf -X PATCH \
+          -H "Authorization: token ${FORGE_TOKEN}" \
+          -H 'Content-Type: application/json' \
+          "${FORGE_URL}/api/v1/repos/${slug}/issues/${new_num}" \
+          -d '{"state":"closed"}' >/dev/null 2>&1 || \
+          backup_log "WARNING: failed to close issue #${new_num} (PATCH)" >&2
+      fi
     fi
   done
 
