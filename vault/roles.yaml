@@ -70,13 +70,6 @@ roles:
     namespace: default
     job_id:    agents
 
-  # ── Chat UI (nomad/jobs/chat.hcl — S5.2) ─────────────────────────────────
-  # Claude chat UI service with OAuth secrets. Uses vault/policies/service-chat.hcl.
-  - name:      service-chat
-    policy:    service-chat
-    namespace: default
-    job_id:    chat
-
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the

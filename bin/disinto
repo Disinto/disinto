@@ -92,7 +92,7 @@ Init options:
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --backend <value>    Orchestration backend: docker (default) | nomad
-  --with <services>    (nomad) Deploy services: forgejo,woodpecker,agents,staging,chat,edge[,...] (S1.3, S3.4, S4.2, S5.2, S5.5)
+  --with <services>    (nomad) Deploy services: forgejo,woodpecker,agents,staging,edge[,...] (S1.3, S3.4, S4.2, S5.2, S5.5)
   --empty              (nomad) Bring up cluster only, no jobs (S0.4)
   --bare               Skip compose generation (bare-metal setup)
   --build              Use local docker build instead of registry images (dev mode)
@@ -809,7 +809,7 @@ _disinto_init_nomad() {
       # real-run path so dry-run output accurately represents execution order.
       # Build ordered deploy list: only include services present in with_services
       local DEPLOY_ORDER=""
-      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat edge; do
+      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging edge; do
         if echo ",$with_services," | grep -q ",$ordered_svc,"; then
           DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
         fi
@@ -823,7 +823,6 @@ _disinto_init_nomad() {
         case "$svc" in
           woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
           agents) seed_name="agents" ;;
-          chat) seed_name="chat" ;;
           edge) seed_name="ops-repo" ;;
         esac
         local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
@@ -987,9 +986,9 @@ _disinto_init_nomad() {
   if [ -n "$with_services" ]; then
     local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
 
-    # Build ordered deploy list (S3.4, S4.2, S5.2, S5.5): forgejo → woodpecker-server → woodpecker-agent → agents → staging → chat → edge
+    # Build ordered deploy list (S3.4, S4.2, S5.2, S5.5): forgejo → woodpecker-server → woodpecker-agent → agents → staging → edge
     local DEPLOY_ORDER=""
-    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat edge; do
+    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging edge; do
       if echo ",$with_services," | grep -q ",$ordered_svc,"; then
         DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
       fi
@@ -1002,7 +1001,6 @@ _disinto_init_nomad() {
       case "$svc" in
         woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
         agents) seed_name="agents" ;;
-        chat) seed_name="chat" ;;
         edge) seed_name="ops-repo" ;;
       esac
       local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
@@ -1128,9 +1126,6 @@ _disinto_init_nomad() {
     fi
     if echo ",$with_services," | grep -q ",staging,"; then
       echo "             staging: (internal, no external port)"
-    fi
-    if echo ",$with_services," | grep -q ",chat,"; then
-      echo "             chat: 8080"
     fi
     echo "────────────────────────────────────────────────────────"
   fi
@@ -1258,7 +1253,7 @@ disinto_init() {
     # Auto-include all dependencies when edge is requested (S5.5)
     if echo ",$with_services," | grep -q ",edge,"; then
       # Edge depends on all backend services
-      for dep in forgejo woodpecker-server woodpecker-agent agents staging chat; do
+      for dep in forgejo woodpecker-server woodpecker-agent agents staging; do
         if ! echo ",$with_services," | grep -q ",${dep},"; then
           echo "Note: --with edge implies --with ${dep} (edge depends on all backend services)"
           with_services="${with_services},${dep}"
@@ -1271,9 +1266,9 @@ disinto_init() {
     for _svc in $with_services; do
       _svc=$(echo "$_svc" | xargs)
       case "$_svc" in
-        forgejo|woodpecker-server|woodpecker-agent|agents|staging|chat|edge) ;;
+        forgejo|woodpecker-server|woodpecker-agent|agents|staging|edge) ;;
         *)
-          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat, edge" >&2
+          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, edge" >&2
           exit 1
           ;;
       esac
