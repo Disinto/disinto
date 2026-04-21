@@ -11,7 +11,7 @@
 #
 # Usage (via SSH):
 #   ssh disinto-register@edge "register <project> <pubkey>"
-#   ssh disinto-register@edge "deregister <project>"
+#   ssh disinto-register@edge "deregister <project> <pubkey>"
 #   ssh disinto-register@edge "list"
 #
 # Output: JSON on stdout
@@ -90,7 +90,7 @@ usage() {
   cat <<EOF
 Usage:
   register <project> <pubkey>       Register a new tunnel
-  deregister <project>              Remove a tunnel
+  deregister <project> <pubkey>     Remove a tunnel (requires owner pubkey)
   list                              List all registered tunnels
 
 Example:
@@ -231,9 +231,15 @@ do_register() {
 }
 
 # Deregister a tunnel
-# Usage: do_deregister <project>
+# Usage: do_deregister <project> <pubkey>
 do_deregister() {
   local project="$1"
+  local caller_pubkey="$2"
+
+  if [ -z "$caller_pubkey" ]; then
+    echo '{"error":"deregister requires <project> <pubkey>"}'
+    exit 1
+  fi
 
   # Record who is deregistering before removal
   local deregistered_by="$CALLER"
@@ -247,12 +253,15 @@ do_deregister() {
     exit 1
   fi
 
-  pubkey_fp=$(get_project_info "$project" | jq -r '.pubkey // empty' 2>/dev/null) || pubkey_fp=""
-  if [ -n "$pubkey_fp" ]; then
-    pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$pubkey_fp" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
-  else
-    pubkey_fp="unknown"
+  # Verify caller owns this project — pubkey must match stored value
+  local stored_pubkey
+  stored_pubkey=$(get_project_info "$project" | jq -r '.pubkey // empty' 2>/dev/null) || stored_pubkey=""
+  if [ "$caller_pubkey" != "$stored_pubkey" ]; then
+    echo '{"error":"pubkey mismatch"}'
+    exit 1
   fi
+
+  pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$stored_pubkey" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
 
   # Remove from registry
   free_port "$project" >/dev/null
@@ -335,13 +344,17 @@ main() {
       do_register "$project" "$pubkey"
       ;;
     deregister)
-      # deregister <project>
-      local project="$args"
-      if [ -z "$project" ]; then
-        echo '{"error":"deregister requires <project>"}'
+      # deregister <project> <pubkey>
+      local project="${args%% *}"
+      local pubkey="${args#* }"
+      if [ "$pubkey" = "$args" ]; then
+        pubkey=""
+      fi
+      if [ -z "$project" ] || [ -z "$pubkey" ]; then
+        echo '{"error":"deregister requires <project> <pubkey>"}'
         exit 1
       fi
-      do_deregister "$project"
+      do_deregister "$project" "$pubkey"
       ;;
     list)
       do_list

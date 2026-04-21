@@ -2885,12 +2885,23 @@ disinto_edge() {
         edge_host="${EDGE_HOST:-edge.disinto.ai}"
       fi
 
+      # Read tunnel pubkey for ownership proof
+      local secrets_dir="${FACTORY_ROOT}/secrets"
+      local tunnel_pubkey="${secrets_dir}/tunnel_key.pub"
+      if [ ! -f "$tunnel_pubkey" ]; then
+        echo "Error: tunnel keypair not found at ${tunnel_pubkey}" >&2
+        echo "Cannot prove ownership without the tunnel public key." >&2
+        exit 1
+      fi
+      local pubkey
+      pubkey=$(tr -d '\n' < "$tunnel_pubkey")
+
       # SSH to edge host and deregister
       echo "Deregistering tunnel for ${project} on ${edge_host}..."
       local response
       response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
         "disinto-register@${edge_host}" \
-        "deregister ${project}" 2>&1) || {
+        "deregister ${project} ${pubkey}" 2>&1) || {
         echo "Error: failed to deregister tunnel" >&2
         echo "Response: ${response}" >&2
         exit 1
