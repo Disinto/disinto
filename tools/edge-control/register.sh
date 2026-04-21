@@ -244,23 +244,22 @@ do_deregister() {
   # Record who is deregistering before removal
   local deregistered_by="$CALLER"
 
-  # Get current port and pubkey before removing
-  local port pubkey_fp
+  # Get current port and stored pubkey before removing
+  local port stored_pubkey pubkey_fp
   port=$(get_port "$project")
-
-  if [ -z "$port" ]; then
-    echo '{"error":"project not found"}'
-    exit 1
-  fi
-
-  # Verify caller owns this project — pubkey must match stored value
-  local stored_pubkey
   stored_pubkey=$(get_project_info "$project" | jq -r '.pubkey // empty' 2>/dev/null) || stored_pubkey=""
-  if [ "$caller_pubkey" != "$stored_pubkey" ]; then
-    echo '{"error":"pubkey mismatch"}'
+
+  # Return a single generic error — project nonexistence and ownership
+  # failure must not be distinguishable to the caller (prevents enumeration).
+  if [ -z "$port" ] || [ "$caller_pubkey" != "$stored_pubkey" ]; then
+    # Audit the attempt before we fail so operators can investigate.
+    pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$stored_pubkey" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
+    audit_log "deregister" "$project" "${port:-unknown}" "$pubkey_fp"
+    echo '{"error":"deregister denied"}'
     exit 1
   fi
 
+  # Compute fingerprint for success-path audit log
   pubkey_fp=$(ssh-keygen -lf /dev/stdin <<<"$stored_pubkey" 2>/dev/null | awk '{print $2}') || pubkey_fp="unknown"
 
   # Remove from registry
