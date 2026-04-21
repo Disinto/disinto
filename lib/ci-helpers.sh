@@ -56,6 +56,64 @@ ci_required_for_pr() {
   echo "$files" | diff_has_code_files
 }
 
+# ci_required_contexts [branch] — get required status check contexts from branch protection.
+# Cached per poll cycle (module-level variable) to avoid repeated API calls.
+# Stdout: newline-separated list of required context names, or empty if none configured.
+# shellcheck disable=SC2120  # branch arg is optional, callers may omit it
+ci_required_contexts() {
+  if [ -n "${_CI_REQUIRED_CONTEXTS+set}" ]; then
+    printf '%s' "$_CI_REQUIRED_CONTEXTS"
+    return
+  fi
+  local branch="${1:-${PRIMARY_BRANCH:-main}}"
+  local bp_json
+  bp_json=$(forge_api GET "/branch_protections/${branch}" 2>/dev/null) || bp_json=""
+
+  if [ -z "$bp_json" ] || [ "$bp_json" = "null" ]; then
+    _CI_REQUIRED_CONTEXTS=""
+    printf '%s' "$_CI_REQUIRED_CONTEXTS"
+    return
+  fi
+
+  local enabled
+  enabled=$(printf '%s' "$bp_json" | jq -r '.enable_status_check // false' 2>/dev/null) || enabled="false"
+
+  if [ "$enabled" != "true" ]; then
+    _CI_REQUIRED_CONTEXTS=""
+    printf '%s' "$_CI_REQUIRED_CONTEXTS"
+    return
+  fi
+
+  _CI_REQUIRED_CONTEXTS=$(printf '%s' "$bp_json" \
+    | jq -r '.status_check_contexts // [] | .[]' 2>/dev/null) || _CI_REQUIRED_CONTEXTS=""
+  printf '%s' "$_CI_REQUIRED_CONTEXTS"
+}
+
+# _ci_reduce_required_contexts <sha> <required_contexts>
+# Reduce commit statuses to required contexts only.
+# Fetches per-context statuses from the forge combined endpoint and filters.
+# Stdout: success | failure | pending
+_ci_reduce_required_contexts() {
+  local sha="$1" required="$2"
+  local status_json
+  status_json=$(forge_api GET "/commits/${sha}/status" 2>/dev/null) || { echo "pending"; return; }
+
+  printf '%s' "$status_json" | jq -r --arg req "$required" '
+    ($req | split("\n") | map(select(. != ""))) as $contexts |
+    .statuses as $all |
+    if ($contexts | length) == 0 then "pending"
+    else
+      [ $contexts[] as $ctx |
+        [$all[] | select(.context == $ctx)] | sort_by(.id) | last | .status // "pending"
+      ] |
+      if any(. == "failure" or . == "error") then "failure"
+      elif all(. == "success") then "success"
+      else "pending"
+      end
+    end
+  ' 2>/dev/null || echo "pending"
+}
+
 # ci_passed <state> — check if CI is passing (or no CI configured)
 #   Returns 0 if state is "success", or if no CI is configured and
 #   state is empty/pending/unknown.
@@ -83,11 +141,23 @@ ci_failed() {
 }
 
 # ci_commit_status <sha> — get CI state for a commit
-# Queries Woodpecker API directly, falls back to forge commit status API.
+# When branch protection declares required status check contexts, reduces over
+# just those — optional workflows that are stuck/failed do not block decisions.
+# Otherwise queries Woodpecker API directly, falls back to forge combined status.
 ci_commit_status() {
   local sha="$1"
   local state=""
 
+  # When required contexts are configured, reduce over just those
+  local required
+  # shellcheck disable=SC2119  # branch arg defaults to PRIMARY_BRANCH
+  required=$(ci_required_contexts) || true
+  if [ -n "$required" ]; then
+    _ci_reduce_required_contexts "$sha" "$required"
+    return
+  fi
+
+  # No required-context filtering — original behavior
   # Primary: ask Woodpecker directly
   if [ -n "${WOODPECKER_REPO_ID:-}" ] && [ "${WOODPECKER_REPO_ID}" != "0" ]; then
     state=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines" \
