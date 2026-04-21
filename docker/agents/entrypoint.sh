@@ -545,7 +545,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((supervisor_iteration % SUPERVISOR_INTERVAL)) -eq 0 ] && [ "$now" -ge "$supervisor_iteration" ]; then
         if ! pgrep -f "supervisor-run.sh" >/dev/null; then
           log "Running supervisor (iteration ${iteration}, ${SUPERVISOR_INTERVAL}s interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor/supervisor.log" 2>&1 &
         else
           log "Skipping supervisor — already running"
         fi
