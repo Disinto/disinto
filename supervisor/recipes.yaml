@@ -1,0 +1,129 @@
+# supervisor/recipes.yaml — Procedural recipe library for abnormal-signal detection
+#
+# Each recipe maps a preflight.sh output section + rule to a severity level
+# and an optional remediation action. The evaluator (evaluate-recipes.sh)
+# consumes this file before any LLM invocation.
+#
+# Schema:
+#   name:        unique identifier (snake_case)
+#   severity:    P0–P4 (mirrors formulas/run-supervisor.toml tiers)
+#   detect:
+#     source:    preflight          # always "preflight" for this library
+#     section:   "<preflight heading>"  # matches "## <section>" lines
+#     rule:      <rule_name>
+#     threshold: <number>            # numeric comparison value (rule-dependent)
+#     field:     "<field name>"     # for field_eq rules
+#     value:     "<value>"           # for field_eq rules
+#   action:      direct | vault | incident | llm
+#   action_script: "<path>"          # optional; only when action=direct
+
+recipes:
+
+  # ── P0: Memory crisis ──────────────────────────────────────────────────
+
+  - name: memory-crisis-low-ram
+    severity: P0
+    detect:
+      source: preflight
+      section: "System Resources"
+      rule: ram_available_mb_lt
+      threshold: 500
+    action: direct
+    action_script: supervisor/actions/memory-crisis.sh
+
+  - name: memory-crisis-high-swap
+    severity: P0
+    detect:
+      source: preflight
+      section: "System Resources"
+      rule: swap_mb_gt
+      threshold: 3072
+    action: direct
+    action_script: supervisor/actions/memory-crisis.sh
+
+  # ── P1: Disk pressure ──────────────────────────────────────────────────
+
+  - name: disk-pressure
+    severity: P1
+    detect:
+      source: preflight
+      section: "System Resources"
+      rule: disk_pct_gt
+      threshold: 80
+    action: direct
+    action_script: supervisor/actions/disk-pressure.sh
+
+  # ── P2: Factory stopped / stalled ──────────────────────────────────────
+
+  - name: wp-agent-unhealthy
+    severity: P2
+    detect:
+      source: preflight
+      section: "Woodpecker Agent Health"
+      rule: field_eq
+      field: "WP Agent Health"
+      value: "UNHEALTHY"
+    action: direct
+    action_script: supervisor/actions/wp-agent-restart.sh
+
+  - name: ci-stuck
+    severity: P2
+    detect:
+      source: preflight
+      section: "CI Pipelines"
+      rule: stuck_gt
+      threshold: 0
+    action: incident
+
+  - name: ci-pending-stale
+    severity: P2
+    detect:
+      source: preflight
+      section: "CI Pipelines"
+      rule: pending_gt
+      threshold: 0
+    action: incident
+
+  - name: git-broken-rebase
+    severity: P2
+    detect:
+      source: preflight
+      section: "Lock Files"
+      rule: field_eq
+      field: "git-rebase"
+      value: "broken"
+    action: direct
+    action_script: supervisor/actions/git-rebase-fix.sh
+
+  # ── P3: Factory degraded ──────────────────────────────────────────────
+
+  - name: pr-stale
+    severity: P3
+    detect:
+      source: preflight
+      section: "Open PRs"
+      rule: stale_prs_gt
+      threshold: 0
+    action: incident
+
+  # ── P4: Housekeeping ───────────────────────────────────────────────────
+
+  - name: stale-worktree
+    severity: P4
+    detect:
+      source: preflight
+      section: "Stale Worktrees"
+      rule: any_older_than_min
+      threshold: 120
+    action: direct
+    action_script: supervisor/actions/cleanup-worktrees.sh
+
+  - name: lock-file-dead
+    severity: P4
+    detect:
+      source: preflight
+      section: "Lock Files"
+      rule: dead_lock_gt
+      threshold: 0
+    action: direct
+    action_script: supervisor/actions/cleanup-locks.sh
