@@ -52,9 +52,22 @@ claude_run_with_watchdog() {
   out_file=$(mktemp) || return 1
   trap 'rm -f "$out_file"' RETURN
 
-  # Start claude in new process group (setsid creates new session, $pid is PGID leader)
-  # All children of claude will inherit this process group.
-  setsid "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
+  # Start claude under a PTY in a new process group.
+  #
+  # Why the PTY (issue #575): Claude Code 2.1.84's ink/TUI layer blocks during
+  # turn-zero initialization when stdout is a plain pipe/file — node sleeps in
+  # S state with 0 bytes emitted, no llama activity, no syscalls, until
+  # CLAUDE_TIMEOUT fires. Verified in repro: identical `claude -p` invocation
+  # completes in ~10s under `script -qfc` and hangs indefinitely without it.
+  # `script -qfc ... /dev/null` gives Claude a PTY file descriptor, suppresses
+  # its own terminal echo, and drops the typescript file at /dev/null. setsid
+  # still wraps so kill -TERM -- "-$pid" hits the whole process group.
+  #
+  # Shell-escape the command so `script -c` (which takes a single string) runs
+  # our argv array faithfully even when args contain spaces or special chars.
+  local claude_cmdline
+  printf -v claude_cmdline '%q ' "${cmd[@]}"
+  setsid script -qfc "$claude_cmdline" /dev/null > "$out_file" 2>>"$LOGFILE" &
   pid=$!
 
   # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
