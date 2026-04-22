@@ -703,6 +703,7 @@ _disinto_init_nomad() {
   local vault_auth_sh="${FACTORY_ROOT}/lib/init/nomad/vault-nomad-auth.sh"
   local vault_import_sh="${FACTORY_ROOT}/tools/vault-import.sh"
   local vault_seed_ops_repo_sh="${FACTORY_ROOT}/tools/vault-seed-ops-repo.sh"
+  local vault_seed_runner_sh="${FACTORY_ROOT}/tools/vault-seed-runner.sh"
 
   if [ ! -x "$cluster_up" ]; then
     echo "Error: ${cluster_up} not found or not executable" >&2
@@ -821,6 +822,15 @@ _disinto_init_nomad() {
     if [ "$import_any" = true ] && [ -x "$vault_seed_ops_repo_sh" ]; then
       echo "── Vault seed ops-repo dry-run ────────────────────────"
       echo "[seed] [dry-run] ${vault_seed_ops_repo_sh} --dry-run"
+      echo ""
+    fi
+
+    # Runner token seed (unconditional, issue #604). Reads .env and writes
+    # kv/disinto/runner/<TOKEN>/value for each present token. Also seeds
+    # kv/disinto/shared/ops-repo with remote + deploy_key.
+    if [ -x "$vault_seed_runner_sh" ]; then
+      echo "── Vault seed runner dry-run ──────────────────────────"
+      echo "[seed] [dry-run] ${vault_seed_runner_sh} --dry-run"
       echo ""
     fi
 
@@ -999,6 +1009,25 @@ _disinto_init_nomad() {
         exit 1
       fi
       sudo -n -- env "VAULT_ADDR=$vault_addr" "$vault_seed_ops_repo_sh" || exit $?
+    fi
+  fi
+
+  # Runner token seed (unconditional, issue #604). Reads .env and writes
+  # kv/disinto/runner/<TOKEN>/value for each present token. Also seeds
+  # kv/disinto/shared/ops-repo with remote + deploy_key. Warns on absent
+  # secrets; does not hard-fail (factory can start without mirrors).
+  local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
+  if [ -x "$vault_seed_runner_sh" ]; then
+    echo ""
+    echo "── Seeding Vault for runner ────────────────────────────"
+    if [ "$(id -u)" -eq 0 ]; then
+      VAULT_ADDR="$vault_addr" "$vault_seed_runner_sh" || exit $?
+    else
+      if ! command -v sudo >/dev/null 2>&1; then
+        echo "Error: vault-seed-runner.sh must run as root and sudo is not installed" >&2
+        exit 1
+      fi
+      sudo -n -- env "VAULT_ADDR=$vault_addr" "$vault_seed_runner_sh" || exit $?
     fi
   fi
 
