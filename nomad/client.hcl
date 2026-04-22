@@ -66,6 +66,19 @@ client {
     path      = "/srv/disinto/ops-repo"
     read_only = false
   }
+
+  # supervisor agent runtime data (logs, state files for Opus supervisor).
+  host_volume "agent-data-opus-supervisor" {
+    path      = "/srv/disinto/agent-data-opus-supervisor"
+    read_only = false
+  }
+
+  # Claude OAuth credentials for the Opus supervisor agent.
+  # Mounted at /home/agent/.claude inside the container.
+  host_volume "claude-creds" {
+    path      = "/srv/disinto/claude-creds"
+    read_only = true
+  }
 }
 
 # Docker task driver. `volumes.enabled = true` is required so jobspecs

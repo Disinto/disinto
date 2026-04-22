@@ -8,7 +8,7 @@
 # This job replaces the supervisor loop that previously ran inside the edge
 # caddy task (docker/edge/entrypoint.sh). The supervisor now runs as a
 # standalone Nomad job with:
-#   - Opus model (claude-opus-4-7) via OAuth, not llama API-key mode
+#   - Opus model (claude-opus-4-6) via OAuth, not llama API-key mode
 #   - Read-write docker.sock for container management
 #   - Ops-repo volume for incident journal writes
 #   - Claude OAuth credentials via claude-creds host_volume
@@ -131,7 +131,7 @@ job "agents-supervisor-opus" {
       env {
         AGENT_ROLES        = "supervisor"
         FORGE_REPO         = "disinto-admin/disinto"
-        CLAUDE_MODEL       = "claude-opus-4-7"
+        CLAUDE_MODEL       = "claude-opus-4-6"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "disinto"
