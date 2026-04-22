@@ -153,10 +153,14 @@ if [ -n "$RECIPE_OUTPUT" ]; then
       # All direct fires have valid action_script and no non-direct actions —
       # safe to skip LLM (direct-action dispatch is implemented in #594).
       log "All ${_direct_total} fired recipe(s) have direct-action handlers — skipping LLM (fast path)"
+      LLM_REQUIRED=false
     else
       # Mixed: some direct fires lack action_script, or there are incident/vault/llm actions
       LLM_REQUIRED=true
     fi
+  else
+    # No recipes fired — healthy box, no LLM needed.
+    LLM_REQUIRED=false
   fi
 fi
 
