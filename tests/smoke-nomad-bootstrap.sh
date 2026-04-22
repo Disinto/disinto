@@ -83,6 +83,12 @@ fi
   # as "unreachable" because it cannot see the source sourcing below.
   # shellcheck disable=SC2317
   log() { :; }
+  # The real helper expands ${USER} inside its heredoc. CI base images
+  # (e.g. python:3-alpine running as root without a login shell) may not
+  # set USER, which would trip `set -u` and truncate the generated TOML.
+  # The production call path always has USER set; this fallback is only
+  # for the hermetic test environment.
+  export USER="${USER:-smoke}"
   # shellcheck disable=SC1090
   source "$HELPER_SNIPPET"
   if ! declare -F generate_default_toml >/dev/null; then
