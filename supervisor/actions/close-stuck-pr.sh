@@ -6,25 +6,22 @@
 #
 # Sources: lib/issue-lifecycle.sh (issue_close helper), lib/ci-helpers.sh
 # (forge_api via env.sh).
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC2034
 FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Accept project config from argument; default to disinto
-export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
-export FORGE_TOKEN_OVERRIDE="${FORGE_SUPERVISOR_TOKEN:-}"
-# shellcheck source=../lib/env.sh
-source "$FACTORY_ROOT/lib/env.sh"
+# Source shared setup (header, env, log function)
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh" "$@"
+# shellcheck source=_ops-setup.sh
+source "$SCRIPT_DIR/_ops-setup.sh"
 
+# shellcheck disable=SC2034
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
-
-# Override log() to append to supervisor-specific log file
-log() {
-  local agent="${LOG_AGENT:-supervisor}"
-  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
-}
-
+# shellcheck disable=SC2034
 LOG_AGENT="supervisor"
 
 log "Scanning for stuck PRs (ci_exhausted + open >2h)..."
