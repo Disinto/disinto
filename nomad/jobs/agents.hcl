@@ -111,8 +111,11 @@ job "agents" {
       }
 
       # ── Non-secret env ─────────────────────────────────────────────────────
+      # FORGE_URL is rendered from Nomad service discovery in the template
+      # block below — the bridge-network netns cannot resolve the `forgejo`
+      # hostname (no Consul DNS). Same pattern as edge.hcl post-#1157 (issue
+      # #567).
       env {
-        FORGE_URL          = "http://forgejo:3000"
         FORGE_REPO         = "disinto-admin/disinto"
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
@@ -128,6 +131,21 @@ job "agents" {
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
         CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "60"
+      }
+
+      # ── Nomad-discovered FORGE_URL (issue #567) ───────────────────────────
+      # Bridge netns cannot resolve `forgejo:3000`. Render from Nomad service
+      # discovery — matches edge.hcl (post-#1157) and keeps the job portable
+      # across boxes with different bridge IPs.
+      template {
+        destination = "secrets/forge-url.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range nomadService "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
       }
 
       # ── Vault-templated bot tokens (S4.1, issue #955) ─────────────────────
