@@ -29,9 +29,11 @@ state = {
     "collaborators": {},  # key: "owner/repo" -> set of usernames
     "protections": {},    # key: "owner/repo" -> list of protections
     "oauth2_apps": [],    # list of oauth2 app objects
+    "issues": [],         # list of issue objects
+    "next_issue_number": {},  # key: "owner/repo" -> next number
 }
 
-next_ids = {"users": 1, "tokens": 1, "repos": 1, "orgs": 1, "labels": 1, "oauth2_apps": 1}
+next_ids = {"users": 1, "tokens": 1, "repos": 1, "orgs": 1, "labels": 1, "oauth2_apps": 1, "issues": 1}
 
 SHUTDOWN_REQUESTED = False
 
@@ -142,6 +144,8 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             (r"^repos/([^/]+)/([^/]+)/labels$", f"handle_{method}_repos_owner_repo_labels"),
             (r"^repos/([^/]+)/([^/]+)/branch_protections$", f"handle_{method}_repos_owner_repo_branch_protections"),
             (r"^repos/([^/]+)/([^/]+)/collaborators/([^/]+)$", f"handle_{method}_repos_owner_repo_collaborators_collaborator"),
+            (r"^repos/([^/]+)/([^/]+)/issues$", f"handle_{method}_repos_owner_repo_issues"),
+            (r"^repos/([^/]+)/([^/]+)/issues/([^/]+)$", f"handle_{method}_repos_owner_repo_issues_issue_id"),
             # Org patterns
             (r"^orgs/([^/]+)/repos$", f"handle_{method}_orgs_org_repos"),
             # User patterns
@@ -784,6 +788,125 @@ class ForgejoHandler(BaseHTTPRequestHandler):
             self.end_headers()
         else:
             json_response(self, 404, {"message": "collaborator not found"})
+
+    def _issue_repo_key(self):
+        """Extract owner/repo from /api/v1/repos/{owner}/{repo}/issues... path."""
+        parts = self.path.split("/")
+        if len(parts) >= 6:
+            return parts[4], parts[5]
+        return None, None
+
+    def _find_issue(self, owner, repo, issue_num):
+        """Find an issue by number. Returns (index, issue) or (None, None)."""
+        key = f"{owner}/{repo}"
+        for idx, issue in enumerate(state["issues"]):
+            if issue.get("repo_key") == key and issue.get("number") == int(issue_num):
+                return idx, issue
+        return None, None
+
+    def handle_GET_repos_owner_repo_issues(self, query):
+        """GET /api/v1/repos/{owner}/{repo}/issues"""
+        owner, repo = self._issue_repo_key()
+        if not owner or not repo:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+        require_token(self)
+        key = f"{owner}/{repo}"
+        state_filter = query.get("state", ["open"])[0]
+        type_filter = query.get("type", ["issues"])[0]
+        limit = int(query.get("limit", ["30"])[0])
+        page = int(query.get("page", ["1"])[0])
+        results = [
+            i for i in state["issues"]
+            if i.get("repo_key") == key
+            and i.get("state") == state_filter
+            and (type_filter != "issues" or i.get("is_pull_request") is False)
+        ]
+        start = (page - 1) * limit
+        page_items = results[start:start + limit]
+        json_response(self, 200, page_items)
+
+    def handle_GET_repos_owner_repo_issues_issue_id(self, query):
+        """GET /api/v1/repos/{owner}/{repo}/issues/{issue_id}"""
+        owner, repo = self._issue_repo_key()
+        if not owner or not repo:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+        parts = self.path.split("/")
+        if len(parts) >= 8:
+            issue_num = parts[7]
+        else:
+            json_response(self, 404, {"message": "issue not found"})
+            return
+        idx, issue = self._find_issue(owner, repo, issue_num)
+        if issue is None:
+            json_response(self, 404, {"message": "issue not found"})
+        else:
+            json_response(self, 200, issue)
+
+    def handle_POST_repos_owner_repo_issues(self, query):
+        """POST /api/v1/repos/{owner}/{repo}/issues"""
+        owner, repo = self._issue_repo_key()
+        if not owner or not repo:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+        require_token(self)
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        data = json.loads(body) if body else {}
+        key = f"{owner}/{repo}"
+        if key not in state["next_issue_number"]:
+            state["next_issue_number"][key] = 1
+        issue_num = state["next_issue_number"][key]
+        state["next_issue_number"][key] += 1
+        # Resolve label IDs to names
+        label_ids = data.get("labels", [])
+        label_names = []
+        if key in state["labels"]:
+            for lid in label_ids:
+                for lbl in state["labels"][key]:
+                    if lbl.get("id") == lid:
+                        label_names.append(lbl.get("name", ""))
+                        break
+        issue = {
+            "id": next_ids["issues"],
+            "number": issue_num,
+            "title": data.get("title", ""),
+            "body": data.get("body", ""),
+            "state": data.get("state", "open"),
+            "labels": [{"id": lid, "name": n} for lid, n in zip(label_ids, label_names)],
+            "repo_key": key,
+            "is_pull_request": False,
+            "created_at": "2026-04-01T00:00:00Z",
+            "updated_at": "2026-04-01T00:00:00Z",
+        }
+        next_ids["issues"] += 1
+        state["issues"].append(issue)
+        json_response(self, 201, issue)
+
+    def handle_PATCH_repos_owner_repo_issues_issue_id(self, query):
+        """PATCH /api/v1/repos/{owner}/{repo}/issues/{issue_id}"""
+        owner, repo = self._issue_repo_key()
+        if not owner or not repo:
+            json_response(self, 404, {"message": "repository not found"})
+            return
+        require_token(self)
+        parts = self.path.split("/")
+        if len(parts) >= 8:
+            issue_num = parts[7]
+        else:
+            json_response(self, 404, {"message": "issue not found"})
+            return
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        data = json.loads(body) if body else {}
+        idx, issue = self._find_issue(owner, repo, issue_num)
+        if issue is None:
+            json_response(self, 404, {"message": "issue not found"})
+            return
+        for key, value in data.items():
+            issue[key] = value
+        json_response(self, 200, issue)
 
     def handle_404(self):
         """Return 404 for unknown routes."""

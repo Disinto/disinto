@@ -119,8 +119,8 @@ job "woodpecker-server" {
       # below and is merged into task env.
       env {
         WOODPECKER_FORGEJO              = "true"
-        WOODPECKER_FORGEJO_URL          = "http://forgejo:3000"
-        WOODPECKER_HOST                 = "http://woodpecker:8000"
+        WOODPECKER_FORGEJO_URL          = "https://self.disinto.ai/forge"
+        WOODPECKER_HOST                 = "https://self.disinto.ai/ci"
         WOODPECKER_OPEN                 = "true"
         WOODPECKER_DATABASE_DRIVER      = "sqlite3"
         WOODPECKER_DATABASE_DATASOURCE  = "/var/lib/woodpecker/woodpecker.sqlite"
