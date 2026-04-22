@@ -2,8 +2,9 @@
 # nomad/jobs/agents.hcl — All-role agent polling loop (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S4.1, issue #955). Runs the main bot
-# polling loop with all 7 agent roles (review, dev, gardener, architect,
-# planner, predictor, supervisor) against the local llama server.
+# polling loop with 6 agent roles (review, dev, gardener, architect,
+# planner, predictor) against the local llama server.
+# Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
 #
 # Host_volume contract:
 #   This job mounts agent-data, project-repos, and ops-repo from
@@ -14,7 +15,7 @@
 #   - vault { role = "service-agents" } at group scope — workload-identity
 #     JWT exchanged for a Vault token carrying the composite service-agents
 #     policy (vault/policies/service-agents.hcl), which grants read access
-#     to all 7 bot KV namespaces + vault bot + shared forge config.
+#     to the 6 bot KV namespaces (supervisor is separate) + vault bot + shared forge config.
 #   - template stanza renders per-bot FORGE_*_TOKEN + FORGE_PASS from Vault
 #     KV v2 at kv/disinto/bots/<role>.
 #   - Seeded on fresh boxes by tools/vault-seed-agents.sh.
@@ -120,7 +121,7 @@ job "agents" {
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"
-        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor,supervisor"
+        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"

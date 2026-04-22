@@ -124,7 +124,7 @@ if [ -f /opt/disinto/lib/git-creds.sh ]; then
 fi
 
 # Ensure log directory exists
-mkdir -p /opt/disinto-logs/supervisor
+mkdir -p /opt/disinto-logs
 
 # ── Reverse tunnel (optional) ──────────────────────────────────────────
 # When EDGE_TUNNEL_HOST is set, open a single reverse-SSH forward so the
@@ -165,13 +165,6 @@ export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/${PROJECT_NAME:-disinto
 
 # Start dispatcher in background
 bash /opt/disinto/docker/edge/dispatcher.sh &
-
-# Start supervisor loop in background
-PROJECT_TOML="${PROJECT_TOML:-projects/disinto.toml}"
-(while true; do
-  bash /opt/disinto/supervisor/supervisor-run.sh "/opt/disinto/${PROJECT_TOML}" 2>&1 | tee -a /opt/disinto-logs/supervisor/supervisor.log || true
-  sleep 1200  # 20 minutes
-done) &
 
 # ── Load optional secrets from secrets/*.enc (#777) ────────────────────
 # Engagement collection (collect-engagement.sh) requires CADDY_ secrets to
