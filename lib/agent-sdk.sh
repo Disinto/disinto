@@ -53,9 +53,17 @@ claude_run_with_watchdog() {
   trap 'rm -f "$out_file"' RETURN
 
   # Start claude in new process group (setsid creates new session, $pid is PGID leader)
-  # All children of claude will inherit this process group
+  # All children of claude will inherit this process group.
   setsid "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
   pid=$!
+
+  # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
+  # arrive — without this, a run that hangs mid-stream shows no progress to
+  # operators for up to CLAUDE_TIMEOUT seconds (issue #568).
+  (
+    tail -F -n 0 --pid="$pid" "$out_file" 2>/dev/null >> "$LOGFILE"
+  ) &
+  local tail_pid=$!
 
   # Background watchdog: poll for final result marker
   (
@@ -104,6 +112,10 @@ claude_run_with_watchdog() {
   # Clean up the watchdog (target process group if it spawned children)
   kill -- "-$grace_pid" 2>/dev/null || true
   wait "$grace_pid" 2>/dev/null || true
+  # Clean up the log tailer — tail -F --pid exits automatically when claude
+  # exits, but be defensive.
+  kill "$tail_pid" 2>/dev/null || true
+  wait "$tail_pid" 2>/dev/null || true
 
   # When timeout fires (rc=124), explicitly kill the orphaned claude process group
   # tail --pid is a passive waiter, not a supervisor
@@ -134,7 +146,15 @@ agent_run() {
 
   _AGENT_LAST_OUTPUT=""
 
-  local -a args=(-p "$prompt" --output-format json --dangerously-skip-permissions --max-turns 200)
+  # stream-json streams each turn incrementally instead of buffering the whole
+  # run — lets the watchdog see progress and the LOGFILE capture real-time
+  # tool-use activity. With buffered `json` a hang before the first turn
+  # produces zero output for the full CLAUDE_TIMEOUT (issue #568).
+  #
+  # max-turns lowered from 200 to CLAUDE_MAX_TURNS (default 30). Single-file
+  # bug fixes never need 200 turns; tighter bound surfaces stuck runs faster.
+  local max_turns="${CLAUDE_MAX_TURNS:-30}"
+  local -a args=(-p "$prompt" --output-format stream-json --verbose --dangerously-skip-permissions --max-turns "$max_turns")
   [ -n "$resume_id" ] && args+=(--resume "$resume_id")
   [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
 
