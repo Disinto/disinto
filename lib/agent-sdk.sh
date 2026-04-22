@@ -48,26 +48,34 @@ claude_run_with_watchdog() {
   local -a cmd=("$@")
   local out_file pid grace_pid rc
 
-  # Create temp file for stdout capture
+  # Create temp files for stdout capture and PTY runner script
   out_file=$(mktemp) || return 1
-  trap 'rm -f "$out_file"' RETURN
+  local runner
+  runner=$(mktemp) || { rm -f "$out_file"; return 1; }
+  trap 'rm -f "$out_file" "$runner"' RETURN
 
   # Start claude under a PTY in a new process group.
   #
   # Why the PTY (issue #575): Claude Code 2.1.84's ink/TUI layer blocks during
   # turn-zero initialization when stdout is a plain pipe/file — node sleeps in
   # S state with 0 bytes emitted, no llama activity, no syscalls, until
-  # CLAUDE_TIMEOUT fires. Verified in repro: identical `claude -p` invocation
-  # completes in ~10s under `script -qfc` and hangs indefinitely without it.
-  # `script -qfc ... /dev/null` gives Claude a PTY file descriptor, suppresses
-  # its own terminal echo, and drops the typescript file at /dev/null. setsid
-  # still wraps so kill -TERM -- "-$pid" hits the whole process group.
+  # CLAUDE_TIMEOUT fires. Verified: identical `claude -p` completes in ~10s
+  # under `script -qfc` and hangs indefinitely without it.
   #
-  # Shell-escape the command so `script -c` (which takes a single string) runs
-  # our argv array faithfully even when args contain spaces or special chars.
-  local claude_cmdline
-  printf -v claude_cmdline '%q ' "${cmd[@]}"
-  setsid script -qfc "$claude_cmdline" /dev/null > "$out_file" 2>>"$LOGFILE" &
+  # Why the runner tempfile (follow-up to #575): `script -c <cmdline>` passes
+  # the cmdline to `/bin/sh -c`, which on Debian/Ubuntu is `dash`. Bash
+  # `printf %q` output isn't dash-compatible — ANSI-C $'...' quoting blows up
+  # dash's parser with "Syntax error: '(' unexpected" when the Claude prompt
+  # contains parentheses (every issue body does). Writing the argv to a
+  # `#!/bin/bash` script file bypasses sh re-parsing entirely — dash just
+  # spawns the script via its shebang, and bash handles the %q'd args.
+  {
+    printf '#!/bin/bash\nexec '
+    printf '%q ' "${cmd[@]}"
+    printf '\n'
+  } > "$runner"
+  chmod +x "$runner"
+  setsid script -qfc "$runner" /dev/null > "$out_file" 2>>"$LOGFILE" &
   pid=$!
 
   # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
