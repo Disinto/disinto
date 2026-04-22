@@ -6,8 +6,9 @@
 # to stdout listing which recipes fired.
 #
 # Usage:
-#   bash supervisor/evaluate-recipes.sh <(bash supervisor/preflight.sh /opt/disinto/projects/disinto.toml)
-#   bash supervisor/evaluate-recipes.sh /path/to/preflight-output.txt
+#   bash supervisor/evaluate-recipes.sh <recipes.yaml> <preflight-output-file-or-pipe>
+#   bash supervisor/evaluate-recipes.sh supervisor/recipes.yaml <(bash supervisor/preflight.sh /opt/disinto/projects/disinto.toml)
+#   bash supervisor/evaluate-recipes.sh supervisor/recipes.yaml /path/to/preflight-output.txt
 #
 # Output (JSON):
 #   {"fired":[{"name":"disk-pressure","severity":"P1","evidence":"Disk: 85% used","action":"direct","action_script":"..."}]}
@@ -34,7 +35,7 @@ extract_section() {
 
   while IFS= read -r line; do
     # Match "## Section" or "## Section (...)" — prefix match on section name
-    if [[ "$line" == "## ${section}" || "$line" == "## ${section}(" || "$line" == "## ${section} (" ]]; then
+    if [[ "$line" == "## ${section}" || "$line" == "## ${section}(" || "$line" == "## ${section} ("* ]]; then
       in_section=true
       continue
     fi
@@ -181,14 +182,8 @@ eval_stale_prs_gt() {
 
 # ── Main logic ─────────────────────────────────────────────────────────────
 
-# Read preflight text once
-PREFLIGHT_TEXT=""
-if [ -f "$PREFLIGHT_FILE" ]; then
-  PREFLIGHT_TEXT="$(cat "$PREFLIGHT_FILE")"
-elif [ -p "$PREFLIGHT_FILE" ] || [ -t 0 ]; then
-  # stdin or pipe — read it
-  PREFLIGHT_TEXT="$(cat)"
-fi
+# Read preflight text once (works for regular files, named pipes, and FDs)
+PREFLIGHT_TEXT="$(cat "$PREFLIGHT_FILE")"
 
 # Count recipes
 recipe_count=$(yq eval '.recipes | length' "$RECIPE_FILE")

@@ -5,7 +5,7 @@
 # Current action: git worktree remove/prune.
 set -euo pipefail
 
-FACTORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FACTORY_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROJECT_REPO="${WORKTREE_ROOT:-$FACTORY_ROOT}"
 
 echo "[cleanup-worktrees] Pruning stale worktrees..."
