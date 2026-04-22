@@ -216,10 +216,10 @@ steps:
           FAILED=1
         fi
 
-        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:3000"; then
-          echo "[PASS] Forgejo reverse_proxy (port 3000)"
+        if echo "$CADDYFILE" | grep -q 'nomadService "forgejo"'; then
+          echo "[PASS] Forgejo reverse_proxy (Nomad service discovery)"
         else
-          echo "[FAIL] Forgejo reverse_proxy (port 3000)"
+          echo "[FAIL] Forgejo reverse_proxy (Nomad service discovery)"
           FAILED=1
         fi
 
@@ -231,10 +231,10 @@ steps:
           FAILED=1
         fi
 
-        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8000"; then
-          echo "[PASS] Woodpecker reverse_proxy (port 8000)"
+        if echo "$CADDYFILE" | grep -q 'nomadService "woodpecker"'; then
+          echo "[PASS] Woodpecker reverse_proxy (Nomad service discovery)"
         else
-          echo "[FAIL] Woodpecker reverse_proxy (port 8000)"
+          echo "[FAIL] Woodpecker reverse_proxy (Nomad service discovery)"
           FAILED=1
         fi
 
@@ -275,10 +275,10 @@ steps:
           FAILED=1
         fi
 
-        if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8080"; then
-          echo "[PASS] Chat reverse_proxy (port 8080)"
+        if echo "$CADDYFILE" | grep -q 'nomadService "chat"'; then
+          echo "[PASS] Chat reverse_proxy (Nomad service discovery)"
         else
-          echo "[FAIL] Chat reverse_proxy (port 8080)"
+          echo "[FAIL] Chat reverse_proxy (Nomad service discovery)"
           FAILED=1
         fi
 
