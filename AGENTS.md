@@ -49,7 +49,7 @@ disinto/                 (code repo)
 ├── docker/        Dockerfiles and entrypoints: reproduce, triage, edge (Caddy + chat server subprocess + dispatcher)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; register.sh enforces: reserved-name blocklist, admin-approved allowlist via /var/lib/disinto/allowlist.json, per-caller attribution via --as <tag> forced-command arg stored as registered_by, append-only audit log at /var/log/disinto/edge-register.log, ownership check on deregister requiring pubkey match)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
-│                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>` (add a new file to support a new service)
+│                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>` (add a new file to support a new service); vault-seed-runner.sh is an exception — it runs unconditionally during init because runner jobs require secrets before any --with service can be deployed
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)

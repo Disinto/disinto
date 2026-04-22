@@ -48,6 +48,15 @@ declare -a RUNNER_TOKENS=(GITHUB_TOKEN CODEBERG_TOKEN CLAWHUB_TOKEN NPM_TOKEN DO
 log() { printf '[vault-seed-runner] %s\n' "$*"; }
 die() { printf '[vault-seed-runner] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Strip surrounding single/double quotes from a value (e.g. "abc123" -> abc123)
+_strip_quote() {
+  local v="$1"
+  case "$v" in
+    \'*\'|\"*\") v="${v:1:${#v}-2}" ;;
+  esac
+  printf '%s' "$v"
+}
+
 # ── Flag parsing ─────────────────────────────────────────────────────────────
 DRY_RUN=0
 case "$#:${1-}" in
@@ -106,6 +115,8 @@ else
     [[ -z "$key" ]] && continue
     # Trim leading/trailing whitespace from key
     key="$(printf '%s' "$key" | xargs)"
+    # Strip surrounding quotes from value
+    val="$(_strip_quote "$val")"
     env_vals["$key"]="$val"
   done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" 2>/dev/null || true)
 
@@ -148,6 +159,7 @@ if [ -f "$env_file" ]; then
     [[ "$key" =~ ^[[:space:]]*# ]] && continue
     [[ -z "$key" ]] && continue
     key="$(printf '%s' "$key" | xargs)"
+    val="$(_strip_quote "$val")"
     env_vals["$key"]="$val"
   done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" 2>/dev/null || true)
 
@@ -176,14 +188,30 @@ if [ -n "$ops_remote" ] || [ -n "$ops_deploy_key" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[dry-run] ${OPS_REPO_PATH}: would write remote=${ops_remote:+set}${ops_remote:+,} deploy_key=${ops_deploy_key:+set}"
   else
-    # Build payload with only the fields we have
-    payload='{"data":{}}'
+    # Read existing ops-repo document and merge (POST replaces the full KV v2
+    # data document, so we must preserve sibling keys like 'token').
+    existing_raw="$(hvault_get_or_empty "kv/data/${OPS_REPO_PATH}")" || true
+    existing_data="{}"
+    [ -n "$existing_raw" ] && existing_data="$(printf '%s' "$existing_raw" | jq '.data.data // {}')"
+
+    payload="$(printf '%s' "$existing_data" | jq -c '
+      if .remote == null and .deploy_key == null then .
+      else
+        (. + (
+          (if .remote != null then {remote: .remote} else {} end) +
+          (if .deploy_key != null then {deploy_key: .deploy_key} else {} end)
+        ))
+      end
+    ')"
+    # Now overlay the new values
     if [ -n "$ops_remote" ]; then
-      payload="$(printf '%s' "$payload" | jq --arg v "$ops_remote" '.data.remote = $v')"
+      payload="$(printf '%s' "$payload" | jq --arg v "$ops_remote" '.remote = $v')"
     fi
     if [ -n "$ops_deploy_key" ]; then
-      payload="$(printf '%s' "$payload" | jq --arg v "$ops_deploy_key" '.data.deploy_key = $v')"
+      payload="$(printf '%s' "$payload" | jq --arg v "$ops_deploy_key" '.deploy_key = $v')"
     fi
+    payload="$(printf '%s' "$payload" | jq '{data: .}')"
+
     if ! _hvault_request POST "kv/data/${OPS_REPO_PATH}" "$payload" >/dev/null; then
       log "error: failed to write ${OPS_REPO_PATH}"
     else
