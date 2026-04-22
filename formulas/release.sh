@@ -67,6 +67,17 @@ if ! echo "$RELEASE_VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
   exit 1
 fi
 
+# Assert tree VERSION file matches the action context version (#605)
+if [ ! -f "${FACTORY_ROOT}/VERSION" ]; then
+  log "ERROR: VERSION file not found at ${FACTORY_ROOT}/VERSION"
+  exit 1
+fi
+tree_ver=$(tr -d '[:space:]' < "${FACTORY_ROOT}/VERSION")
+if [ "v${tree_ver}" != "${RELEASE_VERSION}" ]; then
+  log "ERROR: VERSION file says ${tree_ver}, action context says ${RELEASE_VERSION}"
+  exit 1
+fi
+
 # Required env vars
 for var in FORGE_URL FORGE_TOKEN FORGE_REPO PRIMARY_BRANCH; do
   if [ -z "${!var:-}" ]; then

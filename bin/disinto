@@ -47,6 +47,10 @@ source "${FACTORY_ROOT}/lib/disinto/backup.sh"  # backup create/import
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+cmd_version() {
+  cat "${FACTORY_ROOT}/VERSION"
+}
+
 usage() {
   cat <<EOF
 disinto — autonomous code factory CLI
@@ -63,6 +67,7 @@ Usage:
   disinto ci-logs <pipeline> [--step <name>]
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
+  disinto version                      Print the tree's VERSION file contents
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
   disinto role <subcommand>            Manage roles (enable/disable)
@@ -3377,6 +3382,7 @@ case "${1:-}" in
   run)             shift; disinto_run "$@" ;;
   ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
+  version)         shift; cmd_version "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   role)            shift; disinto_role "$@" ;;
   agent)           shift; disinto_agent "$@" ;;
