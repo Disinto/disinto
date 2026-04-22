@@ -202,9 +202,18 @@ agent_run() {
     log "agent_run: empty output (claude may have crashed or failed, exit code: $rc)"
   fi
 
-  # Extract and persist session_id
+  # Extract and persist session_id.
+  #
+  # With --output-format stream-json (post #568) the output is a stream of
+  # JSON objects, each carrying `session_id`. A naive `jq -r '.session_id'`
+  # emits the same UUID once per message — concatenated with newlines the
+  # value becomes `uuid\nuuid\n...` which breaks `--resume <sid>` in the
+  # nudge path with "Session IDs must be in UUID format".
+  #
+  # Use `jq -s 'last'` to slurp the stream and take only the final object's
+  # session_id. For plain `json` output (one object) this still works.
   local new_sid
-  new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
+  new_sid=$(printf '%s' "$output" | jq -rs 'last.session_id // empty' 2>/dev/null) || true
   if [ -n "$new_sid" ]; then
     _AGENT_SESSION_ID="$new_sid"
     printf '%s' "$new_sid" > "$SID_FILE"
