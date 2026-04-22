@@ -9,9 +9,11 @@
 #   1. Guards: run lock, memory check
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
-#   4. Load formula (formulas/run-supervisor.toml)
-#   5. Context: AGENTS.md, preflight metrics, structural graph
-#   6. agent_run(worktree, prompt) → Claude monitors, may clean up
+#   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
+#   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
+#   6. Load formula (formulas/run-supervisor.toml)
+#   7. Context: AGENTS.md, preflight metrics, structural graph
+#   8. agent_run(worktree, prompt) → Claude monitors, may clean up
 #
 # Usage:
 #   supervisor-run.sh [projects/disinto.toml]   # project config (default: disinto)
@@ -111,6 +113,73 @@ else
     log "Preflight error: $(echo "$PREFLIGHT_OUTPUT" | tail -3)"
   fi
 fi
+
+# ── Evaluate recipes for abnormal signals ──────────────────────────────────
+# Run evaluate-recipes.sh to detect P0-P2 conditions.
+# Output: {"fired":[{"name":"...","severity":"P1","evidence":"...","action":"direct|llm","action_script":"..."}]}
+RECIPE_OUTPUT=""
+if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
+  _eval_exit=0
+  RECIPE_OUTPUT=$(bash "$SCRIPT_DIR/evaluate-recipes.sh" \
+    "$FACTORY_ROOT/supervisor/recipes.yaml" \
+    <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || _eval_exit=$?
+  if [ "$_eval_exit" -ne 0 ]; then
+    log "WARNING: recipe evaluator exited $_eval_exit — falling back to always-LLM gate"
+  fi
+fi
+
+# ── LLM escalation gate ───────────────────────────────────────────────────
+# Fast path: no abnormal signals → skip LLM entirely.
+# Only invoke claude -p when recipe evaluator fired at least one abnormal
+# signal that requires LLM attention (action: llm, or action_script missing).
+#
+# This eliminates ~72 unnecessary opus calls per day on healthy boxes.
+# See issue #593.
+LLM_REQUIRED=true
+if [ -n "$RECIPE_OUTPUT" ]; then
+  _fired_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '.fired | length' 2>/dev/null || echo "0")
+  if [ "$_fired_count" -gt 0 ]; then
+    # At least one recipe fired — check if any need LLM.
+    # If all fires have action: direct AND a valid action_script, skip LLM
+    # (direct-action handlers are wired in #594; until then, fall through).
+    _llm_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "llm")] | length' 2>/dev/null || echo "0")
+    _direct_ok_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "direct" and .action_script != "__MISSING__")] | length' 2>/dev/null || echo "0")
+    _direct_total=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "direct")] | length' 2>/dev/null || echo "0")
+    _has_non_direct=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action != "direct")] | length' 2>/dev/null || echo "0")
+
+    if [ "$_llm_count" -gt 0 ]; then
+      LLM_REQUIRED=true
+    elif [ "$_direct_total" -gt 0 ] && [ "$_direct_total" -eq "$_direct_ok_count" ] && [ "$_has_non_direct" -eq 0 ]; then
+      # All direct fires have valid action_script and no non-direct actions —
+      # safe to skip LLM (direct-action dispatch is implemented in #594).
+      log "All ${_direct_total} fired recipe(s) have direct-action handlers — skipping LLM (fast path)"
+      LLM_REQUIRED=false
+    else
+      # Mixed: some direct fires lack action_script, or there are incident/vault/llm actions
+      LLM_REQUIRED=true
+    fi
+  else
+    # No recipes fired — healthy box, no LLM needed.
+    LLM_REQUIRED=false
+  fi
+fi
+
+if [ "$LLM_REQUIRED" = false ]; then
+  log "No abnormal signals requiring LLM — fast path, skipping agent_run"
+  # Write journal entry (brief "all clear" only if prior run had findings)
+  profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" || true
+
+  # Commit and push any incident files written during this tick
+  if [ -n "${OPS_REPO_ROOT:-}" ] && [ -d "${OPS_REPO_ROOT}/incidents" ]; then
+    bash "$SCRIPT_DIR/commit-incidents.sh" || true
+  fi
+
+  rm -f "$SCRATCH_FILE"
+  log "--- Supervisor run done (fast path) ---"
+  exit 0
+fi
+
+log "Abnormal signals detected — proceeding to LLM escalation path"
 
 # ── Load formula + context ───────────────────────────────────────────────
 load_formula_or_profile "supervisor" "$FACTORY_ROOT/formulas/run-supervisor.toml" || exit 1
@@ -324,15 +393,6 @@ EOF
   else
     log "WP agent restart already performed in this run (since $_wp_last_restart), skipping"
   fi
-fi
-
-# ── Evaluate recipes for abnormal signals ──────────────────────────────────
-# Run evaluate-recipes.sh to detect P0-P2 conditions; inject into prompt
-RECIPE_OUTPUT=""
-if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
-  RECIPE_OUTPUT=$(bash "$SCRIPT_DIR/evaluate-recipes.sh" \
-    "$FACTORY_ROOT/supervisor/recipes.yaml" \
-    <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || true
 fi
 
 # ── Run agent ─────────────────────────────────────────────────────────────
