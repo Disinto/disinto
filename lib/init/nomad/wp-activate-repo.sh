@@ -42,7 +42,6 @@ FORGE_REPO="${FORGE_REPO:-}"  # e.g. disinto-admin/disinto
 WP_HOST="${WP_HOST:-http://127.0.0.1:8000}"
 WOODPECKER_HOST="${WOODPECKER_HOST:-${WP_HOST}}"
 WP_DB="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
-WP_HOOK_URL="${WP_HOOK_URL:-}"  # computed after DB step (needs JWT)
 
 LOG_TAG="[wp-activate-repo]"
 log() { printf '%s %s\n' "$LOG_TAG" "$*" >&2; }
@@ -72,7 +71,7 @@ log "── Step 2/3: activate repo row in Woodpecker DB ──"
 HASH=$(openssl rand -hex 32)
 
 python3 - "${WP_DB}" "${FORGE_OWNER}" "${FORGE_REPO}" "${forge_remote_id}" \
-  "${clone_url}" "${ssh_url}" "${default_branch}" "${HASH}" "${FORGE_URL}" <<PY
+  "${clone_url}" "${ssh_url}" "${default_branch}" "${FORGE_URL}" "${HASH}" <<PY
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 # Find forge_id and admin user_id (seeded by OAuth flow).
@@ -106,9 +105,9 @@ else:
         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (admin_uid, forge_id, sys.argv[4], org_id, sys.argv[2], sys.argv[3].split("/")[-1],
          sys.argv[3], "", f"{sys.argv[8]}/{sys.argv[3]}", sys.argv[5], sys.argv[6],
-         sys.argv[7], 1, 60, "public", 0, 0, '{"network":false,"security":false,"volumes":false}',
-         "none", "[]",
-         1, 1, 0, "[]", sys.argv[8], "[]", 0, "[]", 0, "[]", 0))
+         sys.argv[7], 1, 60, "public", 0, 0,
+         '{"network":false,"security":false,"volumes":false}', "none", 1, 1, 0, "[]",
+         sys.argv[9], "[]", 0, "[]", 0, "[]", 0, "[]", 0, "[]"))
     print("repo row inserted")
 c.commit()
 PY
