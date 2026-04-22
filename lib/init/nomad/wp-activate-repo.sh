@@ -40,7 +40,7 @@ FORGE_URL="${FORGE_URL:-http://127.0.0.1:3000}"
 FORGE_TOKEN="${FORGE_TOKEN:-}"
 FORGE_REPO="${FORGE_REPO:-}"  # e.g. disinto-admin/disinto
 WP_HOST="${WP_HOST:-http://127.0.0.1:8000}"
-WP_HOOK_URL="${WP_HOOK_URL:-${WP_HOST}/api/hook}"
+WOODPECKER_HOST="${WOODPECKER_HOST:-${WP_HOST}}"
 WP_DB="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
 
 LOG_TAG="[wp-activate-repo]"
@@ -52,7 +52,6 @@ die() { printf '%s ERROR: %s\n' "$LOG_TAG" "$*" >&2; exit 1; }
 [ -f "$WP_DB" ]       || die "WP sqlite DB not found at $WP_DB"
 
 FORGE_OWNER="${FORGE_REPO%/*}"
-FORGE_NAME="${FORGE_REPO#*/}"
 
 log "── Step 1/3: look up Forgejo repo metadata ──"
 repo_json=$(curl -sf --max-time 10 \
@@ -69,28 +68,31 @@ ssh_url=$(printf '%s' "$repo_json" | jq -r '.ssh_url // empty')
 log "Forgejo repo id=${forge_remote_id}, branch=${default_branch}"
 
 log "── Step 2/3: activate repo row in Woodpecker DB ──"
-python3 - <<PY
+HASH=$(openssl rand -hex 32)
+
+python3 - "${WP_DB}" "${FORGE_OWNER}" "${FORGE_REPO}" "${forge_remote_id}" \
+  "${clone_url}" "${ssh_url}" "${default_branch}" "${FORGE_URL}" "${HASH}" <<PY
 import sqlite3, sys
-c = sqlite3.connect("${WP_DB}")
+c = sqlite3.connect(sys.argv[1])
 # Find forge_id and admin user_id (seeded by OAuth flow).
 forge_id = next((r[0] for r in c.execute("SELECT id FROM forges LIMIT 1")), None)
 admin_uid = next((r[0] for r in c.execute("SELECT id FROM users WHERE admin=1 LIMIT 1")), None)
 if forge_id is None or admin_uid is None:
-    print("${LOG_TAG} ERROR: forges/users not seeded — run wp-oauth-register.sh first", file=sys.stderr)
+    print("ERROR: forges/users not seeded — run wp-oauth-register.sh first", file=sys.stderr)
     sys.exit(1)
 # Ensure org row
 org_id = next((r[0] for r in c.execute(
-    "SELECT id FROM orgs WHERE forge_id=? AND name=?", (forge_id, "${FORGE_OWNER}"))), None)
+    "SELECT id FROM orgs WHERE forge_id=? AND name=?", (forge_id, sys.argv[2]))), None)
 if org_id is None:
     c.execute("INSERT INTO orgs (forge_id, name, is_user, private) VALUES (?,?,0,0)",
-              (forge_id, "${FORGE_OWNER}"))
+              (forge_id, sys.argv[2]))
     org_id = c.lastrowid
 existing = next((r[0] for r in c.execute(
     "SELECT id FROM repos WHERE forge_id=? AND full_name=?",
-    (forge_id, "${FORGE_REPO}"))), None)
+    (forge_id, sys.argv[3]))), None)
 if existing:
     c.execute("UPDATE repos SET active=1, allow_pr=1 WHERE id=?", (existing,))
-    print(f"${LOG_TAG} repo row id={existing} updated (active=1)")
+    print(f"repo row id={existing} updated (active=1)")
 else:
     c.execute(
         "INSERT INTO repos (user_id, forge_id, forge_remote_id, org_id, owner, name, full_name,"
@@ -101,34 +103,69 @@ else:
         "  registry_extension_endpoint, registry_extension_netrc,"
         "  secret_extension_endpoint, secret_extension_netrc)"
         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (admin_uid, forge_id, "${forge_remote_id}", org_id, "${FORGE_OWNER}", "${FORGE_NAME}",
-         "${FORGE_REPO}", "", "${FORGE_URL}/${FORGE_REPO}", "${clone_url}", "${ssh_url}",
-         "${default_branch}", 1, 60, "public", 0, 0, "none", "",
-         1, 1, 0, "", "wp-activate-repo", 0, 0, "", 0, "", "", 0, "", 0))
-    print(f"${LOG_TAG} repo row inserted")
+        (admin_uid, forge_id, sys.argv[4], org_id, sys.argv[2], sys.argv[3].split("/")[-1],
+         sys.argv[3], "", f"{sys.argv[8]}/{sys.argv[3]}", sys.argv[5], sys.argv[6],
+         sys.argv[7], 1, 60, "public", 0, 0,
+         '{"network":false,"security":false,"volumes":false}', "none", 1, 1, 0, "[]",
+         sys.argv[9], "[]", 0, "[]", 0, "[]", 0, "[]", 0, "[]"))
+    print("repo row inserted")
 c.commit()
 PY
+
+# Compute JWT: {"type":"hook","forge-id":"<int>","repo-forge-remote-id":"<int>"} signed with repos.hash
+log "── Step 2b/3: compute JWT for webhook URL ──"
+JWT=$(python3 - "${HASH}" "${forge_remote_id}" "${WOODPECKER_HOST}" <<PY
+import sqlite3, sys, json, hmac, hashlib, base64
+
+hash_val = sys.argv[1]
+repo_remote_id = sys.argv[2]
+wp_host = sys.argv[3]
+
+c = sqlite3.connect("${WP_DB}")
+forge_id = next((r[0] for r in c.execute("SELECT id FROM forges LIMIT 1")), None)
+c.close()
+
+def _b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+payload = _b64url(json.dumps({
+    "type": "hook",
+    "forge-id": str(forge_id),
+    "repo-forge-remote-id": str(repo_remote_id),
+}, separators=(",", ":")).encode())
+signing_input = f"{header}.{payload}"
+sig = hmac.new(hash_val.encode(), signing_input.encode(), hashlib.sha256).digest()
+token = f"{signing_input}.{_b64url(sig)}"
+
+# Build URL: join wp_host (may include subpath) + /api/hook?access_token=jwt
+url = wp_host.rstrip("/") + "/api/hook?access_token=" + token
+print(url)
+PY
+)
 
 log "── Step 3/3: register Forgejo webhook to Woodpecker ──"
 hooks=$(curl -sf --max-time 10 \
   -H "Authorization: token ${FORGE_TOKEN}" \
   "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/hooks") || hooks="[]"
 
-if printf '%s' "$hooks" | jq -e --arg url "$WP_HOOK_URL" '.[] | select(.config.url == $url)' >/dev/null 2>&1; then
-    log "webhook already exists for ${WP_HOOK_URL} — skip"
+if printf '%s' "$hooks" | jq -e --arg url "$JWT" '.[] | select(.config.url == $url)' >/dev/null 2>&1; then
+    log "webhook already exists — skip"
 else
-    curl -sf --max-time 10 -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/hooks" \
-      -d "$(jq -n --arg url "$WP_HOOK_URL" '{
-        type: "gitea",
-        config: { url: $url, content_type: "json" },
-        events: ["push", "pull_request", "pull_request_sync"],
-        active: true
-      }')" >/dev/null \
-      && log "webhook registered -> ${WP_HOOK_URL}" \
-      || die "failed to register webhook"
+    if curl -sf --max-time 10 -X POST \
+        -H "Authorization: token ${FORGE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/hooks" \
+        -d "$(jq -n --arg url "$JWT" '{
+          type: "forgejo",
+          config: { url: $url, content_type: "json" },
+          events: ["push", "pull_request", "pull_request_sync"],
+          active: true
+        }')" >/dev/null; then
+        log "webhook registered"
+    else
+        die "failed to register webhook"
+    fi
 fi
 
 log "done — repo activated, webhook wired"
