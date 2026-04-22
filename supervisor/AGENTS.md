@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5be020b9de1a719cb331b930cf45caf7559473f7 -->
+<!-- last-reviewed: HEAD -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -11,7 +11,7 @@ resources or human decisions, files vault items instead of escalating directly.
 - **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `data/logs/supervisor/supervisor.log` (canonical sink — both `supervisor-run.sh` internal logging and entrypoint stderr redirect write to this single file).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
-Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
+Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
@@ -67,7 +67,9 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
 → lock + memory guard → run preflight.sh (collect metrics) → **WP agent health recovery**
-(if unhealthy: restart container + recover ci_exhausted issues) → load formula + context → run
-claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes, writes journal
-→ `incidents` step writes markdown files for fired P0–P2 recipes → `commit-incidents.sh` commits
-and pushes to ops repo → `PHASE:done`.
+(if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
+(`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
+and none require LLM, skip to journal + exit (fast path); otherwise proceed → load formula + context
+→ run claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes,
+writes journal → `incidents` step writes markdown files for fired P0–P2 recipes
+→ `commit-incidents.sh` commits and pushes to ops repo → `PHASE:done`.

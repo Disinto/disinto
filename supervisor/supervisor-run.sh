@@ -119,9 +119,13 @@ fi
 # Output: {"fired":[{"name":"...","severity":"P1","evidence":"...","action":"direct|llm","action_script":"..."}]}
 RECIPE_OUTPUT=""
 if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
+  _eval_exit=0
   RECIPE_OUTPUT=$(bash "$SCRIPT_DIR/evaluate-recipes.sh" \
     "$FACTORY_ROOT/supervisor/recipes.yaml" \
-    <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || true
+    <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || _eval_exit=$?
+  if [ "$_eval_exit" -ne 0 ]; then
+    log "WARNING: recipe evaluator exited $_eval_exit — falling back to always-LLM gate"
+  fi
 fi
 
 # ── LLM escalation gate ───────────────────────────────────────────────────
@@ -131,7 +135,7 @@ fi
 #
 # This eliminates ~72 unnecessary opus calls per day on healthy boxes.
 # See issue #593.
-LLM_REQUIRED=false
+LLM_REQUIRED=true
 if [ -n "$RECIPE_OUTPUT" ]; then
   _fired_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '.fired | length' 2>/dev/null || echo "0")
   if [ "$_fired_count" -gt 0 ]; then
@@ -141,15 +145,16 @@ if [ -n "$RECIPE_OUTPUT" ]; then
     _llm_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "llm")] | length' 2>/dev/null || echo "0")
     _direct_ok_count=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "direct" and .action_script != "__MISSING__")] | length' 2>/dev/null || echo "0")
     _direct_total=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action == "direct")] | length' 2>/dev/null || echo "0")
+    _has_non_direct=$(printf '%s' "$RECIPE_OUTPUT" | jq -r '[.fired[] | select(.action != "direct")] | length' 2>/dev/null || echo "0")
 
     if [ "$_llm_count" -gt 0 ]; then
       LLM_REQUIRED=true
-    elif [ "$_direct_total" -gt 0 ] && [ "$_direct_total" -eq "$_direct_ok_count" ]; then
-      # All direct fires have valid action_script — fast path (no LLM needed)
-      # Direct actions are handled by #594; for now this is a no-op fast path.
+    elif [ "$_direct_total" -gt 0 ] && [ "$_direct_total" -eq "$_direct_ok_count" ] && [ "$_has_non_direct" -eq 0 ]; then
+      # All direct fires have valid action_script and no non-direct actions —
+      # safe to skip LLM (direct-action dispatch is implemented in #594).
       log "All ${_direct_total} fired recipe(s) have direct-action handlers — skipping LLM (fast path)"
     else
-      # Mixed: some direct fires lack action_script, or there are incident/vault actions
+      # Mixed: some direct fires lack action_script, or there are incident/vault/llm actions
       LLM_REQUIRED=true
     fi
   fi
