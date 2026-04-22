@@ -18,6 +18,11 @@ ARG TEA_VERSION=0.9.2
 RUN curl -fsSL "https://dl.gitea.com/tea/${TEA_VERSION}/tea-${TEA_VERSION}-linux-amd64" \
     -o /usr/local/bin/tea && chmod +x /usr/local/bin/tea
 
+# Install yq — YAML processor (used by supervisor recipe evaluator)
+ARG YQ_VERSION=4.45.1
+RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
+    -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
 # Install Claude Code CLI — agent runtime for all LLM backends (llama, Claude API).
 # The CLI is the execution environment; ANTHROPIC_BASE_URL selects the model provider.
 RUN npm install -g @anthropic-ai/claude-code@2.1.84

@@ -30,6 +30,10 @@ disinto/                 (code repo)
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring (polling-loop executor)
 │                  preflight.sh — pre-flight data collection for supervisor formula
+│                  evaluate-recipes.sh — YAML recipe evaluator for abnormal-signal detection
+│                  recipes.yaml — recipe definitions (sections, rules, actions)
+│                  actions/ — remediation action scripts: cleanup-locks.sh, cleanup-worktrees.sh,
+│                           disk-pressure.sh, git-rebase-fix.sh, memory-crisis.sh, wp-agent-restart.sh
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
