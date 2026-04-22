@@ -32,12 +32,12 @@ export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 export FORGE_TOKEN_OVERRIDE="${FORGE_SUPERVISOR_TOKEN:-}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
+# shellcheck source=../lib/guard.sh
+source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
 # shellcheck source=../lib/worktree.sh
 source "$FACTORY_ROOT/lib/worktree.sh"
-# shellcheck source=../lib/guard.sh
-source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 # shellcheck source=../lib/ci-helpers.sh
