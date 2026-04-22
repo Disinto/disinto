@@ -728,6 +728,13 @@ _disinto_init_nomad() {
   local dry_run="${1:-false}" empty="${2:-false}" with_services="${3:-}"
   local import_env="${4:-}" import_sops="${5:-}" age_key="${6:-}"
   local repo_url="${7:-}" forge_url_flag="${8:-}"
+  # Derive project name (shared by dry-run and real deploy paths)
+  local project_name="disinto"
+  if [ -n "$repo_url" ]; then
+    project_name=$(parse_repo_slug "$repo_url")
+    project_name="${project_name##*/}"
+  fi
+  local forge_url="${forge_url_flag:-${FORGE_URL:-http://localhost:3000}}"
   local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
   local deploy_sh="${FACTORY_ROOT}/lib/init/nomad/deploy.sh"
   local vault_engines_sh="${FACTORY_ROOT}/lib/init/nomad/vault-engines.sh"
@@ -877,13 +884,6 @@ _disinto_init_nomad() {
         fi
       done
 
-      # Derive project name for dry-run output (#574)
-      local project_name="disinto"
-      if [ -n "$repo_url" ]; then
-        project_name=$(parse_repo_slug "$repo_url")
-        project_name="${project_name##*/}"
-      fi
-      local forge_url="${forge_url_flag:-${FORGE_URL:-http://localhost:3000}}"
       local IFS=' '
       echo "[deploy] deployment order: ${DEPLOY_ORDER}"
       for svc in $DEPLOY_ORDER; do
