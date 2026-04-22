@@ -160,6 +160,18 @@ if ! command -v claude &>/dev/null; then
 fi
 log "Claude CLI: $(claude --version 2>&1 || true)"
 
+# Ensure CLAUDE_CONFIG_DIR exists before Claude runs (issue #579).
+# Setting CLAUDE_CONFIG_DIR to a missing path causes Claude to silently
+# hang at turn zero — 0 bytes stdout, no llama calls, no error, until
+# CLAUDE_TIMEOUT fires. bin/disinto's setup_claude_config_dir() creates
+# this on the host side during `disinto init`, but on Nomad the agents
+# alloc runs the container cold without that setup ever executing.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -d "$CLAUDE_CONFIG_DIR" ]; then
+  log "Creating CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR} (missing)"
+  install -d -m 0700 -o agent -g agent "$CLAUDE_CONFIG_DIR" \
+    || log "WARNING: failed to create $CLAUDE_CONFIG_DIR — Claude may hang"
+fi
+
 # ANTHROPIC_API_KEY fallback: when set, Claude uses the API key directly
 # and OAuth token refresh is not needed (no rotation race).  Log which
 # auth method is active so operators can debug 401s.
