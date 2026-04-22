@@ -142,6 +142,26 @@ Set up Anthropic OAuth so agents can authenticate.
    # Should return the new box's Forgejo version
    ```
 
+### 4.7 Finalize local clone remote
+
+The `/opt/disinto` clone was created during initial provisioning and still
+points at the old dev-box Forgejo. Repoint it to the new instance.
+
+```bash
+# On disinto-nomad-box
+./bin/disinto edge cutover-finalize --forge-host 10.10.10.132:3000
+```
+
+Idempotent — if origin already points at the new host, this is a no-op.
+
+Verify:
+
+```bash
+git -C /opt/disinto remote -v | grep origin
+# Should show 10.10.10.132:3000
+grep dev-box /opt/disinto/.git/config && echo "FAIL: still points at old host" || echo "OK"
+```
+
 ---
 
 ## 5. Post-cutover smoke

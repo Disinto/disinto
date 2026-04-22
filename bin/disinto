@@ -75,9 +75,10 @@ Validate subcommands:
   lint-ci                              Lint .woodpecker/*.yml for missing timeouts
 
 Edge subcommands:
-  register [project]    Register a new tunnel (generates keypair if needed)
-  deregister <project>  Remove a tunnel registration
-  status                Show registered tunnels
+  register [project]        Register a new tunnel (generates keypair if needed)
+  deregister <project>      Remove a tunnel registration
+  status                    Show registered tunnels
+  cutover-finalize [path]   Repoint git origin to new Forgejo host
 
 Role subcommands:
   disable <role>       Remove state file to disable role
@@ -2739,9 +2740,10 @@ disinto_agent() {
 # ── edge command ──────────────────────────────────────────────────────────────
 # Manage edge tunnel registrations (reverse SSH tunnels to edge hosts)
 # Usage: disinto edge <verb> [options]
-#   register [project]    Register a new tunnel (generates keypair if needed)
-#   deregister <project>  Remove a tunnel registration
-#   status                Show registered tunnels
+#   register [project]        Register a new tunnel (generates keypair if needed)
+#   deregister <project>      Remove a tunnel registration
+#   status                    Show registered tunnels
+#   cutover-finalize [path]   Repoint /opt/disinto origin to new Forgejo host
 disinto_edge() {
   local subcmd="${1:-}"
   local EDGE_HOST="${EDGE_HOST:-}"
@@ -2963,24 +2965,127 @@ disinto_edge() {
       fi
       ;;
 
+    cutover-finalize)
+      # Repoint /opt/disinto git origin to the new Forgejo host after nomad cutover.
+      # Usage: disinto edge cutover-finalize [--repo-path <path>] [--forge-host <host>]
+      # Idempotent: no-op if origin already points at the new host.
+      local repo_path="${FACTORY_ROOT}"
+      shift || true
+
+      # Parse flags
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --repo-path)
+            repo_path="$2"
+            shift 2
+            ;;
+          --forge-host)
+            shift
+            # Accept host with or without port/protocol
+            local forge_host="${1:-}"
+            shift
+            # Strip protocol prefix if present
+            forge_host="${forge_host#http://}"
+            forge_host="${forge_host#https://}"
+            # Strip trailing slash
+            forge_host="${forge_host%/}"
+            # Strip path if present
+            forge_host="${forge_host%%/*}"
+            ;;
+          *)
+            # Positional arg: repo path if not yet set
+            if [ -z "$repo_path" ] || [ "$repo_path" = "${FACTORY_ROOT}" ]; then
+              repo_path="$1"
+            fi
+            shift
+            ;;
+        esac
+      done
+
+      # Default forge host from env or derive from FORGE_URL
+      local forge_host="${forge_host:-${FORGE_HOST:-${FORGE_URL:-}}}"
+      if [ -n "$forge_host" ]; then
+        forge_host="${forge_host#http://}"
+        forge_host="${forge_host#https://}"
+        forge_host="${forge_host%/}"
+        forge_host="${forge_host%%/*}"
+      fi
+
+      if [ -z "$forge_host" ]; then
+        echo "Error: --forge-host is required (or set FORGE_HOST / FORGE_URL)" >&2
+        exit 1
+      fi
+
+      # Resolve repo path (default /opt/disinto)
+      if [ "$repo_path" = "${FACTORY_ROOT}" ]; then
+        repo_path="/opt/disinto"
+      fi
+
+      if [ ! -d "$repo_path/.git" ]; then
+        echo "Error: not a git repository: ${repo_path}" >&2
+        exit 1
+      fi
+
+      # Determine current origin URL
+      local current_origin
+      current_origin=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || current_origin=""
+
+      if [ -z "$current_origin" ]; then
+        echo "Error: no 'origin' remote found in ${repo_path}" >&2
+        exit 1
+      fi
+
+      # Normalize: strip .git suffix, protocol, and path components for comparison
+      local current_host
+      current_host=$(printf '%s' "$current_origin" | sed 's|https\?://||; s|\.git$||; s|/.*||')
+
+      if [ "$current_host" = "$forge_host" ]; then
+        echo "origin already points at ${forge_host} — no change needed"
+        return 0
+      fi
+
+      # Build the canonical origin URL
+      local new_url="http://${forge_host}/disinto-admin/disinto.git"
+
+      echo "Repointing origin in ${repo_path}:"
+      echo "  from: ${current_origin}"
+      echo "  to:   ${new_url}"
+
+      git -C "$repo_path" remote set-url origin "$new_url"
+
+      # Fetch to verify connectivity
+      echo "Fetching origin to verify..."
+      if git -C "$repo_path" fetch origin main 2>&1; then
+        echo "origin updated and verified: ${new_url}"
+      else
+        echo "Warning: fetch failed — remote may be unreachable (check network/credentials)" >&2
+        echo "  URL was set to: ${new_url}"
+      fi
+      ;;
+
     *)
       cat <<EOF >&2
 Usage: disinto edge <verb> [options]
 
 Manage edge tunnel registrations:
 
-  register [project]    Register a new tunnel (generates keypair if needed)
-  deregister <project>  Remove a tunnel registration
-  status                Show registered tunnels
+  register [project]        Register a new tunnel (generates keypair if needed)
+  deregister <project>      Remove a tunnel registration
+  status                    Show registered tunnels
+  cutover-finalize [path]   Repoint git origin to new Forgejo host
 
 Options:
   --edge-host <fqdn>    Edge host FQDN (default: edge.disinto.ai or EDGE_HOST env)
+  --forge-host <host>   Forgejo host for cutover-finalize (default: FORGE_HOST / FORGE_URL)
+  --repo-path <path>    Repository path for cutover-finalize (default: /opt/disinto)
 
 Examples:
   disinto edge register myproject
   disinto edge register myproject --edge-host custom.example.com
   disinto edge deregister myproject
   disinto edge status
+  disinto edge cutover-finalize --forge-host 10.10.10.132:3000
+  disinto edge cutover-finalize /opt/disinto --forge-host 10.10.10.132:3000
 EOF
       exit 1
       ;;
