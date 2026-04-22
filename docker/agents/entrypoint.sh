@@ -304,7 +304,24 @@ bootstrap_factory_repo() {
     mkdir -p "${DISINTO_LIVE}/projects"
     cp "${DISINTO_BAKED}"/projects/*.toml "${DISINTO_LIVE}/projects/"
     chown -R agent:agent "${DISINTO_LIVE}/projects"
-    log "Factory bootstrap: copied project TOMLs to live checkout"
+    log "Factory bootstrap: copied project TOMLs from baked copy to live checkout"
+  fi
+
+  # Also copy from host-volume path (/srv/disinto/project-repos/_factory/)
+  # where disinto init --backend=nomad seeds default TOMLs (#574).
+  local host_projects="/srv/disinto/project-repos/_factory/projects"
+  if [ -d "$host_projects" ]; then
+    mkdir -p "${DISINTO_LIVE}/projects"
+    local copied=false
+    for toml in "${host_projects}"/*.toml; do
+      [ -f "$toml" ] || continue
+      cp "$toml" "${DISINTO_LIVE}/projects/"
+      copied=true
+    done
+    if [ "$copied" = true ]; then
+      chown -R agent:agent "${DISINTO_LIVE}/projects"
+      log "Factory bootstrap: copied project TOMLs from host volume to live checkout"
+    fi
   fi
 
   # Verify the live checkout has the expected structure
