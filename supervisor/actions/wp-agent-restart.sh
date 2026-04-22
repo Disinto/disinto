@@ -10,11 +10,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=_common.sh
 source "$SCRIPT_DIR/_common.sh" "$@"
 
+# Override LOG_FILE/LOG_AGENT for consistent supervisor logging
+# shellcheck disable=SC2034
+LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
+# shellcheck disable=SC2034
+LOG_AGENT="supervisor"
+
 # WP agent container name (configurable via env var)
 export WP_AGENT_CONTAINER_NAME="${WP_AGENT_CONTAINER_NAME:-disinto-woodpecker-agent}"
 
-# Health reason passed as $1 by the dispatch loop in supervisor-run.sh
-_WP_HEALTH_REASON="${1:-}"
+# Health reason passed as $2 by the dispatch loop in supervisor-run.sh
+# ($1 = PROJECT_TOML, $2 = evidence/health reason)
+_WP_HEALTH_REASON="${2:-}"
 
 if [ -n "$_WP_HEALTH_REASON" ]; then
   log "WP agent detected as UNHEALTHY: $_WP_HEALTH_REASON"
