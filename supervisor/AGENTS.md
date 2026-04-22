@@ -30,12 +30,18 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
   automatic container restart + `blocked:ci_exhausted` issue recovery in
   `supervisor-run.sh` before the Claude session starts.
-- `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
-  health-assessment, decide-actions, report, journal) with `needs` dependencies.
-  Claude evaluates all metrics and takes actions in a single interactive session.
-  Health-assessment now includes P2 **Woodpecker agent unhealthy** classification
-  (container not running, ≥3 gRPC errors/20m, or ≥3 fast-failure pipelines/15m);
-  decide-actions documents the pre-session auto-recovery path
+- `formulas/run-supervisor.toml` — Execution spec: six steps (preflight review,
+  health-assessment, decide-actions, report, incidents, journal) with `needs`
+  dependencies. Claude evaluates all metrics and takes actions in a single
+  interactive session. Health-assessment now includes P2 **Woodpecker agent
+  unhealthy** classification (container not running, ≥3 gRPC errors/20m, or
+  ≥3 fast-failure pipelines/15m); decide-actions documents the pre-session
+  auto-recovery path
+- `supervisor/write-incident.sh` — Writes one markdown incident file per fired
+  recipe (P0–P2 only) under `${OPS_REPO_ROOT}/incidents/`. Sources
+  `lib/secret-scan.sh` for redaction; graceful exit in degraded mode.
+- `supervisor/commit-incidents.sh` — Commits and pushes incident markdown files
+  to the ops repo after the Claude session writes them.
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 
@@ -62,4 +68,6 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 **Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
 → lock + memory guard → run preflight.sh (collect metrics) → **WP agent health recovery**
 (if unhealthy: restart container + recover ci_exhausted issues) → load formula + context → run
-claude -p via agent-sdk.sh → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.
+claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes, writes journal
+→ `incidents` step writes markdown files for fired P0–P2 recipes → `commit-incidents.sh` commits
+and pushes to ops repo → `PHASE:done`.

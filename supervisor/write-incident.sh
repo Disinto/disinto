@@ -51,6 +51,12 @@ slug=$(echo "$name" | tr '[:upper:] ' '[:lower]-' | tr -cd 'a-z0-9-' | cut -c1-4
 TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 FILENAME="${TIMESTAMP}-${slug}.md"
 
+# ── Degraded-mode guard ────────────────────────────────────────────────────
+if [ -z "${OPS_REPO_ROOT:-}" ]; then
+  echo "write-incident: OPS_REPO_ROOT not set — skipping incident write (degraded mode)" >&2
+  exit 0
+fi
+
 # ── Ensure incidents directory exists ──────────────────────────────────────
 INCIDENTS_DIR="${OPS_REPO_ROOT}/incidents"
 mkdir -p "$INCIDENTS_DIR"
@@ -62,7 +68,15 @@ if [ -f "$FACTORY_ROOT/lib/secret-scan.sh" ]; then
   redact_fn() { redact_secrets "$1"; }
 else
   redact_fn() {
-    printf '%s' "$1" | grep -iv 'token\|password\|secret\|api_key\|bearer' || printf '%s' "$1"
+    # Use sed to replace values after sensitive key names with [REDACTED].
+    # This avoids the grep -iv inversion bug where all-matching input
+    # produces no output and triggers a fallback that leaks the original.
+    printf '%s' "$1" | sed -E \
+      -e 's/(token[=: ]+)\S+/\1\[REDACTED\]/gi' \
+      -e 's/(password[=: ]+)\S+/\1\[REDACTED\]/gi' \
+      -e 's/(secret[=: ]+)\S+/\1\[REDACTED\]/gi' \
+      -e 's/(api_key[=: ]+)\S+/\1\[REDACTED\]/gi' \
+      -e 's/(bearer\s+)\S+/\1\[REDACTED\]/gi'
   }
 fi
 

@@ -44,7 +44,8 @@ summary_msg="${summary_msg%, }"
 # ── Git commit and push ────────────────────────────────────────────────────
 cd "$OPS_REPO_ROOT"
 
-# Stage only new incident files (avoid journal churn)
+# Stage all changes under incidents/ (incident files are write-once with
+# timestamped names, so there is no risk of stale journal churn)
 git add incidents/
 
 # Skip if nothing to commit (e.g., already committed)
