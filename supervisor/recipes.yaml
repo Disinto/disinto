@@ -146,7 +146,7 @@ recipes:
     severity: P3
     detect:
       source: preflight
-      section: "Open PRs"
+      section: "Blocked Issues"
       rule: stuck_pr_gt
       threshold: 0
     action: direct

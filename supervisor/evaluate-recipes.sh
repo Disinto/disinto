@@ -196,11 +196,11 @@ eval_ci_exhausted_blocked_gt() {
 eval_stuck_pr_gt() {
   local section_text="$1"
   local threshold="$2"
-  # Count PR lines (start with #)
-  local pr_count
-  pr_count=$(printf '%s\n' "$section_text" | grep -cP '^#\d+' || true)
-  if [ "${pr_count:-0}" -gt "$threshold" ] 2>/dev/null; then
-    _EVIDENCE="Stuck PRs: ${pr_count} (threshold: >${threshold})"
+  # Count blocked issue lines (start with "  #" — matches "Blocked Issues" section format)
+  local blocked_count
+  blocked_count=$(printf '%s\n' "$section_text" | grep -cP '^  #\d+' || true)
+  if [ "${blocked_count:-0}" -gt "$threshold" ] 2>/dev/null; then
+    _EVIDENCE="Blocked issues: ${blocked_count} (threshold: >${threshold})"
     return 0
   fi
   return 1

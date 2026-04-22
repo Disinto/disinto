@@ -51,8 +51,8 @@ if [ "$_blocked_count" -gt 0 ]; then
       _issues_processed=$(( _issues_processed + 1 ))
 
       # Check for idempotency guard - already swept by supervisor?
-      _issue_body=$(echo "$issue_json" | jq -r '.body // ""' 2>/dev/null || echo "")
-      if echo "$_issue_body" | grep -q "<!-- supervisor-swept -->"; then
+      _swept_comments=$(forge_api GET "/issues/$_issue_num/comments" 2>/dev/null || echo "[]")
+      if echo "$_swept_comments" | jq -e '.[] | select(.body | contains("<!-- supervisor-swept -->"))' >/dev/null 2>&1; then
         log "Issue #$_issue_num already swept by supervisor, skipping"
         continue
       fi
