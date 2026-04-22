@@ -1145,6 +1145,33 @@ _disinto_init_nomad() {
           echo "warning: forgejo-bootstrap.sh not found or not executable" >&2
         fi
       fi
+
+      # Post-deploy: seed Woodpecker repo secrets (#603) after woodpecker-agent
+      # is up. Reads GHCR_TOKEN + FORGE_TOKEN from env and upserts them into
+      # the WP secrets table so tag-triggered pipelines (publish-images.yml)
+      # can authenticate. Missing env vars are warned, not fatal.
+      # Precondition: wp-activate-repo.sh must have inserted the repo row.
+      if [ "$svc" = "woodpecker-agent" ]; then
+        echo ""
+        echo "── Seeding Woodpecker repo secrets ─────────────────────────"
+        local wp_seed_script="${FACTORY_ROOT}/lib/init/nomad/wp-seed-secrets.sh"
+        if [ -x "$wp_seed_script" ]; then
+          if [ "$(id -u)" -eq 0 ]; then
+            FORGE_REPO="${FORGE_REPO:-}" "$wp_seed_script" \
+              || echo "warning: wp-seed-secrets.sh failed (non-fatal)" >&2
+          else
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "Error: wp-seed-secrets.sh must run as root and sudo is not installed" >&2
+              exit 1
+            fi
+            sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN -- \
+              "$wp_seed_script" \
+              || echo "warning: wp-seed-secrets.sh failed (non-fatal)" >&2
+          fi
+        else
+          echo "warning: wp-seed-secrets.sh not found or not executable" >&2
+        fi
+      fi
     done
   fi
 
