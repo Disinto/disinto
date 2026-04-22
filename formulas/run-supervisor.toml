@@ -102,7 +102,7 @@ title = "Fix what you can, file vault items for what you cannot"
 description = """
 For each finding from the health assessment, decide and execute an action.
 
-### Auto-fixable (execute these directly)
+### Auto-fixable (executed procedurally by recipe action scripts)
 
 **P2 Woodpecker agent unhealthy:**
 The supervisor-run.sh script automatically handles WP agent recovery:
@@ -114,46 +114,20 @@ The supervisor-run.sh script automatically handles WP agent recovery:
 - Avoids duplicate restarts via 5-minute cooldown in history file
 
 **P0 Memory crisis:**
-  # Kill stale one-shot claude processes (>3h old)
-  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
-  # Drop filesystem caches
-  sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+Action script: `supervisor/actions/memory-crisis.sh` — kills stale claude processes, drops caches.
 
 **P1 Disk pressure:**
-  # First pass: dangling only (cheap, safe)
-  sudo docker system prune -f >/dev/null 2>&1 || true
-  # If still > 80%, escalate to all unused images (more aggressive but necessary)
-  _pct=$(df -h / | awk 'NR==2{print $5}' | tr -d '%')
-  if [ "${_pct:-0}" -gt 80 ]; then
-    sudo docker system prune -a -f >/dev/null 2>&1 || true
-  fi
-  # Truncate logs > 10MB
-  for f in "$FACTORY_ROOT"/{dev,review,supervisor,gardener,planner,predictor}/*.log; do
-    [ -f "$f" ] && [ "$(du -k "$f" | cut -f1)" -gt 10240 ] && truncate -s 0 "$f"
-  done
-
-**P2 Dead lock files:**
-  rm -f /path/to/stale.lock
-
-**P2 Stale rebase:**
-  cd "$PROJECT_REPO_ROOT"
-  git rebase --abort 2>/dev/null
-  git checkout "$PRIMARY_BRANCH" 2>/dev/null
-
-**P2 Wrong branch:**
-  cd "$PROJECT_REPO_ROOT"
-  git checkout "$PRIMARY_BRANCH" 2>/dev/null
-
-**P4 Stale PHASE:escalate files (closed issues):**
-  Already handled by preflight.sh auto-cleanup. Check "Stale Phase Cleanup"
-  in the metrics for results. Log any cleanups in the journal.
+Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log truncation.
 
 **P4 Stale worktrees:**
-  git -C "$PROJECT_REPO_ROOT" worktree remove --force /tmp/stale-worktree 2>/dev/null
-  git -C "$PROJECT_REPO_ROOT" worktree prune 2>/dev/null
+Action script: `supervisor/actions/cleanup-worktrees.sh` — git worktree prune.
 
-**P4 Stale claude processes:**
-  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
+**P4 Dead lock files:**
+Action script: `supervisor/actions/cleanup-locks.sh` — removes lock files for dead PIDs.
+
+**P4 Stale PHASE:escalate files:**
+Action script: `supervisor/actions/cleanup-phase-files.sh` — removes PHASE:escalate files
+for closed issues (24h grace period).
 
 **P3 Stale PRs (CI done >20min, no push since):**
   Do NOT read dev-poll.sh, push branches, attempt merges, or investigate pipeline code.

@@ -19,6 +19,56 @@ source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
 
+# ── Stale Phase Cleanup Function ──────────────────────────────────────────
+# Auto-remove PHASE:escalate files whose parent issue/PR is confirmed closed.
+# Grace period: 24h after issue closure to avoid race conditions.
+#
+# Named function for reuse by cleanup-phase-files.sh action script.
+# Usage: __preflight_cleanup_stale_phases <fn>  where <fn> is echo|log|:
+__preflight_cleanup_stale_phases() {
+  local _out_fn="${1:-echo}"
+  local _found_stale=false
+  for _pf in /tmp/*-session-*.phase; do
+    [ -f "$_pf" ] || continue
+    _phase_line=$(head -1 "$_pf" 2>/dev/null || echo "")
+    # Only target PHASE:escalate files
+    case "$_phase_line" in
+      PHASE:escalate*) ;;
+      *) continue ;;
+    esac
+    # Extract issue number: *-session-{PROJECT_NAME}-{number}.phase
+    _base=$(basename "$_pf" .phase)
+    if [[ "$_base" =~ -session-${PROJECT_NAME}-([0-9]+)$ ]]; then
+      _issue_num="${BASH_REMATCH[1]}"
+    else
+      continue
+    fi
+    # Query Forge for issue/PR state
+    _issue_json=$(forge_api GET "/issues/${_issue_num}" 2>/dev/null || echo "")
+    [ -n "$_issue_json" ] || continue
+    _state=$(printf '%s' "$_issue_json" | jq -r '.state // empty' 2>/dev/null)
+    [ "$_state" = "closed" ] || continue
+    _found_stale=true
+    # Enforce 24h grace period after closure
+    _closed_at=$(printf '%s' "$_issue_json" | jq -r '.closed_at // empty' 2>/dev/null)
+    [ -n "$_closed_at" ] || continue
+    _closed_epoch=$(date -d "$_closed_at" +%s 2>/dev/null || echo 0)
+    _now=$(date +%s)
+    _elapsed=$(( _now - _closed_epoch ))
+    if [ "$_elapsed" -gt 86400 ]; then
+      rm -f "$_pf"
+      "$_out_fn" "  Cleaned: $(basename "$_pf") — issue #${_issue_num} closed at ${_closed_at}"
+    else
+      _remaining_h=$(( (86400 - _elapsed) / 3600 ))
+      "$_out_fn" "  Grace: $(basename "$_pf") — issue #${_issue_num} closed, ${_remaining_h}h remaining"
+    fi
+  done
+  [ "$_found_stale" = false ] && "$_out_fn" "  None"
+}
+
+# ── Side-effect: preflight output (only when executed directly) ──────────
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
 # ── System Resources ─────────────────────────────────────────────────────
 
 echo "## System Resources"
@@ -152,48 +202,10 @@ done
 [ "$_found_phase" = false ] && echo "  None"
 echo ""
 
-# ── Stale Phase Cleanup ─────────────────────────────────────────────────
-# Auto-remove PHASE:escalate files whose parent issue/PR is confirmed closed.
-# Grace period: 24h after issue closure to avoid race conditions.
+# ── Stale Phase Cleanup (inline section header) ──────────────────────────
 
 echo "## Stale Phase Cleanup"
-_found_stale=false
-for _pf in /tmp/*-session-*.phase; do
-  [ -f "$_pf" ] || continue
-  _phase_line=$(head -1 "$_pf" 2>/dev/null || echo "")
-  # Only target PHASE:escalate files
-  case "$_phase_line" in
-    PHASE:escalate*) ;;
-    *) continue ;;
-  esac
-  # Extract issue number: *-session-{PROJECT_NAME}-{number}.phase
-  _base=$(basename "$_pf" .phase)
-  if [[ "$_base" =~ -session-${PROJECT_NAME}-([0-9]+)$ ]]; then
-    _issue_num="${BASH_REMATCH[1]}"
-  else
-    continue
-  fi
-  # Query Forge for issue/PR state
-  _issue_json=$(forge_api GET "/issues/${_issue_num}" 2>/dev/null || echo "")
-  [ -n "$_issue_json" ] || continue
-  _state=$(printf '%s' "$_issue_json" | jq -r '.state // empty' 2>/dev/null)
-  [ "$_state" = "closed" ] || continue
-  _found_stale=true
-  # Enforce 24h grace period after closure
-  _closed_at=$(printf '%s' "$_issue_json" | jq -r '.closed_at // empty' 2>/dev/null)
-  [ -n "$_closed_at" ] || continue
-  _closed_epoch=$(date -d "$_closed_at" +%s 2>/dev/null || echo 0)
-  _now=$(date +%s)
-  _elapsed=$(( _now - _closed_epoch ))
-  if [ "$_elapsed" -gt 86400 ]; then
-    rm -f "$_pf"
-    echo "  Cleaned: $(basename "$_pf") — issue #${_issue_num} closed at ${_closed_at}"
-  else
-    _remaining_h=$(( (86400 - _elapsed) / 3600 ))
-    echo "  Grace: $(basename "$_pf") — issue #${_issue_num} closed, ${_remaining_h}h remaining"
-  fi
-done
-[ "$_found_stale" = false ] && echo "  None"
+__preflight_cleanup_stale_phases echo
 echo ""
 
 # ── Lock Files ────────────────────────────────────────────────────────────
@@ -413,3 +425,5 @@ if [ -f "$_WP_HEALTH_HISTORY_FILE" ]; then
 fi
 echo "Last restart: $_wp_last_restart"
 echo ""
+
+fi

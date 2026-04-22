@@ -127,3 +127,39 @@ recipes:
       threshold: 0
     action: direct
     action_script: supervisor/actions/cleanup-locks.sh
+
+  # ── P2: ci_exhausted recovery ─────────────────────────────────────────
+
+  - name: ci-exhausted-sweep
+    severity: P2
+    detect:
+      source: preflight
+      section: "Blocked Issues"
+      rule: ci_exhausted_blocked_gt
+      threshold: 0
+    action: direct
+    action_script: supervisor/actions/sweep-ci-exhausted.sh
+
+  # ── P3: Stuck PR sweeper (#452) ───────────────────────────────────────
+
+  - name: close-stuck-pr
+    severity: P3
+    detect:
+      source: preflight
+      section: "Blocked Issues"
+      rule: stuck_pr_gt
+      threshold: 0
+    action: direct
+    action_script: supervisor/actions/close-stuck-pr.sh
+
+  # ── P4: Housekeeping ──────────────────────────────────────────────────
+
+  - name: cleanup-phase-files
+    severity: P4
+    detect:
+      source: preflight
+      section: "Phase Files"
+      rule: escalate_phase_gt
+      threshold: 0
+    action: direct
+    action_script: supervisor/actions/cleanup-phase-files.sh

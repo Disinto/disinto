@@ -180,6 +180,45 @@ eval_stale_prs_gt() {
   return 1
 }
 
+eval_ci_exhausted_blocked_gt() {
+  local section_text="$1"
+  local threshold="$2"
+  # Count blocked issue lines (start with "  #" — not "  None")
+  local blocked_count
+  blocked_count=$(printf '%s\n' "$section_text" | grep -cP '^  #\d+' || true)
+  if [ "${blocked_count:-0}" -gt "$threshold" ] 2>/dev/null; then
+    _EVIDENCE="Blocked issues: ${blocked_count} (threshold: >${threshold})"
+    return 0
+  fi
+  return 1
+}
+
+eval_stuck_pr_gt() {
+  local section_text="$1"
+  local threshold="$2"
+  # Count blocked issue lines (start with "  #" — matches "Blocked Issues" section format)
+  local blocked_count
+  blocked_count=$(printf '%s\n' "$section_text" | grep -cP '^  #\d+' || true)
+  if [ "${blocked_count:-0}" -gt "$threshold" ] 2>/dev/null; then
+    _EVIDENCE="Blocked issues: ${blocked_count} (threshold: >${threshold})"
+    return 0
+  fi
+  return 1
+}
+
+eval_escalate_phase_gt() {
+  local section_text="$1"
+  local threshold="$2"
+  # Count phase files with PHASE:escalate
+  local escalate_count
+  escalate_count=$(printf '%s\n' "$section_text" | grep -c 'PHASE:escalate' || true)
+  if [ "${escalate_count:-0}" -gt "$threshold" ] 2>/dev/null; then
+    _EVIDENCE="Escalated phase files: ${escalate_count} (threshold: >${threshold})"
+    return 0
+  fi
+  return 1
+}
+
 # ── Main logic ─────────────────────────────────────────────────────────────
 
 # Read preflight text once (works for regular files, named pipes, and FDs)
@@ -227,6 +266,12 @@ for ((i = 0; i < recipe_count; i++)); do
       eval_dead_lock_gt "$section_text" "$detect_threshold" && _fired=true ;;
     stale_prs_gt)
       eval_stale_prs_gt "$section_text" "$detect_threshold" && _fired=true ;;
+    ci_exhausted_blocked_gt)
+      eval_ci_exhausted_blocked_gt "$section_text" "$detect_threshold" && _fired=true ;;
+    stuck_pr_gt)
+      eval_stuck_pr_gt "$section_text" "$detect_threshold" && _fired=true ;;
+    escalate_phase_gt)
+      eval_escalate_phase_gt "$section_text" "$detect_threshold" && _fired=true ;;
     *)
       echo "WARNING: unknown rule '$detect_rule' for recipe '$name'" >&2
       continue ;;
