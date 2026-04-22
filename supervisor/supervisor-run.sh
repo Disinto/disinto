@@ -157,6 +157,9 @@ Fix what you can. File vault items for what you cannot. Do NOT ask permission �
 ## Pre-flight metrics (collected $(date -u +%H:%M) UTC)
 ${PREFLIGHT_OUTPUT}
 
+## Recipe evaluation (abnormal-signal detection)
+${RECIPE_OUTPUT:-(no recipes fired)}
+
 ## Project context
 ${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
@@ -323,12 +326,26 @@ EOF
   fi
 fi
 
+# ── Evaluate recipes for abnormal signals ──────────────────────────────────
+# Run evaluate-recipes.sh to detect P0-P2 conditions; inject into prompt
+RECIPE_OUTPUT=""
+if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
+  RECIPE_OUTPUT=$(bash "$SCRIPT_DIR/evaluate-recipes.sh" \
+    "$FACTORY_ROOT/supervisor/recipes.yaml" \
+    <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || true
+fi
+
 # ── Run agent ─────────────────────────────────────────────────────────────
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 # Write journal entry post-session
 profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" "" || true
+
+# Commit and push any incident files written during this tick
+if [ -n "${OPS_REPO_ROOT:-}" ] && [ -d "${OPS_REPO_ROOT}/incidents" ]; then
+  bash "$SCRIPT_DIR/commit-incidents.sh" || true
+fi
 
 rm -f "$SCRATCH_FILE"
 log "--- Supervisor run done ---"

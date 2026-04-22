@@ -4,7 +4,7 @@
 # supervisor-run.sh runs claude -p via agent-sdk.sh and injects
 # this formula with pre-collected metrics as context.
 #
-# Steps: preflight → health-assessment → decide-actions → report → journal
+# Steps: preflight → health-assessment → decide-actions → report → incidents → journal
 #
 # Key differences from planner/gardener:
 #   - Runs every 20min — lightweight health check
@@ -233,6 +233,39 @@ in the previous run (check journal for prior messages).
 needs = ["decide-actions"]
 
 [[steps]]
+id    = "incidents"
+title = "Write per-incident markdown files for P0-P2 findings"
+description = """
+For each P0-P2 finding from the recipe evaluation (see "Recipe evaluation" section above),
+write a per-incident markdown file and ensure it gets committed and pushed.
+
+### When recipes fired (P0-P2)
+
+For each fired recipe in the recipe evaluation output, run:
+
+  bash supervisor/write-incident.sh '<json-record>' '<preflight-section-excerpt>'
+
+Where <json-record> is the JSON object for that recipe (name, severity, evidence,
+action, action_script) and <preflight-section-excerpt> is the relevant preflight
+section text (e.g. the System Resources section for disk-pressure).
+
+The script writes the file to ${OPS_REPO_ROOT}/incidents/<iso-time>-<slug>.md
+and returns the file path.
+
+### When no recipes fired
+
+Skip this step entirely — no incident files to write.
+
+### After writing incident files
+
+The supervisor-run.sh wrapper will automatically commit and push all incident
+files to the ops repo. Do NOT run git operations yourself.
+
+Keep the action taken for each incident brief and factual.
+"""
+needs = ["report"]
+
+[[steps]]
 id    = "journal"
 title = "Write health journal entry"
 description = """
@@ -297,4 +330,4 @@ review-agent.md, git.md.
 
 After writing the journal, the agent session completes automatically.
 """
-needs = ["report"]
+needs = ["incidents"]
