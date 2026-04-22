@@ -1164,7 +1164,7 @@ _disinto_init_nomad() {
               echo "Error: wp-seed-secrets.sh must run as root and sudo is not installed" >&2
               exit 1
             fi
-            sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN -- \
+            sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN,WP_DB,SECRET_NAMES -- \
               "$wp_seed_script" \
               || echo "warning: wp-seed-secrets.sh failed (non-fatal)" >&2
           fi
