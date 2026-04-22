@@ -46,6 +46,90 @@ else
 fi
 echo ""
 
+# ── Docker Allocs ─────────────────────────────────────────────────────────
+
+echo "## Docker Allocs"
+if command -v docker &>/dev/null; then
+  # Single docker stats call — one snapshot, no streaming.
+  _stats_json=$(docker stats --no-stream --format '{{json .}}' 2>/dev/null || echo "")
+  if [ -n "$_stats_json" ]; then
+    # Header
+    printf "%-28s %-10s %-7s %-11s %-22s %-9s %s\n" "NAME" "STATUS" "CPU%" "RSS(MB)" "IMAGE" "RESTARTS" "MOUNTS"
+
+    # Collect per-container data as lines: name|status|cpu|rss_mb|image|restarts|mounts
+    _alloc_lines=""
+    while IFS= read -r _line; do
+      [ -n "$_line" ] || continue
+      _name=$(printf '%s' "$_line" | jq -r '.Name // empty' 2>/dev/null)
+      [ -n "$_name" ] || continue
+      # Only include containers with Nomad alloc label
+      _has_nomad=$(printf '%s' "$_line" | jq -r '
+        (.Labels // "") |
+        if (. | type) == "string" then .
+        else (. | to_entries | map(.value | tostring) | join(","))
+        end |
+        split(",") | map(select(test("com\\.hashicorp\\.nomad"; "i"))) | length' 2>/dev/null)
+      [ "$_has_nomad" -gt 0 ] 2>/dev/null || continue
+
+      _status=$(printf '%s' "$_line" | jq -r '.State // "unknown"' 2>/dev/null)
+      _cpu_raw=$(printf '%s' "$_line" | jq -r '.CPU // "0"' 2>/dev/null)
+      _cpu=$(printf '%s' "$_cpu_raw" | sed 's/%//;s/[^0-9.]//g')
+      [ -n "$_cpu" ] || _cpu="0"
+      _mem_raw=$(printf '%s' "$_line" | jq -r '.MemUsage // ""' 2>/dev/null)
+      _rss_mb=$(printf '%s' "$_mem_raw" | awk -F'/' '{gsub(/[^0-9.]/,"",$1); print $1}' 2>/dev/null)
+      [ -n "$_rss_mb" ] || _rss_mb="0"
+      # Use inspect for image, restart count, mounts (not in stats output)
+      _inspect=$(docker inspect "$_name" --format '{{.RestartCount}}\t{{.Config.Image}}\t{{range .Mounts}}{{.Name}},{{end}}' 2>/dev/null || echo $'\t\t')
+      _restarts=$(printf '%s' "$_inspect" | cut -f1)
+      _image=$(printf '%s' "$_inspect" | cut -f2)
+      _mounts=$(printf '%s' "$_inspect" | cut -f3 | sed 's/,$//')
+      [ -n "$_image" ] || _image="-"
+      [ -n "$_restarts" ] || _restarts="0"
+      [ -n "$_mounts" ] || _mounts="-"
+      _alloc_lines="${_alloc_lines}${_name}|${_status}|${_cpu}|${_rss_mb}|${_image}|${_restarts}|${_mounts}"$'\n'
+    done <<< "$_stats_json"
+
+    # Print sorted by RSS desc
+    printf '%s' "$_alloc_lines" | sort -t'|' -k4 -rn | head -50 | while IFS='|' read -r _n _s _c _r _i _rs _m; do
+      [ -n "$_n" ] || continue
+      printf "%-28s %-10s %-7s %-11s %-22s %-9s %s\n" "$_n" "$_s" "$_c" "$_r" "$_i" "$_rs" "$_m"
+    done
+
+    # Top-3 RSS summary
+    _top_rss=$(printf '%s' "$_alloc_lines" | sort -t'|' -k4 -rn | head -3 | while IFS='|' read -r _n _s _c _r _i _rs _m; do
+      [ -n "$_n" ] || continue
+      printf "%s %sMB, " "$_n" "$_r"
+    done)
+    _top_rss=$(printf '%s' "$_top_rss" | sed 's/, $//')
+    [ -n "${_top_rss:-}" ] && echo "Top-3 RSS: ${_top_rss}"
+
+    # Top-3 CPU summary
+    _top_cpu=$(printf '%s' "$_alloc_lines" | sort -t'|' -k3 -rn | head -3 | while IFS='|' read -r _n _s _c _r _i _rs _m; do
+      [ -n "$_n" ] || continue
+      printf "%s %s%%, " "$_n" "$_c"
+    done)
+    _top_cpu=$(printf '%s' "$_top_cpu" | sed 's/, $//')
+    [ -n "${_top_cpu:-}" ] && echo "Top-3 CPU: ${_top_cpu}"
+  else
+    echo "(no containers or docker unavailable)"
+  fi
+else
+  echo "Docker not available"
+fi
+echo ""
+
+# ── Host Volumes ──────────────────────────────────────────────────────────
+
+echo "## Host Volumes"
+if [ -d /srv/disinto ]; then
+  du -sh /srv/disinto/* 2>/dev/null | while IFS=$'\t' read -r _sz _p; do
+    printf "%-32s %s\n" "$_p" "$_sz"
+  done
+else
+  echo "/srv/disinto not found"
+fi
+echo ""
+
 # ── Active Sessions + Phase Files ─────────────────────────────────────────
 
 echo "## Active Sessions"
