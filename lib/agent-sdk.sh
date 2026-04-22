@@ -172,7 +172,7 @@ agent_run() {
   #
   # max-turns lowered from 200 to CLAUDE_MAX_TURNS (default 30). Single-file
   # bug fixes never need 200 turns; tighter bound surfaces stuck runs faster.
-  local max_turns="${CLAUDE_MAX_TURNS:-30}"
+  local max_turns="${CLAUDE_MAX_TURNS:-60}"
   local -a args=(-p "$prompt" --output-format stream-json --verbose --dangerously-skip-permissions --max-turns "$max_turns")
   [ -n "$resume_id" ] && args+=(--resume "$resume_id")
   [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
