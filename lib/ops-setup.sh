@@ -120,7 +120,7 @@ setup_ops_repo() {
     [planner-bot]="write"
     [gardener-bot]="write"
     [vault-bot]="write"
-    [supervisor-bot]="read"
+    [supervisor-bot]="write"
     [predictor-bot]="read"
     [architect-bot]="write"
   )

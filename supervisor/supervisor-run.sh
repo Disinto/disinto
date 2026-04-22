@@ -40,6 +40,8 @@ source "$FACTORY_ROOT/lib/worktree.sh"
 source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
+# shellcheck source=../lib/ci-helpers.sh
+source "$FACTORY_ROOT/lib/ci-helpers.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -76,6 +78,60 @@ cd "$PROJECT_REPO_ROOT"
 
 # ── Housekeeping: clean up stale crashed worktrees (>24h) ────────────────
 cleanup_stale_crashed_worktrees 24
+
+# ── CI Circuit Breaker (issue #557) ─────────────────────────────────────
+# Reconcile .dev-active against incident PR state each cycle.
+# Open incident PR → remove .dev-active (pause dev agents).
+# No open incident PR + green main → ensure .dev-active present (resume).
+# Fail-safe: a missed cycle leaves trigger in last known state.
+CI_UNTRUSTED=false
+INCIDENT_PR=""
+
+# Step 1: Check for existing open incident PRs
+if [ -n "${OPS_REPO_ROOT:-}" ] && [ -d "${OPS_REPO_ROOT}" ]; then
+  INCIDENT_PR=$(_ci_incident_pr_exists 2>/dev/null) || true
+fi
+
+if [ -n "$INCIDENT_PR" ]; then
+  # Open incident PR exists — pause dev agents
+  CI_UNTRUSTED=true
+  DEV_ACTIVE="${FACTORY_ROOT}/state/.dev-active"
+  if [ -f "$DEV_ACTIVE" ]; then
+    rm -f "$DEV_ACTIVE"
+    log "CI circuit breaker: open incident PR #${INCIDENT_PR} — removed .dev-active (pause dev agents)"
+  fi
+else
+  # No open incident PR — check main canary for recovery
+  CANARY_RESULT=$(ci_main_canary 2>/dev/null) || true
+  if [ -n "$CANARY_RESULT" ]; then
+    # Main canary red — create incident PR
+    PIPES_JSON=$(ci_get_main_pipelines 2>/dev/null) || PIPES_JSON="[]"
+    NEW_PR=$(create_incident_pr "$CANARY_RESULT" "$PIPES_JSON" 2>/dev/null) || true
+    if [ -n "$NEW_PR" ]; then
+      CI_UNTRUSTED=true
+      INCIDENT_PR="$NEW_PR"
+      DEV_ACTIVE="${FACTORY_ROOT}/state/.dev-active"
+      if [ -f "$DEV_ACTIVE" ]; then
+        rm -f "$DEV_ACTIVE"
+        log "CI circuit breaker: canary red — created incident PR #${INCIDENT_PR}, removed .dev-active"
+      fi
+    fi
+  else
+    # Main canary green — check for recovery: close any incident PR
+    # that was previously open (the main pipeline going green signals recovery)
+    _ci_recover_incident_pr || true
+    DEV_ACTIVE="${FACTORY_ROOT}/state/.dev-active"
+    if [ ! -f "$DEV_ACTIVE" ]; then
+      touch "$DEV_ACTIVE"
+      log "CI circuit breaker: main green — restored .dev-active (resume dev agents)"
+    fi
+  fi
+fi
+
+# Export CI_UNTRUSTED for downstream use (e.g., recipe evaluation)
+export CI_UNTRUSTED
+# shellcheck disable=SC2034  # available for recipe evaluation
+CI_INCIDENT_PR="${INCIDENT_PR:-}"
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
 resolve_agent_identity || true
