@@ -404,6 +404,10 @@ ci_main_canary() {
   pipelines_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines?perPage=20" 2>/dev/null) || return 1
 
   # Find the last two finished pipelines on main, sorted by number descending
+  # Note: skipped/blocked/declined are included in the finished pool so they can
+  # appear in the top-2, but the untrusted trigger only fires on failure/error/killed.
+  # A skipped pipeline between two failures (e.g. [failure, skipped, failure]) will
+  # prevent detection — skipped pipelines do NOT reset the consecutive-failure counter.
   local result
   result=$(printf '%s' "$pipelines_json" | jq -r --arg branch "${PRIMARY_BRANCH:-main}" '
     [.[] | select(.branch == $branch)] |
@@ -471,19 +475,6 @@ _ci_incident_pr_exists() {
     return 0
   fi
   return 1
-}
-
-# _ci_incident_pr_is_closed — check if there are any open incident PRs
-# Returns: 0 if there are open incident PRs, 1 otherwise.
-_ci_incident_pr_is_open() {
-  local response
-  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null) || return 1
-
-  local count
-  count=$(printf '%s' "$response" | jq '[.[] | select(.title | contains("incident: ci-untrusted"))] | length' 2>/dev/null) || return 1
-
-  [ "$count" -gt 0 ]
 }
 
 # create_incident_pr <signal> <pipelines_json>

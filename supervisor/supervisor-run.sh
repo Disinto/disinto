@@ -88,9 +88,9 @@ CI_UNTRUSTED=false
 INCIDENT_PR=""
 
 # Step 1: Check for existing open incident PRs
-if [ -n "${OPS_REPO_ROOT:-}" ] && [ -d "${OPS_REPO_ROOT}" ]; then
-  INCIDENT_PR=$(_ci_incident_pr_exists 2>/dev/null) || true
-fi
+# Note: _ci_incident_pr_exists uses the Forge API (FORGE_API_BASE), not OPS_REPO_ROOT,
+# so no guard here — the detection path must run in all modes for consistency.
+INCIDENT_PR=$(_ci_incident_pr_exists 2>/dev/null) || true
 
 if [ -n "$INCIDENT_PR" ]; then
   # Open incident PR exists — pause dev agents
