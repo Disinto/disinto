@@ -92,19 +92,17 @@ claude_run_with_watchdog() {
     local detected=0
 
     while kill -0 "$pid" 2>/dev/null; do
-      # Check for stream-json result marker first (more reliable)
-      if grep -q '"type":"result"' "$out_file" 2>/dev/null; then
+      # Match the terminal result object specifically. `"type":"result"` alone
+      # would also match if Claude's thinking/text content happens to echo
+      # that literal string; `"type":"result","subtype":` only appears in the
+      # real result frame emitted when the run completes (issue #581).
+      if grep -q '"type":"result","subtype":' "$out_file" 2>/dev/null; then
         detected=1
         break
       fi
-      # Fallback: check for closing brace of top-level result object
-      if tail -c 100 "$out_file" 2>/dev/null | grep -q '}[[:space:]]*$'; then
-        # Verify it looks like a JSON result (has session_id or result key)
-        if grep -qE '"(session_id|result)":' "$out_file" 2>/dev/null; then
-          detected=1
-          break
-        fi
-      fi
+      # Pre-stream-json fallback removed (#581): in stream-json mode every
+      # message ends `}\n` and carries `session_id`, so that heuristic fired
+      # on the first system-init message, SIGTERMing Claude mid-run.
       sleep 2
     done
 
