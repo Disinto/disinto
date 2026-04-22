@@ -76,7 +76,7 @@ if command -v docker &>/dev/null; then
       _cpu=$(printf '%s' "$_cpu_raw" | sed 's/%//;s/[^0-9.]//g')
       [ -n "$_cpu" ] || _cpu="0"
       _mem_raw=$(printf '%s' "$_line" | jq -r '.MemUsage // ""' 2>/dev/null)
-      _rss_mb=$(printf '%s' "$_mem_raw" | awk -F'/' '{gsub(/[^0-9.]/,"",$2); print $2}' 2>/dev/null)
+      _rss_mb=$(printf '%s' "$_mem_raw" | awk -F'/' '{gsub(/[^0-9.]/,"",$1); print $1}' 2>/dev/null)
       [ -n "$_rss_mb" ] || _rss_mb="0"
       # Use inspect for image, restart count, mounts (not in stats output)
       _inspect=$(docker inspect "$_name" --format '{{.RestartCount}}\t{{.Config.Image}}\t{{range .Mounts}}{{.Name}},{{end}}' 2>/dev/null || echo $'\t\t')
