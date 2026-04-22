@@ -66,7 +66,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Logs a WARNING message at startup indicating degraded mode
 
 **Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
-→ lock + memory guard → run preflight.sh (collect metrics) → **WP agent health recovery**
+→ lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
 (if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
 and none require LLM, skip to journal + exit (fast path); otherwise proceed → load formula + context
