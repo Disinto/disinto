@@ -20,3 +20,4 @@ steps:
       - sleep 2
       - bash tests/smoke-init.sh
       - kill $(cat /tmp/mock-forgejo.pid) 2>/dev/null || true
+      - bash tests/smoke-nomad-bootstrap.sh
