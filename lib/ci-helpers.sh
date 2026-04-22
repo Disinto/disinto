@@ -407,8 +407,7 @@ ci_main_canary() {
   local result
   result=$(printf '%s' "$pipelines_json" | jq -r --arg branch "${PRIMARY_BRANCH:-main}" '
     [.[] | select(.branch == $branch)] |
-    [.[] | select(.status == "failure" or .status == "error" or .status == "success" or
-                  .status == "killed" or .status == "pending" or .status == "running" or
+    [.[] | select(.status == "failure" or .status == "error" or .status == "killed" or
                   .status == "declined" or .status == "skipped" or .status == "blocked")] |
     sort_by(-.number) | .[0:2] |
     if length < 2 then "ok"
