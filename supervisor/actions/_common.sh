@@ -8,13 +8,21 @@
 #   - Logging helper (log() → supervisor.log)
 #
 # Usage:
-#   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 #   source "$SCRIPT_DIR/_common.sh"
 #
-# Action scripts may override LOG_FILE and log() after sourcing.
+# Action scripts may override LOG_FILE and LOG_AGENT after sourcing.
+
+set -euo pipefail
+
+# Standard header: directory resolution
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${FACTORY_ROOT:-}" ]; then
+  FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
+fi
+export FACTORY_ROOT
 
 # Accept project config from argument; default to disinto
-export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
+export PROJECT_TOML="${PROJECT_TOML:-${1:-$FACTORY_ROOT/projects/disinto.toml}}"
 export FORGE_TOKEN_OVERRIDE="${FORGE_SUPERVISOR_TOKEN:-}"
 # shellcheck source=../lib/env.sh
 source "$FACTORY_ROOT/lib/env.sh"
@@ -24,3 +32,9 @@ log() {
   local agent="${LOG_AGENT:-supervisor}"
   printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
 }
+
+# Auto-source _ops-setup.sh if available (OPS repo environment setup)
+# shellcheck source=_ops-setup.sh
+if [ -f "$SCRIPT_DIR/_ops-setup.sh" ]; then
+  source "$SCRIPT_DIR/_ops-setup.sh"
+fi

@@ -4,29 +4,12 @@
 # Scans for blocked issues with ci_exhausted label updated in the last
 # 30 minutes, unassigns them, removes the blocked label, and posts a
 # recovery comment. Idempotent via <!-- supervisor-swept --> marker.
-#
-# Sources: supervisor/supervisor-run.sh ci_exhausted sweep block (lines
-# 295-387, extracted).
-set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Accept project config from argument; default to disinto
-export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
-export FORGE_TOKEN_OVERRIDE="${FORGE_SUPERVISOR_TOKEN:-}"
-# shellcheck source=../lib/env.sh
-source "$FACTORY_ROOT/lib/env.sh"
-
-LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
-
-# Override log() to append to supervisor-specific log file
-log() {
-  local agent="${LOG_AGENT:-supervisor}"
-  printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
-}
-
-LOG_AGENT="supervisor"
+# Source shared setup (header, env, log, OPS)
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh" "$@"
 
 log "Scanning for ci_exhausted issues updated in last 30 minutes..."
 _now_epoch=$(date +%s)

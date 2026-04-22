@@ -8,9 +8,12 @@
 #   source "$SCRIPT_DIR/_common.sh"   # must be sourced first
 #   source "$SCRIPT_DIR/_ops-setup.sh"  # then this
 
-# ── OPS Repo Detection (mirrors supervisor-run.sh) ─────────────────────
+# ── OPS Repo Detection ─────────────────────────────────────────────────
 if [ -z "${OPS_REPO_ROOT:-}" ] || [ ! -d "${OPS_REPO_ROOT}" ]; then
+  # shellcheck disable=SC2154
+  log "WARNING: OPS_REPO_ROOT not set or directory missing — running in degraded mode (no playbooks, no journal continuity, no vault destination)"
   export OPS_REPO_DEGRADED=1
+  # Set fallback paths for degraded mode
   export OPS_KNOWLEDGE_ROOT="${FACTORY_ROOT}/knowledge"
   export OPS_JOURNAL_ROOT="${FACTORY_ROOT}/state/supervisor-journal"
   export OPS_VAULT_ROOT="${PROJECT_REPO_ROOT}/vault/pending"
