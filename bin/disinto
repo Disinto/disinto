@@ -1112,28 +1112,34 @@ _disinto_init_nomad() {
         fi
       fi
     done
+  fi
 
-    # Run vault-runner (unconditionally, not gated by --with) — infrastructure job
-    # vault-runner is always present since it's needed for vault action dispatch
-    echo ""
-    echo "── Running vault-runner ────────────────────────────────────"
-    local vault_runner_path="${FACTORY_ROOT}/nomad/jobs/vault-runner.hcl"
-    if [ -f "$vault_runner_path" ]; then
-      echo "[deploy] vault-runner: running Nomad job (infrastructure)"
-      local -a vault_runner_cmd=("$deploy_sh" "vault-runner")
-      if [ "$(id -u)" -eq 0 ]; then
-        "${vault_runner_cmd[@]}" || exit $?
-      else
-        if ! command -v sudo >/dev/null 2>&1; then
-          echo "Error: deploy.sh must run as root and sudo is not installed" >&2
-          exit 1
-        fi
-        sudo -n -- "${vault_runner_cmd[@]}" || exit $?
-      fi
+  # Run vault-runner (unconditionally, not gated by --with) — infrastructure job
+  # vault-runner is the parameterized batch job the edge dispatcher invokes via
+  # `nomad job dispatch vault-runner …`. It must be registered on every nomad
+  # init run regardless of --with selection, otherwise the dispatcher fails with
+  # "No job(s) with prefix or ID 'vault-runner' found" (#602). Idempotent —
+  # Nomad accepts re-submission of a parameterized batch job.
+  echo ""
+  echo "── Running vault-runner ────────────────────────────────────"
+  local vault_runner_path="${FACTORY_ROOT}/nomad/jobs/vault-runner.hcl"
+  if [ -f "$vault_runner_path" ]; then
+    echo "[deploy] vault-runner: running Nomad job (infrastructure)"
+    local -a vault_runner_cmd=("$deploy_sh" "vault-runner")
+    if [ "$(id -u)" -eq 0 ]; then
+      "${vault_runner_cmd[@]}" || exit $?
     else
-      echo "[deploy] vault-runner: jobspec not found, skipping"
+      if ! command -v sudo >/dev/null 2>&1; then
+        echo "Error: deploy.sh must run as root and sudo is not installed" >&2
+        exit 1
+      fi
+      sudo -n -- "${vault_runner_cmd[@]}" || exit $?
     fi
+  else
+    echo "[deploy] vault-runner: jobspec not found, skipping"
+  fi
 
+  if [ -n "$with_services" ]; then
     # Print final summary
     echo ""
     echo "── Summary ────────────────────────────────────────────"

@@ -105,6 +105,40 @@ setup_file() {
   [[ "$output" == *"--empty is only valid with --backend=nomad"* ]]
 }
 
+# ── vault-runner submission (regression guard for #602) ─────────────────────
+#
+# vault-runner is the parameterized batch job the edge dispatcher invokes
+# via `nomad job dispatch vault-runner …`. It must be registered on every
+# nomad init run regardless of --with selection — otherwise the dispatcher
+# fails with "No job(s) with prefix or ID 'vault-runner' found" (the #602
+# symptom observed after cutover). A prior implementation nested the
+# vault-runner deploy inside the `if [ -n "$with_services" ]` block,
+# silently omitting it on `disinto init --backend=nomad` with no --with.
+
+@test "disinto init --backend=nomad --dry-run submits vault-runner even without --with" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"── Vault-runner dry-run ──"* ]]
+  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job validate"* ]]
+  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job run -detach"* ]]
+}
+
+@test "disinto init --backend=nomad --with=forgejo --dry-run still submits vault-runner" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with=forgejo --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"── Vault-runner dry-run ──"* ]]
+  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job validate"* ]]
+}
+
+@test "disinto init --backend=nomad --empty --dry-run does NOT submit vault-runner" {
+  # --empty is the cluster-only escape hatch — no policies, no auth, no
+  # jobs of any kind. vault-runner must not appear on this path.
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"── Vault-runner dry-run ──"* ]]
+  [[ "$output" != *"vault-runner"* ]]
+}
+
 # ── Positional vs flag-first invocation (#835) ───────────────────────────────
 #
 # Before the #835 fix, disinto_init eagerly consumed $1 as repo_url *before*
