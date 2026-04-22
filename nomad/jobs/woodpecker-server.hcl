@@ -124,6 +124,12 @@ job "woodpecker-server" {
         WOODPECKER_OPEN                 = "true"
         WOODPECKER_DATABASE_DRIVER      = "sqlite3"
         WOODPECKER_DATABASE_DATASOURCE  = "/var/lib/woodpecker/woodpecker.sqlite"
+        # Woodpecker 3.14 removed `plugins/docker` from its default-privileged
+        # list; without this env, the server rejects the whole repo's
+        # `.woodpecker/*.yml` at lint time (all-or-nothing across files), so
+        # pipelines land in status=error with zero workflows spawned. Matches
+        # the legacy docker-compose generator fix from #394. See #598.
+        WOODPECKER_PLUGINS_PRIVILEGED   = "plugins/docker"
       }
 
       # ── Vault-templated secrets env (S2.4 pattern) ─────────────────────────
