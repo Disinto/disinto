@@ -13,15 +13,11 @@ source "$SCRIPT_DIR/_common.sh" "$@"
 # WP agent container name (configurable via env var)
 export WP_AGENT_CONTAINER_NAME="${WP_AGENT_CONTAINER_NAME:-disinto-woodpecker-agent}"
 
-# ── WP Agent Health Check ───────────────────────────────────────────────
-_WP_HEALTH_CHECK_FILE="${DISINTO_LOG_DIR}/supervisor/wp-agent-health-check.md"
+# Health reason passed as $1 by the dispatch loop in supervisor-run.sh
+_WP_HEALTH_REASON="${1:-}"
 
-# Extract WP agent health status
-_wp_agent_healthy=$(grep "^WP Agent Health: healthy$" "$_WP_HEALTH_CHECK_FILE" 2>/dev/null && echo "true" || echo "false")
-_wp_health_reason=$(grep "^Reason:" "$_WP_HEALTH_CHECK_FILE" 2>/dev/null | sed 's/^Reason: //' || echo "")
-
-if [ "$_wp_agent_healthy" = "false" ] && [ -n "$_wp_health_reason" ]; then
-  log "WP agent detected as UNHEALTHY: $_wp_health_reason"
+if [ -n "$_WP_HEALTH_REASON" ]; then
+  log "WP agent detected as UNHEALTHY: $_WP_HEALTH_REASON"
 
   # ── Idempotency guard: 5-minute cooldown ────────────────────────────
   _WP_HEALTH_HISTORY_FILE="${DISINTO_LOG_DIR}/supervisor/wp-agent-health.history"
@@ -56,7 +52,7 @@ if [ "$_wp_agent_healthy" = "false" ] && [ -n "$_wp_health_reason" ]; then
           echo ""
           echo "### WP Agent Recovery - $_restart_time"
           echo ""
-          echo "WP agent was unhealthy: $_wp_health_reason"
+          echo "WP agent was unhealthy: $_WP_HEALTH_REASON"
           echo "Container restarted automatically."
         } >> "$_journal_file"
       fi

@@ -11,6 +11,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=_common.sh
 source "$SCRIPT_DIR/_common.sh" "$@"
 
+# Override LOG_FILE/LOG_AGENT for consistent supervisor logging
+# shellcheck disable=SC2034
+LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
+# shellcheck disable=SC2034
+LOG_AGENT="supervisor"
+
 log "Scanning for ci_exhausted issues updated in last 30 minutes..."
 _now_epoch=$(date +%s)
 _thirty_min_ago=$(( _now_epoch - 1800 ))
@@ -24,7 +30,7 @@ _issues_recovered=0
 
 if [ "$_blocked_count" -gt 0 ]; then
   # Process each blocked issue
-  echo "$_blocked_issues" | jq -c '.[]' 2>/dev/null | while IFS= read -r issue_json; do
+  while IFS= read -r issue_json; do
     [ -z "$issue_json" ] && continue
 
     _issue_num=$(echo "$issue_json" | jq -r '.number // empty')
@@ -103,7 +109,7 @@ EOF
       log "Recovered issue #$_issue_num - returned to pool"
       _issues_recovered=$(( _issues_recovered + 1 ))
     fi
-  done
+  done < <(echo "$_blocked_issues" | jq -c '.[]' 2>/dev/null)
 fi
 
 log "ci_exhausted sweep complete: processed $_issues_processed, recovered $_issues_recovered"

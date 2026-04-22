@@ -4,7 +4,7 @@
 # Auto-removes PHASE:escalate files whose parent issue/PR is confirmed closed.
 # Grace period: 24h after issue closure to avoid race conditions.
 #
-# Reuses the stale phase cleanup logic from preflight.sh via sourcing.
+# Sources preflight.sh to reuse __preflight_cleanup_stale_phases().
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -17,7 +17,7 @@ LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034
 LOG_AGENT="supervisor"
 
-# Source preflight.sh to reuse __preflight_cleanup_stale_phases()
+# Source preflight.sh to get __preflight_cleanup_stale_phases() and forge_api
 # shellcheck source=../preflight.sh
 source "$FACTORY_ROOT/supervisor/preflight.sh"
 

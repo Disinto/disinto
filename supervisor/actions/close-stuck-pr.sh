@@ -21,7 +21,6 @@ LOG_AGENT="supervisor"
 log "Scanning for stuck PRs (ci_exhausted + open >2h)..."
 
 _now_epoch=$(date +%s)
-_two_hours_ago=$(( _now_epoch - 7200 ))
 
 # Fetch open PRs
 _open_prs=$(forge_api GET "/pulls?state=open&limit=100" 2>/dev/null || echo "[]")
@@ -30,7 +29,7 @@ _pr_count=$(echo "$_open_prs" | jq 'length' 2>/dev/null || echo "0")
 _prs_closed=0
 
 if [ "$_pr_count" -gt 0 ]; then
-  echo "$_open_prs" | jq -c '.[]' 2>/dev/null | while IFS= read -r pr_json; do
+  while IFS= read -r pr_json; do
     [ -z "$pr_json" ] && continue
 
     _pr_num=$(echo "$pr_json" | jq -r '.number // empty')
@@ -92,7 +91,7 @@ EOF
 
     log "Closed PR #$_pr_num (stuck on ci_exhausted issue #$_linked_issue)"
     _prs_closed=$(( _prs_closed + 1 ))
-  done
+  done < <(echo "$_open_prs" | jq -c '.[]' 2>/dev/null)
 fi
 
 log "Stuck PR sweep complete: closed $_prs_closed"

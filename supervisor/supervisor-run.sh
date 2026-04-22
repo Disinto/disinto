@@ -146,6 +146,19 @@ fi
 
 if [ "$LLM_REQUIRED" = false ]; then
   log "No abnormal signals requiring LLM — fast path, skipping agent_run"
+
+  # ── Execute direct-action scripts for all fired direct recipes ──────
+  # This is the dispatch loop that runs remediation scripts before the
+  # fast-path exit. Without it, direct-action scripts are dead code.
+  # Passes PROJECT_TOML + evidence (health reason for wp-agent-restart.sh).
+  if [ -n "$RECIPE_OUTPUT" ]; then
+    while IFS=$'\t' read -r _script _evidence; do
+      if [ -n "$_script" ] && [ "$_script" != "__MISSING__" ]; then
+        bash "$FACTORY_ROOT/$_script" "$PROJECT_TOML" "$_evidence" || true
+      fi
+    done < <(printf '%s' "$RECIPE_OUTPUT" | jq -r '.fired[] | select(.action == "direct") | [.action_script, .evidence // empty] | @tsv' 2>/dev/null)
+  fi
+
   # Write journal entry (brief "all clear" only if prior run had findings)
   profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" || true
 
