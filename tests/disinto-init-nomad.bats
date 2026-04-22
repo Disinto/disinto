@@ -442,3 +442,22 @@ setup_file() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"tools/vault-seed-ops-repo.sh --dry-run"* ]]
 }
+
+# #601 — ops-repo seed must run unconditionally at init (after vault-import),
+# not only inside --with edge, so that a later direct `nomad job run edge.hcl`
+# finds kv/disinto/shared/ops-repo already populated.
+@test "disinto init --backend=nomad --import-env seeds ops-repo unconditionally (issue #601)" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env /tmp/.env --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Vault seed ops-repo dry-run"* ]]
+  [[ "$output" == *"tools/vault-seed-ops-repo.sh --dry-run"* ]]
+}
+
+# Without --import-* the ops-repo seeder is skipped: running it before
+# kv/disinto/bots/vault is populated would write a random fallback token
+# that later copies from bots/vault can no longer overwrite.
+@test "disinto init --backend=nomad (no --import-*) skips unconditional ops-repo seed (issue #601)" {
+  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Vault seed ops-repo dry-run"* ]]
+}
