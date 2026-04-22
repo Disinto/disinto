@@ -113,6 +113,17 @@ issue_claim() {
   me=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${FORGE_URL}/api/v1/user" | jq -r '.login') || return 1
 
+  # Guard: only dev-class agents may claim issues (fix #620).
+  # Non-dev agents (review-bot, gardener-bot, etc.) must never call issue_claim().
+  # Allow dev-bot and any bot whose name starts with "dev-".
+  case "$me" in
+    dev-bot|dev-*) : ;; # allowed
+    *)
+      _ilc_log "REFUSED: ${me} is not a dev-class agent — cannot claim issue #${issue}"
+      return 1
+      ;;
+  esac
+
   # Check current assignee
   local current
   current=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
