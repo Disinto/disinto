@@ -56,6 +56,11 @@ CLAUDE_BIN = "/usr/local/bin/claude"
 # Defaults to empty; when set, Claude can read/write to this directory
 WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "")
 
+# Claude model pinned for the chat subprocess (#648). Defaults to Opus 4.7 —
+# overridable via CHAT_CLAUDE_MODEL so ops can swap the model without a
+# code change (e.g. to roll back after a bad release).
+CHAT_CLAUDE_MODEL = os.environ.get("CHAT_CLAUDE_MODEL", "claude-opus-4-7")
+
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
 CHAT_OAUTH_CLIENT_ID = os.environ.get("CHAT_OAUTH_CLIENT_ID", "")
@@ -502,7 +507,7 @@ class _WebSocketHandler:
 
         try:
             # Build claude command with permission mode (acceptEdits allows file edits)
-            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", message]
+            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", "--model", CHAT_CLAUDE_MODEL, message]
 
             # Spawn claude --print with stream-json for streaming output
             # Set cwd to workspace directory if configured, allowing Claude to access project code
@@ -1057,7 +1062,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             _write_message(user, conv_id, "user", message)
 
             # Build claude command with permission mode (acceptEdits allows file edits)
-            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", message]
+            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", "--model", CHAT_CLAUDE_MODEL, message]
 
             # Spawn claude --print with stream-json for token tracking (#711)
             # Set cwd to workspace directory if configured, allowing Claude to access project code

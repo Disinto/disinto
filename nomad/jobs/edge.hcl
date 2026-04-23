@@ -71,6 +71,17 @@ job "edge" {
       read_only = false
     }
 
+    # claude-creds: OAuth credentials for Anthropic Claude CLI used by the
+    # chat subprocess (#648). Mounted at /home/agent/.claude inside the
+    # caddy task so the chat-launched `claude -p` call picks up the Max
+    # subscription instead of requiring ANTHROPIC_API_KEY. Shared with
+    # agents-supervisor-opus.hcl — same host path, read-only.
+    volume "claude-creds" {
+      type      = "host"
+      source    = "claude-creds"
+      read_only = true
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -118,6 +129,16 @@ job "edge" {
         volume      = "caddy-data"
         destination = "/data"
         read_only   = false
+      }
+
+      # Mount claude-creds so the chat subprocess (python3 chat-server.py
+      # spawning `claude -p` — see entrypoint-edge.sh) finds OAuth creds
+      # at /home/agent/.claude/.credentials.json (#648). The chat process
+      # runs as USER=agent (uid 1000) per entrypoint-edge.sh.
+      volume_mount {
+        volume      = "claude-creds"
+        destination = "/home/agent/.claude"
+        read_only   = true
       }
 
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
@@ -197,6 +218,13 @@ EOT
         FORGE_REPO        = "disinto-admin/disinto"
         DISINTO_CONTAINER = "1"
         PROJECT_NAME      = "disinto"
+
+        # Chat subprocess: OAuth via mounted claude-creds volume, pinned
+        # Opus 4.7 model (#648). Do NOT set ANTHROPIC_API_KEY or
+        # ANTHROPIC_BASE_URL — their presence forces API-key mode and
+        # bypasses the Max-subscription OAuth flow.
+        CLAUDE_CONFIG_DIR = "/home/agent/.claude"
+        CHAT_CLAUDE_MODEL = "claude-opus-4-7"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
