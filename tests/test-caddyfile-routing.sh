@@ -96,11 +96,11 @@ check_forgejo_routing() {
     tr_fail "Missing Forgejo strip_prefix (/forge)"
   fi
 
-  # Check reverse_proxy to Forgejo on port 3000
-  if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:3000"; then
-    tr_pass "Forgejo reverse_proxy configured (127.0.0.1:3000)"
+  # Check reverse_proxy to Forgejo via Nomad service discovery
+  if echo "$CADDYFILE" | grep -q 'nomadService "forgejo"'; then
+    tr_pass "Forgejo reverse_proxy uses Nomad service discovery"
   else
-    tr_fail "Missing Forgejo reverse_proxy (127.0.0.1:3000)"
+    tr_fail "Missing Forgejo Nomad service discovery"
   fi
 }
 
@@ -114,11 +114,11 @@ check_woodpecker_routing() {
     tr_fail "Missing Woodpecker handle block (handle /ci/*)"
   fi
 
-  # Check reverse_proxy to Woodpecker on port 8000
-  if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8000"; then
-    tr_pass "Woodpecker reverse_proxy configured (127.0.0.1:8000)"
+  # Check reverse_proxy to Woodpecker via Nomad service discovery
+  if echo "$CADDYFILE" | grep -q 'nomadService "woodpecker"'; then
+    tr_pass "Woodpecker reverse_proxy uses Nomad service discovery"
   else
-    tr_fail "Missing Woodpecker reverse_proxy (127.0.0.1:8000)"
+    tr_fail "Missing Woodpecker Nomad service discovery"
   fi
 }
 
