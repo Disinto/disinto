@@ -146,7 +146,6 @@ _generate_local_model_services() {
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
-    # ghcr.io/disinto/agents is now public (#600, follow-up to #651).
     image: ghcr.io/disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-agents-${service_name}
     restart: unless-stopped
