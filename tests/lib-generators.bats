@@ -62,13 +62,10 @@ EOF
   [[ "$output" != *'FORGE_BOT_USER_LLAMA'* ]]
 }
 
-@test "local-model agent service emits local image ref + build: fallback (#853)" {
-  # Before #853 the generator emitted `image: ghcr.io/disinto/agents:<tag>` for
-  # every hired agent. The ghcr image isn't publicly pullable and the running
-  # deployment has no credentials, so `docker compose up` failed with `denied`.
-  # The fix: emit the registry-less local name (matches `disinto init --build`
-  # and the legacy agents-llama stanza) plus a build: directive so hosts
-  # without a pre-built image can rebuild locally.
+@test "local-model agent service emits ghcr.io/disinto/agents image (#600, finish #429)" {
+  # #600: hired-agent path migrated to ghcr.io/disinto/agents (same as the main
+  # agents service at line 423). The registry-less name + build: fallback from
+  # #853/#887 is dead weight now that ghcr packages are public.
   cat > "${FACTORY_ROOT}/projects/test.toml" <<'EOF'
 name      = "test"
 repo      = "test-owner/test-repo"
@@ -90,21 +87,16 @@ EOF
   "
 
   [ "$status" -eq 0 ]
-  # Local image ref — no ghcr prefix.
-  [[ "$output" == *'image: disinto/agents:${DISINTO_IMAGE_TAG:-latest}'* ]]
-  [[ "$output" != *'image: ghcr.io/disinto/agents'* ]]
-  # build: fallback so hosts without a pre-built image can rebuild.
-  [[ "$output" == *'dockerfile: docker/agents/Dockerfile'* ]]
+  # Public ghcr image — same as main agents service.
+  [[ "$output" == *'image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}'* ]]
+  # No build: fallback (ghcr is public now).
+  [[ "$output" != *'dockerfile: docker/agents/Dockerfile'* ]]
 }
 
-@test "local-model agent service emits pull_policy: build so docker compose up rebuilds on source change (#887)" {
-  # Without pull_policy: build, `docker compose up -d --force-recreate` reuses
-  # the cached `disinto/agents:latest` image and silently runs stale
-  # docker/agents/entrypoint.sh even after the repo is updated. `pull_policy:
-  # build` forces a rebuild on every up; BuildKit layer cache makes unchanged
-  # rebuilds near-instant. The alternative was requiring every operator to
-  # remember `--build` on every invocation, which was the bug that prompted
-  # #887 (2h of debugging a fix that was merged but never reached the container).
+@test "local-model agent service has no build: or pull_policy: build (#600)" {
+  # #600: hired-agent path no longer uses build: fallback or pull_policy: build.
+  # The ghcr.io/disinto/agents image is public, so downstream hosts can pull
+  # directly without needing the disinto source tree.
   cat > "${FACTORY_ROOT}/projects/test.toml" <<'EOF'
 name      = "test"
 repo      = "test-owner/test-repo"
@@ -126,7 +118,9 @@ EOF
   "
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *'pull_policy: build'* ]]
+  [[ "$output" != *'build:'* ]]
+  [[ "$output" != *'pull_policy: build'* ]]
+  [[ "$output" != *'dockerfile: docker/agents/Dockerfile'* ]]
 }
 
 @test "local-model agent service keys FORGE_BOT_USER to forge_user even when it differs from service name (#849)" {
