@@ -52,9 +52,11 @@ UI_DIR = "/var/chat/ui"
 STATIC_DIR = os.path.join(UI_DIR, "static")
 CLAUDE_BIN = "/usr/local/bin/claude"
 
-# Workspace directory: bind-mounted project working tree for Claude access
-# Defaults to empty; when set, Claude can read/write to this directory
-WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "")
+# Workspace directory: bind-mounted project working tree for Claude access.
+# Default /opt/disinto so chat-Claude acts as a factory operator (#650); this
+# is the factory source clone inside the edge container. Override via env for
+# local dev or alternate workspace bind-mounts.
+WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "/opt/disinto")
 
 # Claude model pinned for the chat subprocess (#648). Defaults to Opus 4.7 —
 # overridable via CHAT_CLAUDE_MODEL so ops can swap the model without a

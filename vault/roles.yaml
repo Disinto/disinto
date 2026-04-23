@@ -126,6 +126,16 @@ roles:
     namespace: default
     job_id:    edge
 
+  # ── Edge chat-Claude control surface (#650) ────────────────────────────────
+  # Caddy task in nomad/jobs/edge.hcl binds this role so the chat subprocess
+  # can read the operator Forge PAT + scoped Nomad ACL token from Vault KV.
+  # Same job_id as service-dispatcher (both tasks live in the edge job); per-
+  # task vault { role = ... } stanzas pick which role each task gets.
+  - name:      service-edge-chat
+    policy:    service-edge-chat
+    namespace: default
+    job_id:    edge
+
   # ── Per-secret runner roles ────────────────────────────────────────────────
   # vault-runner (Step 5) composes runner-<NAME> policies onto each
   # ephemeral dispatch token based on the action TOML's `secrets = [...]`.

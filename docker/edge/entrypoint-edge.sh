@@ -237,6 +237,55 @@ else
   echo "edge: collect-engagement cron skipped (EDGE_ENGAGEMENT_READY=0)" >&2
 fi
 
+# ── chat-Claude factory control surface (#650) ────────────────────────
+# Install settings.json + .mcp.json templates into $CHAT_WORKSPACE_DIR so
+# Claude Code auto-loads them when chat-server.py spawns `claude -p` with
+# cwd=$CHAT_WORKSPACE_DIR. The templates are baked into the image at
+# /var/chat/config-templates/ by the Dockerfile.
+#
+# Load Vault-templated secrets (if present) into env so the Bash allow-list
+# and the forge-api MCP header substitution can reach them:
+#   - FACTORY_FORGE_PAT  — Forge admin PAT (issue/PR CRUD via forge-api MCP)
+#   - NOMAD_TOKEN        — scoped ACL token (namespace default, submit/read/list/logs)
+#
+# Files are expected under /secrets/ inside the caddy task (Vault template
+# writes them there when the jobspec's `template` stanza is configured —
+# see nomad/jobs/edge.hcl).
+export CHAT_WORKSPACE_DIR="${CHAT_WORKSPACE_DIR:-/opt/disinto}"
+
+_chat_install_settings() {
+  local workspace="$1"
+  [ -d "$workspace" ] || return 0
+  mkdir -p "${workspace}/.claude"
+  if [ -f /var/chat/config-templates/settings.json ]; then
+    cp /var/chat/config-templates/settings.json "${workspace}/.claude/settings.json"
+    echo "edge: installed chat settings.json -> ${workspace}/.claude/settings.json" >&2
+  fi
+  if [ -f /var/chat/config-templates/mcp.json ]; then
+    cp /var/chat/config-templates/mcp.json "${workspace}/.mcp.json"
+    echo "edge: installed chat .mcp.json -> ${workspace}/.mcp.json" >&2
+  fi
+}
+
+_chat_load_secret_file() {
+  # $1 = env var name, $2 = file path
+  local var="$1" path="$2"
+  if [ -n "${!var:-}" ]; then
+    # Already set (dev override) — leave it.
+    return 0
+  fi
+  if [ -r "$path" ] && [ -s "$path" ]; then
+    # shellcheck disable=SC2046  # single line, no IFS weirdness
+    export "$var=$(tr -d '\r\n' < "$path")"
+    echo "edge: loaded $var from $path" >&2
+  fi
+}
+
+_chat_load_secret_file FACTORY_FORGE_PAT "${FACTORY_FORGE_PAT_FILE:-/secrets/forge-pat}"
+_chat_load_secret_file NOMAD_TOKEN       "${NOMAD_TOKEN_FILE:-/secrets/nomad-token}"
+export NOMAD_ADDR="${NOMAD_ADDR:-http://localhost:4646}"
+_chat_install_settings "$CHAT_WORKSPACE_DIR"
+
 # Start chat server in background (#1083 — merged from docker/chat into edge)
 (python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &
 

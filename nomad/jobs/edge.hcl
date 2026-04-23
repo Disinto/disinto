@@ -35,12 +35,9 @@ job "edge" {
   group "edge" {
     count = 1
 
-    # ── Vault workload identity for dispatcher (S5.1, issue #988) ──────────
-    # Service role for dispatcher task to fetch vault actions from KV v2.
-    # Role defined in vault/roles.yaml, policy in vault/policies/dispatcher.hcl.
-    vault {
-      role = "service-dispatcher"
-    }
+    # Vault workload identity is scoped per-task below: the caddy task uses
+    # service-edge-chat (operator Forge PAT + Nomad ACL token, #650); the
+    # dispatcher task uses service-dispatcher (ops-repo + runner secrets).
 
     # ── Network ports (S5.1, issue #988) ──────────────────────────────────
     # Caddy listens on :80 and :443. Expose both on the host.
@@ -110,6 +107,11 @@ job "edge" {
     task "caddy" {
       driver = "docker"
 
+      # Vault role for the chat-Claude control surface secrets (#650).
+      vault {
+        role = "service-edge-chat"
+      }
+
       config {
         # Use pre-built disinto/edge:local image (custom Dockerfile adds
         # bash, jq, curl, git, docker-cli, python3, openssh-client, autossh).
@@ -121,6 +123,12 @@ job "edge" {
         # apparmor=unconfined matches docker-compose — needed for autossh
         # in the entrypoint script.
         security_opt = ["apparmor=unconfined"]
+
+        # Mount docker.sock rw for the chat-Claude factory control surface
+        # (#650). The chat subprocess needs rw to run `docker restart`,
+        # `docker stop`, etc. via the Bash allow-list in chat-settings.json.
+        # The dispatcher task keeps its own ro mount below.
+        volumes = ["/var/run/docker.sock:/var/run/docker.sock:rw"]
       }
 
       # Mount caddy-data volume for ACME state and config directory.
@@ -213,6 +221,44 @@ EOT
 EOT
       }
 
+      # ── Chat-Claude factory control surface secrets (#650) ──────────────
+      # Forge admin PAT — read by the forge-api MCP server via the
+      # FACTORY_FORGE_PAT env var (entrypoint-edge.sh loads it from the file
+      # mount at container start). File mount preferred over direct env so
+      # rotation = `vault kv put kv/disinto/chat forge_pat=<new>` + template
+      # change_mode triggers a restart without shell-history leakage.
+      template {
+        destination          = "secrets/forge-pat"
+        change_mode          = "restart"
+        error_on_missing_key = false
+        perms                = "0400"
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/chat" -}}
+{{ .Data.data.forge_pat }}
+{{- else -}}
+seed-me
+{{- end -}}
+EOT
+      }
+
+      # Nomad ACL token — scoped namespace=default, perms submit-job /
+      # read-job / list-jobs / read-logs (see docs/CHAT-CONTROL-SURFACE.md
+      # for the policy to install via `nomad acl policy apply`). Rendered
+      # as a file so NOMAD_TOKEN never appears in `docker inspect`.
+      template {
+        destination          = "secrets/nomad-token"
+        change_mode          = "restart"
+        error_on_missing_key = false
+        perms                = "0400"
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/chat" -}}
+{{ .Data.data.nomad_token }}
+{{- else -}}
+seed-me
+{{- end -}}
+EOT
+      }
+
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         FORGE_REPO        = "disinto-admin/disinto"
@@ -225,6 +271,15 @@ EOT
         # bypasses the Max-subscription OAuth flow.
         CLAUDE_CONFIG_DIR = "/home/agent/.claude"
         CHAT_CLAUDE_MODEL = "claude-opus-4-7"
+
+        # Chat-Claude factory control surface (#650). Workspace default is
+        # /opt/disinto so Claude can read factory source; settings.json +
+        # .mcp.json land there via entrypoint-edge.sh. Secret file paths
+        # point at the Vault-rendered files above.
+        CHAT_WORKSPACE_DIR     = "/opt/disinto"
+        FACTORY_FORGE_PAT_FILE = "/secrets/forge-pat"
+        NOMAD_TOKEN_FILE       = "/secrets/nomad-token"
+        NOMAD_ADDR             = "http://localhost:4646"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
@@ -237,6 +292,13 @@ EOT
     # ── Dispatcher task (S5.1, issue #988) ────────────────────────────────
     task "dispatcher" {
       driver = "docker"
+
+      # Vault role for ops-repo + runner secret enumeration. Previously
+      # inherited from a group-level stanza; moved to task scope when the
+      # caddy task got its own role (#650).
+      vault {
+        role = "service-dispatcher"
+      }
 
       config {
         # Use same disinto/agents:local image as other agents.
