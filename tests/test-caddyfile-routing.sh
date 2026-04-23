@@ -171,11 +171,11 @@ check_chat_routing() {
     tr_fail "Missing Chat catch-all handle block (handle /chat/*)"
   fi
 
-  # Check reverse_proxy to Chat on port 8080
-  if echo "$CADDYFILE" | grep -q "reverse_proxy 127.0.0.1:8080"; then
-    tr_pass "Chat reverse_proxy configured (127.0.0.1:8080)"
+  # Check reverse_proxy to Chat on port 8080 (subprocess via env var)
+  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "CHAT_PORT" "8080" }}'; then
+    tr_pass "Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
   else
-    tr_fail "Missing Chat reverse_proxy (127.0.0.1:8080)"
+    tr_fail "Missing Chat reverse_proxy (127.0.0.1:CHAT_PORT)"
   fi
 
   # Check forward_auth block for /chat/*

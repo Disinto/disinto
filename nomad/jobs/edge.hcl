@@ -193,30 +193,32 @@ EOT
 {{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
 {{ end }}    }
 
-    # Chat service — reverse proxy to disinto-chat backend (#705, #1156)
-    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
+    # Chat service — subprocess on 127.0.0.1:{{ env "CHAT_PORT" "8080" }} (#1083)
+    # Chat was folded into edge as a subprocess (#1083); no Nomad service named
+    # "chat" exists. Use the host-local loopback address instead of
+    # nomadService discovery.
     handle /chat/login {
-{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }}
-{{ end }}    }
+        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+    }
     handle /chat/oauth/callback {
-{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }}
-{{ end }}    }
+        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+    }
     # WebSocket endpoint for streaming (#1026)
     handle /chat/ws {
-{{ range nomadService "chat" }}        reverse_proxy {{ .Address }}:{{ .Port }} {
+        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
             header_up Upgrade {http.request.header.Upgrade}
             header_up Connection {http.request.header.Connection}
         }
-{{ end }}    }
+    }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
-{{ range nomadService "chat" }}        forward_auth {{ .Address }}:{{ .Port }} {
+        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy {{ .Address }}:{{ .Port }}
-{{ end }}    }
+        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+    }
 }
 EOT
       }
