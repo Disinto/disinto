@@ -259,6 +259,30 @@ seed-me
 EOT
       }
 
+      # ── Voice bridge Gemini API key (#664 / parent #651) ─────────────────
+      # Rendered to a FILE at /secrets/gemini-api-key rather than an env
+      # stanza. Rationale: env vars set on the Nomad task are inherited by
+      # every subprocess in the task — chat-server.py, the chat-launched
+      # `claude -p` process, AND the voice bridge. The voice bridge is the
+      # only subprocess that should hold the Gemini key. The voice launcher
+      # (lands with #662) reads this file and sets GEMINI_API_KEY only in
+      # its own child env, preventing leakage into the chat subprocess or
+      # any `claude -p` session it spawns. Seed via
+      # `disinto vault reseed-voice` (see tools/vault-seed-voice.sh).
+      template {
+        destination          = "secrets/gemini-api-key"
+        change_mode          = "restart"
+        error_on_missing_key = false
+        perms                = "0400"
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/voice" -}}
+{{ .Data.data.gemini_api_key }}
+{{- else -}}
+seed-me
+{{- end -}}
+EOT
+      }
+
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         FORGE_REPO        = "disinto-admin/disinto"
@@ -280,6 +304,12 @@ EOT
         FACTORY_FORGE_PAT_FILE = "/secrets/forge-pat"
         NOMAD_TOKEN_FILE       = "/secrets/nomad-token"
         NOMAD_ADDR             = "http://localhost:4646"
+
+        # Voice bridge (#664 / parent #651). The path — not the secret — is
+        # exposed as env. The voice launcher (arriving with #662) reads the
+        # file and scopes GEMINI_API_KEY to its own subprocess env only, so
+        # the chat subprocess never sees the Gemini key.
+        GEMINI_API_KEY_FILE    = "/secrets/gemini-api-key"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
