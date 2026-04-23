@@ -36,9 +36,7 @@ reads the file and never sees the key.
 
 ### First-time seeding
 
-The key is seeded automatically during `disinto init` if
-`GEMINI_API_KEY` is present in `.env`. To seed an already-initialized
-factory:
+After factory init, seed the key manually:
 
 ```sh
 # On the factory host (where .env and Vault live):
