@@ -7,7 +7,7 @@
 #
 #   1. Inserts (or updates) the project repo row in Woodpecker's sqlite DB
 #      with active=1, so the review-bot sees "success" states on PR commits.
-#   2. Registers a Forgejo webhook pointing at WP's /api/hook endpoint, so
+#   2. Registers a Forgejo webhook pointing at WP's /ci/api/hook endpoint, so
 #      pushes + PR events fire Woodpecker pipelines automatically.
 #
 # Direct DB insert is used because Woodpecker's repo-activation API requires
@@ -24,7 +24,8 @@
 #
 # Idempotency:
 #   - Repo row: INSERT OR REPLACE on (owner, name, forge_id)
-#   - Webhook: GET existing hooks first, skip if one already targets WP
+#   - Webhook: deterministic HASH from forge_remote_id; skip if any hook
+#     already targets this WP host (issue #643/#635)
 #
 # Requires: sqlite3 (on the WP alloc host) OR python3, curl, jq
 # =============================================================================
@@ -68,7 +69,11 @@ ssh_url=$(printf '%s' "$repo_json" | jq -r '.ssh_url // empty')
 log "Forgejo repo id=${forge_remote_id}, branch=${default_branch}"
 
 log "── Step 2/3: activate repo row in Woodpecker DB ──"
-HASH=$(openssl rand -hex 32)
+# Derive HASH from stable inputs (forge_remote_id) so the webhook URL is
+# deterministic across runs.  A random HASH (old behavior) caused a new URL
+# on every invocation, defeating the idempotency check and creating duplicate
+# webhooks — see issue #643 / #635.
+HASH=$(printf '%s' "${forge_remote_id}" | openssl dgst -sha256 -hmac "wp-activate-repo-hash" -hex 2>/dev/null | awk '{print $NF}')
 
 python3 - "${WP_DB}" "${FORGE_OWNER}" "${FORGE_REPO}" "${forge_remote_id}" \
   "${clone_url}" "${ssh_url}" "${default_branch}" "${FORGE_URL}" "${HASH}" <<PY
@@ -91,8 +96,8 @@ existing = next((r[0] for r in c.execute(
     "SELECT id FROM repos WHERE forge_id=? AND full_name=?",
     (forge_id, sys.argv[3]))), None)
 if existing:
-    c.execute("UPDATE repos SET active=1, allow_pr=1 WHERE id=?", (existing,))
-    print(f"repo row id={existing} updated (active=1)")
+    c.execute("UPDATE repos SET active=1, allow_pr=1, hash=? WHERE id=?", (sys.argv[9], existing,))
+    print(f"repo row id={existing} updated (active=1, hash refreshed)")
 else:
     c.execute(
         "INSERT INTO repos (user_id, forge_id, forge_remote_id, org_id, owner, name, full_name,"
@@ -138,8 +143,8 @@ signing_input = f"{header}.{payload}"
 sig = hmac.new(hash_val.encode(), signing_input.encode(), hashlib.sha256).digest()
 token = f"{signing_input}.{_b64url(sig)}"
 
-# Build URL: join wp_host (may include subpath) + /api/hook?access_token=jwt
-url = wp_host.rstrip("/") + "/api/hook?access_token=" + token
+# Build URL: join wp_host (may include subpath) + /ci/api/hook?access_token=jwt
+url = wp_host.rstrip("/") + "/ci/api/hook?access_token=" + token
 print(url)
 PY
 )
@@ -149,8 +154,13 @@ hooks=$(curl -sf --max-time 10 \
   -H "Authorization: token ${FORGE_TOKEN}" \
   "${FORGE_URL}/api/v1/repos/${FORGE_REPO}/hooks") || hooks="[]"
 
-if printf '%s' "$hooks" | jq -e --arg url "$JWT" '.[] | select(.config.url == $url)' >/dev/null 2>&1; then
-    log "webhook already exists — skip"
+# Check for an existing hook targeting this WP host (any path).
+# This catches both the correct /ci/api/hook URL and the old misconfigured
+# /api/hook URL that silently dropped deliveries (issue #635 / #643).
+wp_host_stem="${WOODPECKER_HOST%/}"
+if printf '%s' "$hooks" | jq -e --arg stem "$wp_host_stem" \
+    '.[] | select(.config.url | startswith($stem))' >/dev/null 2>&1; then
+    log "webhook already exists for this WP host — skip"
 else
     if curl -sf --max-time 10 -X POST \
         -H "Authorization: token ${FORGE_TOKEN}" \
