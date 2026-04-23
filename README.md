@@ -102,6 +102,13 @@ docker compose up -d
 docker exec disinto-agents tail -f /home/agent/data/agent-entrypoint.log
 ```
 
+## Pinning versions
+
+Control which Disinto image tag is used via the `DISINTO_IMAGE_TAG` environment variable in `.env`.
+
+- **Stability-first:** set `DISINTO_IMAGE_TAG=v0.3.0` to pin to a specific release. Bump manually when ready.
+- **Auto-float:** leave `DISINTO_IMAGE_TAG` unset — the generator defaults to `:latest`, and `docker compose pull` picks up new releases automatically.
+
 ## Directory Structure
 
 ```
