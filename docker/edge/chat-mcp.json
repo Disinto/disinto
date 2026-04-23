@@ -1,0 +1,38 @@
+{
+  "$schema_note": "Claude Code .mcp.json for the chat subprocess (#650).",
+  "$comment": [
+    "MCP servers exposed to chat-Claude. Installed at $CHAT_WORKSPACE_DIR/.mcp.json",
+    "by docker/edge/entrypoint-edge.sh.",
+    "",
+    "Servers:",
+    "  - forge-api: HTTP bearer-auth against the on-box Forgejo API (issue/PR CRUD).",
+    "    Token is read from $FACTORY_FORGE_PAT_FILE at tool-call time by the caller;",
+    "    for Claude Code's HTTP MCP transport the Authorization header is rendered",
+    "    from the FACTORY_FORGE_PAT env var which entrypoint-edge.sh populates from",
+    "    the Vault-templated file mount.",
+    "  - disinto-cli: stdio wrapper around /opt/disinto/bin/disinto. The wrapper",
+    "    script is installed at /usr/local/bin/disinto-mcp by the edge image.",
+    "",
+    "Nomad interactions are intentionally handled through the Bash allow-list in",
+    "chat-settings.json rather than a dedicated MCP — the nomad CLI + NOMAD_TOKEN",
+    "env is enough (#650 scope note)."
+  ],
+  "mcpServers": {
+    "forge-api": {
+      "type": "http",
+      "url": "https://self.disinto.ai/forge/api/v1",
+      "headers": {
+        "Authorization": "token ${FACTORY_FORGE_PAT}",
+        "Accept": "application/json"
+      }
+    },
+    "disinto-cli": {
+      "type": "stdio",
+      "command": "/usr/local/bin/disinto-mcp",
+      "args": [],
+      "env": {
+        "DISINTO_BIN": "/opt/disinto/bin/disinto"
+      }
+    }
+  }
+}

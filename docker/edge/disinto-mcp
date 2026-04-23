@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# disinto-mcp — minimal stdio MCP wrapper around /opt/disinto/bin/disinto (#650).
+#
+# Exposes disinto CLI subcommands as MCP tools to the chat-Claude subprocess.
+# Implements the MCP stdio framing (JSON-RPC 2.0 over stdio, line-delimited JSON
+# messages). Only a small surface: initialize, tools/list, tools/call.
+#
+# Tool:
+#   disinto.run { args: [string] }  -> executes `$DISINTO_BIN <args...>` and
+#                                      returns combined stdout+stderr as text.
+#
+# The Bash allow-list in chat-settings.json already permits direct invocation
+# of the disinto CLI via the shell; this wrapper exists so forge-api-style
+# clients that prefer MCP tool calls (e.g. a future voice layer, #831) can
+# reuse the same surface.
+#
+# Scoped to what's safe for an OAuth-gated operator session: allow-list of
+# disinto subcommands (mirrors the permission envelope in #650).
+set -euo pipefail
+
+DISINTO_BIN="${DISINTO_BIN:-/opt/disinto/bin/disinto}"
+
+# Mirror of the broad permissions.allow entry "Bash(disinto:*)". The MCP surface
+# is narrower than the Bash surface on purpose — agents that talk through MCP
+# should not need administrative subcommands like `secrets add`.
+ALLOWED_SUBCOMMANDS=(
+  status
+  backup
+  wp
+  logs
+  ps
+  doctor
+  init
+  agent
+  version
+  help
+)
+
+# ── JSON-RPC helpers ─────────────────────────────────────────────────────────
+_jq() { jq -cn "$@"; }
+
+_respond() {
+  # $1 = id (raw json), $2 = result (raw json)
+  printf '%s\n' "$(jq -cn --argjson id "$1" --argjson result "$2" \
+    '{jsonrpc:"2.0", id:$id, result:$result}')"
+}
+
+_error() {
+  # $1 = id, $2 = code, $3 = message
+  printf '%s\n' "$(jq -cn --argjson id "$1" --arg code "$2" --arg msg "$3" \
+    '{jsonrpc:"2.0", id:$id, error:{code:($code|tonumber), message:$msg}}')"
+}
+
+_tool_list_json() {
+  # shellcheck disable=SC2016  # jq program literal, vars via --argjson
+  _jq --argjson allowed "$(printf '%s\n' "${ALLOWED_SUBCOMMANDS[@]}" | jq -R . | jq -cs .)" '
+    {
+      tools: [{
+        name: "disinto.run",
+        description: "Run a disinto CLI subcommand. Allowed subcommands: " + ($allowed|join(", ")),
+        inputSchema: {
+          type: "object",
+          properties: {
+            args: {
+              type: "array",
+              items: {type:"string"},
+              description: "Arguments passed to the disinto CLI. First element must be one of the allowed subcommands."
+            }
+          },
+          required: ["args"]
+        }
+      }]
+    }'
+}
+
+_subcommand_allowed() {
+  local cmd="$1"
+  local allowed
+  for allowed in "${ALLOWED_SUBCOMMANDS[@]}"; do
+    [ "$cmd" = "$allowed" ] && return 0
+  done
+  return 1
+}
+
+_run_disinto() {
+  # $1 = JSON array of args
+  local args_json="$1"
+  local subcmd
+  subcmd=$(jq -r '.[0] // ""' <<<"$args_json")
+  if [ -z "$subcmd" ]; then
+    printf '%s' "error: no subcommand provided"
+    return 2
+  fi
+  if ! _subcommand_allowed "$subcmd"; then
+    printf 'error: subcommand %q is not on the disinto-mcp allow-list' "$subcmd"
+    return 2
+  fi
+
+  # Shell out with the args array mapped to positional parameters.
+  mapfile -t argv < <(jq -r '.[]' <<<"$args_json")
+  "$DISINTO_BIN" "${argv[@]}" 2>&1
+}
+
+# ── Main loop ────────────────────────────────────────────────────────────────
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  method=$(jq -r '.method // ""' <<<"$line" 2>/dev/null || echo "")
+  id=$(jq -c '.id // null' <<<"$line" 2>/dev/null || echo "null")
+
+  case "$method" in
+    initialize)
+      _respond "$id" '{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"disinto-cli","version":"0.1"}}'
+      ;;
+    tools/list)
+      _respond "$id" "$(_tool_list_json)"
+      ;;
+    tools/call)
+      tname=$(jq -r '.params.name // ""' <<<"$line")
+      if [ "$tname" != "disinto.run" ]; then
+        _error "$id" -32601 "unknown tool: $tname"
+        continue
+      fi
+      args=$(jq -c '.params.arguments.args // []' <<<"$line")
+      output=$(_run_disinto "$args" || true)
+      _respond "$id" "$(jq -cn --arg text "$output" '{content:[{type:"text", text:$text}]}')"
+      ;;
+    notifications/*)
+      # No response for notifications.
+      ;;
+    "")
+      # Ignore non-JSON-RPC input.
+      ;;
+    *)
+      [ "$id" != "null" ] && _error "$id" -32601 "method not implemented: $method"
+      ;;
+  esac
+done
