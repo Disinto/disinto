@@ -78,8 +78,9 @@ steps:
           echo '        reverse_proxy 127.0.0.1:8081'
           echo '    }'
           echo ''
-          echo '    # Chat service — reverse proxy to disinto-chat backend (#705)'
-          echo '    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)'
+          echo '    # Chat service — subprocess on 127.0.0.1:8080 (#1083)'
+          echo '    # Chat was folded into edge as a subprocess (#1083); no Nomad service named'
+          echo '    # "chat" exists. Use the host-local loopback address.'
           echo '    handle /chat/login {'
           echo '        reverse_proxy 127.0.0.1:8080'
           echo '    }'
@@ -275,10 +276,10 @@ steps:
           FAILED=1
         fi
 
-        if echo "$CADDYFILE" | grep -q 'nomadService "chat"'; then
-          echo "[PASS] Chat reverse_proxy (Nomad service discovery)"
+        if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "CHAT_PORT" "8080" }}'; then
+          echo "[PASS] Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
         else
-          echo "[FAIL] Chat reverse_proxy (Nomad service discovery)"
+          echo "[FAIL] Chat reverse_proxy not configured (expected 127.0.0.1:CHAT_PORT)"
           FAILED=1
         fi
 
