@@ -248,7 +248,7 @@ print(cfg.get('primary_branch', 'main'))
     else
       # Repo exists — ensure remote is configured and pull latest
       local current_remote
-      current_remote=$(git -C "$ops_root" remote get-url origin 2>/dev/null || true)
+      current_remote=$(gosu agent git -C "$ops_root" remote get-url origin 2>/dev/null || true)
       if [ -z "$current_remote" ]; then
         log "Ops bootstrap: adding missing remote to ${ops_root}"
         gosu agent git -C "$ops_root" remote add origin "$remote_url"
