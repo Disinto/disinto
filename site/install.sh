@@ -3,7 +3,7 @@
 # disinto — Bootstrap installer for fresh hosts
 #
 # Usage:
-#   curl -fsSL https://disinto.ai/install.sh | sudo sh
+#   curl -fsSL https://disinto.ai/install.sh | sudo bash
 #
 # Installs the disinto CLI at /opt/disinto and symlinks it to /usr/local/bin.
 # =============================================================================
@@ -11,7 +11,7 @@ set -euo pipefail
 
 # --- Require root -----------------------------------------------------------
 if [ "$(id -u)" -ne 0 ]; then
-  echo "ERROR: This installer must be run as root (try: sudo sh)." >&2
+  echo "ERROR: This installer must be run as root (try: sudo bash)." >&2
   exit 1
 fi
 
