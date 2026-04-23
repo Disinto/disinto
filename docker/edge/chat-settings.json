@@ -33,11 +33,9 @@
       "Bash(nomad alloc logs:*)",
       "Bash(nomad alloc restart:*)",
       "Bash(nomad alloc stop:*)",
-      "Bash(nomad alloc exec:*)",
       "Bash(nomad node status:*)",
       "Bash(nomad operator api:*)",
       "Bash(docker ps:*)",
-      "Bash(docker ps)",
       "Bash(docker logs:*)",
       "Bash(docker inspect:*)",
       "Bash(docker stats:*)",
@@ -49,8 +47,7 @@
       "Bash(disinto:*)",
       "Bash(/opt/disinto/bin/disinto:*)",
       "Bash(git:*)",
-      "Bash(curl https://self.disinto.ai/forge/api/v1/*)",
-      "Bash(curl -* https://self.disinto.ai/forge/api/v1/*)"
+      "Bash(curl*https://self.disinto.ai/forge/api/v1/*)"
     ],
     "deny": [
       "Bash(docker volume rm:*)",
