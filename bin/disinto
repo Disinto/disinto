@@ -3581,6 +3581,40 @@ if warnings:
 # Idempotent: re-running overwrites values with current .env contents.
 # Missing env vars produce a warning (not a hard error).
 disinto_wp() {
+  # Extract subcommand before flag parsing.
+  local subcmd="${1:-}"
+  case "$subcmd" in
+    reseed-secrets) shift ;;
+    -h|--help)
+      cat <<EOF
+Usage: disinto wp reseed-secrets [--dry-run]
+
+Re-seed Woodpecker repo secrets from .env for post-init factories.
+
+Reads GHCR_TOKEN and FORGE_TOKEN (and any other names in SECRET_NAMES)
+from the environment (sourced from .env or .env.enc at startup) and
+upserts them into the Woodpecker secrets table for the project repo.
+
+Idempotent: re-running overwrites values with current .env contents.
+Missing env vars produce a warning, not a hard error.
+
+Options:
+  --dry-run   Show what would be seeded without writing
+EOF
+      exit 0
+      ;;
+    "")
+      echo "Error: missing wp subcommand" >&2
+      echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
+      exit 1
+      ;;
+    *)
+      echo "Error: unknown wp subcommand: $subcmd" >&2
+      echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
+      exit 1
+      ;;
+  esac
+
   local dry_run=0
   for arg in "$@"; do
     case "$arg" in
@@ -3604,7 +3638,7 @@ EOF
         exit 0
         ;;
       *)
-        echo "Error: unknown wp subcommand: $arg" >&2
+        echo "Error: unknown option: $arg" >&2
         echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
         exit 1
         ;;
@@ -3629,6 +3663,7 @@ EOF
 
   # WP_DB defaults to the nomad path; fall back to docker compose volume path.
   local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
+  local -a checked_paths=("$wp_db")
   if [ ! -f "$wp_db" ]; then
     # Try the docker-compose volume mount path.
     if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
@@ -3636,11 +3671,16 @@ EOF
     elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
       wp_db="/woodpecker-data/woodpecker.sqlite"
     fi
+    # Collect fallback paths that were also probed.
+    if [ "$wp_db" = "${checked_paths[0]}" ]; then
+      # None of the fallbacks matched — record them.
+      checked_paths+=("/var/lib/woodpecker/woodpecker.sqlite" "/woodpecker-data/woodpecker.sqlite")
+    fi
   fi
 
   if [ ! -f "$wp_db" ]; then
     echo "Error: Woodpecker sqlite DB not found" >&2
-    echo "  Checked: ${wp_db}" >&2
+    echo "  Checked: ${checked_paths[*]}" >&2
     echo "  Ensure Woodpecker is running and the DB volume is mounted." >&2
     exit 1
   fi
