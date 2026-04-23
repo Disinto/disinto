@@ -193,7 +193,7 @@ EOT
 {{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
 {{ end }}    }
 
-    # Chat service — subprocess on 127.0.0.1:{{ env "CHAT_PORT" "8080" }} (#1083)
+    # Chat service — subprocess on 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} (#1083)
     # Chat was folded into edge as a subprocess (#1083); no Nomad service named
     # "chat" exists. Use the host-local loopback address instead of
     # nomadService discovery.
@@ -202,26 +202,26 @@ EOT
         redir /chat/ 302
     }
     handle /chat/login {
-        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
     }
     handle /chat/oauth/callback {
-        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
     }
     # WebSocket endpoint for streaming (#1026)
     handle /chat/ws {
-        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
             header_up Upgrade {http.request.header.Upgrade}
             header_up Connection {http.request.header.Connection}
         }
     }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
-        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
+        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
     }
 
     # Voice bridge WebSocket endpoint — Gemini Live ↔ `think` tool ↔
@@ -343,6 +343,23 @@ seed-me
 EOT
       }
 
+      # Chat OAuth (Forgejo) client id/secret + forward_auth shared secret.
+      # Injected as env vars (env = true) because server.py reads from env.
+      template {
+        destination          = "secrets/chat-oauth.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        perms                = "0400"
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/chat" -}}
+CHAT_OAUTH_CLIENT_ID={{ .Data.data.oauth_client_id }}
+CHAT_OAUTH_CLIENT_SECRET={{ .Data.data.oauth_client_secret }}
+FORWARD_AUTH_SECRET={{ .Data.data.forward_auth_secret }}
+{{- end }}
+EOT
+      }
+
       # ── Non-secret env ───────────────────────────────────────────────────
       env {
         FORGE_REPO        = "disinto-admin/disinto"
@@ -375,6 +392,15 @@ EOT
         # CHAT_PORT=8080.
         VOICE_PORT             = "8090"
         VOICE_HOST             = "127.0.0.1"
+
+        # OAuth callback FQDN — server.py builds redirect_uri from this.
+        EDGE_TUNNEL_FQDN       = "self.disinto.ai"
+        EDGE_ROUTING_MODE      = "subpath"
+
+        # FORGE_URL stays internal (used for git clone + server-to-server
+        # API calls). The OAuth authorize redirect needs a browser-reachable
+        # URL — server.py reads FORGE_PUBLIC_URL when present.
+        FORGE_PUBLIC_URL       = "https://self.disinto.ai/forge"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
