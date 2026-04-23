@@ -159,7 +159,7 @@ else
         -d "$(jq -n --arg url "$JWT" '{
           type: "forgejo",
           config: { url: $url, content_type: "json" },
-          events: ["push", "pull_request", "pull_request_sync"],
+          events: ["push", "create", "pull_request", "pull_request_sync"],
           active: true
         }')" >/dev/null; then
         log "webhook registered"
