@@ -566,6 +566,7 @@ COMPOSEEOF
 
   # Edge proxy — reverse proxy to Forgejo, Woodpecker, and staging
   # Serves on ports 80/443, routes based on path
+  # ghcr.io/disinto/edge is now public (#670, follow-up to #606).
   edge:
     image: ghcr.io/disinto/edge:${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-edge
