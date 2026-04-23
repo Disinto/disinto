@@ -276,12 +276,12 @@ def _parse_stream_json(output):
 class _WebSocketHandler:
     """Handle WebSocket connections for chat streaming."""
 
-    def __init__(self, reader, writer, user, message_queue, session_id=None):
+    def __init__(self, reader, writer, user, message_queue, conv_id=None):
         self.reader = reader
         self.writer = writer
         self.user = user
         self.message_queue = message_queue
-        self.session_id = session_id
+        self.conv_id = conv_id
         self.closed = False
 
     async def accept_connection(self, sec_websocket_key, sec_websocket_protocol=None):
@@ -461,7 +461,10 @@ class _WebSocketHandler:
                         data = json.loads(msg)
                         if data.get("type") == "chat_request":
                             # Invoke Claude with the message
-                            await self._handle_chat_request(data.get("message", ""))
+                            await self._handle_chat_request(
+                                data.get("message", ""),
+                                data.get("conversation_id"),
+                            )
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         pass
 
@@ -496,7 +499,7 @@ class _WebSocketHandler:
         except Exception:
             pass
 
-    async def _handle_chat_request(self, message):
+    async def _handle_chat_request(self, message, message_conv_id=None):
         """Handle a chat_request WebSocket frame by invoking Claude."""
         if not message:
             return
@@ -509,10 +512,16 @@ class _WebSocketHandler:
             }))
             return
 
+        # Derive claude session_id from conv_id so each conversation has its own claude context
+        conv_id = message_conv_id or self.conv_id or _generate_conversation_id()
+        claude_session_id = f"{conv_id}-claude"
+        if not claude_session_id:
+            claude_session_id = uuid.uuid4().hex
+
         try:
             # Build claude command with session continuity (-r) for conversation memory
             claude_args = [
-                CLAUDE_BIN, "-r", self.session_id, "-p", message,
+                CLAUDE_BIN, "-r", claude_session_id, "-p", message,
                 "--output-format", "stream-json",
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
@@ -734,10 +743,6 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/chat/login")
         self.end_headers()
         return None
-
-    def _require_session_with_sid(self):
-        """Check session; redirect to /chat/login if missing. Returns (username, session_id)."""
-        return _validate_session(self.headers.get("Cookie"))
 
     def _check_forwarded_user(self, session_user):
         """Defense-in-depth: verify X-Forwarded-User matches session user (#709).
@@ -969,7 +974,6 @@ class ChatHandler(BaseHTTPRequestHandler):
         _sessions[session_token] = {
             "user": username,
             "expires": time.time() + SESSION_TTL,
-            "session_id": uuid.uuid4().hex,
         }
 
         cookie_flags = _session_cookie_flags()
@@ -1056,8 +1060,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(400, "Empty message")
             return
 
-        # Get user and session_id from session
-        user, session_id = _validate_session(self.headers.get("Cookie"))
+        # Get user from session
+        user, _ = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized")
             return
@@ -1071,14 +1075,18 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not conv_id or not _validate_conversation_id(conv_id):
             conv_id = _generate_conversation_id()
 
+        # Derive claude session_id from conv_id so each conversation has its own claude context
+        claude_session_id = f"{conv_id}-claude"
+        if not claude_session_id:
+            claude_session_id = uuid.uuid4().hex
+
         try:
             # Save user message to history
             _write_message(user, conv_id, "user", message)
 
             # Build claude command with session continuity (-r) for conversation memory
-            # First turn creates the session; subsequent turns reuse it via -r <session_id>
             claude_args = [
-                CLAUDE_BIN, "-r", session_id, "-p", message,
+                CLAUDE_BIN, "-r", claude_session_id, "-p", message,
                 "--output-format", "stream-json",
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
@@ -1234,7 +1242,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def handle_websocket_upgrade(self):
         """Handle WebSocket upgrade request for chat streaming."""
         # Check session cookie
-        user, session_id = _validate_session(self.headers.get("Cookie"))
+        user, _ = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized: no valid session")
             return
@@ -1261,8 +1269,8 @@ class ChatHandler(BaseHTTPRequestHandler):
                 # Wrap the socket in asyncio streams using open_connection
                 reader, writer = await asyncio.open_connection(sock=sock)
 
-                # Create WebSocket handler (pass session_id for claude -r)
-                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user], session_id)
+                # Create WebSocket handler (pass conv_id for claude session scoping)
+                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user])
 
                 # Accept the connection (pass headers from HTTP request)
                 if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
