@@ -792,11 +792,17 @@ build_sdk_prompt_footer() {
 # Creates an isolated worktree for synchronous formula execution.
 # Fetches primary branch, cleans stale worktree, creates new one, and
 # sets an EXIT trap for cleanup.
-# Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH, FORGE_REMOTE.
-# Ensure resolve_forge_remote() is called before this function.
+# Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH.
+# Self-heals FORGE_REMOTE by calling resolve_forge_remote when unset — this
+# eliminates a silent-abort bug class in callers that forgot the precondition
+# (see #1120 / #551). Callers still need FORGE_URL set so resolve_forge_remote
+# can match a git remote (or fall back to "origin").
 formula_worktree_setup() {
   local worktree="$1"
   cd "$PROJECT_REPO_ROOT" || return
+  if [ -z "${FORGE_REMOTE:-}" ]; then
+    resolve_forge_remote
+  fi
   git fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
   worktree_cleanup "$worktree"
   git worktree add "$worktree" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null
