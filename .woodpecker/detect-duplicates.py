@@ -336,6 +336,22 @@ def main() -> int:
         "e42f14335a1236b9c5ea8e0b370898cb": "vault-seed help text + exit + invalid arg (ops-repo + runner)",
         # Common shell control-flow: if → return 1 → fi → fi (env.sh + register.sh)
         "a8bdb7f1a5d8cbd0a5921b17b6cf6f4d": "Common shell control-flow (return 1 / fi / fi / return 0 / }) (env.sh + register.sh)",
+        # vault-seed-voice.sh mirrors vault-seed-runner.sh for .env quoting +
+        # preconditions (issue #664). Intentional duplication: both seeders
+        # must agree on _strip_quote semantics and the precondition guard
+        # block so .env → KV writes stay consistent.
+        "41c132e129c262b36ebc80b36853326b": "_strip_quote helper start (vault-seed-runner + vault-seed-voice)",
+        "fedceb1c601c549ff2726155666ced8c": "_strip_quote helper body (vault-seed-runner + vault-seed-voice)",
+        "78c10c8b6f5cfdcd25498ddd258af885": "_strip_quote case pattern (vault-seed-runner + vault-seed-voice)",
+        "4752f5b7efb44353932535f587939a1c": "_strip_quote quote-strip case (vault-seed-runner + vault-seed-voice)",
+        "e8fbb8f714cc938529c5155326f82b46": "_strip_quote esac + printf (vault-seed-runner + vault-seed-voice)",
+        "993f5701a8e02959974f12fe319d4520": "_strip_quote close + DRY_RUN init (vault-seed-runner + vault-seed-voice)",
+        "02cfda183e483efb61cf6b17f88f4f3b": "_strip_quote close + DRY_RUN + case (vault-seed-runner + vault-seed-voice)",
+        "0a981d7d1b71db0c948e2d51394388f4": "Precondition binary check loop (vault-seed-runner + vault-seed-voice)",
+        "33746afae6ef9b929b28f35196430043": "Precondition binary check body (vault-seed-runner + vault-seed-voice)",
+        "440be711c8dacb6d38a0596e5837f135": "Precondition binary check + _hvault_default_env (vault-seed-runner + vault-seed-voice)",
+        "d83556898ab0dc34a2596258af74d06c": "Precondition done + _hvault_default_env + VAULT_ADDR (vault-seed-runner + vault-seed-voice)",
+        "efaa2b9d9e444ec9173d40a0c20d5b9b": "Precondition _hvault_default_env + VAULT_ADDR die (vault-seed-runner + vault-seed-voice)",
     }
 
     if not sh_files:
