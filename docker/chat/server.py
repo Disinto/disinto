@@ -8,7 +8,7 @@ Routes:
     GET /chat/oauth/callback -> exchange code for token, validate user, set session
     GET /chat/               -> serves index.html (session required)
     GET /chat/static/*       -> serves static assets (session required)
-    POST /chat               -> spawns `claude --print` with user message (session required)
+    POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
 
 OAuth flow:
@@ -37,6 +37,7 @@ import subprocess
 import sys
 import time
 import threading
+import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, urlencode
@@ -149,20 +150,20 @@ def _session_cookie_flags():
 
 
 def _validate_session(cookie_header):
-    """Check session cookie and return username if valid, else None."""
+    """Check session cookie and return (username, session_id) if valid, else (None, None)."""
     if not cookie_header:
-        return None
+        return None, None
     for part in cookie_header.split(";"):
         part = part.strip()
         if part.startswith(SESSION_COOKIE + "="):
             token = part[len(SESSION_COOKIE) + 1:]
             session = _sessions.get(token)
             if session and session["expires"] > time.time():
-                return session["user"]
+                return session["user"], session.get("session_id")
             # Expired - clean up
             _sessions.pop(token, None)
-            return None
-    return None
+            return None, None
+    return None, None
 
 
 def _gc_sessions():
@@ -275,11 +276,12 @@ def _parse_stream_json(output):
 class _WebSocketHandler:
     """Handle WebSocket connections for chat streaming."""
 
-    def __init__(self, reader, writer, user, message_queue):
+    def __init__(self, reader, writer, user, message_queue, session_id=None):
         self.reader = reader
         self.writer = writer
         self.user = user
         self.message_queue = message_queue
+        self.session_id = session_id
         self.closed = False
 
     async def accept_connection(self, sec_websocket_key, sec_websocket_protocol=None):
@@ -508,8 +510,13 @@ class _WebSocketHandler:
             return
 
         try:
-            # Build claude command with permission mode (acceptEdits allows file edits)
-            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", "--model", CHAT_CLAUDE_MODEL, message]
+            # Build claude command with session continuity (-r) for conversation memory
+            claude_args = [
+                CLAUDE_BIN, "-r", self.session_id, "-p", message,
+                "--output-format", "stream-json",
+                "--permission-mode", "acceptEdits",
+                "--model", CHAT_CLAUDE_MODEL,
+            ]
 
             # Spawn claude --print with stream-json for streaming output
             # Set cwd to workspace directory if configured, allowing Claude to access project code
@@ -720,13 +727,17 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _require_session(self):
         """Check session; redirect to /chat/login if missing. Returns username or None."""
-        user = _validate_session(self.headers.get("Cookie"))
+        user, _sid = _validate_session(self.headers.get("Cookie"))
         if user:
             return user
         self.send_response(302)
         self.send_header("Location", "/chat/login")
         self.end_headers()
         return None
+
+    def _require_session_with_sid(self):
+        """Check session; redirect to /chat/login if missing. Returns (username, session_id)."""
+        return _validate_session(self.headers.get("Cookie"))
 
     def _check_forwarded_user(self, session_user):
         """Defense-in-depth: verify X-Forwarded-User matches session user (#709).
@@ -879,7 +890,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 self.send_error_page(403, "Forbidden: invalid forward-auth secret")
                 return
 
-        user = _validate_session(self.headers.get("Cookie"))
+        user, _sid = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized: no valid session")
             return
@@ -958,6 +969,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         _sessions[session_token] = {
             "user": username,
             "expires": time.time() + SESSION_TTL,
+            "session_id": uuid.uuid4().hex,
         }
 
         cookie_flags = _session_cookie_flags()
@@ -1044,8 +1056,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(400, "Empty message")
             return
 
-        # Get user from session
-        user = _validate_session(self.headers.get("Cookie"))
+        # Get user and session_id from session
+        user, session_id = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized")
             return
@@ -1063,8 +1075,14 @@ class ChatHandler(BaseHTTPRequestHandler):
             # Save user message to history
             _write_message(user, conv_id, "user", message)
 
-            # Build claude command with permission mode (acceptEdits allows file edits)
-            claude_args = [CLAUDE_BIN, "--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", "--model", CHAT_CLAUDE_MODEL, message]
+            # Build claude command with session continuity (-r) for conversation memory
+            # First turn creates the session; subsequent turns reuse it via -r <session_id>
+            claude_args = [
+                CLAUDE_BIN, "-r", session_id, "-p", message,
+                "--output-format", "stream-json",
+                "--permission-mode", "acceptEdits",
+                "--model", CHAT_CLAUDE_MODEL,
+            ]
 
             # Spawn claude --print with stream-json for token tracking (#711)
             # Set cwd to workspace directory if configured, allowing Claude to access project code
@@ -1216,7 +1234,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def handle_websocket_upgrade(self):
         """Handle WebSocket upgrade request for chat streaming."""
         # Check session cookie
-        user = _validate_session(self.headers.get("Cookie"))
+        user, session_id = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized: no valid session")
             return
@@ -1243,8 +1261,8 @@ class ChatHandler(BaseHTTPRequestHandler):
                 # Wrap the socket in asyncio streams using open_connection
                 reader, writer = await asyncio.open_connection(sock=sock)
 
-                # Create WebSocket handler
-                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user])
+                # Create WebSocket handler (pass session_id for claude -r)
+                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user], session_id)
 
                 # Accept the connection (pass headers from HTTP request)
                 if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
