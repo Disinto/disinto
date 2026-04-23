@@ -11,3 +11,11 @@ serves darkness. "I don't know yet" never does.
 
 More shared knowledge or less? More capable or more dependent?
 Door opened or closed? Ask. Every time.
+
+<!--
+Voice interface (see #651):
+  - docs/voice/SOUL_VOICE.md  — prosodic prompt for the voice-layer model
+  - docs/voice/SOUL_THINK.md  — reasoning-layer prompt; embeds this compass
+Neither is loaded at runtime yet; wiring lands with the bridge child (#662).
+-->
+
