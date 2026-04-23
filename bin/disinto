@@ -15,6 +15,7 @@
 #   disinto backup create <outfile>     Export factory state for migration
 #   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
 #   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner)
+#   disinto wp reseed-secrets           Re-seed Woodpecker repo secrets from .env
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -77,6 +78,7 @@ Usage:
   disinto backup <subcommand>          Backup and restore factory state
   disinto validate <subcommand>        Validate factory artifacts
   disinto vault <subcommand>           Vault maintenance (reseed-ops-repo, reseed-runner)
+  disinto wp reseed-secrets            Re-seed Woodpecker repo secrets from .env
 
 Validate subcommands:
   lint-ci                              Lint .woodpecker/*.yml for missing timeouts
@@ -3568,6 +3570,117 @@ if warnings:
   exit 0
 }
 
+# ── wp command ────────────────────────────────────────────────────────────────
+
+# Usage: disinto wp reseed-secrets [--dry-run]
+# Re-seed Woodpecker repo secrets from .env for factories initialized
+# before #603 landed. Reads GHCR_TOKEN / FORGE_TOKEN from .env (already
+# sourced by lib/env.sh at the top of this script) and upserts them into
+# the Woodpecker secrets table via wp-seed-secrets.sh.
+#
+# Idempotent: re-running overwrites values with current .env contents.
+# Missing env vars produce a warning (not a hard error).
+disinto_wp() {
+  local dry_run=0
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) dry_run=1 ;;
+      -h|--help)
+        cat <<EOF
+Usage: disinto wp reseed-secrets [--dry-run]
+
+Re-seed Woodpecker repo secrets from .env for post-init factories.
+
+Reads GHCR_TOKEN and FORGE_TOKEN (and any other names in SECRET_NAMES)
+from the environment (sourced from .env or .env.enc at startup) and
+upserts them into the Woodpecker secrets table for the project repo.
+
+Idempotent: re-running overwrites values with current .env contents.
+Missing env vars produce a warning, not a hard error.
+
+Options:
+  --dry-run   Show what would be seeded without writing
+EOF
+        exit 0
+        ;;
+      *)
+        echo "Error: unknown wp subcommand: $arg" >&2
+        echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  local wp_seed_script="${FACTORY_ROOT}/lib/init/nomad/wp-seed-secrets.sh"
+
+  # Verify the seed script exists and is executable.
+  if [ ! -x "$wp_seed_script" ]; then
+    echo "Error: wp-seed-secrets.sh not found or not executable at ${wp_seed_script}" >&2
+    echo "  This subcommand requires the Woodpecker init scripts." >&2
+    exit 1
+  fi
+
+  # FORGE_REPO is required — sourced from .env by lib/env.sh at script top.
+  if [ -z "${FORGE_REPO:-}" ]; then
+    echo "Error: FORGE_REPO not set" >&2
+    echo "  Ensure .env (or .env.enc) contains FORGE_REPO (e.g. disinto-admin/disinto)" >&2
+    exit 1
+  fi
+
+  # WP_DB defaults to the nomad path; fall back to docker compose volume path.
+  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
+  if [ ! -f "$wp_db" ]; then
+    # Try the docker-compose volume mount path.
+    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
+      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
+    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
+      wp_db="/woodpecker-data/woodpecker.sqlite"
+    fi
+  fi
+
+  if [ ! -f "$wp_db" ]; then
+    echo "Error: Woodpecker sqlite DB not found" >&2
+    echo "  Checked: ${wp_db}" >&2
+    echo "  Ensure Woodpecker is running and the DB volume is mounted." >&2
+    exit 1
+  fi
+
+  # Export WP_DB so wp-seed-secrets.sh picks it up.
+  export WP_DB="$wp_db"
+
+  # Run the seed script. It reads GHCR_TOKEN / FORGE_TOKEN from env
+  # (already populated by lib/env.sh sourcing .env/.env.enc).
+  # Handle root/non-root the same way the init path does: if running
+  # as root, invoke directly; otherwise try sudo.
+  local wp_args=()
+  if [ "$dry_run" -eq 1 ]; then
+    wp_args=(--dry-run)
+  fi
+
+  echo "── Reseeding Woodpecker repo secrets ────────────────────────"
+  echo "FORGE_REPO=${FORGE_REPO}  WP_DB=${wp_db}"
+
+  local rc=0
+  if [ "$(id -u)" -eq 0 ]; then
+    FORGE_REPO="${FORGE_REPO}" WP_DB="${wp_db}" \
+      "$wp_seed_script" "${wp_args[@]}" || rc=$?
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "Error: wp-seed-secrets.sh requires root; sudo is not installed" >&2
+      exit 1
+    fi
+    sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN,WP_DB,SECRET_NAMES -- \
+      "$wp_seed_script" "${wp_args[@]}" || rc=$?
+  fi
+
+  if [ "$rc" -ne 0 ]; then
+    echo "Error: wp-seed-secrets.sh exited with code ${rc}" >&2
+    exit "$rc"
+  fi
+
+  echo "── Done ─────────────────────────────────────────────────────"
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -3588,7 +3701,8 @@ case "${1:-}" in
   edge)            shift; disinto_edge "$@" ;;
   backup)          shift; disinto_backup "$@" ;;
   validate)        shift; disinto_validate "$@" ;;
-  vault)           shift; disinto_vault "$@" ;;
+ vault)           shift; disinto_vault "$@" ;;
+  wp)              shift; disinto_wp "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
