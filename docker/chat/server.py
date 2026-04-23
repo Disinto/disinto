@@ -66,6 +66,10 @@ CHAT_CLAUDE_MODEL = os.environ.get("CHAT_CLAUDE_MODEL", "claude-opus-4-7")
 
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
+# Browser-reachable Forgejo URL — only needed when FORGE_URL is internal
+# (used for git clone + server-to-server calls) and the /chat/login
+# authorize redirect needs to land on a URL the user's browser can reach.
+FORGE_PUBLIC_URL = os.environ.get("FORGE_PUBLIC_URL", FORGE_URL)
 CHAT_OAUTH_CLIENT_ID = os.environ.get("CHAT_OAUTH_CLIENT_ID", "")
 CHAT_OAUTH_CLIENT_SECRET = os.environ.get("CHAT_OAUTH_CLIENT_SECRET", "")
 EDGE_TUNNEL_FQDN = os.environ.get("EDGE_TUNNEL_FQDN", "")
@@ -924,7 +928,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             "state": state,
         })
         self.send_response(302)
-        self.send_header("Location", f"{FORGE_URL}/login/oauth/authorize?{params}")
+        self.send_header("Location", f"{FORGE_PUBLIC_URL}/login/oauth/authorize?{params}")
         self.end_headers()
 
     def handle_oauth_callback(self, query_string):
