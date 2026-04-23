@@ -112,6 +112,28 @@ Forgejo's template stanza will fail to render (and thus the allocation
 will stall) until those KV paths exist — so either import them or seed
 them first.
 
+## Upgrading existing factories (post-cutover)
+
+Factories initialized before the nomad-vault migration landed
+(`kv/disinto/shared/ops-repo` seed, S5.1 #1035) are missing the KV path
+the edge dispatcher's template stanza reads. Symptom: edge alloc sits
+in `pending` forever with
+`Missing: vault.read(kv/data/disinto/shared/ops-repo)` and no retry or
+alert fires. Observed on the live factory post-2026-04-21 cutover, stuck
+24h before anyone noticed (#634).
+
+After pulling the nomad-vault migration commits on an existing factory,
+run once:
+
+```bash
+sudo ./bin/disinto vault reseed-ops-repo
+nomad alloc restart <edge-alloc>   # kick the template re-render
+```
+
+The subcommand delegates to the idempotent `tools/vault-seed-ops-repo.sh`,
+so re-running on an already-seeded factory is a no-op (logs
+`token unchanged`).
+
 ## Secret hygiene
 
 - Never log a secret value. The CLI only prints paths (`--import-env`,

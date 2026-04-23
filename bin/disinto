@@ -14,6 +14,7 @@
 #   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
 #   disinto backup create <outfile>     Export factory state for migration
 #   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
+#   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo)
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -75,9 +76,13 @@ Usage:
   disinto edge <verb> [options]        Manage edge tunnel registrations
   disinto backup <subcommand>          Backup and restore factory state
   disinto validate <subcommand>        Validate factory artifacts
+  disinto vault <subcommand>           Vault maintenance (reseed-ops-repo)
 
 Validate subcommands:
   lint-ci                              Lint .woodpecker/*.yml for missing timeouts
+
+Vault subcommands:
+  reseed-ops-repo                      Seed kv/disinto/shared/ops-repo (idempotent; fixes #634)
 
 Edge subcommands:
   register [project]        Register a new tunnel (generates keypair if needed)
@@ -3244,6 +3249,59 @@ EOF
   esac
 }
 
+# ── vault command ────────────────────────────────────────────────────────────
+# Usage: disinto vault <subcommand>
+# Subcommands:
+#   reseed-ops-repo   Run tools/vault-seed-ops-repo.sh against the running Vault
+#
+# reseed-ops-repo is a one-shot for factories upgraded past the nomad-vault
+# migration (#1035) whose kv/disinto/shared/ops-repo path was never seeded —
+# the edge dispatcher's template stanza stalls forever on the missing key
+# (observed post-2026-04-21, #634). The underlying script is idempotent, so
+# this is safe to run on an already-seeded factory.
+disinto_vault() {
+  local subcmd="${1:-}"
+  shift || true
+
+  case "$subcmd" in
+    reseed-ops-repo)
+      local seed_script="${FACTORY_ROOT}/tools/vault-seed-ops-repo.sh"
+      if [ ! -x "$seed_script" ]; then
+        echo "Error: ${seed_script} not found or not executable" >&2
+        exit 1
+      fi
+
+      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
+      echo "── Reseeding Vault for ops-repo ───────────────────────"
+      echo "[vault] VAULT_ADDR=${vault_addr}"
+      if [ "$(id -u)" -eq 0 ]; then
+        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
+      else
+        if ! command -v sudo >/dev/null 2>&1; then
+          echo "Error: vault-seed-ops-repo.sh must run as root and sudo is not installed" >&2
+          exit 1
+        fi
+        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
+      fi
+      ;;
+    *)
+      cat <<EOF >&2
+Usage: disinto vault <subcommand>
+
+Subcommands:
+  reseed-ops-repo   Seed kv/disinto/shared/ops-repo from kv/disinto/bots/vault
+                    (idempotent — safe on already-seeded factories; fixes
+                    edge dispatcher stuck pending on missing KV path)
+
+Environment:
+  VAULT_ADDR   Vault server address (default: http://127.0.0.1:8200)
+  VAULT_TOKEN  Vault token (or /etc/vault.d/root.token when running as root)
+EOF
+      exit 1
+      ;;
+  esac
+}
+
 # ── backup command ────────────────────────────────────────────────────────────
 # Usage: disinto backup <subcommand> [args]
 # Subcommands:
@@ -3499,6 +3557,7 @@ case "${1:-}" in
   edge)            shift; disinto_edge "$@" ;;
   backup)          shift; disinto_backup "$@" ;;
   validate)        shift; disinto_validate "$@" ;;
+  vault)           shift; disinto_vault "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
