@@ -199,7 +199,7 @@ EOT
     # nomadService discovery.
     # Bare /chat → /chat/ (Caddy has no implicit directory redirect)
     handle /chat {
-        redir /chat/ 302
+        redir * /chat/ 302
     }
     handle /chat/login {
         reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
@@ -265,7 +265,7 @@ EOT
     # index.html via try_files so deep links like /voice/?conv=abc work.
     # Same forward_auth gate as the static and ws handlers above.
     handle /voice {
-        redir /voice/ 302
+        redir * /voice/ 302
     }
     handle /voice/ {
         forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
