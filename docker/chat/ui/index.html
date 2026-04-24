@@ -444,14 +444,14 @@
             sendBtn.disabled = true;
             sendBtn.textContent = 'Sending...';
 
-            // Add user message
-            addMessage('user', message);
-            textarea.value = '';
-
-            // If no conversation ID, create one
+            // If no conversation ID, create one first (this may wipe DOM for "new conversation" banner)
             if (!currentConversationId) {
                 await createNewConversation();
             }
+
+            // Now add user message — it will persist
+            addMessage('user', message);
+            textarea.value = '';
 
             // Try WebSocket streaming first, fall back to fetch
             if (window.location.protocol === 'https:' || window.location.hostname === 'localhost') {
