@@ -43,8 +43,7 @@ log() {
 }
 
 # Resolve current agent identity once at startup — cache for all assignee checks
-BOT_USER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${API%%/repos*}/user" | jq -r '.login') || BOT_USER=""
+BOT_USER=$(forge_whoami)
 log "running as agent: ${BOT_USER}"
 
 # =============================================================================

@@ -23,7 +23,7 @@
 #   Per-agent tokens (FORGE_REVIEW_TOKEN, FORGE_GARDENER_TOKEN, …)
 #   CLAUDE_SHARED_DIR, CLAUDE_CONFIG_DIR
 #   Helper functions: log(), validate_url(), forge_api(), forge_api_all(),
-#     woodpecker_api(), wpdb(), memory_guard()
+#     forge_whoami(), woodpecker_api(), wpdb(), memory_guard()
 # =============================================================================
 
 set -euo pipefail
@@ -269,6 +269,20 @@ forge_api_all() {
     page=$((page + 1))
   done
   printf '%s' "$all_items"
+}
+
+# =============================================================================
+# FORGE WHOAMI HELPER
+# =============================================================================
+# forge_whoami — resolve the current token's login name.
+# Echoes the login to stdout, empty string on failure.
+# Requires: FORGE_TOKEN, FORGE_URL (or FORGE_API_BASE).
+# =============================================================================
+forge_whoami() {
+  local base="${FORGE_API_BASE:-${FORGE_URL}/api/v1}"
+  curl -sf --max-time 10 \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${base}/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true
 }
 
 # =============================================================================

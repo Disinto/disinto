@@ -68,10 +68,7 @@ resolve_agent_identity() {
     log "WARNING: FORGE_TOKEN not set, cannot resolve agent identity"
     return 1
   fi
-  local forge_url="${FORGE_URL:-http://localhost:3000}"
-  AGENT_IDENTITY=$(curl -sf --max-time 10 \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${forge_url}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null) || true
+  AGENT_IDENTITY=$(forge_whoami)
   if [ -z "$AGENT_IDENTITY" ]; then
     log "WARNING: failed to resolve agent identity from FORGE_TOKEN"
     return 1
