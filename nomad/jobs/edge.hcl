@@ -197,6 +197,10 @@ EOT
     # Chat was folded into edge as a subprocess (#1083); no Nomad service named
     # "chat" exists. Use the host-local loopback address instead of
     # nomadService discovery.
+    # Bare /chat → /chat/ (Caddy has no implicit directory redirect)
+    handle /chat {
+        redir /chat/ 302
+    }
     handle /chat/login {
         reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
     }
