@@ -11,7 +11,11 @@
 #   source "$(dirname "$0")/../lib/agent-sdk.sh"
 #   agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
 #
-# After each call, _AGENT_SESSION_ID holds the session ID (also saved to SID_FILE).
+# After each call, these globals are set:
+#   _AGENT_SESSION_ID  — session ID (also persisted to SID_FILE)
+#   _AGENT_LAST_OUTPUT — raw stream-json output of the last run
+#                        (also written to $DISINTO_LOG_DIR/$LOG_AGENT/agent-run-last.json)
+#
 # Call agent_recover_session() on startup to restore a previous session.
 
 set -euo pipefail
