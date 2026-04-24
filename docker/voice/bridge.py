@@ -42,10 +42,8 @@ GEMINI_API_KEY handling:
 
 import argparse
 import asyncio
-import base64
 import json
 import os
-import subprocess
 import sys
 import time
 import uuid
