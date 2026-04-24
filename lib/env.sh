@@ -18,12 +18,13 @@
 #
 # What this file sets / exports:
 #   FACTORY_ROOT, DISINTO_LOG_DIR
-#   .env / .env.enc secrets (FORGE_TOKEN, etc.)
+#   .env / .env.enc secrets (FORGE_TOKEN, etc.) — eager-loaded via lib/secrets.sh
 #   FORGE_API, FORGE_WEB, TEA_LOGIN, FORGE_OPS_REPO (derived from FORGE_URL/FORGE_REPO)
 #   Per-agent tokens (FORGE_REVIEW_TOKEN, FORGE_GARDENER_TOKEN, …)
 #   CLAUDE_SHARED_DIR, CLAUDE_CONFIG_DIR
 #   Helper functions: log(), validate_url(), forge_api(), forge_api_all(),
 #     forge_whoami(), woodpecker_api(), wpdb(), memory_guard()
+#   From lib/secrets.sh (sourced): load_dotenv(), load_dotenv_enc(), load_secret()
 # =============================================================================
 
 set -euo pipefail
@@ -48,47 +49,23 @@ else
 fi
 export DISINTO_LOG_DIR
 
+# Secret resolution (load_dotenv, load_dotenv_enc, load_secret) lives in
+# lib/secrets.sh. Sourced unconditionally so load_secret is available to every
+# caller regardless of container detection. Eager .env / .env.enc loading
+# below is preserved for back-compat; callers that only need load_secret (or
+# log/memory_guard from this file) pay nothing extra today and, once migrated
+# to source secrets.sh directly, will skip the eager-load cost entirely.
+# shellcheck source=secrets.sh
+source "$(dirname "${BASH_SOURCE[0]}")/secrets.sh"
+
 # Load secrets: prefer .env.enc (SOPS-encrypted), fall back to plaintext .env.
 # Inside containers (DISINTO_CONTAINER=1), compose environment is the source of truth.
 # On bare metal, .env/.env.enc is sourced to provide default values.
 if [ "${DISINTO_CONTAINER:-}" != "1" ]; then
   if [ -f "$FACTORY_ROOT/.env.enc" ] && command -v sops &>/dev/null; then
-    set -a
-    _saved_forge_url="${FORGE_URL:-}"
-    # Use temp file + validate dotenv format before sourcing (avoids eval injection)
-    # SOPS -d automatically verifies MAC/GCM authentication tag during decryption
-    _tmpenv=$(mktemp) || { echo "Error: failed to create temp file for .env.enc" >&2; exit 1; }
-    if ! sops -d --output-type dotenv "$FACTORY_ROOT/.env.enc" > "$_tmpenv" 2>/dev/null; then
-      echo "Error: failed to decrypt .env.enc — decryption failed, possible corruption" >&2
-      rm -f "$_tmpenv"
-      exit 1
-    fi
-    # Validate: non-empty, non-comment lines must match KEY=value pattern
-    # Filter out blank lines and comments before validation
-    _validated=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$_tmpenv" 2>/dev/null || true)
-    if [ -n "$_validated" ]; then
-      # Write validated content to a second temp file and source it
-      _validated_env=$(mktemp)
-      printf '%s\n' "$_validated" > "$_validated_env"
-      # shellcheck source=/dev/null
-      source "$_validated_env"
-      rm -f "$_validated_env"
-    else
-      echo "Error: .env.enc decryption output failed format validation" >&2
-      rm -f "$_tmpenv"
-      exit 1
-    fi
-    rm -f "$_tmpenv"
-    set +a
-    [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
+    load_dotenv_enc
   elif [ -f "$FACTORY_ROOT/.env" ]; then
-    # Preserve compose-injected FORGE_URL (localhost in .env != forgejo in Docker)
-    _saved_forge_url="${FORGE_URL:-}"
-    set -a
-    # shellcheck source=/dev/null
-    source "$FACTORY_ROOT/.env"
-    set +a
-    [ -n "$_saved_forge_url" ] && export FORGE_URL="$_saved_forge_url"
+    load_dotenv
   fi
 fi
 
@@ -327,67 +304,7 @@ memory_guard() {
   fi
 }
 
-# =============================================================================
-# SECRET LOADING ABSTRACTION
-# =============================================================================
-# load_secret NAME [DEFAULT]
-#
-# Resolves a secret value using the following precedence:
-#   1. /secrets/<NAME>.env  — Nomad-rendered template (future)
-#   2. Current environment  — already set by .env.enc, compose, etc.
-#   3. secrets/<NAME>.enc   — age-encrypted per-key file (decrypted on demand)
-#   4. DEFAULT (or empty)
-#
-# Prints the resolved value to stdout.  Caches age-decrypted values in the
-# process environment so subsequent calls are free.
-# =============================================================================
-load_secret() {
-  local name="$1"
-  local default="${2:-}"
-
-  # 1. Nomad-rendered template (future: Nomad writes /secrets/<NAME>.env)
-  local nomad_path="/secrets/${name}.env"
-  if [ -f "$nomad_path" ]; then
-    # Source into a subshell to extract just the value
-    local _nomad_val
-    _nomad_val=$(
-      set -a
-      # shellcheck source=/dev/null
-      source "$nomad_path"
-      set +a
-      printf '%s' "${!name:-}"
-    )
-    if [ -n "$_nomad_val" ]; then
-      export "$name=$_nomad_val"
-      printf '%s' "$_nomad_val"
-      return 0
-    fi
-  fi
-
-  # 2. Already in environment (set by .env.enc, compose injection, etc.)
-  if [ -n "${!name:-}" ]; then
-    printf '%s' "${!name}"
-    return 0
-  fi
-
-  # 3. Age-encrypted per-key file: secrets/<NAME>.enc (#777)
-  local _age_key="${HOME}/.config/sops/age/keys.txt"
-  local _enc_path="${FACTORY_ROOT}/secrets/${name}.enc"
-  if [ -f "$_enc_path" ] && [ -f "$_age_key" ] && command -v age &>/dev/null; then
-    local _dec_val
-    if _dec_val=$(age -d -i "$_age_key" "$_enc_path" 2>/dev/null) && [ -n "$_dec_val" ]; then
-      export "$name=$_dec_val"
-      printf '%s' "$_dec_val"
-      return 0
-    fi
-  fi
-
-  # 4. Default (or empty)
-  if [ -n "$default" ]; then
-    printf '%s' "$default"
-  fi
-  return 0
-}
+# load_secret (secret resolution) is defined in lib/secrets.sh, sourced above.
 
 # Source tea helpers (available when tea binary is installed)
 if command -v tea &>/dev/null; then
