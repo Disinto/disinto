@@ -1247,6 +1247,16 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(401, "Unauthorized: no valid session")
             return
 
+        # Extract conv_id from query params so claude sessions are scoped to a
+        # conversation for the lifetime of the socket. Clients may still override
+        # per-frame via `conversation_id`, but without this the upgrade-time
+        # conv_id was being dropped and each frame could start a fresh session.
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        conv_id = params.get("conversation_id", [None])[0]
+        if conv_id is not None and not _validate_conversation_id(conv_id):
+            conv_id = None
+
         # Create message queue for this user
         _websocket_queues[user] = asyncio.Queue()
 
@@ -1270,7 +1280,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 reader, writer = await asyncio.open_connection(sock=sock)
 
                 # Create WebSocket handler (pass conv_id for claude session scoping)
-                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user])
+                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user], conv_id=conv_id)
 
                 # Accept the connection (pass headers from HTTP request)
                 if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
