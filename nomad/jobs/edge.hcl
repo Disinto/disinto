@@ -68,15 +68,16 @@ job "edge" {
       read_only = false
     }
 
-    # claude-creds: OAuth credentials for Anthropic Claude CLI used by the
-    # chat subprocess (#648). Mounted at /home/agent/.claude inside the
-    # caddy task so the chat-launched `claude -p` call picks up the Max
-    # subscription instead of requiring ANTHROPIC_API_KEY. Shared with
-    # agents-supervisor-opus.hcl — same host path, read-only.
-    volume "claude-creds" {
+    # claude-shared: OAuth credentials for Anthropic Claude CLI used by
+    # the chat subprocess (#648). Same volume used by every opus agent
+    # (agents-{dev,review,architect,supervisor}-opus) — keeps the chat
+    # subprocess on the refreshed OAuth session rather than the stale
+    # claude-creds host path. Mounted read-write: agents write session
+    # state under config/sessions/ as turns complete.
+    volume "claude-shared" {
       type      = "host"
-      source    = "claude-creds"
-      read_only = true
+      source    = "claude-shared"
+      read_only = false
     }
 
     # ── Conservative restart policy ───────────────────────────────────────
@@ -139,14 +140,16 @@ job "edge" {
         read_only   = false
       }
 
-      # Mount claude-creds so the chat subprocess (python3 chat-server.py
-      # spawning `claude -p` — see entrypoint-edge.sh) finds OAuth creds
-      # at /home/agent/.claude/.credentials.json (#648). The chat process
-      # runs as USER=agent (uid 1000) per entrypoint-edge.sh.
+      # Mount claude-shared so the chat subprocess (python3 chat-server.py
+      # spawning `claude -p`) finds OAuth creds at
+      # /var/lib/disinto/claude-shared/config/.credentials.json (#648,
+      # #705). This is the same directory convention every opus agent
+      # uses via lib/env.sh defaults. CLAUDE_CONFIG_DIR below points the
+      # Python subprocess at the config/ subdir.
       volume_mount {
-        volume      = "claude-creds"
-        destination = "/home/agent/.claude"
-        read_only   = true
+        volume      = "claude-shared"
+        destination = "/var/lib/disinto/claude-shared"
+        read_only   = false
       }
 
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
@@ -366,11 +369,11 @@ EOT
         DISINTO_CONTAINER = "1"
         PROJECT_NAME      = "disinto"
 
-        # Chat subprocess: OAuth via mounted claude-creds volume, pinned
-        # Opus 4.7 model (#648). Do NOT set ANTHROPIC_API_KEY or
+        # Chat subprocess: OAuth via mounted claude-shared volume, pinned
+        # Opus 4.7 model (#648, #705). Do NOT set ANTHROPIC_API_KEY or
         # ANTHROPIC_BASE_URL — their presence forces API-key mode and
         # bypasses the Max-subscription OAuth flow.
-        CLAUDE_CONFIG_DIR = "/home/agent/.claude"
+        CLAUDE_CONFIG_DIR = "/var/lib/disinto/claude-shared/config"
         CHAT_CLAUDE_MODEL = "claude-opus-4-7"
 
         # Chat-Claude factory control surface (#650). Workspace default is
