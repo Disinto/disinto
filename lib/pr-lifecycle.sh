@@ -15,11 +15,13 @@
 #
 # Functions:
 #   pr_create              BRANCH TITLE BODY [BASE_BRANCH]
+#   pr_find_for_issue      ISSUE_NUMBER ISSUE_BODY BRANCH
 #   pr_find_by_branch      BRANCH
 #   pr_poll_ci             PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_poll_review         PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_merge               PR_NUMBER [COMMIT_MSG]
 #   pr_is_merged           PR_NUMBER
+#   pr_close               PR_NUMBER
 #   pr_walk_to_merge       PR_NUMBER SESSION_ID WORKTREE [MAX_CI_FIXES] [MAX_REVIEW_ROUNDS]
 #   build_phase_protocol_prompt  BRANCH [REMOTE]
 #
@@ -36,6 +38,10 @@
 #   _PR_WALK_EXIT_REASON  merged | ci_exhausted | review_exhausted |
 #                         ci_timeout | review_timeout | merge_blocked |
 #                         closed_externally | unexpected_verdict
+#   _PR_FOUND_NUMBER      PR number found (set by pr_find_for_issue)
+#   _PR_FOUND_BRANCH      head branch (set by pr_find_for_issue, empty for prior_art)
+#   _PR_FOUND_MODE        open | prior_art (set by pr_find_for_issue)
+#   _PR_PRIOR_ART_DIFF    diff excerpt (set by pr_find_for_issue when mode=prior_art)
 #
 # shellcheck shell=bash
 
@@ -108,6 +114,87 @@ pr_create() {
       return 1
       ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# pr_find_for_issue — Four-strategy cascade to find an existing PR for an issue.
+#
+# Tries, in order:
+#   1. "Existing PR: #NNN" hint in ISSUE_BODY
+#   2. Branch match via pr_find_by_branch
+#   3. Open PR with "ixes #NNN\b" in body
+#   4. Closed-unmerged PR as prior art (fetches first 500 lines of .diff)
+#
+# Args: issue_number issue_body branch
+# Sets: _PR_FOUND_NUMBER _PR_FOUND_BRANCH _PR_FOUND_MODE
+#       _PR_PRIOR_ART_DIFF (only when mode=prior_art)
+# Returns: 0 on any hit, 1 if nothing found
+# ---------------------------------------------------------------------------
+pr_find_for_issue() {
+  local issue="$1" issue_body="$2" branch="$3"
+
+  _PR_FOUND_NUMBER=""
+  _PR_FOUND_BRANCH=""
+  _PR_FOUND_MODE=""
+  _PR_PRIOR_ART_DIFF=""
+
+  # Strategy 1: explicit "Existing PR: #NNN" hint in issue body
+  local body_pr
+  body_pr=$(printf '%s' "$issue_body" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
+  if [ -n "$body_pr" ]; then
+    local pr_check pr_check_state
+    pr_check=$(forge_api GET "/pulls/${body_pr}") || true
+    pr_check_state=$(printf '%s' "$pr_check" | jq -r '.state')
+    if [ "$pr_check_state" = "open" ]; then
+      _PR_FOUND_NUMBER="$body_pr"
+      _PR_FOUND_BRANCH=$(printf '%s' "$pr_check" | jq -r '.head.ref')
+      _PR_FOUND_MODE="open"
+      _prl_log "found existing PR #${_PR_FOUND_NUMBER} on branch ${_PR_FOUND_BRANCH} (from issue body)"
+      return 0
+    fi
+  fi
+
+  # Strategy 2: match by branch name
+  local pr_num
+  pr_num=$(pr_find_by_branch "$branch") || true
+  if [ -n "$pr_num" ]; then
+    _PR_FOUND_NUMBER="$pr_num"
+    _PR_FOUND_BRANCH="$branch"
+    _PR_FOUND_MODE="open"
+    _prl_log "found existing PR #${_PR_FOUND_NUMBER} (from branch match)"
+    return 0
+  fi
+
+  # Strategy 3: match "ixes #NNN" in open PR bodies
+  local found_pr
+  found_pr=$(forge_api GET "/pulls?state=open&limit=20" | \
+    jq -r --arg issue "ixes #${issue}\\b" \
+    '.[] | select(.body | test($issue; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
+  if [ -n "$found_pr" ]; then
+    _PR_FOUND_NUMBER=$(printf '%s' "$found_pr" | awk '{print $1}')
+    _PR_FOUND_BRANCH=$(printf '%s' "$found_pr" | awk '{print $2}')
+    _PR_FOUND_MODE="open"
+    _prl_log "found existing PR #${_PR_FOUND_NUMBER} on branch ${_PR_FOUND_BRANCH} (from body match)"
+    return 0
+  fi
+
+  # Strategy 4: check closed PRs for prior art
+  local closed_pr
+  closed_pr=$(forge_api GET "/pulls?state=closed&limit=30" | \
+    jq -r --arg issue "#${issue}" \
+    '.[] | select(.merged != true) | select((.title | contains($issue)) or (.body // "" | test("ixes " + $issue + "\\b"; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
+  if [ -n "$closed_pr" ]; then
+    local closed_pr_num
+    closed_pr_num=$(printf '%s' "$closed_pr" | awk '{print $1}')
+    _PR_FOUND_NUMBER="$closed_pr_num"
+    _PR_FOUND_MODE="prior_art"
+    _PR_PRIOR_ART_DIFF=$(forge_api GET "/pulls/${closed_pr_num}.diff" 2>/dev/null \
+      | head -500) || true
+    _prl_log "found closed (unmerged) PR #${_PR_FOUND_NUMBER} as prior art"
+    return 0
+  fi
+
+  return 1
 }
 
 # ---------------------------------------------------------------------------
