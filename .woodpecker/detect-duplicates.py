@@ -352,6 +352,26 @@ def main() -> int:
         "440be711c8dacb6d38a0596e5837f135": "Precondition binary check + _hvault_default_env (vault-seed-runner + vault-seed-voice)",
         "d83556898ab0dc34a2596258af74d06c": "Precondition done + _hvault_default_env + VAULT_ADDR (vault-seed-runner + vault-seed-voice)",
         "efaa2b9d9e444ec9173d40a0c20d5b9b": "Precondition _hvault_default_env + VAULT_ADDR die (vault-seed-runner + vault-seed-voice)",
+        # chat-init.sh + vault-seed-chat.sh KV merge/payload building (issue #678)
+        "d95e807c86be214ce0ca251701074214": "KV merge: payload build start with forge_pat (chat-init + vault-seed-chat)",
+        "04304b32f5a3fd08f557d565d85fa6e9": "KV merge: forge_pat jq assignment (chat-init + vault-seed-chat)",
+        "27996456928c36ca239d730e5cbd64d1": "KV merge: forge_pat end + nomad_token start (chat-init + vault-seed-chat)",
+        "38fd55ad487ef042d8def123a1c94ccd": "KV merge: nomad_token jq assignment (chat-init + vault-seed-chat)",
+        "2a082ff8bb20d74731b73fdcf6859208": "KV merge: nomad_token end + oauth_client_id start (chat-init + vault-seed-chat)",
+        "3d732e7400de6f5bfb45907557df7001": "KV merge: oauth_client_id jq assignment (chat-init + vault-seed-chat)",
+        "c8b15cc834b0e5f16382d1a4b46e10b8": "KV merge: oauth_client_id end + oauth_client_secret start (chat-init + vault-seed-chat)",
+        "866c69dd155dbdb7486dcd81ec0e6f59": "KV merge: oauth_client_secret jq assignment (chat-init + vault-seed-chat)",
+        "a622d3d27f4dfe9f61977423d6921dd6": "KV merge: oauth_client_secret end + forward_auth_secret start (chat-init + vault-seed-chat)",
+        "8a8e3c3ddb8fdf0c062f20358c0077bc": "KV merge: forward_auth_secret jq assignment (chat-init + vault-seed-chat)",
+        "eb507da1eee0edd9c2463b8ca2f8d76c": "KV merge: forward_auth_secret end + generation check (chat-init + vault-seed-chat)",
+        "d6523ac02cc30556164af4c5c903788f": "KV merge: forward_auth_secret generation block (chat-init + vault-seed-chat)",
+        "79a50d21e1f73914cb03dbd593c5d42f": "KV merge: data wrap + _hvault_request POST (chat-init + vault-seed-chat)",
+        "4c4bd162b4fed39ceae1dab1fbe5e914": "KV merge: data wrap + _hvault_request POST (chat-init + vault-seed-chat)",
+        "c1a8098cc746fc7b6a01abb455f7d293": "KV merge: generation block start (chat-init + vault-seed-chat)",
+        "34db504293973ffc8ac4b3ec59575604": "KV merge: generation block body (chat-init + vault-seed-chat)",
+        "35f27d9d5467d10592618a4a4458901c": "KV merge: generation block end (chat-init + vault-seed-chat)",
+        "53824d870799cf8bd7b19418e3466729": "KV merge: data wrap (chat-init + vault-seed-chat)",
+        "79f7dd039fcfd455d21b9c2a41ea47de": "KV merge: data wrap + POST (chat-init + vault-seed-chat)",
     }
 
     if not sh_files:

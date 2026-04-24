@@ -929,6 +929,13 @@ _disinto_init_nomad() {
         if [ "$svc" = "agents" ]; then
           echo "[deploy] [dry-run] [seed] would generate default projects/${project_name}.toml"
         fi
+        # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
+        if [ "$svc" = "edge" ]; then
+          local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
+          if [ -x "$chat_init_sh" ]; then
+            echo "[deploy] [dry-run] [post-deploy] would run ${chat_init_sh}"
+          fi
+        fi
       done
       echo "[deploy] dry-run complete"
     fi
@@ -1232,6 +1239,41 @@ _disinto_init_nomad() {
           fi
         else
           echo "warning: wp-seed-secrets.sh not found or not executable" >&2
+        fi
+      fi
+
+      # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
+      # Initializes Forgejo OAuth2 app, seeds kv/disinto/chat, and
+      # conditionally applies Nomad ACL policy + token for the chat task.
+      if [ "$svc" = "edge" ]; then
+        echo ""
+        echo "── Chat OAuth + Vault bootstrap ────────────────────────"
+        local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
+        if [ -x "$chat_init_sh" ]; then
+          if [ "$(id -u)" -eq 0 ]; then
+            FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
+              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
+              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
+              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
+              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
+              VAULT_ADDR="$vault_addr" \
+              "$chat_init_sh" || exit $?
+          else
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "Error: chat-init.sh must run as root and sudo is not installed" >&2
+              exit 1
+            fi
+            sudo -n --preserve-env=FORGE_URL,FORGE_TOKEN,FORGE_ADMIN_PASS,EDGE_TUNNEL_FQDN,EDGE_TUNNEL_FQDN_CHAT,EDGE_ROUTING_MODE,VAULT_ADDR -- \
+              FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
+              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
+              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
+              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
+              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
+              VAULT_ADDR="$vault_addr" \
+              "$chat_init_sh" || exit $?
+          fi
+        else
+          echo "warning: chat-init.sh not found or not executable" >&2
         fi
       fi
     done
@@ -3341,6 +3383,26 @@ disinto_vault() {
         sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
       fi
       ;;
+    reseed-chat-oauth)
+      local seed_script="${FACTORY_ROOT}/tools/vault-seed-chat.sh"
+      if [ ! -x "$seed_script" ]; then
+        echo "Error: ${seed_script} not found or not executable" >&2
+        exit 1
+      fi
+
+      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
+      echo "── Reseeding Vault for chat OAuth + secrets ────────────"
+      echo "[vault] VAULT_ADDR=${vault_addr}"
+      if [ "$(id -u)" -eq 0 ]; then
+        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
+      else
+        if ! command -v sudo >/dev/null 2>&1; then
+          echo "Error: vault-seed-chat.sh must run as root and sudo is not installed" >&2
+          exit 1
+        fi
+        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
+      fi
+      ;;
     *)
       cat <<EOF >&2
 Usage: disinto vault <subcommand>
@@ -3355,6 +3417,9 @@ Subcommands:
   reseed-voice      Seed kv/disinto/voice.gemini_api_key from GEMINI_API_KEY
                     in .env for the voice bridge (#664). Idempotent — missing
                     GEMINI_API_KEY leaves Vault untouched.
+  reseed-chat-oauth Seed kv/disinto/chat with OAuth credentials, forge PAT,
+                    forward_auth_secret, and nomad_token from .env or env
+                    vars (#678). Idempotent — merges with existing KV data.
 
 Environment:
   VAULT_ADDR   Vault server address (default: http://127.0.0.1:8200)
