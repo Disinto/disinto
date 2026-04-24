@@ -219,6 +219,25 @@ EOT
         }
         reverse_proxy 127.0.0.1:{{ env "CHAT_PORT" "8080" }}
     }
+
+    # Voice bridge WebSocket endpoint — Gemini Live ↔ `think` tool ↔
+    # `claude -r` (#662). Direct loopback to the voice-bridge.py
+    # subprocess (NOT nomadService discovery — the bridge is a
+    # sidecar process inside this task, same pattern as /chat/ws).
+    # Shared forward_auth with /chat/* above: a valid OAuth session
+    # cookie is required to upgrade, and X-Forwarded-User is stamped
+    # so the bridge can log and audit per-user voice sessions.
+    handle /voice/ws {
+        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+            uri /chat/auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
+        reverse_proxy 127.0.0.1:{{ env "VOICE_PORT" "8090" }} {
+            header_up Upgrade {http.request.header.Upgrade}
+            header_up Connection {http.request.header.Connection}
+        }
+    }
 }
 EOT
       }
@@ -307,11 +326,16 @@ EOT
         NOMAD_TOKEN_FILE       = "/secrets/nomad-token"
         NOMAD_ADDR             = "http://localhost:4646"
 
-        # Voice bridge (#664 / parent #651). The path — not the secret — is
-        # exposed as env. The voice launcher (arriving with #662) reads the
-        # file and scopes GEMINI_API_KEY to its own subprocess env only, so
-        # the chat subprocess never sees the Gemini key.
+        # Voice bridge (#662 / parent #651). The path — not the secret — is
+        # exposed as env. The voice launcher reads the file and scopes
+        # GEMINI_API_KEY to its own subprocess env only, so the chat
+        # subprocess never sees the Gemini key.
         GEMINI_API_KEY_FILE    = "/secrets/gemini-api-key"
+        # Voice bridge listens on loopback; Caddy's /voice/ws handle
+        # reverse-proxies here. 8090 picked to avoid collision with
+        # CHAT_PORT=8080.
+        VOICE_PORT             = "8090"
+        VOICE_HOST             = "127.0.0.1"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.

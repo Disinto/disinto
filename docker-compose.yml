@@ -243,6 +243,14 @@ services:
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
       - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
       - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
+      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
+      # GEMINI_API_KEY is intentionally NOT set here — the bridge reads
+      # it from ${GEMINI_API_KEY_FILE} (rendered by Vault in the Nomad
+      # path; local-compose dev can bind-mount a file or leave it unset
+      # and the bridge will decline to start, which is safe).
+      - VOICE_HOST=127.0.0.1
+      - VOICE_PORT=8090
+      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
       # Rate limiting removed (#1084)
     ports:
       - "80:80"

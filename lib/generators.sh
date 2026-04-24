@@ -608,6 +608,13 @@ COMPOSEEOF
       - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
       - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
       - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
+      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
+      # GEMINI_API_KEY is NOT set here — the bridge reads it from
+      # ${GEMINI_API_KEY_FILE} so it never lands in the task env where
+      # chat-server.py or its `claude -p` children could inherit it.
+      - VOICE_HOST=127.0.0.1
+      - VOICE_PORT=8090
+      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
       # Rate limiting removed (#1084)
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile

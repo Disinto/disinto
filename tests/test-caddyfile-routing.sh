@@ -193,6 +193,38 @@ check_chat_routing() {
   fi
 }
 
+check_voice_routing() {
+  tr_section "Validating voice bridge routing (#662)"
+
+  # Check /voice/ws handle exists
+  if echo "$CADDYFILE" | grep -q "handle /voice/ws"; then
+    tr_pass "Voice WebSocket handle block (handle /voice/ws)"
+  else
+    tr_fail "Missing Voice WebSocket handle block (handle /voice/ws)"
+  fi
+
+  # Check reverse_proxy points at loopback VOICE_PORT
+  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "VOICE_PORT" "8090" }}'; then
+    tr_pass "Voice reverse_proxy configured (127.0.0.1:VOICE_PORT)"
+  else
+    tr_fail "Missing Voice reverse_proxy (expected 127.0.0.1:{{ env VOICE_PORT 8090 }})"
+  fi
+
+  # Check forward_auth shared with /chat/* for OAuth gating
+  if echo "$CADDYFILE" | awk '/handle \/voice\/ws/,/^    }$/' | grep -q "forward_auth"; then
+    tr_pass "Voice forward_auth block configured"
+  else
+    tr_fail "Missing forward_auth inside /voice/ws handle"
+  fi
+
+  # Check WebSocket Upgrade headers forwarded
+  if echo "$CADDYFILE" | awk '/handle \/voice\/ws/,/^    }$/' | grep -q "header_up Upgrade"; then
+    tr_pass "Voice WebSocket Upgrade header forwarded"
+  else
+    tr_fail "Missing Upgrade header_up inside /voice/ws handle"
+  fi
+}
+
 check_root_redirect() {
   tr_section "Validating root redirect"
 
@@ -226,6 +258,7 @@ main() {
   check_woodpecker_routing
   check_staging_routing
   check_chat_routing
+  check_voice_routing
   check_root_redirect
 
   # Summary
