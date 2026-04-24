@@ -597,15 +597,26 @@ class _WebSocketHandler:
                     event = json.loads(line)
                     etype = event.get("type", "")
 
-                    # Extract text content from content_block_delta events
+                    # 2.0 streaming
                     if etype == "content_block_delta":
                         delta = event.get("delta", {})
                         if delta.get("type") == "text_delta":
                             text = delta.get("text", "")
                             if text:
                                 response_parts.append(text)
-                                # Send tokens to client
-                                await self.send_text(text)
+                                await self.send_text(json.dumps(
+                                    {"type": "token", "token": text}))
+
+                    # 2.1 single-event per turn
+                    elif etype == "assistant":
+                        msg = event.get("message", {}) or {}
+                        for part in (msg.get("content") or []):
+                            if part.get("type") == "text":
+                                text = part.get("text", "")
+                                if text:
+                                    response_parts.append(text)
+                                    await self.send_text(json.dumps(
+                                        {"type": "token", "token": text}))
 
                     # Check for usage event to know when complete
                     if etype == "result":

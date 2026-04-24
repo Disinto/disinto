@@ -276,7 +276,7 @@ steps:
           FAILED=1
         fi
 
-        if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "CHAT_PORT" "8080" }}'; then
+        if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "CHAT_PORT") "8080" }}'; then
           echo "[PASS] Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
         else
           echo "[FAIL] Chat reverse_proxy not configured (expected 127.0.0.1:CHAT_PORT)"
