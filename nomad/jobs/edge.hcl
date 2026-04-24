@@ -232,12 +232,12 @@ EOT
     # cookie is required to upgrade, and X-Forwarded-User is stamped
     # so the bridge can log and audit per-user voice sessions.
     handle /voice/ws {
-        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy 127.0.0.1:{{ env "VOICE_PORT" "8090" }} {
+        reverse_proxy 127.0.0.1:{{ or (env "VOICE_PORT") "8090" }} {
             header_up Upgrade {http.request.header.Upgrade}
             header_up Connection {http.request.header.Connection}
         }
@@ -251,7 +251,7 @@ EOT
     # /voice/static/* is matched before /voice/* by Caddy's longest-path
     # precedence, so the index handler below never sees these requests.
     handle /voice/static/* {
-        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
@@ -268,7 +268,7 @@ EOT
         redir /voice/ 302
     }
     handle /voice/ {
-        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
