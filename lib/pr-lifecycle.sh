@@ -122,8 +122,17 @@ pr_create() {
 # Tries, in order:
 #   1. "Existing PR: #NNN" hint in ISSUE_BODY
 #   2. Branch match via pr_find_by_branch
-#   3. Open PR with "ixes #NNN\b" in body
-#   4. Closed-unmerged PR as prior art (fetches first 500 lines of .diff)
+#   3. Open PR whose body matches the canonical "fixes-NNN" rule (see below)
+#   4. Closed-unmerged PR as prior art — body matches the same rule, OR
+#      title contains "#NNN" as a substring (fetches first 500 lines of .diff)
+#
+# Canonical PR→issue matching rule (applies to strategies 3 and 4):
+#   Body:  regex /ixes #NNN\b/i — matches "Fixes #NNN", "fixes #NNN", etc.,
+#          with a trailing word boundary so "#12" does not match "#1234".
+#   Title: literal substring "#NNN" (strategy 4 only). Intentionally looser
+#          than the body regex — title cross-refs like "Fix issue #NNN" often
+#          omit the word "fixes", and prior-art lookup benefits from wider
+#          net. Applied only to closed PRs, never to open ones.
 #
 # Args: issue_number issue_body branch
 # Sets: _PR_FOUND_NUMBER _PR_FOUND_BRANCH _PR_FOUND_MODE
@@ -165,11 +174,15 @@ pr_find_for_issue() {
     return 0
   fi
 
-  # Strategy 3: match "ixes #NNN" in open PR bodies
+  # Canonical body matcher for strategies 3 and 4 — single source of truth.
+  local body_pattern="ixes #${issue}\\b"
+  local title_ref="#${issue}"
+
+  # Strategy 3: match the canonical body rule on open PRs
   local found_pr
   found_pr=$(forge_api GET "/pulls?state=open&limit=20" | \
-    jq -r --arg issue "ixes #${issue}\\b" \
-    '.[] | select(.body | test($issue; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
+    jq -r --arg pat "$body_pattern" \
+    '.[] | select((.body // "") | test($pat; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
   if [ -n "$found_pr" ]; then
     _PR_FOUND_NUMBER=$(printf '%s' "$found_pr" | awk '{print $1}')
     _PR_FOUND_BRANCH=$(printf '%s' "$found_pr" | awk '{print $2}')
@@ -178,11 +191,11 @@ pr_find_for_issue() {
     return 0
   fi
 
-  # Strategy 4: check closed PRs for prior art
+  # Strategy 4: check closed PRs for prior art (same body rule + loose title contains)
   local closed_pr
   closed_pr=$(forge_api GET "/pulls?state=closed&limit=30" | \
-    jq -r --arg issue "#${issue}" \
-    '.[] | select(.merged != true) | select((.title | contains($issue)) or (.body // "" | test("ixes " + $issue + "\\b"; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
+    jq -r --arg pat "$body_pattern" --arg ref "$title_ref" \
+    '.[] | select(.merged != true) | select((.title | contains($ref)) or ((.body // "") | test($pat; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
   if [ -n "$closed_pr" ]; then
     local closed_pr_num
     closed_pr_num=$(printf '%s' "$closed_pr" | awk '{print $1}')
