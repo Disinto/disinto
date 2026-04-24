@@ -121,7 +121,7 @@ _resolve_val() {
         _strip_quote "$v"
         return
       fi
-    done < <(grep -E "^[A-Za-z_][A-Za-z0-9_]*=${key}=" "$env_file" 2>/dev/null || true)
+    done < <(grep -E "^${key}=" "$env_file" 2>/dev/null || true)
   fi
 }
 
