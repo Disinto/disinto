@@ -529,7 +529,13 @@
                             // Stream a token to the UI
                             addTokenToLastMessage(data.token);
                         } else if (data.type === 'complete') {
-                            // Streaming complete
+                            // Streaming complete. Clear the `streaming` class from
+                            // the finished assistant bubble so the next turn's
+                            // tokens land in a fresh bubble rather than being
+                            // appended to this one.
+                            messagesDiv
+                                .querySelectorAll('.message.assistant .content.streaming')
+                                .forEach(el => el.classList.remove('streaming'));
                             closeWebSocket();
                             textarea.disabled = false;
                             sendBtn.disabled = false;
@@ -569,11 +575,13 @@
             }
         }
 
-        // Add a token to the last assistant message (for streaming)
+        // Add a token to the last assistant message (for streaming).
+        // A bubble is "currently streaming" iff its content div still has the
+        // `streaming` class — that class is cleared on `complete`. If none is
+        // actively streaming (start of a new turn), create a fresh bubble.
         function addTokenToLastMessage(token) {
-            const messages = messagesDiv.querySelectorAll('.message.assistant');
-            if (messages.length === 0) {
-                // No assistant message yet, create one
+            let lastMsg = messagesDiv.querySelector('.message.assistant .content.streaming');
+            if (!lastMsg) {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = 'message assistant';
                 msgDiv.innerHTML = `
@@ -581,13 +589,10 @@
                     <div class="content streaming"></div>
                 `;
                 messagesDiv.appendChild(msgDiv);
+                lastMsg = msgDiv.querySelector('.content.streaming');
             }
-
-            const lastMsg = messagesDiv.querySelector('.message.assistant .content.streaming');
-            if (lastMsg) {
-                lastMsg.textContent += token;
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            }
+            lastMsg.textContent += token;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
         // Close WebSocket connection
