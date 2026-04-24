@@ -1,4 +1,14 @@
-FROM caddy:latest
+# Multi-stage build: Nomad 1.8+ is glibc-fortified and requires __vdprintf_chk,
+# which Alpine's musl (and gcompat / sgerrand's alpine-pkg-glibc) do not provide
+# (#699). Switch the runtime base to frolvlad/alpine-glibc, which ships a full
+# glibc with FORTIFY support, and copy Caddy from the official image so the
+# Caddy build stays identical to what `caddy:latest` ships.
+FROM caddy:latest AS caddy-src
+
+FROM frolvlad/alpine-glibc
+COPY --from=caddy-src /usr/bin/caddy         /usr/bin/caddy
+COPY --from=caddy-src /etc/caddy/Caddyfile   /etc/caddy/Caddyfile
+COPY --from=caddy-src /usr/share/caddy/      /usr/share/caddy/
 RUN apk add --no-cache bash jq curl git docker-cli python3 py3-pip openssh-client autossh \
     nodejs npm unzip
 # Voice bridge (#662): isolated venv so Alpine's system Python stays clean.
