@@ -106,6 +106,39 @@ WEBSOCKET_SUBPROTOCOL = "voice-stream-v1"
 THINK_TIMEOUT_SECS = int(os.environ.get("VOICE_THINK_TIMEOUT_SECS", "60"))
 
 
+# ── Claude session UUID helpers (#706) ────────────────────────────────────────
+
+_CLAUDE_SESSION_NAMESPACE = uuid.UUID("6d436c61-7564-6553-6573-736964000000")
+
+
+def _claude_session_id_for(conv_id, suffix="claude"):
+    """Derive a stable UUID5 from *conv_id* + *suffix*.
+
+    Voice uses ``suffix="voice-claude"``.  Passes through existing UUIDs
+    unchanged so clients that already supply a valid UUID are not broken.
+    """
+    try:
+        uuid.UUID(conv_id)
+        return conv_id
+    except ValueError:
+        pass
+    return str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, f"{conv_id}-{suffix}"))
+
+
+def _claude_session_flag(session_uuid, cwd=None):
+    """Return ``(flag, uuid)`` for the next claude invocation.
+
+    If the session file already exists on disk use ``-r`` (resume);
+    otherwise use ``--session-id`` (create).
+    """
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+    encoded = (cwd or os.getcwd()).replace("/", "-")
+    sess_path = os.path.join(cfg, "projects", encoded, session_uuid + ".jsonl")
+    if os.path.exists(sess_path):
+        return ("-r", session_uuid)
+    return ("--session-id", session_uuid)
+
+
 def _load_gemini_api_key():
     """Resolve GEMINI_API_KEY from env or from the Vault-rendered file.
 
@@ -204,22 +237,24 @@ def _parse_claude_stream_json(output):
 
 
 async def _run_think(query, claude_session_id):
-    """Spawn `claude -r <session> -p <query>` and return the text reply."""
+    """Spawn `claude <flag> <session> -p <query>` and return the text reply."""
     if not os.path.exists(CLAUDE_BIN):
         return "The reasoning layer is unavailable: claude binary not found."
 
+    flag, session_uuid = _claude_session_flag(claude_session_id, cwd=WORKSPACE_DIR)
     args = [
         CLAUDE_BIN,
-        "-r", claude_session_id,
+        flag, session_uuid,
         "-p", query,
         "--output-format", "stream-json",
         "--permission-mode", "acceptEdits",
         "--model", VOICE_CLAUDE_MODEL,
+        "--verbose",
     ]
     if os.path.isfile(SOUL_THINK_PATH):
         args.extend(["--system-prompt-file", SOUL_THINK_PATH])
 
-    _log(f"think: spawn claude -r {claude_session_id} (cwd={WORKSPACE_DIR})")
+    _log(f"think: spawn claude {flag} {session_uuid} (cwd={WORKSPACE_DIR})")
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -282,9 +317,7 @@ class VoiceSession:
         # context.
         if not conv_id:
             conv_id = uuid.uuid4().hex[:12]
-        if conv_id.endswith("-voice-claude") or conv_id.endswith("-claude"):
-            return conv_id
-        return f"{conv_id}-voice-claude"
+        return _claude_session_id_for(conv_id, suffix="voice-claude")
 
     async def _handle_client_frame(self, frame, live_session):
         """Route a single incoming frame from the browser."""

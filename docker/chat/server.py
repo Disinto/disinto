@@ -270,6 +270,44 @@ def _parse_stream_json(output):
 
 
 # =============================================================================
+# Claude session UUID helpers (#706)
+# =============================================================================
+
+# Fixed namespace UUID for deterministic UUID5 derivation from conv_id.
+_CLAUDE_SESSION_NAMESPACE = uuid.UUID("6d436c61-7564-6553-6573-736964000000")
+
+
+def _claude_session_id_for(conv_id, suffix="claude"):
+    """Derive a stable UUID5 from *conv_id* + *suffix*.
+
+    Chat uses ``suffix="claude"``, voice uses ``suffix="voice-claude"``.
+    Passes through an existing UUID unchanged (the caller may already
+    supply a valid UUID from a prior session).
+    """
+    # If the value is already a valid UUID, return it as-is.
+    try:
+        uuid.UUID(conv_id)
+        return conv_id
+    except ValueError:
+        pass
+    return str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, f"{conv_id}-{suffix}"))
+
+
+def _claude_session_flag(session_uuid, cwd=None):
+    """Return ``(flag, uuid)`` for the next claude invocation.
+
+    If the session file already exists on disk use ``-r`` (resume);
+    otherwise use ``--session-id`` (create).
+    """
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+    encoded = (cwd or os.getcwd()).replace("/", "-")
+    sess_path = os.path.join(cfg, "projects", encoded, session_uuid + ".jsonl")
+    if os.path.exists(sess_path):
+        return ("-r", session_uuid)
+    return ("--session-id", session_uuid)
+
+
+# =============================================================================
 # WebSocket Handler Class
 # =============================================================================
 
@@ -514,17 +552,18 @@ class _WebSocketHandler:
 
         # Derive claude session_id from conv_id so each conversation has its own claude context
         conv_id = message_conv_id or self.conv_id or _generate_conversation_id()
-        claude_session_id = f"{conv_id}-claude"
-        if not claude_session_id:
-            claude_session_id = uuid.uuid4().hex
+        session_uuid = _claude_session_id_for(conv_id, suffix="claude")
 
         try:
             # Build claude command with session continuity (-r) for conversation memory
+            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
+            flag, session_uuid = _claude_session_flag(session_uuid, cwd=cwd)
             claude_args = [
-                CLAUDE_BIN, "-r", claude_session_id, "-p", message,
+                CLAUDE_BIN, flag, session_uuid, "-p", message,
                 "--output-format", "stream-json",
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
+                "--verbose",
             ]
 
             # Spawn claude --print with stream-json for streaming output
@@ -1076,25 +1115,25 @@ class ChatHandler(BaseHTTPRequestHandler):
             conv_id = _generate_conversation_id()
 
         # Derive claude session_id from conv_id so each conversation has its own claude context
-        claude_session_id = f"{conv_id}-claude"
-        if not claude_session_id:
-            claude_session_id = uuid.uuid4().hex
+        session_uuid = _claude_session_id_for(conv_id, suffix="claude")
 
         try:
             # Save user message to history
             _write_message(user, conv_id, "user", message)
 
             # Build claude command with session continuity (-r) for conversation memory
+            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
+            flag, session_uuid = _claude_session_flag(session_uuid, cwd=cwd)
             claude_args = [
-                CLAUDE_BIN, "-r", claude_session_id, "-p", message,
+                CLAUDE_BIN, flag, session_uuid, "-p", message,
                 "--output-format", "stream-json",
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
+                "--verbose",
             ]
 
             # Spawn claude --print with stream-json for token tracking (#711)
             # Set cwd to workspace directory if configured, allowing Claude to access project code
-            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
             proc = subprocess.Popen(
                 claude_args,
                 stdout=subprocess.PIPE,
