@@ -1,6 +1,14 @@
 FROM caddy:latest
-RUN apk add --no-cache bash jq curl git docker-cli python3 openssh-client autossh \
+RUN apk add --no-cache bash jq curl git docker-cli python3 py3-pip openssh-client autossh \
     nodejs npm unzip
+# Voice bridge (#662): isolated venv so Alpine's system Python stays clean.
+# google-genai provides the Gemini Live client; websockets is the asyncio
+# server used by docker/voice/bridge.py. Invoked from entrypoint-edge.sh as
+# `/opt/voice-venv/bin/python3 /usr/local/bin/voice-bridge.py`.
+RUN python3 -m venv /opt/voice-venv && \
+    /opt/voice-venv/bin/pip install --no-cache-dir \
+        "google-genai>=0.8.0" \
+        "websockets>=12.0"
 # Claude Code CLI — chat backend runtime (merged from docker/chat, #1083)
 RUN npm install -g @anthropic-ai/claude-code@2.1.84
 # Nomad CLI — chat-Claude factory control surface (#650). Pinned nomad binary
@@ -31,6 +39,8 @@ RUN chmod 0755 /usr/local/bin/disinto-mcp
 # Chat server and UI (merged from docker/chat into edge, #1083)
 COPY docker/chat/server.py /usr/local/bin/chat-server.py
 COPY docker/chat/ui/ /var/chat/ui/
+# Voice bridge — Gemini Live ↔ `think` tool ↔ claude -r (#662)
+COPY docker/voice/bridge.py /usr/local/bin/voice-bridge.py
 
 VOLUME /data
 

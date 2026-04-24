@@ -289,6 +289,40 @@ _chat_install_settings "$CHAT_WORKSPACE_DIR"
 # Start chat server in background (#1083 — merged from docker/chat into edge)
 (python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &
 
+# ── Voice bridge (#662, parent #651) ──────────────────────────────────
+# Gemini Live WebSocket bridge on 127.0.0.1:$VOICE_PORT. Caddy forwards
+# /voice/ws here with X-Forwarded-User stamped by forward_auth (same
+# OAuth gate as /chat/*). GEMINI_API_KEY is scoped to this subprocess
+# only — we export it into the child env from the Vault-rendered file
+# at $GEMINI_API_KEY_FILE and then unset it again from our own env so
+# neither chat-server.py nor any `claude -p` child can inherit it.
+#
+# The key-from-file contract is documented in docs/voice/README.md and
+# enforced by the env stanza in nomad/jobs/edge.hcl (which sets
+# GEMINI_API_KEY_FILE but NEVER GEMINI_API_KEY on the task).
+export VOICE_PORT="${VOICE_PORT:-8090}"
+export VOICE_HOST="${VOICE_HOST:-127.0.0.1}"
+(
+  if [ -r "${GEMINI_API_KEY_FILE:-}" ] && [ -s "${GEMINI_API_KEY_FILE:-}" ]; then
+    GEMINI_API_KEY="$(tr -d '\r\n' < "$GEMINI_API_KEY_FILE")"
+    # Skip launch if the template has not been seeded yet — the file
+    # will contain the sentinel "seed-me" until `disinto vault
+    # reseed-voice` runs. Caddy will return 502 on /voice/ws which is
+    # the expected pre-seed behavior.
+    if [ -n "$GEMINI_API_KEY" ] && [ "$GEMINI_API_KEY" != "seed-me" ]; then
+      export GEMINI_API_KEY
+      exec /opt/voice-venv/bin/python3 /usr/local/bin/voice-bridge.py \
+        2>&1 | tee -a /opt/disinto-logs/voice-bridge.log
+    else
+      echo "edge: voice bridge skipped — $GEMINI_API_KEY_FILE is unseeded" >&2
+      sleep infinity
+    fi
+  else
+    echo "edge: voice bridge skipped — GEMINI_API_KEY_FILE not readable" >&2
+    sleep infinity
+  fi
+) &
+
 # Nomad template renders Caddyfile to /local/Caddyfile via service discovery;
 # copy it into the expected location if present (compose uses the mounted path).
 if [ -f /local/Caddyfile ]; then
