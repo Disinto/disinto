@@ -552,9 +552,14 @@ class _WebSocketHandler:
 
         # Derive claude session_id from conv_id so each conversation has its own claude context
         conv_id = message_conv_id or self.conv_id or _generate_conversation_id()
+        if not _validate_conversation_id(conv_id):
+            conv_id = _generate_conversation_id()
         session_uuid = _claude_session_id_for(conv_id, suffix="claude")
 
         try:
+            # Save user message to history (#709)
+            _write_message(self.user, conv_id, "user", message)
+
             # Build claude command with session continuity (-r) for conversation memory
             cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
             flag, session_uuid = _claude_session_flag(session_uuid, cwd=cwd)
@@ -578,7 +583,8 @@ class _WebSocketHandler:
                 bufsize=1,
             )
 
-            # Stream output line by line
+            # Stream output line by line, accumulating for history persistence (#709)
+            response_parts = []
             for line in iter(proc.stdout.readline, ""):
                 line = line.strip()
                 if not line:
@@ -593,6 +599,7 @@ class _WebSocketHandler:
                         if delta.get("type") == "text_delta":
                             text = delta.get("text", "")
                             if text:
+                                response_parts.append(text)
                                 # Send tokens to client
                                 await self.send_text(text)
 
@@ -613,9 +620,13 @@ class _WebSocketHandler:
                 }))
                 return
 
-            # Send complete signal
+            # Save assistant response to history (#709)
+            _write_message(self.user, conv_id, "assistant", "".join(response_parts))
+
+            # Send complete signal with conversation_id so client can refresh sidebar (#709)
             await self.send_text(json.dumps({
                 "type": "complete",
+                "conversation_id": conv_id,
             }))
 
         except FileNotFoundError:
