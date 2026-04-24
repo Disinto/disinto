@@ -41,6 +41,10 @@ COPY docker/chat/server.py /usr/local/bin/chat-server.py
 COPY docker/chat/ui/ /var/chat/ui/
 # Voice bridge — Gemini Live ↔ `think` tool ↔ claude -r (#662)
 COPY docker/voice/bridge.py /usr/local/bin/voice-bridge.py
+# Voice UI — mic + Silero VAD + WebSocket client (#663). Caddy serves
+# /voice/ and /voice/static/* directly out of /var/voice/ui via file_server
+# (see Caddyfile in nomad/jobs/edge.hcl); no chat-server.py path involvement.
+COPY docker/voice/ui/ /var/voice/ui/
 
 VOLUME /data
 

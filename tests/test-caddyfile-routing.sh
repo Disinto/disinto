@@ -225,6 +225,44 @@ check_voice_routing() {
   fi
 }
 
+check_voice_ui_routing() {
+  tr_section "Validating voice UI routing (#663)"
+
+  # /voice/static/* — static asset file_server with forward_auth
+  if echo "$CADDYFILE" | grep -q "handle /voice/static/\*"; then
+    tr_pass "Voice static handle block (handle /voice/static/*)"
+  else
+    tr_fail "Missing Voice static handle block (handle /voice/static/*)"
+  fi
+  if echo "$CADDYFILE" | awk '/handle \/voice\/static\/\*/,/^    }$/' | grep -q "file_server"; then
+    tr_pass "Voice static handler uses file_server"
+  else
+    tr_fail "Missing file_server inside /voice/static/* handle"
+  fi
+  if echo "$CADDYFILE" | awk '/handle \/voice\/static\/\*/,/^    }$/' | grep -q "forward_auth"; then
+    tr_pass "Voice static handler shares forward_auth gate"
+  else
+    tr_fail "Missing forward_auth inside /voice/static/* handle"
+  fi
+
+  # /voice/ — index.html via file_server + try_files
+  if echo "$CADDYFILE" | grep -q "handle /voice/ {"; then
+    tr_pass "Voice index handle block (handle /voice/)"
+  else
+    tr_fail "Missing Voice index handle block (handle /voice/)"
+  fi
+  if echo "$CADDYFILE" | awk '/handle \/voice\/ \{/,/^    }$/' | grep -q "try_files"; then
+    tr_pass "Voice index handler uses try_files for SPA fallback"
+  else
+    tr_fail "Missing try_files inside /voice/ handle"
+  fi
+  if echo "$CADDYFILE" | awk '/handle \/voice\/ \{/,/^    }$/' | grep -q "forward_auth"; then
+    tr_pass "Voice index handler shares forward_auth gate"
+  else
+    tr_fail "Missing forward_auth inside /voice/ handle"
+  fi
+}
+
 check_root_redirect() {
   tr_section "Validating root redirect"
 
@@ -259,6 +297,7 @@ main() {
   check_staging_routing
   check_chat_routing
   check_voice_routing
+  check_voice_ui_routing
   check_root_redirect
 
   # Summary
