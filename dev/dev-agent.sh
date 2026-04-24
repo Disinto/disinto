@@ -133,8 +133,7 @@ if printf '%s' "$ISSUE_LABELS" | grep -qw 'formula'; then
 fi
 
 # --- Append human comments to issue body ---
-_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-  "${FORGE_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
+_bot_login=$(forge_whoami)
 _bot_logins="${_bot_login}"
 [ -n "${FORGE_BOT_USERNAMES:-}" ] && \
   _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
