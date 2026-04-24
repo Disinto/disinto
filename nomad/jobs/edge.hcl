@@ -238,6 +238,41 @@ EOT
             header_up Connection {http.request.header.Connection}
         }
     }
+
+    # Voice UI static assets (#663). Served by Caddy out of the image at
+    # /var/voice/ui (Dockerfile COPY). Same OAuth gate as /chat/* — the
+    # forward_auth block stamps X-Forwarded-User and bounces unauthenticated
+    # requests to 401 (Caddy then surfaces a generic error; the page-level
+    # JS at /voice/ catches the WebSocket 4401 and redirects to /chat/login).
+    # /voice/static/* is matched before /voice/* by Caddy's longest-path
+    # precedence, so the index handler below never sees these requests.
+    handle /voice/static/* {
+        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+            uri /chat/auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
+        root * /var/voice/ui
+        file_server
+    }
+
+    # Voice UI index — matches /voice and /voice/ (Caddy's path matcher
+    # treats a trailing-slash matcher as a prefix). Falls through to
+    # index.html via try_files so deep links like /voice/?conv=abc work.
+    # Same forward_auth gate as the static and ws handlers above.
+    handle /voice {
+        redir /voice/ 302
+    }
+    handle /voice/ {
+        forward_auth 127.0.0.1:{{ env "CHAT_PORT" "8080" }} {
+            uri /chat/auth/verify
+            copy_headers X-Forwarded-User
+            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
+        }
+        root * /var/voice/ui
+        try_files {path} /index.html
+        file_server
+    }
 }
 EOT
       }
