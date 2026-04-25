@@ -372,6 +372,11 @@ def main() -> int:
         "35f27d9d5467d10592618a4a4458901c": "KV merge: generation block end (chat-init + vault-seed-chat)",
         "53824d870799cf8bd7b19418e3466729": "KV merge: data wrap (chat-init + vault-seed-chat)",
         "79f7dd039fcfd455d21b9c2a41ea47de": "KV merge: data wrap + POST (chat-init + vault-seed-chat)",
+        # Snapshot collector main() — identical merge pattern across forge + nomad
+        # Both collectors follow the same architecture: check state.json, build data,
+        # merge with jq, write atomically, log result. Intentional duplication.
+        "f92b93f26ab2adc223b3919b78c8c44f": "Snapshot main() start: closing brace + main() + state.json check (snapshot-forge + snapshot-nomad)",
+        "5f81cc4d353bbf9f23f34eaf38b2b60e": "Snapshot main() body: main() + state.json check + skip message (snapshot-forge + snapshot-nomad)",
     }
 
     if not sh_files:
