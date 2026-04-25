@@ -28,6 +28,35 @@ when:
 # Workflow-level timeout default — propagates to all steps without their own timeout.
 timeout: 10m
 
+# Authenticated clone with PR-ref fetch retry. Mirrors .woodpecker/ci.yml —
+# Forgejo's REQUIRE_SIGN_IN blocks anonymous clones (exit 128), and on PR
+# events the refs/pull/<n>/head ref is created asynchronously after the
+# webhook fires, so the fetch can race ahead of the ref. Retry with
+# exponential backoff (1s, 2s, 4s, 8s, 16s ≈ 30s window).
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - |
+        if [ -n "${FORGE_TOKEN:-}" ]; then
+          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+          git clone --depth 1 "$AUTH_URL" .
+        else
+          git clone --depth 1 "$CI_REPO_CLONE_URL" .
+        fi
+      - |
+        set -e
+        n=0
+        until git fetch --depth 1 origin "$CI_COMMIT_REF"; do
+          n=$((n + 1))
+          if [ "$n" -ge 5 ]; then
+            echo "git fetch '$CI_COMMIT_REF' failed after 5 attempts" >&2
+            exit 128
+          fi
+          sleep $((1 << (n - 1)))
+        done
+      - git checkout FETCH_HEAD
+
 steps:
   # ── 1. ShellCheck on smoke script ────────────────────────────────────────
   # `shellcheck` validates bash syntax, style, and common pitfalls.
