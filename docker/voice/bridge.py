@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-disinto-voice bridge — Gemini Live ↔ browser voice client ↔ `think` tool.
+disinto-voice bridge — Gemini Live ↔ browser voice client ↔ tiered tools.
 
 Part of the voice interface (parent issue #651, this PR implements #662).
 
@@ -11,12 +11,10 @@ Scope:
       (shared with /chat/* — same OAuth session cookie gate, #709).
     * For each accepted browser connection, open a Gemini Live session
       loaded with docs/voice/SOUL_VOICE.md as the system prompt.
-    * Register a single `think` tool whose handler runs
-          claude -r <session-id> -p <query> \
-                 --system-prompt-file docs/voice/SOUL_THINK.md \
-                 --output-format stream-json
-      and returns the collected text to Gemini Live as the function
-      response. Gemini speaks the reply verbatim (see SOUL_VOICE.md).
+    * Register three tools (see SOUL_VOICE.md for routing rules):
+      - `factory_state(section?)` — fast-path snapshot read, <200ms.
+      - `narrate(question)` — fast-path prose summary via local llama, ~1s.
+      - `think(query)` — full claude-p reasoning, 5–10s.
     * Proxy audio frames (opaque binary) between the browser and Gemini
       Live in both directions.
 
@@ -105,6 +103,24 @@ WEBSOCKET_SUBPROTOCOL = "voice-stream-v1"
 # is tight; longer thinks should be rare and will surface an error frame
 # to the client so the voice model can acknowledge and move on.
 THINK_TIMEOUT_SECS = int(os.environ.get("VOICE_THINK_TIMEOUT_SECS", "60"))
+
+# Fast-path skills live in the chat-skills tree inside the container.
+# The bridge invokes them directly (no claude -p overhead).
+CHAT_SKILLS_DIR = os.environ.get(
+    "CHAT_SKILLS_DIR", os.path.join(WORKSPACE_DIR, "docker/edge/chat-skills")
+)
+FACTORY_STATE_SH = os.environ.get(
+    "FACTORY_STATE_SH",
+    os.path.join(CHAT_SKILLS_DIR, "factory-state", "factory-state.sh"),
+)
+NARRATE_SH = os.environ.get(
+    "NARRATE_SH",
+    os.path.join(CHAT_SKILLS_DIR, "narrate", "narrate.sh"),
+)
+
+# Timeouts for fast-path skills (seconds). Much tighter than think.
+FACTORY_STATE_TIMEOUT = int(os.environ.get("VOICE_FACTORY_STATE_TIMEOUT_SECS", "10"))
+NARRATE_TIMEOUT = int(os.environ.get("VOICE_NARRATE_TIMEOUT_SECS", "15"))
 
 # drop to the unprivileged `agent` user (uid 1000) via preexec_fn before
 # exec. The edge container entrypoint starts the bridge as root (to bind
@@ -201,6 +217,58 @@ def _log(msg):
           file=sys.stderr, flush=True)
 
 
+# ── `factory_state` tool — fast-path snapshot read ────────────────────────────
+
+FACTORY_STATE_TOOL_DECLARATION = {
+    "name": "factory_state",
+    "description": (
+        "Read the current factory state from the snapshot daemon. "
+        "Use for any state query — tracker status, agent status, nomad jobs, "
+        "inbox items, or a specific section. Returns a concise plain-text "
+        "summary plus JSON. Accepts an optional section argument: "
+        "nomad, forge, agents, inbox."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "section": {
+                "type": "string",
+                "description": (
+                    "Optional section to read: nomad, forge, agents, inbox. "
+                    "Omit for a full summary."
+                ),
+            }
+        },
+        "required": [],
+    },
+}
+
+
+# ── `narrate` tool — fast-path prose summary via local llama ──────────────────
+
+NARRATE_TOOL_DECLARATION = {
+    "name": "narrate",
+    "description": (
+        "Generate a TTS-friendly prose summary of the factory state in "
+        "response to a natural-language question. Use for walk-throughs, "
+        "explanations, and conversational summaries. The local llama model "
+        "answers using the current snapshot data. Returns plain prose."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": (
+                    "The natural-language question to answer with a prose summary."
+                ),
+            }
+        },
+        "required": ["question"],
+    },
+}
+
+
 # ── `think` tool: claude -r <session> -p <query> ─────────────────────────────
 
 THINK_TOOL_DECLARATION = {
@@ -257,6 +325,96 @@ def _parse_claude_stream_json(output):
             if isinstance(result_text, str) and result_text and not parts:
                 parts.append(result_text)
     return "".join(parts).strip()
+
+
+async def _run_factory_state(section=None):
+    """Run factory-state.sh and return the plain-text output."""
+    if not os.path.isfile(FACTORY_STATE_SH):
+        return "The factory-state skill is unavailable: script not found."
+
+    args = [FACTORY_STATE_SH]
+    if section:
+        args.append(section)
+
+    _log(f"factory_state: spawn {FACTORY_STATE_SH}{' ' + section if section else ''}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The factory-state skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=FACTORY_STATE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return "The factory-state read timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log(f"factory_state: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The factory-state read returned an error. Try again in a moment."
+
+    # Script emits: text summary, blank line, JSON. Return everything as-is;
+    # the voice model will naturally focus on the text summary.
+    text = stdout.strip()
+    if not text:
+        text = "The factory-state read returned no data."
+
+    _log(f"factory_state: ok ({len(text)} chars)")
+    return text
+
+
+async def _run_narrate(question):
+    """Run narrate.sh and return the prose output."""
+    if not os.path.isfile(NARRATE_SH):
+        return "The narrate skill is unavailable: script not found."
+
+    _log(f"narrate: spawn {NARRATE_SH}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            NARRATE_SH, question,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The narrate skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=NARRATE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return "The narrate call timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log(f"narrate: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The narrate call returned an error. Try again in a moment."
+
+    text = stdout.strip()
+    if not text:
+        text = "I don't have a narrated answer for that yet."
+
+    _log(f"narrate: ok ({len(text)} chars)")
+    return text
 
 
 async def _run_think(query, claude_session_id):
@@ -436,7 +594,59 @@ class VoiceSession:
             args = getattr(call, "args", {}) or {}
             call_id = getattr(call, "id", None) or name
 
-            if name != "think":
+            if name == "factory_state":
+                section = (isinstance(args, dict)
+                           and str(args.get("section", "")).strip()) or None
+                result_text = await _run_factory_state(section)
+
+            elif name == "narrate":
+                query = ""
+                if isinstance(args, dict):
+                    query = str(args.get("question", "")).strip()
+                if not query:
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={"error": "missing required arg: question"},
+                    ))
+                    continue
+                result_text = await _run_narrate(query)
+
+            elif name == "think":
+                query = ""
+                if isinstance(args, dict):
+                    query = str(args.get("query", "")).strip()
+                if not query:
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={"error": "missing required arg: query"},
+                    ))
+                    continue
+
+                # Notify the browser the bridge is thinking so UIs can show
+                # a transient indicator. The voice layer is still free to
+                # say "one moment" on its own per SOUL_VOICE.md.
+                try:
+                    await self.ws.send(json.dumps({
+                        "type": "think_start",
+                        "query": query,
+                    }))
+                except websockets.exceptions.ConnectionClosed:
+                    return
+
+                claude_session = self.claude_session_id or self._derive_claude_session_id(None)
+                result_text = await _run_think(query, claude_session)
+
+                try:
+                    await self.ws.send(json.dumps({
+                        "type": "think_end",
+                        "length": len(result_text),
+                    }))
+                except websockets.exceptions.ConnectionClosed:
+                    return
+
+            else:
                 _log(f"unknown tool call name={name!r} — returning error")
                 function_responses.append(genai_types.FunctionResponse(
                     id=call_id,
@@ -444,39 +654,6 @@ class VoiceSession:
                     response={"error": f"unknown tool {name}"},
                 ))
                 continue
-
-            query = ""
-            if isinstance(args, dict):
-                query = str(args.get("query", "")).strip()
-            if not query:
-                function_responses.append(genai_types.FunctionResponse(
-                    id=call_id,
-                    name=name,
-                    response={"error": "missing required arg: query"},
-                ))
-                continue
-
-            # Notify the browser the bridge is thinking so UIs can show
-            # a transient indicator. The voice layer is still free to
-            # say "one moment" on its own per SOUL_VOICE.md.
-            try:
-                await self.ws.send(json.dumps({
-                    "type": "think_start",
-                    "query": query,
-                }))
-            except websockets.exceptions.ConnectionClosed:
-                return
-
-            claude_session = self.claude_session_id or self._derive_claude_session_id(None)
-            result_text = await _run_think(query, claude_session)
-
-            try:
-                await self.ws.send(json.dumps({
-                    "type": "think_end",
-                    "length": len(result_text),
-                }))
-            except websockets.exceptions.ConnectionClosed:
-                return
 
             function_responses.append(genai_types.FunctionResponse(
                 id=call_id,
@@ -500,7 +677,9 @@ class VoiceSession:
             ),
             tools=[genai_types.Tool(
                 function_declarations=[
-                    genai_types.FunctionDeclaration(**THINK_TOOL_DECLARATION)
+                    genai_types.FunctionDeclaration(**FACTORY_STATE_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**NARRATE_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**THINK_TOOL_DECLARATION),
                 ],
             )],
         )
