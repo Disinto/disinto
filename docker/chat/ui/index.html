@@ -3,641 +3,426 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>disinto-chat</title>
-    <script src="/static/htmx.min.js"></script>
+    <title>Disinto threads</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #1a1a2e;
-            color: #eaeaea;
+            background: #0d0d0d;
+            color: #e0e0e0;
             min-height: 100vh;
-            display: flex;
         }
-        /* Sidebar styles */
-        .sidebar {
-            width: 280px;
-            background: #16213e;
-            border-right: 1px solid #0f3460;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            position: fixed;
-            left: 0;
+
+        /* ── Header ─────────────────────────────────────────── */
+        header {
+            background: #141414;
+            border-bottom: 1px solid #2a2a2a;
+            padding: 0.75rem 1.5rem;
+            position: sticky;
             top: 0;
             z-index: 100;
         }
-        .sidebar-header {
-            padding: 1rem;
-            border-bottom: 1px solid #0f3460;
-        }
-        .sidebar-header h1 {
-            font-size: 1.25rem;
+        header .title {
+            font-size: 1.1rem;
             font-weight: 600;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.35rem;
         }
-        .new-chat-btn {
-            width: 100%;
-            background: #e94560;
-            color: white;
-            border: none;
-            border-radius: 6px;
+        .state-strip {
+            font-size: 0.8rem;
+            color: #888;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .state-strip .count { color: #aaa; font-weight: 600; }
+        .state-strip .worker { color: #6ecf6e; }
+
+        /* ── Thread list ────────────────────────────────────── */
+        #threads-list {
+            max-width: 800px;
+            margin: 1rem auto;
+            padding: 0 1rem;
+        }
+        .thread-card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            overflow: hidden;
+            transition: border-color 0.15s;
+        }
+        .thread-card:hover { border-color: #444; }
+        .thread-card.running { border-left: 3px solid #6ecf6e; }
+        .thread-card.completed { border-left: 3px solid #6eafe7; }
+        .thread-card.failed { border-left: 3px solid #e76e6e; }
+
+        .card-header {
             padding: 0.75rem 1rem;
-            font-size: 0.9rem;
-            font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.75rem;
         }
-        .new-chat-btn:hover {
-            background: #d63447;
-        }
-        .new-chat-btn:disabled {
-            background: #555;
-            cursor: not-allowed;
-        }
-        .conversations-list {
+        .card-header .query {
             flex: 1;
-            overflow-y: auto;
-            padding: 0.5rem;
-        }
-        .conversation-item {
-            padding: 0.75rem 1rem;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-bottom: 0.25rem;
-            transition: background 0.2s;
-            border: 1px solid transparent;
-        }
-        .conversation-item:hover {
-            background: #1a1a2e;
-        }
-        .conversation-item.active {
-            background: #0f3460;
-            border-color: #e94560;
-        }
-        .conversation-item .preview {
-            font-size: 0.875rem;
+            font-size: 0.9rem;
+            line-height: 1.4;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            opacity: 0.9;
         }
-        .conversation-item .meta {
-            font-size: 0.75rem;
-            opacity: 0.6;
+        .card-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-shrink: 0;
+        }
+        .status-badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            text-transform: uppercase;
+        }
+        .status-badge.running { background: #1a3a1a; color: #6ecf6e; }
+        .status-badge.completed { background: #1a2a3a; color: #6eafe7; }
+        .status-badge.failed { background: #3a1a1a; color: #e76e6e; }
+        .age {
+            font-size: 0.7rem;
+            color: #666;
+        }
+
+        /* ── Card body (live stream / result) ───────────────── */
+        .card-body {
+            display: none;
+            border-top: 1px solid #222;
+        }
+        .card-body.expanded { display: block; }
+
+        .live-stream {
+            background: #0a0a0a;
+            padding: 0.75rem 1rem;
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            max-height: 240px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #ccc;
+        }
+
+        .result-summary {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: #aaa;
+        }
+        .result-summary:hover { color: #ddd; }
+        .result-summary .expand-hint {
+            font-size: 0.7rem;
+            color: #666;
+            display: block;
             margin-top: 0.25rem;
         }
-        .conversation-item .message-count {
-            float: right;
-            font-size: 0.7rem;
-            background: #0f3460;
-            padding: 0.125rem 0.5rem;
-            border-radius: 10px;
-        }
-        .main-content {
-            margin-left: 280px;
-            display: flex;
-            flex-direction: column;
-            width: 100%;
-            height: 100vh;
-        }
-        header {
-            background: #16213e;
-            padding: 1rem 2rem;
-            border-bottom: 1px solid #0f3460;
-        }
-        header h1 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-        main {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            max-width: 900px;
-            margin: 0 auto;
-            width: 100%;
-            padding: 1rem;
-        }
-        #messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 1rem;
-            background: #16213e;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
-        .message {
-            margin-bottom: 1rem;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            line-height: 1.5;
-        }
-        .message.user {
-            background: #0f3460;
-            margin-left: 2rem;
-        }
-        .message.assistant {
-            background: #1a1a2e;
-            margin-right: 2rem;
-        }
-        .message.system {
-            background: #1a1a2e;
-            font-style: italic;
-            color: #888;
-            text-align: center;
-        }
-        .message .role {
-            font-weight: 600;
-            font-size: 0.875rem;
-            margin-bottom: 0.25rem;
-            opacity: 0.8;
-        }
-        .message .content {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .input-area {
-            display: flex;
-            gap: 0.5rem;
-            padding: 1rem;
-            background: #16213e;
-            border-radius: 8px;
-        }
-        textarea {
-            flex: 1;
-            background: #1a1a2e;
-            border: 1px solid #0f3460;
-            border-radius: 6px;
-            padding: 0.75rem;
-            color: #eaeaea;
-            font-family: inherit;
-            font-size: 1rem;
-            resize: none;
-            min-height: 80px;
-        }
-        textarea:focus {
-            outline: none;
-            border-color: #e94560;
-        }
-        button {
-            background: #e94560;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 0.75rem 1.5rem;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        button:hover {
-            background: #d63447;
-        }
-        button:disabled {
-            background: #555;
-            cursor: not-allowed;
-        }
-        .loading {
-            opacity: 0.6;
-        }
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: #888;
-            text-align: center;
-        }
-        .empty-state p {
-            margin-top: 1rem;
-        }
-        /* Responsive sidebar toggle */
-        .sidebar-toggle {
+        .full-transcript {
             display: none;
-            position: fixed;
-            top: 1rem;
-            left: 1rem;
-            z-index: 200;
-            background: #e94560;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 0.5rem;
-            cursor: pointer;
+            background: #0a0a0a;
+            padding: 0.75rem 1rem;
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #bbb;
+            border-top: 1px solid #222;
         }
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-                transition: transform 0.3s;
-            }
-            .sidebar.open {
-                transform: translateX(0);
-            }
-            .sidebar-toggle {
-                display: block;
-            }
-            .main-content {
-                margin-left: 0;
-            }
+        .full-transcript.visible { display: block; }
+
+        /* ── Empty state ────────────────────────────────────── */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 1rem;
+            color: #555;
+        }
+        .empty-state p { margin-top: 0.5rem; font-size: 0.9rem; }
+
+        /* ── Timestamps ─────────────────────────────────────── */
+        .started {
+            font-size: 0.7rem;
+            color: #555;
+            margin-top: 0.2rem;
         }
     </style>
 </head>
 <body>
-    <button class="sidebar-toggle" id="sidebar-toggle">☰</button>
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <h1>disinto-chat</h1>
-            <button class="new-chat-btn" id="new-chat-btn">+ New Chat</button>
+    <header>
+        <div class="title">Disinto threads</div>
+        <div class="state-strip" id="state-strip">
+            <span>Loading...</span>
         </div>
-        <div class="conversations-list" id="conversations-list">
-            <!-- Conversations will be loaded here -->
-        </div>
-    </aside>
-    <div class="main-content">
-        <header>
-            <h1>disinto-chat</h1>
-        </header>
-        <main>
-            <div id="messages">
-                <div class="message system">
-                    <div class="role">system</div>
-                    <div class="content">Welcome to disinto-chat. Type a message to start chatting with Claude.</div>
-                </div>
-            </div>
-            <form class="input-area" id="chat-form">
-                <textarea name="message" placeholder="Type your message..." required></textarea>
-                <button type="submit" id="send-btn">Send</button>
-            </form>
-        </main>
+    </header>
+
+    <div id="threads-list">
+        <div class="empty-state"><p>Loading threads...</p></div>
     </div>
 
     <script>
-        // State
-        let currentConversationId = null;
-        let conversations = [];
+        // ── State ──────────────────────────────────────────────
+        let threads = [];
+        let wsMap = {}; // task-id -> WebSocket
 
-        // DOM elements
-        const messagesDiv = document.getElementById('messages');
-        const sendBtn = document.getElementById('send-btn');
-        const textarea = document.querySelector('textarea');
-        const conversationsList = document.getElementById('conversations-list');
-        const newChatBtn = document.getElementById('new-chat-btn');
-        const sidebar = document.getElementById('sidebar');
-        const sidebarToggle = document.getElementById('sidebar-toggle');
+        // ── DOM refs ───────────────────────────────────────────
+        const threadsList = document.getElementById('threads-list');
+        const stateStrip = document.getElementById('state-strip');
 
-        // Load conversations list
-        async function loadConversations() {
+        // ── Factory state ──────────────────────────────────────
+        async function loadFactoryState() {
             try {
-                const response = await fetch('/chat/history');
-                if (response.ok) {
-                    conversations = await response.json();
-                    renderConversationsList();
+                const res = await fetch('/factory-state');
+                if (!res.ok) return;
+                const state = await res.json();
+                const parts = [];
+                parts.push(`<span class="count">${state.backlog}</span> backlog`);
+                parts.push(`<span class="count">${state.in_progress}</span> in-progress`);
+                if (state.current_worker) {
+                    parts.push(`<span class="worker">${state.current_worker}</span> working`);
                 }
-            } catch (error) {
-                console.error('Failed to load conversations:', error);
+                stateStrip.innerHTML = parts.join(' &bull; ');
+            } catch {
+                // silent
             }
         }
 
-        // Render conversations list
-        function renderConversationsList() {
-            conversationsList.innerHTML = '';
+        // ── Thread list ────────────────────────────────────────
+        async function loadThreads() {
+            try {
+                const res = await fetch('/threads');
+                if (!res.ok) return;
+                const data = await res.json();
+                // Only render if list changed (avoids full re-render)
+                const ids = data.map(t => t.id);
+                const oldIds = threads.map(t => t.id);
+                if (JSON.stringify(ids) === JSON.stringify(oldIds)) return;
+                threads = data;
+                renderThreads();
+            } catch {
+                // silent
+            }
+        }
 
-            if (conversations.length === 0) {
-                conversationsList.innerHTML = '<div style="padding: 1rem; color: #888; text-align: center; font-size: 0.875rem;">No conversations yet</div>';
+        function renderThreads() {
+            if (threads.length === 0) {
+                threadsList.innerHTML = '<div class="empty-state"><p>No threads yet. Delegate a task via tmux.</p></div>';
                 return;
             }
-
-            conversations.forEach(conv => {
-                const item = document.createElement('div');
-                item.className = 'conversation-item';
-                if (conv.id === currentConversationId) {
-                    item.classList.add('active');
-                }
-                item.dataset.conversationId = conv.id;
-
-                const previewDiv = document.createElement('div');
-                previewDiv.className = 'preview';
-                previewDiv.textContent = conv.preview || '(empty)';
-
-                const metaDiv = document.createElement('div');
-                metaDiv.className = 'meta';
-                const date = conv.created_at ? new Date(conv.created_at).toLocaleDateString() : '';
-                metaDiv.innerHTML = `${date} <span class="message-count">${conv.message_count || 0} msg${conv.message_count !== 1 ? 's' : ''}</span>`;
-
-                item.appendChild(previewDiv);
-                item.appendChild(metaDiv);
-
-                item.addEventListener('click', () => loadConversation(conv.id));
-                conversationsList.appendChild(item);
+            const frag = document.createDocumentFragment();
+            threads.forEach(thread => {
+                frag.appendChild(buildCard(thread));
             });
+            threadsList.innerHTML = '';
+            threadsList.appendChild(frag);
         }
 
-        // Load a specific conversation
-        async function loadConversation(convId) {
-            // Early-return if already showing this conversation
-            if (convId === currentConversationId) {
-                return;
-            }
+        function buildCard(t) {
+            const card = document.createElement('div');
+            const status = (t.status || 'unknown').toLowerCase();
+            card.className = `thread-card ${status}`;
 
-            // Clear messages
-            messagesDiv.innerHTML = '';
+            const header = document.createElement('div');
+            header.className = 'card-header';
 
-            // Update active state in sidebar
-            document.querySelectorAll('.conversation-item').forEach(item => {
-                item.classList.remove('active');
-            });
-            document.querySelector(`[data-conversation-id="${convId}"]`)?.classList.add('active');
+            const queryDiv = document.createElement('div');
+            queryDiv.className = 'query';
+            queryDiv.textContent = t.query || '(no query)';
+            queryDiv.title = t.query || '';
 
-            currentConversationId = convId;
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'card-meta';
 
-            try {
-                const response = await fetch(`/chat/history/${convId}`);
-                if (response.ok) {
-                    const messages = await response.json();
-                    if (messages && messages.length > 0) {
-                        messages.forEach(msg => {
-                            addMessage(msg.role, msg.content);
-                        });
-                    } else {
-                        addSystemMessage('This conversation is empty');
-                    }
-                } else {
-                    addSystemMessage('Failed to load conversation');
-                }
-            } catch (error) {
-                console.error('Failed to load conversation:', error);
-                addSystemMessage('Error loading conversation');
-            }
+            const badge = document.createElement('span');
+            badge.className = `status-badge ${status}`;
+            badge.textContent = status;
 
-            // Close sidebar on mobile
-            if (window.innerWidth <= 768) {
-                sidebar.classList.remove('open');
-            }
-        }
+            const ageSpan = document.createElement('span');
+            ageSpan.className = 'age';
+            ageSpan.textContent = t.started ? timeAgo(t.started) : '';
 
-        // Create a new conversation
-        async function createNewConversation() {
-            try {
-                const response = await fetch('/chat/new', { method: 'POST' });
-                if (response.ok) {
-                    const data = await response.json();
-                    currentConversationId = data.conversation_id;
-                    messagesDiv.innerHTML = '';
-                    addSystemMessage('New conversation started');
-                    await loadConversations();
-                } else {
-                    addSystemMessage('Failed to create new conversation');
-                }
-            } catch (error) {
-                console.error('Failed to create new conversation:', error);
-                addSystemMessage('Error creating new conversation');
-            }
-        }
+            metaDiv.appendChild(badge);
+            metaDiv.appendChild(ageSpan);
 
-        // Add message to display
-        function addMessage(role, content, streaming = false) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `message ${role}`;
-            msgDiv.innerHTML = `
-                <div class="role">${role}</div>
-                <div class="content${streaming ? ' streaming' : ''}">${escapeHtml(content)}</div>
-            `;
-            messagesDiv.appendChild(msgDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            return msgDiv.querySelector('.content');
-        }
+            header.appendChild(queryDiv);
+            header.appendChild(metaDiv);
 
-        function addSystemMessage(content) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = 'message system';
-            msgDiv.innerHTML = `
-                <div class="role">system</div>
-                <div class="content">${escapeHtml(content)}</div>
-            `;
-            messagesDiv.appendChild(msgDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
+            // Started time (shown below query on hover or always for compact)
+            const startedDiv = document.createElement('div');
+            startedDiv.className = 'started';
+            startedDiv.textContent = t.started ? `started ${t.started}` : '';
+            header.appendChild(startedDiv);
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML.replace(/\n/g, '<br>');
-        }
+            card.appendChild(header);
 
-        // WebSocket connection for streaming
-        let ws = null;
-        let wsMessageId = null;
+            // Body: live stream for running, result for completed/failed
+            const body = document.createElement('div');
+            body.className = 'card-body';
 
-        // Send message handler
-        async function sendMessage() {
-            const message = textarea.value.trim();
-            if (!message) return;
-
-            // Disable input
-            textarea.disabled = true;
-            sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
-
-            // If no conversation ID, create one first (this may wipe DOM for "new conversation" banner)
-            if (!currentConversationId) {
-                await createNewConversation();
-            }
-
-            // Now add user message — it will persist
-            addMessage('user', message);
-            textarea.value = '';
-
-            // Try WebSocket streaming first, fall back to fetch
-            if (window.location.protocol === 'https:' || window.location.hostname === 'localhost') {
-                if (tryWebSocketSend(message)) {
-                    return;
-                }
-            }
-
-            // Fallback to fetch
-            try {
-                // Use fetch with URLSearchParams for application/x-www-form-urlencoded
-                const params = new URLSearchParams();
-                params.append('message', message);
-                params.append('conversation_id', currentConversationId);
-
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    body: params
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                // Read the response as JSON (now returns JSON with response and conversation_id)
-                const data = await response.json();
-                addMessage('assistant', data.response);
-
-            } catch (error) {
-                addSystemMessage(`Error: ${error.message}`);
-            } finally {
-                textarea.disabled = false;
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'Send';
-                textarea.focus();
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-                // Refresh conversations list
-                await loadConversations();
-            }
-        }
-
-        // Try to send message via WebSocket streaming
-        function tryWebSocketSend(message) {
-            try {
-                // Generate a unique message ID for this request
-                wsMessageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-
-                // Connect to WebSocket
-                const wsUrl = window.location.protocol === 'https:'
-                    ? `wss://${window.location.host}/chat/ws`
-                    : `ws://${window.location.host}/chat/ws`;
-
-                ws = new WebSocket(wsUrl);
-
-                ws.onopen = function() {
-                    // Send the message as JSON with message ID
-                    const data = {
-                        type: 'chat_request',
-                        message_id: wsMessageId,
-                        message: message,
-                        conversation_id: currentConversationId
-                    };
-                    ws.send(JSON.stringify(data));
-                };
-
-                ws.onmessage = function(event) {
-                    try {
-                        const data = JSON.parse(event.data);
-
-                        if (data.type === 'token') {
-                            // Stream a token to the UI
-                            addTokenToLastMessage(data.token);
-                        } else if (data.type === 'complete') {
-                            // Streaming complete. Clear the `streaming` class from
-                            // the finished assistant bubble so the next turn's
-                            // tokens land in a fresh bubble rather than being
-                            // appended to this one.
-                            messagesDiv
-                                .querySelectorAll('.message.assistant .content.streaming')
-                                .forEach(el => el.classList.remove('streaming'));
-                            closeWebSocket();
-                            textarea.disabled = false;
-                            sendBtn.disabled = false;
-                            sendBtn.textContent = 'Send';
-                            textarea.focus();
-                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                            loadConversations();
-                        } else if (data.type === 'error') {
-                            addSystemMessage(`Error: ${data.message}`);
-                            closeWebSocket();
-                            textarea.disabled = false;
-                            sendBtn.disabled = false;
-                            sendBtn.textContent = 'Send';
-                            textarea.focus();
+            if (status === 'running') {
+                const streamDiv = document.createElement('div');
+                streamDiv.className = 'live-stream';
+                streamDiv.textContent = '(connecting...)';
+                body.appendChild(streamDiv);
+                connectStream(t.id, streamDiv);
+            } else if (status === 'completed' || status === 'failed') {
+                if (t.result_summary) {
+                    const summaryDiv = document.createElement('div');
+                    summaryDiv.className = 'result-summary';
+                    summaryDiv.innerHTML = escapeHtml(truncate(t.result_summary, 300))
+                        + `<span class="expand-hint">click to expand full transcript</span>`;
+                    summaryDiv.addEventListener('click', () => {
+                        const transcript = body.querySelector('.full-transcript');
+                        if (!transcript) {
+                            loadTranscript(t.id, body, summaryDiv);
+                        } else {
+                            transcript.classList.toggle('visible');
                         }
-                    } catch (e) {
-                        console.error('Failed to parse WebSocket message:', e);
-                    }
-                };
-
-                ws.onerror = function(error) {
-                    console.error('WebSocket error:', error);
-                    addSystemMessage('WebSocket connection error. Falling back to regular chat.');
-                    closeWebSocket();
-                    sendMessage(); // Retry with fetch
-                };
-
-                ws.onclose = function() {
-                    wsMessageId = null;
-                };
-
-                return true; // WebSocket attempt started
-
-            } catch (error) {
-                console.error('Failed to create WebSocket:', error);
-                return false; // Fall back to fetch
-            }
-        }
-
-        // Add a token to the last assistant message (for streaming).
-        // A bubble is "currently streaming" iff its content div still has the
-        // `streaming` class — that class is cleared on `complete`. If none is
-        // actively streaming (start of a new turn), create a fresh bubble.
-        function addTokenToLastMessage(token) {
-            let lastMsg = messagesDiv.querySelector('.message.assistant .content.streaming');
-            if (!lastMsg) {
-                const msgDiv = document.createElement('div');
-                msgDiv.className = 'message assistant';
-                msgDiv.innerHTML = `
-                    <div class="role">assistant</div>
-                    <div class="content streaming"></div>
-                `;
-                messagesDiv.appendChild(msgDiv);
-                lastMsg = msgDiv.querySelector('.content.streaming');
-            }
-            lastMsg.textContent += token;
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        // Close WebSocket connection
-        function closeWebSocket() {
-            if (ws) {
-                ws.onopen = null;
-                ws.onmessage = null;
-                ws.onerror = null;
-                ws.onclose = null;
-                ws.close();
-                ws = null;
-            }
-        }
-
-        // Event listeners
-        sendBtn.addEventListener('click', sendMessage);
-
-        newChatBtn.addEventListener('click', createNewConversation);
-
-        textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        // Sidebar toggle for mobile
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('open');
-        });
-
-        // Close sidebar when clicking outside on mobile
-        document.addEventListener('click', (e) => {
-            if (window.innerWidth <= 768) {
-                if (!sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
-                    sidebar.classList.remove('open');
+                    });
+                    body.appendChild(summaryDiv);
                 }
             }
-        });
 
-        // Initial focus
-        textarea.focus();
+            card.appendChild(body);
 
-        // Load conversations on page load
-        loadConversations();
+            // Click header to expand/collapse
+            header.addEventListener('click', () => {
+                body.classList.toggle('expanded');
+            });
+
+            return card;
+        }
+
+        // ── WebSocket stream for running threads ───────────────
+        function connectStream(taskId, streamEl) {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = location.host;
+            const wsUrl = `${proto}//${host}/threads/${taskId}/stream`;
+
+            let ws;
+            try {
+                ws = new WebSocket(wsUrl);
+            } catch {
+                streamEl.textContent = 'WebSocket unavailable';
+                return;
+            }
+
+            ws.onopen = () => {
+                streamEl.textContent = '';
+            };
+
+            ws.onmessage = (ev) => {
+                const line = ev.data;
+                // Parse stream-json line and extract text
+                const text = extractTextFromStreamLine(line);
+                if (text !== null) {
+                    streamEl.textContent += text;
+                    streamEl.scrollTop = streamEl.scrollHeight;
+                }
+            };
+
+            ws.onerror = () => {
+                streamEl.textContent += '\n[stream error]';
+            };
+
+            ws.onclose = () => {
+                // Reconnect after a delay
+                setTimeout(() => {
+                    if (wsMap[taskId] === ws) {
+                        connectStream(taskId, streamEl);
+                    }
+                }, 3000);
+            };
+
+            wsMap[taskId] = ws;
+        }
+
+        function extractTextFromStreamLine(line) {
+            try {
+                const obj = JSON.parse(line);
+                // stream-json format: content_block_delta with text_delta
+                if (obj.type === 'content_block_delta') {
+                    const delta = obj.delta || {};
+                    if (delta.type === 'text_delta') {
+                        return delta.text || '';
+                    }
+                }
+                // Fallback: raw text
+                return line;
+            } catch {
+                return line;
+            }
+        }
+
+        // ── Transcript loading ─────────────────────────────────
+        async function loadTranscript(taskId, body, summaryDiv) {
+            try {
+                const res = await fetch(`/threads/${taskId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const transcript = document.createElement('div');
+                transcript.className = 'full-transcript';
+
+                // Show stream tail if available
+                if (data._stream_tail && data._stream_tail.length > 0) {
+                    const text = data._stream_tail.map(l => extractTextFromStreamLine(l)).join('');
+                    transcript.textContent = text || '(empty stream)';
+                } else {
+                    transcript.textContent = '(no stream data)';
+                }
+
+                transcript.classList.add('visible');
+                body.appendChild(transcript);
+                summaryDiv.querySelector('.expand-hint').textContent = 'click to collapse';
+            } catch {
+                // silent
+            }
+        }
+
+        // ── Helpers ────────────────────────────────────────────
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML.replace(/\n/g, '<br>');
+        }
+
+        function truncate(s, n) {
+            if (s.length <= n) return s;
+            return s.slice(0, n) + '...';
+        }
+
+        function timeAgo(isoStr) {
+            const then = new Date(isoStr).getTime();
+            if (isNaN(then)) return '';
+            const diff = Math.floor((Date.now() - then) / 1000);
+            if (diff < 10) return 'just now';
+            if (diff < 60) return diff + 's ago';
+            const mins = Math.floor(diff / 60);
+            if (mins < 60) return mins + 'm ago';
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return hrs + 'h ago';
+            const days = Math.floor(hrs / 24);
+            return days + 'd ago';
+        }
+
+        // ── Init ───────────────────────────────────────────────
+        loadFactoryState();
+        loadThreads();
+        // Refresh factory state every 5s
+        setInterval(loadFactoryState, 5000);
+        // Refresh thread list every 10s (WS handles live for running)
+        setInterval(loadThreads, 10000);
     </script>
 </body>
 </html>

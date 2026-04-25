@@ -1164,6 +1164,42 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_websocket_upgrade()
             return
 
+        # Thread list endpoint: GET /threads
+        if path == "/threads":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_threads_list()
+            return
+
+        # Thread detail endpoint: GET /threads/<task-id>
+        if path.startswith("/threads/") and not path.startswith("/threads/static/"):
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            task_id = path[len("/threads/"):]
+            if "/" in task_id:
+                # e.g. /threads/<task-id>/stream → handled below
+                if task_id.endswith("/stream"):
+                    self.handle_thread_stream(task_id[:-len("/stream")])
+                    return
+            self.handle_thread_detail(task_id)
+            return
+
+        # Factory-state endpoint: GET /factory-state
+        if path == "/factory-state":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_factory_state()
+            return
+
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
 
@@ -1738,8 +1774,183 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_error_page(404, "Not found")
 
 
-def main():
-    """Start the HTTP server."""
+   # =======================================================================
+    # Thread Store Handlers (issues #764/#765)
+    # =======================================================================
+
+    def handle_threads_list(self):
+        """List all threads from THREADS_ROOT, newest first."""
+        threads = []
+        if os.path.isdir(THREADS_ROOT):
+            for entry in sorted(
+                os.listdir(THREADS_ROOT), reverse=True
+            ):
+                meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
+                if not os.path.isfile(meta_path):
+                    continue
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    threads.append(meta)
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(threads, ensure_ascii=False).encode("utf-8"))
+
+    def handle_thread_detail(self, task_id):
+        """Return full detail for a single thread."""
+        meta_path = os.path.join(THREADS_ROOT, task_id, "meta.json")
+        if not os.path.isfile(meta_path):
+            self.send_error_page(404, "Thread not found")
+            return
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            self.send_error_page(500, "Failed to read thread meta")
+            return
+
+        # Attach stream tail if available
+        stream_path = os.path.join(THREADS_ROOT, task_id, "stream.jsonl")
+        if os.path.isfile(stream_path):
+            try:
+                with open(stream_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                # Last 50 lines as a convenience
+                meta["_stream_tail"] = [l.rstrip("\n") for l in lines[-50:]]
+            except OSError:
+                pass
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(meta, ensure_ascii=False).encode("utf-8"))
+
+    def handle_thread_stream(self, task_id):
+        """Upgrade to WebSocket and tail stream.jsonl for a thread."""
+        stream_path = os.path.join(THREADS_ROOT, task_id, "stream.jsonl")
+        if not os.path.isfile(stream_path):
+            self.send_error_page(404, "Stream not found")
+            return
+
+        # Validate session (same pattern as other WS handlers)
+        user, _ = _validate_session(self.headers.get("Cookie"))
+        if not user:
+            self.send_error_page(401, "Unauthorized: no valid session")
+            return
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        conv_id = params.get("conversation_id", [None])[0]
+
+        _websocket_queues[user] = asyncio.Queue()
+
+        sec_websocket_key = self.headers.get("Sec-WebSocket-Key", "")
+        sec_websocket_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
+
+        if not sec_websocket_key:
+            self.send_error_page(400, "Bad Request", "Missing Sec-WebSocket-Key")
+            return
+
+        sock = self.connection
+        sock.setblocking(False)
+
+        async def handle_stream_ws():
+            reader, writer = await asyncio.open_connection(sock=sock)
+            ws_handler = _WebSocketHandler(
+                reader, writer, user, _websocket_queues[user], conv_id=conv_id
+            )
+            if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
+                return
+
+            # Drain initial tail (last 20 lines)
+            try:
+                with open(stream_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                for line in lines[-20:]:
+                    await ws_handler.send_text(line.rstrip("\n"))
+            except OSError:
+                pass
+
+            # Then tail for new lines
+            async def tail_stream():
+                try:
+                    with open(stream_path, "r", encoding="utf-8") as f:
+                        f.seek(0, 2)  # seek to end
+                        while not ws_handler.closed:
+                            line = f.readline()
+                            if line:
+                                await ws_handler.send_text(line.rstrip("\n"))
+                            else:
+                                await asyncio.sleep(0.2)
+                except OSError:
+                    pass
+
+            tail_task = asyncio.create_task(tail_stream())
+            await ws_handler.handle_connection()
+            tail_task.cancel()
+            try:
+                await tail_task
+            except asyncio.CancelledError:
+                pass
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(handle_stream_ws())
+        except Exception as e:
+            print(f"Thread stream error: {e}", file=sys.stderr)
+        finally:
+            loop.close()
+            sock.close()
+
+    def handle_factory_state(self):
+        """Read the snapshot file and return factory state summary."""
+        snapshot_dir = "/var/lib/disinto/snapshot"
+        snapshot_path = os.path.join(snapshot_dir, "state.json")
+
+        state = {}
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        # Compute summary counts from threads
+        backlog = 0
+        in_progress = 0
+        current_worker = ""
+        if os.path.isdir(THREADS_ROOT):
+            for entry in os.listdir(THREADS_ROOT):
+                meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
+                if not os.path.isfile(meta_path):
+                    continue
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    status = meta.get("status", "")
+                    if status == "running":
+                        in_progress += 1
+                        current_worker = entry
+                    else:
+                        backlog += 1
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            "backlog": backlog,
+            "in_progress": in_progress,
+            "current_worker": current_worker,
+            "snapshot": state,
+        }, ensure_ascii=False).encode("utf-8"))
+
     server_address = (HOST, PORT)
     httpd = HTTPServer(server_address, ChatHandler)
     print(f"Starting disinto-chat server on {HOST}:{PORT}", file=sys.stderr)
