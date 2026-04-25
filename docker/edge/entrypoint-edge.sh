@@ -296,6 +296,21 @@ _chat_load_secret_file NOMAD_TOKEN       "${NOMAD_TOKEN_FILE:-/secrets/nomad-tok
 export NOMAD_ADDR="${NOMAD_ADDR:-http://localhost:4646}"
 _chat_install_settings "$CHAT_WORKSPACE_DIR"
 
+# ── Ensure chat session dir ownership (issue #747) ───────────────────
+# claude-code persists session state to ${CLAUDE_CONFIG_DIR}/projects/<cwd>/
+# Historically chat spawned claude as root (pre-#743), leaving the session
+# dir root-owned. After #743 drop-priv to agent, claude cannot write new
+# sessions or resume existing ones — continuity is lost.
+_chat_ensure_session_dir() {
+  # Match _claude_session_flag's path encoding: cwd "/opt/disinto" -> "-opt-disinto"
+  local encoded="${CHAT_WORKSPACE_DIR//\//-}"
+  local dir="${CLAUDE_CONFIG_DIR:-}/projects/${encoded}"
+  install -d -m 0750 -o agent -g agent "$dir" 2>/dev/null || true
+  # Repair pre-existing root-owned files (idempotent, no-op once clean).
+  chown -R agent:agent "$dir" 2>/dev/null || true
+}
+_chat_ensure_session_dir
+
 # Start chat server in background (#1083 — merged from docker/chat into edge)
 (python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &
 
