@@ -9,6 +9,7 @@ Routes:
     GET /chat/               -> serves index.html (session required)
     GET /chat/static/*       -> serves static assets (session required)
     POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
+    POST /chat/delegate      -> fire-and-forget: spawns detached claude -p, returns task-id (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
 
 OAuth flow:
@@ -74,6 +75,13 @@ CHAT_CLAUDE_MODEL = os.environ.get("CHAT_CLAUDE_MODEL", "claude-opus-4-7")
 # (e.g. local dev workspace without a SOUL.md).
 SOUL_MD_PATH = os.environ.get(
     "CHAT_SOUL_MD_PATH", os.path.join(WORKSPACE_DIR, "SOUL.md"))
+
+# SOUL_THINK.md path — system prompt for delegate sessions.
+SOUL_THINK_PATH = os.environ.get(
+    "CHAT_SOUL_THINK_PATH", os.path.join(WORKSPACE_DIR, "docs/voice/SOUL_THINK.md"))
+
+# Threads root — where delegate task state lands.
+THREADS_ROOT = os.environ.get("CHAT_THREADS_ROOT", "/var/lib/disinto/threads")
 
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
@@ -382,6 +390,175 @@ def _soul_append_args(flag):
     if not soul.strip():
         return []
     return ["--append-system-prompt", soul]
+
+
+# =============================================================================
+# `delegate` tool — fire-and-forget claude-p with task-id
+# =============================================================================
+
+DELEGATE_TOOL_DECLARATION = {
+    "name": "delegate",
+    "description": (
+        "Fire-and-forget: spawn a detached Claude session for long-running "
+        "investigations. Use when the user's request will take more than a "
+        "few seconds to answer (e.g. 'why are PRs stuck?', 'audit the "
+        "latest PR'). Returns immediately with a task-id; the result lands "
+        "in the threads store so it can be checked later."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The task description the Claude session should work on."
+                ),
+            },
+            "context": {
+                "type": "string",
+                "description": (
+                    "Optional additional context or instructions for the "
+                    "Claude session."
+                ),
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+
+def _ensure_threads_dir(task_id):
+    """Create the thread directory and return its path."""
+    thread_dir = os.path.join(THREADS_ROOT, task_id)
+    os.makedirs(thread_dir, exist_ok=True)
+    return thread_dir
+
+
+def _write_meta(task_id, meta):
+    """Atomically write meta.json for a delegate task."""
+    thread_dir = _ensure_threads_dir(task_id)
+    meta_path = os.path.join(thread_dir, "meta.json")
+    tmp_path = meta_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, meta_path)
+
+
+def _update_meta(task_id, updates):
+    """Merge *updates* into the existing meta.json (atomic read-modify-write)."""
+    thread_dir = _ensure_threads_dir(task_id)
+    meta_path = os.path.join(thread_dir, "meta.json")
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        meta = {"id": task_id}
+    meta.update(updates)
+    _write_meta(task_id, meta)
+
+
+def _spawn_delegate_sync(query, context=""):
+    """Synchronous fire-and-forget: spawn a detached claude -p session.
+
+    Returns a dict with ``task_id`` and ``started_at`` immediately.
+    The spawned process streams stdout to ``stream.jsonl`` and updates
+    ``meta.json`` on exit via a background thread.
+    """
+    task_id = f"del-{uuid.uuid4().hex[:12]}"
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # Build the full prompt from query + optional context.
+    full_prompt = query
+    if context:
+        full_prompt = f"{query}\n\nContext:\n{context}"
+
+    # Write initial meta.json
+    _write_meta(task_id, {
+        "id": task_id,
+        "query": query,
+        "started": started_at,
+        "status": "running",
+        "completed": None,
+        "result_summary": None,
+    })
+
+    thread_dir = _ensure_threads_dir(task_id)
+    stream_path = os.path.join(thread_dir, "stream.jsonl")
+
+    # Build claude args (mirrors handle_chat but without session resume).
+    flag, _ = _claude_session_flag(task_id, cwd=WORKSPACE_DIR)
+    claude_args = [
+        CLAUDE_BIN,
+        flag, task_id,
+        "-p", full_prompt,
+        "--output-format", "stream-json",
+        "--permission-mode", "bypassPermissions",
+        "--model", CHAT_CLAUDE_MODEL,
+        "--verbose",
+    ]
+    if os.path.isfile(SOUL_THINK_PATH):
+        claude_args.extend(["--system-prompt-file", SOUL_THINK_PATH])
+
+    def _worker():
+        """Worker thread: run claude, stream output, update meta on exit."""
+        stream_fh = open(stream_path, "w", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                claude_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+                bufsize=1,
+                preexec_fn=_drop_to_agent,
+                start_new_session=True,
+            )
+            # Stream stdout to file.
+            for line in proc.stdout:
+                stream_fh.write(line)
+                stream_fh.flush()
+            proc.wait()
+
+            # Parse result and update meta.
+            stream_fh.close()
+            stream_fh = open(stream_path, "r", encoding="utf-8")
+            stdout = stream_fh.read()
+            stream_fh.close()
+            text = _parse_stream_json(stdout)[0]
+            if not text:
+                text = stdout.strip() or "The delegate session completed with no output."
+            status = "completed" if proc.returncode == 0 else "failed"
+            _update_meta(task_id, {
+                "status": status,
+                "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "result_summary": text,
+            })
+        except Exception as exc:
+            _log_chat(f"delegate exit error for {task_id}: {exc!r}")
+            try:
+                _update_meta(task_id, {
+                    "status": "failed",
+                    "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "result_summary": f"Delegate failed: {exc}",
+                })
+            except Exception:
+                pass
+            try:
+                stream_fh.close()
+            except Exception:
+                pass
+
+    _log_chat(f"delegate: spawn {task_id} (cwd={WORKSPACE_DIR})")
+    threading.Thread(target=_worker, daemon=True, name=f"delegate-{task_id}").start()
+
+    return {"task_id": task_id, "started_at": started_at}
+
+
+def _log_chat(msg):
+    """Log a message to stderr with timestamp."""
+    print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] chat: {msg}",
+          file=sys.stderr, flush=True)
 
 
 # =============================================================================
@@ -1015,6 +1192,16 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_chat(user)
             return
 
+        # Delegate endpoint (session required) — fire-and-forget claude-p
+        if path == "/chat/delegate":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_delegate(user)
+            return
+
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
 
@@ -1329,6 +1516,45 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(500, "Claude CLI not found")
         except Exception as e:
             self.send_error_page(500, f"Error: {e}")
+
+    def handle_delegate(self, user):
+        """Handle delegate requests by spawning a detached claude -p session."""
+
+        # Read request body
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            self.send_error_page(400, "No query provided")
+            return
+
+        body = self.rfile.read(content_length)
+        try:
+            body_str = body.decode("utf-8")
+            params = parse_qs(body_str)
+            query = params.get("query", [""])[0]
+            context = params.get("context", [""])[0]
+        except (UnicodeDecodeError, KeyError):
+            self.send_error_page(400, "Invalid query format")
+            return
+
+        if not query:
+            self.send_error_page(400, "Empty query")
+            return
+
+        # Validate Claude binary exists
+        if not os.path.exists(CLAUDE_BIN):
+            self.send_error_page(500, "Claude CLI not found")
+            return
+
+        try:
+            result = _spawn_delegate_sync(query, context)
+        except Exception as e:
+            self.send_error_page(500, f"Delegate failed: {e}")
+            return
+
+        self.send_response(202)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
 
     # =======================================================================
     # Conversation History Handlers

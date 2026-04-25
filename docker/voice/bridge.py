@@ -11,10 +11,12 @@ Scope:
       (shared with /chat/* — same OAuth session cookie gate, #709).
     * For each accepted browser connection, open a Gemini Live session
       loaded with docs/voice/SOUL_VOICE.md as the system prompt.
-    * Register three tools (see SOUL_VOICE.md for routing rules):
+    * Register four tools (see SOUL_VOICE.md for routing rules):
       - `factory_state(section?)` — fast-path snapshot read, <200ms.
       - `narrate(question)` — fast-path prose summary via local llama, ~1s.
       - `think(query)` — full claude-p reasoning, 5–10s.
+      - `delegate(query, context?)` — fire-and-forget detached claude-p,
+        returns task-id immediately; result lands in threads store.
     * Proxy audio frames (opaque binary) between the browser and Gemini
       Live in both directions.
 
@@ -43,6 +45,7 @@ import asyncio
 import json
 import os
 import pwd
+import subprocess
 import sys
 import time
 import uuid
@@ -121,6 +124,9 @@ NARRATE_SH = os.environ.get(
 # Timeouts for fast-path skills (seconds). Much tighter than think.
 FACTORY_STATE_TIMEOUT = int(os.environ.get("VOICE_FACTORY_STATE_TIMEOUT_SECS", "10"))
 NARRATE_TIMEOUT = int(os.environ.get("VOICE_NARRATE_TIMEOUT_SECS", "15"))
+
+# Threads root — where delegate task state lands.
+THREADS_ROOT = os.environ.get("VOICE_THREADS_ROOT", "/var/lib/disinto/threads")
 
 # drop to the unprivileged `agent` user (uid 1000) via preexec_fn before
 # exec. The edge container entrypoint starts the bridge as root (to bind
@@ -293,6 +299,192 @@ THINK_TOOL_DECLARATION = {
         "required": ["query"],
     },
 }
+
+
+# ── `delegate` tool: fire-and-forget claude-p ─────────────────────────────────
+
+DELEGATE_TOOL_DECLARATION = {
+    "name": "delegate",
+    "description": (
+        "Fire-and-forget: spawn a detached Claude session for long-running "
+        "investigations. Use when the user's request will take more than a "
+        "few seconds to answer (e.g. 'why are PRs stuck?', 'audit the "
+        "latest PR'). Returns immediately with a task-id; the result lands "
+        "in the threads store so it can be checked later."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The task description the Claude session should work on."
+                ),
+            },
+            "context": {
+                "type": "string",
+                "description": (
+                    "Optional additional context or instructions for the "
+                    "Claude session."
+                ),
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+
+def _ensure_threads_dir(task_id):
+    """Create the thread directory and return its path."""
+    thread_dir = os.path.join(THREADS_ROOT, task_id)
+    os.makedirs(thread_dir, exist_ok=True)
+    return thread_dir
+
+
+def _write_meta(task_id, meta):
+    """Atomically write meta.json for a delegate task."""
+    thread_dir = _ensure_threads_dir(task_id)
+    meta_path = os.path.join(thread_dir, "meta.json")
+    tmp_path = meta_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, meta_path)
+
+
+def _update_meta(task_id, updates):
+    """Merge *updates* into the existing meta.json (atomic read-modify-write)."""
+    thread_dir = _ensure_threads_dir(task_id)
+    meta_path = os.path.join(thread_dir, "meta.json")
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        meta = {"id": task_id}
+    meta.update(updates)
+    _write_meta(task_id, meta)
+
+
+async def _spawn_delegate(query, context=""):
+    """Fire-and-forget: spawn a detached claude -p session.
+
+    Returns a dict with ``task_id`` and ``started_at`` immediately.
+    The spawned process streams stdout to ``stream.jsonl`` and updates
+    ``meta.json`` on exit.
+    """
+    task_id = f"del-{uuid.uuid4().hex[:12]}"
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # Build the full prompt from query + optional context.
+    full_prompt = query
+    if context:
+        full_prompt = f"{query}\n\nContext:\n{context}"
+
+    # Write initial meta.json
+    _write_meta(task_id, {
+        "id": task_id,
+        "query": query,
+        "started": started_at,
+        "status": "running",
+        "completed": None,
+        "result_summary": None,
+    })
+
+    thread_dir = _ensure_threads_dir(task_id)
+    stream_path = os.path.join(thread_dir, "stream.jsonl")
+
+    # Build claude args (mirrors _run_think but without --session-id).
+    flag, _ = _claude_session_flag(task_id, cwd=WORKSPACE_DIR)
+    args = [
+        CLAUDE_BIN,
+        flag, task_id,
+        "-p", full_prompt,
+        "--output-format", "stream-json",
+        "--permission-mode", "bypassPermissions",
+        "--model", VOICE_CLAUDE_MODEL,
+        "--verbose",
+    ]
+    if os.path.isfile(SOUL_THINK_PATH):
+        args.extend(["--system-prompt-file", SOUL_THINK_PATH])
+
+    # Open the stream file for writing.
+    stream_fh = open(stream_path, "w", encoding="utf-8")
+
+    _log(f"delegate: spawn {task_id} (cwd={WORKSPACE_DIR})")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        _update_meta(task_id, {
+            "status": "failed",
+            "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "result_summary": "The reasoning layer is unavailable: claude binary not found.",
+        })
+        return {"task_id": task_id, "started_at": started_at}
+
+    # Stream stdout to file and track process for exit callback.
+    _delegate_tasks[task_id] = proc
+
+    async def _stream():
+        """Read stdout line-by-line and write to stream.jsonl."""
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                stream_fh.write(line.decode("utf-8", errors="replace"))
+                stream_fh.flush()
+        except Exception as exc:
+            _log(f"delegate stream error for {task_id}: {exc!r}")
+
+    # Schedule the stream reader; on finish, update meta.
+    asyncio.ensure_future(_stream_done(proc, task_id, _stream(), stream_fh, stream_path))
+
+    return {"task_id": task_id, "started_at": started_at}
+
+
+# Registry of running delegate tasks: task_id -> Process
+_delegate_tasks = {}
+
+
+async def _stream_done(proc, task_id, stream_coro, stream_fh, stream_path):
+    """Wait for stream to finish, then update meta on exit."""
+    await stream_coro
+    # Wait for process to exit (stdout already drained by _stream).
+    try:
+        _, _ = await proc.communicate()
+    except Exception as exc:
+        _log(f"delegate communicate error for {task_id}: {exc!r}")
+
+    try:
+        # Re-read the stream file (double-read) so we can parse the output
+        # that _stream already wrote — proc.stdout is already exhausted.
+        with open(stream_path, "r", encoding="utf-8") as fh:
+            stdout = fh.read()
+        text = _parse_claude_stream_json(stdout)
+        if not text:
+            text = stdout.strip() or "The delegate session completed with no output."
+        status = "completed" if proc.returncode == 0 else "failed"
+        _update_meta(task_id, {
+            "status": status,
+            "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "result_summary": text,
+        })
+    except Exception as exc:
+        _log(f"delegate exit handler error for {task_id}: {exc!r}")
+    finally:
+        try:
+            stream_fh.close()
+        except Exception:
+            pass
+        _delegate_tasks.pop(task_id, None)
 
 
 def _parse_claude_stream_json(output):
@@ -646,6 +838,27 @@ class VoiceSession:
                 except websockets.exceptions.ConnectionClosed:
                     return
 
+            elif name == "delegate":
+                query = ""
+                context = ""
+                if isinstance(args, dict):
+                    query = str(args.get("query", "")).strip()
+                    context = str(args.get("context", "")).strip()
+                if not query:
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={"error": "missing required arg: query"},
+                    ))
+                    continue
+
+                result = await _spawn_delegate(query, context)
+                result_text = (
+                    f"Delegated. Task id: {result['task_id']} "
+                    f"(started {result['started_at']}). "
+                    "I'll let you know when it's done."
+                )
+
             else:
                 _log(f"unknown tool call name={name!r} — returning error")
                 function_responses.append(genai_types.FunctionResponse(
@@ -680,6 +893,7 @@ class VoiceSession:
                     genai_types.FunctionDeclaration(**FACTORY_STATE_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**NARRATE_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**THINK_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**DELEGATE_TOOL_DECLARATION),
                 ],
             )],
         )
