@@ -10,7 +10,14 @@ COPY --from=caddy-src /usr/bin/caddy         /usr/bin/caddy
 COPY --from=caddy-src /etc/caddy/Caddyfile   /etc/caddy/Caddyfile
 COPY --from=caddy-src /usr/share/caddy/      /usr/share/caddy/
 RUN apk add --no-cache bash jq curl git docker-cli python3 py3-pip openssh-client autossh \
-    nodejs npm unzip
+    nodejs npm unzip shadow
+
+# Non-root agent user (uid 1000) — chat-server.py drops privileges to this
+# uid before spawning `claude -p` because claude-code refuses
+# bypassPermissions when euid is 0 (#743). uid:gid 1000:1000 matches the
+# ownership of the shared /var/lib/disinto/claude-shared host volume so the
+# child process can read .credentials.json.
+RUN groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 -s /bin/bash agent
 # Voice bridge (#662): isolated venv so Alpine's system Python stays clean.
 # google-genai provides the Gemini Live client; websockets is the asyncio
 # server used by docker/voice/bridge.py. Invoked from entrypoint-edge.sh as
