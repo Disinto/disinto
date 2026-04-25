@@ -119,7 +119,11 @@ job "woodpecker-server" {
       # below and is merged into task env.
       env {
         WOODPECKER_FORGEJO              = "true"
-        WOODPECKER_FORGEJO_URL          = "https://self.disinto.ai/forge"
+        # OAuth browser redirects still hit the public URL; this is separate
+        # from WOODPECKER_FORGEJO_URL which is resolved via nomadService below
+        # so that internal API traffic stays on the nomad mesh (10.10.10.0/24)
+        # and avoids DO-edge 502s dropping commit-status callbacks.
+        WOODPECKER_EXPERT_FORGE_OAUTH_HOST = "https://self.disinto.ai/forge"
         WOODPECKER_HOST                 = "https://self.disinto.ai/ci"
         WOODPECKER_OPEN                 = "true"
         WOODPECKER_DATABASE_DRIVER      = "sqlite3"
@@ -130,6 +134,23 @@ job "woodpecker-server" {
         # pipelines land in status=error with zero workflows spawned. Matches
         # the legacy docker-compose generator fix from #394. See #598.
         WOODPECKER_PLUGINS_PRIVILEGED   = "plugins/docker"
+      }
+
+      # ── In-cluster Forgejo URL (nomad mesh, not DO edge) ───────────────────
+      # Routes woodpecker→forgejo API traffic (commit-status callbacks, etc.)
+      # over the nomad mesh (10.10.10.0/24) instead of the DO edge.
+      # Uses plain HTTP because forgejo binds http://:3000 internally — no
+      # WOODPECKER_FORGE_SKIP_VERIFY needed.
+      # See issue #729: edge 502s cause dropped terminal status callbacks.
+      template {
+        destination = "local/forgejo-url.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{- range nomadService "forgejo" -}}
+WOODPECKER_FORGEJO_URL=http://{{ .Address }}:{{ .Port }}
+{{- end -}}
+EOT
       }
 
       # ── Vault-templated secrets env (S2.4 pattern) ─────────────────────────
