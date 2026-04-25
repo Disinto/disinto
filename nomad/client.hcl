@@ -79,6 +79,20 @@ client {
     path      = "/srv/disinto/claude-creds"
     read_only = true
   }
+
+  # factory-state snapshot output (written by snapshot-daemon, read RO by
+  # consumers such as the factory-state skill).
+  host_volume "snapshot-state" {
+    path      = "/var/lib/disinto/snapshot"
+    read_only = false
+  }
+}
+
+# raw_exec driver for the snapshot-daemon (issue #755).
+plugin "raw_exec" {
+  config {
+    enabled = true
+  }
 }
 
 # Docker task driver. `volumes.enabled = true` is required so jobspecs

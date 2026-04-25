@@ -80,6 +80,14 @@ job "edge" {
       read_only = false
     }
 
+    # snapshot-state: factory-state JSON written by snapshot-daemon.
+    # RW for the daemon task; consumers mount RO.
+    volume "snapshot-state" {
+      type      = "host"
+      source    = "snapshot-state"
+      read_only = false
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -411,6 +419,31 @@ EOT
       resources {
         cpu    = 200
         memory = 256
+      }
+    }
+
+    # ── Snapshot daemon (issue #755) ──────────────────────────────────────
+    # Polls every ~5s and writes factory-state JSON to disk. Consumers
+    # (factory-state skill, snapshot-consumer) cat the file for instant
+    # sub-200ms answers — no fork/load overhead vs. claude -p.
+    task "snapshot" {
+      driver = "raw_exec"
+
+      config {
+        command = "/opt/disinto/bin/snapshot-daemon.sh"
+      }
+
+      # RW mount so the daemon can write state.json atomically.
+      volume_mount {
+        volume      = "snapshot-state"
+        destination = "/var/lib/disinto/snapshot"
+        read_only   = false
+      }
+
+      # Minimal resources — pure bash loop, negligible footprint.
+      resources {
+        cpu    = 50
+        memory = 32
       }
     }
 
