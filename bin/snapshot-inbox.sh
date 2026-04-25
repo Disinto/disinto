@@ -98,9 +98,8 @@ scan_action_vault() {
     local basename
     basename="$(basename "$filepath")"
 
-    # Skip hidden files and the sentinel
+    # Skip hidden files (includes .last-ack sentinel)
     [[ "$basename" == .* ]] && continue
-    [[ "$basename" == ".last-ack" ]] && continue
 
     # Skip if newer-than sentinel and sentinel exists
     if [ -n "$cutoff_epoch" ]; then
@@ -194,7 +193,7 @@ scan_prediction_issues() {
           ts: .created_at
         }
     ]
-  ' 2>/dev/null || printf '[]'
+  ' < "$body_file" 2>/dev/null || printf '[]'
 }
 
 # ── Scan Forge automation issues ─────────────────────────────────────────────
@@ -235,7 +234,7 @@ scan_automation_issues() {
           ts: .created_at
         }
     ]
-  ' 2>/dev/null || printf '[]'
+  ' < "$body_file" 2>/dev/null || printf '[]'
 }
 
 # ── Merge and cap ─────────────────────────────────────────────────────────────
@@ -250,7 +249,7 @@ merge_inbox() {
   jq -c --argjson vault "$vault_items" \
         --argjson predictions "$prediction_items" \
         --argjson automation "$automation_items" '
-    ($vault + $predictions + automation)
+    ($vault + $predictions + $automation)
     | sort_by(.ts) | reverse
     | .[:20]
     | {items: ., unread_count: length}
