@@ -386,6 +386,8 @@ def main() -> int:
         "f4ee900d52b701eb7050355c05ba4ecd": "Snapshot TMPFILES + printf (snapshot-agents + snapshot-forge)",
         "5f62ad0ed0fb0c919db212d1667e1a29": "Snapshot closing brace + cleanup (snapshot-agents + snapshot-forge)",
         "1f783c0f648d56972c99488c313e45a6": "Snapshot cleanup function (snapshot-agents + snapshot-forge)",
+        # snapshot-inbox.sh shares standard env-var header with other snapshot collectors
+        "816df0fd43ba5676531c08e63ea1c4f8": "Snapshot env-var header (set -euo + FACTORY_FORGE_PAT + FORGE_URL + FORGE_REPO + SNAPSHOT_PATH) (snapshot-forge + snapshot-inbox)",
     }
 
     if not sh_files:
