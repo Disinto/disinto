@@ -29,7 +29,22 @@ clone:
         else
           git clone --depth 1 "$CI_REPO_CLONE_URL" .
         fi
-      - git fetch --depth 1 origin "$CI_COMMIT_REF"
+      # Retry the fetch — for pull_request events, $CI_COMMIT_REF is
+      # refs/pull/<n>/head, which Forgejo creates asynchronously after the
+      # PR webhook fires. The pipeline can start before the ref appears,
+      # producing exit 128 ("couldn't find remote ref"). Backoff: 1s, 2s,
+      # 4s, 8s, 16s — covers ~30s of webhook lag in practice.
+      - |
+        set -e
+        n=0
+        until git fetch --depth 1 origin "$CI_COMMIT_REF"; do
+          n=$((n + 1))
+          if [ "$n" -ge 5 ]; then
+            echo "git fetch '$CI_COMMIT_REF' failed after 5 attempts" >&2
+            exit 128
+          fi
+          sleep $((1 << (n - 1)))
+        done
       - git checkout FETCH_HEAD
 
 steps:

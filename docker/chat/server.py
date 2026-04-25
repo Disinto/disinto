@@ -64,6 +64,16 @@ WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "/opt/disinto")
 # code change (e.g. to roll back after a bad release).
 CHAT_CLAUDE_MODEL = os.environ.get("CHAT_CLAUDE_MODEL", "claude-opus-4-7")
 
+# SOUL.md path (#727) — persona prompt for the chat-Claude assistant.
+# Loaded via --append-system-prompt on session creation so chat-Claude
+# answers "who are you?" with operator-grade context (factory co-pilot,
+# boundaries, where-it-keeps-state). Mirrors voice bridge's
+# --system-prompt-file pattern (docker/voice/bridge.py uses
+# docs/voice/SOUL_THINK.md). Skipped silently if the file is missing
+# (e.g. local dev workspace without a SOUL.md).
+SOUL_MD_PATH = os.environ.get(
+    "CHAT_SOUL_MD_PATH", os.path.join(WORKSPACE_DIR, "SOUL.md"))
+
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
 # Browser-reachable Forgejo URL — only needed when FORGE_URL is internal
@@ -309,6 +319,26 @@ def _claude_session_flag(session_uuid, cwd=None):
     if os.path.exists(sess_path):
         return ("-r", session_uuid)
     return ("--session-id", session_uuid)
+
+
+def _soul_append_args(flag):
+    """Return claude args to append SOUL.md as a system prompt (#727).
+
+    Only applied on session creation (``--session-id``); on resume (``-r``)
+    the system prompt is already baked into the session jsonl. Empty list
+    when SOUL.md is absent or unreadable so local dev workspaces without a
+    SOUL.md keep working.
+    """
+    if flag != "--session-id":
+        return []
+    try:
+        with open(SOUL_MD_PATH, "r", encoding="utf-8") as f:
+            soul = f.read()
+    except (IOError, OSError):
+        return []
+    if not soul.strip():
+        return []
+    return ["--append-system-prompt", soul]
 
 
 # =============================================================================
@@ -573,6 +603,7 @@ class _WebSocketHandler:
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
                 "--verbose",
+                *_soul_append_args(flag),
             ]
 
             # Spawn claude --print with stream-json for streaming output
@@ -1156,6 +1187,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "--permission-mode", "acceptEdits",
                 "--model", CHAT_CLAUDE_MODEL,
                 "--verbose",
+                *_soul_append_args(flag),
             ]
 
             # Spawn claude --print with stream-json for token tracking (#711)
