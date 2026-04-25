@@ -600,7 +600,7 @@ class _WebSocketHandler:
             claude_args = [
                 CLAUDE_BIN, flag, session_uuid, "-p", message,
                 "--output-format", "stream-json",
-                "--permission-mode", "acceptEdits",
+                "--permission-mode", "bypassPermissions",
                 "--model", CHAT_CLAUDE_MODEL,
                 "--verbose",
                 *_soul_append_args(flag),
@@ -1184,7 +1184,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             claude_args = [
                 CLAUDE_BIN, flag, session_uuid, "-p", message,
                 "--output-format", "stream-json",
-                "--permission-mode", "acceptEdits",
+                "--permission-mode", "bypassPermissions",
                 "--model", CHAT_CLAUDE_MODEL,
                 "--verbose",
                 *_soul_append_args(flag),
