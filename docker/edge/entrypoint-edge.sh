@@ -265,6 +265,16 @@ _chat_install_settings() {
     cp /var/chat/config-templates/mcp.json "${workspace}/.mcp.json"
     echo "edge: installed chat .mcp.json -> ${workspace}/.mcp.json" >&2
   fi
+  # Skills (#727): copy each /var/chat/skill-templates/<name>/ into
+  # ${workspace}/.claude/skills/<name>/ so chat-Claude has its operator
+  # skill set discoverable under CWD. Done at container start (not baked
+  # into the image) so the workspace tree owns the installed copy.
+  if [ -d /var/chat/skill-templates ]; then
+    mkdir -p "${workspace}/.claude/skills"
+    cp -R /var/chat/skill-templates/. "${workspace}/.claude/skills/"
+    find "${workspace}/.claude/skills" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
+    echo "edge: installed chat skills -> ${workspace}/.claude/skills/" >&2
+  fi
 }
 
 _chat_load_secret_file() {
