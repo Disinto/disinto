@@ -88,6 +88,14 @@ job "edge" {
       read_only = false
     }
 
+    # threads-state: delegate thread state (meta.json + stream.jsonl).
+    # RW for the GC batch job and any consumer that needs to inspect threads.
+    volume "threads-state" {
+      type      = "host"
+      source    = "threads-state"
+      read_only = false
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -166,6 +174,15 @@ job "edge" {
       volume_mount {
         volume      = "snapshot-state"
         destination = "/var/lib/disinto/snapshot"
+        read_only   = true
+      }
+
+      # Mount threads-state so the chat UI can list/show thread state
+      # (issue #764). Read-only for the caddy task — only the GC job
+      # needs write access.
+      volume_mount {
+        volume      = "threads-state"
+        destination = "/var/lib/disinto/threads"
         read_only   = true
       }
 
