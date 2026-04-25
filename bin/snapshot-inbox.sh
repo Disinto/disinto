@@ -246,7 +246,7 @@ merge_inbox() {
   automation_items="$(scan_automation_issues)"
 
   # Merge all items, sort by timestamp descending, cap at 20
-  jq -c --argjson vault "$vault_items" \
+  jq -cn --argjson vault "$vault_items" \
         --argjson predictions "$prediction_items" \
         --argjson automation "$automation_items" '
     ($vault + $predictions + $automation)
