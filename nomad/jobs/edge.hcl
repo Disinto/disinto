@@ -88,6 +88,14 @@ job "edge" {
       read_only = false
     }
 
+    # threads-state: delegate thread state (meta.json + stream.jsonl).
+    # RW for the GC batch job and any consumer that needs to inspect threads.
+    volume "threads-state" {
+      type      = "host"
+      source    = "threads-state"
+      read_only = false
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -166,6 +174,15 @@ job "edge" {
       volume_mount {
         volume      = "snapshot-state"
         destination = "/var/lib/disinto/snapshot"
+        read_only   = true
+      }
+
+      # Mount threads-state so the chat UI can list/show thread state
+      # (issue #764). Read-only for the caddy task — only the GC job
+      # needs write access.
+      volume_mount {
+        volume      = "threads-state"
+        destination = "/var/lib/disinto/threads"
         read_only   = true
       }
 
@@ -542,6 +559,67 @@ EOT
       resources {
         cpu    = 100
         memory = 256
+      }
+    }
+  }
+}
+
+# =============================================================================
+# nomad/jobs/edge.hcl — threads-state GC (periodic batch job)
+#
+# Runs daily at 03:00 UTC. Deletes completed/failed/error threads older than
+# THREADS_TTL (default 7 days). The bin/threads.sh script handles the actual
+# deletion logic (status check + age check).
+# =============================================================================
+
+job "edge-threads-gc" {
+  type        = "batch"
+  datacenters = ["dc1"]
+
+  periodic {
+    cron     = "0 3 * * *"
+    timezone = "UTC"
+  }
+
+  group "gc" {
+    count = 1
+
+    restart {
+      attempts = 1
+      interval = "5m"
+      delay    = "15s"
+      mode     = "fail"
+    }
+
+    volume "threads-state" {
+      type      = "host"
+      source    = "threads-state"
+      read_only = false
+    }
+
+    task "gc" {
+      driver = "raw_exec"
+
+      config {
+        command = "/opt/disinto/bin/threads.sh"
+        args    = ["gc"]
+      }
+
+      env {
+        THREADS_ROOT  = "/var/lib/disinto/threads"
+        THREADS_TTL   = "7"
+        DISINTO_DATA  = "/opt/disinto"
+      }
+
+      volume_mount {
+        volume      = "threads-state"
+        destination = "/var/lib/disinto/threads"
+        read_only   = false
+      }
+
+      resources {
+        cpu    = 100
+        memory = 64
       }
     }
   }

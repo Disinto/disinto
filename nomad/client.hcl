@@ -86,6 +86,12 @@ client {
     path      = "/var/lib/disinto/snapshot"
     read_only = false
   }
+
+  # delegate thread state (meta.json + stream.jsonl per task-id).
+  host_volume "threads-state" {
+    path      = "/var/lib/disinto/threads"
+    read_only = false
+  }
 }
 
 # raw_exec driver for the snapshot-daemon (issue #755).
