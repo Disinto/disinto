@@ -157,7 +157,7 @@ def _build_callback_uri():
 
 def _session_cookie_flags():
     """Return cookie flags appropriate for the deployment mode."""
-    flags = "HttpOnly; SameSite=Lax; Path=/chat"
+    flags = "HttpOnly; SameSite=Lax; Path=/"
     if EDGE_TUNNEL_FQDN:
         flags += "; Secure"
     return flags
