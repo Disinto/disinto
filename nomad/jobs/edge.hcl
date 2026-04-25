@@ -487,6 +487,12 @@ EOT
         DISINTO_CONTAINER    = "1"
         OPS_REPO_ROOT        = "/home/agent/repos/disinto-ops"
         FORGE_ADMIN_USERS    = "vault-bot,admin"
+
+        # Skip the Claude CLI auth gate in the agent entrypoint (#733).
+        # Dispatcher only polls the ops repo (docker/edge/dispatcher.sh) and
+        # never invokes claude — the auth check would otherwise crash this
+        # task with exit 3 under set -euo pipefail.
+        AGENT_REQUIRES_CLAUDE = "0"
       }
 
       # Dispatcher is lightweight — minimal CPU + memory.
