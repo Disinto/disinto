@@ -31,6 +31,7 @@ Workspace access:
 import asyncio
 import json
 import os
+import pwd
 import re
 import secrets
 import subprocess
@@ -91,6 +92,41 @@ EDGE_ROUTING_MODE = os.environ.get("EDGE_ROUTING_MODE", "subpath")
 # allowed to call /chat/auth/verify.  When empty the endpoint is unrestricted
 # (acceptable during local dev; production MUST set this).
 FORWARD_AUTH_SECRET = os.environ.get("FORWARD_AUTH_SECRET", "")
+
+
+# Privilege drop for the spawned claude binary (#743).
+#
+# claude-code 2.1.84 hard-refuses --permission-mode=bypassPermissions when
+# launched with euid 0 ("--dangerously-skip-permissions cannot be used with
+# root/sudo privileges for security reasons"). chat-server.py runs as root
+# inside the edge container (entrypoint-edge.sh stays root to bind privileged
+# ports for caddy and to manage /home/agent), so each Popen of `claude` must
+# drop to the unprivileged `agent` user (uid 1000) via preexec_fn before exec.
+#
+# uid 1000 matches the ownership of the shared host volume at
+# /var/lib/disinto/claude-shared/config (CLAUDE_CONFIG_DIR), so the child
+# can still read .credentials.json. Resolved once at import — a missing
+# `agent` account means the image is misconfigured and we want to fail
+# fast rather than silently keep running as root.
+try:
+    _agent_pw = pwd.getpwnam("agent")
+    _AGENT_UID = _agent_pw.pw_uid
+    _AGENT_GID = _agent_pw.pw_gid
+except KeyError as _agent_err:
+    raise RuntimeError(
+        "chat-server.py requires the 'agent' user (uid 1000) in the image; "
+        "see docker/edge/Dockerfile (#743)"
+    ) from _agent_err
+
+
+def _drop_to_agent():
+    """preexec_fn: drop privileges to the agent user before exec().
+
+    Called in the forked child after fork() but before exec(); setgid must
+    happen before setuid so the gid change is still permitted.
+    """
+    os.setgid(_AGENT_GID)
+    os.setuid(_AGENT_UID)
 
 
 # Allowed users - disinto-admin always allowed; CSV allowlist extends it
@@ -615,6 +651,8 @@ class _WebSocketHandler:
 
             # Spawn claude --print with stream-json for streaming output
             # Set cwd to workspace directory if configured, allowing Claude to access project code
+            # Drop to the agent user before exec — claude-code refuses
+            # bypassPermissions when euid is 0 (#743).
             cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
             proc = subprocess.Popen(
                 claude_args,
@@ -623,6 +661,7 @@ class _WebSocketHandler:
                 text=True,
                 cwd=cwd,
                 bufsize=1,
+                preexec_fn=_drop_to_agent,
             )
 
             # Stream output line by line, accumulating for history persistence (#709)
@@ -1199,6 +1238,8 @@ class ChatHandler(BaseHTTPRequestHandler):
 
             # Spawn claude --print with stream-json for token tracking (#711)
             # Set cwd to workspace directory if configured, allowing Claude to access project code
+            # Drop to the agent user before exec — claude-code refuses
+            # bypassPermissions when euid is 0 (#743).
             proc = subprocess.Popen(
                 claude_args,
                 stdout=subprocess.PIPE,
@@ -1206,6 +1247,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 text=True,
                 cwd=cwd,
                 bufsize=1,  # Line buffered
+                preexec_fn=_drop_to_agent,
             )
 
             # Stream output line by line
