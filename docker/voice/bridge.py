@@ -410,27 +410,6 @@ async def _spawn_delegate(query, context=""):
     # Open the stream file for writing.
     stream_fh = open(stream_path, "w", encoding="utf-8")
 
-    def _on_exit(proc):
-        """Callback when the subprocess exits."""
-        try:
-            stdout = proc.stdout.read() if proc.stdout else ""
-            text = _parse_claude_stream_json(stdout)
-            if not text:
-                text = stdout.strip() or "The delegate session completed with no output."
-            status = "completed" if proc.returncode == 0 else "failed"
-            _update_meta(task_id, {
-                "status": status,
-                "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "result_summary": text,
-            })
-        except Exception as exc:
-            _log(f"delegate exit handler error for {task_id}: {exc!r}")
-        finally:
-            try:
-                stream_fh.close()
-            except Exception:
-                pass
-
     _log(f"delegate: spawn {task_id} (cwd={WORKSPACE_DIR})")
 
     try:
@@ -466,7 +445,7 @@ async def _spawn_delegate(query, context=""):
             _log(f"delegate stream error for {task_id}: {exc!r}")
 
     # Schedule the stream reader; on finish, update meta.
-    asyncio.ensure_future(_stream_done(proc, task_id, _stream, stream_fh))
+    asyncio.ensure_future(_stream_done(proc, task_id, _stream(), stream_fh, stream_path))
 
     return {"task_id": task_id, "started_at": started_at}
 
@@ -475,18 +454,20 @@ async def _spawn_delegate(query, context=""):
 _delegate_tasks = {}
 
 
-async def _stream_done(proc, task_id, stream_coro, stream_fh):
+async def _stream_done(proc, task_id, stream_coro, stream_fh, stream_path):
     """Wait for stream to finish, then update meta on exit."""
     await stream_coro
+    # Wait for process to exit (stdout already drained by _stream).
     try:
-        stdout_b, stderr_b = await proc.communicate()
+        _, _ = await proc.communicate()
     except Exception as exc:
         _log(f"delegate communicate error for {task_id}: {exc!r}")
-        stdout_b = b""
-        stderr_b = b""
 
     try:
-        stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+        # Re-read the stream file (double-read) so we can parse the output
+        # that _stream already wrote — proc.stdout is already exhausted.
+        with open(stream_path, "r", encoding="utf-8") as fh:
+            stdout = fh.read()
         text = _parse_claude_stream_json(stdout)
         if not text:
             text = stdout.strip() or "The delegate session completed with no output."
