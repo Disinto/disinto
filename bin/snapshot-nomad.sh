@@ -37,7 +37,7 @@ fetch_jobs() {
 }
 
 fetch_allocs() {
-  nomad alloc status -json -address="$NOMAD_ADDR" \
+  nomad alloc list -json -address="$NOMAD_ADDR" \
     -token="$NOMAD_TOKEN" \
     -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null || true
 }
@@ -49,6 +49,7 @@ build_nomad_data() {
 
   jobs_json="$(fetch_jobs)" || true
   allocs_json="$(fetch_allocs)" || true
+  allocs_json="${allocs_json:-[]}"
 
   # If jobs call returned nothing, Nomad is unreachable.
   if [[ -z "$jobs_json" || "$jobs_json" == "[]" || "$jobs_json" == "null" ]]; then
@@ -58,7 +59,7 @@ build_nomad_data() {
 
   # Build the merged output with jq.
   # nomad job status -json → flat array of job objects
-  # nomad alloc status -json → flat array of alloc objects
+  # nomad alloc list -json → flat array of alloc objects
   printf '%s' "$jobs_json" | jq -c --argjson allocs "$allocs_json" '
     # ── alloc_id → restart_count map ──
     ([$allocs[] | select(. != null and .ID != null)]
@@ -116,6 +117,7 @@ main() {
 
   local tmpfile
   tmpfile="$(mktemp "${SNAPSHOT_PATH}.nomad.XXXXXX")"
+  trap 'rm -f "$tmpfile"' EXIT
 
   # Read previous snapshot, merge nomad key, write atomically.
   jq -c --argjson nomad "$nomad_data" '.nomad = $nomad' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
