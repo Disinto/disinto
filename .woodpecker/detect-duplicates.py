@@ -377,6 +377,15 @@ def main() -> int:
         # merge with jq, write atomically, log result. Intentional duplication.
         "f92b93f26ab2adc223b3919b78c8c44f": "Snapshot main() start: closing brace + main() + state.json check (snapshot-forge + snapshot-nomad)",
         "5f81cc4d353bbf9f23f34eaf38b2b60e": "Snapshot main() body: main() + state.json check + skip message (snapshot-forge + snapshot-nomad)",
+        # snapshot-agents.sh shares temp-file tracking pattern with snapshot-forge.sh
+        "a7e19281d631d7bd1252029b661d6b31": "Snapshot temp-file tracking start (snapshot-agents + snapshot-forge)",
+        "7ccce86c6bbc77eb1b4cd13c29b3be81": "Snapshot temp-file tracking (snapshot-agents + snapshot-forge)",
+        "152a7f9ea51a0f80703f58ea2a0a5af1": "Snapshot mktemp_safe (snapshot-agents + snapshot-forge)",
+        "14dc98e549b3263b08a0c63b49846c3b": "Snapshot mktemp_safe body (snapshot-agents + snapshot-forge)",
+        "e0f85b3b2a8abf79e98cd998aeaadfc7": "Snapshot mktemp_safe + TMPFILES (snapshot-agents + snapshot-forge)",
+        "f4ee900d52b701eb7050355c05ba4ecd": "Snapshot TMPFILES + printf (snapshot-agents + snapshot-forge)",
+        "5f62ad0ed0fb0c919db212d1667e1a29": "Snapshot closing brace + cleanup (snapshot-agents + snapshot-forge)",
+        "1f783c0f648d56972c99488c313e45a6": "Snapshot cleanup function (snapshot-agents + snapshot-forge)",
     }
 
     if not sh_files:
