@@ -126,11 +126,14 @@ configure_tea_login() {
     case "$FORGE_URL" in
       *codeberg.org*) local_tea_login="codeberg" ;;
     esac
+    # NOTE: --no-version-check was dropped (#733) — the bundled tea version
+    # rejects the flag and exits non-zero, which under set -euo pipefail in
+    # callers would crash. The version-check warning is cosmetic; tea login
+    # add succeeds without it.
     gosu agent bash -c "tea login add \
       --name '${local_tea_login}' \
       --url '${FORGE_URL}' \
-      --token '${FORGE_TOKEN}' \
-      --no-version-check 2>/dev/null || true"
+      --token '${FORGE_TOKEN}' 2>/dev/null || true"
     log "tea login configured: ${local_tea_login} → ${FORGE_URL}"
   else
     log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
@@ -150,38 +153,47 @@ export HOME=/home/agent
 # shellcheck source=lib/env.sh
 source "${DISINTO_BAKED}/lib/env.sh"
 
-# Verify Claude CLI is available (expected via volume mount from host).
-if ! command -v claude &>/dev/null; then
-  log "FATAL: claude CLI not found in PATH."
-  log "Mount the host binary into the container, e.g.:"
-  log "  volumes:"
-  log "    - /usr/local/bin/claude:/usr/local/bin/claude:ro"
-  exit 1
-fi
-log "Claude CLI: $(claude --version 2>&1 || true)"
+# Claude CLI auth gate (#733). Roles like the edge dispatcher reuse this image
+# but never invoke claude — they only poll the ops repo. The auth check would
+# spuriously trip them. Set AGENT_REQUIRES_CLAUDE=0 in those task blocks to
+# skip the gate; default (unset / non-zero) preserves the legacy behavior
+# expected by review/architect/dev/etc.
+if [ "${AGENT_REQUIRES_CLAUDE:-1}" != "0" ]; then
+  # Verify Claude CLI is available (expected via volume mount from host).
+  if ! command -v claude &>/dev/null; then
+    log "FATAL: claude CLI not found in PATH."
+    log "Mount the host binary into the container, e.g.:"
+    log "  volumes:"
+    log "    - /usr/local/bin/claude:/usr/local/bin/claude:ro"
+    exit 1
+  fi
+  log "Claude CLI: $(claude --version 2>&1 || true)"
 
-# Ensure CLAUDE_CONFIG_DIR exists before Claude runs (issue #579).
-# Setting CLAUDE_CONFIG_DIR to a missing path causes Claude to silently
-# hang at turn zero — 0 bytes stdout, no llama calls, no error, until
-# CLAUDE_TIMEOUT fires. bin/disinto's setup_claude_config_dir() creates
-# this on the host side during `disinto init`, but on Nomad the agents
-# alloc runs the container cold without that setup ever executing.
-if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -d "$CLAUDE_CONFIG_DIR" ]; then
-  log "Creating CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR} (missing)"
-  install -d -m 0700 -o agent -g agent "$CLAUDE_CONFIG_DIR" \
-    || log "WARNING: failed to create $CLAUDE_CONFIG_DIR — Claude may hang"
-fi
+  # Ensure CLAUDE_CONFIG_DIR exists before Claude runs (issue #579).
+  # Setting CLAUDE_CONFIG_DIR to a missing path causes Claude to silently
+  # hang at turn zero — 0 bytes stdout, no llama calls, no error, until
+  # CLAUDE_TIMEOUT fires. bin/disinto's setup_claude_config_dir() creates
+  # this on the host side during `disinto init`, but on Nomad the agents
+  # alloc runs the container cold without that setup ever executing.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -d "$CLAUDE_CONFIG_DIR" ]; then
+    log "Creating CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR} (missing)"
+    install -d -m 0700 -o agent -g agent "$CLAUDE_CONFIG_DIR" \
+      || log "WARNING: failed to create $CLAUDE_CONFIG_DIR — Claude may hang"
+  fi
 
-# ANTHROPIC_API_KEY fallback: when set, Claude uses the API key directly
-# and OAuth token refresh is not needed (no rotation race).  Log which
-# auth method is active so operators can debug 401s.
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  log "Auth: ANTHROPIC_API_KEY is set — using API key (no OAuth rotation)"
-elif [ -f "${CLAUDE_CONFIG_DIR:-/home/agent/.claude}/.credentials.json" ]; then
-  log "Auth: OAuth credentials mounted from host (${CLAUDE_CONFIG_DIR:-~/.claude})"
+  # ANTHROPIC_API_KEY fallback: when set, Claude uses the API key directly
+  # and OAuth token refresh is not needed (no rotation race).  Log which
+  # auth method is active so operators can debug 401s.
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    log "Auth: ANTHROPIC_API_KEY is set — using API key (no OAuth rotation)"
+  elif [ -f "${CLAUDE_CONFIG_DIR:-/home/agent/.claude}/.credentials.json" ]; then
+    log "Auth: OAuth credentials mounted from host (${CLAUDE_CONFIG_DIR:-~/.claude})"
+  else
+    log "WARNING: No ANTHROPIC_API_KEY and no OAuth credentials found."
+    log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
+  fi
 else
-  log "WARNING: No ANTHROPIC_API_KEY and no OAuth credentials found."
-  log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
+  log "Claude auth gate: skipped (AGENT_REQUIRES_CLAUDE=0)"
 fi
 
 # Bootstrap ops repos for each project TOML (#586).
@@ -237,25 +249,31 @@ print(cfg.get('primary_branch', 'main'))
       if gosu agent git clone --quiet "$remote_url" "$ops_root" 2>/dev/null; then
         log "Ops bootstrap: ${ops_slug} cloned successfully"
       else
-        # Remote may not exist yet (first run before init); create empty repo
+        # Remote may not exist yet (first run before init); create empty repo.
+        # Use idempotent remote setup so a partially-initialized volume from
+        # a prior failed run doesn't crash with "remote origin already exists"
+        # (#733).
         log "Ops bootstrap: clone failed for ${ops_slug} — initializing empty repo"
         gosu agent bash -c "
           mkdir -p '${ops_root}' && \
           git -C '${ops_root}' init --initial-branch='${primary_branch}' -q && \
-          git -C '${ops_root}' remote add origin '${remote_url}'
+          ( git -C '${ops_root}' remote | grep -qx origin \
+              || git -C '${ops_root}' remote add origin '${remote_url}' ) && \
+          git -C '${ops_root}' remote set-url origin '${remote_url}'
         "
       fi
     else
-      # Repo exists — ensure remote is configured and pull latest
-      local current_remote
-      current_remote=$(gosu agent git -C "$ops_root" remote get-url origin 2>/dev/null || true)
-      if [ -z "$current_remote" ]; then
+      # Repo exists — ensure remote is configured and pull latest.
+      # Use `git remote` listing (not get-url) for the existence check —
+      # get-url can return empty in edge cases (legacy config, permissions
+      # quirks under gosu) while origin is actually defined, which previously
+      # caused a non-idempotent `git remote add` crash on every restart (#733).
+      if ! gosu agent git -C "$ops_root" remote | grep -qx origin; then
         log "Ops bootstrap: adding missing remote to ${ops_root}"
         gosu agent git -C "$ops_root" remote add origin "$remote_url"
-      elif [ "$current_remote" != "$remote_url" ]; then
-        log "Ops bootstrap: fixing remote URL in ${ops_root}"
-        gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
       fi
+      # Always reconcile the URL — cheap and idempotent.
+      gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
       # Pull latest from forgejo to pick up any host-side migrations
       log "Ops bootstrap: pulling latest for ${project_name}-ops"
       gosu agent bash -c "
