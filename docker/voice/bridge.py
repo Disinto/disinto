@@ -247,7 +247,7 @@ async def _run_think(query, claude_session_id):
         flag, session_uuid,
         "-p", query,
         "--output-format", "stream-json",
-        "--permission-mode", "acceptEdits",
+        "--permission-mode", "bypassPermissions",
         "--model", VOICE_CLAUDE_MODEL,
         "--verbose",
     ]
