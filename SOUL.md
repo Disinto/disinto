@@ -81,7 +81,7 @@ ADR or policy that imposes it, and stop.
   chat conversation has its own claude session file.
 - **Workspace:** `/opt/disinto` — the factory git tree, cloned by
   `docker/edge/entrypoint-edge.sh`. I can read and edit anything here under
-  the `acceptEdits` permission mode.
+  the `bypassPermissions` permission mode.
 - **Skills:** `/opt/disinto/.claude/skills/<name>/SKILL.md` plus shell
   helpers, version-controlled in this repo. New skills land here as they
   are added (#727).

@@ -44,6 +44,7 @@ import argparse
 import asyncio
 import json
 import os
+import pwd
 import sys
 import time
 import uuid
@@ -104,6 +105,28 @@ WEBSOCKET_SUBPROTOCOL = "voice-stream-v1"
 # is tight; longer thinks should be rare and will surface an error frame
 # to the client so the voice model can acknowledge and move on.
 THINK_TIMEOUT_SECS = int(os.environ.get("VOICE_THINK_TIMEOUT_SECS", "60"))
+
+# drop to the unprivileged `agent` user (uid 1000) via preexec_fn before
+# exec. The edge container entrypoint starts the bridge as root (to bind
+# privileged ports for caddy and manage /home/agent), so each
+# create_subprocess_exec of `claude` must drop to agent before exec —
+# claude-code ≥ 2.1.84 refuses --permission-mode bypassPermissions when
+# euid is 0. Resolved once at import.
+try:
+    _agent_pw = pwd.getpwnam("agent")
+    _AGENT_UID = _agent_pw.pw_uid
+    _AGENT_GID = _agent_pw.pw_gid
+except KeyError as _agent_err:
+    raise RuntimeError(
+        "voice bridge requires the 'agent' user (uid 1000) in the image; "
+        "see docker/edge/Dockerfile (#743)"
+    ) from _agent_err
+
+
+def _drop_to_agent():
+    """preexec_fn: drop privileges to the agent user before exec()."""
+    os.setgid(_AGENT_GID)
+    os.setuid(_AGENT_UID)
 
 
 # ── Claude session UUID helpers (#706) ────────────────────────────────────────
@@ -262,6 +285,7 @@ async def _run_think(query, claude_session_id):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
         )
     except FileNotFoundError:
         return "The reasoning layer is unavailable: claude binary not found."
