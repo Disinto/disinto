@@ -1039,6 +1039,15 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         user, _sid = _validate_session(self.headers.get("Cookie"))
         if not user:
+            upgrade = (self.headers.get("Upgrade") or "").lower()
+            sec_fetch_dest = self.headers.get("Sec-Fetch-Dest", "")
+            if upgrade != "websocket" and sec_fetch_dest == "document":
+                self.send_response(302)
+                self.send_header("Location", "/chat/login")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"redirect to login")
+                return
             self.send_error_page(401, "Unauthorized: no valid session")
             return
 
