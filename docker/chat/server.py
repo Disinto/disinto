@@ -164,7 +164,13 @@ def _session_cookie_flags():
 
 
 def _validate_session(cookie_header):
-    """Check session cookie and return (username, session_id) if valid, else (None, None)."""
+    """Return the first VALID session for cookies named SESSION_COOKIE.
+
+    Multiple cookies of the same name can coexist with different ``Path``
+    attributes (e.g. when a previous deploy used a narrower ``Path``).
+    The browser sends all of them in one ``Cookie`` header — keep
+    iterating until we find one that resolves to a live session.
+    """
     if not cookie_header:
         return None, None
     for part in cookie_header.split(";"):
@@ -174,9 +180,10 @@ def _validate_session(cookie_header):
             session = _sessions.get(token)
             if session and session["expires"] > time.time():
                 return session["user"], session.get("session_id")
-            # Expired - clean up
+            # Stale or unknown — pop opportunistically and keep looking
+            # (a later cookie with a different Path may still be valid).
             _sessions.pop(token, None)
-            return None, None
+            continue
     return None, None
 
 
