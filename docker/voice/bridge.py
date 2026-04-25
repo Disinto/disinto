@@ -87,7 +87,7 @@ SOUL_THINK_PATH = os.environ.get(
 
 # Gemini Live model. Overridable so ops can swap without a code change.
 GEMINI_MODEL = os.environ.get(
-    "GEMINI_LIVE_MODEL", "gemini-2.0-flash-live-001"
+    "GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest"
 )
 
 # Claude model used for the `think` backing call. Tracks the chat subprocess
@@ -559,6 +559,7 @@ async def _main_async():
         api_key=api_key,
         http_options=genai_types.HttpOptions(api_version="v1beta"),
     )
+    _log(f"gemini live: model={GEMINI_MODEL} api=v1beta")
 
     async def handler(ws, path):
         await _handle_ws(
