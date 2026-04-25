@@ -160,6 +160,15 @@ job "edge" {
         read_only   = false
       }
 
+      # Mount snapshot-state so chat-Claude skills can read state.json
+      # (issue #760). The snapshot daemon writes atomically; consumers
+      # only read.
+      volume_mount {
+        volume      = "snapshot-state"
+        destination = "/var/lib/disinto/snapshot"
+        read_only   = true
+      }
+
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
       # All upstreams rendered from Nomad service registration. Caddy picks up
       # /local/Caddyfile via entrypoint.
