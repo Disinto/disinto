@@ -259,6 +259,7 @@ EOT
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
+        uri strip_prefix /voice
         root * /var/voice/ui
         file_server
     }
