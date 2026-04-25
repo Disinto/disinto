@@ -88,6 +88,13 @@ client {
   }
 }
 
+# raw_exec driver for the snapshot-daemon (issue #755).
+plugin "raw_exec" {
+  config {
+    enabled = true
+  }
+}
+
 # Docker task driver. `volumes.enabled = true` is required so jobspecs
 # can mount host_volume declarations defined above. `allow_privileged`
 # is true — woodpecker-agent requires `privileged = true` to access

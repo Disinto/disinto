@@ -33,13 +33,6 @@ read_previous_snapshot() {
   fi
 }
 
-# Merge two JSON objects: overlay $2 into $1 (deep merge).
-# Returns merged JSON on stdout. Used by collectors to add sub-keys.
-json_merge() {
-  local base="$1" overlay="$2"
-  jq -n --argjson a "$base" --argjson b "$overlay" '$a * $b' 2>/dev/null || printf '%s' "$base"
-}
-
 # Write one snapshot tick.
 # Reads the previous file, updates only "ts", writes atomically.
 write_tick() {

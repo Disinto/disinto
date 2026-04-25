@@ -430,8 +430,7 @@ EOT
       driver = "raw_exec"
 
       config {
-        command = "bash"
-        args    = ["bin/snapshot-daemon.sh"]
+        command = "/opt/disinto/bin/snapshot-daemon.sh"
       }
 
       # RW mount so the daemon can write state.json atomically.
