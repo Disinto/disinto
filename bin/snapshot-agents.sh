@@ -81,7 +81,7 @@ discover_opus_allocs() {
 
 # ── Fetch recent logs for a single allocation ────────────────────────────────
 
-# Writes combined stdout+stderr log to the given file.
+# Writes stdout log to the given file (stderr discarded).
 fetch_alloc_logs() {
   local alloc_id="$1" dest="$2"
   nomad alloc logs -tail="$LOG_TAIL" -address="$NOMAD_ADDR" \
@@ -209,7 +209,7 @@ build_agents_data() {
   alloc_count="$(printf '%s' "$allocs_json" | jq 'length')" || alloc_count=0
 
   if [ "$alloc_count" -eq 0 ]; then
-    printf '{"agents":{}}'
+    printf '{}'
     return
   fi
 
@@ -248,7 +248,7 @@ build_agents_data() {
     agents_json="$(printf '%s' "$agents_json" | jq -c --arg name "$agent_name" --argjson info "$state_json" '. + {($name): $info}')"
   done
 
-  printf '{"agents":%s}' "$agents_json"
+  printf '%s' "$agents_json"
 }
 
 # ── Merge into state.json ─────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ main() {
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local agent_count
-  agent_count=$(printf '%s' "$agents_data" | jq -r '.agents | length')
+  agent_count=$(printf '%s' "$agents_data" | jq -r 'length')
   log "agents snapshot merged — ${agent_count} agent(s)"
 }
 
