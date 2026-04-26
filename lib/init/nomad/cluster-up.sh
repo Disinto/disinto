@@ -69,6 +69,8 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/docker"
   "/srv/disinto/chat-history"
   "/srv/disinto/ops-repo"
+  "/srv/disinto/snapshot-state"
+  "/srv/disinto/threads-state"
 )
 
 # Default API addresses — matches the listener bindings in

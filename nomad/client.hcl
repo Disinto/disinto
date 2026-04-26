@@ -81,15 +81,21 @@ client {
   }
 
   # factory-state snapshot output (written by snapshot-daemon, read RO by
-  # consumers such as the factory-state skill).
+  # consumers such as the factory-state skill). Host path is
+  # /srv/disinto/snapshot-state — must match the SNAPSHOT_PATH env in
+  # nomad/jobs/edge.hcl's snapshot task (raw_exec writes to host directly,
+  # bypassing the volume_mount). Container consumers see this path
+  # remapped to /var/lib/disinto/snapshot via volume_mount destination.
   host_volume "snapshot-state" {
-    path      = "/var/lib/disinto/snapshot"
+    path      = "/srv/disinto/snapshot-state"
     read_only = false
   }
 
-  # delegate thread state (meta.json + stream.jsonl per task-id).
+  # delegate thread state (meta.json + stream.jsonl per task-id). Host
+  # path is /srv/disinto/threads-state; container consumers see this
+  # remapped to /var/lib/disinto/threads via volume_mount destination.
   host_volume "threads-state" {
-    path      = "/var/lib/disinto/threads"
+    path      = "/srv/disinto/threads-state"
     read_only = false
   }
 }
