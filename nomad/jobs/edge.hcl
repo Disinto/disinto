@@ -455,15 +455,34 @@ EOT
     task "snapshot" {
       driver = "raw_exec"
 
+      # Reuse service-edge-chat policy — grants read access to
+      # kv/data/disinto/chat (forge_pat + nomad_token) and
+      # kv/data/disinto/voice (gemini_api_key).
+      vault {
+        role = "service-edge-chat"
+      }
+
       config {
         command = "/opt/disinto/bin/snapshot-daemon.sh"
       }
 
-      # RW mount so the daemon can write state.json atomically.
-      volume_mount {
-        volume      = "snapshot-state"
-        destination = "/var/lib/disinto/snapshot"
-        read_only   = false
+      # ── Collector secrets (env = true) ────────────────────────────────
+      # NOMAD_TOKEN and FACTORY_FORGE_PAT come from the same Vault KV
+      # paths the caddy task already uses — no new paths needed.
+      # raw_exec respects template { env = true } the same as docker.
+      template {
+        destination          = "secrets/snapshot.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/chat" -}}
+FACTORY_FORGE_PAT={{ .Data.data.forge_pat }}
+NOMAD_TOKEN={{ .Data.data.nomad_token }}
+{{- end }}
+NOMAD_ADDR={{ env "NOMAD_ADDR" }}
+FACTORY_ROOT=/opt/disinto
+EOT
       }
 
       # Minimal resources — pure bash loop, negligible footprint.
