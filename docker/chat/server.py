@@ -11,6 +11,7 @@ Routes:
     POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
     POST /chat/delegate      -> fire-and-forget: spawns detached claude -p, returns task-id (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
+    GET /threads             -> list all threads, newest first (session required)
     GET /threads/<id>        -> thread detail JSON (session required)
     GET /threads/<id>/stream -> WebSocket upgrade, tails stream.jsonl (session required)
     GET /factory-state       -> backlog/in_progress counts from thread store (session required)
@@ -1186,9 +1187,10 @@ class ChatHandler(BaseHTTPRequestHandler):
             if not self._check_forwarded_user(user):
                 return
             task_id = path[len("/threads/"):]
+            is_stream = False
             if "/" in task_id:
-                # e.g. /threads/<task-id>/stream → handled below
                 if task_id.endswith("/stream"):
+                    is_stream = True
                     task_id = task_id[:-len("/stream")]
                 else:
                     # Slash in path but not /stream suffix → 404
@@ -1197,7 +1199,10 @@ class ChatHandler(BaseHTTPRequestHandler):
             if not TASK_ID_PATTERN.match(task_id):
                 self.send_error_page(404, "Not found")
                 return
-            self.handle_thread_detail(task_id)
+            if is_stream:
+                self.handle_thread_stream(task_id)
+            else:
+                self.handle_thread_detail(task_id)
             return
 
         # Factory-state endpoint: GET /factory-state
