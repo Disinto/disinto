@@ -2,13 +2,15 @@
 # =============================================================================
 # snapshot-inbox.sh — inbox-collector for snapshot daemon
 #
-# Scans action-vault drops and forge issues to surface unread items for the
-# operator (voice/chat: "architect produced a sprint draft, want me to read it?").
+# Scans action-vault drops, forge issues, and completed delegate threads to
+# surface unread items for the operator (voice/chat: "architect produced a
+# sprint draft, want me to read it?").
 #
 # Scans:
 #   - action-vault/ for files newer than action-vault/.last-ack sentinel.
 #   - Forge issues labeled prediction/unreviewed (label id 11).
 #   - Forge issues opened in the last 24h by automation accounts.
+#   - Completed delegate threads from the last 24h (not yet acked).
 #
 # Output under "inbox" key in state.json:
 #   {"inbox":{"items":[...],"unread_count":N}}
@@ -22,6 +24,7 @@
 #   SNAPSHOT_PATH      — path to state.json (default /var/lib/disinto/snapshot/state.json)
 #   FORGE_TIMEOUT      — per-call timeout in seconds (default 15)
 #   VAULT_DIR          — action-vault dir relative to repo root (default action-vault)
+#   THREADS_ROOT       — parent directory for thread stores (default /var/lib/disinto/threads)
 #
 # .last-ack sentinel: updated by a future ack skill. Until then, everything
 # is treated as unread.
@@ -237,19 +240,108 @@ scan_automation_issues() {
   ' < "$body_file" 2>/dev/null || printf '[]'
 }
 
+# ── Scan completed threads ────────────────────────────────────────────────────
+
+# Returns JSON array of inbox items for completed, unacked threads from the
+# last 24 hours.
+#
+# Thread meta.json shape:
+#   {"id":"del-abc123","query":"...","started":"...","status":"completed",
+#    "completed":"...","result_summary":"..."}
+#
+# Ack marker: <THREADS_ROOT>/<task-id>/.acked
+scan_completed_threads() {
+  local threads_root="${THREADS_ROOT:-/var/lib/disinto/threads}"
+
+  if [ ! -d "$threads_root" ]; then
+    printf '[]'
+    return
+  fi
+
+  local cutoff_epoch
+  cutoff_epoch="$(date -d '24 hours ago' +%s 2>/dev/null)" || cutoff_epoch=0
+
+  local items="[]"
+
+  for thread_dir in "$threads_root"/*/; do
+    [ -d "$thread_dir" ] || continue
+
+    local meta_path="$thread_dir/meta.json"
+    [ -f "$meta_path" ] || continue
+
+    local task_id status
+    task_id="$(basename "$thread_dir")"
+    status="$(jq -r '.status // ""' "$meta_path" 2>/dev/null)" || continue
+
+    # Only completed threads
+    [ "$status" = "completed" ] || continue
+
+    # Skip if acked
+    [ -f "$thread_dir/.acked" ] && continue
+
+    # Check age — use completed timestamp if available, fall back to started
+    local ts_epoch
+    local completed_ts
+    completed_ts="$(jq -r '.completed // empty' "$meta_path" 2>/dev/null)" || completed_ts=""
+    if [ -n "$completed_ts" ]; then
+      ts_epoch="$(date -d "$completed_ts" +%s 2>/dev/null)" || ts_epoch=0
+    else
+      local started_ts
+      started_ts="$(jq -r '.started // empty' "$meta_path" 2>/dev/null)" || started_ts=""
+      ts_epoch="$(date -d "$started_ts" +%s 2>/dev/null)" || ts_epoch=0
+    fi
+
+    # Skip if older than 24h
+    [ "$ts_epoch" -ge "$cutoff_epoch" ] 2>/dev/null || continue
+
+    # Derive title from query (first line, truncated to 60 chars)
+    local query title
+    query="$(jq -r '.query // ""' "$meta_path" 2>/dev/null)" || query=""
+    title="$(printf '%s' "$query" | head -n1 | cut -c1-60)"
+
+    # Truncate summary to 200 chars
+    local summary
+    summary="$(jq -r '.result_summary // ""' "$meta_path" 2>/dev/null)" || summary=""
+    summary="$(printf '%s' "$summary" | head -c 200)"
+
+    local ts
+    if [ -n "$completed_ts" ]; then
+      ts="$completed_ts"
+    else
+      ts="$(date -u -d "@$ts_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || ts=""
+    fi
+
+    local item
+    item=$(jq -n -c \
+      --arg id "thread-del-${task_id#del-}" \
+      --arg kind "thread-result" \
+      --arg task_id "$task_id" \
+      --arg title "$title" \
+      --arg summary "$summary" \
+      --arg ts "$ts" \
+      '{id: $id, kind: $kind, task_id: $task_id, title: $title, summary: $summary, ts: $ts}')
+
+    items="$(printf '%s' "$items" | jq -c --argjson item "$item" '. + [$item]')"
+  done
+
+  printf '%s' "$items"
+}
+
 # ── Merge and cap ─────────────────────────────────────────────────────────────
 
 merge_inbox() {
-  local vault_items prediction_items automation_items
+  local vault_items prediction_items automation_items thread_items
   vault_items="$(scan_action_vault)"
   prediction_items="$(scan_prediction_issues)"
   automation_items="$(scan_automation_issues)"
+  thread_items="$(scan_completed_threads)"
 
   # Merge all items, sort by timestamp descending, cap at 20
   jq -cn --argjson vault "$vault_items" \
         --argjson predictions "$prediction_items" \
-        --argjson automation "$automation_items" '
-    ($vault + $predictions + $automation)
+        --argjson automation "$automation_items" \
+        --argjson threads "$thread_items" '
+    ($vault + $predictions + $automation + $threads)
     | sort_by(.ts) | reverse
     | .[:20]
     | {items: ., unread_count: length}
