@@ -682,6 +682,7 @@ class VoiceSession:
         # fresh uuid so every session has stable claude-session plumbing.
         self.conv_id = None
         self.claude_session_id = None
+        self._activity_open = False
 
     def _derive_claude_session_id(self, conv_id):
         # Siblings with chat's "<conv_id>-claude" (see docker/chat/server.py).
@@ -696,15 +697,24 @@ class VoiceSession:
     async def _handle_client_frame(self, frame, live_session):
         """Route a single incoming frame from the browser."""
         # Binary frame → audio sample bytes → forward to Gemini Live.
+        # Use send_realtime_input + activity bracketing for native-audio
+        # models (gemini-2.5-flash-native-audio-latest). The legacy
+        # send(input=Blob, end_of_turn=False) call silently no-ops on
+        # native-audio models — Gemini receives no audio. Manual activity
+        # bracketing requires server VAD disabled (see LiveConnectConfig).
         if isinstance(frame, (bytes, bytearray)):
-            await live_session.send(
-                input=genai_types.Blob(
+            if not self._activity_open:
+                await live_session.send_realtime_input(
+                    activity_start=genai_types.ActivityStart(),
+                )
+                self._activity_open = True
+            await live_session.send_realtime_input(
+                audio=genai_types.Blob(
                     data=bytes(frame),
                     # The browser client is expected to send PCM16 mono
                     # 16kHz (matches Gemini Live's audio input contract).
                     mime_type="audio/pcm;rate=16000",
                 ),
-                end_of_turn=False,
             )
             return
 
@@ -732,9 +742,20 @@ class VoiceSession:
             # Optional text-in path (debug / wscat): inject as user text.
             content = data.get("content", "")
             if content:
-                await live_session.send(input=content, end_of_turn=True)
+                await live_session.send_client_content(
+                    turns=genai_types.Content(
+                        role="user",
+                        parts=[genai_types.Part(text=content)],
+                    ),
+                    turn_complete=True,
+                )
         elif mtype == "end_of_turn":
-            await live_session.send(input=".", end_of_turn=True)
+            if self._activity_open:
+                await live_session.send_realtime_input(
+                    activity_end=genai_types.ActivityEnd(),
+                )
+                self._activity_open = False
+            return
         else:
             _log(f"unknown client frame type={mtype!r} (ignored)")
 
@@ -770,6 +791,29 @@ class VoiceSession:
                     }))
                 except websockets.exceptions.ConnectionClosed:
                     return
+
+            # Native-audio models surface transcripts via
+            # server_content.{output,input}_transcription.text. Forward
+            # both to the browser tagged with their source so the UI can
+            # render Gemini's speech alongside the user's transcribed
+            # mic input.
+            sc = getattr(response, "server_content", None)
+            if sc is not None:
+                for attr, kind in (
+                    ("output_transcription", "transcript"),
+                    ("input_transcription", "transcript"),
+                ):
+                    tr = getattr(sc, attr, None)
+                    tr_text = getattr(tr, "text", None) if tr is not None else None
+                    if tr_text:
+                        try:
+                            await self.ws.send(json.dumps({
+                                "type": kind,
+                                "text": tr_text,
+                                "source": attr.replace("_transcription", ""),
+                            }))
+                        except websockets.exceptions.ConnectionClosed:
+                            return
 
             # Tool call dispatch. The SDK delivers these either at the
             # top level (`response.tool_call`) or folded into
@@ -885,6 +929,16 @@ class VoiceSession:
         """Open the Gemini Live session and pump frames in both directions."""
         config = genai_types.LiveConnectConfig(
             response_modalities=[genai_types.Modality.AUDIO],
+            output_audio_transcription=genai_types.AudioTranscriptionConfig(),
+            input_audio_transcription=genai_types.AudioTranscriptionConfig(),
+            # Disable server VAD — required for manual activity_start /
+            # activity_end bracketing in send_realtime_input. Without this
+            # Gemini rejects the manual activity_* calls with code 11007.
+            realtime_input_config=genai_types.RealtimeInputConfig(
+                automatic_activity_detection=genai_types.AutomaticActivityDetection(
+                    disabled=True,
+                ),
+            ),
             system_instruction=genai_types.Content(
                 parts=[genai_types.Part(text=self.soul_voice_prompt)]
             ),
