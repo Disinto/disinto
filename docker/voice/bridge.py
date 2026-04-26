@@ -672,7 +672,7 @@ async def _run_check_inbox(min_priority=None):
 
     args = [CHECK_INBOX_SH]
     if min_priority:
-        args.append(min_priority)
+        args.extend(["--min-priority", min_priority])
 
     _log(f"check_inbox: spawn {CHECK_INBOX_SH}{' ' + min_priority if min_priority else ''}")
 
