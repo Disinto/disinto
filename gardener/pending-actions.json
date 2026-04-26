@@ -1,102 +1,47 @@
 [
   {
-    "action": "comment",
-    "issue": 802,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 802,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 801,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 801,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 800,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 800,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 799,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 799,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 798,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 798,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 797,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 797,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 796,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 796,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 705,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 705,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 704,
-    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria (checkboxes with `- [ ]`), affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 704,
-    "label": "backlog"
+    "action": "edit_body",
+    "issue": 806,
+    "body": "Flagged by AI reviewer in PR #805.\n\n## Problem\n\n`.woodpecker/publish-images.yml` line 65 sets `context: docker/edge` for the `build-and-push-edge` step. However, `docker/edge/Dockerfile` COPYs from paths outside that directory:\n\n- `COPY docker/chat/server.py ...` (added in #1083)\n- `COPY docker/voice/bridge.py ...`\n- `COPY docker/voice/ui/ ...`\n\nWith `context: docker/edge`, these COPY instructions will fail because `docker/chat/` and `docker/voice/` are not inside the `docker/edge/` subtree. The build context must be the repo root (`context: .`).\n\nThe new `.woodpecker/build-edge.yml` (PR #805) correctly uses `context: .`. `publish-images.yml` was not updated when docker/chat and docker/voice were merged into the edge image (#1083).\n\n## Fix\n\nChange `context: docker/edge` to `context: .` in the `build-and-push-edge` step of `.woodpecker/publish-images.yml`.\n\n---\n*Auto-created from AI review of PR #805*\n\n## Affected files\n- `.woodpecker/publish-images.yml`\n- `docker/edge/Dockerfile`\n\n## Acceptance criteria\n- [ ] The Docker build context for `build-and-push-edge` is set to `.` (root) instead of `docker/edge`\n- [ ] `docker/edge/Dockerfile` COPY instructions for `docker/chat/server.py` and `docker/voice/` paths resolve correctly from root context\n- [ ] `woodpecker lint` passes for the updated pipeline"
   },
   {
     "action": "edit_body",
-    "issue": 738,
-    "body": "Flagged by AI reviewer in PR #737.\n\n## Problem\n\nSeveral `gosu agent bash -c \"...\"` calls in `docker/agents/entrypoint.sh` expand shell variables (`${ops_root}`, `${remote_url}`, `${primary_branch}`) via a double-quoted outer string before passing the resulting string to `bash -c`. If any project TOML value contains shell metacharacters (semicolons, backticks, `$(...)`, etc.) the outer shell interprets them before `bash -c` sees the command.\n\nAffected calls (non-exhaustive):\n- `bootstrap_ops_repos()` — clone-failed path and repo-exists pull path\n- `bootstrap_factory_repo()`\n- `ensure_project_clone()`\n\n## Why It Matters\n\nValues come from project TOML files which are committed to the ops repo (internal, not end-user input), so practical exploit risk is low. However, it violates the principle that config values should be data, not code — a mis-formatted TOML value or a supply-chain compromise of the ops repo could escalate to arbitrary command execution inside the agent container.\n\n## Suggested Fix\n\nUse `printf '%q'` to safely quote variable values before interpolation, or restructure using `export` + a here-doc so variables reach the inner shell as environment variables rather than via string expansion:\n\n```bash\ngosu agent bash -s <<EOF\n  cd \"$OPS_ROOT\" && git pull --ff-only\nEOF\n```\n\n---\n*Auto-created from AI review of PR #737*\n\n## Acceptance criteria\n\n- [ ] gosu bash -c wraps project TOML values in proper single quotes with escaped inner quotes\n- [ ] SQL injection test: TOML value containing single quote does not break the command\n- [ ] Existing entrypoint behavior is unchanged for valid TOML values\n\n## Affected files\n\n- `lib/env.sh` — the gosu bash -c invocation\n- `projects/*.toml.example` — verify no breaking changes to TOML format"
+    "issue": 703,
+    "body": "Flagged by AI reviewer in PR #701.\n\n## Problem\n`profile_load_lessons()` (`lib/profile.sh:383`) sets `LESSONS_CONTEXT` with the heading already embedded:\n```bash\nLESSONS_CONTEXT=\"## Lessons learned (from .profile/knowledge/lessons-learned.md)\\n${lessons_content}\"\n```\n`profile_prepare_context()` then assigns `LESSONS_INJECTION=\"${LESSONS_CONTEXT:-}\"`. When callers invoke `profile_lessons_block()` (or the shim `formula_lessons_block()`), it prepends the same heading again:\n```bash\nprintf '\\n## Lessons learned (from .profile/knowledge/lessons-learned.md)\\n%s' \"$LESSONS_INJECTION\"\n```\nThis results in the heading appearing twice in every agent prompt. Pre-existing before #697 (the refactor moved the code without changing behavior).\n\n## Fix\nDrop the heading from `LESSONS_CONTEXT` in `profile_load_lessons()` so it contains only the raw file content, or drop the heading prefix in `profile_lessons_block()`.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `lib/profile.sh`\n\n## Acceptance criteria\n- [ ] `profile_load_lessons()` no longer embeds the \"Lessons learned\" heading in LESSONS_CONTEXT\n- [ ] `profile_prepare_context()` outputs the heading exactly once\n- [ ] No duplicate \"## Lessons learned\" heading appears in session context"
   },
   {
-    "action": "add_label",
-    "issue": 738,
-    "label": "backlog"
+    "action": "edit_body",
+    "issue": 694,
+    "body": "Flagged by AI reviewer in PR #692.\n\n## Problem\n\nPR #692 added `forge_whoami()` to consolidate the curl+jq \"who am I\" idiom and migrated three call sites. Six additional call sites still use the old inline pattern:\n\n- `lib/git-creds.sh:49`\n- `lib/disinto/backup.sh:238`\n- `lib/issue-lifecycle.sh:114`\n- `docker/edge/entrypoint-edge.sh:62`\n- `docker/agents/entrypoint.sh:105`\n- `architect/architect-run.sh:90`\n\nThese should be updated to call `forge_whoami()` so any future changes to the idiom (e.g. timeout, error handling) propagate uniformly.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `lib/git-creds.sh`\n- `lib/disinto/backup.sh`\n- `lib/issue-lifecycle.sh`\n\n## Acceptance criteria\n- [ ] All forge_whoami() call sites migrated to use the shared function\n- [ ] No inline `curl ... /api/v1/user | jq .login` patterns remain\n- [ ] All callers handle empty/missing response gracefully"
+  },
+  {
+    "action": "edit_body",
+    "issue": 684,
+    "body": "Flagged by AI reviewer in PR #682.\n\n## Problem\n\n`lib/init/nomad/chat-init.sh` line 202 runs `nomad acl status -format=json` to detect if Nomad ACL is enabled. `nomad acl status` is not a valid Nomad CLI subcommand — valid subcommands under `nomad acl` are: `bootstrap`, `policy {apply,delete,info,list}`, `token {create,delete,info,list,self,update}`. The command always exits non-zero, `acl_status` is always empty, `nomad_acl_enabled` is always `false`, and the entire Step 3/3 block (policy apply + token create + KV patch) is dead code on every run. The PR advertises conditional ACL automation that silently never fires.\n\n## Fix\n\nReplace with a working ACL detection, e.g. `nomad acl policy list 2>/dev/null` exits 0 when ACL is enabled, non-zero when disabled.\n\n---\n*Auto-created from AI review of PR #682*\n\n## Affected files\n- `lib/init/nomad/chat-init.sh`\n\n## Acceptance criteria\n- [ ] `nomad acl status` replaced with valid ACL detection method\n- [ ] ACL detection logic works correctly on Nomad instances with and without ACLs enabled\n- [ ] No dead code paths remain"
+  },
+  {
+    "action": "edit_body",
+    "issue": 685,
+    "body": "Flagged by AI reviewer in PR #682.\n\n## Problem\n\n`lib/init/nomad/chat-init.sh` line 218 calls `_hvault_request PUT \"sys/acl/policy/chat-ops\"` with a Nomad HCL policy body. `sys/acl/policy/` is Vault's own ACL policy endpoint, not Nomad's. Vault rejects the Nomad HCL (`namespace \"default\" { ... }`) as invalid Vault policy syntax, returning non-2xx, so `_hvault_request` returns 1 and the correct `nomad acl policy apply` fallback runs. The code works in practice but only via the fallback. The `else` branch (line 226: \"applied via Vault sys API\") is misleading — it would only be reached if Vault accepted the payload, which would create a garbage Vault ACL policy, not a Nomad policy.\n\n## Fix\n\nRemove the `_hvault_request` attempt entirely. Use `nomad acl policy apply` directly as the primary (and only) apply mechanism.\n\n---\n*Auto-created from AI review of PR #682*\n\n## Affected files\n- `lib/init/nomad/chat-init.sh`\n\n## Acceptance criteria\n- [ ] Vault sys/acl/policy call replaced with correct Nomad ACL policy endpoint\n- [ ] Nomad HCL policy body accepted by the target endpoint\n- [ ] Policy application succeeds on Nomad instances with ACLs enabled"
+  },
+  {
+    "action": "close",
+    "issue": 720,
+    "reason": "streaming class code refactored away in later PR — no .streaming class in current ws.onmessage handler"
+  },
+  {
+    "action": "close",
+    "issue": 632,
+    "reason": "_ci_incident_pr_is_open() no longer exists in lib/ci-helpers.sh — dead code already removed"
+  },
+  {
+    "action": "close",
+    "issue": 630,
+    "reason": "already fixed — wp-activate-repo.sh uses deterministic HASH from forge_remote_id instead of random"
+  },
+  {
+    "action": "comment",
+    "issue": 542,
+    "body": "This issue depends on **#1105** which does not exist in this repository. The dependency reference appears to be stale or from a different repository.\n\nPlease either:\n1. Remove the `Depends on: #1105` line if it is no longer relevant\n2. Update to the correct issue number if #1105 was moved\n\nNote: `#557` (agent-management-redesign) is already closed, so that dependency is satisfied."
   }
 ]
