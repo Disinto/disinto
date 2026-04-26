@@ -196,15 +196,14 @@ log "── Step 3/3: Nomad ACL for chat (conditional) ──"
 ACL_POLICY_HCL="${REPO_ROOT}/nomad/acl-policies/chat-ops.hcl"
 ACL_POLICY_NAME="chat-ops"
 
-# Check if Nomad ACL is enabled by trying `nomad acl status`.
+# Check if Nomad ACL is enabled.
+# `nomad acl status` is not a valid subcommand; use `nomad acl policy list`,
+# which exits 0 when ACLs are enabled and non-zero (with "ACL support
+# disabled") otherwise. See issue #684.
 nomad_acl_enabled=false
 if command -v nomad >/dev/null 2>&1; then
-  acl_status="$(nomad acl status -format=json 2>/dev/null)" || acl_status=""
-  if [ -n "$acl_status" ]; then
-    acl_enabled_raw="$(printf '%s' "$acl_status" | jq -r '.enabled // false' 2>/dev/null)" || acl_enabled_raw="false"
-    if [ "$acl_enabled_raw" = "true" ]; then
-      nomad_acl_enabled=true
-    fi
+  if nomad acl policy list >/dev/null 2>&1; then
+    nomad_acl_enabled=true
   fi
 fi
 
