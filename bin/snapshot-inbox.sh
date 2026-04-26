@@ -17,7 +17,8 @@
 #   /var/lib/disinto/inbox/.shown/<id>     — item shown (still surfaces on
 #                                            explicit query, not filtered)
 #   /var/lib/disinto/inbox/.snoozed/<id>   — item snoozed, filtered while
-#                                            mtime <= now
+#                                            mtime > now (sentinel mtime
+#                                            is "now + duration")
 #
 # Priority levels:
 #   P0 = critical (incidents, security, deployment failures)
@@ -69,13 +70,13 @@ item_filtered() {
     return 0
   fi
 
-  # Snoozed: filter out while mtime <= now
+  # Snoozed: filter out while mtime > now (sentinel mtime is "now + duration")
   local snooze_file="${SNOOZED_DIR}/${id}"
   if [ -f "$snooze_file" ]; then
     local snooze_mtime now_epoch
     snooze_mtime="$(stat -c '%Y' "$snooze_file" 2>/dev/null)" || return 0
     now_epoch="$(date +%s)"
-    [ "$snooze_mtime" -le "$now_epoch" ] && return 0
+    [ "$snooze_mtime" -gt "$now_epoch" ] && return 0
   fi
 
   return 1
@@ -377,19 +378,26 @@ merge_inbox() {
     | jq -c '.[]' > "$merged_file" 2>/dev/null || true
 
   # Filter sentinels in bash (jq can't access filesystem)
-  local filtered_file
+  local filtered_file shown_ids_file
   filtered_file="$(mktemp_safe /tmp/snapshot-inbox-filtered.XXXXXX)"
+  shown_ids_file="$(mktemp_safe /tmp/snapshot-inbox-shown.XXXXXX)"
   while IFS= read -r line; do
     local item_id
     item_id="$(printf '%s' "$line" | jq -r '.id // empty' 2>/dev/null)" || continue
     [ -z "$item_id" ] && continue
     if ! item_filtered "$item_id"; then
       printf '%s\n' "$line" >> "$filtered_file"
+      # Track shown items (for unshown_count)
+      [ -f "${SHOWN_DIR}/${item_id}" ] && printf '%s\n' "$item_id" >> "$shown_ids_file"
     fi
   done < "$merged_file"
 
   # Sort by priority (P0 first), then timestamp desc; cap at 20
-  jq -cn --slurpfile items <(jq -s '.' "$filtered_file") '
+  local shown_ids_json="[]"
+  if [ -s "$shown_ids_file" ]; then
+    shown_ids_json="$(jq -Rn '[inputs | select(length > 0)]' < "$shown_ids_file")"
+  fi
+  jq -cn --slurpfile items <(jq -s '.' "$filtered_file") --argjson shown "$shown_ids_json" '
     # Priority sort key: P0=0, P1=1, P2=2
     def prio_key:
       if   . == "P0" then 0
@@ -398,12 +406,12 @@ merge_inbox() {
       end;
 
     ($items[0]
-      | sort_by(.priority | prio_key) | sort_by(.ts) | reverse
+      | sort_by([(.priority | prio_key), .ts]) | reverse
       | .[:20]
       | {
           items: .,
           total_count: length,
-          unshown_count: ([.[] | select(true)] | length)
+          unshown_count: ([.[] | select(.id as $id | ($shown | index($id)) == null)] | length)
         }
     )
   ' 2>/dev/null || printf '{"items":[],"total_count":0,"unshown_count":0}'
