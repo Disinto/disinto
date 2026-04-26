@@ -390,6 +390,22 @@ ACK_INBOX_TOOL_DECLARATION = {
 }
 
 
+# ── `set_mode` tool — toggle deep-work mode ──────────────────────────────────
+
+SET_MODE_TOOL_DECLARATION = {
+    "name": "set_mode",
+    "description": (
+        "Toggle deep-work mode. In deep-work, only P0 inbox items surface; "
+        "P1 and P2 stay silent until normal mode."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["mode"],
+        "properties": {"mode": {"type": "string", "enum": ["deep_work", "normal"]}},
+    },
+}
+
+
 def _ensure_threads_dir(task_id):
     """Create the thread directory and return its path."""
     thread_dir = os.path.join(THREADS_ROOT, task_id)
@@ -665,16 +681,26 @@ async def _run_narrate(question):
     return text
 
 
-async def _run_check_inbox(min_priority=None):
-    """Run check-inbox.sh and return the plain-text output."""
+async def _run_check_inbox(min_priority=None, deep_work=False):
+    """Run check-inbox.sh and return the plain-text output.
+
+    When *deep_work* is True, force ``--min-priority P0`` regardless of the
+    caller's *min_priority* — only P0 items surface in deep-work mode.
+    """
     if not os.path.isfile(CHECK_INBOX_SH):
         return "The check-inbox skill is unavailable: script not found."
 
-    args = [CHECK_INBOX_SH]
-    if min_priority:
-        args.extend(["--min-priority", min_priority])
+    effective_priority = "P0" if deep_work else min_priority
 
-    _log(f"check_inbox: spawn {CHECK_INBOX_SH}{' ' + min_priority if min_priority else ''}")
+    args = [CHECK_INBOX_SH]
+    if effective_priority:
+        args.extend(["--min-priority", effective_priority])
+
+    _log(
+        f"check_inbox: spawn {CHECK_INBOX_SH}"
+        f"{' ' + effective_priority if effective_priority else ''}"
+        f"{' (deep_work)' if deep_work else ''}"
+    )
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -827,6 +853,10 @@ class VoiceSession:
         self.conv_id = None
         self.claude_session_id = None
         self._activity_open = False
+        # Deep-work mode is per-session state (not persisted across reconnects).
+        # When True, _run_check_inbox forces --min-priority P0 regardless of
+        # the tool's min_priority arg, so P1/P2 items stay silent.
+        self.deep_work = False
 
     def _derive_claude_session_id(self, conv_id):
         # Siblings with chat's "<conv_id>-claude" (see docker/chat/server.py).
@@ -1051,7 +1081,33 @@ class VoiceSession:
                 min_priority = None
                 if isinstance(args, dict):
                     min_priority = str(args.get("min_priority", "")).strip() or None
-                result_text = await _run_check_inbox(min_priority)
+                result_text = await _run_check_inbox(
+                    min_priority, deep_work=self.deep_work
+                )
+
+            elif name == "set_mode":
+                mode = ""
+                if isinstance(args, dict):
+                    mode = str(args.get("mode", "")).strip()
+                if mode not in ("deep_work", "normal"):
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={
+                            "error": "missing or invalid arg: mode (deep_work|normal)",
+                        },
+                    ))
+                    continue
+                self.deep_work = (mode == "deep_work")
+                _log(f"set_mode: deep_work={self.deep_work} (user={self.user})")
+                if self.deep_work:
+                    result_text = (
+                        "Deep work mode — I'll stay silent unless something P0 lands."
+                    )
+                else:
+                    result_text = (
+                        "Back to normal mode — I'll surface P1 and P2 items again."
+                    )
 
             elif name == "ack_inbox":
                 item_id = ""
@@ -1117,6 +1173,7 @@ class VoiceSession:
                     genai_types.FunctionDeclaration(**DELEGATE_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**CHECK_INBOX_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**ACK_INBOX_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**SET_MODE_TOOL_DECLARATION),
                 ],
             )],
         )
