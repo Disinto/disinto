@@ -455,8 +455,8 @@ log "Agent roles configured: ${AGENT_ROLES}"
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
-# Gardener and architect intervals (default 6 hours = 21600 seconds)
-GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
+# Gardener and architect intervals (gardener 1h=3600, architect 6h=21600)
+GARDENER_INTERVAL="${GARDENER_INTERVAL:-3600}"
 ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
 PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
 SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
