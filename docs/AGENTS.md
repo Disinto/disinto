@@ -1,4 +1,4 @@
-<!-- last-reviewed: 429d89cfb6a0e6f9323dad16214a793c21ed4746 -->
+<!-- last-reviewed: 09e8cdd903fde793990db2f29d53b37d5bf0e45d -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -11,7 +11,7 @@ disinto/                 (code repo)
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
 │                  best-practices.md — gardener best-practice reference
-│                  pending-actions.json — queued gardener actions
+│                  pending-actions.json(l) — queued gardener actions (JSONL format)
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
@@ -25,14 +25,14 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh, backfill-labels.sh, claude-config.sh, backup.sh
+├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh, inbox-sentinels.sh, backfill-labels.sh, claude-config.sh, backup.sh
 │                  hooks/ — Claude Code session hooks
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh, wp-oauth-register.sh, wp-seed-secrets.sh
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
 │                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
-├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher); voice/ (bridge.py, UI)
+├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills: ack-inbox, check-inbox); voice/ (bridge.py, UI)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
