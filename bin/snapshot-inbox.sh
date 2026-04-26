@@ -55,9 +55,9 @@ readonly PREDICTION_LABEL_ID=11
 # ── Inbox sentinels ──────────────────────────────────────────────────────────
 
 INBOX_ROOT="${INBOX_ROOT:-/var/lib/disinto/inbox}"
-readonly ACKED_DIR="${INBOX_ROOT}/.acked"
-readonly SHOWN_DIR="${INBOX_ROOT}/.shown"
-readonly SNOOZED_DIR="${INBOX_ROOT}/.snoozed"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+source "${FACTORY_ROOT}/lib/inbox-sentinels.sh"
 
 # ── Sentinel helpers ─────────────────────────────────────────────────────────
 
@@ -66,18 +66,10 @@ item_filtered() {
   local id="$1"
 
   # Acked: always filter out
-  if [ -f "${ACKED_DIR}/${id}" ]; then
-    return 0
-  fi
+  [ -f "${ACKED_DIR}/${id}" ] && return 0
 
   # Snoozed: filter out while mtime > now (sentinel mtime is "now + duration")
-  local snooze_file="${SNOOZED_DIR}/${id}"
-  if [ -f "$snooze_file" ]; then
-    local snooze_mtime now_epoch
-    snooze_mtime="$(stat -c '%Y' "$snooze_file" 2>/dev/null)" || return 0
-    now_epoch="$(date +%s)"
-    [ "$snooze_mtime" -gt "$now_epoch" ] && return 0
-  fi
+  item_snoozed "$id" && return 0
 
   return 1
 }
