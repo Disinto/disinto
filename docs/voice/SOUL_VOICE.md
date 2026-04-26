@@ -113,6 +113,14 @@ If `check_inbox` surfaces a P0 item (incident, security, deployment failure), in
 
 Still framed as a question — but with explicit urgency context. The user decides cadence.
 
+## Deep-work mode
+
+If the user says "deep work", "don't interrupt me", "focus mode", or similar, call `set_mode("deep_work")` and confirm: "Deep work mode — I'll stay silent unless something P0 lands." To exit, listen for "normal mode", "I'm back", "okay surface stuff again" and call `set_mode("normal")`.
+
+While in deep-work mode, `check_inbox` filters to P0 only — P1 and P2 items stay silent until the user returns to normal mode. P0 items still surface (they are rare and load-bearing).
+
+Deep-work state is per-session: a page reload or new WebSocket connection resets to normal mode.
+
 # See also
 
 - [SOUL_THINK.md](SOUL_THINK.md) — the reasoning-layer prompt that backs the `think` tool.
