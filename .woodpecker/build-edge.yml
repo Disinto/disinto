@@ -1,0 +1,73 @@
+# .woodpecker/build-edge.yml — Build disinto/edge on merges to main
+#
+# Triggered on push to main when any edge-related paths change:
+#   - docker/edge/**
+#   - docker/voice/**
+#   - docker/chat/**
+#   - bin/snapshot-*.sh
+#   - bin/threads.sh
+#
+# Builds and pushes:
+#   - ghcr.io/disinto/edge:main       (floating tag)
+#   - ghcr.io/disinto/edge:<short-sha> (commit SHA tag)
+#
+# Timeouts:
+#   Workflow-level default (20m) applies to all steps unless overridden.
+#
+# Requires GHCR_TOKEN secret configured in Woodpecker with push access
+# to ghcr.io/disinto.
+
+when:
+  - branch: main
+    event: push
+    paths:
+      include:
+        - docker/edge/**
+        - docker/voice/**
+        - docker/chat/**
+        - bin/snapshot-*.sh
+        - bin/threads.sh
+
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 20m
+
+# Authenticated clone with PR-ref fetch retry. Mirrors .woodpecker/ci.yml —
+# Forgejo's REQUIRE_SIGN_IN blocks anonymous clones (exit 128).
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - |
+        if [ -n "${FORGE_TOKEN:-}" ]; then
+          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+          git clone --depth 1 "$AUTH_URL" .
+        else
+          git clone --depth 1 "$CI_REPO_CLONE_URL" .
+        fi
+      - |
+        set -e
+        n=0
+        until git fetch --depth 1 origin "$CI_COMMIT_REF"; do
+          n=$((n + 1))
+          if [ "$n" -ge 5 ]; then
+            echo "git fetch '$CI_COMMIT_REF' failed after 5 attempts" >&2
+            exit 128
+          fi
+          sleep $((1 << (n - 1)))
+        done
+      - git checkout FETCH_HEAD
+
+steps:
+  - name: build-and-push-edge
+    image: plugins/docker
+    settings:
+      repo: ghcr.io/disinto/edge
+      registry: ghcr.io
+      dockerfile: docker/edge/Dockerfile
+      context: .
+      tags:
+        - main
+        - ${CI_COMMIT_SHA_SHORT}
+      username: disinto
+      password:
+        from_secret: GHCR_TOKEN
