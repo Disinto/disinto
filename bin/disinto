@@ -2936,12 +2936,6 @@ EOF
   esac
 }
 
-# ── agent command (deprecated — use 'role') ──────────────────────────────────
-disinto_agent() {
-  echo "Warning: 'disinto agent' is deprecated, use 'disinto role' instead" >&2
-  disinto_role "$@"
-}
-
 # ── edge command ──────────────────────────────────────────────────────────────
 # Manage edge tunnel registrations (reverse SSH tunnels to edge hosts)
 # Usage: disinto edge <verb> [options]
@@ -3834,7 +3828,7 @@ case "${1:-}" in
   version)         shift; cmd_version "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   role)            shift; disinto_role "$@" ;;
-  agent)           shift; disinto_agent "$@" ;;
+  agent)           echo "Unknown command 'agent'. Did you mean 'role'?" >&2; exit 1 ;;
   edge)            shift; disinto_edge "$@" ;;
   backup)          shift; disinto_backup "$@" ;;
   validate)        shift; disinto_validate "$@" ;;
