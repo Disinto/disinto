@@ -328,6 +328,7 @@ DELEGATE_TOOL_DECLARATION = {
     ),
     "parameters": {
         "type": "object",
+        "required": ["query"],
         "properties": {
             "query": {
                 "type": "string",
@@ -342,8 +343,14 @@ DELEGATE_TOOL_DECLARATION = {
                     "Claude session."
                 ),
             },
+            "priority": {
+                "type": "string",
+                "enum": ["P0", "P1", "P2"],
+                "description": (
+                    "Inbox priority for the completion notification. Default P2."
+                ),
+            },
         },
-        "required": ["query"],
     },
 }
 
@@ -437,7 +444,7 @@ def _update_meta(task_id, updates):
     _write_meta(task_id, meta)
 
 
-async def _spawn_delegate(query, context=""):
+async def _spawn_delegate(query, context="", priority="P2"):
     """Fire-and-forget: spawn a detached claude -p session.
 
     Returns a dict with ``task_id`` and ``started_at`` immediately.
@@ -456,6 +463,7 @@ async def _spawn_delegate(query, context=""):
     _write_meta(task_id, {
         "id": task_id,
         "query": query,
+        "priority": priority,
         "started": started_at,
         "status": "running",
         "completed": None,
@@ -1059,9 +1067,13 @@ class VoiceSession:
             elif name == "delegate":
                 query = ""
                 context = ""
+                priority = "P2"
                 if isinstance(args, dict):
                     query = str(args.get("query", "")).strip()
                     context = str(args.get("context", "")).strip()
+                    prio = str(args.get("priority", "")).strip()
+                    if prio in ("P0", "P1", "P2"):
+                        priority = prio
                 if not query:
                     function_responses.append(genai_types.FunctionResponse(
                         id=call_id,
@@ -1070,7 +1082,7 @@ class VoiceSession:
                     ))
                     continue
 
-                result = await _spawn_delegate(query, context)
+                result = await _spawn_delegate(query, context, priority)
                 result_text = (
                     f"Delegated. Task id: {result['task_id']} "
                     f"(started {result['started_at']}). "
