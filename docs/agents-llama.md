@@ -155,6 +155,23 @@ poll_interval = 60
   context windows
 - Agents serialize on the llama-server's single KV cache (AD-002)
 
+## Per-env config on Nomad boxes (#794)
+
+Under the Nomad backend, per-env factory project TOMLs live at
+`/srv/disinto/projects/` on the host, mounted RO into agent containers
+as the `factory-projects` host_volume. Edit the TOML on the host and
+restart the agent job — no image rebuild needed:
+
+```bash
+sudo $EDITOR /srv/disinto/projects/disinto.toml
+nomad job restart agents
+nomad job restart agents-supervisor-opus
+```
+
+If you are coming from a pre-#794 box that kept TOMLs at
+`/opt/disinto/projects/`, see `docs/nomad-migration.md` for the
+one-time `cp` migration.
+
 ## Troubleshooting
 
 ### Agent service not starting

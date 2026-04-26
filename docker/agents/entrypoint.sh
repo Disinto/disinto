@@ -421,6 +421,28 @@ bootstrap_ops_repos
 # Bootstrap factory repo — switch DISINTO_DIR to live checkout (#593)
 bootstrap_factory_repo
 
+# Copy project TOMLs from the factory-projects host_volume mount into
+# DISINTO_DIR/projects/ so validate_projects_dir succeeds even when
+# FACTORY_REPO is unset and bootstrap_factory_repo returned early without
+# switching DISINTO_DIR to the live checkout (#794).
+#
+# Operator-managed per-env config lives at /srv/disinto/projects/ on the host
+# and is mounted RO into the container at the path below via the
+# `factory-projects` Nomad host_volume. This mirrors the copy already done in
+# bootstrap_factory_repo's success path, but runs unconditionally so the
+# baked-image fallback path is no longer fatal.
+seed_projects_from_host_volume() {
+  local host_projects="/srv/disinto/project-repos/_factory/projects"
+  [ -d "$host_projects" ] || return 0
+  if ! compgen -G "${host_projects}/*.toml" >/dev/null 2>&1; then
+    return 0
+  fi
+  mkdir -p "${DISINTO_DIR}/projects"
+  cp "${host_projects}"/*.toml "${DISINTO_DIR}/projects/" 2>/dev/null || true
+  chown -R agent:agent "${DISINTO_DIR}/projects" 2>/dev/null || true
+  log "Seeded ${DISINTO_DIR}/projects from host volume ${host_projects} (#794)"
+}
+
 # Validate that projects directory has at least one real .toml file (not .example)
 # This prevents the silent-zombie mode where the polling loop matches zero files
 # and does nothing forever.
@@ -430,10 +452,16 @@ validate_projects_dir() {
   # can log a diagnostic (#877).  Use the conditional form already adopted at
   # lines above (see bootstrap_factory_repo, PROJECT_NAME parsing).
   if ! compgen -G "${DISINTO_DIR}/projects/*.toml" >/dev/null 2>&1; then
+    # Graceful degrade (#794): if the factory-projects host_volume is mounted
+    # and contains TOMLs, seed_projects_from_host_volume should already have
+    # populated DISINTO_DIR. Reaching here means neither path produced any
+    # real config — that is genuinely fatal.
     log "FATAL: No real .toml files found in ${DISINTO_DIR}/projects/"
     log "Expected at least one project config file (e.g., disinto.toml)"
     log "The directory only contains *.toml.example template files."
-    log "Mount the host ./projects volume or copy real .toml files into the container."
+    log "Populate /srv/disinto/projects/ on the host (mounted via the"
+    log "factory-projects host_volume) or set FACTORY_REPO to clone a"
+    log "checkout with project TOMLs."
     exit 1
   fi
   local toml_count
@@ -443,6 +471,10 @@ validate_projects_dir() {
 
 # Initialize state directory for check_active guards
 init_state_dir
+
+# Seed projects from factory-projects host_volume — runs after both bootstrap
+# paths so it covers the FACTORY_REPO-unset / clone-failed cases too (#794).
+seed_projects_from_host_volume
 
 # Validate projects directory before entering polling loop
 validate_projects_dir

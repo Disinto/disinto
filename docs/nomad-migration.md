@@ -134,6 +134,45 @@ The subcommand delegates to the idempotent `tools/vault-seed-ops-repo.sh`,
 so re-running on an already-seeded factory is a no-op (logs
 `token unchanged`).
 
+## Per-env factory project TOMLs (#794)
+
+Per-env factory project config (`disinto.toml` and friends) lives in a
+host directory mounted into the agent containers via the
+`factory-projects` Nomad host_volume. This decouples operator-managed
+config from the baked agents image — TOMLs change without rebuilds.
+
+| Layer                  | Path                                              |
+|------------------------|---------------------------------------------------|
+| Host (source of truth) | `/srv/disinto/projects/`                          |
+| Container (RO mount)   | `/srv/disinto/project-repos/_factory/projects/`   |
+
+`bin/disinto init --backend=nomad --with agents` writes the default
+`disinto.toml` to `/srv/disinto/projects/`. `cluster-up.sh` creates the
+directory (`ubuntu:ubuntu` mode `0775`) and seeds a default TOML if it
+is empty, so a clean rebuild does not require manual operator
+intervention before agents come up.
+
+### Migrating existing boxes
+
+Older factories kept per-env TOMLs at `/opt/disinto/projects/`, outside
+any Nomad volume. After pulling these changes, move that config into
+the new location:
+
+```bash
+sudo install -d -m 0775 -o ubuntu -g ubuntu /srv/disinto/projects
+sudo cp /opt/disinto/projects/*.toml /srv/disinto/projects/
+sudo chown ubuntu:ubuntu /srv/disinto/projects/*.toml
+
+# Restart agent jobs so they pick the new mount up
+nomad job restart agents
+nomad job restart agents-supervisor-opus
+```
+
+If you skip this step on an existing box and the agents container has
+no real TOMLs visible, the entrypoint logs a graceful diagnostic
+(`No real .toml files found`) and exits — same surface as the
+crash-loop the migration fixes, just with the new path printed.
+
 ## Secret hygiene
 
 - Never log a secret value. The CLI only prints paths (`--import-env`,

@@ -43,6 +43,16 @@ client {
     read_only = false
   }
 
+  # operator-managed per-env factory project TOMLs (#794).
+  # Decoupled from the baked image: agents mount this read-only at
+  # /srv/disinto/project-repos/_factory/projects/ (the path the entrypoint
+  # already reads from) so per-env config can change without rebuilding.
+  # `disinto init --backend=nomad` writes the default disinto.toml here.
+  host_volume "factory-projects" {
+    path      = "/srv/disinto/projects"
+    read_only = false
+  }
+
   # caddy config + ACME state.
   host_volume "caddy-data" {
     path      = "/srv/disinto/caddy-data"
