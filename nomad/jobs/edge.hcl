@@ -466,11 +466,12 @@ EOT
         command = "/opt/disinto/bin/snapshot-daemon.sh"
       }
 
-      # RW mount so the daemon can write state.json atomically.
-      volume_mount {
-        volume      = "snapshot-state"
-        destination = "/var/lib/disinto/snapshot"
-        read_only   = false
+      # raw_exec runs on the host, not in a container — host_volume mounts
+      # don't apply. Daemon writes directly to the host path. Edge container
+      # consumers (caddy task) mount the same host path at
+      # /var/lib/disinto/snapshot via the existing snapshot-state volume_mount.
+      env {
+        SNAPSHOT_PATH = "/srv/disinto/snapshot-state/state.json"
       }
 
       # ── Collector secrets (env = true) ────────────────────────────────
