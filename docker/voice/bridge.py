@@ -44,9 +44,11 @@ GEMINI_API_KEY handling:
 
 import argparse
 import asyncio
+import calendar
 import json
 import os
 import pwd
+import re
 import subprocess
 import sys
 import time
@@ -397,6 +399,57 @@ ACK_INBOX_TOOL_DECLARATION = {
 }
 
 
+# ── `list_threads` tool — list active and recent threads (#791) ──────────────
+
+LIST_THREADS_TOOL_DECLARATION = {
+    "name": "list_threads",
+    "description": (
+        "List active and recently-completed delegated threads with their "
+        "number, slug, query, status, age, and turn count. Use when the "
+        "user refers to a thread without naming it explicitly."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "include_completed": {
+                "type": "boolean",
+                "description": "Include completed threads from the last 24h.",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+# ── `delegate_followup` tool — continue an existing thread (#791) ────────────
+
+DELEGATE_FOLLOWUP_TOOL_DECLARATION = {
+    "name": "delegate_followup",
+    "description": (
+        "Continue an existing delegated thread with a followup question or "
+        "refinement. Resolves thread by number, slug, or query keyword. "
+        "Resumes the same claude session — full context preserved."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["thread_ref", "message"],
+        "properties": {
+            "thread_ref": {
+                "type": "string",
+                "description": (
+                    "Thread number (e.g. \"3\"), slug (e.g. \"ci-flaky\"), "
+                    "or query keyword fragment."
+                ),
+            },
+            "message": {
+                "type": "string",
+                "description": "The followup question or instruction.",
+            },
+        },
+    },
+}
+
+
 # ── `set_mode` tool — toggle deep-work mode ──────────────────────────────────
 
 SET_MODE_TOOL_DECLARATION = {
@@ -411,6 +464,183 @@ SET_MODE_TOOL_DECLARATION = {
         "properties": {"mode": {"type": "string", "enum": ["deep_work", "normal"]}},
     },
 }
+
+
+# ── Thread addressing helpers (#791) ──────────────────────────────────────────
+
+# Stopwords stripped from queries when building slugs. Includes common
+# function words plus action verbs that typically lead a delegate query
+# ("investigate why CI is flaky" → drop "investigate", "why", "is" →
+# "ci-flaky"). The aim is to leave 1–3 distinctive content words.
+_SLUG_STOPWORDS = frozenset({
+    # Articles, conjunctions, copulae, prepositions
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be",
+    "been", "being", "of", "to", "for", "in", "on", "at", "by", "with",
+    "from", "as", "into", "onto", "about",
+    # Wh-words / determiners
+    "why", "how", "what", "when", "where", "who", "which",
+    "this", "that", "these", "those", "it", "its",
+    # Modals + helpers
+    "do", "does", "did", "can", "could", "should", "would", "will",
+    "shall", "may", "might",
+    # Pronouns
+    "i", "we", "you", "they", "he", "she", "my", "our", "your", "their",
+    "me", "us", "them", "him", "her", "please",
+    # Common command verbs that lead delegate queries (#791 examples)
+    "investigate", "check", "summarize", "audit", "analyze",
+    "look", "find", "explain", "describe", "show",
+    "tell", "ask", "list", "report",
+})
+
+_SLUG_MAX_LEN = 24
+_SLUG_MAX_WORDS = 3
+
+
+def _slugify_query(query):
+    """Derive a 1–3 word lowercase hyphenated slug from *query*.
+
+    Stopwords dropped; result capped at 24 chars. Falls back to "thread"
+    if the query has no usable content words (e.g. all punctuation).
+    """
+    if not query:
+        return "thread"
+    # Lowercase, replace non-alphanumeric with spaces.
+    text = re.sub(r"[^a-z0-9]+", " ", query.lower())
+    words = [w for w in text.split() if w and w not in _SLUG_STOPWORDS]
+    if not words:
+        # Fall back to original tokens (all stopwords or empty after filter).
+        words = [w for w in text.split() if w]
+    if not words:
+        return "thread"
+    picked = words[:_SLUG_MAX_WORDS]
+    slug = "-".join(picked)
+    if len(slug) > _SLUG_MAX_LEN:
+        # Trim word-by-word until we fit, but always keep at least one word.
+        while len(picked) > 1 and len("-".join(picked)) > _SLUG_MAX_LEN:
+            picked.pop()
+        slug = "-".join(picked)
+        if len(slug) > _SLUG_MAX_LEN:
+            slug = slug[:_SLUG_MAX_LEN].rstrip("-") or "thread"
+    return slug
+
+
+def _list_thread_metas():
+    """Return a list of (task_id, meta_dict) for every thread on disk."""
+    metas = []
+    if not os.path.isdir(THREADS_ROOT):
+        return metas
+    try:
+        entries = os.listdir(THREADS_ROOT)
+    except OSError:
+        return metas
+    for entry in entries:
+        meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
+        if not os.path.isfile(meta_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        metas.append((entry, meta))
+    return metas
+
+
+def _next_thread_number():
+    """Return max(existing number) + 1 across THREADS_ROOT, starting at 1."""
+    max_n = 0
+    for _, meta in _list_thread_metas():
+        try:
+            n = int(meta.get("number", 0) or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n > max_n:
+            max_n = n
+    return max_n + 1
+
+
+def _unique_slug(base_slug):
+    """Return *base_slug* with -2/-3/... suffix on collision with open threads."""
+    open_slugs = set()
+    for _, meta in _list_thread_metas():
+        status = meta.get("status", "")
+        if status in ("running", "completed", "failed"):
+            existing = meta.get("slug")
+            if existing:
+                open_slugs.add(existing)
+    if base_slug not in open_slugs:
+        return base_slug
+    n = 2
+    while True:
+        candidate = f"{base_slug}-{n}"
+        if candidate not in open_slugs:
+            return candidate
+        n += 1
+
+
+def _resolve_thread_ref(thread_ref):
+    """Resolve *thread_ref* to (task_id, meta) or (None, error_message).
+
+    Resolution order: numeric → slug exact → query substring →
+    most-recent on tie → ambiguous error → not-found error.
+    """
+    ref = (thread_ref or "").strip()
+    if not ref:
+        return None, "missing thread reference"
+
+    metas = _list_thread_metas()
+    if not metas:
+        return None, f"no thread matches '{ref}'"
+
+    # 1. Numeric exact.
+    if ref.isdigit():
+        wanted = int(ref)
+        matches = [(tid, m) for tid, m in metas
+                   if int(m.get("number", 0) or 0) == wanted]
+        if len(matches) == 1:
+            tid, m = matches[0]
+            return tid, m
+        if len(matches) > 1:
+            # Numeric should be unique by construction; pick most recent.
+            matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                         im[1].get("started") or "", reverse=True)
+            return matches[0][0], matches[0][1]
+        # Fall through — maybe the digits are part of a slug/query.
+
+    # 2. Slug exact.
+    matches = [(tid, m) for tid, m in metas if m.get("slug") == ref]
+    if len(matches) == 1:
+        tid, m = matches[0]
+        return tid, m
+    if len(matches) > 1:
+        matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                     im[1].get("started") or "", reverse=True)
+        return matches[0][0], matches[0][1]
+
+    # 3. Query substring (case-insensitive).
+    needle = ref.lower()
+    matches = [(tid, m) for tid, m in metas
+               if needle in (m.get("query") or "").lower()
+               or needle in (m.get("slug") or "").lower()]
+    if not matches:
+        return None, f"no thread matches '{ref}'"
+    if len(matches) == 1:
+        tid, m = matches[0]
+        return tid, m
+
+    # 4. Ambiguous — prefer most-recent last_turn_at; if still tied, error.
+    matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                 im[1].get("started") or "", reverse=True)
+    top_ts = matches[0][1].get("last_turn_at") or matches[0][1].get("started") or ""
+    same_ts = [m for m in matches
+               if (m[1].get("last_turn_at") or m[1].get("started") or "") == top_ts]
+    if len(same_ts) == 1:
+        tid, m = same_ts[0]
+        return tid, m
+    return None, (
+        f"ambiguous thread_ref — matched {len(matches)} threads, "
+        "please specify by number or slug"
+    )
 
 
 def _ensure_threads_dir(task_id):
@@ -453,6 +683,8 @@ async def _spawn_delegate(query, context="", priority="P2"):
     """
     task_id = f"del-{uuid.uuid4().hex[:12]}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    number = _next_thread_number()
+    slug = _unique_slug(_slugify_query(query))
 
     # Build the full prompt from query + optional context.
     full_prompt = query
@@ -462,12 +694,16 @@ async def _spawn_delegate(query, context="", priority="P2"):
     # Write initial meta.json
     _write_meta(task_id, {
         "id": task_id,
+        "number": number,
+        "slug": slug,
         "query": query,
         "priority": priority,
         "started": started_at,
         "status": "running",
         "completed": None,
         "result_summary": None,
+        "turns": 1,
+        "last_turn_at": started_at,
     })
 
     thread_dir = _ensure_threads_dir(task_id)
@@ -507,7 +743,8 @@ async def _spawn_delegate(query, context="", priority="P2"):
             "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "result_summary": "The reasoning layer is unavailable: claude binary not found.",
         })
-        return {"task_id": task_id, "started_at": started_at}
+        return {"task_id": task_id, "started_at": started_at,
+                "number": number, "slug": slug, "turns": 1, "status": "failed"}
 
     # Stream stdout to file and track process for exit callback.
     _delegate_tasks[task_id] = proc
@@ -527,7 +764,8 @@ async def _spawn_delegate(query, context="", priority="P2"):
     # Schedule the stream reader; on finish, update meta.
     asyncio.ensure_future(_stream_done(proc, task_id, _stream(), stream_fh, stream_path))
 
-    return {"task_id": task_id, "started_at": started_at}
+    return {"task_id": task_id, "started_at": started_at,
+            "number": number, "slug": slug, "turns": 1, "status": "running"}
 
 
 # Registry of running delegate tasks: task_id -> Process
@@ -552,10 +790,12 @@ async def _stream_done(proc, task_id, stream_coro, stream_fh, stream_path):
         if not text:
             text = stdout.strip() or "The delegate session completed with no output."
         status = "completed" if proc.returncode == 0 else "failed"
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         _update_meta(task_id, {
             "status": status,
-            "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "completed": now,
             "result_summary": text,
+            "last_turn_at": now,
         })
     except Exception as exc:
         _log(f"delegate exit handler error for {task_id}: {exc!r}")
@@ -597,6 +837,258 @@ def _parse_claude_stream_json(output):
             if isinstance(result_text, str) and result_text and not parts:
                 parts.append(result_text)
     return "".join(parts).strip()
+
+
+def _format_age(started):
+    """Render an ISO-8601 timestamp as a short age string (e.g. "2m", "8h")."""
+    if not started:
+        return "-"
+    try:
+        ts = started.rstrip("Z")
+        dt = time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
+        delta = max(0, int(time.time() - calendar.timegm(dt)))
+    except Exception:
+        return "-"
+    if delta < 60:
+        return f"{delta}s"
+    if delta < 3600:
+        return f"{delta // 60}m"
+    if delta < 86400:
+        return f"{delta // 3600}h"
+    return f"{delta // 86400}d"
+
+
+def _format_threads_table(metas, include_completed):
+    """Render the list_threads plain-text output."""
+    now = time.time()
+    cutoff_24h = now - 24 * 3600
+
+    active = []
+    completed = []
+    for tid, m in metas:
+        status = (m.get("status") or "unknown").lower()
+        if status == "running":
+            active.append(m)
+        elif include_completed and status in ("completed", "failed"):
+            # Filter to last 24h by completed/last_turn_at/started.
+            ts_str = m.get("completed") or m.get("last_turn_at") or m.get("started") or ""
+            try:
+                dt = time.strptime(ts_str.rstrip("Z")[:19], "%Y-%m-%dT%H:%M:%S")
+                ts = calendar.timegm(dt)
+            except Exception:
+                ts = 0
+            if ts >= cutoff_24h:
+                completed.append(m)
+
+    # Sort by number ascending (stable display order).
+    active.sort(key=lambda m: int(m.get("number", 0) or 0))
+    completed.sort(key=lambda m: int(m.get("number", 0) or 0))
+
+    def _row(m):
+        num = m.get("number", "?")
+        slug = m.get("slug", "?")
+        status = (m.get("status") or "unknown").lower()
+        age_ref = m.get("started") or m.get("last_turn_at") or ""
+        age = _format_age(age_ref)
+        turns = m.get("turns", 1) or 1
+        turn_word = "turn" if turns == 1 else "turns"
+        query = (m.get("query") or "").replace("\n", " ").strip()
+        if len(query) > 60:
+            query = query[:57] + "..."
+        return (
+            f"  {num:<3} {slug:<14} {status:<10} {age:<5} "
+            f"{turns} {turn_word:<6} \"{query}\""
+        )
+
+    out_lines = []
+    if active:
+        out_lines.append("Active threads:")
+        out_lines.extend(_row(m) for m in active)
+    else:
+        out_lines.append("Active threads: (none)")
+
+    if include_completed:
+        if completed:
+            out_lines.append("")
+            out_lines.append("Recently completed (24h):")
+            out_lines.extend(_row(m) for m in completed)
+        else:
+            out_lines.append("")
+            out_lines.append("Recently completed (24h): (none)")
+
+    return "\n".join(out_lines)
+
+
+async def _run_list_threads(include_completed=False):
+    """Read meta.json files and return a plain-text table."""
+    metas = _list_thread_metas()
+    if not metas:
+        return "No threads yet."
+    return _format_threads_table(metas, include_completed)
+
+
+async def _spawn_delegate_followup(thread_ref, message):
+    """Resume a delegated thread with a followup *message*.
+
+    Returns a dict with ``task_id``, ``slug``, ``number``, ``turns``,
+    ``status`` on success, or ``error`` on failure.
+    """
+    task_id, meta = _resolve_thread_ref(thread_ref)
+    if task_id is None:
+        return {"error": meta}
+
+    if meta.get("status") == "running":
+        slug = meta.get("slug", task_id)
+        return {"error": (
+            f"thread {slug} is still running, wait or use list_threads "
+            "to check status."
+        )}
+
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    new_turns = int(meta.get("turns", 1) or 1) + 1
+
+    thread_dir = _ensure_threads_dir(task_id)
+    stream_path = os.path.join(thread_dir, "stream.jsonl")
+
+    # Mark the thread as running again BEFORE spawning so subsequent
+    # followup requests refuse cleanly.
+    _update_meta(task_id, {
+        "status": "running",
+        "last_turn_at": started_at,
+    })
+
+    # Append a turn-separator line to the existing stream.jsonl. The
+    # marker is its own JSON object so downstream parsers see it as a
+    # delimiter rather than claude output.
+    sep_line = json.dumps({
+        "_turn_separator": new_turns,
+        "ts": started_at,
+    }, ensure_ascii=False) + "\n"
+    try:
+        with open(stream_path, "a", encoding="utf-8") as f:
+            f.write(sep_line)
+    except OSError as exc:
+        _log(f"delegate_followup: stream append failed for {task_id}: {exc!r}")
+
+    # Always resume — followup never spawns a new session.
+    args = [
+        CLAUDE_BIN,
+        "-r", task_id,
+        "-p", message,
+        "--output-format", "stream-json",
+        "--permission-mode", "bypassPermissions",
+        "--model", VOICE_CLAUDE_MODEL,
+        "--verbose",
+    ]
+    if os.path.isfile(SOUL_THINK_PATH):
+        args.extend(["--system-prompt-file", SOUL_THINK_PATH])
+
+    # Open stream.jsonl in append mode so the resumed claude output lands
+    # after the separator marker.
+    stream_fh = open(stream_path, "a", encoding="utf-8")
+
+    _log(f"delegate_followup: resume {task_id} (turn={new_turns})")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        try:
+            stream_fh.close()
+        except Exception:
+            pass
+        _update_meta(task_id, {
+            "status": "failed",
+            "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "result_summary": "The reasoning layer is unavailable: claude binary not found.",
+            "turns": new_turns,
+            "last_turn_at": started_at,
+        })
+        return {
+            "task_id": task_id,
+            "slug": meta.get("slug"),
+            "number": meta.get("number"),
+            "turns": new_turns,
+            "status": "failed",
+        }
+
+    _delegate_tasks[task_id] = proc
+
+    async def _stream():
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                stream_fh.write(line.decode("utf-8", errors="replace"))
+                stream_fh.flush()
+        except Exception as exc:
+            _log(f"delegate_followup stream error for {task_id}: {exc!r}")
+
+    asyncio.ensure_future(_followup_done(
+        proc, task_id, _stream(), stream_fh, stream_path, new_turns,
+    ))
+
+    return {
+        "task_id": task_id,
+        "slug": meta.get("slug"),
+        "number": meta.get("number"),
+        "turns": new_turns,
+        "status": "running",
+    }
+
+
+async def _followup_done(proc, task_id, stream_coro, stream_fh, stream_path, turns):
+    """Wait for the followup turn to finish; update meta with new turn data."""
+    await stream_coro
+    try:
+        _, _ = await proc.communicate()
+    except Exception as exc:
+        _log(f"delegate_followup communicate error for {task_id}: {exc!r}")
+
+    try:
+        with open(stream_path, "r", encoding="utf-8") as fh:
+            stdout = fh.read()
+        # Parse only the segment after the most recent separator so the
+        # latest turn's text isn't conflated with prior turns.
+        last_sep = stdout.rfind('"_turn_separator"')
+        segment = stdout
+        if last_sep != -1:
+            # Trim back to start-of-line for that separator.
+            line_start = stdout.rfind("\n", 0, last_sep) + 1
+            # Skip the separator line itself.
+            sep_end = stdout.find("\n", line_start)
+            if sep_end != -1:
+                segment = stdout[sep_end + 1:]
+        text = _parse_claude_stream_json(segment)
+        if not text:
+            text = (
+                segment.strip()
+                or "The followup turn completed with no output."
+            )
+        status = "completed" if proc.returncode == 0 else "failed"
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _update_meta(task_id, {
+            "status": status,
+            "completed": now,
+            "result_summary": text,
+            "turns": turns,
+            "last_turn_at": now,
+        })
+    except Exception as exc:
+        _log(f"delegate_followup exit handler error for {task_id}: {exc!r}")
+    finally:
+        try:
+            stream_fh.close()
+        except Exception:
+            pass
+        _delegate_tasks.pop(task_id, None)
 
 
 async def _run_factory_state(section=None):
@@ -1084,10 +1576,45 @@ class VoiceSession:
 
                 result = await _spawn_delegate(query, context, priority)
                 result_text = (
-                    f"Delegated. Task id: {result['task_id']} "
-                    f"(started {result['started_at']}). "
+                    f"Started thread {result.get('number')} — "
+                    f"{result.get('slug')}. "
                     "I'll let you know when it's done."
                 )
+
+            elif name == "list_threads":
+                include_completed = False
+                if isinstance(args, dict):
+                    raw = args.get("include_completed", False)
+                    if isinstance(raw, bool):
+                        include_completed = raw
+                    elif isinstance(raw, str):
+                        include_completed = raw.strip().lower() in ("1", "true", "yes")
+                result_text = await _run_list_threads(include_completed)
+
+            elif name == "delegate_followup":
+                thread_ref = ""
+                message = ""
+                if isinstance(args, dict):
+                    thread_ref = str(args.get("thread_ref", "")).strip()
+                    message = str(args.get("message", "")).strip()
+                if not thread_ref or not message:
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={
+                            "error": "missing required args: thread_ref and message",
+                        },
+                    ))
+                    continue
+                result = await _spawn_delegate_followup(thread_ref, message)
+                if "error" in result:
+                    result_text = result["error"]
+                else:
+                    result_text = (
+                        f"Continuing thread {result.get('number')} — "
+                        f"{result.get('slug')} (turn {result.get('turns')}). "
+                        "I'll let you know when it's done."
+                    )
 
             elif name == "check_inbox":
                 min_priority = None
@@ -1183,6 +1710,8 @@ class VoiceSession:
                     genai_types.FunctionDeclaration(**NARRATE_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**THINK_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**DELEGATE_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**LIST_THREADS_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**DELEGATE_FOLLOWUP_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**CHECK_INBOX_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**ACK_INBOX_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**SET_MODE_TOOL_DECLARATION),

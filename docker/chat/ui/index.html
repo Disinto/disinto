@@ -162,13 +162,38 @@
             align-items: flex-start;
             gap: 0.75rem;
         }
-        .card-header .query {
+        .number-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #888;
+            background: #232323;
+            border-radius: 4px;
+            padding: 0.1rem 0.45rem;
+            min-width: 1.5rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .header-text {
             flex: 1;
+            min-width: 0;
+        }
+        .card-header .query {
             font-size: 0.9rem;
             line-height: 1.4;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        .slug {
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.7rem;
+            color: #6eafe7;
+            margin-top: 0.15rem;
+        }
+        .turns {
+            font-size: 0.7rem;
+            color: #888;
+            margin-left: 0.4rem;
         }
         .card-meta {
             display: flex;
@@ -472,10 +497,39 @@
             const header = document.createElement('div');
             header.className = 'card-header';
 
+            // Number badge (top-left, prominent) — #791
+            if (t.number !== undefined && t.number !== null) {
+                const numBadge = document.createElement('div');
+                numBadge.className = 'number-badge';
+                numBadge.textContent = `#${t.number}`;
+                header.appendChild(numBadge);
+            }
+
+            const headerText = document.createElement('div');
+            headerText.className = 'header-text';
+
             const queryDiv = document.createElement('div');
             queryDiv.className = 'query';
             queryDiv.textContent = t.query || '(no query)';
             queryDiv.title = t.query || '';
+            headerText.appendChild(queryDiv);
+
+            // Slug + turn count under the query (#791)
+            if (t.slug || t.turns) {
+                const slugDiv = document.createElement('div');
+                slugDiv.className = 'slug';
+                if (t.slug) {
+                    slugDiv.textContent = t.slug;
+                }
+                if (t.turns && t.turns > 0) {
+                    const turnsSpan = document.createElement('span');
+                    turnsSpan.className = 'turns';
+                    turnsSpan.textContent =
+                        `${t.turns} ${t.turns === 1 ? 'turn' : 'turns'}`;
+                    slugDiv.appendChild(turnsSpan);
+                }
+                headerText.appendChild(slugDiv);
+            }
 
             const metaDiv = document.createElement('div');
             metaDiv.className = 'card-meta';
@@ -491,7 +545,7 @@
             metaDiv.appendChild(badge);
             metaDiv.appendChild(ageSpan);
 
-            header.appendChild(queryDiv);
+            header.appendChild(headerText);
             header.appendChild(metaDiv);
 
             // Started time (shown below query on hover or always for compact)

@@ -135,6 +135,58 @@ While in deep-work mode, `check_inbox` filters to P0 only — P1 and P2 items st
 
 Deep-work state is per-session: a page reload or new WebSocket connection resets to normal mode.
 
+# Delegated threads (#791)
+
+Delegated threads (spawned via `delegate`) are addressable by **number**
+(monotonic across the threads directory) and **slug** (1–3 lowercase
+words derived from the query). Both land in `meta.json` at spawn time.
+
+## Listing threads
+
+When the user refers to a delegated thread without naming it, call
+`list_threads` to see what is running. Pass `include_completed: true`
+when the user is asking about something that may have just finished.
+
+## Resolving user phrases
+
+Resolve the user's reference into a thread by trying these in order:
+
+- **Number** — "thread three" → `3`
+- **Slug** — "the ci-flaky thread" → `ci-flaky`
+- **Query keyword** — "the CI thread" → fuzzy match on the query field
+- **Position** — "the latest" → most recent `last_turn_at`
+- **Anaphora** — "that one", "it" → most recent thread *you* mentioned
+
+If still ambiguous, ask the user to specify by number or slug rather
+than guessing.
+
+## Announcing on spawn
+
+When you spawn a thread via `delegate`, always announce its number and
+slug back to the user:
+
+> "Started thread 4 — ci-flaky."
+
+When you report on a thread later, lead with the slug or number so the
+user can refer to it consistently.
+
+## Following up
+
+When the user wants to follow up, refine, or extend an existing thread,
+call `delegate_followup(thread_ref, message)`. This **resumes the same
+claude session** — full context is preserved, you do not need to restate
+earlier findings.
+
+- The tool returns immediately with a new turn count; acknowledge with
+  the number and slug: "Got it, continuing thread 3 — ci-flaky."
+- If the thread is still running, the tool returns an error like
+  "thread ci-flaky is still running". Report progress instead and offer
+  to follow up once it lands.
+- If the reference is ambiguous, the tool returns an "ambiguous
+  thread_ref" error. Ask the user to clarify by number or slug.
+- If no thread matches, the tool returns "no thread matches '...'".
+  Offer to spawn a fresh `delegate` instead.
+
 # See also
 
 - [SOUL_THINK.md](SOUL_THINK.md) — the reasoning-layer prompt that backs the `think` tool.

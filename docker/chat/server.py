@@ -10,6 +10,7 @@ Routes:
     GET /chat/static/*       -> serves static assets (session required)
     POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
     POST /chat/delegate      -> fire-and-forget: spawns detached claude -p, returns task-id (session required)
+    POST /chat/delegate-followup -> resume an existing thread by number/slug/keyword (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
     GET /threads             -> list all threads, newest first (session required)
     GET /threads/<id>        -> thread detail JSON (session required)
@@ -501,6 +502,164 @@ ACK_INBOX_TOOL_DECLARATION = {
 }
 
 
+# ── Thread addressing helpers (#791) ──────────────────────────────────────────
+
+# Stopwords stripped from queries when building slugs. Mirrors the voice
+# bridge list so chat-side and voice-side delegate spawns produce identical
+# slugs for a given query (#791).
+_SLUG_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be",
+    "been", "being", "of", "to", "for", "in", "on", "at", "by", "with",
+    "from", "as", "into", "onto", "about",
+    "why", "how", "what", "when", "where", "who", "which",
+    "this", "that", "these", "those", "it", "its",
+    "do", "does", "did", "can", "could", "should", "would", "will",
+    "shall", "may", "might",
+    "i", "we", "you", "they", "he", "she", "my", "our", "your", "their",
+    "me", "us", "them", "him", "her", "please",
+    "investigate", "check", "summarize", "audit", "analyze",
+    "look", "find", "explain", "describe", "show",
+    "tell", "ask", "list", "report",
+})
+
+_SLUG_MAX_LEN = 24
+_SLUG_MAX_WORDS = 3
+
+
+def _slugify_query(query):
+    """Derive a 1–3 word lowercase hyphenated slug from *query*."""
+    if not query:
+        return "thread"
+    text = re.sub(r"[^a-z0-9]+", " ", query.lower())
+    words = [w for w in text.split() if w and w not in _SLUG_STOPWORDS]
+    if not words:
+        words = [w for w in text.split() if w]
+    if not words:
+        return "thread"
+    picked = words[:_SLUG_MAX_WORDS]
+    slug = "-".join(picked)
+    if len(slug) > _SLUG_MAX_LEN:
+        while len(picked) > 1 and len("-".join(picked)) > _SLUG_MAX_LEN:
+            picked.pop()
+        slug = "-".join(picked)
+        if len(slug) > _SLUG_MAX_LEN:
+            slug = slug[:_SLUG_MAX_LEN].rstrip("-") or "thread"
+    return slug
+
+
+def _list_thread_metas():
+    """Return a list of (task_id, meta_dict) for every thread on disk."""
+    metas = []
+    if not os.path.isdir(THREADS_ROOT):
+        return metas
+    try:
+        entries = os.listdir(THREADS_ROOT)
+    except OSError:
+        return metas
+    for entry in entries:
+        meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
+        if not os.path.isfile(meta_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        metas.append((entry, meta))
+    return metas
+
+
+def _next_thread_number():
+    """Return max(existing number) + 1 across THREADS_ROOT, starting at 1."""
+    max_n = 0
+    for _, meta in _list_thread_metas():
+        try:
+            n = int(meta.get("number", 0) or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n > max_n:
+            max_n = n
+    return max_n + 1
+
+
+def _unique_slug(base_slug):
+    """Return *base_slug* with -2/-3/... suffix on collision with open threads."""
+    open_slugs = set()
+    for _, meta in _list_thread_metas():
+        status = meta.get("status", "")
+        if status in ("running", "completed", "failed"):
+            existing = meta.get("slug")
+            if existing:
+                open_slugs.add(existing)
+    if base_slug not in open_slugs:
+        return base_slug
+    n = 2
+    while True:
+        candidate = f"{base_slug}-{n}"
+        if candidate not in open_slugs:
+            return candidate
+        n += 1
+
+
+def _resolve_thread_ref(thread_ref):
+    """Resolve *thread_ref* to (task_id, meta) or (None, error_message).
+
+    Resolution order: numeric → slug exact → query substring →
+    most-recent on tie → ambiguous error → not-found error.
+    """
+    ref = (thread_ref or "").strip()
+    if not ref:
+        return None, "missing thread reference"
+
+    metas = _list_thread_metas()
+    if not metas:
+        return None, f"no thread matches '{ref}'"
+
+    if ref.isdigit():
+        wanted = int(ref)
+        matches = [(tid, m) for tid, m in metas
+                   if int(m.get("number", 0) or 0) == wanted]
+        if len(matches) == 1:
+            tid, m = matches[0]
+            return tid, m
+        if len(matches) > 1:
+            matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                         im[1].get("started") or "", reverse=True)
+            return matches[0][0], matches[0][1]
+
+    matches = [(tid, m) for tid, m in metas if m.get("slug") == ref]
+    if len(matches) == 1:
+        tid, m = matches[0]
+        return tid, m
+    if len(matches) > 1:
+        matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                     im[1].get("started") or "", reverse=True)
+        return matches[0][0], matches[0][1]
+
+    needle = ref.lower()
+    matches = [(tid, m) for tid, m in metas
+               if needle in (m.get("query") or "").lower()
+               or needle in (m.get("slug") or "").lower()]
+    if not matches:
+        return None, f"no thread matches '{ref}'"
+    if len(matches) == 1:
+        tid, m = matches[0]
+        return tid, m
+
+    matches.sort(key=lambda im: im[1].get("last_turn_at") or
+                 im[1].get("started") or "", reverse=True)
+    top_ts = matches[0][1].get("last_turn_at") or matches[0][1].get("started") or ""
+    same_ts = [m for m in matches
+               if (m[1].get("last_turn_at") or m[1].get("started") or "") == top_ts]
+    if len(same_ts) == 1:
+        tid, m = same_ts[0]
+        return tid, m
+    return None, (
+        f"ambiguous thread_ref — matched {len(matches)} threads, "
+        "please specify by number or slug"
+    )
+
+
 def _ensure_threads_dir(task_id):
     """Create the thread directory and return its path."""
     thread_dir = os.path.join(THREADS_ROOT, task_id)
@@ -541,6 +700,8 @@ def _spawn_delegate_sync(query, context="", priority="P2"):
     """
     task_id = f"del-{uuid.uuid4().hex[:12]}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    number = _next_thread_number()
+    slug = _unique_slug(_slugify_query(query))
 
     # Build the full prompt from query + optional context.
     full_prompt = query
@@ -550,12 +711,16 @@ def _spawn_delegate_sync(query, context="", priority="P2"):
     # Write initial meta.json
     _write_meta(task_id, {
         "id": task_id,
+        "number": number,
+        "slug": slug,
         "query": query,
         "priority": priority,
         "started": started_at,
         "status": "running",
         "completed": None,
         "result_summary": None,
+        "turns": 1,
+        "last_turn_at": started_at,
     })
 
     thread_dir = _ensure_threads_dir(task_id)
@@ -604,10 +769,12 @@ def _spawn_delegate_sync(query, context="", priority="P2"):
             if not text:
                 text = stdout.strip() or "The delegate session completed with no output."
             status = "completed" if proc.returncode == 0 else "failed"
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             _update_meta(task_id, {
                 "status": status,
-                "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "completed": now,
                 "result_summary": text,
+                "last_turn_at": now,
             })
         except Exception as exc:
             _log_chat(f"delegate exit error for {task_id}: {exc!r}")
@@ -627,7 +794,137 @@ def _spawn_delegate_sync(query, context="", priority="P2"):
     _log_chat(f"delegate: spawn {task_id} (cwd={WORKSPACE_DIR})")
     threading.Thread(target=_worker, daemon=True, name=f"delegate-{task_id}").start()
 
-    return {"task_id": task_id, "started_at": started_at}
+    return {
+        "task_id": task_id,
+        "started_at": started_at,
+        "number": number,
+        "slug": slug,
+        "turns": 1,
+        "status": "running",
+    }
+
+
+def _spawn_delegate_followup_sync(thread_ref, message):
+    """Resume a delegated thread with a followup *message* (chat-side mirror).
+
+    Returns ``{"error": "..."}`` on failure, otherwise a dict with
+    ``task_id``, ``slug``, ``number``, ``turns``, ``status``.
+    """
+    task_id, meta = _resolve_thread_ref(thread_ref)
+    if task_id is None:
+        return {"error": meta}
+
+    if meta.get("status") == "running":
+        slug = meta.get("slug", task_id)
+        return {"error": (
+            f"thread {slug} is still running, wait or use list_threads "
+            "to check status."
+        )}
+
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    new_turns = int(meta.get("turns", 1) or 1) + 1
+
+    thread_dir = _ensure_threads_dir(task_id)
+    stream_path = os.path.join(thread_dir, "stream.jsonl")
+
+    _update_meta(task_id, {
+        "status": "running",
+        "last_turn_at": started_at,
+    })
+
+    sep_line = json.dumps({
+        "_turn_separator": new_turns,
+        "ts": started_at,
+    }, ensure_ascii=False) + "\n"
+    try:
+        with open(stream_path, "a", encoding="utf-8") as f:
+            f.write(sep_line)
+    except OSError as exc:
+        _log_chat(f"delegate_followup: stream append failed for {task_id}: {exc!r}")
+
+    claude_args = [
+        CLAUDE_BIN,
+        "-r", task_id,
+        "-p", message,
+        "--output-format", "stream-json",
+        "--permission-mode", "bypassPermissions",
+        "--model", CHAT_CLAUDE_MODEL,
+        "--verbose",
+    ]
+    if os.path.isfile(SOUL_THINK_PATH):
+        claude_args.extend(["--system-prompt-file", SOUL_THINK_PATH])
+
+    def _worker():
+        stream_fh = open(stream_path, "a", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                claude_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+                bufsize=1,
+                preexec_fn=_drop_to_agent,
+                start_new_session=True,
+            )
+            for line in proc.stdout:
+                stream_fh.write(line)
+                stream_fh.flush()
+            proc.wait()
+            stream_fh.close()
+
+            # Re-read the stream and isolate the most recent turn segment
+            # so result_summary reflects only the followup turn output.
+            with open(stream_path, "r", encoding="utf-8") as fh:
+                full = fh.read()
+            last_sep = full.rfind('"_turn_separator"')
+            segment = full
+            if last_sep != -1:
+                line_start = full.rfind("\n", 0, last_sep) + 1
+                sep_end = full.find("\n", line_start)
+                if sep_end != -1:
+                    segment = full[sep_end + 1:]
+            text = _parse_stream_json(segment)[0]
+            if not text:
+                text = segment.strip() or "The followup turn completed with no output."
+            status = "completed" if proc.returncode == 0 else "failed"
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            _update_meta(task_id, {
+                "status": status,
+                "completed": now,
+                "result_summary": text,
+                "turns": new_turns,
+                "last_turn_at": now,
+            })
+        except Exception as exc:
+            _log_chat(f"delegate_followup exit error for {task_id}: {exc!r}")
+            try:
+                _update_meta(task_id, {
+                    "status": "failed",
+                    "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "result_summary": f"Followup failed: {exc}",
+                    "turns": new_turns,
+                    "last_turn_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                })
+            except Exception:
+                pass
+            try:
+                stream_fh.close()
+            except Exception:
+                pass
+
+    _log_chat(f"delegate_followup: resume {task_id} (turn={new_turns})")
+    threading.Thread(
+        target=_worker, daemon=True, name=f"followup-{task_id}-{new_turns}",
+    ).start()
+
+    return {
+        "task_id": task_id,
+        "slug": meta.get("slug"),
+        "number": meta.get("number"),
+        "turns": new_turns,
+        "status": "running",
+    }
 
 
 def _log_chat(msg):
@@ -1511,6 +1808,16 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_delegate(user)
             return
 
+        # Delegate followup (#791) — resume an existing thread by ref.
+        if path == "/chat/delegate-followup":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_delegate_followup(user)
+            return
+
         # Check-inbox endpoint (session required)
         if path == "/chat/check-inbox":
             user = self._require_session()
@@ -1895,6 +2202,49 @@ class ChatHandler(BaseHTTPRequestHandler):
             result = _spawn_delegate_sync(query, context, priority)
         except Exception as e:
             self.send_error_page(500, f"Delegate failed: {e}")
+            return
+
+        self.send_response(202)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+
+    def handle_delegate_followup(self, user):
+        """Continue an existing delegate thread by ref (#791)."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            self.send_error_page(400, "No body provided")
+            return
+
+        body = self.rfile.read(content_length)
+        try:
+            body_str = body.decode("utf-8")
+            params = parse_qs(body_str)
+            thread_ref = params.get("thread_ref", [""])[0]
+            message = params.get("message", [""])[0]
+        except (UnicodeDecodeError, KeyError):
+            self.send_error_page(400, "Invalid format")
+            return
+
+        if not thread_ref or not message:
+            self.send_error_page(400, "Missing required args: thread_ref and message")
+            return
+
+        if not os.path.exists(CLAUDE_BIN):
+            self.send_error_page(500, "Claude CLI not found")
+            return
+
+        try:
+            result = _spawn_delegate_followup_sync(thread_ref, message)
+        except Exception as e:
+            self.send_error_page(500, f"Followup failed: {e}")
+            return
+
+        if "error" in result:
+            self.send_response(409)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return
 
         self.send_response(202)
