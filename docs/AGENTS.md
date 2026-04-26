@@ -1,4 +1,4 @@
-<!-- last-reviewed: 429d89cfb6a0e6f9323dad16214a793c21ed4746 -->
+<!-- last-reviewed: 09e8cdd903fde793990db2f29d53b37d5bf0e45d -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -36,7 +36,7 @@ disinto/                 (code repo)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
-├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md)
+├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md); voice/ (SOUL_VOICE.md — voice agent state machine)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)
 ├── templates/     Issue templates
