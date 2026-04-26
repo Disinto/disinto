@@ -11,12 +11,14 @@ Scope:
       (shared with /chat/* — same OAuth session cookie gate, #709).
     * For each accepted browser connection, open a Gemini Live session
       loaded with docs/voice/SOUL_VOICE.md as the system prompt.
-    * Register four tools (see SOUL_VOICE.md for routing rules):
+    * Register six tools (see SOUL_VOICE.md for routing rules):
       - `factory_state(section?)` — fast-path snapshot read, <200ms.
       - `narrate(question)` — fast-path prose summary via local llama, ~1s.
       - `think(query)` — full claude-p reasoning, 5–10s.
       - `delegate(query, context?)` — fire-and-forget detached claude-p,
         returns task-id immediately; result lands in threads store.
+      - `check_inbox(min_priority?)` — read prioritized inbox items.
+      - `ack_inbox(item_id, action)` — acknowledge an inbox item.
     * Proxy audio frames (opaque binary) between the browser and Gemini
       Live in both directions.
 
@@ -124,6 +126,18 @@ NARRATE_SH = os.environ.get(
 # Timeouts for fast-path skills (seconds). Much tighter than think.
 FACTORY_STATE_TIMEOUT = int(os.environ.get("VOICE_FACTORY_STATE_TIMEOUT_SECS", "10"))
 NARRATE_TIMEOUT = int(os.environ.get("VOICE_NARRATE_TIMEOUT_SECS", "15"))
+CHECK_INBOX_TIMEOUT = int(os.environ.get("VOICE_CHECK_INBOX_TIMEOUT_SECS", "10"))
+ACK_INBOX_TIMEOUT = int(os.environ.get("VOICE_ACK_INBOX_TIMEOUT_SECS", "10"))
+
+# Inbox skill scripts.
+CHECK_INBOX_SH = os.environ.get(
+    "CHECK_INBOX_SH",
+    os.path.join(CHAT_SKILLS_DIR, "check-inbox", "check-inbox.sh"),
+)
+ACK_INBOX_SH = os.environ.get(
+    "ACK_INBOX_SH",
+    os.path.join(CHAT_SKILLS_DIR, "ack-inbox", "ack-inbox.sh"),
+)
 
 # Threads root — where delegate task state lands.
 THREADS_ROOT = os.environ.get("VOICE_THREADS_ROOT", "/var/lib/disinto/threads")
@@ -330,6 +344,48 @@ DELEGATE_TOOL_DECLARATION = {
             },
         },
         "required": ["query"],
+    },
+}
+
+
+# ── `check_inbox` tool — read prioritized inbox items ─────────────────────────
+
+CHECK_INBOX_TOOL_DECLARATION = {
+    "name": "check_inbox",
+    "description": (
+        "Read prioritized unread inbox items. Call when the user shows "
+        "readiness for a context switch (see SOUL_VOICE.md). Returns "
+        "empty if nothing to surface."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "min_priority": {
+                "type": "string",
+                "enum": ["P0", "P1", "P2"],
+                "description": "Optional minimum priority. Defaults to P2 (all).",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+# ── `ack_inbox` tool — acknowledge an inbox item ─────────────────────────────
+
+ACK_INBOX_TOOL_DECLARATION = {
+    "name": "ack_inbox",
+    "description": (
+        "Acknowledge an inbox item the user has acted on, dismissed, or "
+        "wants to defer."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["item_id", "action"],
+        "properties": {
+            "item_id": {"type": "string"},
+            "action":  {"type": "string", "enum": ["dismiss", "accept", "snooze"]},
+        },
     },
 }
 
@@ -606,6 +662,94 @@ async def _run_narrate(question):
         text = "I don't have a narrated answer for that yet."
 
     _log(f"narrate: ok ({len(text)} chars)")
+    return text
+
+
+async def _run_check_inbox(min_priority=None):
+    """Run check-inbox.sh and return the plain-text output."""
+    if not os.path.isfile(CHECK_INBOX_SH):
+        return "The check-inbox skill is unavailable: script not found."
+
+    args = [CHECK_INBOX_SH]
+    if min_priority:
+        args.extend(["--min-priority", min_priority])
+
+    _log(f"check_inbox: spawn {CHECK_INBOX_SH}{' ' + min_priority if min_priority else ''}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The check-inbox skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=CHECK_INBOX_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return "The check-inbox call timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log(f"check_inbox: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The check-inbox call returned an error. Try again in a moment."
+
+    text = stdout.strip()
+    if not text:
+        text = "Nothing to surface right now."
+
+    _log(f"check_inbox: ok ({len(text)} chars)")
+    return text
+
+
+async def _run_ack_inbox(item_id, action):
+    """Run ack-inbox.sh and return the plain-text output."""
+    if not os.path.isfile(ACK_INBOX_SH):
+        return "The ack-inbox skill is unavailable: script not found."
+
+    _log(f"ack_inbox: spawn {ACK_INBOX_SH} item_id={item_id} action={action}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ACK_INBOX_SH, item_id, action,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The ack-inbox skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=ACK_INBOX_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return "The ack-inbox call timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log(f"ack_inbox: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The ack-inbox call returned an error. Try again in a moment."
+
+    text = stdout.strip()
+    if not text:
+        text = "Item acknowledged."
+
+    _log(f"ack_inbox: ok ({len(text)} chars)")
     return text
 
 
@@ -903,6 +1047,29 @@ class VoiceSession:
                     "I'll let you know when it's done."
                 )
 
+            elif name == "check_inbox":
+                min_priority = None
+                if isinstance(args, dict):
+                    min_priority = str(args.get("min_priority", "")).strip() or None
+                result_text = await _run_check_inbox(min_priority)
+
+            elif name == "ack_inbox":
+                item_id = ""
+                action = ""
+                if isinstance(args, dict):
+                    item_id = str(args.get("item_id", "")).strip()
+                    action = str(args.get("action", "")).strip()
+                if not item_id or action not in ("dismiss", "accept", "snooze"):
+                    function_responses.append(genai_types.FunctionResponse(
+                        id=call_id,
+                        name=name,
+                        response={
+                            "error": "missing required args: item_id and action (dismiss|accept|snooze)",
+                        },
+                    ))
+                    continue
+                result_text = await _run_ack_inbox(item_id, action)
+
             else:
                 _log(f"unknown tool call name={name!r} — returning error")
                 function_responses.append(genai_types.FunctionResponse(
@@ -948,6 +1115,8 @@ class VoiceSession:
                     genai_types.FunctionDeclaration(**NARRATE_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**THINK_TOOL_DECLARATION),
                     genai_types.FunctionDeclaration(**DELEGATE_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**CHECK_INBOX_TOOL_DECLARATION),
+                    genai_types.FunctionDeclaration(**ACK_INBOX_TOOL_DECLARATION),
                 ],
             )],
         )
