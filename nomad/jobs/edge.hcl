@@ -466,6 +466,13 @@ EOT
         command = "/opt/disinto/bin/snapshot-daemon.sh"
       }
 
+      # RW mount so the daemon can write state.json atomically.
+      volume_mount {
+        volume      = "snapshot-state"
+        destination = "/var/lib/disinto/snapshot"
+        read_only   = false
+      }
+
       # ── Collector secrets (env = true) ────────────────────────────────
       # NOMAD_TOKEN and FACTORY_FORGE_PAT come from the same Vault KV
       # paths the caddy task already uses — no new paths needed.
@@ -480,7 +487,7 @@ EOT
 FACTORY_FORGE_PAT={{ .Data.data.forge_pat }}
 NOMAD_TOKEN={{ .Data.data.nomad_token }}
 {{- end }}
-NOMAD_ADDR={{ env "NOMAD_ADDR" }}
+NOMAD_ADDR=http://localhost:4646
 FACTORY_ROOT=/opt/disinto
 EOT
       }
