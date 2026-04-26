@@ -19,7 +19,10 @@ set -euo pipefail
 
 SNAPSHOT_INTERVAL_SECS="${SNAPSHOT_INTERVAL_SECS:-5}"
 SNAPSHOT_PATH="${SNAPSHOT_PATH:-/var/lib/disinto/snapshot/state.json}"
+export SNAPSHOT_PATH
 SNAPSHOT_DIR="$(dirname "$SNAPSHOT_PATH")"
+
+SNAPSHOT_COLLECTOR_TIMEOUT_SECS="${SNAPSHOT_COLLECTOR_TIMEOUT_SECS:-3}"
 
 # Ensure output directory exists.
 mkdir -p "$SNAPSHOT_DIR"
@@ -53,17 +56,49 @@ write_tick() {
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 }
 
+# ── Collector runner ──────────────────────────────────────────────────────────
+
+run_collector() {
+  local script="$1"
+  if [ ! -f "$script" ]; then
+    return 0
+  fi
+  if [ ! -x "$script" ]; then
+    return 0
+  fi
+  if ! timeout "${SNAPSHOT_COLLECTOR_TIMEOUT_SECS}" "$script" 2>>"$daemon_stderr_log"; then
+    log "collector $(basename "$script") failed (continuing)"
+  fi
+}
+
 # Main loop.
 log() {
   printf '[%s] snapshot: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
+daemon_stderr_log="$(mktemp "${SNAPSHOT_DIR}/snapshot-daemon.stderr.XXXXXX")"
+
 log "starting — interval=${SNAPSHOT_INTERVAL_SECS}s path=${SNAPSHOT_PATH}"
+
+# Warn once at startup if collectors are missing.
+for collector in snapshot-nomad.sh snapshot-forge.sh snapshot-agents.sh snapshot-inbox.sh; do
+  collector_path="$(dirname "$0")/$collector"
+  if [ ! -f "$collector_path" ]; then
+    log "collector $collector not found — skipping"
+  fi
+done
 
 # Write the initial tick immediately so a reader never races the loop.
 write_tick
 
 while true; do
   sleep "$SNAPSHOT_INTERVAL_SECS"
+
+  # Run collectors in series (concurrent would race the atomic-mv write).
+  run_collector "$(dirname "$0")/snapshot-nomad.sh"
+  run_collector "$(dirname "$0")/snapshot-forge.sh"
+  run_collector "$(dirname "$0")/snapshot-agents.sh"
+  run_collector "$(dirname "$0")/snapshot-inbox.sh"
+
   write_tick
 done
