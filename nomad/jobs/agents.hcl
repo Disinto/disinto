@@ -128,6 +128,7 @@ job "agents" {
         PROJECT_REPO_ROOT  = "/home/agent/repos/project"
         CLAUDE_TIMEOUT     = "7200"
         CLAUDE_MAX_TURNS   = "60"
+        GARDENER_INTERVAL  = "3600"
 
         # llama-specific Claude Code tuning
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
