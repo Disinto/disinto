@@ -15,6 +15,8 @@ Routes:
     GET /threads/<id>        -> thread detail JSON (session required)
     GET /threads/<id>/stream -> WebSocket upgrade, tails stream.jsonl (session required)
     GET /factory-state       -> backlog/in_progress counts from thread store (session required)
+    POST /chat/check-inbox   -> read prioritized inbox items (session required)
+    POST /chat/ack-inbox     -> acknowledge an inbox item (session required)
 
 OAuth flow:
     1. User hits any /chat/* route without a valid session cookie -> 302 /chat/login
@@ -86,6 +88,24 @@ SOUL_THINK_PATH = os.environ.get(
 
 # Threads root — where delegate task state lands.
 THREADS_ROOT = os.environ.get("CHAT_THREADS_ROOT", "/var/lib/disinto/threads")
+
+# Fast-path skills live in the chat-skills tree inside the container.
+CHAT_SKILLS_DIR = os.environ.get(
+    "CHAT_SKILLS_DIR", os.path.join(WORKSPACE_DIR, "docker/edge/chat-skills"))
+
+# Inbox skill scripts.
+CHECK_INBOX_SH = os.environ.get(
+    "CHECK_INBOX_SH",
+    os.path.join(CHAT_SKILLS_DIR, "check-inbox", "check-inbox.sh"),
+)
+ACK_INBOX_SH = os.environ.get(
+    "ACK_INBOX_SH",
+    os.path.join(CHAT_SKILLS_DIR, "ack-inbox", "ack-inbox.sh"),
+)
+
+# Timeouts for inbox skills (seconds).
+CHECK_INBOX_TIMEOUT = int(os.environ.get("CHAT_CHECK_INBOX_TIMEOUT_SECS", "10"))
+ACK_INBOX_TIMEOUT = int(os.environ.get("CHAT_ACK_INBOX_TIMEOUT_SECS", "10"))
 
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
@@ -432,6 +452,48 @@ DELEGATE_TOOL_DECLARATION = {
 }
 
 
+# ── `check_inbox` tool — read prioritized inbox items ─────────────────────────
+
+CHECK_INBOX_TOOL_DECLARATION = {
+    "name": "check_inbox",
+    "description": (
+        "Read prioritized unread inbox items. Call when the user shows "
+        "readiness for a context switch (see SOUL_VOICE.md). Returns "
+        "empty if nothing to surface."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "min_priority": {
+                "type": "string",
+                "enum": ["P0", "P1", "P2"],
+                "description": "Optional minimum priority. Defaults to P2 (all).",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+# ── `ack_inbox` tool — acknowledge an inbox item ─────────────────────────────
+
+ACK_INBOX_TOOL_DECLARATION = {
+    "name": "ack_inbox",
+    "description": (
+        "Acknowledge an inbox item the user has acted on, dismissed, or "
+        "wants to defer."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["item_id", "action"],
+        "properties": {
+            "item_id": {"type": "string"},
+            "action":  {"type": "string", "enum": ["dismiss", "accept", "snooze"]},
+        },
+    },
+}
+
+
 def _ensure_threads_dir(task_id):
     """Create the thread directory and return its path."""
     thread_dir = os.path.join(THREADS_ROOT, task_id)
@@ -564,6 +626,94 @@ def _log_chat(msg):
     """Log a message to stderr with timestamp."""
     print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] chat: {msg}",
           file=sys.stderr, flush=True)
+
+
+# =============================================================================
+# Inbox skill helpers
+# =============================================================================
+
+def _run_check_inbox(min_priority=None):
+    """Run check-inbox.sh and return the plain-text output."""
+    if not os.path.isfile(CHECK_INBOX_SH):
+        return "The check-inbox skill is unavailable: script not found."
+
+    args = [CHECK_INBOX_SH]
+    if min_priority:
+        args.append(min_priority)
+
+    _log_chat(f"check_inbox: spawn {CHECK_INBOX_SH}{' ' + min_priority if min_priority else ''}")
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The check-inbox skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = proc.communicate(timeout=CHECK_INBOX_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return "The check-inbox call timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log_chat(f"check_inbox: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The check-inbox call returned an error. Try again in a moment."
+
+    text = stdout.strip()
+    if not text:
+        text = "Nothing to surface right now."
+
+    _log_chat(f"check_inbox: ok ({len(text)} chars)")
+    return text
+
+
+def _run_ack_inbox(item_id, action):
+    """Run ack-inbox.sh and return the plain-text output."""
+    if not os.path.isfile(ACK_INBOX_SH):
+        return "The ack-inbox skill is unavailable: script not found."
+
+    _log_chat(f"ack_inbox: spawn {ACK_INBOX_SH} item_id={item_id} action={action}")
+
+    try:
+        proc = subprocess.Popen(
+            [ACK_INBOX_SH, item_id, action],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
+            preexec_fn=_drop_to_agent,
+        )
+    except FileNotFoundError:
+        return "The ack-inbox skill is unavailable: script not found."
+
+    try:
+        stdout_b, stderr_b = proc.communicate(timeout=ACK_INBOX_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return "The ack-inbox call timed out."
+
+    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+
+    if proc.returncode != 0:
+        _log_chat(f"ack_inbox: exit={proc.returncode} stderr={stderr[:400]}")
+        return "The ack-inbox call returned an error. Try again in a moment."
+
+    text = stdout.strip()
+    if not text:
+        text = "Item acknowledged."
+
+    _log_chat(f"ack_inbox: ok ({len(text)} chars)")
+    return text
 
 
 # =============================================================================
@@ -1253,6 +1403,26 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_delegate(user)
             return
 
+        # Check-inbox endpoint (session required)
+        if path == "/chat/check-inbox":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_check_inbox(user)
+            return
+
+        # Ack-inbox endpoint (session required)
+        if path == "/chat/ack-inbox":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_ack_inbox(user)
+            return
+
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
 
@@ -1606,6 +1776,58 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+
+    # =======================================================================
+    # Inbox Skill Handlers
+    # =======================================================================
+
+    def handle_check_inbox(self, user):
+        """Handle check-inbox requests."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        min_priority = None
+        try:
+            if body:
+                body_str = body.decode("utf-8")
+                params = parse_qs(body_str)
+                min_priority = params.get("min_priority", [None])[0]
+        except (UnicodeDecodeError, KeyError):
+            pass
+
+        result_text = _run_check_inbox(min_priority)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps({"result": result_text}, ensure_ascii=False).encode("utf-8"))
+
+    def handle_ack_inbox(self, user):
+        """Handle ack-inbox requests."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            self.send_error_page(400, "No body provided")
+            return
+
+        body = self.rfile.read(content_length)
+        try:
+            body_str = body.decode("utf-8")
+            params = parse_qs(body_str)
+            item_id = params.get("item_id", [""])[0]
+            action = params.get("action", [""])[0]
+        except (UnicodeDecodeError, KeyError):
+            self.send_error_page(400, "Invalid format")
+            return
+
+        if not item_id or action not in ("dismiss", "accept", "snooze"):
+            self.send_error_page(400, "Missing or invalid args: item_id and action (dismiss|accept|snooze)")
+            return
+
+        result_text = _run_ack_inbox(item_id, action)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps({"result": result_text}, ensure_ascii=False).encode("utf-8"))
 
     # =======================================================================
     # Conversation History Handlers
