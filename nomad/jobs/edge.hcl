@@ -96,6 +96,14 @@ job "edge" {
       read_only = false
     }
 
+    # inbox-state: per-item sentinel directories (.acked, .shown, .snoozed).
+    # RW for snapshot-daemon (writes sentinels); RO for caddy/consumers.
+    volume "inbox-state" {
+      type      = "host"
+      source    = "inbox-state"
+      read_only = false
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -183,6 +191,14 @@ job "edge" {
       volume_mount {
         volume      = "threads-state"
         destination = "/var/lib/disinto/threads"
+        read_only   = true
+      }
+
+      # Mount inbox-state so the caddy task can read sentinel state
+      # (.acked, .shown, .snoozed) for inbox filtering.
+      volume_mount {
+        volume      = "inbox-state"
+        destination = "/var/lib/disinto/inbox"
         read_only   = true
       }
 
@@ -472,6 +488,10 @@ EOT
       # /var/lib/disinto/snapshot via the existing snapshot-state volume_mount.
       env {
         SNAPSHOT_PATH = "/srv/disinto/snapshot-state/state.json"
+        # Snapshot daemon writes sentinels to the host path directly
+        # (raw_exec runs on the host). caddy task reads via volume_mount
+        # at /var/lib/disinto/inbox (RO), which maps to this same host path.
+        INBOX_ROOT    = "/srv/disinto/inbox-state"
       }
 
       # ── Collector secrets (env = true) ────────────────────────────────

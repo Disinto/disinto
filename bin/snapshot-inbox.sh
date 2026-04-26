@@ -7,15 +7,29 @@
 # sprint draft, want me to read it?").
 #
 # Scans:
-#   - action-vault/ for files newer than action-vault/.last-ack sentinel.
+#   - action-vault/ for new item files.
 #   - Forge issues labeled prediction/unreviewed (label id 11).
 #   - Forge issues opened in the last 24h by automation accounts.
 #   - Completed delegate threads from the last 24h (not yet acked).
 #
-# Output under "inbox" key in state.json:
-#   {"inbox":{"items":[...],"unread_count":N}}
+# Sentinel filtering (unified per-id sentinels):
+#   /var/lib/disinto/inbox/.acked/<id>     — item acknowledged, filtered out
+#   /var/lib/disinto/inbox/.shown/<id>     — item shown (still surfaces on
+#                                            explicit query, not filtered)
+#   /var/lib/disinto/inbox/.snoozed/<id>   — item snoozed, filtered while
+#                                            mtime > now (sentinel mtime
+#                                            is "now + duration")
 #
-# Cap: most recent 20 items (sorted by timestamp descending).
+# Priority levels:
+#   P0 = critical (incidents, security, deployment failures)
+#   P1 = important (review-blocked, sprint-relevant)
+#   P2 = default (all sources omitting priority)
+#
+# Output under "inbox" key in state.json:
+#   {"inbox":{"items":[...],"total_count":N,"unshown_count":N}}
+#
+# Items sorted by priority (P0 first), then timestamp descending.
+# Cap: most recent 20 items after filtering.
 #
 # Environment:
 #   FACTORY_FORGE_PAT  — Forge admin PAT (required for forge queries)
@@ -25,9 +39,7 @@
 #   FORGE_TIMEOUT      — per-call timeout in seconds (default 15)
 #   VAULT_DIR          — action-vault dir relative to repo root (default action-vault)
 #   THREADS_ROOT       — parent directory for thread stores (default /var/lib/disinto/threads)
-#
-# .last-ack sentinel: updated by a future ack skill. Until then, everything
-# is treated as unread.
+#   INBOX_ROOT         — inbox sentinel root (default /var/lib/disinto/inbox)
 # =============================================================================
 set -euo pipefail
 
@@ -39,6 +51,36 @@ FORGE_TIMEOUT="${FORGE_TIMEOUT:-15}"
 VAULT_DIR="${VAULT_DIR:-action-vault}"
 
 readonly PREDICTION_LABEL_ID=11
+
+# ── Inbox sentinels ──────────────────────────────────────────────────────────
+
+INBOX_ROOT="${INBOX_ROOT:-/var/lib/disinto/inbox}"
+readonly ACKED_DIR="${INBOX_ROOT}/.acked"
+readonly SHOWN_DIR="${INBOX_ROOT}/.shown"
+readonly SNOOZED_DIR="${INBOX_ROOT}/.snoozed"
+
+# ── Sentinel helpers ─────────────────────────────────────────────────────────
+
+# Returns 0 (true) if the item should be filtered out.
+item_filtered() {
+  local id="$1"
+
+  # Acked: always filter out
+  if [ -f "${ACKED_DIR}/${id}" ]; then
+    return 0
+  fi
+
+  # Snoozed: filter out while mtime > now (sentinel mtime is "now + duration")
+  local snooze_file="${SNOOZED_DIR}/${id}"
+  if [ -f "$snooze_file" ]; then
+    local snooze_mtime now_epoch
+    snooze_mtime="$(stat -c '%Y' "$snooze_file" 2>/dev/null)" || return 0
+    now_epoch="$(date +%s)"
+    [ "$snooze_mtime" -gt "$now_epoch" ] && return 0
+  fi
+
+  return 1
+}
 
 log() {
   printf '[%s] snapshot-inbox: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
@@ -75,9 +117,7 @@ forge_get() {
 
 # ── Scan action-vault/ ──────────────────────────────────────────────────────
 
-# Collects files from action-vault/ newer than .last-ack sentinel.
-# If .last-ack doesn't exist, all files are included.
-# Returns JSON array of inbox items.
+# Collects files from action-vault/ and returns JSON array of inbox items.
 scan_action_vault() {
   local vault_path
   vault_path="$(pwd)/${VAULT_DIR}"
@@ -87,29 +127,15 @@ scan_action_vault() {
     return
   fi
 
-  local last_ack
-  last_ack="${vault_path}/.last-ack"
-  local cutoff_epoch=""
-  if [ -f "$last_ack" ]; then
-    cutoff_epoch="$(date -d "@$(cat "$last_ack" 2>/dev/null)" +%s 2>/dev/null)" || true
-  fi
-
   local items="[]"
 
-  # Find files (not directories, not the sentinel itself), skip hidden files
+  # Find files (not directories, not hidden), skip sentinel files
   while IFS= read -r -d '' filepath; do
     local basename
     basename="$(basename "$filepath")"
 
-    # Skip hidden files (includes .last-ack sentinel)
+    # Skip hidden files
     [[ "$basename" == .* ]] && continue
-
-    # Skip if newer-than sentinel and sentinel exists
-    if [ -n "$cutoff_epoch" ]; then
-      local file_epoch
-      file_epoch="$(stat -c '%Y' "$filepath" 2>/dev/null)" || continue
-      [ "$file_epoch" -le "$cutoff_epoch" ] && continue
-    fi
 
     # Get file modification timestamp (ISO 8601 UTC)
     local file_ts
@@ -157,8 +183,9 @@ scan_action_vault() {
       --arg path "$rel_path" \
       --arg title "$title" \
       --arg author "$author" \
+      --arg priority "P2" \
       --arg ts "$file_ts" \
-      '{id: $id, kind: $kind, path: $path, title: $title, author: $author, ts: $ts}')
+      '{id: $id, kind: $kind, path: $path, title: $title, author: $author, priority: $priority, ts: $ts}')
 
     items="$(printf '%s' "$items" | jq -c --argjson item "$item" '. + [$item]')"
   done < <(find "$vault_path" -maxdepth 2 -type f -print0 2>/dev/null | sort -z -r)
@@ -193,6 +220,7 @@ scan_prediction_issues() {
           kind: "prediction",
           number: .number,
           title: .title,
+          priority: "P2",
           ts: .created_at
         }
     ]
@@ -234,6 +262,7 @@ scan_automation_issues() {
           number: .number,
           title: .title,
           author: .user.login,
+          priority: "P2",
           ts: .created_at
         }
     ]
@@ -249,7 +278,7 @@ scan_automation_issues() {
 #   {"id":"del-abc123","query":"...","started":"...","status":"completed",
 #    "completed":"...","result_summary":"..."}
 #
-# Ack marker: <THREADS_ROOT>/<task-id>/.acked
+# Ack marker: /var/lib/disinto/inbox/.acked/<task-id> (unified sentinel)
 scan_completed_threads() {
   local threads_root="${THREADS_ROOT:-/var/lib/disinto/threads}"
 
@@ -275,9 +304,6 @@ scan_completed_threads() {
 
     # Only completed threads
     [ "$status" = "completed" ] || continue
-
-    # Skip if acked
-    [ -f "$thread_dir/.acked" ] && continue
 
     # Check age — use completed timestamp if available, fall back to started
     local ts_epoch
@@ -311,6 +337,14 @@ scan_completed_threads() {
       ts="$(date -u -d "@$ts_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || ts=""
     fi
 
+    # Derive priority from meta.json if present, default P2
+    local priority="P2"
+    local meta_priority
+    meta_priority="$(jq -r '.priority // empty' "$meta_path" 2>/dev/null)" || meta_priority=""
+    case "$meta_priority" in
+      P0|P1|P2) priority="$meta_priority" ;;
+    esac
+
     local item
     item=$(jq -n -c \
       --arg id "thread-del-${task_id#del-}" \
@@ -318,8 +352,9 @@ scan_completed_threads() {
       --arg task_id "$task_id" \
       --arg title "$title" \
       --arg summary "$summary" \
+      --arg priority "$priority" \
       --arg ts "$ts" \
-      '{id: $id, kind: $kind, task_id: $task_id, title: $title, summary: $summary, ts: $ts}')
+      '{id: $id, kind: $kind, task_id: $task_id, title: $title, summary: $summary, priority: $priority, ts: $ts}')
 
     items="$(printf '%s' "$items" | jq -c --argjson item "$item" '. + [$item]')"
   done
@@ -336,16 +371,50 @@ merge_inbox() {
   automation_items="$(scan_automation_issues)"
   thread_items="$(scan_completed_threads)"
 
-  # Merge all items, sort by timestamp descending, cap at 20
-  jq -cn --argjson vault "$vault_items" \
-        --argjson predictions "$prediction_items" \
-        --argjson automation "$automation_items" \
-        --argjson threads "$thread_items" '
-    ($vault + $predictions + $automation + $threads)
-    | sort_by(.ts) | reverse
-    | .[:20]
-    | {items: ., unread_count: length}
-  ' 2>/dev/null || printf '{"items":[],"unread_count":0}'
+  # Merge all items into a temp file (one JSON object per line)
+  local merged_file
+  merged_file="$(mktemp_safe /tmp/snapshot-inbox-merged.XXXXXX)"
+  printf '%s' "[$vault_items,$prediction_items,$automation_items,$thread_items]" \
+    | jq -c '.[]' > "$merged_file" 2>/dev/null || true
+
+  # Filter sentinels in bash (jq can't access filesystem)
+  local filtered_file shown_ids_file
+  filtered_file="$(mktemp_safe /tmp/snapshot-inbox-filtered.XXXXXX)"
+  shown_ids_file="$(mktemp_safe /tmp/snapshot-inbox-shown.XXXXXX)"
+  while IFS= read -r line; do
+    local item_id
+    item_id="$(printf '%s' "$line" | jq -r '.id // empty' 2>/dev/null)" || continue
+    [ -z "$item_id" ] && continue
+    if ! item_filtered "$item_id"; then
+      printf '%s\n' "$line" >> "$filtered_file"
+      # Track shown items (for unshown_count)
+      [ -f "${SHOWN_DIR}/${item_id}" ] && printf '%s\n' "$item_id" >> "$shown_ids_file"
+    fi
+  done < "$merged_file"
+
+  # Sort by priority (P0 first), then timestamp desc; cap at 20
+  local shown_ids_json="[]"
+  if [ -s "$shown_ids_file" ]; then
+    shown_ids_json="$(jq -Rn '[inputs | select(length > 0)]' < "$shown_ids_file")"
+  fi
+  jq -cn --slurpfile items <(jq -s '.' "$filtered_file") --argjson shown "$shown_ids_json" '
+    # Priority sort key: P0=0, P1=1, P2=2
+    def prio_key:
+      if   . == "P0" then 0
+      elif . == "P1" then 1
+      else 2
+      end;
+
+    ($items[0]
+      | sort_by([(2 - (.priority | prio_key)), .ts]) | reverse
+      | .[:20]
+      | {
+          items: .,
+          total_count: length,
+          unshown_count: ([.[] | select(.id as $id | ($shown | index($id)) == null)] | length)
+        }
+    )
+  ' 2>/dev/null || printf '{"items":[],"total_count":0,"unshown_count":0}'
 }
 
 # ── Merge into state.json ─────────────────────────────────────────────────────
@@ -355,6 +424,9 @@ main() {
     log "no state.json found — skipping (daemon not yet initialized)"
     return 0
   fi
+
+  # Ensure sentinel directories exist (idempotent, first-call setup)
+  mkdir -p "$ACKED_DIR" "$SHOWN_DIR" "$SNOOZED_DIR"
 
   local inbox_data
   inbox_data="$(merge_inbox)"
@@ -366,9 +438,10 @@ main() {
   jq -c --argjson inbox "$inbox_data" '.inbox = $inbox' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
-  local unread_count
-  unread_count=$(printf '%s' "$inbox_data" | jq -r '.unread_count')
-  log "inbox snapshot merged — ${unread_count} unread item(s)"
+  local total_count unshown_count
+  total_count=$(printf '%s' "$inbox_data" | jq -r '.total_count')
+  unshown_count=$(printf '%s' "$inbox_data" | jq -r '.unshown_count')
+  log "inbox snapshot merged — ${unshown_count} unshown / ${total_count} total item(s)"
 }
 
 main "$@"
