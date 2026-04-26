@@ -11,6 +11,9 @@ Routes:
     POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
     POST /chat/delegate      -> fire-and-forget: spawns detached claude -p, returns task-id (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
+    GET /threads/<id>        -> thread detail JSON (session required)
+    GET /threads/<id>/stream -> WebSocket upgrade, tails stream.jsonl (session required)
+    GET /factory-state       -> backlog/in_progress counts from thread store (session required)
 
 OAuth flow:
     1. User hits any /chat/* route without a valid session cookie -> 302 /chat/login
@@ -154,6 +157,7 @@ CHAT_HISTORY_DIR = os.environ.get("CHAT_HISTORY_DIR", "/var/lib/chat/history")
 
 # Regex for valid conversation_id (12-char hex, no slashes)
 CONVERSATION_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # In-memory session store: token -> {"user": str, "expires": float}
 _sessions = {}
@@ -1185,8 +1189,14 @@ class ChatHandler(BaseHTTPRequestHandler):
             if "/" in task_id:
                 # e.g. /threads/<task-id>/stream → handled below
                 if task_id.endswith("/stream"):
-                    self.handle_thread_stream(task_id[:-len("/stream")])
+                    task_id = task_id[:-len("/stream")]
+                else:
+                    # Slash in path but not /stream suffix → 404
+                    self.send_error_page(404, "Not found")
                     return
+            if not TASK_ID_PATTERN.match(task_id):
+                self.send_error_page(404, "Not found")
+                return
             self.handle_thread_detail(task_id)
             return
 
@@ -1674,8 +1684,8 @@ class ChatHandler(BaseHTTPRequestHandler):
         if conv_id is not None and not _validate_conversation_id(conv_id):
             conv_id = None
 
-        # Create message queue for this user
-        _websocket_queues[user] = asyncio.Queue()
+        # Create message queue for this user (preserve existing to avoid clobbering concurrent connections)
+        _websocket_queues.setdefault(user, asyncio.Queue())
 
         # Get WebSocket upgrade headers from the HTTP request
         sec_websocket_key = self.headers.get("Sec-WebSocket-Key", "")
@@ -1847,7 +1857,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
         conv_id = params.get("conversation_id", [None])[0]
 
-        _websocket_queues[user] = asyncio.Queue()
+        _websocket_queues.setdefault(user, asyncio.Queue())
 
         sec_websocket_key = self.headers.get("Sec-WebSocket-Key", "")
         sec_websocket_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
@@ -1936,7 +1946,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                     if status == "running":
                         in_progress += 1
                         current_worker = entry
-                    else:
+                    elif status in ("pending", "queued"):
                         backlog += 1
                 except (json.JSONDecodeError, OSError):
                     continue
@@ -1951,6 +1961,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             "snapshot": state,
         }, ensure_ascii=False).encode("utf-8"))
 
+def main():
     server_address = (HOST, PORT)
     httpd = HTTPServer(server_address, ChatHandler)
     print(f"Starting disinto-chat server on {HOST}:{PORT}", file=sys.stderr)
