@@ -432,6 +432,7 @@ DELEGATE_TOOL_DECLARATION = {
     ),
     "parameters": {
         "type": "object",
+        "required": ["query"],
         "properties": {
             "query": {
                 "type": "string",
@@ -446,8 +447,14 @@ DELEGATE_TOOL_DECLARATION = {
                     "Claude session."
                 ),
             },
+            "priority": {
+                "type": "string",
+                "enum": ["P0", "P1", "P2"],
+                "description": (
+                    "Inbox priority for the completion notification. Default P2."
+                ),
+            },
         },
-        "required": ["query"],
     },
 }
 
@@ -525,7 +532,7 @@ def _update_meta(task_id, updates):
     _write_meta(task_id, meta)
 
 
-def _spawn_delegate_sync(query, context=""):
+def _spawn_delegate_sync(query, context="", priority="P2"):
     """Synchronous fire-and-forget: spawn a detached claude -p session.
 
     Returns a dict with ``task_id`` and ``started_at`` immediately.
@@ -544,6 +551,7 @@ def _spawn_delegate_sync(query, context=""):
     _write_meta(task_id, {
         "id": task_id,
         "query": query,
+        "priority": priority,
         "started": started_at,
         "status": "running",
         "completed": None,
@@ -1867,6 +1875,9 @@ class ChatHandler(BaseHTTPRequestHandler):
             params = parse_qs(body_str)
             query = params.get("query", [""])[0]
             context = params.get("context", [""])[0]
+            priority = params.get("priority", ["P2"])[0]
+            if priority not in ("P0", "P1", "P2"):
+                priority = "P2"
         except (UnicodeDecodeError, KeyError):
             self.send_error_page(400, "Invalid query format")
             return
@@ -1881,7 +1892,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            result = _spawn_delegate_sync(query, context)
+            result = _spawn_delegate_sync(query, context, priority)
         except Exception as e:
             self.send_error_page(500, f"Delegate failed: {e}")
             return

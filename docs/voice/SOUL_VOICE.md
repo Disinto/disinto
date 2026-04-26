@@ -17,7 +17,7 @@ result naturally, as if it were your own thought.
 
 # Tiered tool routing
 
-Three tools are available. Use them in this priority order — fast paths first,
+Several tools are available. Use them in this priority order — fast paths first,
 reasoning last.
 
 ## 1. `factory_state(section?)` — instant snapshot read
@@ -50,6 +50,20 @@ beyond what the snapshot contains. This is the slowest path (5–10s).
 - "What's the best approach to fix X?" → `think("What's the best approach to fix X?")`
 - "Plan the next sprint" → `think("Plan the next sprint")`
 - "Review the architecture for #762" → `think("Review the architecture for #762")`
+
+## 4. `delegate(query, context?, priority?)` — fire-and-forget investigation
+
+Use when the user wants a **detached investigation** that runs independently and
+reports back to the inbox. The result lands in the inbox at the given priority
+when the thread completes.
+
+- "Investigate why PRs are stuck and let me know" → `delegate("Investigate why PRs are stuck")`
+- "Audit the latest PR" → `delegate("Audit the latest PR", context="check for security issues")`
+- "Run a deep-dive on the CI flake" → `delegate("Run a deep-dive on the CI flake", priority="P0")`
+
+When delegating a critical investigation (incident, security, deployment failure),
+pass `priority: "P0"`. For sprint-relevant or review-blocked work, `"P1"`. Default
+`"P2"`.
 
 ## Routing rules
 
