@@ -1167,12 +1167,14 @@ _disinto_init_nomad() {
           fi
           ;;
         agents)
-          # Seed project-repos host volume with a default project TOML
-          # so the agents container finds a real .toml at
-          # /home/agent/repos/_factory/projects/ (#574)
-          local projects_dir="/srv/disinto/project-repos/_factory/projects"
+          # Seed factory-projects host volume with a default project TOML so
+          # the agents container finds a real .toml at the path that the
+          # entrypoint reads from (#574, #794). The factory-projects volume
+          # is the single source of truth for per-env project config and is
+          # decoupled from the baked image and from project-repos.
+          local projects_dir="/srv/disinto/projects"
           if [ ! -f "${projects_dir}/${project_name}.toml" ]; then
-            echo "[agents] seeding project-repos volume with default config..."
+            echo "[agents] seeding factory-projects volume with default config..."
             generate_default_toml "$project_name" "$forge_url" "${projects_dir}/${project_name}.toml"
           fi
           ;;

@@ -61,6 +61,16 @@ job "agents" {
       read_only = true
     }
 
+    # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
+    # the path bootstrap_factory_repo already reads from, so per-env config
+    # changes do not require an image rebuild. Backed by /srv/disinto/projects/
+    # on the host (see nomad/client.hcl).
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
     # Conservative restart — fail fast to the scheduler.
     restart {
       attempts = 3
@@ -111,6 +121,15 @@ job "agents" {
         read_only   = true
       }
 
+      # factory-projects: surfaces /srv/disinto/projects/ inside the container
+      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
+      # already reads from (#794).
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
+        read_only   = true
+      }
+
       # ── Non-secret env ─────────────────────────────────────────────────────
       # FORGE_URL is rendered from Nomad service discovery in the template
       # block below — the bridge-network netns cannot resolve the `forgejo`
@@ -118,6 +137,10 @@ job "agents" {
       # #567).
       env {
         FORGE_REPO         = "disinto-admin/disinto"
+        # Activate bootstrap_factory_repo so DISINTO_DIR switches to the
+        # live clone and per-env TOMLs from factory-projects are picked up
+        # rather than the stale baked image copy (#794).
+        FACTORY_REPO       = "disinto-admin/disinto"
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"

@@ -74,6 +74,16 @@ job "agents-supervisor-opus" {
       read_only = true
     }
 
+    # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
+    # the path bootstrap_factory_repo already reads from, so per-env config
+    # changes do not require an image rebuild. Backed by /srv/disinto/projects/
+    # on the host (see nomad/client.hcl).
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
     # Conservative restart — fail fast to the scheduler.
     restart {
       attempts = 3
@@ -127,10 +137,23 @@ job "agents-supervisor-opus" {
         # for reading .credentials.json
       }
 
+      # factory-projects: surfaces /srv/disinto/projects/ inside the container
+      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
+      # already reads from (#794).
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
+        read_only   = true
+      }
+
       # ── Non-secret env ─────────────────────────────────────────────────────
       env {
         AGENT_ROLES        = "supervisor"
         FORGE_REPO         = "disinto-admin/disinto"
+        # Activate bootstrap_factory_repo so DISINTO_DIR switches to the
+        # live clone and per-env TOMLs from factory-projects are picked up
+        # rather than the stale baked image copy (#794).
+        FACTORY_REPO       = "disinto-admin/disinto"
         CLAUDE_MODEL       = "claude-opus-4-6"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
