@@ -406,7 +406,7 @@ merge_inbox() {
       end;
 
     ($items[0]
-      | sort_by([(.priority | prio_key), .ts]) | reverse
+      | sort_by([(2 - (.priority | prio_key)), .ts]) | reverse
       | .[:20]
       | {
           items: .,
