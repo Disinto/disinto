@@ -37,6 +37,104 @@
         .state-strip .count { color: #aaa; font-weight: 600; }
         .state-strip .worker { color: #6ecf6e; }
 
+        /* ── Inbox panel ────────────────────────────────────── */
+        #inbox-panel {
+            max-width: 800px;
+            margin: 0.75rem auto 0;
+            padding: 0 1rem;
+        }
+        .inbox-toggle {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: #aaa;
+            user-select: none;
+            transition: border-color 0.15s;
+        }
+        .inbox-toggle:hover { border-color: #444; }
+        .inbox-toggle .count { font-weight: 600; color: #ddd; }
+        .inbox-toggle .chevron { transition: transform 0.2s; font-size: 0.75rem; }
+        .inbox-toggle .chevron.open { transform: rotate(90deg); }
+        .inbox-body {
+            display: none;
+            border: 1px solid #2a2a2a;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            background: #1a1a1a;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .inbox-body.expanded { display: block; }
+        .inbox-item {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid #222;
+        }
+        .inbox-item:last-child { border-bottom: none; }
+        .inbox-item-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.25rem;
+        }
+        .priority-badge {
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .priority-badge.p0 { background: #3a1a1a; color: #e76e6e; }
+        .priority-badge.p1 { background: #3a3a1a; color: #e7d86e; }
+        .priority-badge.p2 { background: #2a2a2a; color: #999; }
+        .inbox-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #e0e0e0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1;
+        }
+        .inbox-summary {
+            font-size: 0.78rem;
+            color: #888;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            margin-bottom: 0.4rem;
+        }
+        .inbox-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .inbox-btn {
+            font-size: 0.72rem;
+            padding: 0.2rem 0.6rem;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: transparent;
+            color: #aaa;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .inbox-btn:hover { background: #2a2a2a; color: #ddd; }
+        .inbox-btn:disabled { opacity: 0.4; cursor: default; }
+        .inbox-empty {
+            padding: 1rem;
+            text-align: center;
+            color: #555;
+            font-size: 0.85rem;
+        }
+
         /* ── Thread list ────────────────────────────────────── */
         #threads-list {
             max-width: 800px;
@@ -167,6 +265,15 @@
         </div>
     </header>
 
+    <!-- ── Inbox panel ──────────────────────────────────────── -->
+    <div id="inbox-panel">
+        <div class="inbox-toggle" id="inbox-toggle">
+            <span>Inbox <span class="count" id="inbox-count">(0)</span></span>
+            <span class="chevron" id="inbox-chevron">&#9654;</span>
+        </div>
+        <div class="inbox-body" id="inbox-body"></div>
+    </div>
+
     <div id="threads-list">
         <div class="empty-state"><p>Loading threads...</p></div>
     </div>
@@ -175,10 +282,17 @@
         // ── State ──────────────────────────────────────────────
         let threads = [];
         let wsMap = {}; // task-id -> WebSocket
+        let inboxItems = [];
+        let inboxExpanded = false;
 
         // ── DOM refs ───────────────────────────────────────────
         const threadsList = document.getElementById('threads-list');
         const stateStrip = document.getElementById('state-strip');
+        const inboxPanel = document.getElementById('inbox-panel');
+        const inboxToggle = document.getElementById('inbox-toggle');
+        const inboxCount = document.getElementById('inbox-count');
+        const inboxBody = document.getElementById('inbox-body');
+        const inboxChevron = document.getElementById('inbox-chevron');
 
         // ── Factory state ──────────────────────────────────────
         async function loadFactoryState() {
@@ -197,6 +311,128 @@
                 // silent
             }
         }
+
+        // ── Inbox panel ────────────────────────────────────────
+        async function loadInbox() {
+            try {
+                const res = await fetch('/inbox');
+                if (!res.ok) return;
+                const data = await res.json();
+                // Only render if list changed
+                const ids = data.map(i => i.id);
+                const oldIds = inboxItems.map(i => i.id);
+                if (JSON.stringify(ids) === JSON.stringify(oldIds)) return;
+                inboxItems = data;
+                renderInbox();
+            } catch {
+                // silent
+            }
+        }
+
+        function renderInbox() {
+            const count = inboxItems.length;
+            inboxCount.textContent = `(${count})`;
+
+            if (count === 0) {
+                inboxBody.innerHTML = '';
+                inboxBody.classList.remove('expanded');
+                inboxChevron.classList.remove('open');
+                inboxExpanded = false;
+                return;
+            }
+
+            const frag = document.createDocumentFragment();
+            inboxItems.forEach(item => {
+                frag.appendChild(buildInboxItem(item));
+            });
+            inboxBody.innerHTML = '';
+            inboxBody.appendChild(frag);
+        }
+
+        function buildInboxItem(item) {
+            const div = document.createElement('div');
+            div.className = 'inbox-item';
+
+            // Header row: priority badge + title
+            const header = document.createElement('div');
+            header.className = 'inbox-item-header';
+
+            const badge = document.createElement('span');
+            const prioClass = 'p' + (item.priority || 'P2').replace('P', '');
+            badge.className = `priority-badge ${prioClass}`;
+            badge.textContent = item.priority || 'P2';
+
+            const title = document.createElement('span');
+            title.className = 'inbox-title';
+            title.textContent = item.title || item.id;
+            title.title = item.title || '';
+
+            header.appendChild(badge);
+            header.appendChild(title);
+            div.appendChild(header);
+
+            // Summary
+            if (item.summary) {
+                const summary = document.createElement('div');
+                summary.className = 'inbox-summary';
+                summary.textContent = truncate(item.summary, 200);
+                div.appendChild(summary);
+            }
+
+            // Actions
+            const actions = document.createElement('div');
+            actions.className = 'inbox-actions';
+
+            const dismissBtn = document.createElement('button');
+            dismissBtn.className = 'inbox-btn';
+            dismissBtn.textContent = 'Dismiss';
+            dismissBtn.addEventListener('click', () => handleInboxAck(item.id, 'dismiss', dismissBtn));
+
+            const snoozeBtn = document.createElement('button');
+            snoozeBtn.className = 'inbox-btn';
+            snoozeBtn.textContent = 'Snooze';
+            snoozeBtn.addEventListener('click', () => handleInboxAck(item.id, 'snooze', snoozeBtn));
+
+            actions.appendChild(dismissBtn);
+            actions.appendChild(snoozeBtn);
+            div.appendChild(actions);
+
+            return div;
+        }
+
+        async function handleInboxAck(itemId, action, btnEl) {
+            // Disable button during request
+            btnEl.disabled = true;
+            btnEl.textContent = '...';
+
+            try {
+                const res = await fetch(`/inbox/${itemId}/ack`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=${encodeURIComponent(action)}`,
+                });
+                if (res.ok) {
+                    // Remove item from list immediately for responsiveness
+                    const idx = inboxItems.findIndex(i => i.id === itemId);
+                    if (idx !== -1) {
+                        inboxItems.splice(idx, 1);
+                        renderInbox();
+                    }
+                }
+            } catch {
+                // silent
+            } finally {
+                btnEl.disabled = false;
+                btnEl.textContent = action === 'dismiss' ? 'Dismiss' : 'Snooze';
+            }
+        }
+
+        // Toggle inbox panel open/closed
+        inboxToggle.addEventListener('click', () => {
+            inboxExpanded = !inboxExpanded;
+            inboxBody.classList.toggle('expanded', inboxExpanded);
+            inboxChevron.classList.toggle('open', inboxExpanded);
+        });
 
         // ── Thread list ────────────────────────────────────────
         async function loadThreads() {
@@ -419,8 +655,11 @@
         // ── Init ───────────────────────────────────────────────
         loadFactoryState();
         loadThreads();
+        loadInbox();
         // Refresh factory state every 5s
         setInterval(loadFactoryState, 5000);
+        // Refresh inbox every 5s (synced with factory-state)
+        setInterval(loadInbox, 5000);
         // Refresh thread list every 10s (WS handles live for running)
         setInterval(loadThreads, 10000);
     </script>

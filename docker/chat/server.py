@@ -632,6 +632,96 @@ def _log_chat(msg):
 # Inbox skill helpers
 # =============================================================================
 
+def _read_inbox_snapshot():
+    """Read inbox items from the snapshot state.json.
+
+    Returns the raw inbox section dict, or None if snapshot is missing/invalid.
+    """
+    snap_path = os.environ.get(
+        "SNAPSHOT_PATH", "/var/lib/disinto/snapshot/state.json")
+    if not os.path.isfile(snap_path):
+        return None
+    try:
+        with open(snap_path, "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        return snap.get("inbox", {})
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _is_item_excluded(item_id, inbox_root):
+    """Check if an inbox item should be excluded (acked, shown, or snoozed)."""
+    acked_dir = os.path.join(inbox_root, ".acked")
+    shown_dir = os.path.join(inbox_root, ".shown")
+    snoozed_dir = os.path.join(inbox_root, ".snoozed")
+
+    # Acked: always exclude
+    if os.path.isfile(os.path.join(acked_dir, item_id)):
+        return True
+
+    # Shown: exclude (read-once semantics)
+    if os.path.isfile(os.path.join(shown_dir, item_id)):
+        return True
+
+    # Snoozed: exclude while mtime > now
+    snooze_file = os.path.join(snoozed_dir, item_id)
+    if os.path.isfile(snooze_file):
+        try:
+            mtime = os.path.getmtime(snooze_file)
+            if mtime > time.time():
+                return True
+        except OSError:
+            pass
+
+    return False
+
+
+PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
+
+
+def _get_inbox_items(min_priority=None):
+    """Read inbox snapshot, filter by priority and sentinels, return list of dicts."""
+    inbox = _read_inbox_snapshot()
+    if not inbox:
+        return []
+
+    items = inbox.get("items", [])
+    if not items:
+        return []
+
+    inbox_root = os.environ.get(
+        "INBOX_ROOT", "/var/lib/disinto/inbox")
+
+    # Determine minimum priority rank (default P2 = all)
+    min_rank = PRIORITY_RANK.get(min_priority, 2) if min_priority else 2
+
+    result = []
+    for item in items:
+        item_id = item.get("id", "")
+        if not item_id:
+            continue
+
+        priority = item.get("priority", "P2")
+        rank = PRIORITY_RANK.get(priority, 2)
+        if rank > min_rank:
+            continue
+
+        if _is_item_excluded(item_id, inbox_root):
+            continue
+
+        result.append({
+            "id": item_id,
+            "priority": priority,
+            "title": item.get("title", ""),
+            "summary": item.get("summary", ""),
+            "ts": item.get("ts", ""),
+            "kind": item.get("kind", ""),
+            "ref": item.get("ref", ""),
+        })
+
+    return result
+
+
 def _run_check_inbox(min_priority=None):
     """Run check-inbox.sh and return the plain-text output."""
     if not os.path.isfile(CHECK_INBOX_SH):
@@ -1365,6 +1455,16 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_factory_state()
             return
 
+        # Inbox list endpoint: GET /inbox
+        if path == "/inbox":
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            self.handle_inbox_list()
+            return
+
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
 
@@ -1421,6 +1521,20 @@ class ChatHandler(BaseHTTPRequestHandler):
             if not self._check_forwarded_user(user):
                 return
             self.handle_ack_inbox(user)
+            return
+
+        # Per-item ack endpoint: POST /inbox/<id>/ack
+        if path.startswith("/inbox/") and path.endswith("/ack"):
+            user = self._require_session()
+            if not user:
+                return
+            if not self._check_forwarded_user(user):
+                return
+            item_id = path[len("/inbox/"):-len("/ack")]
+            if not item_id or not TASK_ID_PATTERN.match(item_id):
+                self.send_error_page(404, "Not found")
+                return
+            self.handle_inbox_ack(item_id)
             return
 
         # 404 for unknown paths
@@ -1828,6 +1942,42 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps({"result": result_text}, ensure_ascii=False).encode("utf-8"))
+
+    def handle_inbox_list(self):
+        """Handle GET /inbox — return JSON list of unacked inbox items."""
+        items = _get_inbox_items()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(items, ensure_ascii=False).encode("utf-8"))
+
+    def handle_inbox_ack(self, item_id):
+        """Handle POST /inbox/<id>/ack — dismiss or snooze an inbox item."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            self.send_error_page(400, "No body provided")
+            return
+
+        body = self.rfile.read(content_length)
+        try:
+            body_str = body.decode("utf-8")
+            params = parse_qs(body_str)
+            action = params.get("action", [""])[0]
+        except (UnicodeDecodeError, KeyError):
+            self.send_error_page(400, "Invalid format")
+            return
+
+        if action not in ("dismiss", "snooze"):
+            self.send_error_page(400, "Invalid action: must be dismiss or snooze")
+            return
+
+        # Map action to inbox-ack.sh flag: dismiss -> no flag (default ack), snooze -> --snooze
+        ack_action = "dismiss" if action == "dismiss" else "snooze"
+
+        result_text = _run_ack_inbox(item_id, ack_action)
+
+        self.send_response(204)
+        self.end_headers()
 
     # =======================================================================
     # Conversation History Handlers
