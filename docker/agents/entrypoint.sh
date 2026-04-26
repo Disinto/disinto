@@ -254,13 +254,20 @@ print(cfg.get('primary_branch', 'main'))
         # a prior failed run doesn't crash with "remote origin already exists"
         # (#733).
         log "Ops bootstrap: clone failed for ${ops_slug} — initializing empty repo"
-        gosu agent bash -c "
-          mkdir -p '${ops_root}' && \
-          git -C '${ops_root}' init --initial-branch='${primary_branch}' -q && \
-          ( git -C '${ops_root}' remote | grep -qx origin \
-              || git -C '${ops_root}' remote add origin '${remote_url}' ) && \
-          git -C '${ops_root}' remote set-url origin '${remote_url}'
-        "
+        # Pass TOML-derived values via environment, not via outer-shell string
+        # expansion into `bash -c`, so shell metacharacters in TOML values
+        # cannot escape into the command (#738).
+        gosu agent env \
+          OPS_ROOT="$ops_root" \
+          PRIMARY_BRANCH="$primary_branch" \
+          REMOTE_URL="$remote_url" \
+          bash -s <<'EOF'
+          mkdir -p "$OPS_ROOT" && \
+          git -C "$OPS_ROOT" init --initial-branch="$PRIMARY_BRANCH" -q && \
+          ( git -C "$OPS_ROOT" remote | grep -qx origin \
+              || git -C "$OPS_ROOT" remote add origin "$REMOTE_URL" ) && \
+          git -C "$OPS_ROOT" remote set-url origin "$REMOTE_URL"
+EOF
       fi
     else
       # Repo exists — ensure remote is configured and pull latest.
@@ -276,11 +283,15 @@ print(cfg.get('primary_branch', 'main'))
       gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
       # Pull latest from forgejo to pick up any host-side migrations
       log "Ops bootstrap: pulling latest for ${project_name}-ops"
-      gosu agent bash -c "
-        cd '${ops_root}' && \
-        git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
-        git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
-      " || log "Ops bootstrap: pull failed for ${ops_slug} (remote may not exist yet)"
+      # See #738 — pass values via env to avoid outer-shell expansion into bash -c.
+      gosu agent env \
+        OPS_ROOT="$ops_root" \
+        PRIMARY_BRANCH="$primary_branch" \
+        bash -s <<'EOF' || log "Ops bootstrap: pull failed for ${ops_slug} (remote may not exist yet)"
+        cd "$OPS_ROOT" && \
+        git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
+        git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
+EOF
     fi
   done
 }
@@ -308,11 +319,15 @@ bootstrap_factory_repo() {
     fi
   else
     log "Factory bootstrap: pulling latest ${repo}"
-    gosu agent bash -c "
-      cd '${DISINTO_LIVE}' && \
-      git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
-      git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
-    " || log "Factory bootstrap: pull failed — using existing checkout"
+    # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
+    gosu agent env \
+      DISINTO_LIVE="$DISINTO_LIVE" \
+      PRIMARY_BRANCH="$primary_branch" \
+      bash -s <<'EOF' || log "Factory bootstrap: pull failed — using existing checkout"
+      cd "$DISINTO_LIVE" && \
+      git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
+      git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
+EOF
   fi
 
   # Copy project TOMLs from baked dir — they are gitignored AND docker-ignored,
@@ -382,11 +397,15 @@ ensure_project_clone() {
 pull_factory_repo() {
   [ "$DISINTO_DIR" = "$DISINTO_LIVE" ] || return 0
   local primary_branch="${PRIMARY_BRANCH:-main}"
-  gosu agent bash -c "
-    cd '${DISINTO_LIVE}' && \
-    git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
-    git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
-  " || log "Factory pull failed — continuing with current checkout"
+  # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
+  gosu agent env \
+    DISINTO_LIVE="$DISINTO_LIVE" \
+    PRIMARY_BRANCH="$primary_branch" \
+    bash -s <<'EOF' || log "Factory pull failed — continuing with current checkout"
+    cd "$DISINTO_LIVE" && \
+    git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
+    git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
+EOF
 }
 
 # Configure git and tea once at startup (as root, then drop to agent)
