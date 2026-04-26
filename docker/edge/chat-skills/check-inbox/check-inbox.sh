@@ -27,10 +27,10 @@ set -euo pipefail
 
 SNAPSHOT_PATH="${SNAPSHOT_PATH:-/var/lib/disinto/snapshot/state.json}"
 INBOX_ROOT="${INBOX_ROOT:-/var/lib/disinto/inbox}"
-readonly ACKED_DIR="${INBOX_ROOT}/.acked"
-readonly SHOWN_DIR="${INBOX_ROOT}/.shown"
-readonly SNOOZED_DIR="${INBOX_ROOT}/.snoozed"
 ACK_SCRIPT="$(dirname "$0")/../../../../bin/inbox-ack.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/../../../../.." && pwd)}"
+source "${FACTORY_ROOT}/lib/inbox-sentinels.sh"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -77,19 +77,13 @@ item_excluded() {
   local id="$1"
 
   # Acked: always exclude
-  [ -f "${ACKED_DIR}/${id}" ] && return 0
+  [ -f "${ACKED_DIR:-/dev/null}/${id}" ] && return 0
 
   # Shown: exclude (read-once semantics)
   [ -f "${SHOWN_DIR}/${id}" ] && return 0
 
   # Snoozed: exclude while mtime > now
-  local snooze_file="${SNOOZED_DIR}/${id}"
-  if [ -f "$snooze_file" ]; then
-    local snooze_mtime now_epoch
-    snooze_mtime="$(stat -c '%Y' "$snooze_file" 2>/dev/null)" || return 0
-    now_epoch="$(date +%s)"
-    [ "$snooze_mtime" -gt "$now_epoch" ] && return 0
-  fi
+  item_snoozed "$id" && return 0
 
   return 1
 }
