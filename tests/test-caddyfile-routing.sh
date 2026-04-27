@@ -172,10 +172,10 @@ check_chat_routing() {
   fi
 
   # Check reverse_proxy to Chat on port 8080 (subprocess via env var)
-  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "CHAT_PORT" "8080" }}'; then
+  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "CHAT_PORT") "8080" }}'; then
     tr_pass "Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
   else
-    tr_fail "Missing Chat reverse_proxy (127.0.0.1:CHAT_PORT)"
+    tr_fail "Missing Chat reverse_proxy (expected 127.0.0.1:{{ or (env \"CHAT_PORT\") \"8080\" }})"
   fi
 
   # Check forward_auth block for /chat/*
@@ -204,10 +204,10 @@ check_voice_routing() {
   fi
 
   # Check reverse_proxy points at loopback VOICE_PORT
-  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ env "VOICE_PORT" "8090" }}'; then
+  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "VOICE_PORT") "8090" }}'; then
     tr_pass "Voice reverse_proxy configured (127.0.0.1:VOICE_PORT)"
   else
-    tr_fail "Missing Voice reverse_proxy (expected 127.0.0.1:{{ env VOICE_PORT 8090 }})"
+    tr_fail "Missing Voice reverse_proxy (expected 127.0.0.1:{{ or (env \"VOICE_PORT\") \"8090\" }})"
   fi
 
   # Check forward_auth shared with /chat/* for OAuth gating

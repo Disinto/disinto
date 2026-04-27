@@ -24,7 +24,9 @@
 #   mergeable-failure — CI not passing
 #
 # Output shape:
-#   {"forge":{"backlog_count":N,"in_progress_count":N,...,"prs_open":[...],"prs_blocked":[]}}
+#   {"forge":{"backlog_count":N,"backlog":[{"number":N,"title":"...",
+#     "age_hours":N},...],"in_progress_count":N,...,"prs_open":[...],
+#     "prs_blocked":[]}}
 #
 # ETag/If-None-Match: skips API call if forge returns 304.
 # =============================================================================
@@ -198,13 +200,24 @@ build_forge_data() {
   }
 
   # Classify issues by label ID via jq; emit intermediate JSON with pulls for PR processing.
+  local now_epoch
+  now_epoch="$(date +%s)"
+
   local classified
   classified=$(printf '%s' "$issues_json" | jq -c --argjson pulls "$pulls_json" \
     --argjson bl_id "$BACKLOG_LABEL_ID" \
     --argjson ip_id "$INPROGRESS_LABEL_ID" \
     --argjson bk_id "$BLOCKED_LABEL_ID" \
     --argjson us_id "$UNDERSPECIFIED_LABEL_ID" \
-    --argjson vi_id "$VISION_LABEL_ID" '
+    --argjson vi_id "$VISION_LABEL_ID" \
+    --argjson now "$now_epoch" '
+
+    # ── Helper: compute age_hours from ISO 8601 timestamp ──
+    def age_hours($epoch_now):
+      if . and . != null and . != "" then
+        (try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch 0) as $created |
+        if $created > 0 then (($epoch_now - $created) / 3600 | floor) else 0 end
+      else 0 end;
 
     # ── Classify issues by label ID ──
     (map(select(. != null)) | map(
@@ -221,12 +234,31 @@ build_forge_data() {
     ($issue_label_ids | map(select(. == ($us_id | tostring))) | length) as $underspecified_count |
     ($issue_label_ids | map(select(. == ($vi_id | tostring))) | length) as $vision_count |
 
+    # ── Per-label item lists (capped at 20, newest-first) ──
+    (map(select(. != null)) | map(select(
+      .labels and (.labels | any(.id == $bl_id))
+    )) | sort_by(.created_at) | reverse |
+      .[0:20] | map({number: .number, title: .title, age_hours: (.created_at | age_hours($now))})) as $backlog_items |
+
+    (map(select(. != null)) | map(select(
+      .labels and (.labels | any(.id == $ip_id))
+    )) | sort_by(.created_at) | reverse |
+      .[0:20] | map({number: .number, title: .title, age_hours: (.created_at | age_hours($now))})) as $inprogress_items |
+
+    (map(select(. != null)) | map(select(
+      .labels and (.labels | any(.id == $bk_id))
+    )) | sort_by(.created_at) | reverse |
+      .[0:20] | map({number: .number, title: .title, age_hours: (.created_at | age_hours($now))})) as $blocked_items |
+
     {
       backlog_count: $backlog_count,
       in_progress_count: $inprogress_count,
       blocked_count: $blocked_count,
       underspecified_count: $underspecified_count,
       vision_count: $vision_count,
+      backlog: $backlog_items,
+      in_progress: $inprogress_items,
+      blocked: $blocked_items,
       _pulls_raw: $pulls
     }
   ' 2>/dev/null) || printf '{}'

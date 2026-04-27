@@ -281,9 +281,6 @@ def main() -> int:
         "161a80f7296d6e9d45895607b7f5b9c9": "Docker compose env_file + depends_on block (generators.sh + hire-agent.sh) - old",
         # New hash after explicit environment fix (#381)
         "83fa229b86a7fdcb1d3591ab8e718f9d": "Docker compose explicit environment block (generators.sh + hire-agent.sh) - #381",
-        # Acceptance test standard header (set -euo pipefail, SCRIPT_DIR, REPO_ROOT)
-        # Shared across issue-859.sh + issue-882.sh
-        "d61d670d7ab353b62ad815d6b3408c85": "Acceptance test standard header (issue-859 + issue-882)",
         # Verification mode helper functions - intentionally duplicated in dispatcher and entrypoint
         # These functions check if bug-report parent issues have all sub-issues closed
         "b783d403276f78b49ad35840845126a1": "Verification helper: sub_issues variable declaration",
@@ -407,15 +404,20 @@ def main() -> int:
         # Standard --help heredoc closing + flag-parser tail (cluster-up.sh + sync-nomad-client-config.sh, #789)
         "2882d287343e26a4d8d6499e4bd38c26": "Help heredoc EOF + exit 0 + unknown-flag die + esac (cluster-up + sync-nomad-client-config)",
         "8f6432aafe427171507274ef71c1b612": "Help exit 0 + unknown-flag die + esac + done (cluster-up + sync-nomad-client-config)",
-        # Gardener entry-point bootstrap (gardener-run + gardener-step, #871)
-        # Both are runtime entry scripts that need identical env setup
-        # (PROJECT_TOML default, FORGE_TOKEN_OVERRIDE) before sourcing lib/env.sh.
-        # Cannot be extracted to a helper — the bootstrap *is* the path resolution
-        # required before any `source` call.
-        "5526ab1f7681b24559d41eafa8bfc5be": "Gardener bootstrap: set -euo + SCRIPT_DIR + FACTORY_ROOT (gardener-run + gardener-step)",
-        "b872def5010d5ec9dd38745e04f2aae0": "Gardener bootstrap: SCRIPT_DIR + FACTORY_ROOT + PROJECT_TOML (gardener-run + gardener-step)",
-        "69fb1237da473cd2c9bcc1ff175e62ab": "Gardener bootstrap: FACTORY_ROOT + PROJECT_TOML + FORGE_TOKEN_OVERRIDE (gardener-run + gardener-step)",
-        "1a2923180b6d7cddb8cabf850f1d5686": "Gardener bootstrap: PROJECT_TOML + FORGE_TOKEN_OVERRIDE + source env.sh (gardener-run + gardener-step)",
+        # forge_api_all inlined into lib/env.sh while still present in lib/forge-paginate.sh
+        "6ca76cb74139771aca2df9cf2f858e9a": "forge_api_all signature (env.sh + forge-paginate.sh)",
+        "01c1445d61d56be67ca41173d3f9bb1b": "forge_api_all local vars (env.sh + forge-paginate.sh)",
+        "3bf71e9a1b5dc079ab2418cd22e1e5be": "forge_api_all case start (env.sh + forge-paginate.sh)",
+        "3884eb90560e8466e18345a0bbffb18b": "forge_api_all path_prefix check (env.sh + forge-paginate.sh)",
+        "e92d12d91a35dce42bb7fa0297b18f00": "forge_api_all separator logic (env.sh + forge-paginate.sh)",
+        "8dbb47d62365219b5e8a0418c443b8ac": "forge_api_all esac (env.sh + forge-paginate.sh)",
+        "1e83d159e5e3244b98219fef890d4142": "forge_api_all window env.sh:241 + forge-paginate.sh (inlined function)",
+        "f3b6f7521eb616bfa9dbeb2985b50077": "forge_api_all window env.sh:242 + forge-paginate.sh (inlined function)",
+        "c2c1df8184b838251b4c0ed39a7a0860": "forge_api_all window env.sh:243 + forge-paginate.sh (inlined function)",
+        "9276d71ea72d9dbcd8bb1f91eb87942f": "forge_api_all window env.sh:244 + forge-paginate.sh (inlined function)",
+        "2b5a82793a819934b53e6f42e4aa7f4a": "forge_api_all window env.sh:245 + forge-paginate.sh (inlined function)",
+        # Acceptance tests share standard header pattern (issue-859 + issue-861)
+        "029fec76a4516445bf76b94355360e57": "Acceptance test header (issue-859 + issue-861)",
     }
 
     if not sh_files:

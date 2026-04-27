@@ -1,4 +1,4 @@
-<!-- last-reviewed: 58c297f0caa3a884023caacd031b30a0dfcd8dad -->
+<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -28,9 +28,7 @@ Key directories:
 - **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
 - **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher); `docker/agents/` — Llama-server agent entrypoint
-- **docker/agents/**: Llama-server agent orchestration (`entrypoint.sh`)
-- **.woodpecker/**: CI pipelines (detect-duplicates.py, acceptance-tests.yml, etc.)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
 - **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
@@ -79,7 +77,7 @@ bash dev/phase-test.sh
 |-------|-----------|------|---------|
 | Dev | `dev/` | Issue implementation | [AGENTS.md](dev/AGENTS.md) |
 | Review | `review/` | PR review | [AGENTS.md](review/AGENTS.md) |
-| Gardener | `gardener/` | Backlog grooming (per-iteration, single task per cycle, llama-friendly — #872) | [AGENTS.md](gardener/AGENTS.md) |
+| Gardener | `gardener/` | Backlog grooming | [AGENTS.md](gardener/AGENTS.md) |
 | Supervisor | `supervisor/` | Health monitoring | [AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure patterns | [AGENTS.md](predictor/AGENTS.md) |

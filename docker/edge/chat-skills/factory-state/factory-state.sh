@@ -127,6 +127,20 @@ build_text_summary() {
     fi
     printf '\n'
 
+    # ── Per-label issue lists (top items) ──
+    local forge_issues
+    forge_issues=$(printf '%s' "$data" | jq -r '
+      .collectors.forge as $f |
+      (
+        (if $f.backlog then $f.backlog[] else empty end) // empty,
+        (if $f.in_progress then $f.in_progress[] else empty end) // empty,
+        (if $f.blocked then $f.blocked[] else empty end) // empty
+      ) | "  - #\(.number) \(.title) (\(.age_hours)h)"
+    ' 2>/dev/null | head -10) || forge_issues=""
+    if [ -n "$forge_issues" ]; then
+      printf '%s\n' "$forge_issues"
+    fi
+
     if [ "$prs_open" -gt 0 ] 2>/dev/null || [ "$prs_blocked" -gt 0 ] 2>/dev/null; then
       # Build PR detail string
       local pr_details
@@ -251,6 +265,15 @@ build_section_summary() {
         printf ', %s blocked' "$blocked"
       fi
       printf '\n'
+
+      # ── Per-label issue lists (top items) ──
+      printf '%s' "$data" | jq -r '
+        (
+          (if .backlog then .backlog[] else empty end) // empty,
+          (if .in_progress then .in_progress[] else empty end) // empty,
+          (if .blocked then .blocked[] else empty end) // empty
+        ) | "  - #\(.number) \(.title) (\(.age_hours)h)"
+      ' 2>/dev/null | head -10 || true
       local prs_open prs_blocked
       prs_open=$(printf '%s' "$data" | jq -r '.prs_open // [] | length')
       prs_blocked=$(printf '%s' "$data" | jq -r '.prs_blocked // [] | length')
