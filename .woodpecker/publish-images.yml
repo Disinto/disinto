@@ -62,7 +62,7 @@ steps:
       repo: ghcr.io/disinto/edge
       registry: ghcr.io
       dockerfile: docker/edge/Dockerfile
-      context: docker/edge
+      context: .
       tags:
         - ${CI_COMMIT_TAG}
         - latest
