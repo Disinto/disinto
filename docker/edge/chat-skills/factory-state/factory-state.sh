@@ -210,7 +210,7 @@ get_data_slice() {
   if [ -n "$sec" ]; then
     # Return just the section under .collectors
     local has_key
-    has_key=$(printf '%s' "$data" | jq ".collectors | has(\"$sec\")")
+    has_key=$(printf '%s' "$data" | jq --arg sec "$sec" '.collectors | has($sec)')
     if [ "$has_key" = "true" ]; then
       printf '%s' "$data" | jq -c --arg sec "$sec" '.collectors[$sec]'
     else
