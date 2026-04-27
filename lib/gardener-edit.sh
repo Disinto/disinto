@@ -16,6 +16,7 @@
 #   gardener_add_label    <issue_num> <label_name>   (idempotent)
 #   gardener_remove_label <issue_num> <label_name>   (idempotent)
 #   gardener_post_comment <issue_num> <body_file>
+#   gardener_close_issue  <issue_num>
 #
 # Preconditions (callers — usually env.sh has already set them):
 #   FORGE_GARDENER_TOKEN — bot token (env.sh defaults this to FORGE_TOKEN)
@@ -303,6 +304,23 @@ gardener_post_comment() {
   _ge_journal "gardener_post_comment" "$issue" "${_GE_HTTP_CODE}" "$args_json"
   if ! _ge_is_2xx "${_GE_HTTP_CODE}"; then
     _ge_log "gardener_post_comment issue=${issue} http=${_GE_HTTP_CODE} body=${_GE_RESP_BODY}"
+    return 1
+  fi
+  return 0
+}
+
+# gardener_close_issue <issue_num>
+# PATCH /repos/.../issues/<n> with state:"closed". Journals the action.
+gardener_close_issue() {
+  local issue="${1:-}"
+  if [ -z "$issue" ]; then
+    _ge_log "gardener_close_issue: missing args (issue=$issue)"
+    return 2
+  fi
+  _ge_split "$(_ge_curl PATCH "/issues/${issue}" --data '{"state":"closed"}')"
+  _ge_journal "gardener_close_issue" "$issue" "${_GE_HTTP_CODE}" '{}'
+  if ! _ge_is_2xx "${_GE_HTTP_CODE}"; then
+    _ge_log "gardener_close_issue issue=${issue} http=${_GE_HTTP_CODE} body=${_GE_RESP_BODY}"
     return 1
   fi
   return 0

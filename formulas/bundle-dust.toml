@@ -147,19 +147,13 @@ For each source issue in AFFECTED_PATHS:
   gardener_post_comment "$issue_num" "/tmp/bundle-dust-comment-${issue_num}.md"  || true
 
   # Close the source issue
-  curl -sf -X PATCH -H "Authorization: token $FORGE_TOKEN" \\
-    -H "Content-Type: application/json" \\
-    -d '{"state":"closed"}' \\
-    "$FORGE_API/issues/${issue_num}" >/dev/null
+  gardener_close_issue "$issue_num"  || true
 
 ## 7. Remove bundled entries from dust.jsonl
 
 Remove all entries matching the dust_group from gardener/dust.jsonl:
 
-  grep -v "^\$(jq -c --arg g \"$DUST_GROUP\" 'select(.group == $g)' "$DUST_FILE")" \\
-    "$DUST_FILE" > /tmp/bundle-dust-dust-new.jsonl
-
-  # More reliable: rebuild dust.jsonl without the group entries
+  # Rebuild dust.jsonl without the group entries
   jq -c --arg g "$DUST_GROUP" 'select(.group != $g)' "$DUST_FILE" \\
     > /tmp/bundle-dust-dust-new.jsonl
 
@@ -167,14 +161,13 @@ Remove all entries matching the dust_group from gardener/dust.jsonl:
 
 ## 8. Open a small PR with the dust.jsonl change
 
-Commit and push the updated dust.jsonl:
+Create the feature branch first, then commit and push:
 
   cd "$PROJECT_REPO_ROOT"
+  BRANCH="chore/bundle-dust-${DUST_GROUP}-$(date +%Y%m%d)"
+  git checkout -b "$BRANCH"
   git add gardener/dust.jsonl
   git commit -m "chore(gardener): remove bundled dust entries for ${DUST_GROUP} (#${BUNDLE_ISSUE})"
-  BRANCH="chore/bundle-dust-${DUST_GROUP}-$(date +%Y%m%d)"
-  git branch "$BRANCH" 2>/dev/null || true
-  git checkout "$BRANCH" 2>/dev/null || true
   git push origin "$BRANCH"
 
   # Create the PR
@@ -197,10 +190,10 @@ Done. Stop the session.
 - No JSON-schema declarations, no regex backreferences in your reasoning —
   keep the structure plain prose + bash blocks (llama-friendly).
 - One pass only. Do not loop, do not pick up a second group.
-- Every repo edit goes through the four exported helpers
+- Every repo edit goes through the five exported helpers
   (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
-  `gardener_post_comment`) — never PATCH issues directly via curl, so the
-  audit journal stays complete.
+  `gardener_post_comment`, `gardener_close_issue`) — never PATCH issues
+  directly via curl, so the audit journal stays complete.
 - The PR creation and dust.jsonl commit are the only git operations — keep the
   PR small and focused.
 """
