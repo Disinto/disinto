@@ -1,4 +1,4 @@
-<!-- last-reviewed: 4c61adde7e285785a5b82db1f98efc6425d7a870 -->
+<!-- last-reviewed: f7a5ea5edfd4fa4948d9ee66b58d9290e69c0ea3 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -27,6 +27,9 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   Executes pending-actions manifest after PR merge.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
+- `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
+  item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
+  30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
 - `gardener/pending-actions.jsonl` — Intermediate manifest of proposed repo actions
   (label changes, closures, comments, issue creation, body edits). Written during
   grooming steps as one JSON object per line.
