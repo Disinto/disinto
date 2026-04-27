@@ -56,6 +56,19 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
     body, then labels it `bug-report`. Runs git log preflight on affected
     paths extracted from the body. Replaces the inline enrichment logic
     in monolithic `run-gardener.toml` (lines 89–135).
+  - `formulas/agents-md-update.toml` (#875) — per-directory AGENTS.md
+    refresh: bash preflight computes a structural diff (file inventory at
+    watermark vs HEAD, reference validation against the codebase, semantic
+    diff of code/config files), claude rewrites exactly ONE AGENTS.md with
+    NEW/DELETED file additions, lie corrections, semantic-change notes,
+    and a watermark bump to HEAD. Opens one small PR
+    (`chore/agents-md-<dir>-<date>`, one file changed, title-only). Skips
+    with a no-op log when the watermark is stale but no structural drift
+    is present. Replaces step 4 (`agents-update`) of monolithic
+    `run-gardener.toml` which routinely overshot its budget walking all
+    AGENTS.md files in one session. Token budget: ≤8K input, ≤4K output.
+    Splitting the root AGENTS.md past the size cap is a separate sibling
+    concern — not handled here.
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
