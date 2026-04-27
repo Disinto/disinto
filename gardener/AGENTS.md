@@ -40,6 +40,16 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   pending-actions manifest after PR merge.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
+- **Per-task formula registry** (consumed by `gardener-step.sh` based on
+  `classify.sh` task field — one formula per priority bucket):
+  - `formulas/enrich-underspecified.toml` (#873) — single-issue body
+    enrichment: rewrite an `underspecified`-labeled issue with `## Affected
+    files` + `## Acceptance criteria` and flip the label to `backlog`. On
+    too-thin bodies, posts a comment asking the operator for the missing
+    pieces and keeps `underspecified`. Replaces the buggy quality-gate
+    branch in monolithic `run-gardener.toml` that stripped `backlog` from
+    9 issues in PR #811 without enriching them (manually re-enriched
+    2026-04-26).
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
