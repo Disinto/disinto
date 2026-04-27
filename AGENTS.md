@@ -96,7 +96,7 @@ Shared helpers: [lib/AGENTS.md](lib/AGENTS.md) · Nomad jobs: [nomad/AGENTS.md](
 
 ## Issue lifecycle and label conventions
 
-Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → `closed`.
+Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiting-live-verification` → human verifies AC on live box → `closed`.
 
 ### Labels
 
@@ -116,6 +116,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | `prediction/dismissed` | Prediction triaged as DISMISS — planner disagrees, closed with reason. | Planner (triage-predictions step) |
 | `prediction/actioned` | Prediction promoted or dismissed by planner. | Planner (triage-predictions step) |
 | `formula` | Issue is a formula-based operational task. Dev-poll skips these; dispatcher handles them. | Dispatcher (when dispatching formula tasks) |
+| `awaiting-live-verification` | Issue has been merged but acceptance criteria have not yet been verified on the live box. Dev-poll skips these. | dev-agent (post-merge) |
 
 ### Dependency conventions
 

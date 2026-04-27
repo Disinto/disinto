@@ -541,9 +541,9 @@ rc=0
 pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
 
 if [ "$rc" -eq 0 ]; then
-  # Merged successfully
+  # Merged successfully — keep open with awaiting-live-verification label
   log "PR #${PR_NUMBER} merged"
-  issue_close "$ISSUE"
+  issue_close_after_verification "$ISSUE"
 
   # Capture files changed for journal entry (after agent work)
   FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""

@@ -47,3 +47,20 @@ body:
       label: Dependencies
       description: Issues that must be merged first. Leave empty if none.
       placeholder: "- #NNN (reason)"
+  - type: textarea
+    id: acceptance-test
+    attributes:
+      label: Acceptance test
+      description: |
+        Explicit shell commands (with expected output) that prove the fix works
+        when run on the live box. Include the reproduction steps as the first
+        command to confirm the bug no longer occurs.
+        See docs/contributing/acceptance-tests.md for the convention.
+      placeholder: |
+        ```bash
+        $ # Reproduction step — should no longer produce the error
+        $ curl -sf http://localhost:3000/api/health | jq .status
+        "ok"
+        ```
+    validations:
+      required: true
