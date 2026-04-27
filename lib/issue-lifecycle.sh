@@ -48,6 +48,7 @@ declare -A _ILC_LABEL_IDS
 _ILC_LABEL_IDS["backlog"]=""
 _ILC_LABEL_IDS["in-progress"]=""
 _ILC_LABEL_IDS["blocked"]=""
+_ILC_LABEL_IDS["awaiting-live-verification"]=""
 
 # _ilc_ensure_label_id LABEL_NAME [COLOR]
 # Looks up label by name, creates if missing, caches in associative array.
@@ -78,13 +79,14 @@ _ilc_ensure_label_id() {
 _ilc_backlog_id()      { _ilc_ensure_label_id "backlog"     "#0075ca"; }
 _ilc_in_progress_id()  { _ilc_ensure_label_id "in-progress" "#1d76db"; }
 _ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
+_ilc_awaiting_live_id() { _ilc_ensure_label_id "awaiting-live-verification" "#ff9100"; }
 
 # ---------------------------------------------------------------------------
 # Labels that indicate an issue belongs to a non-dev agent workflow.
 # Any issue carrying one of these should NOT be touched by dev-poll's
 # stale-detection or orphan-recovery logic.  See issue #608.
 # ---------------------------------------------------------------------------
-_ILC_NON_DEV_LABELS="bug-report vision in-triage prediction/unreviewed prediction/dismissed action formula"
+_ILC_NON_DEV_LABELS="bug-report vision in-triage prediction/unreviewed prediction/dismissed action formula awaiting-live-verification"
 
 # issue_is_dev_claimable COMMA_SEPARATED_LABELS
 # Returns 0 if the issue's labels are compatible with dev-agent ownership,
@@ -320,6 +322,36 @@ issue_close() {
     "${FORGE_API}/issues/${issue}" \
     -d '{"state":"closed"}' >/dev/null 2>&1 || true
   _ilc_log "closed issue #${issue}"
+}
+
+# ---------------------------------------------------------------------------
+# issue_close_after_verification — keep issue open with awaiting-live-verification label.
+# Used after merge: issue stays open so a human (or supervisor) can run
+# the acceptance test commands on the live box before closing.
+# Args: issue_number
+# ---------------------------------------------------------------------------
+issue_close_after_verification() {
+  local issue="$1"
+
+  # Clear assignee
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}" \
+    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+
+  # Add awaiting-live-verification label (issue stays open)
+  local alv_id
+  alv_id=$(_ilc_awaiting_live_id)
+  if [ -n "$alv_id" ]; then
+    curl -sf -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_API}/issues/${issue}/labels" \
+      -d "{\"labels\":[${alv_id}]}" >/dev/null 2>&1 || true
+  fi
+
+  _ilc_log "marked issue #${issue} awaiting-live-verification (merged, not verified)"
 }
 
 # ---------------------------------------------------------------------------

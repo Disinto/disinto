@@ -49,3 +49,19 @@ body:
     attributes:
       label: Additional context
       description: Links to docs, prior art, design decisions, related issues.
+  - type: textarea
+    id: acceptance-test
+    attributes:
+      label: Acceptance test
+      description: |
+        Explicit shell commands (with expected output) that prove the issue is
+        resolved when run on the live box. Every command must be runnable
+        verbatim — no "verify it works" or "ensure X is correct."
+        See docs/contributing/acceptance-tests.md for the convention.
+      placeholder: |
+        ```bash
+        $ jq '.collectors | keys' /srv/disinto/snapshot-state/state.json
+        [ "agents", "forge", "inbox", "nomad" ]
+        ```
+    validations:
+      required: true

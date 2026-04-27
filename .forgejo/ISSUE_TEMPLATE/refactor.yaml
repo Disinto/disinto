@@ -48,3 +48,21 @@ body:
       placeholder: |
         - Phase handler changes could break dev/action/review lifecycle
         - ShellCheck may flag new patterns
+  - type: textarea
+    id: acceptance-test
+    attributes:
+      label: Acceptance test
+      description: |
+        Explicit shell commands (with expected output) that prove the refactor
+        preserves behavior (or correctly changes it) when run on the live box.
+        For refactors, include a command that verifies the old behavior still
+        works identically.
+        See docs/contributing/acceptance-tests.md for the convention.
+      placeholder: |
+        ```bash
+        $ # Verify behavior is unchanged
+        $ dev-poll.sh disinto.toml --dry-run
+        Ready issues: 3
+        ```
+    validations:
+      required: true

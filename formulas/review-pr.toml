@@ -55,6 +55,16 @@ Adapt based on scope. Check for:
 - **Claim verification**: if docs/README/AGENTS.md changed, verify claims
   against actual code — read the files to confirm
 
+- **Acceptance test (if the issue has an `## Acceptance test` section)**
+  Read the `## Acceptance test` section from the PR description (it references
+  the issue body). Check that:
+  - The section exists and contains explicit shell commands with expected output.
+  - Commands reference the correct file paths and schema (not stubs).
+  - The expected output matches what the code actually produces.
+  - If a command cannot be run on the live box (e.g., requires a deploy),
+    flag as `needs-deploy-verification` — do NOT approve.
+  - See docs/contributing/acceptance-tests.md for the full convention.
+
 Do NOT flag:
 - Style preferences with no correctness impact
 - Missing tests unless the change is clearly untested and risky
