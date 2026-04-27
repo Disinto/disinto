@@ -37,6 +37,19 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
 
+**Direct-edit primitives (per-task gardener, #869)**: `lib/gardener-edit.sh`
+provides sourceable helpers for the new pull-one-task gardener that bypass the
+deferred-PR pattern above for label/body edits. Each call applies via the
+Forgejo API immediately and is appended as one row to
+`${DISINTO_LOG_DIR}/gardener/journal.jsonl` (audit trail since direct edits
+leave no git history). Functions:
+- `gardener_edit_body <issue_num> <body_file>` — PATCH issue body from file
+- `gardener_add_label <issue_num> <label_name>` — idempotent, label id cached
+- `gardener_remove_label <issue_num> <label_name>` — idempotent
+- `gardener_post_comment <issue_num> <body_file>` — comment body from file
+All authenticate via `FORGE_GARDENER_TOKEN` and exit non-zero on non-2xx
+responses (full response body logged to `${DISINTO_LOG_DIR}/gardener/edit.log`).
+
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
