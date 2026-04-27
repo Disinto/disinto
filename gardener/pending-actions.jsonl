@@ -1,0 +1,72 @@
+{
+  "action": "comment",
+  "issue": 561,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":561,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 559,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":559,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 560,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":560,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 556,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":556,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 452,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":452,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 431,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":431,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 326,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":326,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 289,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":289,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 275,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":275,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 244,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":244,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 205,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+}
+{"action":"remove_label","issue":205,"label":"backlog"}
+{
+  "action": "comment",
+  "issue": 356,
+  "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+}
+{"action":"remove_label","issue":356,"label":"backlog"}

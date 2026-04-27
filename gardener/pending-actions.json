@@ -1,22 +1,122 @@
 [
   {
-    "action": "edit_body",
-    "issue": 787,
-    "body": "## Symptom\n\nAfter today's `edge` redeploy (job version 37, new alloc `94429d2d`), the `dispatcher` task is in restart backoff:\n\n```\nTask \"dispatcher\" is \"pending\"\n2026-04-26T05:37:50Z  Restarting  Exceeded allowed attempts, applying a delay - Task restarting in 4m1.844454477s\n2026-04-26T05:37:48Z  Started     Task started by client\n2026-04-26T05:37:32Z  Restarting  Task restarting in 16.276402627s\n2026-04-26T05:37:30Z  Started     Task started by client\n2026-04-26T05:37:12Z  Restarting  Task restarting in 16.980670271s\n2026-04-26T05:37:11Z  Started     Task started by client\n```\n\nExits within seconds of starting. `caddy` and `snapshot` tasks healthy; only `dispatcher` is sick.\n\n## Pre-existing or regression?\n\nPre-existing on prior alloc as well (yesterday's alloc `e22709df` showed dispatcher Restarting). **Not a regression from today's snapshot/threads work.** Pattern matches #733 (\"edge dispatcher in crashloop\") which was previously fixed.\n\nEarlier alloc dump also showed:\n```\nTemplate: Missing: vault.read(kv/data/disinto/shared/ops-repo)\n```\nfor the dispatcher task — Vault path may be unresolved.\n\n## What to do (triage)\n\n1. `nomad alloc logs -task dispatcher -stderr <alloc-id>` — capture the actual error.\n2. Compare current `task \"dispatcher\"` config (in `nomad/jobs/edge.hcl`) against the #733 fix that resolved this last time.\n3. Verify Vault role `service-dispatcher` resolves and `kv/data/disinto/shared/ops-repo` exists.\n4. Verify the `git remote` idempotency added in #733 is still in place (entrypoint script).\n\n## Out of scope\n\n- Implementation. This is a triage issue. Once root cause is known, file a `backlog` companion.\n\n## Notes\n\nDon't claim this issue from `dev`-bot directly — bug-report is non-claimable. Open a backlog companion after triage.\n\n## Affected files\n- `nomad/jobs/edge.hcl` (dispatcher task config)\n- `docker/edge/entrypoint.sh` (git remote idempotency from #733)\n- `nomad/jobs/edge.hcl` Vault role template for service-dispatcher\n\n## Acceptance criteria\n\n- [ ] Root cause of dispatcher restart backoff identified (actual error captured from alloc logs)\n- [ ] Fix verified: dispatcher task starts and stays healthy after edge redeploy\n- [ ] No `Missing: vault.read(kv/data/disinto/shared/ops-repo)` errors in dispatcher logs"
+    "action": "comment",
+    "issue": 561,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
   },
   {
-    "action": "edit_body",
-    "issue": 634,
-    "body": "## Symptom\n\nBoth Vault KV runner secrets AND Woodpecker repo secrets were absent on the live factory after nomad cutover, blocking the release pipeline. Specifically:\n\n- `kv/disinto/runner/*` tree empty (no `GITHUB_TOKEN`, `CODEBERG_TOKEN`, etc.)\n- `kv/disinto/shared/ops-repo` empty (vault-runner couldn't read FORGE_TOKEN)\n- Woodpecker secret `ghcr_token` not defined on repo_id=1 (tag pipeline errored with `secret \"ghcr_token\" not found`)\n\n## Root cause\n\nBoth seeding paths run only at `disinto init` time:\n\n- `lib/init/nomad/wp-seed-secrets.sh` (#603) — seeds Woodpecker secrets from `.env`\n- `tools/vault-seed-ops-repo.sh` (#1035) — seeds `kv/disinto/shared/ops-repo`\n- vault KV runner seeding (#604) — seeds `kv/disinto/runner/*`\n\nFactories initialized before these features landed have no retroactive migration. When #603/#604/#1035 merged today, the live nomad-box factory was NOT re-seeded.\n\n## Fix options\n\n1. Add a `disinto vault reseed` and/or `disinto wp reseed` subcommand — idempotent, reads `.env`, runnable on live factory post-upgrade.\n2. Include the seed calls in a post-upgrade migration hook triggered by `disinto up` or similar.\n3. Surface in `disinto status` — warn when:\n   - `kv/disinto/runner/` is empty but vault-runner job is registered\n   - WP repo has no secrets but `.woodpecker/*.yml` references `from_secret: X`\n   - `kv/disinto/shared/ops-repo` is empty\n\n## Impact\n\n- v0.2.0 release-v020.toml filed via `disinto release` never executed (still sitting in `vault/actions/`)\n- v0.3.0 had to be cut by direct `git push forge v0.3.0`, bypassing the formula entirely\n- First pipeline run on a real tag after nomad cutover errored on missing `ghcr_token` secret\n- Mirror push (Codeberg, GitHub) never works on this factory until `GITHUB_TOKEN`/`CODEBERG_TOKEN` seeded into Vault\n\nManual one-time fix (what I did today) — for reference:\n\n```bash\ntools/vault-seed-ops-repo.sh                    # seeds ops-repo FORGE_TOKEN\nGHCR_TOKEN=ghp_... FORGE_REPO=disinto-admin/disinto \\\n  lib/init/nomad/wp-seed-secrets.sh             # seeds WP repo secrets\n# kv/disinto/runner/* still unseeded — mirror push still broken\n```\n\n## What was reported\n\nAfter the nomad cutover, the factory's Vault KV tree and Woodpecker repo secrets were not seeded, blocking the release pipeline and mirror push. Factories initialized before the seeding features (#603, #604, #1035) landed have no retroactive migration path.\n\n## Known context\n\n- Three seeding scripts run only at `disinto init` time: `wp-seed-secrets.sh`, `vault-seed-ops-repo.sh`, vault KV runner seed\n- Related issues: #603 (WP seed), #604 (KV runner seed), #1035 (vault-seed-ops-repo)\n- The nomad-box factory was initialized before these features existed\n- Manual reseed works but requires running scripts manually with correct env vars\n- No `disinto reseed` subcommand or migration hook exists yet\n- Impact: release pipeline broken, mirror push broken, v0.3.0 cut manually\n\n## Reproduction plan\n\n1. On the nomad-box factory: check `kv/disinto/runner/*` in Vault — expect empty\n2. Check Woodpecker repo secrets for repo_id=1 — expect missing `ghcr_token`\n3. Check `kv/disinto/shared/ops-repo` — expect empty\n4. Run `disinto release` or a tagged pipeline — expect failures due to missing secrets\n5. Run the manual reseed scripts — verify secrets are populated\n\n## What needs verification\n- [ ] The Vault KV tree is indeed empty on the live nomad-box (reproduce)\n- [ ] Woodpecker repo has no secrets configured (check state)\n- [ ] All factories initialized before #603/#604/#1035 are affected (scope audit)\n- [ ] A reseed subcommand or migration hook resolves the issue without manual intervention (fix verification)\n- [ ] The reseed is idempotent and safe to run on already-seeded factories (safety)\n\n## Affected files\n\n- `tools/vault-seed-ops-repo.sh` (ops-repo FORGE_TOKEN seeding)\n- `lib/init/nomad/wp-seed-secrets.sh` (Woodpecker repo secrets seeding)\n- `lib/init/nomad/vault-kv-runner-seed.sh` (KV runner secrets seeding)\n- `lib/cli/vault.sh` or `lib/cli/disinto.sh` (new reseed subcommand)\n- `lib/cli/disinto.sh` (status/warning for empty secret trees)"
+    "action": "remove_label",
+    "issue": 561,
+    "label": "backlog"
   },
   {
-    "action": "edit_body",
-    "issue": 552,
-    "body": "## Symptom\n\nThe `caddy-validate` step in the `edge-subpath` workflow fails intermittently with:\n\n```\nGet \"http://%2Fvar%2Frun%2Fdocker.sock/v1.41/containers/wp_01KPQZ2WV7SVX68TDRC7DP2Z9M/json\": context deadline exceeded\n```\n\nExit code on the step: `126`. Downstream steps (`caddyfile-routing-test`, `test-caddyfile-routing`, etc.) get skipped, and the workflow reports `failure`.\n\nThis showed up on PR #1108 (gardener housekeeping, commit `0946ca9828`, pipeline 1597, workflow id 3470, step pid 12). Also pending-forever on the sibling workflows for PR #1112 (pipeline 1599) and PR #1113 (pipeline 1601) — not confirmed to be the same failure mode on those two, but the delay pattern matches (edge-subpath sits pending long after `ci`, `nomad-validate`, `secret-scan` complete). Worth verifying on a fresh run.\n\nThe `edge-subpath` workflow is not in the required-status-contexts list (branch protection requires `ci/woodpecker/pr/ci` and `ci/woodpecker/push/ci` only), so this doesn't block merge by itself. But it does leave combined commit status at `failure`/`pending` and forces `force_merge: true` on any admin-merge path — plus the reviewer-agent almost certainly gates on combined status, so every legitimate review flow stalls here.\n\n## Reproduction\n\nHappens under load when multiple pipelines queue up. Triggered every time while the WP agent was wedged on 2026-04-20 — dozens of `wait(): code: DeadlineExceeded` lines in `docker logs disinto-woodpecker-agent` between 11:17Z and 13:10Z. After restarting the agent, pipeline 1597 completed except for this step.\n\n## Likely cause\n\nThe step mounts the host's `/var/run/docker.sock` inside the workflow container (typical pattern when a CI step needs to spin up sibling containers — caddy-validate presumably spawns a Caddy container to render/validate the Caddyfile). The `Get /v1.41/containers/.../json` call is Docker-in-Docker introspection and it times out.\n\nCandidates:\n\n1. **Socket passthrough is saturated.** The nested Docker daemon handles too many concurrent API calls — backed-up from the pipeline pile-up — and individual `GET container` requests exceed the default deadline.\n2. **Woodpecker agent's default step timeout is too tight** for the caddy-validate operation during busy periods.\n3. **The step code uses a short `context.WithTimeout`** that doesn't account for a busy Docker daemon.\n\n## Proposal\n\nPick one based on what the step actually does:\n\n- If the step's container-introspect is incidental (just checking if a helper container is up), switch to polling with retry + exponential backoff and a larger overall budget (60–120s) rather than a single short deadline.\n- If the step needs to spawn a sibling container and talk to it, consider running it inside the workflow container directly (no docker.sock mount) — `caddy validate` is a single binary call, no container-orchestration needed for a linter-style check.\n- Short-term: raise the step-level `when.failure: ignore` or move edge-subpath into a separate optional pipeline so it stops showing up as combined-status `failure` on otherwise-green PRs.\n\n## Acceptance\n\n- A PR that passes the required `ci` workflow also produces a green (or explicitly-optional) `edge-subpath` result, with no `context deadline exceeded` in the step logs over ten consecutive runs.\n- Reviewer-agent no longer gets blocked by this workflow on merge-eligible PRs.\n- If the fix is \"mark as optional,\" the branch-protection required-contexts list is reviewed so it's clear which checks actually gate.\n\n## Context\n\nObserved 2026-04-21 during triage of why PRs were backing up in queue. WP agent restart drained the queue for most workflows; this one step remained stuck or timing out. The merged commit for #1108 shipped with this check in `failure`.\n\n## Affected files\n\n- `.woodpecker/edge-subpath.yml` (caddy-validate step config)\n- `docker/edge/Caddyfile` (referenced by caddy-validate step)\n- Woodpecker agent timeout configuration (if step-level timeout is adjustable)"
+    "action": "comment",
+    "issue": 559,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
   },
   {
-    "action": "edit_body",
-    "issue": 550,
-    "body": "## Symptom\n\n`supervisor-run.sh` has been effectively dead since **2026-04-19T19:03Z** (roughly 48h at time of filing). The polling loop in `docker/agents/entrypoint.sh` invokes it every 20 min and the script writes `--- Supervisor run start ---` to `data/logs/supervisor/supervisor.log`, but **no subsequent log lines** — no preflight, no journal entries, no `--- Supervisor run done ---`. ~200 iterations in a row show this pattern.\n\nEffect: WP-agent health recovery is off (CI-exhausted sweep in `supervisor-run.sh` never runs), worktree GC is off, journal writes are off, scratch-file compaction state never persists.\n\n## Reproduction\n\nInside `disinto-agents`:\n\n```bash\ndocker exec disinto-agents bash -c 'tail -3 /home/agent/data/logs/supervisor.log'\n# → /home/agent/repos/_factory/lib/formula-session.sh: line 800: FORGE_REMOTE: unbound variable\n```\n\nThe entrypoint redirects the supervisor invocation's stderr to `data/logs/supervisor.log` (singular, not the agent-written `supervisor/supervisor.log`). That sink holds the real error.\n\n## Diagnosis\n\n`lib/formula-session.sh` exposes two functions:\n\n- `resolve_forge_remote()` at lines 86–98 — walks `git remote -v` to set `FORGE_REMOTE`, exports it, falls back to `origin` if no match.\n- `formula_worktree_setup()` at lines 794–804 — uses `${FORGE_REMOTE}` in `git fetch` and `git worktree add`. Its docstring at line 795–796 states:\n  > Requires globals: PROJECT_REPO_ROOT, PRIMARY_BRANCH, FORGE_REMOTE.\n  > Ensure resolve_forge_remote() is called before this function.\n\n`supervisor-run.sh` never calls `resolve_forge_remote`. It jumps straight from `build_sdk_prompt_footer` to `formula_worktree_setup \"$WORKTREE\"`. With `set -u` active, the first `${FORGE_REMOTE}` expansion aborts the script with exit code 1 before any further log() call. The abort happens silently because the outer entrypoint backgrounds the process (`&`) and only captures stderr to a separate log that nobody polls.\n\n## Fix sketch\n\nTwo candidates:\n\n1. **One-line call site fix** (smallest, matches how review-poll / dev-poll handle it): add `resolve_forge_remote` in `supervisor-run.sh` right after the `cd \"$PROJECT_REPO_ROOT\"` step and before `formula_worktree_setup \"$WORKTREE\"`. This mirrors the pattern used by dev-poll/review-poll loops.\n\n2. **Defensive fix in formula_worktree_setup** — call `resolve_forge_remote` inside `formula_worktree_setup` itself if `FORGE_REMOTE` is unset, so every caller is safe. Slightly larger blast radius but eliminates the precondition footgun entirely.\n\nOption 2 is preferable: the silent-abort-on-unbound was invisible for two days, and adding a precondition comment on a function is weaker than making the function self-heal.\n\n## Acceptance\n\n- After fix, `data/logs/supervisor/supervisor.log` shows `--- Supervisor run start ---` followed by `Running preflight.sh` and eventually `--- Supervisor run done ---` on every iteration.\n- `data/logs/supervisor.log` (the stderr sink) does NOT contain `FORGE_REMOTE: unbound variable` entries going forward.\n- WP-agent CI-exhausted sweep demonstrably runs at least once end-to-end (log line `WP agent restart and issue recovery complete` or `WP Agent Health: healthy` path).\n\n## Related\n\n- Observed stale lockfiles at `/tmp/{architect,gardener,planner,predictor}-run.lock` from the 2026-04-21T11:58Z 6h tick — not released, PIDs dead. May be a related-but-separate bug (agents crashing without `trap EXIT` releasing the lock). Worth a follow-up issue if reproduces after the supervisor fix lands.\n\n## Affected files\n\n- `supervisor/supervisor-run.sh` (missing `resolve_forge_remote` call)\n- `lib/formula-session.sh` (optional defensive fix in `formula_worktree_setup`)"
+    "action": "remove_label",
+    "issue": 559,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 560,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 560,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 556,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 556,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 452,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 452,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 431,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 431,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 326,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 326,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 289,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 289,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 275,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 275,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 244,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 244,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 205,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 205,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 356,
+    "body": "This issue is missing required sections for dev-agent pickup. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 356,
+    "label": "backlog"
   }
 ]
