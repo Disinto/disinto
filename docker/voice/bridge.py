@@ -1442,59 +1442,76 @@ class VoiceSession:
             _log(f"client closed (user={self.user})")
 
     async def _pump_live_to_client(self, live_session):
-        """Read events from Gemini; forward audio bytes + dispatch tools."""
-        async for response in live_session.receive():
-            # Gemini Live returns audio chunks as server_content.model_turn
-            # parts. The new SDK exposes them as `response.data` for audio
-            # and `response.text` for text; older paths may use
-            # `response.server_content`. We handle both without branching
-            # into SDK internals.
-            audio = getattr(response, "data", None)
-            if audio:
-                try:
-                    await self.ws.send(bytes(audio))
-                except websockets.exceptions.ConnectionClosed:
-                    return
+        """Read events from Gemini; forward audio bytes + dispatch tools.
 
-            text = getattr(response, "text", None)
-            if text:
-                try:
-                    await self.ws.send(json.dumps({
-                        "type": "transcript",
-                        "text": text,
-                    }))
-                except websockets.exceptions.ConnectionClosed:
-                    return
+        Note on the loop shape: ``live_session.receive()`` is documented to
+        "represent a complete model turn" and the SDK's implementation
+        (google-genai/live.py) exits the generator after the first event
+        with ``server_content.turn_complete=True`` (search ``while result :=``
+        + ``break`` in that file). To handle multiple user turns in a
+        single Gemini Live session we re-arm ``receive()`` after each turn
+        — the outer ``while True`` does that. The loop exits when the
+        underlying WebSocket dies (subsequent ``receive()`` raises) or
+        when the bridge's ``self.ws`` closes (caught via
+        ``websockets.exceptions.ConnectionClosed`` in the inner sends).
+        """
+        while True:
+            try:
+                async for response in live_session.receive():
+                    # Gemini Live returns audio chunks as server_content.model_turn
+                    # parts. The new SDK exposes them as `response.data` for audio
+                    # and `response.text` for text; older paths may use
+                    # `response.server_content`. We handle both without branching
+                    # into SDK internals.
+                    audio = getattr(response, "data", None)
+                    if audio:
+                        try:
+                            await self.ws.send(bytes(audio))
+                        except websockets.exceptions.ConnectionClosed:
+                            return
 
-            # Native-audio models surface transcripts via
-            # server_content.{output,input}_transcription.text. Forward
-            # both to the browser tagged with their source so the UI can
-            # render Gemini's speech alongside the user's transcribed
-            # mic input.
-            sc = getattr(response, "server_content", None)
-            if sc is not None:
-                for attr, kind in (
-                    ("output_transcription", "transcript"),
-                    ("input_transcription", "transcript"),
-                ):
-                    tr = getattr(sc, attr, None)
-                    tr_text = getattr(tr, "text", None) if tr is not None else None
-                    if tr_text:
+                    text = getattr(response, "text", None)
+                    if text:
                         try:
                             await self.ws.send(json.dumps({
-                                "type": kind,
-                                "text": tr_text,
-                                "source": attr.replace("_transcription", ""),
+                                "type": "transcript",
+                                "text": text,
                             }))
                         except websockets.exceptions.ConnectionClosed:
                             return
 
-            # Tool call dispatch. The SDK delivers these either at the
-            # top level (`response.tool_call`) or folded into
-            # `server_content`.
-            tool_call = getattr(response, "tool_call", None)
-            if tool_call:
-                await self._dispatch_tool_call(tool_call, live_session)
+                    # Native-audio models surface transcripts via
+                    # server_content.{output,input}_transcription.text. Forward
+                    # both to the browser tagged with their source so the UI can
+                    # render Gemini's speech alongside the user's transcribed
+                    # mic input.
+                    sc = getattr(response, "server_content", None)
+                    if sc is not None:
+                        for attr, kind in (
+                            ("output_transcription", "transcript"),
+                            ("input_transcription", "transcript"),
+                        ):
+                            tr = getattr(sc, attr, None)
+                            tr_text = getattr(tr, "text", None) if tr is not None else None
+                            if tr_text:
+                                try:
+                                    await self.ws.send(json.dumps({
+                                        "type": kind,
+                                        "text": tr_text,
+                                        "source": attr.replace("_transcription", ""),
+                                    }))
+                                except websockets.exceptions.ConnectionClosed:
+                                    return
+
+                    # Tool call dispatch. The SDK delivers these either at the
+                    # top level (`response.tool_call`) or folded into
+                    # `server_content`.
+                    tool_call = getattr(response, "tool_call", None)
+                    if tool_call:
+                        await self._dispatch_tool_call(tool_call, live_session)
+            except Exception as exc:
+                _log(f"live_session.receive() raised {exc!r} — exiting pump")
+                return
 
     async def _dispatch_tool_call(self, tool_call, live_session):
         """Execute a tool call from Gemini and send the response back."""

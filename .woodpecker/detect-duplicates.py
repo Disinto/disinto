@@ -281,6 +281,9 @@ def main() -> int:
         "161a80f7296d6e9d45895607b7f5b9c9": "Docker compose env_file + depends_on block (generators.sh + hire-agent.sh) - old",
         # New hash after explicit environment fix (#381)
         "83fa229b86a7fdcb1d3591ab8e718f9d": "Docker compose explicit environment block (generators.sh + hire-agent.sh) - #381",
+        # Acceptance test standard header (set -euo pipefail, SCRIPT_DIR, REPO_ROOT)
+        # Shared across issue-859.sh + issue-882.sh
+        "d61d670d7ab353b62ad815d6b3408c85": "Acceptance test standard header (issue-859 + issue-882)",
         # Verification mode helper functions - intentionally duplicated in dispatcher and entrypoint
         # These functions check if bug-report parent issues have all sub-issues closed
         "b783d403276f78b49ad35840845126a1": "Verification helper: sub_issues variable declaration",
