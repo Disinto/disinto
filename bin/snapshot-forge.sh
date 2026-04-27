@@ -345,8 +345,8 @@ main() {
   local tmpfile
   tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.forge.XXXXXX")"
 
-  # Read previous snapshot, merge forge key, write atomically.
-  jq -c --argjson forge "$forge_data" '.forge = $forge' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  # Read previous snapshot, merge forge key under .collectors.forge, write atomically.
+  jq -c --argjson forge "$forge_data" '.collectors.forge = $forge' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local backlog_count

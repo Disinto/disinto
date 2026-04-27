@@ -106,7 +106,7 @@ fi
 eligible_file="$(mktemp)"
 trap 'rm -f "$eligible_file"' EXIT
 
-printf '%s' "$snapshot" | jq -r -c '.inbox.items // [] | .[] | [.id, .priority, .title] | @tsv' 2>/dev/null | \
+printf '%s' "$snapshot" | jq -r -c '.collectors.inbox.items // [] | .[] | [.id, .priority, .title] | @tsv' 2>/dev/null | \
 while IFS=$'\t' read -r item_id item_priority item_title; do
   # Skip empty lines
   [ -z "$item_id" ] && continue
