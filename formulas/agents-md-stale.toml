@@ -1,0 +1,264 @@
+# formulas/agents-md-stale.toml — Per-directory AGENTS.md watermark walk
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"agents-md-stale","issue":0,
+#    "ctx":{"agents_md_path":"<path>","review_sha":"<watermark sha>","current_head":"<head sha>"}}
+#
+# Goal: keep AGENTS.md drift in check WITHOUT trying to refresh all 10+ files
+# in one claude session. Each invocation rewrites exactly ONE AGENTS.md and
+# opens one small PR. Replaces step 4 (`agents-update`) of monolithic
+# `formulas/run-gardener.toml`, which tried to walk every AGENTS.md in a
+# single session and routinely overshot its token budget.
+#
+# Idempotency: re-running on an already-current file is a no-op because
+# classify.sh stops surfacing it (watermark == HEAD); the formula itself
+# is detection-free and trusts classify's selection.
+#
+# Token budget: ≤8K input (existing AGENTS.md + structural diff context),
+# ≤4K output (rewritten AGENTS.md). One file changed, one small PR.
+
+name        = "agents-md-stale"
+description = "Refresh exactly one AGENTS.md against its directory's current state"
+version     = 1
+
+[[steps]]
+id    = "refresh"
+title = "Compute structural diff for one AGENTS.md, rewrite it, open a small PR"
+description = """
+You are refreshing exactly ONE AGENTS.md file identified in the classification
+payload. Do this in a single pass — no orchestration, no other AGENTS.md
+files, no monolithic walk.
+
+The classification payload's `ctx` field contains:
+  - agents_md_path: the AGENTS.md to rewrite (absolute path)
+  - review_sha:    the watermark SHA recorded on line 1 of that file
+  - current_head:  the directory's current git HEAD
+
+## 1. Pull the inputs into shell variables
+
+  AGENTS_MD="<the .ctx.agents_md_path field from the payload>"
+  WATERMARK="<the .ctx.review_sha field from the payload>"
+  HEAD_SHA="<the .ctx.current_head field from the payload>"
+  AGENTS_DIR="$(dirname "$AGENTS_MD")"
+
+  # Rebase the directory to the project repo root so git ls-tree paths come
+  # back relative-clean. Most AGENTS.md live in subdirectories of
+  # $PROJECT_REPO_ROOT, so derive the relative dir for git commands:
+  cd "$PROJECT_REPO_ROOT"
+  REL_DIR="${AGENTS_DIR#$PROJECT_REPO_ROOT/}"
+  if [ "$REL_DIR" = "$AGENTS_DIR" ]; then
+    # AGENTS.md is at repo root
+    REL_DIR="."
+  fi
+
+Save the existing file content to scratch (you will hand this to the rewrite
+step verbatim alongside the diff context):
+
+  cp "$AGENTS_MD" /tmp/agents-md-update.orig
+
+## 2. Bash preflight — compute the structural diff (zero tokens)
+
+This is the core of the formula. Three checks, output to scratch files that
+the rewrite step reads.
+
+### 2a. File inventory: watermark vs HEAD
+
+List the directory's tracked files at both revisions and diff them:
+
+  git ls-tree -r --name-only "$WATERMARK" -- "$REL_DIR" \\
+    | sort > /tmp/agents-md-update.files-watermark
+  git ls-tree -r --name-only HEAD -- "$REL_DIR" \\
+    | sort > /tmp/agents-md-update.files-head
+
+  comm -13 /tmp/agents-md-update.files-watermark \\
+           /tmp/agents-md-update.files-head \\
+    > /tmp/agents-md-update.files-new
+  comm -23 /tmp/agents-md-update.files-watermark \\
+           /tmp/agents-md-update.files-head \\
+    > /tmp/agents-md-update.files-deleted
+
+  echo "NEW files since watermark:"     ; cat /tmp/agents-md-update.files-new
+  echo "DELETED files since watermark:" ; cat /tmp/agents-md-update.files-deleted
+
+### 2b. Reference validation: every path/symbol mentioned in AGENTS.md exists
+
+Extract every concrete reference from the current AGENTS.md and verify it
+still resolves at HEAD. Flag every miss as a LIE for the rewrite step.
+
+  # File paths: backtick-wrapped or bare path segments with a recognised
+  # extension. Keep the regex llama-friendly — no backreferences.
+  grep -oE '`[a-zA-Z0-9_./-]+\\.(sh|py|js|ts|tsx|jsx|toml|md|hcl|yml|yaml|json|rs|go|sql|html|css)`' \\
+    "$AGENTS_MD" \\
+    | tr -d '`' \\
+    | sort -u > /tmp/agents-md-update.refs-paths
+
+  # Function names: backtick-wrapped identifiers ending in ()
+  grep -oE '`[a-zA-Z_][a-zA-Z0-9_]*\\(\\)`' "$AGENTS_MD" \\
+    | tr -d '`()' \\
+    | sort -u > /tmp/agents-md-update.refs-funcs
+
+  # Shell variables: $UPPERCASE_NAME (heuristic, may include false positives —
+  # the rewrite step verifies before rewriting)
+  grep -oE '\\$[A-Z_][A-Z0-9_]+' "$AGENTS_MD" \\
+    | sort -u > /tmp/agents-md-update.refs-vars
+
+  # Verify file paths exist at HEAD. Walk each and emit a LIE line per miss.
+  : > /tmp/agents-md-update.lies
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if ! git ls-tree -r --name-only HEAD -- "$p" | grep -qx "$p"; then
+      echo "LIE: file path '$p' does not exist at HEAD" \\
+        >> /tmp/agents-md-update.lies
+    fi
+  done < /tmp/agents-md-update.refs-paths
+
+  # Verify function names: each must be defined somewhere in this directory's
+  # *.sh / *.py files (best-effort — bash function syntax: `name()` or
+  # `function name`; python: `def name`).
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if ! git grep -l -E "(^|[^a-zA-Z0-9_])$f *\\(\\)|function +$f|def +$f" \\
+        -- "$REL_DIR" >/dev/null 2>&1; then
+      echo "LIE: function '${f}()' is not defined in $REL_DIR at HEAD" \\
+        >> /tmp/agents-md-update.lies
+    fi
+  done < /tmp/agents-md-update.refs-funcs
+
+  echo "LIES found:" ; cat /tmp/agents-md-update.lies
+
+### 2c. Semantic diff: meaningful changes since watermark
+
+Show what actually changed in code/config files (not pure formatting):
+
+  git diff --stat "$WATERMARK"..HEAD -- \\
+      "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
+      "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
+    > /tmp/agents-md-update.semdiff-stat || true
+
+  # Cap the full diff to keep the rewrite step within budget. ~400 lines is
+  # plenty of context for the model to spot new exports, removed flags, etc.
+  git diff "$WATERMARK"..HEAD -- \\
+      "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
+      "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
+    | head -n 400 > /tmp/agents-md-update.semdiff-head
+
+  echo "SEMANTIC DIFF (stat):"
+  cat /tmp/agents-md-update.semdiff-stat
+  echo "---"
+  echo "SEMANTIC DIFF (first 400 lines):"
+  cat /tmp/agents-md-update.semdiff-head
+
+## 3. Decide: actionable or no-op?
+
+Skip the rewrite (no PR, log no-op, exit 0) if ALL of the following hold:
+  - /tmp/agents-md-update.files-new      is empty
+  - /tmp/agents-md-update.files-deleted  is empty
+  - /tmp/agents-md-update.lies           is empty
+  - /tmp/agents-md-update.semdiff-stat   is empty (or only mentions purely
+    cosmetic changes — the watermark moved but nothing structural changed)
+
+In that case:
+
+  echo "ACTION: no-op for $AGENTS_MD — watermark stale but no structural drift"
+  exit 0
+
+Otherwise continue to step 4.
+
+## 4. Rewrite the AGENTS.md (model pass)
+
+You now have:
+  - /tmp/agents-md-update.orig         — current AGENTS.md verbatim
+  - /tmp/agents-md-update.files-new    — files added since watermark
+  - /tmp/agents-md-update.files-deleted — files removed since watermark
+  - /tmp/agents-md-update.lies         — references that no longer resolve
+  - /tmp/agents-md-update.semdiff-stat — high-level signal of what changed
+  - /tmp/agents-md-update.semdiff-head — first 400 lines of the actual diff
+
+Rewrite the AGENTS.md applying these corrections, in order:
+  a. Update line 1 watermark to the new HEAD sha:
+       <!-- last-reviewed: $HEAD_SHA -->
+  b. Add NEW files to the relevant layout / key-files section, with a brief
+     one-line description derived from each file's purpose.
+  c. Remove DELETED files from any layout / key-files / table sections.
+  d. Fix every entry in the LIES list — either rename to the current path,
+     replace with the correct symbol, or remove the reference if obsolete.
+  e. Add concise notes about meaningful SEMANTIC CHANGES (new exported
+     functions, removed flags, new env vars, renamed scripts). Skip pure
+     internal refactors, comment changes, and formatting.
+  f. Preserve the rest of the file's structure and tone — this is a
+     surgical refresh, not a rewrite from scratch.
+
+Output budget: ≤4K tokens for the rewritten file. If the existing file is
+already close to its size cap (e.g. root AGENTS.md near 200 lines), keep
+the rewrite at parity — do NOT split into per-directory files in this
+formula. Splitting the root AGENTS.md is a separate concern; if the file
+grows past the cap, file a sibling issue rather than handle it here.
+
+Write the rewrite to scratch and then move it into place:
+
+  # Compose the new file using the model output, written to /tmp/agents-md-update.new
+  mv /tmp/agents-md-update.new "$AGENTS_MD"
+
+Verify line 1 watermark is correctly set:
+
+  head -n1 "$AGENTS_MD" | grep -q "<!-- last-reviewed: $HEAD_SHA -->" \\
+    || { echo "rewrite missing HEAD watermark — abort"; exit 1; }
+
+## 5. Commit and open a small PR
+
+Single small PR with one file changed:
+
+  cd "$PROJECT_REPO_ROOT"
+  DATE=$(date -u +%Y%m%d)
+  # Slugify the directory name for the branch (root = "root")
+  if [ "$REL_DIR" = "." ]; then
+    DIR_SLUG="root"
+  else
+    DIR_SLUG=$(printf '%s' "$REL_DIR" | tr '/' '-')
+  fi
+  BRANCH="chore/agents-md-${DIR_SLUG}-${DATE}"
+
+  git checkout -B "$BRANCH"
+  git add "$AGENTS_MD"
+
+  # Sanity-check: exactly one file staged.
+  STAGED_COUNT=$(git diff --cached --name-only | wc -l)
+  if [ "$STAGED_COUNT" -ne 1 ]; then
+    echo "expected exactly one staged file, got $STAGED_COUNT — abort"
+    git diff --cached --name-only
+    exit 1
+  fi
+
+  git commit -m "chore: refresh AGENTS.md for ${REL_DIR}"
+  git push -u origin "$BRANCH"
+
+  # Open the PR — title only, body is the auto-generated diff summary.
+  curl -sf -X POST \\
+    -H "Authorization: token $FORGE_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    "$FORGE_API/pulls" \\
+    -d "$(jq -n \\
+        --arg title  "chore: refresh AGENTS.md for ${REL_DIR}" \\
+        --arg head   "$BRANCH" \\
+        --arg base   "$PRIMARY_BRANCH" \\
+        '{title:$title, head:$head, base:$base, body:""}')" \\
+    > /tmp/agents-md-update.pr.json
+
+  PR_NUMBER=$(jq -r '.number' /tmp/agents-md-update.pr.json)
+  echo "ACTION: refreshed $AGENTS_MD — PR #${PR_NUMBER} (${BRANCH})"
+
+Done. Stop the session.
+
+## Output discipline
+
+- One AGENTS.md per invocation. Never touch a second file.
+- One small PR. One file changed. Title only — no body beyond the auto
+  diff. Do NOT bundle other gardener work into this PR.
+- Every reference you write into the rewritten file must exist at HEAD —
+  if you cannot verify it, leave it out. Lies on the way in become lies on
+  the way out.
+- Do NOT split the root AGENTS.md in this formula, even if it is over the
+  size cap. That is a sibling concern — file a separate issue.
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+"""

@@ -49,7 +49,6 @@ fi
 
 # ── Constants ────────────────────────────────────────────────────────────────
 DUST_FILE="${FACTORY_ROOT}/gardener/dust.jsonl"
-AGENTS_MD="${FACTORY_ROOT}/AGENTS.md"
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -329,43 +328,64 @@ check_bundle_dust() {
 }
 
 # 6. agents-md-stale
-#    AGENTS.md whose watermark <!-- last-reviewed: <sha> --> predates
-#    git log head for its directory.
+#    Any AGENTS.md whose watermark <!-- last-reviewed: <sha> --> predates
+#    git log head for its directory. Walks every AGENTS.md in the repo and
+#    surfaces the one with the oldest watermark relative to its directory's
+#    HEAD (most-stale-first).
 check_agents_md_stale() {
-  if [ ! -f "$AGENTS_MD" ]; then
+  # Find all AGENTS.md files tracked in the repo (skip .git, vendor dirs).
+  local agents_md_files
+  agents_md_files=$(git -C "$FACTORY_ROOT" ls-files '*AGENTS.md' 'AGENTS.md' 2>/dev/null) || agents_md_files=""
+
+  if [ -z "$agents_md_files" ]; then
     return 0
   fi
 
-  # Extract the review watermark SHA from AGENTS.md
-  local review_sha
-  review_sha=$(grep -oP '<!-- last-reviewed:\s*\K[0-9a-f]+' "$AGENTS_MD" 2>/dev/null) || review_sha=""
+  local best_path="" best_sha="" best_head="" best_age=0
 
-  if [ -z "$review_sha" ]; then
-    return 0
-  fi
+  while IFS= read -r rel_path; do
+    [ -z "$rel_path" ] && continue
+    local md_path="$FACTORY_ROOT/$rel_path"
+    [ -f "$md_path" ] || continue
 
-  # Get the git log head for the directory containing AGENTS.md
-  local md_dir
-  md_dir=$(dirname "$AGENTS_MD")
-  local dir_head
-  dir_head=$(git -C "$md_dir" log -1 --format='%H' 2>/dev/null) || dir_head=""
+    # Extract the review watermark SHA from this AGENTS.md
+    local review_sha
+    review_sha=$(grep -oP '<!-- last-reviewed:\s*\K[0-9a-f]+' "$md_path" 2>/dev/null) || review_sha=""
+    [ -z "$review_sha" ] && continue
 
-  if [ -z "$dir_head" ]; then
-    return 0
-  fi
+    # Get the git log head for the directory containing this AGENTS.md
+    local md_dir
+    md_dir=$(dirname "$md_path")
+    local dir_head
+    dir_head=$(git -C "$md_dir" log -1 --format='%H' -- "$md_dir" 2>/dev/null) || dir_head=""
+    [ -z "$dir_head" ] && continue
 
-  # Check if the review SHA is older than the directory head
-  if [ "$review_sha" != "${dir_head:0:${#review_sha}}" ]; then
-    # The review SHA is different from current head — check if it's older
+    # If the watermark already matches HEAD (full or prefix), skip.
+    if [ "$review_sha" = "${dir_head:0:${#review_sha}}" ]; then
+      continue
+    fi
+
+    # Confirm the watermark is strictly older than dir HEAD by commit time.
     local review_date head_date
     review_date=$(git -C "$md_dir" log -1 --format='%ct' "$review_sha" 2>/dev/null) || review_date=0
     head_date=$(git -C "$md_dir" log -1 --format='%ct' "$dir_head" 2>/dev/null) || head_date=0
 
     if [ "${review_date:-0}" -lt "${head_date:-0}" ]; then
-      jq -n -c --arg path "$AGENTS_MD" --arg sha "$review_sha" --arg head "$dir_head" \
-        '{"task":"agents-md-stale","issue":0,"ctx":{"agents_md_path":$path,"review_sha":$sha,"current_head":$head}}'
-      return 0
+      local age=$(( head_date - review_date ))
+      # Most-stale wins — surfaces the file most overdue for refresh first.
+      if [ -z "$best_path" ] || [ "$age" -gt "$best_age" ]; then
+        best_path="$md_path"
+        best_sha="$review_sha"
+        best_head="$dir_head"
+        best_age="$age"
+      fi
     fi
+  done <<< "$agents_md_files"
+
+  if [ -n "$best_path" ]; then
+    jq -n -c --arg path "$best_path" --arg sha "$best_sha" --arg head "$best_head" \
+      '{"task":"agents-md-stale","issue":0,"ctx":{"agents_md_path":$path,"review_sha":$sha,"current_head":$head}}'
+    return 0
   fi
 
   return 0
