@@ -273,12 +273,12 @@ classify_prs() {
 
     # Check for REQUEST_CHANGES (non-stale)
     local has_changes
-    has_changes="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state == "REQUEST_CHANGES" and (.stale == false or .stale == null))] | length')" || true
+    has_changes="$(printf '%s' "$reviews_json" | jq -c '[.[] | select(.state == "REQUEST_CHANGES" and (.stale == false or .stale == null))] | length')" || true
     has_changes="${has_changes:-0}"
 
     # Check for APPROVED (non-stale)
     local has_approved
-    has_approved="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state == "APPROVED" and (.stale == false or .stale == null))] | length')" || true
+    has_approved="$(printf '%s' "$reviews_json" | jq -c '[.[] | select(.state == "APPROVED" and (.stale == false or .stale == null))] | length')" || true
     has_approved="${has_approved:-0}"
 
     # Determine status
@@ -317,13 +317,13 @@ classify_prs() {
       --argjson age "$age_hours" \
       '{number: $num, title: $title, status: $status, age_hours: $age}')
 
-    # Classify into prs_open or prs_blocked
+    # Classify into prs_open or prs_blocked (compact output so each is a single line)
     case "$status" in
       mergeable-failure)
-        prs_blocked=$(printf '%s' "$prs_blocked" | jq --argjson entry "$pr_entry" '. + [$entry]')
+        prs_blocked=$(printf '%s' "$prs_blocked" | jq -c --argjson entry "$pr_entry" '. + [$entry]')
         ;;
       *)
-        prs_open=$(printf '%s' "$prs_open" | jq --argjson entry "$pr_entry" '. + [$entry]')
+        prs_open=$(printf '%s' "$prs_open" | jq -c --argjson entry "$pr_entry" '. + [$entry]')
         ;;
     esac
   done

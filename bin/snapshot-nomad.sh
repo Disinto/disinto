@@ -47,15 +47,17 @@ trap cleanup EXIT
 # ── Fetch Nomad data with timeout ─────────────────────────────────────────────
 
 fetch_jobs() {
-  nomad job list -json -address="$NOMAD_ADDR" \
-    -token="$NOMAD_TOKEN" \
-    -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null || true
+  local -a headers=()
+  [ -n "${NOMAD_TOKEN:-}" ] && headers+=(-H "X-Nomad-Token: ${NOMAD_TOKEN}")
+  curl -fsS --max-time "${NOMAD_TIMEOUT}" "${headers[@]}" \
+    "${NOMAD_ADDR%/}/v1/jobs" 2>/dev/null || true
 }
 
 fetch_allocs() {
-  nomad alloc list -json -address="$NOMAD_ADDR" \
-    -token="$NOMAD_TOKEN" \
-    -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null || true
+  local -a headers=()
+  [ -n "${NOMAD_TOKEN:-}" ] && headers+=(-H "X-Nomad-Token: ${NOMAD_TOKEN}")
+  curl -fsS --max-time "${NOMAD_TIMEOUT}" "${headers[@]}" \
+    "${NOMAD_ADDR%/}/v1/allocations" 2>/dev/null || true
 }
 
 # ── Build jobs array and alerts ───────────────────────────────────────────────
