@@ -61,18 +61,21 @@ discover_opus_allocs() {
   local allocs_json
   allocs_json="$(nomad alloc list -json -address="$NOMAD_ADDR" \
     -token="$NOMAD_TOKEN" \
-    -status=running \
     -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null)" || true
 
   [ -z "$allocs_json" ] && printf '[]' && return
 
+  # Filter on JobID (alloc Name is "<job>.<group>[<index>]" — never ends in
+  # "-opus"); status filter moves into jq so we don't depend on a flag that
+  # `nomad alloc list` doesn't accept.
   printf '%s' "$allocs_json" | jq -c '
     [ .[]
       | select(. != null)
-      | select(.Name != null and .ID != null)
-      | select(.Name | test("-opus$"))
+      | select(.JobID != null and .ID != null)
+      | select(.ClientStatus == "running")
+      | select(.JobID | test("-opus$"))
       | {
-          name: (.Name | sub("^agents-"; "")),
+          name: (.JobID | sub("^agents-"; "")),
           alloc_id: .ID
         }
     ]
@@ -265,8 +268,8 @@ main() {
   local tmpfile
   tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.agents.XXXXXX")"
 
-  # Read previous snapshot, merge agents key, write atomically.
-  jq -c --argjson agents "$agents_data" '.agents = $agents' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  # Read previous snapshot, merge agents key under .collectors.agents, write atomically.
+  jq -c --argjson agents "$agents_data" '.collectors.agents = $agents' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local agent_count

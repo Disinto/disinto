@@ -509,6 +509,7 @@ FACTORY_FORGE_PAT={{ .Data.data.forge_pat }}
 NOMAD_TOKEN={{ .Data.data.nomad_token }}
 {{- end }}
 NOMAD_ADDR=http://localhost:4646
+FORGE_URL=https://self.disinto.ai/forge
 FACTORY_ROOT=/opt/disinto
 EOT
       }

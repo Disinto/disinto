@@ -55,7 +55,7 @@ Operator: "walk me through the completed delegate"
 
 ## Data source
 
-- Reads `/var/lib/disinto/snapshot/state.json` (`.inbox.items[].id`) to
+- Reads `/var/lib/disinto/snapshot/state.json` (`.collectors.inbox.items[].id`) to
   validate the id exists before writing the sentinel.
 - Delegates the write to `bin/inbox-ack.sh`, which manages the per-item
   sentinel files atomically.

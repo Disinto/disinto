@@ -112,14 +112,14 @@ build_text_summary() {
 
   # ── Forge summary ──
   local has_forge
-  has_forge=$(printf '%s' "$data" | jq 'has("forge")')
+  has_forge=$(printf '%s' "$data" | jq '.collectors | has("forge")')
   if [ "$has_forge" = "true" ]; then
     local backlog in_progress blocked prs_open prs_blocked
-    backlog=$(printf '%s' "$data" | jq -r '.forge.backlog_count // 0')
-    in_progress=$(printf '%s' "$data" | jq -r '.forge.in_progress_count // 0')
-    blocked=$(printf '%s' "$data" | jq -r '.forge.blocked_count // 0')
-    prs_open=$(printf '%s' "$data" | jq -r '.forge.prs_open // [] | length')
-    prs_blocked=$(printf '%s' "$data" | jq -r '.forge.prs_blocked // [] | length')
+    backlog=$(printf '%s' "$data" | jq -r '.collectors.forge.backlog_count // 0')
+    in_progress=$(printf '%s' "$data" | jq -r '.collectors.forge.in_progress_count // 0')
+    blocked=$(printf '%s' "$data" | jq -r '.collectors.forge.blocked_count // 0')
+    prs_open=$(printf '%s' "$data" | jq -r '.collectors.forge.prs_open // [] | length')
+    prs_blocked=$(printf '%s' "$data" | jq -r '.collectors.forge.prs_blocked // [] | length')
 
     printf -- '- Tracker: %s backlog, %s in-progress' "$backlog" "$in_progress"
     if [ "$blocked" -gt 0 ] 2>/dev/null; then
@@ -131,10 +131,10 @@ build_text_summary() {
       # Build PR detail string
       local pr_details
       pr_details=$(printf '%s' "$data" | jq -r '
-        [.forge.prs_open // [] | .[] |
+        [.collectors.forge.prs_open // [] | .[] |
           "#\(.number) \(.status)"
         ] +
-        [.forge.prs_blocked // [] | .[] |
+        [.collectors.forge.prs_blocked // [] | .[] |
           "#\(.number) \(.status) (CI failing)"
         ] | join(", ")
       ' 2>/dev/null) || pr_details=""
@@ -148,14 +148,14 @@ build_text_summary() {
 
   # ── Agents summary ──
   local has_agents
-  has_agents=$(printf '%s' "$data" | jq 'has("agents")')
+  has_agents=$(printf '%s' "$data" | jq '.collectors | has("agents")')
   if [ "$has_agents" = "true" ]; then
     local agent_count
-    agent_count=$(printf '%s' "$data" | jq -r '.agents | length')
+    agent_count=$(printf '%s' "$data" | jq -r '.collectors.agents | length')
     if [ "$agent_count" -gt 0 ] 2>/dev/null; then
       local agent_lines
       agent_lines=$(printf '%s' "$data" | jq -r '
-        .agents | to_entries[] |
+        .collectors.agents | to_entries[] |
         if .value.issue then
           "\(.key) working \(.value.issue)"
         elif .value.state == "working" then
@@ -176,13 +176,13 @@ build_text_summary() {
 
   # ── Nomad summary ──
   local has_nomad
-  has_nomad=$(printf '%s' "$data" | jq 'has("nomad")')
+  has_nomad=$(printf '%s' "$data" | jq '.collectors | has("nomad")')
   if [ "$has_nomad" = "true" ]; then
     local job_count alert_count
-    job_count=$(printf '%s' "$data" | jq -r '.nomad.jobs // [] | length')
-    alert_count=$(printf '%s' "$data" | jq -r '.nomad.alerts // [] | length')
+    job_count=$(printf '%s' "$data" | jq -r '.collectors.nomad.jobs // [] | length')
+    alert_count=$(printf '%s' "$data" | jq -r '.collectors.nomad.alerts // [] | length')
     local running_count
-    running_count=$(printf '%s' "$data" | jq -r '[.nomad.jobs[]?.allocs_running // 0] | add // 0')
+    running_count=$(printf '%s' "$data" | jq -r '[.collectors.nomad.jobs[]?.allocs_running // 0] | add // 0')
 
     printf -- '- Nomad: %s jobs, %s running' "$job_count" "$running_count"
     if [ "$alert_count" -gt 0 ] 2>/dev/null; then
@@ -193,10 +193,10 @@ build_text_summary() {
 
   # ── Inbox summary ──
   local has_inbox
-  has_inbox=$(printf '%s' "$data" | jq 'has("inbox")')
+  has_inbox=$(printf '%s' "$data" | jq '.collectors | has("inbox")')
   if [ "$has_inbox" = "true" ]; then
     local unread_count
-    unread_count=$(printf '%s' "$data" | jq -r '.inbox.unread_count // 0')
+    unread_count=$(printf '%s' "$data" | jq -r '.collectors.inbox.unread_count // 0')
     printf -- '- Inbox: %s unread item(s)\n' "$unread_count"
   fi
 }
@@ -208,11 +208,11 @@ get_data_slice() {
   local sec="$2"
 
   if [ -n "$sec" ]; then
-    # Return just the section
+    # Return just the section under .collectors
     local has_key
-    has_key=$(printf '%s' "$data" | jq "has(\"$sec\")")
+    has_key=$(printf '%s' "$data" | jq ".collectors | has(\"$sec\")")
     if [ "$has_key" = "true" ]; then
-      printf '%s' "$data" | jq -c --arg sec "$sec" '.[$sec]'
+      printf '%s' "$data" | jq -c --arg sec "$sec" '.collectors[$sec]'
     else
       printf '{"error":"no data for section '\''%s'\''"}' "$sec"
     fi

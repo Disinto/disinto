@@ -100,7 +100,7 @@ id_in_snapshot() {
   local needle="$1"
   [ -f "$SNAPSHOT_PATH" ] || return 1
   jq -e --arg id "$needle" \
-    '(.inbox.items // []) | map(.id) | index($id) != null' \
+    '(.collectors.inbox.items // []) | map(.id) | index($id) != null' \
     "$SNAPSHOT_PATH" >/dev/null 2>&1
 }
 

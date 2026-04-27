@@ -28,10 +28,26 @@ log() {
   printf '[%s] snapshot-nomad: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
+# ── Temp file tracking ───────────────────────────────────────────────────────
+
+TMPFILES=()
+
+mktemp_safe() {
+  local tmp
+  tmp="$(mktemp "$@")"
+  TMPFILES+=("$tmp")
+  printf '%s' "$tmp"
+}
+
+cleanup() {
+  rm -f "${TMPFILES[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 # ── Fetch Nomad data with timeout ─────────────────────────────────────────────
 
 fetch_jobs() {
-  nomad job status -json -address="$NOMAD_ADDR" \
+  nomad job list -json -address="$NOMAD_ADDR" \
     -token="$NOMAD_TOKEN" \
     -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null || true
 }
@@ -58,36 +74,49 @@ build_nomad_data() {
   fi
 
   # Build the merged output with jq.
-  # nomad job status -json → flat array of job objects
-  # nomad alloc list -json → flat array of alloc objects
+  # nomad job list  -json → flat array of job objects (no embedded Allocations)
+  # nomad alloc list -json → flat array of alloc objects (with JobID, ClientStatus)
   printf '%s' "$jobs_json" | jq -c --argjson allocs "$allocs_json" '
     # ── alloc_id → restart_count map ──
     ([$allocs[] | select(. != null and .ID != null)]
      | map({key: .ID, value: (.RestartCount // 0)})
      | from_entries) as $alloc_restarts |
 
+    # ── job_id → list-of-allocs map ──
+    ([$allocs[] | select(. != null and .JobID != null)]
+     | group_by(.JobID)
+     | map({key: .[0].JobID, value: .})
+     | from_entries) as $allocs_by_job |
+
     # ── jobs summary ──
     (map(select(. != null)) | map(
+      . as $j |
+      ($allocs_by_job[$j.ID // ""] // []) as $job_allocs |
       {
-        id:           (.ID // .Name // "unknown"),
-        status:       (.Status // "unknown"),
-        allocs_running: ([.Allocations // [] | .[] | select(.Status == "running")] | length),
-        allocs_failed:  ([.Allocations // [] | .[] | select(.Status == "dead" or .Status == "failed")] | length)
+        id:           ($j.ID // $j.Name // "unknown"),
+        status:       ($j.Status // "unknown"),
+        allocs_running: ([$job_allocs[] | select(.ClientStatus == "running")] | length),
+        allocs_failed:  ([$job_allocs[] | select(.ClientStatus == "failed" or .ClientStatus == "lost")] | length)
       }
     )) as $jobs |
 
-    # ── Alert 1: pending/dead/failed jobs older than 5 min ──
-    # Parse ISO 8601 StatusTime via strptime/mktime; compare with jq now().
+    # ── Alert 1: pending/dead jobs older than 5 min ──
+    # nomad job list -json exposes SubmitTime (nanoseconds since epoch) rather
+    # than StatusTime — fall back to either when present.
     (
       [
         (map(select(. != null)) | .[]) |
-        select(
-          (.Status == "pending" or .Status == "dead" or .Status == "failed")
-          and (.StatusTime != null)
-        ) |
-        # Strip fractional seconds and Z for strptime compatibility
-        (.StatusTime | gsub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) as $t |
-        select((now - $t) > 300) |
+        select(.Status == "pending" or .Status == "dead") |
+        ((
+          if .StatusTime != null and (.StatusTime | type) == "string" then
+            (.StatusTime | gsub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)
+          elif .SubmitTime != null and (.SubmitTime | type) == "number" then
+            (.SubmitTime / 1000000000 | floor)
+          else
+            null
+          end
+        )) as $t |
+        select($t != null and (now - $t) > 300) |
         "job \(.ID // .Name) \(.Status)"
       ]
     ) as $time_alerts |
@@ -116,11 +145,10 @@ main() {
   nomad_data="$(build_nomad_data)"
 
   local tmpfile
-  tmpfile="$(mktemp "${SNAPSHOT_PATH}.nomad.XXXXXX")"
-  trap 'rm -f "$tmpfile"' EXIT
+  tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.nomad.XXXXXX")"
 
-  # Read previous snapshot, merge nomad key, write atomically.
-  jq -c --argjson nomad "$nomad_data" '.nomad = $nomad' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  # Read previous snapshot, merge nomad key under .collectors.nomad, write atomically.
+  jq -c --argjson nomad "$nomad_data" '.collectors.nomad = $nomad' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local alert_count

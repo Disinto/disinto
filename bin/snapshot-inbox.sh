@@ -426,8 +426,8 @@ main() {
   local tmpfile
   tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.inbox.XXXXXX")"
 
-  # Read previous snapshot, merge inbox key, write atomically.
-  jq -c --argjson inbox "$inbox_data" '.inbox = $inbox' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  # Read previous snapshot, merge inbox key under .collectors.inbox, write atomically.
+  jq -c --argjson inbox "$inbox_data" '.collectors.inbox = $inbox' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local total_count unshown_count
