@@ -1,4 +1,4 @@
-<!-- last-reviewed: 834c1bceb7b3b0dca2cd5e29a5ffc37633f7566c -->
+<!-- last-reviewed: 12b15762f6adcd833f4c39345b66778112eca39c -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -28,7 +28,9 @@ Key directories:
 - **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
 - **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher); `docker/agents/` — Llama-server agent entrypoint
+- **docker/agents/**: Llama-server agent orchestration (`entrypoint.sh`)
+- **.woodpecker/**: CI pipelines (detect-duplicates.py, acceptance-tests.yml, etc.)
 - **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
