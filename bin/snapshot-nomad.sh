@@ -32,11 +32,14 @@ log() {
 
 TMPFILES=()
 
+# Assigns through a global `_TMPFILE` rather than printing to stdout. Reason:
+# command substitution forks a subshell, so any TMPFILES+=() inside it is
+# discarded when the subshell exits — the parent's array stays empty and
+# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
+# keeps the array updates in the parent shell where the trap can see them.
 mktemp_safe() {
-  local tmp
-  tmp="$(mktemp "$@")"
-  TMPFILES+=("$tmp")
-  printf '%s' "$tmp"
+  _TMPFILE="$(mktemp "$@")"
+  TMPFILES+=("$_TMPFILE")
 }
 
 cleanup() {
@@ -147,7 +150,8 @@ main() {
   nomad_data="$(build_nomad_data)"
 
   local tmpfile
-  tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.nomad.XXXXXX")"
+  mktemp_safe "${SNAPSHOT_PATH}.nomad.XXXXXX"
+  tmpfile="$_TMPFILE"
 
   # Read previous snapshot, merge nomad key under .collectors.nomad, write atomically.
   jq -c --argjson nomad "$nomad_data" '.collectors.nomad = $nomad' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
