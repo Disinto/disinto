@@ -112,7 +112,9 @@ ac_log "running each migrated test via tools/run-acceptance.sh"
 for num in "${MIGRATED_ISSUES[@]}"; do
   ac_log "  running test for #${num}"
   result="$(tools/run-acceptance.sh --format json "$num" 2>&1 || true)"
-  exit_code="$(printf '%s' "$result" | jq -r '.exit // 0' 2>/dev/null || echo "1")"
+  # Must be valid JSON that actually contains an .exit key; otherwise hard-fail.
+  exit_code="$(printf '%s' "$result" | jq -r 'if has("exit") then .exit else empty end' 2>/dev/null)"
+  exit_code="${exit_code:-1}"
 
   # Accept either PASS or a real failure (the underlying fix may not be deployed).
   # The migration test only checks the file exists and is structurally valid.

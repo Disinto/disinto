@@ -21,13 +21,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   cat <<EOF
-Usage: $0 <issue-number>
+Usage: $0 <issue-number> [--yes|-y]
 
 Migrates inline acceptance-test commands from an issue body into a
 tests/acceptance/issue-<N>.sh file, then PATCHes the issue body to reference
 the file path instead.
 
 Idempotent: skips if the test file already exists.
+
+Flags:
+  --yes, -y     skip the PATCH confirmation prompt (useful for automation)
 
 Requires: FORGE_TOKEN, FORGE_API (from lib/env.sh).
 EOF
@@ -40,11 +43,20 @@ if [ $# -lt 1 ]; then
   exit 2
 fi
 
+# ── Parse flags ──────────────────────────────────────────────────────────────
+
+YES=false
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) YES=true ;;
+  esac
+done
+
 ISSUE_NUM="$1"
 
 # Resolve env.sh (must be sourced for FORGE_TOKEN / FORGE_API).
 # shellcheck source=lib/env.sh
-source "$SCRIPT_DIR/lib/env.sh"
+source "$REPO_ROOT/lib/env.sh"
 
 TEST_FILE="$REPO_ROOT/tests/acceptance/issue-${ISSUE_NUM}.sh"
 
@@ -163,10 +175,13 @@ printf '\n--- Preview of new issue body (Acceptance test section) ---\n'
 printf '%s\n' "$NEW_BODY" | grep -A2 '## Acceptance test' || true
 printf '--- end preview ---\n\n'
 
-read -r -p "PATCH issue #${ISSUE_NUM} body? [y/N] " confirm
-if [[ "$confirm" != [yY] && "$confirm" != [yY][eE][sS] ]]; then
-  echo "Aborted. Test file was generated but issue body was NOT updated."
-  exit 0
+# Skip prompt if --yes/-y flag or MIGRATE_AC_YES env var is set.
+if [[ "$YES" != true ]] && [[ "${MIGRATE_AC_YES:-}" != true ]]; then
+  read -r -p "PATCH issue #${ISSUE_NUM} body? [y/N] " confirm
+  if [[ "$confirm" != [yY] && "$confirm" != [yY][eE][sS] ]]; then
+    echo "Aborted. Test file was generated but issue body was NOT updated."
+    exit 0
+  fi
 fi
 
 # ── PATCH the issue body ────────────────────────────────────────────────────
