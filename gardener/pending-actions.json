@@ -1,12 +1,1 @@
-[
-  {
-    "action": "add_label",
-    "issue": 542,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 542,
-    "body": "Promoted to backlog during gardener grooming. Issue already has acceptance criteria and affected files sections."
-  }
-]
+[]

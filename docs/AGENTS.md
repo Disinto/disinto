@@ -1,4 +1,4 @@
-<!-- last-reviewed: 4c61adde7e285785a5b82db1f98efc6425d7a870 -->
+<!-- last-reviewed: f7a5ea5edfd4fa4948d9ee66b58d9290e69c0ea3 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -11,7 +11,9 @@ disinto/                 (code repo)
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
 │                  best-practices.md — gardener best-practice reference
-│                  pending-actions.json — queued gardener actions
+│                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
+│                  pending-actions.jsonl — intermediate manifest (JSONL)
+│                  pending-actions.json — final manifest (JSON array, committed to PR)
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
