@@ -251,16 +251,12 @@ forge_api_all() {
 # =============================================================================
 # FORGE WHOAMI HELPER
 # =============================================================================
-# forge_whoami — resolve the current token's login name.
-# Echoes the login to stdout, empty string on failure.
-# Requires: FORGE_TOKEN, FORGE_URL (or FORGE_API_BASE).
+# forge_whoami() lives in lib/forge-helpers.sh so it can be sourced from
+# bootstrap contexts that don't load full env.sh (lib/git-creds.sh callers,
+# docker/edge/entrypoint-edge.sh). #694
 # =============================================================================
-forge_whoami() {
-  local base="${FORGE_API_BASE:-${FORGE_URL}/api/v1}"
-  curl -sf --max-time 10 \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${base}/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true
-}
+# shellcheck source=forge-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/forge-helpers.sh"
 
 # =============================================================================
 # WOODPECKER API HELPER

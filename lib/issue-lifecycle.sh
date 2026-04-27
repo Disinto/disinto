@@ -110,8 +110,11 @@ issue_claim() {
 
   # Get current bot identity
   local me
-  me=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_URL}/api/v1/user" | jq -r '.login') || return 1
+  me=$(forge_whoami)
+  if [ -z "$me" ] || [ "$me" = "null" ]; then
+    _ilc_log "ERROR: could not resolve bot identity from FORGE_TOKEN — cannot claim issue #${issue}"
+    return 1
+  fi
 
   # Guard: only dev-class agents may claim issues (fix #620).
   # Non-dev agents (review-bot, gardener-bot, etc.) must never call issue_claim().

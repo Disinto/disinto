@@ -85,9 +85,10 @@ cd "$PROJECT_REPO_ROOT"
 resolve_forge_remote
 
 # ── Resolve agent identity for .profile repo ────────────────────────────
+# FORGE_TOKEN was overridden to FORGE_ARCHITECT_TOKEN above (line 39) before
+# env.sh sourcing, so forge_whoami() resolves the architect bot's login.
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
-  AGENT_IDENTITY=$(curl -sf -H "Authorization: token ${FORGE_ARCHITECT_TOKEN}" \
-    "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null || true)
+  AGENT_IDENTITY=$(forge_whoami)
 fi
 
 # ── Load formula + context ───────────────────────────────────────────────

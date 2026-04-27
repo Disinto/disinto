@@ -18,6 +18,12 @@
 
 set -euo pipefail
 
+# Source forge_whoami() — self-contained helper that's safe to source from
+# bootstrap contexts (runner entrypoint sources git-creds.sh without first
+# loading env.sh). #694
+# shellcheck source=forge-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/forge-helpers.sh"
+
 # configure_git_creds [HOME_DIR] [RUN_AS_CMD]
 #   HOME_DIR    — home directory for the git user (default: $HOME or /home/agent)
 #   RUN_AS_CMD  — command prefix to run as another user (e.g. "gosu agent")
@@ -45,8 +51,7 @@ configure_git_creds() {
   if [ -n "${FORGE_TOKEN:-}" ]; then
     local attempt
     for attempt in 1 2 3 4 5; do
-      bot_user=$(curl -sf --max-time 5 -H "Authorization: token ${FORGE_TOKEN}" \
-        "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || bot_user=""
+      bot_user=$(forge_whoami)
       if [ -n "$bot_user" ]; then
         break
       fi

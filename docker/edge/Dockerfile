@@ -46,6 +46,9 @@ RUN set -eux; \
     chmod 0755 /usr/local/bin/nomad; \
     /usr/local/bin/nomad --version
 COPY docker/edge/entrypoint-edge.sh /usr/local/bin/entrypoint-edge.sh
+# Bake forge_whoami() into the edge image so entrypoint-edge.sh can call it
+# before /opt/disinto is cloned (#694).
+COPY lib/forge-helpers.sh /usr/local/lib/forge-helpers.sh
 # Chat-Claude control surface (#650): settings.json + .mcp.json templates and
 # the disinto-cli MCP wrapper. Templates are copied into $CHAT_WORKSPACE_DIR
 # at container start by entrypoint-edge.sh.
