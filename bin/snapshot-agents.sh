@@ -58,10 +58,12 @@ trap cleanup EXIT
 # Matches nomad alloc list output for jobs ending in "-opus" (e.g.
 # agents-dev-opus, agents-review-opus, agents-supervisor-opus).
 discover_opus_allocs() {
+  local -a headers=()
+  [ -n "${NOMAD_TOKEN:-}" ] && headers+=(-H "X-Nomad-Token: ${NOMAD_TOKEN}")
+
   local allocs_json
-  allocs_json="$(nomad alloc list -json -address="$NOMAD_ADDR" \
-    -token="$NOMAD_TOKEN" \
-    -timeout="${NOMAD_TIMEOUT}s" 2>/dev/null)" || true
+  allocs_json="$(curl -fsS --max-time "${NOMAD_TIMEOUT}" "${headers[@]}" \
+    "${NOMAD_ADDR%/}/v1/allocations" 2>/dev/null)" || true
 
   [ -z "$allocs_json" ] && printf '[]' && return
 
