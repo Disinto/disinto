@@ -388,6 +388,19 @@ def main() -> int:
         "1f783c0f648d56972c99488c313e45a6": "Snapshot cleanup function (snapshot-agents + snapshot-forge)",
         # snapshot-inbox.sh shares standard env-var header with other snapshot collectors
         "816df0fd43ba5676531c08e63ea1c4f8": "Snapshot env-var header (set -euo + FACTORY_FORGE_PAT + FORGE_URL + FORGE_REPO + SNAPSHOT_PATH) (snapshot-forge + snapshot-inbox)",
+        # Snapshot mktemp_safe / TMPFILES / cleanup pattern after #849 fix:
+        # mktemp_safe must assign through a global (_TMPFILE) instead of printing
+        # to stdout — command substitution forks a subshell, so TMPFILES+=()
+        # inside $(…) is lost. The fix made all 5 snapshot collectors
+        # (snapshot-agents, snapshot-daemon, snapshot-forge, snapshot-inbox,
+        # snapshot-nomad) share the identical helper body verbatim. Intentional
+        # duplication: each collector runs as its own process and needs its own
+        # trap-bound TMPFILES array.
+        "22334695968d905d02e8e4d1dbac3cc1": "Snapshot mktemp_safe block start (TMPFILES=() + mktemp_safe + _TMPFILE) (all 5 snapshot collectors, #849)",
+        "27a6b7f735e325d349acced8fc46234b": "Snapshot mktemp_safe body (mktemp_safe + _TMPFILE + TMPFILES+=) (all 5 snapshot collectors, #849)",
+        "254ebe187922c94793cc00589ab7ac6a": "Snapshot mktemp_safe end (_TMPFILE + TMPFILES+= + closing brace) (all 5 snapshot collectors, #849)",
+        "d536875ce1465069a5495b67167d8658": "Snapshot mktemp_safe → cleanup (TMPFILES+= + closing brace + cleanup) (all 5 snapshot collectors, #849)",
+        "c006fde2bfb8b04ad39a0b48eca2edb2": "Snapshot pre-mktemp_safe boundary (closing brace + TMPFILES=() + mktemp_safe) (snapshot-agents + snapshot-forge + snapshot-inbox + snapshot-nomad, #849)",
         # Standard --help heredoc closing + flag-parser tail (cluster-up.sh + sync-nomad-client-config.sh, #789)
         "2882d287343e26a4d8d6499e4bd38c26": "Help heredoc EOF + exit 0 + unknown-flag die + esac (cluster-up + sync-nomad-client-config)",
         "8f6432aafe427171507274ef71c1b612": "Help exit 0 + unknown-flag die + esac + done (cluster-up + sync-nomad-client-config)",
