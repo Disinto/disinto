@@ -1,8 +1,6 @@
-{"issue":703,"group":"lib/profile.sh","title":"Double \"Lessons learned\" heading in profile_lessons_block","reason":"Single-line fix: heading embedded in LESSONS_CONTEXT and prepended again by caller","ts":"2026-04-26T08:15:19Z"}
 {"issue":684,"group":"lib/init/nomad/chat-init.sh","title":"Invalid nomad acl status command is dead code","reason":"nomad acl status is not a valid subcommand — entire ACL automation block silently never fires","ts":"2026-04-26T08:15:19Z"}
 {"issue":632,"group":"lib/ci-helpers.sh","title":"Dead code: _ci_incident_pr_is_open() never called","reason":"Function defined but never referenced; duplicates _ci_incident_pr_exists","ts":"2026-04-26T08:15:19Z"}
 {"issue":720,"group":"docker/chat/ui/index.html","title":"Clear streaming class on WebSocket error to prevent orphaned bubbles","reason":"Single-line JS fix: streaming class not cleared on WS error","ts":"2026-04-26T10:15:00Z"}
 {"issue":685,"group":"lib/init/nomad/chat-init.sh","title":"Remove confusing Vault/Nomad ACL fallback in chat-init","reason":"Minor: Vault endpoint comment/log is misleading, not dangerous","ts":"2026-04-26T10:15:00Z"}
-{"issue":806,"group":"ci/images","title":"publish-images.yml uses wrong Docker build context","reason":"CI pipeline references incorrect build context path for edge image","ts":"2026-04-26T10:15:00Z"}
 {"issue":694,"group":"lib","title":"Migrate remaining forge_whoami() call sites","reason":"Refactor: update deprecated function references","ts":"2026-04-26T10:15:00Z"}
 {"issue":630,"group":"lib/init","title":"wp-activate-repo.sh webhook dedup check always fails on re-run","reason":"JWT changes each run, dedup always misses; needs stable comparison key","ts":"2026-04-26T10:15:00Z"}

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 09e8cdd903fde793990db2f29d53b37d5bf0e45d -->
+<!-- last-reviewed: 4c61adde7e285785a5b82db1f98efc6425d7a870 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -27,9 +27,12 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   Executes pending-actions manifest after PR merge.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
-- `gardener/pending-actions.json` — Manifest of deferred repo actions (label changes,
-  closures, comments, issue creation). Written during grooming steps, committed to the
-  PR, reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
+- `gardener/pending-actions.jsonl` — Intermediate manifest of proposed repo actions
+  (label changes, closures, comments, issue creation, body edits). Written during
+  grooming steps as one JSON object per line.
+- `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
+  reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
+  Converted from JSONL at commit time.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
