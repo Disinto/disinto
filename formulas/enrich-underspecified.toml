@@ -1,0 +1,165 @@
+# formulas/enrich-underspecified.toml — Single-issue body enrichment
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"enrich-underspecified","issue":N,"ctx":{"title":"…","updated_at":"…"}}
+#
+# Goal: turn an `underspecified`-labeled issue into a backlog-claimable one in
+# a single llama-friendly session. Replaces the buggy quality-gate branch in
+# the monolithic formulas/run-gardener.toml that stripped `backlog` from
+# 9 issues in PR #811 without enriching them.
+#
+# On success: rewrite issue body with ## Affected files + ## Acceptance criteria,
+# add `backlog`, remove `underspecified` (idempotent helpers).
+# On failure (body too thin to enrich): keep `underspecified`, post a comment
+# asking the operator for affected files / acceptance criteria.
+#
+# Idempotency: re-running on an already-enriched issue is a no-op because
+# classify.sh stops surfacing it (label removed); the formula itself is
+# detection-free.
+
+name        = "enrich-underspecified"
+description = "Enrich one underspecified issue into a backlog-claimable shape"
+version     = 1
+
+[[steps]]
+id    = "enrich"
+title = "Read body, derive affected files + acceptance criteria, rewrite, relabel"
+description = """
+You are enriching exactly ONE issue identified in the classification payload
+(field `issue`). Do this in a single pass — no orchestration, no other issues.
+
+## 1. Fetch the issue
+Read the classification payload's `issue` number, then fetch the full issue:
+
+  ISSUE=<the .issue field from the payload>
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE" > /tmp/enrich-${ISSUE}.json
+  TITLE=$(jq -r .title /tmp/enrich-${ISSUE}.json)
+  BODY=$(jq -r '.body // ""' /tmp/enrich-${ISSUE}.json)
+
+Save the original body to a scratch file for reference:
+
+  printf '%s' "$BODY" > /tmp/enrich-${ISSUE}.body.orig
+
+## 2. Decide: enrichable, or too thin?
+
+Count non-blank lines and look for concrete signals (file paths, error
+messages, function/symbol names, URLs, repro steps). The body is
+ENRICHABLE if it has BOTH:
+  - at least 5 non-blank lines, AND
+  - at least one concrete signal (a path like `dir/file.ext`, a backtick
+    symbol, a URL, an error string, or a numbered/bulleted repro step).
+
+Otherwise it is TOO THIN — go to step 5 (failure path).
+
+## 3. Derive affected files (enrichable path)
+
+Build the `## Affected files` list from, in order:
+  a. Inline file paths already in the body (`dir/file.ext`, `path/to/x.sh`,
+     etc. — match patterns like `[a-zA-Z_./-]+\\.(sh|py|js|ts|toml|md|hcl|yml|yaml|json|rs|go)`).
+  b. Layout hints from AGENTS.md and gardener/AGENTS.md (already loaded as
+     project context above): if the body mentions an agent name (gardener,
+     dev, planner, …), include the corresponding agent dir's AGENTS.md and
+     the agent's main script. If it mentions a subsystem (env, secrets,
+     forge-setup), include the matching `lib/<name>.sh`.
+  c. If neither yields anything, list the single most plausible file from
+     context — never invent paths. Verify each path exists in the repo
+     (`ls "$path"`) before listing it; drop any path that does not exist.
+
+Output one bullet per file:
+  - `path/to/file.ext`
+
+## 4. Derive acceptance criteria (enrichable path)
+
+Read the problem description and write 2–5 verifiable `- [ ]` checkboxes.
+Each checkbox MUST be:
+  - imperative ("Add …", "Replace …", "Return …"), not aspirational
+  - verifiable by reading code or running a command (no "improves UX")
+  - scoped — do not invent features the body does not describe
+
+Examples of good shapes:
+  - [ ] `lib/foo.sh` exposes `foo_bar` taking (issue_num, body_file)
+  - [ ] On non-2xx response, helper returns 1 and logs full body
+  - [ ] ShellCheck passes on the new file
+
+## 5. Compose the new full body (enrichable path)
+
+Write the new full body to a scratch file. Preserve the original body
+verbatim under a `## Problem` section, then append the new sections:
+
+  cat > /tmp/enrich-${ISSUE}.body.new <<'EOF'
+  ## Problem
+
+  <ORIGINAL BODY HERE — copy exactly>
+
+  ## Affected files
+
+  - `path/to/file.ext`
+  - …
+
+  ## Acceptance criteria
+
+  - [ ] First verifiable criterion
+  - [ ] Second verifiable criterion
+  EOF
+
+(Use the heredoc literally — substitute the original body in place of the
+placeholder. Do NOT use shell expansion on the original body; write it via
+a temp file or `printf` to avoid corrupting backticks / dollar signs.)
+
+Token budget for the full new body: ≤ 2K tokens.
+
+## 6. Apply enrichment (enrichable path)
+
+Run, in this order, stopping on the first non-zero return:
+
+  gardener_edit_body    "$ISSUE" /tmp/enrich-${ISSUE}.body.new   || exit 1
+  gardener_add_label    "$ISSUE" backlog                          || exit 1
+  gardener_remove_label "$ISSUE" underspecified                   || exit 1
+
+All three helpers are idempotent and journaled to
+`$DISINTO_LOG_DIR/gardener/journal.jsonl`.
+
+Print a final line for the log:
+  echo "ACTION: enriched #$ISSUE — $(jq -r .title /tmp/enrich-${ISSUE}.json)"
+
+Done. Stop the session.
+
+## 7. Failure path: body too thin
+
+If the body did NOT pass the enrichable check in step 2, do NOT rewrite the
+body. Instead, post a comment asking the operator for the missing pieces,
+then keep `underspecified` applied (it is already there — the call is
+idempotent and serves as a no-op safety net):
+
+  cat > /tmp/enrich-${ISSUE}.comment <<'EOF'
+  This issue is labeled `underspecified` because the body lacks enough
+  signal for an autonomous enrichment pass. Please add:
+
+  - **Affected files** — concrete paths (e.g. `lib/foo.sh`,
+    `dev/dev-poll.sh`) the work touches
+  - **Acceptance criteria** — 2–5 verifiable `- [ ]` checkboxes describing
+    what "done" looks like (one observable outcome per checkbox)
+
+  Once added, the gardener will re-pick this on its next pass.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/enrich-${ISSUE}.comment    || exit 1
+  gardener_add_label    "$ISSUE" underspecified                  || exit 1
+
+Print:
+  echo "ACTION: requested enrichment from operator on #$ISSUE — body too thin"
+
+Done. Stop the session.
+
+## Output discipline
+
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+- One pass only. Do not loop, do not pick up a second issue, do not file
+  vault items. The gardener step driver runs ONE task per invocation.
+- Every repo edit goes through the four exported helpers
+  (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) — never PATCH issues directly via curl, so the
+  audit journal stays complete.
+"""
