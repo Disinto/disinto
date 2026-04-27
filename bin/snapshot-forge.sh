@@ -52,14 +52,11 @@ log() {
 
 TMPFILES=()
 
-# Assigns through a global `_TMPFILE` rather than printing to stdout. Reason:
-# command substitution forks a subshell, so any TMPFILES+=() inside it is
-# discarded when the subshell exits — the parent's array stays empty and
-# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
-# keeps the array updates in the parent shell where the trap can see them.
 mktemp_safe() {
-  _TMPFILE="$(mktemp "$@")"
-  TMPFILES+=("$_TMPFILE")
+  local tmp
+  tmp="$(mktemp "$@")"
+  TMPFILES+=("$tmp")
+  printf '%s' "$tmp"
 }
 
 cleanup() {
@@ -128,10 +125,8 @@ forge_get() {
 
 fetch_issues() {
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/issues?type=issues&state=open&limit=100"
-  mktemp_safe
-  FORGE_BODY_FILE="$_TMPFILE"
-  mktemp_safe
-  FORGE_HEADERS_FILE="$_TMPFILE"
+  FORGE_BODY_FILE="$(mktemp_safe)"
+  FORGE_HEADERS_FILE="$(mktemp_safe)"
 
   forge_get "$url" || {
     rm -f "$FORGE_BODY_FILE" "$FORGE_HEADERS_FILE"
@@ -144,10 +139,8 @@ fetch_issues() {
 
 fetch_pulls() {
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/issues?type=pulls&state=open&limit=100"
-  mktemp_safe
-  FORGE_BODY_FILE="$_TMPFILE"
-  mktemp_safe
-  FORGE_HEADERS_FILE="$_TMPFILE"
+  FORGE_BODY_FILE="$(mktemp_safe)"
+  FORGE_HEADERS_FILE="$(mktemp_safe)"
 
   forge_get "$url" || {
     rm -f "$FORGE_BODY_FILE" "$FORGE_HEADERS_FILE"
@@ -162,8 +155,7 @@ fetch_pr_reviews() {
   local pr_number="$1"
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/pulls/${pr_number}/reviews"
   local tmpfile
-  mktemp_safe /tmp/snapshot-forge-pr-reviews.XXXXXX
-  tmpfile="$_TMPFILE"
+  tmpfile="$(mktemp_safe /tmp/snapshot-forge-pr-reviews.XXXXXX)"
   curl -fsS --max-time "$FORGE_TIMEOUT" \
     -H "Authorization: token ${FACTORY_FORGE_PAT}" \
     -H "Accept: application/json" \
@@ -176,8 +168,7 @@ fetch_pr_commit_status() {
   local pr_number="$1"
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/pulls/${pr_number}/status"
   local tmpfile
-  mktemp_safe /tmp/snapshot-forge-pr-status.XXXXXX
-  tmpfile="$_TMPFILE"
+  tmpfile="$(mktemp_safe /tmp/snapshot-forge-pr-status.XXXXXX)"
   curl -fsS --max-time "$FORGE_TIMEOUT" \
     -H "Authorization: token ${FACTORY_FORGE_PAT}" \
     -H "Accept: application/json" \
@@ -352,12 +343,10 @@ main() {
   forge_data="$(build_forge_data)"
 
   local tmpfile
-  mktemp_safe "${SNAPSHOT_PATH}.forge.XXXXXX"
-  tmpfile="$_TMPFILE"
+  tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.forge.XXXXXX")"
 
   # Read previous snapshot, merge forge key under .collectors.forge, write atomically.
   jq -c --argjson forge "$forge_data" '.collectors.forge = $forge' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
-  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local backlog_count

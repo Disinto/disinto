@@ -2,17 +2,6 @@
 # =============================================================================
 # architect-run.sh — Polling-loop wrapper: architect execution via SDK + formula
 #
-# DEPRECATED (#877): vision pitching has been folded into the gardener as one
-# task type. `formulas/pitch-vision.toml`, dispatched by
-# `gardener/gardener-step.sh` when `gardener/classify.sh` emits
-# `task: "pitch-vision"`, runs on llama-qwen with a curated per-pitch context
-# (≤10 files chosen by classify, not the whole tree) and produces the same
-# external contract: one ops-repo PR per vision with an ACCEPT/REJECT footer
-# and a `filer:begin/filer:end` sub-issue block consumed by filer-bot
-# post-merge. This script and `formulas/run-architect.toml` are kept in place
-# until the gardener path proves out on llama; the cleanup sibling will remove
-# them along with the standalone `agents-architect-opus` nomad job.
-#
 # Synchronous bash loop using claude -p (one-shot invocation).
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #

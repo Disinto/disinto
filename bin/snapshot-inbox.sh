@@ -82,14 +82,11 @@ log() {
 
 TMPFILES=()
 
-# Assigns through a global `_TMPFILE` rather than printing to stdout. Reason:
-# command substitution forks a subshell, so any TMPFILES+=() inside it is
-# discarded when the subshell exits — the parent's array stays empty and
-# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
-# keeps the array updates in the parent shell where the trap can see them.
 mktemp_safe() {
-  _TMPFILE="$(mktemp "$@")"
-  TMPFILES+=("$_TMPFILE")
+  local tmp
+  tmp="$(mktemp "$@")"
+  TMPFILES+=("$tmp")
+  printf '%s' "$tmp"
 }
 
 cleanup() {
@@ -194,10 +191,8 @@ scan_action_vault() {
 scan_prediction_issues() {
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/issues?type=issues&state=open&limit=100"
   local body_file headers_file
-  mktemp_safe /tmp/snapshot-inbox-predictions.XXXXXX
-  body_file="$_TMPFILE"
-  mktemp_safe /tmp/snapshot-inbox-predictions-headers.XXXXXX
-  headers_file="$_TMPFILE"
+  body_file="$(mktemp_safe /tmp/snapshot-inbox-predictions.XXXXXX)"
+  headers_file="$(mktemp_safe /tmp/snapshot-inbox-predictions-headers.XXXXXX)"
 
   if ! forge_get "$url" "$body_file" "$headers_file" >/dev/null 2>&1; then
     printf '[]'
@@ -231,10 +226,8 @@ scan_prediction_issues() {
 scan_automation_issues() {
   local url="${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/issues?type=issues&state=open&limit=100"
   local body_file headers_file
-  mktemp_safe /tmp/snapshot-inbox-automation.XXXXXX
-  body_file="$_TMPFILE"
-  mktemp_safe /tmp/snapshot-inbox-automation-headers.XXXXXX
-  headers_file="$_TMPFILE"
+  body_file="$(mktemp_safe /tmp/snapshot-inbox-automation.XXXXXX)"
+  headers_file="$(mktemp_safe /tmp/snapshot-inbox-automation-headers.XXXXXX)"
 
   if ! forge_get "$url" "$body_file" "$headers_file" >/dev/null 2>&1; then
     printf '[]'
@@ -372,17 +365,14 @@ merge_inbox() {
 
   # Merge all items into a temp file (one JSON object per line)
   local merged_file
-  mktemp_safe /tmp/snapshot-inbox-merged.XXXXXX
-  merged_file="$_TMPFILE"
+  merged_file="$(mktemp_safe /tmp/snapshot-inbox-merged.XXXXXX)"
   printf '%s' "[$vault_items,$prediction_items,$automation_items,$thread_items]" \
     | jq -c '.[]' > "$merged_file" 2>/dev/null || true
 
   # Filter sentinels in bash (jq can't access filesystem)
   local filtered_file shown_ids_file
-  mktemp_safe /tmp/snapshot-inbox-filtered.XXXXXX
-  filtered_file="$_TMPFILE"
-  mktemp_safe /tmp/snapshot-inbox-shown.XXXXXX
-  shown_ids_file="$_TMPFILE"
+  filtered_file="$(mktemp_safe /tmp/snapshot-inbox-filtered.XXXXXX)"
+  shown_ids_file="$(mktemp_safe /tmp/snapshot-inbox-shown.XXXXXX)"
   while IFS= read -r line; do
     local item_id
     item_id="$(printf '%s' "$line" | jq -r '.id // empty' 2>/dev/null)" || continue
@@ -434,12 +424,10 @@ main() {
   inbox_data="$(merge_inbox)"
 
   local tmpfile
-  mktemp_safe "${SNAPSHOT_PATH}.inbox.XXXXXX"
-  tmpfile="$_TMPFILE"
+  tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.inbox.XXXXXX")"
 
   # Read previous snapshot, merge inbox key under .collectors.inbox, write atomically.
   jq -c --argjson inbox "$inbox_data" '.collectors.inbox = $inbox' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
-  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local total_count unshown_count

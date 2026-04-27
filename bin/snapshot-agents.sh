@@ -40,14 +40,11 @@ log() {
 
 TMPFILES=()
 
-# Assigns through a global `_TMPFILE` rather than printing to stdout. Reason:
-# command substitution forks a subshell, so any TMPFILES+=() inside it is
-# discarded when the subshell exits — the parent's array stays empty and
-# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
-# keeps the array updates in the parent shell where the trap can see them.
 mktemp_safe() {
-  _TMPFILE="$(mktemp "$@")"
-  TMPFILES+=("$_TMPFILE")
+  local tmp
+  tmp="$(mktemp "$@")"
+  TMPFILES+=("$tmp")
+  printf '%s' "$tmp"
 }
 
 cleanup() {
@@ -264,8 +261,7 @@ build_agents_data() {
     task="$(printf '%s' "$allocs_json" | jq -r ".[$i].task")"
 
     local lf
-    mktemp_safe "/tmp/snapshot-agents-log.XXXXXX"
-    lf="$_TMPFILE"
+    lf="$(mktemp_safe "/tmp/snapshot-agents-log.XXXXXX")"
     logfiles+=("$lf")
 
     # Run log fetch in background
@@ -305,12 +301,10 @@ main() {
   agents_data="$(build_agents_data)"
 
   local tmpfile
-  mktemp_safe "${SNAPSHOT_PATH}.agents.XXXXXX"
-  tmpfile="$_TMPFILE"
+  tmpfile="$(mktemp_safe "${SNAPSHOT_PATH}.agents.XXXXXX")"
 
   # Read previous snapshot, merge agents key under .collectors.agents, write atomically.
   jq -c --argjson agents "$agents_data" '.collectors.agents = $agents' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
-  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local agent_count

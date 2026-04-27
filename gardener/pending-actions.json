@@ -1,32 +1,32 @@
 [
   {
+    "action": "edit_body",
+    "issue": 849,
+    "body": "Flagged by AI reviewer in PR #847.\n\n## Problem\n\nAll four snapshot collector scripts (`snapshot-agents.sh`, `snapshot-forge.sh`, `snapshot-inbox.sh`, `snapshot-nomad.sh`) define a `mktemp_safe()` helper that appends to `TMPFILES` and registers a `trap cleanup EXIT`. However, every call site uses command substitution:\n\n```bash\ntmpfile=\"$(mktemp_safe /tmp/foo.XXXXXX)\"\n```\n\nThis runs `mktemp_safe` in a subshell. The `TMPFILES+=()` inside the subshell is discarded when the subshell exits, so the parent shell's `TMPFILES` stays empty. The `cleanup` trap then calls `rm -f` with an empty array — no files are removed on abnormal exit.\n\nThis was correctly identified and fixed for `snapshot-daemon.sh` in PR #840/#847, and the commit message explicitly notes: *\"The collectors still use the buggy form — separate follow-up needed.\"*\n\n## Fix\n\nFor each call site, replace:\n```bash\ntmpfile=\"$(mktemp_safe /tmp/foo.XXXXXX)\"\n```\nwith:\n```bash\nmktemp_safe /tmp/foo.XXXXXX\ntmpfile=\"$_TMPFILE\"\n```\n\nThis mirrors the pattern used in the fixed `snapshot-daemon.sh`.\n\nAffected call sites (approximate count):\n- `snapshot-agents.sh`: 2 calls\n- `snapshot-forge.sh`: 6 calls  \n- `snapshot-inbox.sh`: 6 calls\n- `snapshot-nomad.sh`: 1 call\n\n---\n*Auto-created from AI review of PR #847*\n## Acceptance criteria\n- [ ] All tmpfile=\"$(mktemp_safe /tmp/...)\" patterns replaced with mktemp_safe /tmp/... + tmpfile=\"$_TMPFILE\" in snapshot-agents.sh\n- [ ] Same pattern applied in snapshot-forge.sh\n- [ ] Same pattern applied in snapshot-inbox.sh\n- [ ] Same pattern applied in snapshot-nomad.sh\n- [ ] TMPFILES tracking works correctly on abnormal exit (tmpfiles cleaned up)\n- [ ] shellcheck passes on all four files\n\n## Affected files\n- bin/snapshot-agents.sh (2 call sites)\n- bin/snapshot-forge.sh (6 call sites)\n- bin/snapshot-inbox.sh (6 call sites)\n- bin/snapshot-nomad.sh (1 call site)\n"
+  },
+  {
     "action": "add_label",
-    "issue": 861,
+    "issue": 849,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 846,
+    "body": "Flagged by AI reviewer in PR #845.\n\n## Problem\n\n`fetch_alloc_logs()` at `bin/snapshot-agents.sh:92-94` still calls `nomad alloc logs` with the old CLI flags (`-token`, `-address`, `-timeout` with `s` suffix):\n\n```bash\nnomad alloc logs -tail=\"$LOG_TAIL\" -address=\"$NOMAD_ADDR\" \\\n  -token=\"$NOMAD_TOKEN\" -timeout=\"${NOMAD_TIMEOUT}s\" \\\n  \"$alloc_id\" > \"$dest\" 2>/dev/null || true\n```\n\nPR #845 converted `nomad job list` and `nomad alloc list` to HTTP API calls (fixing Nomad 1.9.5 compatibility), but the log-streaming command was left unchanged. If `nomad alloc logs` is also absent or flag-incompatible in the deployed Nomad version, agent state detection will silently produce stalled results for all agents.\n\nThe Nomad HTTP streaming log endpoint (`/v1/client/fs/logs/<alloc_id>`) is more complex to consume with plain curl, which is why it was likely deferred.\n\n---\n*Auto-created from AI review*\n## Acceptance criteria\n- [ ] fetch_alloc_logs() updated to use Nomad 1.9.5-compatible flags or HTTP API\n- [ ] nomad alloc logs calls in bin/snapshot-agents.sh use correct flag format\n- [ ] Snapshot log collection works against Nomad 1.9.5\n- [ ] shellcheck passes\n\n## Affected files\n- bin/snapshot-agents.sh (fetch_alloc_logs function)\n\n## Known context\n- PR #845 converted nomad job/alloc list to HTTP API but left log streaming unchanged\n- The nomad HTTP log streaming endpoint is complex; flag fix is the minimal viable fix\n- Nomad 1.9.5 may not support the old -token/-address flags for alloc logs\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 846,
     "label": "backlog"
   },
   {
     "action": "remove_label",
-    "issue": 861,
+    "issue": 696,
     "label": "blocked"
   },
   {
     "action": "add_label",
-    "issue": 852,
+    "issue": 696,
     "label": "backlog"
-  },
-  {
-    "action": "remove_label",
-    "issue": 852,
-    "label": "blocked"
-  },
-  {
-    "action": "add_label",
-    "issue": 851,
-    "label": "backlog"
-  },
-  {
-    "action": "remove_label",
-    "issue": 851,
-    "label": "blocked"
   }
 ]

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 58c297f0caa3a884023caacd031b30a0dfcd8dad -->
+<!-- last-reviewed: 7e3dc4f6926841a31af9ff41e2ce3c78ce30e512 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven

@@ -11,9 +11,7 @@ set -euo pipefail
 # (default: all seven). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
-#   - gardener: every iteration (per-iteration step driver, #872 — single
-#     task per cycle, llama-friendly; previously every GARDENER_INTERVAL
-#     seconds in monolithic batch mode, now obsolete)
+#   - gardener: every GARDENER_INTERVAL seconds (default: 21600 = 6 hours)
 #   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
 #   - planner: every PLANNER_INTERVAL seconds (default: 43200 = 12 hours)
 #   - predictor: every 24 hours (288 iterations * 5 min)
@@ -506,18 +504,16 @@ log "Agent roles configured: ${AGENT_ROLES}"
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
-# Architect / planner / supervisor intervals.
-# GARDENER_INTERVAL was dropped in #872 — gardener now runs every iteration
-# via gardener/gardener-step.sh (single task per cycle, paced by POLL_INTERVAL).
+# Gardener and architect intervals (gardener 1h=3600, architect 6h=21600)
+GARDENER_INTERVAL="${GARDENER_INTERVAL:-3600}"
 ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
 PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
 SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
-log "Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s, Supervisor interval: ${SUPERVISOR_INTERVAL}s"
+log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s, Supervisor interval: ${SUPERVISOR_INTERVAL}s"
 
-# Main polling loop. Iteration counter paces architect/planner/predictor/
-# supervisor (modulo their intervals); gardener and review/dev run every tick.
+# Main polling loop using iteration counter for gardener scheduling
 iteration=0
 while true; do
   iteration=$((iteration + 1))
@@ -584,21 +580,20 @@ print(cfg.get('primary_branch', 'main'))
       wait "${FAST_PIDS[@]}"
     fi
 
-    # Gardener (per-iteration step driver, #872 — single task per cycle).
-    # Runs alongside dev-poll/review-poll on every loop tick. The script's
-    # own flock guards against overlap; the pgrep check is a cheap belt-and-
-    # braces skip to avoid the gosu/source overhead when a step is already
-    # in flight.
+    # --- Slow agents: run in background with pgrep guard ---
+
+    # Gardener (interval configurable via GARDENER_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
-      if ! pgrep -f "gardener-step.sh" >/dev/null; then
-        log "Running gardener-step (iteration ${iteration}) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-step.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener/step.log" 2>&1 &
-      else
-        log "Skipping gardener-step — previous step still in flight"
+      gardener_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((gardener_iteration % GARDENER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
+        if ! pgrep -f "gardener-run.sh" >/dev/null; then
+          log "Running gardener (iteration ${iteration}, ${GARDENER_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener.log" 2>&1 &
+        else
+          log "Skipping gardener — already running"
+        fi
       fi
     fi
-
-    # --- Slow agents: run in background with pgrep guard ---
 
     # Architect (interval configurable via ARCHITECT_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",architect,"* ]]; then
