@@ -310,6 +310,7 @@ main() {
 
   # Read previous snapshot, merge agents key under .collectors.agents, write atomically.
   jq -c --argjson agents "$agents_data" '.collectors.agents = $agents' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local agent_count

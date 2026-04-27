@@ -155,6 +155,7 @@ main() {
 
   # Read previous snapshot, merge nomad key under .collectors.nomad, write atomically.
   jq -c --argjson nomad "$nomad_data" '.collectors.nomad = $nomad' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local alert_count

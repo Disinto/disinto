@@ -75,6 +75,7 @@ write_tick() {
   tmpfile="$_TMPFILE"
 
   printf '%s\n' "$payload" > "$tmpfile"
+  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 }
 

@@ -439,6 +439,7 @@ main() {
 
   # Read previous snapshot, merge inbox key under .collectors.inbox, write atomically.
   jq -c --argjson inbox "$inbox_data" '.collectors.inbox = $inbox' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local total_count unshown_count
