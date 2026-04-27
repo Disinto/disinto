@@ -31,7 +31,12 @@ source "$(dirname "$0")/../lib/issue-lifecycle.sh"
 source "$(dirname "$0")/../lib/mirrors.sh"
 # shellcheck source=../lib/guard.sh
 source "$(dirname "$0")/../lib/guard.sh"
+# shellcheck source=../lib/ci-fix-tracker.sh
+source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 check_active dev
+
+# Initialize CI fix tracker (must be called before any tracker functions)
+ci_fix_tracker_init
 
 API="${FORGE_API}"
 LOCKFILE="/tmp/dev-agent-${PROJECT_NAME:-default}.lock"
@@ -45,51 +50,6 @@ log() {
 # Resolve current agent identity once at startup — cache for all assignee checks
 BOT_USER=$(forge_whoami)
 log "running as agent: ${BOT_USER}"
-
-# =============================================================================
-# CI FIX TRACKER: per-PR counter to avoid infinite respawn loops (max 3)
-# =============================================================================
-CI_FIX_TRACKER="${DISINTO_LOG_DIR}/dev/ci-fixes-${PROJECT_NAME:-default}.json"
-CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
-
-ci_fix_count() {
-  local pr="$1"
-  flock "$CI_FIX_LOCK" python3 -c "import json,sys;d=json.load(open('$CI_FIX_TRACKER')) if __import__('os').path.exists('$CI_FIX_TRACKER') else {};print(d.get(str($pr),0))" 2>/dev/null || echo 0
-}
-ci_fix_reset() {
-  local pr="$1"
-  flock "$CI_FIX_LOCK" python3 -c "
-import json,os
-f='$CI_FIX_TRACKER'
-d=json.load(open(f)) if os.path.exists(f) else {}
-d.pop(str($pr),None)
-json.dump(d,open(f,'w'))
-" 2>/dev/null || true
-}
-ci_fix_check_and_increment() {
-  local pr="$1"
-  local check_only="${2:-}"
-  flock "$CI_FIX_LOCK" python3 -c "
-import json,os
-f='$CI_FIX_TRACKER'
-check_only = '${check_only}' == 'check_only'
-d=json.load(open(f)) if os.path.exists(f) else {}
-count=d.get(str($pr),0)
-if count>3:
-    print('exhausted:'+str(count))
-elif count==3:
-    d[str($pr)]=4
-    json.dump(d,open(f,'w'))
-    print('exhausted_first_time:3')
-elif check_only:
-    print('ok:'+str(count))
-else:
-    count+=1
-    d[str($pr)]=count
-    json.dump(d,open(f,'w'))
-    print('ok:'+str(count))
-" 2>/dev/null || echo "exhausted:99"
-}
 
 # Check whether an issue already has the "blocked" label
 is_blocked() {
@@ -208,12 +168,12 @@ handle_ci_exhaustion() {
 
   # Fast path: already blocked — skip without touching counter.
   if is_blocked "$issue_num"; then
-    CI_FIX_ATTEMPTS=$(ci_fix_count "$pr_num")
+    CI_FIX_ATTEMPTS=$(ci_fix_tracker_count "$pr_num")
     log "PR #${pr_num} (issue #${issue_num}) already blocked (${CI_FIX_ATTEMPTS} attempts) — skipping"
     return 0
   fi
 
-  result=$(ci_fix_check_and_increment "$pr_num" "$check_only")
+  result=$(ci_fix_tracker_check_and_increment "$pr_num" "$check_only")
   case "$result" in
     ok:*)
       CI_FIX_ATTEMPTS="${result#ok:}"
@@ -265,7 +225,7 @@ try_direct_merge() {
     git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH:-}" 2>/dev/null || true
     git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
     mirror_push
-    ci_fix_reset "$pr_num"
+    ci_fix_tracker_reset "$pr_num"
     return 0
   fi
 

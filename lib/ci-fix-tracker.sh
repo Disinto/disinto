@@ -15,7 +15,7 @@
 #   count == 0..2  → ok:N       (increments to N+1)
 #   count == 3     → exhausted_first_time:3  (bumps to 4, marks exhausted)
 #   count >= 4     → exhausted:N (no further increment)
-#   check_only     → ok:N without incrementing (only when count < 3; count >= 3 still returns exhausted)
+#   check_only     → ok:N without incrementing
 
 # Ensure tracker file exists.
 # Must be called before any other function.
@@ -23,8 +23,8 @@ ci_fix_tracker_init() {
   CI_FIX_TRACKER="${DISINTO_LOG_DIR}/dev/ci-fixes-${PROJECT_NAME:-default}.json"
   CI_FIX_LOCK="${CI_FIX_TRACKER}.lock"
   mkdir -p "$(dirname "$CI_FIX_TRACKER")"
-  touch "$CI_FIX_TRACKER" 2>/dev/null || true
-  touch "$CI_FIX_LOCK" 2>/dev/null || true
+  : > "$CI_FIX_TRACKER" 2>/dev/null || true
+  : > "$CI_FIX_LOCK" 2>/dev/null || true
 }
 
 # ci_fix_tracker_count PR
