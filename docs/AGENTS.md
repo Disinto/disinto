@@ -1,4 +1,4 @@
-<!-- last-reviewed: 7e3dc4f6926841a31af9ff41e2ce3c78ce30e512 -->
+<!-- last-reviewed: 01b2a9b120a320d505c8488268260f0d46defc9b -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -34,7 +34,7 @@ disinto/                 (code repo)
 │                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
-├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher); voice/ (bridge.py, UI)
+├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator surface); voice/ (bridge.py, UI)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
