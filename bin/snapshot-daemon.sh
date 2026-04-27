@@ -27,6 +27,27 @@ SNAPSHOT_COLLECTOR_TIMEOUT_SECS="${SNAPSHOT_COLLECTOR_TIMEOUT_SECS:-3}"
 # Ensure output directory exists.
 mkdir -p "$SNAPSHOT_DIR"
 
+# ── Temp file tracking ───────────────────────────────────────────────────────
+#
+# Pattern mirrors the snapshot-* collectors (TMPFILES array + cleanup trap on
+# EXIT) but assigns through a global `_TMPFILE` rather than via $(mktemp_safe …).
+# Reason: command substitution forks a subshell, so any TMPFILES+=() inside it
+# is discarded when the subshell exits — the parent's array stays empty and
+# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
+# keeps the array updates in the parent shell where the trap can see them.
+
+TMPFILES=()
+
+mktemp_safe() {
+  _TMPFILE="$(mktemp "$@")"
+  TMPFILES+=("$_TMPFILE")
+}
+
+cleanup() {
+  rm -f "${TMPFILES[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 # Read previous snapshot if it exists (for additive collector merges).
 read_previous_snapshot() {
   if [ -f "$SNAPSHOT_PATH" ]; then
@@ -50,7 +71,8 @@ write_tick() {
   payload=$(printf '%s' "$prev" | jq -c --arg ts "$ts" '.ts = $ts')
 
   local tmpfile
-  tmpfile="$(mktemp "${SNAPSHOT_DIR}/state.json.XXXXXX")"
+  mktemp_safe "${SNAPSHOT_DIR}/state.json.XXXXXX"
+  tmpfile="$_TMPFILE"
 
   printf '%s\n' "$payload" > "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
@@ -76,7 +98,8 @@ log() {
   printf '[%s] snapshot: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
-daemon_stderr_log="$(mktemp "${SNAPSHOT_DIR}/snapshot-daemon.stderr.XXXXXX")"
+mktemp_safe "${SNAPSHOT_DIR}/snapshot-daemon.stderr.XXXXXX"
+daemon_stderr_log="$_TMPFILE"
 
 log "starting — interval=${SNAPSHOT_INTERVAL_SECS}s path=${SNAPSHOT_PATH}"
 
