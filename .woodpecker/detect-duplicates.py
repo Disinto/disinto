@@ -404,6 +404,15 @@ def main() -> int:
         # Standard --help heredoc closing + flag-parser tail (cluster-up.sh + sync-nomad-client-config.sh, #789)
         "2882d287343e26a4d8d6499e4bd38c26": "Help heredoc EOF + exit 0 + unknown-flag die + esac (cluster-up + sync-nomad-client-config)",
         "8f6432aafe427171507274ef71c1b612": "Help exit 0 + unknown-flag die + esac + done (cluster-up + sync-nomad-client-config)",
+        # Gardener entry-point bootstrap (gardener-run + gardener-step, #871)
+        # Both are runtime entry scripts that need identical env setup
+        # (PROJECT_TOML default, FORGE_TOKEN_OVERRIDE) before sourcing lib/env.sh.
+        # Cannot be extracted to a helper — the bootstrap *is* the path resolution
+        # required before any `source` call.
+        "5526ab1f7681b24559d41eafa8bfc5be": "Gardener bootstrap: set -euo + SCRIPT_DIR + FACTORY_ROOT (gardener-run + gardener-step)",
+        "b872def5010d5ec9dd38745e04f2aae0": "Gardener bootstrap: SCRIPT_DIR + FACTORY_ROOT + PROJECT_TOML (gardener-run + gardener-step)",
+        "69fb1237da473cd2c9bcc1ff175e62ab": "Gardener bootstrap: FACTORY_ROOT + PROJECT_TOML + FORGE_TOKEN_OVERRIDE (gardener-run + gardener-step)",
+        "1a2923180b6d7cddb8cabf850f1d5686": "Gardener bootstrap: PROJECT_TOML + FORGE_TOKEN_OVERRIDE + source env.sh (gardener-run + gardener-step)",
     }
 
     if not sh_files:

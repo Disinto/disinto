@@ -18,13 +18,26 @@ phase file, and cleans up on completion or timeout (2h max session). No action i
 the gardener runs as part of the polling loop alongside the planner, predictor, and supervisor.
 
 **Key files**:
-- `gardener/gardener-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
-  sources disinto project config, creates tmux session, injects formula prompt,
-  monitors phase file via custom `_gardener_on_phase_change` callback (passed to
-  `run_formula_and_monitor`). Stays alive through CI/review/merge cycle after
-  `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
-  `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
-  Executes pending-actions manifest after PR merge.
+- `gardener/gardener-step.sh` — **Pull-one-task driver (#871)**: per-iteration
+  script that does exactly one task per invocation. Same loop shape as
+  `dev/dev-poll.sh`. Acquires `/tmp/gardener-step.lock` via `flock -n` (silent
+  exit if a step is in flight), runs `gardener/classify.sh` to pick one task,
+  exits 0 immediately on CLEAN, otherwise dispatches to `formulas/<task>.toml`
+  via `lib/formula-session.sh` (`load_formula_or_profile`) and runs a single
+  focused claude session. Sources `lib/gardener-edit.sh` and exports its
+  helpers (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) into the claude bash environment so direct API
+  edits are journaled. Logs to `${DISINTO_LOG_DIR}/gardener/step.log`.
+  Cleanup trap drops the lock, scratch dir, and worktree on exit.
+- `gardener/gardener-run.sh` — **Legacy monolithic batch (sibling cleanup will
+  retire once gardener-step.sh proves working)**. Polling loop participant +
+  orchestrator: lock, memory guard, sources disinto project config, creates
+  tmux session, injects formula prompt, monitors phase file via custom
+  `_gardener_on_phase_change` callback (passed to `run_formula_and_monitor`).
+  Stays alive through CI/review/merge cycle after `PHASE:awaiting_ci` —
+  injects CI results and review feedback, re-signals `PHASE:awaiting_ci`
+  after fixes, signals `PHASE:awaiting_review` on CI pass. Executes
+  pending-actions manifest after PR merge.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
