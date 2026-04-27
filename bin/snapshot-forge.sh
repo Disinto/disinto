@@ -24,7 +24,7 @@
 #   mergeable-failure — CI not passing
 #
 # Output shape:
-#   {"forge":{"backlog_count":N,"back":[{"number":N,"title":"...",
+#   {"forge":{"backlog_count":N,"backlog":[{"number":N,"title":"...",
 #     "age_hours":N},...],"in_progress_count":N,...,"prs_open":[...],
 #     "prs_blocked":[]}}
 #
