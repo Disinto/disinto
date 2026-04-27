@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 8e02ab6ee95c53405e0a944a9e68f9d3b1bd66eb -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -16,7 +16,8 @@ dev-agent session is active.
 
 **Key files**:
 - `dev/dev-poll.sh` — Polling loop participant: finds next ready issue, handles merge/rebase
-of approved PRs, tracks CI fix attempts. Invoked by `docker/agents/entrypoint.sh` every 5
+of approved PRs, tracks CI fix attempts (via `lib/ci-fix-tracker.sh`, max 3 fix attempts per PR).
+Invoked by `docker/agents/entrypoint.sh` every 5
 minutes. `BOT_USER` is resolved once at startup via the Forge `/user` API and cached for
 all assignee checks. Formula guard skips issues labeled `formula`, `prediction/dismissed`,
 or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming —
