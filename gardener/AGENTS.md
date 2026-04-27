@@ -56,7 +56,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
     body, then labels it `bug-report`. Runs git log preflight on affected
     paths extracted from the body. Replaces the inline enrichment logic
     in monolithic `run-gardener.toml` (lines 89–135).
-  - `formulas/agents-md-update.toml` (#875) — per-directory AGENTS.md
+  - `formulas/agents-md-stale.toml` (#875) — per-directory AGENTS.md
     refresh: bash preflight computes a structural diff (file inventory at
     watermark vs HEAD, reference validation against the codebase, semantic
     diff of code/config files), claude rewrites exactly ONE AGENTS.md with

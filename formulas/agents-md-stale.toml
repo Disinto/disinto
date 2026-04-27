@@ -1,4 +1,4 @@
-# formulas/agents-md-update.toml — Per-directory AGENTS.md watermark walk
+# formulas/agents-md-stale.toml — Per-directory AGENTS.md watermark walk
 #
 # Consumed by gardener/gardener-step.sh when classify.sh emits
 #   {"task":"agents-md-stale","issue":0,
@@ -17,7 +17,7 @@
 # Token budget: ≤8K input (existing AGENTS.md + structural diff context),
 # ≤4K output (rewritten AGENTS.md). One file changed, one small PR.
 
-name        = "agents-md-update"
+name        = "agents-md-stale"
 description = "Refresh exactly one AGENTS.md against its directory's current state"
 version     = 1
 
