@@ -53,16 +53,13 @@ body:
     attributes:
       label: Acceptance test
       description: |
-        Explicit shell commands (with expected output) that prove the refactor
-        preserves behavior (or correctly changes it) when run on the live box.
-        For refactors, include a command that verifies the old behavior still
-        works identically.
+        Path to the bash file under `tests/acceptance/` that proves the
+        refactor preserves behavior (or correctly changes it) on the live
+        box. Include an assertion that exercises the unchanged behavior. Run
+        via `tools/run-acceptance.sh <issue-number>`.
         See docs/contributing/acceptance-tests.md for the convention.
       placeholder: |
-        ```bash
-        $ # Verify behavior is unchanged
-        $ dev-poll.sh disinto.toml --dry-run
-        Ready issues: 3
-        ```
+        `tests/acceptance/issue-<this-number>.sh` — runs via
+        `tools/run-acceptance.sh <this-number>`.
     validations:
       required: true
