@@ -82,13 +82,13 @@ check_blocker_starving() {
   local backlog_ids non_backlog_ids best_num="" best_time=""
 
   # Collect IDs and bodies of backlog issues
-  backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels[].name == "backlog") | .number] | .[]' 2>/dev/null) || backlog_ids=""
+  backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels | any(.name == "backlog")) | .number] | .[]' 2>/dev/null) || backlog_ids=""
   if [ -z "$backlog_ids" ]; then
     return 0
   fi
 
   # Collect non-backlog issue IDs
-  non_backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels[].name != "backlog") | .number] | .[]' 2>/dev/null) || non_backlog_ids=""
+  non_backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels | map(.name) | all(. != "backlog")) | .number] | .[]' 2>/dev/null) || non_backlog_ids=""
   if [ -z "$non_backlog_ids" ]; then
     return 0
   fi
@@ -142,9 +142,7 @@ check_enrich_underspecified() {
 
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
-    [.[] | select(
-      (.labels[].name == "underspecified")
-    )]
+    [.[] | select(.labels | any(.name == "underspecified"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
@@ -192,18 +190,20 @@ check_enrich_bug_report() {
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
     [.[] | select(
-      (.labels | map(.name) | length) == 0 and  # unlabeled
-      ((.title | ascii_downcase) | (
-        contains("bug") or contains("broken") or
-        contains("error") or contains("crash") or
-        contains("fail") or contains("not working") or
-        contains("reproduce")
-      )) or
-      ((.body // "") | ascii_downcase | (
-        contains("reproduce") or contains("steps to") or
-        contains("expected") or contains("actual") or
-        contains("version:") or contains("environment:")
-      ))
+      ((.labels | map(.name) | length) == 0) and
+      (
+        ((.title | ascii_downcase) | (
+          contains("bug") or contains("broken") or
+          contains("error") or contains("crash") or
+          contains("fail") or contains("not working") or
+          contains("reproduce")
+        )) or
+        ((.body // "") | ascii_downcase | (
+          contains("reproduce") or contains("steps to") or
+          contains("expected") or contains("actual") or
+          contains("version:") or contains("environment:")
+        ))
+      )
     )]
   ' 2>/dev/null) || candidates="[]"
 
@@ -240,7 +240,7 @@ check_promote_tech_debt() {
 
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
-    [.[] | select(.labels[].name == "tech-debt")]
+    [.[] | select(.labels | any(.name == "tech-debt"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
@@ -289,18 +289,9 @@ check_bundle_dust() {
     return 0
   fi
 
-  # Read dust entries and group by group field
+  # Read dust entries and get unique group names
   local groups
-  groups=$(awk '
-    NF > 0 {
-      gsub(/[",]/, "", $0)
-      if (match($0, /"group":"[^"]*"/)) {
-        gsub(/.*"group":"/, "")
-        gsub(/".*/, "")
-        print
-      }
-    }
-  ' "$DUST_FILE" 2>/dev/null) || groups=""
+  groups=$(jq -r '.group // empty' "$DUST_FILE" 2>/dev/null | sort -u) || groups=""
 
   if [ -z "$groups" ]; then
     return 0
@@ -328,9 +319,10 @@ check_bundle_dust() {
       'select(.group == $g) | .issue' "$DUST_FILE" 2>/dev/null | \
       sort -un | tr '\n' ',' | sed 's/,$//') || issues=""
 
-    printf '{"task":"bundle-dust","issue":0,"ctx":{"affected_paths":%s,"dust_group":"%s","dust_issue_count":%d}}\n' \
-      "$(printf '%s' "$issues" | jq -Rc 'split(",") | map(tonumber)')" \
-      "$best_group" "$best_count"
+    local affected_paths
+    affected_paths=$(printf '%s' "$issues" | jq -Rc 'split(",") | map(tonumber)')
+    jq -n -c --argjson group_issues "$affected_paths" --arg group "$best_group" --argjson count "$best_count" \
+      '{"task":"bundle-dust","issue":0,"ctx":{"affected_paths":$group_issues,"dust_group":$group,"dust_issue_count":$count}}'
     return 0
   fi
   return 0
@@ -370,8 +362,8 @@ check_agents_md_stale() {
     head_date=$(git -C "$md_dir" log -1 --format='%ct' "$dir_head" 2>/dev/null) || head_date=0
 
     if [ "${review_date:-0}" -lt "${head_date:-0}" ]; then
-      printf '{"task":"agents-md-stale","issue":0,"ctx":{"agents_md_path":"%s","review_sha":"%s","current_head":"%s"}}\n' \
-        "$AGENTS_MD" "$review_sha" "$dir_head"
+      jq -n -c --arg path "$AGENTS_MD" --arg sha "$review_sha" --arg head "$dir_head" \
+        '{"task":"agents-md-stale","issue":0,"ctx":{"agents_md_path":$path,"review_sha":$sha,"current_head":$head}}'
       return 0
     fi
   fi
@@ -390,7 +382,7 @@ check_pitch_vision() {
 
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
-    [.[] | select(.labels[].name == "vision")]
+    [.[] | select(.labels | any(.name == "vision"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
@@ -405,10 +397,10 @@ check_pitch_vision() {
     # Check if there is an architect pitch in the ops repo for this issue
     local pitch_file="${OPS_REPO_ROOT}/knowledge/pitches/vision-${num}.md"
     if [ ! -f "$pitch_file" ]; then
-      printf '{"task":"pitch-vision","issue":%s,"ctx":{"title":"%s","updated_at":"%s"}}\n' \
-        "$num" \
-        "$(printf '%s' "$candidates" | jq -r ".[$i].title")" \
-        "$ts"
+      local title
+      title=$(printf '%s' "$candidates" | jq -r ".[$i].title")
+      jq -n -c --argjson issue "$num" --arg title "$title" --arg ts "$ts" \
+        '{"task":"pitch-vision","issue":$issue,"ctx":{"title":$title,"updated_at":$ts}}'
       return 0
     fi
   done
