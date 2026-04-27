@@ -186,7 +186,8 @@ _generate_local_model_services() {
       WOODPECKER_REPO_ID: "${wp_repo_id}"
       FORGE_BOT_USER_${user_upper}: "${forge_user}"
       POLL_INTERVAL: "${poll_interval_val}"
-      GARDENER_INTERVAL: "${GARDENER_INTERVAL:-3600}"
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
       ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
       PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
       SUPERVISOR_INTERVAL: "${SUPERVISOR_INTERVAL:-1200}"
@@ -449,7 +450,8 @@ services:
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      GARDENER_INTERVAL: ${GARDENER_INTERVAL:-3600}
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
       ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
@@ -522,7 +524,8 @@ COMPOSEEOF
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      GARDENER_INTERVAL: ${GARDENER_INTERVAL:-3600}
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
       ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     healthcheck:
