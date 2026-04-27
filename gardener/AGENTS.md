@@ -1,4 +1,4 @@
-<!-- last-reviewed: 4c61adde7e285785a5b82db1f98efc6425d7a870 -->
+<!-- last-reviewed: f7a5ea5edfd4fa4948d9ee66b58d9290e69c0ea3 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -33,6 +33,10 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
+- `gardener/dust.jsonl` — Persistent dust accumulator. Each line is a JSON object
+  with `issue`, `group`, `title`, `reason`, and `ts` (ISO timestamp). The
+  dust-bundling step expires 30-day-old entries and bundles groups of 3+ into
+  backlog issues.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).

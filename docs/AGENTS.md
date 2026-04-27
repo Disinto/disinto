@@ -1,4 +1,4 @@
-<!-- last-reviewed: 4c61adde7e285785a5b82db1f98efc6425d7a870 -->
+<!-- last-reviewed: f7a5ea5edfd4fa4948d9ee66b58d9290e69c0ea3 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -25,9 +25,10 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
-├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh, backfill-labels.sh, claude-config.sh, backup.sh
-│                  hooks/ — Claude Code session hooks
-│                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh, wp-oauth-register.sh, wp-seed-secrets.sh
+├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh, backfill-labels.sh, claude-config.sh, backup.sh, forge-helpers.sh, inbox-sentinels.sh
+│                  hooks/ — Claude Code session hooks (on-compact-reinject.sh, on-idle-stop.sh, on-phase-change.sh, on-pretooluse-guard.sh, on-session-end.sh, on-stop-failure.sh)
+│                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh, wp-oauth-register.sh, wp-seed-secrets.sh, chat-init.sh, forgejo-bootstrap.sh, lib-systemd.sh, systemd-nomad.sh, systemd-vault.sh, vault-engines.sh, vault-nomad-auth.sh, wp-activate-repo.sh
+│                  disinto/ — backup.sh (restore)
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
 │                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
