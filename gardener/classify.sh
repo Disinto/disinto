@@ -392,39 +392,146 @@ check_agents_md_stale() {
 }
 
 # 7. pitch-vision
-#    Open vision issue with no architect pitch in ops repo.
+#    Open vision issue with no open architect-prefixed PR and no merged
+#    sprint PR on the ops repo. Surfaces a curated codebase index by
+#    grepping vision keywords against AGENTS.md so the formula can load
+#    only relevant files into context — not the whole tree (#877).
+#
+#    Dedup mirrors architect/architect-run.sh: skip if the vision already
+#    has an open or merged ops-repo PR referencing it. The 3-open-PR cap
+#    is enforced here too — if 3+ architect-prefixed PRs are open, no
+#    new pitch is surfaced (formula is not invoked).
 check_pitch_vision() {
   local issues_json="$1"
 
-  if [ -z "$OPS_REPO_ROOT" ]; then
+  # Need ops-repo access to dedup against existing pitch PRs.
+  if [ -z "${FORGE_OPS_REPO:-}" ]; then
     return 0
   fi
 
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
-    [.[] | select(.labels | any(.name == "vision"))]
+    [.[] | select(.labels | any(.name == "vision"))
+         | select(.labels | map(.name) | all(. != "in-progress"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
   count=$(printf '%s' "$candidates" | jq 'length' 2>/dev/null) || count=0
   [ "$count" -eq 0 ] && return 0
 
+  # Fetch all architect-prefixed PRs (open + closed) once. Dedup against
+  # PR titles/bodies that reference the vision number.
+  local prs_json
+  prs_json=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=all&limit=100" \
+    2>/dev/null) || prs_json='[]'
+
+  # 3-open-PR cap on ops repo (matches architect-run.sh precondition).
+  local open_arch_count
+  open_arch_count=$(printf '%s' "$prs_json" \
+    | jq '[.[] | select(.state == "open") | select(.title | startswith("architect:"))] | length' \
+    2>/dev/null) || open_arch_count=0
+  if [ "${open_arch_count:-0}" -ge 3 ]; then
+    return 0
+  fi
+
+  # Build a set of vision issue numbers already pitched (open or merged).
+  # An ops-repo PR "pitches" a vision if its title starts with `architect:`
+  # AND its body references `#NNN` for that vision number.
+  local pitched_nums
+  pitched_nums=$(printf '%s' "$prs_json" \
+    | jq -r '
+        .[] | select(.title | startswith("architect:"))
+            | select(.state == "open" or (.merged // false))
+            | .body // ""' \
+    2>/dev/null \
+    | grep -oE '#[0-9]+' | tr -d '#' | sort -u) || pitched_nums=""
+
+  # Build candidate keyword set from AGENTS.md once: every backtick-wrapped
+  # path is a usable index entry. The formula receives a per-vision subset
+  # filtered by keyword match against the vision title/body.
+  local agents_md_paths
+  # shellcheck disable=SC2016  # backticks in regex are literal
+  agents_md_paths=$(grep -hoE '`[a-zA-Z0-9_./-]+\.(sh|py|js|ts|tsx|toml|md|hcl|yml|yaml|json|rs|go)`' \
+    "$FACTORY_ROOT/AGENTS.md" \
+    "$FACTORY_ROOT/gardener/AGENTS.md" \
+    "$FACTORY_ROOT/architect/AGENTS.md" \
+    2>/dev/null \
+    | tr -d '`' | sort -u) || agents_md_paths=""
+
+  local best_num="" best_ts=""
   for i in $(seq 0 $((count - 1))); do
     local num ts
     num=$(printf '%s' "$candidates" | jq -r ".[$i].number")
     ts=$(printf '%s' "$candidates" | jq -r ".[$i].updated_at")
 
-    # Check if there is an architect pitch in the ops repo for this issue
-    local pitch_file="${OPS_REPO_ROOT}/knowledge/pitches/vision-${num}.md"
-    if [ ! -f "$pitch_file" ]; then
-      local title
-      title=$(printf '%s' "$candidates" | jq -r ".[$i].title")
-      jq -n -c --argjson issue "$num" --arg title "$title" --arg ts "$ts" \
-        '{"task":"pitch-vision","issue":$issue,"ctx":{"title":$title,"updated_at":$ts}}'
-      return 0
+    # Skip if already pitched (open or merged ops-repo PR refs this vision).
+    if printf '%s\n' "$pitched_nums" | grep -qx "$num"; then
+      continue
+    fi
+
+    # Most recently updated wins (FIFO within the bucket — operator-touched
+    # vision floats to top).
+    if [ -z "$best_ts" ] || [[ "$ts" > "$best_ts" ]]; then
+      best_num="$num"
+      best_ts="$ts"
     fi
   done
 
+  if [ -z "$best_num" ]; then
+    return 0
+  fi
+
+  # Build ctx for the chosen vision: title, body, related #refs, and the
+  # curated codebase_index_paths.
+  local title body
+  title=$(printf '%s' "$candidates" | jq -r ".[] | select(.number == $best_num) | .title")
+  body=$(printf '%s' "$candidates" | jq -r ".[] | select(.number == $best_num) | .body // \"\"")
+
+  # related_issues: every #NNN referenced in the body (excluding the vision
+  # itself), de-duplicated, capped at 20.
+  local related_json
+  related_json=$(printf '%s' "$body" \
+    | grep -oE '#[0-9]+' | sort -u | head -20 \
+    | jq -R . | jq -sc .) || related_json='[]'
+
+  # codebase_index_paths: keywords from title (lowercased, length>=4,
+  # alphanumeric only) → grep AGENTS.md path list for any keyword as
+  # substring → unique paths, capped at 10.
+  local keywords paths_json paths_list
+  keywords=$(printf '%s' "$title" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -c 'a-z0-9' '\n' \
+    | awk 'length >= 4 { print }' \
+    | sort -u)
+
+  paths_list=""
+  if [ -n "$agents_md_paths" ] && [ -n "$keywords" ]; then
+    paths_list=$(while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      while IFS= read -r kw; do
+        [ -z "$kw" ] && continue
+        if printf '%s' "$p" | tr '[:upper:]' '[:lower:]' | grep -qF "$kw"; then
+          printf '%s\n' "$p"
+          break
+        fi
+      done <<< "$keywords"
+    done <<< "$agents_md_paths" | sort -u | head -10)
+  fi
+
+  paths_json=$(printf '%s' "$paths_list" \
+    | grep -v '^$' | jq -R . | jq -sc .) || paths_json='[]'
+
+  jq -n -c \
+    --argjson issue "$best_num" \
+    --arg title "$title" \
+    --arg body "$body" \
+    --argjson related "$related_json" \
+    --argjson paths "$paths_json" \
+    '{"task":"pitch-vision","issue":$issue,
+      "ctx":{"title":$title,"body":$body,
+             "related_issues":$related,
+             "codebase_index_paths":$paths}}'
   return 0
 }
 
