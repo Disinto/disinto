@@ -39,7 +39,7 @@ for script in \
     /chmod 644.*\$tmpfile/ { found=1 }
     END { exit (found ? 0 : 1) }
   ' "$REPO_ROOT/$script"; then
-    ac_fail "$script: missing 'chmod 644 $tmpfile' before 'mv -f $tmpfile'"
+    ac_fail "$script: missing 'chmod 644 \$tmpfile' before 'mv -f \$tmpfile'"
   fi
 done
 
