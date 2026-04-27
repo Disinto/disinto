@@ -1,4 +1,4 @@
-<!-- last-reviewed: 7e3dc4f6926841a31af9ff41e2ce3c78ce30e512 -->
+<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
 # vault/policies/ — Agent Instructions
 
 HashiCorp Vault ACL policies for the disinto factory. One `.hcl` file per

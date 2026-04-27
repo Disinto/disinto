@@ -1,4 +1,4 @@
-<!-- last-reviewed: 7e3dc4f6926841a31af9ff41e2ce3c78ce30e512 -->
+<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -29,7 +29,8 @@ Key directories:
 - **nomad/jobs/**: Nomad job HCL configs
 - **formulas/**: TOML issue templates for multi-step agent tasks
 - **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)

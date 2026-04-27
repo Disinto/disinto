@@ -1,4 +1,4 @@
-<!-- last-reviewed: 7e3dc4f6926841a31af9ff41e2ce3c78ce30e512 -->
+<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
 # Review Agent
 
 **Role**: AI-powered PR review — post structured findings and formal
@@ -23,7 +23,9 @@ Calls `resolve_forge_remote()` at startup to determine the correct git remote na
 hardcoded 'origin'). Before starting the session, runs `lib/build-graph.py --changed-files
 <PR files>` and appends the JSON structural analysis (affected objectives, orphaned
 prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review
-proceeds without it.
+proceeds without it. **Acceptance test checking**: if the issue has an `## Acceptance test`
+section, the reviewer verifies commands reference correct file paths/schema, expected output
+matches actual behavior, and flags `needs-deploy-verification` for live-box-only commands.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN` — Dev-agent token (must not be the same account as FORGE_REVIEW_TOKEN)
