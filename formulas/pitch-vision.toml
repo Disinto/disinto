@@ -1,0 +1,279 @@
+# formulas/pitch-vision.toml — Vision pitching as one task type
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"pitch-vision","issue":N,
+#    "ctx":{"title":"…","body":"…",
+#           "related_issues":["#NNN", …],
+#           "codebase_index_paths":["path/a.sh","path/b.md", …]}}
+#
+# Goal: pitch ONE vision issue per gardener cycle as a markdown PR on the
+# ops repo, with a sprint draft + open questions for operator ACCEPT/REJECT.
+# Replaces the standalone agents-architect-opus nomad job — vision pitching
+# becomes one of many gardener task types, runnable on llama-qwen with
+# curated per-pitch context instead of the whole codebase.
+#
+# External contract is unchanged from architect/architect-run.sh:
+#   - One ops-repo PR per vision (architect: <title>) with a sprint pitch body
+#   - ACCEPT/REJECT footer comment for the operator
+#   - filer:begin/filer:end block for downstream filer-bot sub-issue creation
+# Different driver: bash preflight curates ≤16K tokens of context, claude
+# writes the pitch in plain markdown, bash creates the PR.
+#
+# Dedup discipline (matches current architect):
+#   - classify.sh skips visions that already have an open ops-repo
+#     architect-prefixed PR or a merged sprint PR (3-open-PR cap also
+#     enforced there, not here). The formula trusts classify's selection
+#     and re-checks defensively before opening the PR.
+#
+# Idempotency: re-running on an already-pitched vision is a no-op because
+# classify.sh stops surfacing it.
+#
+# Token budget: ≤16K input (vision body + AGENTS.md + 5–10 curated files),
+# ≤6K output (pitch markdown). Llama-friendly — no JSON-schema, no nested
+# objects, plain markdown to a scratch file.
+
+name        = "pitch-vision"
+description = "Pitch one vision issue as a markdown PR on the ops repo"
+version     = 1
+
+[[steps]]
+id    = "pitch"
+title = "Curate context, generate pitch, open ops-repo PR"
+description = """
+You are pitching exactly ONE vision issue identified in the classification
+payload (field `issue`). Do this in a single pass — no orchestration, no
+other vision issues, no follow-up Q&A in this session.
+
+The classification payload's `ctx` field contains:
+  - title:                vision issue title
+  - body:                 vision issue body (full)
+  - related_issues:       list of "#NNN" references parsed from the body
+  - codebase_index_paths: curated list of repo files (≤10) chosen by
+                          classify.sh via grep on vision keywords against
+                          AGENTS.md — NOT the whole tree
+
+## 1. Pull inputs into shell variables
+
+  ISSUE=$(printf '%s' "$TASK_JSON" | jq -r '.issue')
+  TITLE=$(printf '%s' "$TASK_JSON" | jq -c '.ctx.title // ""' | jq -r .)
+  printf '%s' "$TASK_JSON" | jq -r '.ctx.body // ""' \\
+    > /tmp/pitch-vision-${ISSUE}.body
+  printf '%s' "$TASK_JSON" | jq -r '.ctx.related_issues[]? // empty' \\
+    > /tmp/pitch-vision-${ISSUE}.related
+  printf '%s' "$TASK_JSON" | jq -r '.ctx.codebase_index_paths[]? // empty' \\
+    > /tmp/pitch-vision-${ISSUE}.paths
+
+(`TASK_JSON` is the raw classification payload — already in the prompt
+above. If the variable is not in scope, paste the payload JSON into a
+temp file and pipe it through jq.)
+
+## 2. Bash preflight — load only the curated files into context
+
+For each path in /tmp/pitch-vision-${ISSUE}.paths, append a fenced block
+to a scratch context file:
+
+  : > /tmp/pitch-vision-${ISSUE}.ctx
+  {
+    echo "## Vision issue #${ISSUE}: ${TITLE}"
+    echo
+    echo "### Body"
+    cat /tmp/pitch-vision-${ISSUE}.body
+    echo
+    echo "### Related issues"
+    cat /tmp/pitch-vision-${ISSUE}.related
+    echo
+    echo "### Curated codebase index (chosen by classify.sh — not the whole tree)"
+  } >> /tmp/pitch-vision-${ISSUE}.ctx
+
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    [ -f "$PROJECT_REPO_ROOT/$p" ] || continue
+    echo                                          >> /tmp/pitch-vision-${ISSUE}.ctx
+    echo "#### $p"                                >> /tmp/pitch-vision-${ISSUE}.ctx
+    echo '```'                                    >> /tmp/pitch-vision-${ISSUE}.ctx
+    # Cap each file at 200 lines to keep input ≤16K tokens with 5–10 files.
+    head -n 200 "$PROJECT_REPO_ROOT/$p"           >> /tmp/pitch-vision-${ISSUE}.ctx
+    echo '```'                                    >> /tmp/pitch-vision-${ISSUE}.ctx
+  done < /tmp/pitch-vision-${ISSUE}.paths
+
+  # Sanity: keep total input under ~16K tokens (~64K bytes is a safe heuristic).
+  CTX_BYTES=$(wc -c < /tmp/pitch-vision-${ISSUE}.ctx)
+  if [ "$CTX_BYTES" -gt 65000 ]; then
+    echo "WARNING: curated context $CTX_BYTES bytes exceeds budget; truncating"
+    head -c 65000 /tmp/pitch-vision-${ISSUE}.ctx \\
+      > /tmp/pitch-vision-${ISSUE}.ctx.trunc
+    mv /tmp/pitch-vision-${ISSUE}.ctx.trunc /tmp/pitch-vision-${ISSUE}.ctx
+  fi
+
+## 3. Defensive dedup re-check
+
+classify.sh already skipped this vision if it had an open architect PR
+or a merged sprint PR on the ops repo. Re-check in case state moved
+between classify and dispatch:
+
+  PRS_JSON=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=all&limit=100" \\
+    2>/dev/null || echo '[]')
+
+  EXISTING=$(printf '%s' "$PRS_JSON" \\
+    | jq -r --arg n "$ISSUE" '
+        .[] | select(.title | startswith("architect:")) |
+              select((.body // "") | test("#" + $n + "\\\\b"))
+              | .number' \\
+    | head -1)
+
+  if [ -n "$EXISTING" ]; then
+    echo "ACTION: skipping #$ISSUE — ops-repo PR #$EXISTING already references it"
+    exit 0
+  fi
+
+## 4. Generate the pitch markdown (model pass)
+
+Read /tmp/pitch-vision-${ISSUE}.ctx and produce a sprint pitch in this
+exact shape — one markdown document, no JSON, no nested objects:
+
+  # Sprint: <kebab-case sprint name>
+
+  ## Vision issues
+  - #<ISSUE> — <TITLE>
+
+  ## What this enables
+  <one paragraph: what the project can do after this sprint that it
+  cannot do today>
+
+  ## What exists today
+  <one paragraph or bullets: relevant code/infra already in the curated
+  index that this sprint can build on. Cite paths from the index. Do
+  NOT cite paths that are not in /tmp/pitch-vision-${ISSUE}.paths.>
+
+  ## Complexity
+  <2–4 bullets: rough size in files / subsystems, gluecode-vs-greenfield
+  ratio, expected sub-issue count>
+
+  ## Risks
+  <2–4 bullets: what could go wrong, what breaks if done badly>
+
+  ## Cost — new infra to maintain
+  <1–3 bullets: ongoing maintenance burden — new services, scheduled
+  tasks, formulas, agent roles>
+
+  ## Open questions
+  <2–5 numbered Qs: design forks the operator must decide before this
+  is sub-issued. Phrase as crisp choices, not vague concerns.>
+
+  ## Recommendation
+  <one paragraph: worth it / defer / alternative approach>
+
+  ## Sub-issues
+
+  <!-- filer:begin -->
+  - id: <kebab-case-id>
+    title: "vision(#<ISSUE>): <concise sub-issue title>"
+    labels: [backlog]
+    depends_on: []
+    body: |
+      ## Goal
+      <what this sub-issue accomplishes>
+      ## Acceptance criteria
+      - [ ] <criterion>
+  <!-- filer:end -->
+
+Write this directly to /tmp/pitch-vision-${ISSUE}.pitch.md — do NOT
+echo it through a heredoc that uses shell expansion (the body contains
+backticks and dollar signs that would corrupt). Use printf or a quoted
+heredoc.
+
+Output budget for the pitch: ≤6K tokens.
+
+Hard constraints:
+  - Plain markdown only. No JSON, no schema declarations, no regex
+    backreferences in your reasoning. Llama-friendly throughout.
+  - Every path you cite under "What exists today" must come from
+    /tmp/pitch-vision-${ISSUE}.paths. Do not invent paths.
+  - The filer:begin/filer:end block is parsed by filer-bot after the
+    sprint PR merges (#764). Each entry becomes one project-repo issue.
+  - Do NOT POST to the project repo. You are READ-ONLY there. Any
+    direct API call to the project repo will return 403.
+
+## 5. Open the ops-repo PR
+
+One small PR, one file changed (sprints/<slug>.md), title `architect: <title>`:
+
+  cd "$PROJECT_REPO_ROOT"
+  SPRINT_SLUG=$(printf '%s' "$TITLE" \\
+    | tr '[:upper:]' '[:lower:]' \\
+    | tr -c 'a-z0-9' '-' \\
+    | sed 's/--*/-/g; s/^-//; s/-$//')
+  BRANCH="architect/sprint-vision-${ISSUE}"
+  PR_TITLE="architect: ${TITLE}"
+
+  # Create the branch on the ops repo from PRIMARY_BRANCH.
+  curl -sf -X POST \\
+    -H "Authorization: token $FORGE_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/branches" \\
+    -d "$(jq -n --arg new "$BRANCH" --arg old "${PRIMARY_BRANCH:-main}" \\
+        '{new_branch_name:$new, old_branch_name:$old}')" \\
+    > /tmp/pitch-vision-${ISSUE}.branch.json
+  if ! jq -e .name /tmp/pitch-vision-${ISSUE}.branch.json >/dev/null 2>&1; then
+    # Branch may already exist from a prior failed attempt — that is fine,
+    # we will just overwrite the file on it.
+    echo "INFO: branch ${BRANCH} create returned: $(cat /tmp/pitch-vision-${ISSUE}.branch.json)"
+  fi
+
+  # Write the sprint spec file to the branch.
+  PITCH_B64=$(base64 -w 0 < /tmp/pitch-vision-${ISSUE}.pitch.md)
+  curl -sf -X PUT \\
+    -H "Authorization: token $FORGE_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/contents/sprints/${SPRINT_SLUG}.md" \\
+    -d "$(jq -n \\
+        --arg msg    "sprint: add ${SPRINT_SLUG}.md (vision #${ISSUE})" \\
+        --arg b64    "$PITCH_B64" \\
+        --arg branch "$BRANCH" \\
+        '{message:$msg, content:$b64, branch:$branch}')" \\
+    > /tmp/pitch-vision-${ISSUE}.file.json
+
+  # Build PR body — the same pitch markdown, plus the ACCEPT/REJECT footer.
+  {
+    cat /tmp/pitch-vision-${ISSUE}.pitch.md
+    echo
+    echo "---"
+    echo
+    echo "Reply \\`ACCEPT\\` to proceed with design questions, or \\`REJECT: <reason>\\` to decline."
+  } > /tmp/pitch-vision-${ISSUE}.pr.body
+
+  PR_BODY=$(cat /tmp/pitch-vision-${ISSUE}.pr.body)
+  curl -sf -X POST \\
+    -H "Authorization: token $FORGE_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls" \\
+    -d "$(jq -n \\
+        --arg title "$PR_TITLE" \\
+        --arg body  "$PR_BODY" \\
+        --arg head  "$BRANCH" \\
+        --arg base  "${PRIMARY_BRANCH:-main}" \\
+        '{title:$title, body:$body, head:$head, base:$base}')" \\
+    > /tmp/pitch-vision-${ISSUE}.pr.json
+
+  PR_NUMBER=$(jq -r '.number // empty' /tmp/pitch-vision-${ISSUE}.pr.json)
+  if [ -z "$PR_NUMBER" ]; then
+    echo "ERROR: PR creation failed: $(cat /tmp/pitch-vision-${ISSUE}.pr.json)"
+    exit 1
+  fi
+
+  echo "ACTION: pitched vision #${ISSUE} — ops PR #${PR_NUMBER} (${BRANCH})"
+
+Done. Stop the session.
+
+## Output discipline
+
+- One vision per invocation. Never pitch a second.
+- One ops-repo PR. One file added (sprints/<slug>.md). Title-only beyond
+  the auto pitch body. Do NOT bundle other gardener work into this PR.
+- READ-ONLY on the project repo. The pitch is created on the ops repo
+  only. Sub-issues come later, from filer-bot, after merge (#764).
+- No follow-up Q&A in this session — the operator drives that on the PR.
+- No JSON-schema declarations, no regex backreferences in your reasoning
+  — keep the structure plain prose + bash blocks (llama-friendly).
+"""

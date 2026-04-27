@@ -76,6 +76,24 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
     bundled entries from `dust.jsonl`, and opens a small PR with the
     `dust.jsonl` change. Replaces Step 3 (dust-bundling) in monolithic
     `run-gardener.toml`.
+  - `formulas/pitch-vision.toml` (#877) — pitch ONE vision issue per
+    cycle as a markdown PR on the ops repo. Bash preflight loads only
+    the curated files surfaced by `classify.sh`
+    (`ctx.codebase_index_paths`, ≤10 paths chosen by grepping vision
+    keywords against AGENTS.md), composes a ≤16K-token context block
+    (vision body + related `#refs` + curated files + AGENTS.md), and
+    claude writes a plain-markdown sprint pitch (≤6K output) with
+    What-this-enables / What-exists / Complexity / Risks / Cost / Open
+    questions / Recommendation / `filer:begin`-block sub-issues. Bash
+    creates the ops-repo PR (`architect: <title>`, branch
+    `architect/sprint-vision-<N>`) with an `ACCEPT/REJECT` footer. Same
+    dedup discipline as the legacy architect (skip if open or merged
+    architect-prefixed PR for this vision); 3-open-PR cap enforced by
+    `classify.sh` before the formula is invoked. Llama-friendly — no
+    JSON-schema, no nested objects. Deprecates the standalone
+    `agents-architect-opus` nomad job — same external contract,
+    different driver (curated context on llama-qwen instead of
+    whole-codebase context on opus).
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
