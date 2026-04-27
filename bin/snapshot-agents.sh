@@ -70,6 +70,10 @@ discover_opus_allocs() {
   # Filter on JobID (alloc Name is "<job>.<group>[<index>]" — never ends in
   # "-opus"); status filter moves into jq so we don't depend on a flag that
   # `nomad alloc list` doesn't accept.
+  #
+  # Task name is needed for the HTTP logs endpoint. AllocListStub exposes
+  # TaskStates (map keyed by task name); fall back to TaskGroup if TaskStates
+  # is unavailable for any reason.
   printf '%s' "$allocs_json" | jq -c '
     [ .[]
       | select(. != null)
@@ -78,7 +82,8 @@ discover_opus_allocs() {
       | select(.JobID | test("-opus$"))
       | {
           name: (.JobID | sub("^agents-"; "")),
-          alloc_id: .ID
+          alloc_id: .ID,
+          task: ((.TaskStates // {} | keys | .[0]) // .TaskGroup // "")
         }
     ]
   ' 2>/dev/null || printf '[]'
@@ -87,11 +92,38 @@ discover_opus_allocs() {
 # ── Fetch recent logs for a single allocation ────────────────────────────────
 
 # Writes stdout log to the given file (stderr discarded).
+#
+# Uses the Nomad HTTP logs endpoint (/v1/client/fs/logs/<alloc_id>) directly
+# rather than the `nomad alloc logs` CLI: PR #845 demonstrated that the
+# deployed Nomad 1.9.5 has dropped the legacy -token/-address/-timeout flag
+# format on the matching list commands, so we avoid the CLI surface entirely.
+#
+# The HTTP endpoint is byte-oriented; we over-read a window from the tail and
+# then trim to LOG_TAIL lines locally. 512 bytes/line is a conservative upper
+# bound for these agents' log format.
 fetch_alloc_logs() {
-  local alloc_id="$1" dest="$2"
-  nomad alloc logs -tail="$LOG_TAIL" -address="$NOMAD_ADDR" \
-    -token="$NOMAD_TOKEN" -timeout="${NOMAD_TIMEOUT}s" \
-    "$alloc_id" > "$dest" 2>/dev/null || true
+  local alloc_id="$1" task="$2" dest="$3"
+  : > "$dest"
+
+  # Without a task name we can't query logs — leave the dest empty so
+  # detect_state() falls through to the "stalled" branch.
+  [ -z "$task" ] && return 0
+
+  local -a headers=()
+  [ -n "${NOMAD_TOKEN:-}" ] && headers+=(-H "X-Nomad-Token: ${NOMAD_TOKEN}")
+
+  local bytes=$((LOG_TAIL * 512))
+  [ "$bytes" -lt 8192 ] && bytes=8192
+
+  curl -fsS --max-time "${NOMAD_TIMEOUT}" "${headers[@]}" \
+    --get \
+    --data-urlencode "task=${task}" \
+    --data-urlencode "type=stdout" \
+    --data-urlencode "plain=true" \
+    --data-urlencode "origin=end" \
+    --data-urlencode "offset=${bytes}" \
+    "${NOMAD_ADDR%/}/v1/client/fs/logs/${alloc_id}" 2>/dev/null \
+    | tail -n "$LOG_TAIL" > "$dest" || true
 }
 
 # ── Detect agent state from log content ──────────────────────────────────────
@@ -223,16 +255,17 @@ build_agents_data() {
   local i
 
   for ((i = 0; i < alloc_count; i++)); do
-    local agent_name alloc_id
+    local agent_name alloc_id task
     agent_name="$(printf '%s' "$allocs_json" | jq -r ".[$i].name")"
     alloc_id="$(printf '%s' "$allocs_json" | jq -r ".[$i].alloc_id")"
+    task="$(printf '%s' "$allocs_json" | jq -r ".[$i].task")"
 
     local lf
     lf="$(mktemp_safe "/tmp/snapshot-agents-log.XXXXXX")"
     logfiles+=("$lf")
 
     # Run log fetch in background
-    fetch_alloc_logs "$alloc_id" "$lf" &
+    fetch_alloc_logs "$alloc_id" "$task" "$lf" &
   done
 
   # Wait for all log fetches to complete
