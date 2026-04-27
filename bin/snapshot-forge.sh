@@ -357,6 +357,7 @@ main() {
 
   # Read previous snapshot, merge forge key under .collectors.forge, write atomically.
   jq -c --argjson forge "$forge_data" '.collectors.forge = $forge' "$SNAPSHOT_PATH" > "$tmpfile" 2>/dev/null
+  chmod 644 "$tmpfile"
   mv -f "$tmpfile" "$SNAPSHOT_PATH"
 
   local backlog_count
