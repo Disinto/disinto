@@ -210,19 +210,11 @@ fi
 if [ "$nomad_acl_enabled" = true ] && [ -f "$ACL_POLICY_HCL" ]; then
   log "Nomad ACL is enabled — applying ${ACL_POLICY_NAME} policy"
 
-  # Apply the policy (idempotent via PUT).
-  policy_content="$(cat "$ACL_POLICY_HCL")"
-  policy_payload="$(jq -n --arg p "$policy_content" '{description: "chat-Claude operator scope (#678)", policy: $p}')"
-
-  if ! _hvault_request PUT "sys/acl/policy/${ACL_POLICY_NAME}" "$policy_payload" >/dev/null 2>&1; then
-    # Try the Nomad ACL API directly.
-    if command -v nomad >/dev/null 2>&1; then
-      nomad acl policy apply -description "chat-Claude operator scope (#678)" \
-        "$ACL_POLICY_NAME" "$ACL_POLICY_HCL" 2>/dev/null || \
-        log "warning: failed to apply Nomad ACL policy ${ACL_POLICY_NAME}"
-    fi
-  else
-    log "policy ${ACL_POLICY_NAME} applied via Vault sys API"
+  # Apply the policy via Nomad ACL API (idempotent).
+  if command -v nomad >/dev/null 2>&1; then
+    nomad acl policy apply -description "chat-Claude operator scope (#678)" \
+      "$ACL_POLICY_NAME" "$ACL_POLICY_HCL" 2>/dev/null || \
+      log "warning: failed to apply Nomad ACL policy ${ACL_POLICY_NAME}"
   fi
 
   # Check if a nomad_token already exists in KV.
