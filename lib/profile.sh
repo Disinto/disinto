@@ -380,8 +380,8 @@ profile_load_lessons() {
     lessons_content=$(head -c 2048 "$lessons_file" 2>/dev/null) || lessons_content=""
     if [ -n "$lessons_content" ]; then
       # shellcheck disable=SC2034  # exported to caller for prompt injection
-      LESSONS_CONTEXT="## Lessons learned (from .profile/knowledge/lessons-learned.md)
-${lessons_content}"
+      # Raw content only — profile_lessons_block() adds the heading.
+      LESSONS_CONTEXT="${lessons_content}"
       log "profile: loaded lessons-learned.md (${#lessons_content} bytes)"
     fi
   fi
