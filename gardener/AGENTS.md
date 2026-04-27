@@ -69,6 +69,13 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
     AGENTS.md files in one session. Token budget: ≤8K input, ≤4K output.
     Splitting the root AGENTS.md past the size cap is a separate sibling
     concern — not handled here.
+  - `formulas/bundle-dust.toml` (#876) — multi-issue dust bundling: takes a
+    dust group with 3+ distinct issues from `gardener/dust.jsonl`, creates
+    one bundled cleanup issue (`fix: bundled dust cleanup — <group>`) with a
+    per-source checklist, comments + closes each source issue, removes
+    bundled entries from `dust.jsonl`, and opens a small PR with the
+    `dust.jsonl` change. Replaces Step 3 (dust-bundling) in monolithic
+    `run-gardener.toml`.
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
