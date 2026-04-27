@@ -100,9 +100,7 @@ configure_git_identity() {
   # Resolve BOT_USER from FORGE_TOKEN if not already set (configure_git_creds
   # exports BOT_USER on success, so this is a fallback for edge cases only).
   if [ -z "${BOT_USER:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
-    BOT_USER=$(curl -sf --max-time 10 \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || true
+    BOT_USER=$(forge_whoami)
   fi
 
   if [ -z "${BOT_USER:-}" ]; then

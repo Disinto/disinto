@@ -234,8 +234,7 @@ backup_import_disinto_ops_repo() {
 
   # Build authenticated push URL
   local admin_user
-  admin_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_URL}/api/v1/user" | jq -r '.login') || admin_user=""
+  admin_user=$(forge_whoami)
   if [ -z "$admin_user" ] || [ "$admin_user" = "null" ]; then
     backup_log "ERROR: could not resolve admin username from token"
     rm -rf "$clone_dir"

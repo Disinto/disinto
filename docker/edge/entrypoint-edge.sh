@@ -52,14 +52,17 @@ mkdir -p "$HOME"
 
 # Configure git credential helper before cloning (#604).
 # /opt/disinto does not exist yet so we cannot source lib/git-creds.sh;
-# inline a minimal credential-helper setup here.
+# inline a minimal credential-helper setup here. We do source the baked-in
+# copy of lib/forge-helpers.sh so forge_whoami() stays consistent with the
+# rest of the codebase (#694).
 if [ -n "${FORGE_PASS:-}" ] && [ -n "${FORGE_URL:-}" ]; then
+  # shellcheck source=/usr/local/lib/forge-helpers.sh
+  source /usr/local/lib/forge-helpers.sh
   _forge_host=$(printf '%s' "$FORGE_URL" | sed 's|https\?://||; s|/.*||')
   _forge_proto=$(printf '%s' "$FORGE_URL" | sed 's|://.*||')
   _bot_user=""
   if [ -n "${FORGE_TOKEN:-}" ]; then
-    _bot_user=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_URL}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || _bot_user=""
+    _bot_user=$(forge_whoami)
   fi
   _bot_user="${_bot_user:-dev-bot}"
 
