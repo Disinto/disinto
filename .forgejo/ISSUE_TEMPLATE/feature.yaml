@@ -54,14 +54,13 @@ body:
     attributes:
       label: Acceptance test
       description: |
-        Explicit shell commands (with expected output) that prove the issue is
-        resolved when run on the live box. Every command must be runnable
-        verbatim — no "verify it works" or "ensure X is correct."
+        Path to the bash file under `tests/acceptance/` that proves the
+        feature works on the live box. Add the file in the same PR; it must
+        exit 0 on success and `FAIL: <reason>` on failure. Run via
+        `tools/run-acceptance.sh <issue-number>`.
         See docs/contributing/acceptance-tests.md for the convention.
       placeholder: |
-        ```bash
-        $ jq '.collectors | keys' /srv/disinto/snapshot-state/state.json
-        [ "agents", "forge", "inbox", "nomad" ]
-        ```
+        `tests/acceptance/issue-<this-number>.sh` — runs via
+        `tools/run-acceptance.sh <this-number>`.
     validations:
       required: true

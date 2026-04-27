@@ -52,15 +52,13 @@ body:
     attributes:
       label: Acceptance test
       description: |
-        Explicit shell commands (with expected output) that prove the fix works
-        when run on the live box. Include the reproduction steps as the first
-        command to confirm the bug no longer occurs.
+        Path to the bash file under `tests/acceptance/` that proves the fix.
+        Add the file in the same PR; the first assertion must be the
+        reproduction step (must no longer reproduce). Run on the live box
+        via `tools/run-acceptance.sh <issue-number>`.
         See docs/contributing/acceptance-tests.md for the convention.
       placeholder: |
-        ```bash
-        $ # Reproduction step — should no longer produce the error
-        $ curl -sf http://localhost:3000/api/health | jq .status
-        "ok"
-        ```
+        `tests/acceptance/issue-<this-number>.sh` — runs via
+        `tools/run-acceptance.sh <this-number>`.
     validations:
       required: true
