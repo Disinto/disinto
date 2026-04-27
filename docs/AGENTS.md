@@ -1,4 +1,4 @@
-<!-- last-reviewed: 01b2a9b120a320d505c8488268260f0d46defc9b -->
+<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -35,12 +35,14 @@ disinto/                 (code repo)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator surface); voice/ (bridge.py, UI)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution)
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution); run-acceptance.sh — acceptance test runner for CI
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md); voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)
+├── tests/acceptance/  Acceptance test scripts per issue (issue-<n>.sh); runner at tools/run-acceptance.sh; helpers at tests/lib/acceptance-helpers.sh
+├── tests/lib/       Shared test helpers (acceptance-helpers.sh)
 ├── templates/     Issue templates
 ├── bin/           The `disinto` CLI script (`--with <svc>` deploys services + runs their Vault seeders)
 ├── disinto-factory/  Setup documentation and skill
