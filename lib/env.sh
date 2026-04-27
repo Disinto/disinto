@@ -223,30 +223,9 @@ forge_api() {
     "${FORGE_API}${path}" "$@"
 }
 
-# Paginate a Forge API GET endpoint and return all items as a merged JSON array.
-# Usage: forge_api_all /path             (no existing query params)
-#        forge_api_all /path?a=b         (with existing params — appends &limit=50&page=N)
-#        forge_api_all /path TOKEN       (optional second arg: token; defaults to $FORGE_TOKEN)
-forge_api_all() {
-  local path_prefix="$1"
-  local FORGE_TOKEN="${2:-${FORGE_TOKEN}}"
-  local sep page page_items count all_items="[]"
-  case "$path_prefix" in
-    *"?"*) sep="&" ;;
-    *) sep="?" ;;
-  esac
-  page=1
-  while true; do
-    page_items=$(forge_api GET "${path_prefix}${sep}limit=50&page=${page}")
-    count=$(printf '%s' "$page_items" | jq 'length' 2>/dev/null) || count=0
-    [ -z "$count" ] && count=0
-    [ "$count" -eq 0 ] && break
-    all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
-    [ "$count" -lt 50 ] && break
-    page=$((page + 1))
-  done
-  printf '%s' "$all_items"
-}
+# Paginated Forge API helper (shared across env.sh and classify.sh).
+# shellcheck source=lib/forge-paginate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/forge-paginate.sh"
 
 # =============================================================================
 # FORGE WHOAMI HELPER

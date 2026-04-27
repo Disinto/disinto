@@ -53,24 +53,13 @@ AGENTS_MD="${FACTORY_ROOT}/AGENTS.md"
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-# Fetch all open issues in a single API call (paginated, up to 500 issues).
+# Shared pagination helper (avoids duplication with lib/env.sh).
+# shellcheck source=lib/forge-paginate.sh
+source "${FACTORY_ROOT}/lib/forge-paginate.sh"
+
+# Fetch all open issues via forge_api_all (shared pagination from lib/forge-paginate.sh).
 fetch_open_issues() {
-  local page=1 all_items="[]"
-  while true; do
-    local page_items
-    page_items=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues?state=open&limit=50&page=${page}" 2>/dev/null) || {
-      echo "ERROR: forge unreachable" >&2
-      exit 1
-    }
-    local count
-    count=$(printf '%s' "$page_items" | jq 'length' 2>/dev/null) || count=0
-    [ "$count" -eq 0 ] && break
-    all_items=$(printf '%s\n%s' "$all_items" "$page_items" | jq -s 'add')
-    [ "$count" -lt 50 ] && break
-    page=$((page + 1))
-  done
-  printf '%s' "$all_items"
+  forge_api_all "/issues?state=open"
 }
 
 # Extract dependency issue numbers from an issue body (inline with parse-deps.sh).
