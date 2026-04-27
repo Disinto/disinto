@@ -50,6 +50,12 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
     branch in monolithic `run-gardener.toml` that stripped `backlog` from
     9 issues in PR #811 without enriching them (manually re-enriched
     2026-04-26).
+  - `formulas/enrich-bug-report.toml` (#874) — single-issue investigation
+    brief: appends four sections (`What was reported`, `Known context`,
+    `Reproduction plan`, `What needs verification`) to a raw bug report
+    body, then labels it `bug-report`. Runs git log preflight on affected
+    paths extracted from the body. Replaces the inline enrichment logic
+    in monolithic `run-gardener.toml` (lines 89–135).
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.

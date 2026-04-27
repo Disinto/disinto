@@ -1,0 +1,160 @@
+# formulas/enrich-bug-report.toml — Single-issue investigation brief
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"enrich-bug-report","issue":N,"ctx":{"title":"…","updated_at":"…"}}
+#
+# Goal: turn a raw user bug report into an actionable investigation brief that
+# a reproduce-bot or human can pick up. Extracts the enrichment logic from
+# monolithic formulas/run-gardener.toml (lines 89–135) into a focused single-
+# issue formula.
+#
+# On success: append four sections to the issue body, add `bug-report` label.
+# On failure: keep the issue as-is (classify.sh ensures it's unlabeled).
+#
+# Idempotency: re-running on an already-enriched issue is a no-op because
+# classify.sh stops surfacing it (label added); the formula itself is
+# detection-free.
+
+name        = "enrich-bug-report"
+description = "Enrich one bug report into an actionable investigation brief"
+version     = 1
+
+[[steps]]
+id    = "enrich"
+title = "Preflight, enrich body with 4 sections, relabel"
+description = """
+You are enriching exactly ONE issue identified in the classification payload
+(field `issue`). Do this in a single pass — no orchestration, no other issues.
+
+## 1. Fetch the issue
+
+Read the classification payload's `issue` number, then fetch the full issue:
+
+  ISSUE=<the .issue field from the payload>
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE" > /tmp/bugreport-${ISSUE}.json
+  TITLE=$(jq -r .title /tmp/bugreport-${ISSUE}.json)
+  BODY=$(jq -r '.body // ""' /tmp/bugreport-${ISSUE}.json)
+
+Save the original body to a scratch file for reference:
+
+  printf '%s' "$BODY" > /tmp/bugreport-${ISSUE}.body.orig
+
+## 2. Preflight: extract affected paths + git log
+
+Extract file paths mentioned in the issue body. Match patterns like
+`dir/file.ext`, `path/to/x.sh`, `lib/foo.sh`, or any sequence of path
+segments ending in a file extension (e.g. `[a-zA-Z_./-]+\\.(sh|py|js|ts|toml|md|hcl|yml|yaml|json|rs|go|css|html|vue|svelte|rb|java|kt|cpp|c|h)`).
+
+For each unique path found, run:
+
+  git log --oneline -5 -- <path>
+
+Collect all output into a single string. If no paths are found, the
+preflight section is empty — that is fine.
+
+Save the preflight context to a scratch file:
+
+  printf '%s' "$GIT_LOG_OUTPUT" > /tmp/bugreport-${ISSUE}.gitlog
+
+## 3. Distill: write the four appended sections
+
+Read the original body, the title, and the git log preflight output. Then
+compose four sections to append. Keep each section concise to stay within
+the token budget (total appended body ≤ 3K tokens).
+
+### Section A: What was reported
+
+One or two sentences distilling the user's claim. State the expected behavior
+and what actually went wrong. Do not repeat the full body — distill.
+
+### Section B: Known context
+
+Infer from the codebase what is already known:
+- Which contracts, components, or files are involved (use AGENTS.md layout
+  and paths mentioned in the issue body)
+- What the expected behavior should be (from VISION.md, docs, or code)
+- Recent changes to involved components (from the git log preflight output
+  produced in step 2)
+- Any related issues or prior fixes (cross-reference by number if known)
+
+### Section C: Reproduction plan
+
+Concrete, ordered steps for a reproduce-agent or human. Be specific:
+- Which environment to use (e.g. start fresh stack with the project's
+  dev script)
+- Which transactions or actions to execute (cast commands, API calls,
+  UI navigation steps)
+- What state to check after each step (contract reads, API queries,
+  log output)
+
+Format as a numbered list.
+
+### Section D: What needs verification
+
+3–5 checkboxes distinguishing known facts from unknowns. Each checkbox
+starts with `- [ ]` and describes a specific unknown the reproduce-agent
+must resolve. Tailor these to the specific bug — cover the key unknowns.
+
+## 4. Compose and write the new body
+
+Write the new full body to a scratch file. Preserve the original body
+verbatim under a `## Problem` section, then append the four new sections:
+
+  cat > /tmp/bugreport-${ISSUE}.body.new <<'EOF'
+  ## Problem
+
+  <ORIGINAL BODY HERE — copy exactly>
+
+  ## What was reported
+
+  <1–2 sentence distillation>
+
+  ## Known context
+
+  <inferred context from codebase + git log>
+
+  ## Reproduction plan
+
+  1. <step one>
+  2. <step two>
+  ...
+
+  ## What needs verification
+
+  - [ ] <unknown 1>
+  - [ ] <unknown 2>
+  ...
+  EOF
+
+(Use the heredoc literally — substitute the original body in place of the
+placeholder. Do NOT use shell expansion on the original body; write it via
+a temp file or printf to avoid corrupting backticks / dollar signs.)
+
+Token budget for the appended sections: ≤ 3K tokens.
+
+## 5. Apply enrichment
+
+Run, in this order, stopping on the first non-zero return:
+
+  gardener_edit_body "$ISSUE" /tmp/bugreport-${ISSUE}.body.new   || exit 1
+  gardener_add_label   "$ISSUE" bug-report                        || exit 1
+
+Both helpers are idempotent and journaled to
+`${DISINTO_LOG_DIR}/gardener/journal.jsonl`.
+
+Print a final line for the log:
+  echo "ACTION: enriched bug-report #$ISSUE — $(jq -r .title /tmp/bugreport-${ISSUE}.json)"
+
+Done. Stop the session.
+
+## Output discipline
+
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+- One pass only. Do not loop, do not pick up a second issue.
+- Every repo edit goes through the four exported helpers
+  (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) — never PATCH issues directly via curl, so the
+  audit journal stays complete.
+"""
