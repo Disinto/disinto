@@ -70,6 +70,14 @@ path "kv/metadata/disinto/bots/vault" {
   capabilities = ["list", "read"]
 }
 
+path "kv/data/disinto/bots/filer" {
+  capabilities = ["read"]
+}
+
+path "kv/metadata/disinto/bots/filer" {
+  capabilities = ["list", "read"]
+}
+
 # ── Shared forge config (URL, bot usernames) ─────────────────────────────────
 path "kv/data/disinto/shared/forge" {
   capabilities = ["read"]

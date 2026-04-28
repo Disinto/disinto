@@ -13,7 +13,8 @@
 #   4. promote-tech-debt           — tech-debt issue passing heuristic
 #   5. bundle-dust                 — dust group with >= 3 distinct issues
 #   6. agents-md-stale             — AGENTS.md watermark predates git log head
-#   7. pitch-vision                — open vision issue with no architect pitch
+#   7. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
+#   8. pitch-vision                — open vision issue with no architect pitch
 #
 # Usage:
 #   gardener/classify.sh [projects/disinto.toml]
@@ -391,7 +392,85 @@ check_agents_md_stale() {
   return 0
 }
 
-# 7. pitch-vision
+# 7. file-subissues
+#    Open ops-repo PR with `architect:` title prefix that has been APPROVED
+#    via Forgejo review state and whose body lacks a `## Filed:` marker.
+#    Surfaces the pitch body and the parsed `<!-- filer:begin -->` ...
+#    `<!-- filer:end -->` block so the formula can fan out sub-issues to
+#    the project repo. Sentinel = absence of `## Filed:` marker — re-runs
+#    on already-filed PRs are a no-op (this check skips them).
+#
+#    Slotted above pitch-vision so any APPROVED pitch is fanned out before
+#    new pitches are generated (#902).
+check_file_subissues() {
+  if [ -z "${FORGE_OPS_REPO:-}" ]; then
+    return 0
+  fi
+
+  # Fetch open ops-repo PRs (single page is fine — 50 open architect PRs is
+  # already pathological; the 3-open-PR cap in pitch-vision keeps this small).
+  local prs_json
+  prs_json=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=50" \
+    2>/dev/null) || return 0
+
+  local arch_prs
+  arch_prs=$(printf '%s' "$prs_json" \
+    | jq -c '[.[] | select(.title | startswith("architect:"))]' 2>/dev/null) \
+    || arch_prs="[]"
+
+  local count
+  count=$(printf '%s' "$arch_prs" | jq 'length' 2>/dev/null) || count=0
+  [ "$count" -eq 0 ] && return 0
+
+  local i pr_num pr_body reviews approved filer_block
+  for i in $(seq 0 $((count - 1))); do
+    pr_num=$(printf '%s' "$arch_prs" | jq -r ".[$i].number")
+    pr_body=$(printf '%s' "$arch_prs" | jq -r ".[$i].body // \"\"")
+
+    # Sentinel: skip if already filed.
+    if printf '%s' "$pr_body" | grep -qE '^## Filed:'; then
+      continue
+    fi
+
+    # Must contain a filer:begin/end block to fan out.
+    if ! printf '%s' "$pr_body" | grep -q '<!-- filer:begin -->'; then
+      continue
+    fi
+
+    # Forgejo APPROVED review = design-finalized signal (architect lifecycle).
+    reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" \
+      2>/dev/null) || continue
+
+    approved=$(printf '%s' "$reviews" \
+      | jq -e '[.[] | select(.state == "APPROVED")] | length > 0' \
+        >/dev/null 2>&1 && echo true || echo false)
+    [ "$approved" = "true" ] || continue
+
+    # Extract the filer block (between markers, exclusive).
+    filer_block=$(printf '%s' "$pr_body" | awk '
+      /<!-- filer:begin -->/ { in_block=1; next }
+      /<!-- filer:end -->/   { in_block=0; next }
+      in_block { print }
+    ')
+
+    if [ -z "$filer_block" ]; then
+      continue
+    fi
+
+    jq -n -c \
+      --argjson pr "$pr_num" \
+      --arg body "$pr_body" \
+      --arg block "$filer_block" \
+      '{"task":"file-subissues","ops_pr":$pr,
+        "ctx":{"pitch_body":$body,"filer_block":$block}}'
+    return 0
+  done
+  return 0
+}
+
+# 8. pitch-vision
 #    Open vision issue with no open architect-prefixed PR and no merged
 #    sprint PR on the ops repo. Surfaces a curated codebase index by
 #    grepping vision keywords against AGENTS.md so the formula can load
@@ -584,7 +663,15 @@ main() {
     exit 0
   fi
 
-  # Priority 7: pitch-vision
+  # Priority 7: file-subissues — fan out APPROVED architect pitches first
+  # so the project-repo work is unblocked before new pitches are generated.
+  result=$(check_file_subissues)
+  if [ -n "$result" ]; then
+    printf '%s\n' "$result"
+    exit 0
+  fi
+
+  # Priority 8: pitch-vision
   result=$(check_pitch_vision "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"

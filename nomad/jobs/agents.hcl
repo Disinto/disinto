@@ -239,6 +239,12 @@ FORGE_VAULT_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_VAULT_TOKEN=seed-me
 {{- end }}
+
+{{ with secret "kv/data/disinto/bots/filer" -}}
+FORGE_FILER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_FILER_TOKEN=seed-me
+{{- end }}
 EOT
       }
 

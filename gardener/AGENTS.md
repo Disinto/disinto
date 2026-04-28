@@ -41,6 +41,19 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
+**Per-task formula dispatch (#871, #902)**: `gardener/gardener-step.sh` runs each
+polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+selects a formula in `formulas/<task>.toml`. Current task types include
+`file-subissues` (#902) — for each open ops-repo `architect:` PR with a
+Forgejo APPROVED review state and no `## Filed:` marker, parse the pitch's
+`<!-- filer:begin -->` block, POST each entry as a `backlog`-labeled
+project-repo issue, and PATCH the PR body with `## Filed: #N1 #N2 ...`.
+The task uses filer-bot identity (`FORGE_FILER_TOKEN`) so writes are auditable
+separately from gardener-bot. Idempotency: classify skips PRs that already
+carry `## Filed:`, and the formula dedups per-issue by exact title match
+against existing project-repo issues to guard against POST-then-PATCH-failure
+windows.
+
 **Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
 lock + memory guard → load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
