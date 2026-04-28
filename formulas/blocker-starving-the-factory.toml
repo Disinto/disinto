@@ -23,6 +23,37 @@ name        = "blocker-starving-the-factory"
 description = "Unblock one non-backlog dep that a backlog issue depends on"
 version     = 1
 
+# Bash allowlist envelope for the formula's claude session (#910).
+#
+# Note: claude is invoked with --dangerously-skip-permissions, so this list
+# is advisory rather than CLI-enforced. It is consumed by the prompt below
+# (see "## Tool envelope") to give the model an explicit, narrow command
+# set and to call out the commands that would expose loaded secrets if
+# run unrestricted (env / printenv / set / declare). If env inspection is
+# ever genuinely needed, echo *specific* vars (e.g. `printf '%s\n'
+# "$FORGE_API"`) — never dump the whole environment.
+allowed_tools = [
+  "curl",
+  "jq",
+  "awk",
+  "grep",
+  "sed",
+  "tr",
+  "sort",
+  "head",
+  "tail",
+  "printf",
+  "echo",
+  "cat",
+  "test",
+  "[",
+  "gardener_edit_body",
+  "gardener_add_label",
+  "gardener_remove_label",
+  "gardener_post_comment",
+]
+disallowed_commands = ["env", "printenv", "set", "declare", "export"]
+
 [[steps]]
 id    = "unblock"
 title = "Fetch dep, decide path (backlog vs enrich vs blocked-parent), apply via helpers"
@@ -228,6 +259,28 @@ content:
   echo "ACTION: requested enrichment on #$ISSUE — body too thin to promote (parent #$PARENT)"
   # Done. Stop the session.
   exit 0
+
+## Tool envelope (#910)
+
+You have shell access, but keep it narrow:
+
+- **Allowed**: `curl`, `jq`, `awk`, `grep`, `sed`, `tr`, `sort`, `head`,
+  `tail`, `printf`, `echo`, `cat`, `test`/`[ ]`, plus the four
+  `gardener_*` helpers exported above.
+- **Disallowed**: `env`, `printenv`, `set`, `declare`, `export` — these
+  enumerate the entire process environment, including loaded secrets
+  (`FORGE_*_TOKEN`, `VAULT_*`, etc.). The session's JSONL transcript is
+  written to `${DISINTO_LOG_DIR}/gardener/step.log`; do not let secret
+  values reach it.
+- If you need to verify a single variable is set, echo only that one var
+  by name — `printf '%s\\n' "$FORGE_API"` — never the whole environment.
+- Tokens (`$FORGE_TOKEN`, `$FORGE_GARDENER_TOKEN`) must only ever appear
+  inside a `-H "Authorization: token $FORGE_TOKEN"` curl header. Never
+  echo, log, or interpolate the value into stdout, comments, or files.
+
+A stream filter in `lib/agent-sdk.sh` masks token-shaped assignments
+before they hit disk as a backstop, but treat that as defense in depth,
+not permission to dump env.
 
 ## Output discipline
 

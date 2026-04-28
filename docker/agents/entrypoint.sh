@@ -58,8 +58,17 @@ LOGFILE="/home/agent/data/agent-entrypoint.log"
 
 # Create all expected log subdirectories and set ownership as root before dropping to agent.
 # This handles both fresh volumes and stale root-owned dirs from prior container runs.
+# Tighten perms (#910): formula sub-session JSONL transcripts may contain
+# tool_result stdout that echoes loaded env (FORGE_*_TOKEN, etc.). umask
+# 077 ensures both subdirs and any log files we create after this point
+# are agent-only readable; the find sweeps fix stale 644 from previous
+# container runs (umask 022 default).
+umask 077
 mkdir -p /home/agent/data/logs/{dev,action,review,supervisor,vault,site,metrics,gardener,planner,predictor,architect,dispatcher}
 chown -R agent:agent /home/agent/data
+chmod 700 /home/agent/data/logs 2>/dev/null || true
+find /home/agent/data/logs -mindepth 1 -type d -exec chmod 700 {} + 2>/dev/null || true
+find /home/agent/data/logs -type f -exec chmod 600 {} + 2>/dev/null || true
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"

@@ -43,7 +43,19 @@ FACTORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
   DISINTO_DATA_DIR="${HOME}/data"
   DISINTO_LOG_DIR="${DISINTO_DATA_DIR}/logs"
+  # Tighten log perms (#910): JSONL transcripts captured by formula
+  # sub-sessions may include tool_result stdout that echoes loaded env
+  # (FORGE_*_TOKEN, etc.). With the default umask 022 those land on the
+  # host volume as 644 — readable by every agent container that mounts
+  # agent-data RO. Restrict to 700/600 = agent-only.
+  umask 077
   mkdir -p "${DISINTO_DATA_DIR}" "${DISINTO_LOG_DIR}"/{dev,action,review,supervisor,vault,site,metrics,gardener,planner,predictor,architect,dispatcher}
+  # Self-heal stale 644 perms from prior container runs (and any siblings
+  # the loop above missed). Filesystem-level cap so existing transcripts
+  # are no longer world-readable on a fresh container start.
+  chmod 700 "${DISINTO_LOG_DIR}" 2>/dev/null || true
+  find "${DISINTO_LOG_DIR}" -mindepth 1 -type d -exec chmod 700 {} + 2>/dev/null || true
+  find "${DISINTO_LOG_DIR}" -type f -exec chmod 600 {} + 2>/dev/null || true
 else
   DISINTO_LOG_DIR="${FACTORY_ROOT}"
 fi

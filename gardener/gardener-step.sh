@@ -44,7 +44,18 @@ source "$FACTORY_ROOT/lib/guard.sh"
 source "$FACTORY_ROOT/lib/gardener-edit.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/step.log"
+# Tighten log perms (#910): sub-session JSONL transcripts may contain
+# tool_result stdout that echoes loaded env (FORGE_*_TOKEN, etc.) — a
+# default umask of 022 produces world-readable 644 logs on the host
+# volume. umask 077 ensures both the dir and any log file we create
+# below are 700/600 = agent-only readable. Stream-level redaction in
+# lib/agent-sdk.sh is the second line of defense; this is the first.
+umask 077
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+chmod 700 "$(dirname "$LOG_FILE")" 2>/dev/null || true
+if [ -e "$LOG_FILE" ]; then
+  chmod 600 "$LOG_FILE" 2>/dev/null || true
+fi
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
