@@ -45,6 +45,14 @@ Compact, decision-ready. Human should be able to reply "1a 2c 3b" and be done.
 - Don't modify acceptance criteria that are already well-written
 - Don't close issues that are actively being worked on (check for open PRs)
 - Don't rate-limit yourself — max 10 API calls per run for issue reads, 5 for writes
+- **Don't enumerate the process environment.** Never run `env`, `printenv`,
+  `set`, `declare`, or `export` with no args (#910). The session's JSONL
+  transcript is captured to `${DISINTO_LOG_DIR}/gardener/step.log` on a
+  host volume; an unredacted `env` dump exposes loaded `FORGE_*_TOKEN`,
+  `VAULT_*`, `GH_*` secrets to anyone with shell on the box. If you must
+  inspect a specific var, echo only that var by name. Tokens belong in
+  `-H "Authorization: token $FORGE_TOKEN"` curl headers — never in
+  stdout, comments, or issue bodies.
 
 ## Lessons learned
 - Review bot hallucination rate is ~15% — gardener should verify claims about code before acting

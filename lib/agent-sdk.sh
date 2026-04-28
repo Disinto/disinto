@@ -22,6 +22,40 @@ set -euo pipefail
 
 _AGENT_SESSION_ID=""
 
+# redact_log_secrets — stream filter that masks token-shaped env-var
+# assignments before they hit disk (#910).
+#
+# A formula's claude session can shell out to commands that echo loaded
+# environment (e.g. `env | grep -i forge`); the resulting tool_result
+# stdout is captured into ${DISINTO_LOG_DIR}/<agent>/step.log verbatim.
+# If FORGE_*_TOKEN / VAULT_* / GH_* / GITHUB_* / CLAW_* / CLAUDE_* /
+# ANTHROPIC_* secrets are present in the process env, that log line
+# leaks them onto a host volume.
+#
+# This filter masks the value half of any KEY=value where KEY matches
+# one of the well-known secret-bearing prefixes (case-insensitive),
+# regardless of whether the line is plain shell output or embedded in
+# a JSON string. The variable name is preserved so operators can still
+# audit *which* secret was about to leak; only the value is redacted.
+#
+# Reads stdin, writes redacted stdout. Pure sed — no buffering, safe to
+# splice into a `tail -F` pipeline.
+redact_log_secrets() {
+  # Note on the regex:
+  #   - Anchored on the well-known prefix list (FORGE/VAULT/GH/GITHUB/
+  #     CLAW/CLAUDE/ANTHROPIC) so we don't redact unrelated KEY= pairs.
+  #   - `[A-Za-z0-9_]*` (greedy with backtracking) chews everything up
+  #     to the trailing TOKEN|PASS|KEY|SECRET — covers FORGE_TOKEN as
+  #     well as FORGE_ARCHITECT_TOKEN, GH_API_KEY, etc.
+  #   - Value class `[^[:space:]",}\\]+` stops at JSON quote/brace,
+  #     whitespace, or backslash so we don't eat past the value when
+  #     the line is JSON-embedded.
+  #   - GNU sed `I` flag = case-insensitive match while preserving the
+  #     original case in the captured group.
+  sed -uE \
+    's/((FORGE|VAULT|GH|GITHUB|CLAW|CLAUDE|ANTHROPIC)[A-Za-z0-9_]*(TOKEN|PASS|KEY|SECRET))=[^[:space:]",}\\]+/\1=<redacted>/gI'
+}
+
 # agent_recover_session — restore session_id from SID_FILE if it exists.
 # Call this before agent_run --resume to enable session continuity.
 agent_recover_session() {
@@ -85,8 +119,12 @@ claude_run_with_watchdog() {
   # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
   # arrive — without this, a run that hangs mid-stream shows no progress to
   # operators for up to CLAUDE_TIMEOUT seconds (issue #568).
+  # Stream is piped through redact_log_secrets so token-shaped env-var
+  # assignments (FORGE_TOKEN=…, GITHUB_TOKEN=…, etc.) are masked before
+  # they land on the host volume (#910).
   (
-    tail -F -n 0 --pid="$pid" "$out_file" 2>/dev/null >> "$LOGFILE"
+    tail -F -n 0 --pid="$pid" "$out_file" 2>/dev/null \
+      | redact_log_secrets >> "$LOGFILE"
   ) &
   local tail_pid=$!
 
@@ -148,8 +186,10 @@ claude_run_with_watchdog() {
     kill -KILL -- "-$pid" 2>/dev/null || true
   fi
 
-  # Output the captured stdout
-  cat "$out_file"
+  # Output the captured stdout, redacting token-shaped vars on the way out
+  # so the captured `output` (and anything written from it, e.g. diag_file)
+  # is also clean (#910).
+  redact_log_secrets < "$out_file"
   return "$rc"
 }
 
