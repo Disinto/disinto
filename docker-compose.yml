@@ -45,7 +45,8 @@ services:
       - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
       - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
-      - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
       - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-900}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
       - SUPERVISOR_INTERVAL=${SUPERVISOR_INTERVAL:-1200}
@@ -170,7 +171,8 @@ services:
       - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
       - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
-      - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
       - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-900}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
       - SUPERVISOR_INTERVAL=${SUPERVISOR_INTERVAL:-1200}
