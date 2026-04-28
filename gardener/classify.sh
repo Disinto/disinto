@@ -12,9 +12,10 @@
 #   3. enrich-bug-report           — open unlabeled bug with reproduction steps
 #   4. promote-tech-debt           — tech-debt issue passing heuristic
 #   5. bundle-dust                 — dust group with >= 3 distinct issues
-#   6. agents-md-stale             — AGENTS.md watermark predates git log head
-#   7. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
-#   8. pitch-vision                — open vision issue with no architect pitch
+#   6. revisit-blocked             — stale `blocked` issue past revisit threshold
+#   7. agents-md-stale             — AGENTS.md watermark predates git log head
+#   8. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
+#   9. pitch-vision                — open vision issue with no architect pitch
 #
 # Usage:
 #   gardener/classify.sh [projects/disinto.toml]
@@ -330,7 +331,65 @@ check_bundle_dust() {
   return 0
 }
 
-# 6. agents-md-stale
+# 6. revisit-blocked
+#    Issue carrying the `blocked` label whose `updated_at` is older than
+#    BLOCKED_REVISIT_AGE_SECS (default 4h). Surfaces the oldest such issue so
+#    the formula can parse the latest dev-poll `### Blocked — issue #N`
+#    comment, classify the exit reason, and decide whether to remove
+#    `blocked` (transient agent state or resolved dep), leave it alone
+#    (operator-mediated, dep still open), or post a one-time nudge once the
+#    issue has been blocked longer than BLOCKED_NUDGE_AGE_DAYS (default 7d).
+#    The stale-threshold gate avoids fighting a freshly-blocked dev-poll
+#    cycle.
+check_revisit_blocked() {
+  local issues_json="$1"
+  local age_threshold="${BLOCKED_REVISIT_AGE_SECS:-14400}"
+  local now_epoch best_num="" best_ts=""
+
+  now_epoch=$(date -u +%s)
+
+  local candidates count
+  candidates=$(printf '%s' "$issues_json" | jq -c '
+    [.[] | select(.labels | any(.name == "blocked"))
+         | select(.labels | map(.name) | all(. != "in-progress"))]
+  ' 2>/dev/null) || candidates="[]"
+
+  count=$(printf '%s' "$candidates" | jq 'length' 2>/dev/null) || count=0
+  [ "$count" -eq 0 ] && return 0
+
+  for i in $(seq 0 $((count - 1))); do
+    local num ts updated_epoch age
+    num=$(printf '%s' "$candidates" | jq -r ".[$i].number")
+    ts=$(printf '%s' "$candidates" | jq -r ".[$i].updated_at")
+
+    updated_epoch=$(date -u -d "$ts" +%s 2>/dev/null) || updated_epoch=0
+    [ "${updated_epoch:-0}" -eq 0 ] && continue
+    age=$(( now_epoch - updated_epoch ))
+
+    # Stale-threshold gate: only consider issues older than the threshold.
+    if [ "$age" -lt "$age_threshold" ]; then
+      continue
+    fi
+
+    # Pick the OLDEST candidate (smallest updated_at) so the most-stale
+    # blocked issue is revisited first.
+    if [ -z "$best_ts" ] || [[ "$ts" < "$best_ts" ]]; then
+      best_num="$num"
+      best_ts="$ts"
+    fi
+  done
+
+  if [ -n "$best_num" ]; then
+    local ctx
+    ctx=$(printf '%s' "$candidates" | jq -c ".[] | select(.number == $best_num) | {title, updated_at}")
+    printf '{"task":"revisit-blocked","issue":%s,"ctx":%s}\n' \
+      "$best_num" "$ctx"
+    return 0
+  fi
+  return 0
+}
+
+# 7. agents-md-stale
 #    Any AGENTS.md whose watermark <!-- last-reviewed: <sha> --> predates
 #    git log head for its directory. Walks every AGENTS.md in the repo and
 #    surfaces the one with the oldest watermark relative to its directory's
@@ -394,7 +453,7 @@ check_agents_md_stale() {
   return 0
 }
 
-# 7. file-subissues
+# 8. file-subissues
 #    Open ops-repo PR with `architect:` title prefix that has been APPROVED
 #    via Forgejo review state and whose body lacks a `## Filed:` marker.
 #    Surfaces the pitch body and the parsed `<!-- filer:begin -->` ...
@@ -472,7 +531,7 @@ check_file_subissues() {
   return 0
 }
 
-# 8. pitch-vision
+# 9. pitch-vision
 #    Open vision issue with no open architect-prefixed PR and no merged
 #    sprint PR on the ops repo. Surfaces a curated codebase index by
 #    grepping vision keywords against AGENTS.md so the formula can load
@@ -658,14 +717,21 @@ main() {
     exit 0
   fi
 
-  # Priority 6: agents-md-stale
+  # Priority 6: revisit-blocked — auto-revisit stale blocked issues
+  result=$(check_revisit_blocked "$issues_json")
+  if [ -n "$result" ]; then
+    printf '%s\n' "$result"
+    exit 0
+  fi
+
+  # Priority 7: agents-md-stale
   result=$(check_agents_md_stale)
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 7: file-subissues — fan out APPROVED architect pitches first
+  # Priority 8: file-subissues — fan out APPROVED architect pitches first
   # so the project-repo work is unblocked before new pitches are generated.
   result=$(check_file_subissues)
   if [ -n "$result" ]; then
@@ -673,7 +739,7 @@ main() {
     exit 0
   fi
 
-  # Priority 8: pitch-vision
+  # Priority 9: pitch-vision
   result=$(check_pitch_vision "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"

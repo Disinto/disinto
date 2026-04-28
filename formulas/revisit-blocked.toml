@@ -1,0 +1,307 @@
+# formulas/revisit-blocked.toml — Auto-revisit a stale `blocked` issue
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"revisit-blocked","issue":N,"ctx":{"title":"…","updated_at":"…"}}
+#
+# Context: classify.sh priority 6 surfaces a `blocked`-labeled issue whose
+# `updated_at` is older than `BLOCKED_REVISIT_AGE_SECS` (default 4h). Without
+# this formula, blocked issues sit indefinitely — `dev-poll` filters them out,
+# `architect-bot` polls them but has no revisit logic, `supervisor` only
+# monitors agent health. The operator is left to sweep `blocked` by hand.
+#
+# Goal: parse the latest `### Blocked — issue #N` comment posted by dev-poll
+# (see lib/issue-lifecycle.sh::issue_block) and decide one of three actions
+# based on the exit reason:
+#
+#   1. Transient agent state (`no_push`, `exhausted`, `stuck-pr`,
+#      `ci_exhausted_poll`) → remove `blocked`. dev-poll retries on its next
+#      cycle and either makes progress or re-blocks with a fresh comment.
+#   2. Dependency-based block (`dep #X not merged`, or any reference to
+#      `dep #X` in the comment) → check the state of `#X` via the Forgejo
+#      API. If `#X` is closed/merged → remove `blocked` (the dep landed,
+#      the chain can move). If `#X` is still open → leave alone.
+#   3. Operator-mediated / unrecognized format → leave `blocked` alone. If
+#      the issue has been blocked for more than `BLOCKED_NUDGE_AGE_DAYS`
+#      (default 7d) AND no prior nudge comment exists in the last 7d
+#      (sentinel: HTML comment `<!-- gardener: blocked-nudge -->`), post a
+#      one-line nudge so the operator sees the staleness in the activity
+#      feed. Cap one nudge per 7-day window per issue.
+#
+# All writes go through lib/gardener-edit.sh helpers and are journaled to
+# ${DISINTO_LOG_DIR}/gardener/journal.jsonl.
+#
+# Idempotency:
+#   - The classify.sh stale-threshold gate (default 4h) keeps this from
+#     fighting a freshly-blocked dev-poll cycle.
+#   - The 7-day nudge cap is enforced by reading existing comments authored
+#     by gardener-bot matching the sentinel string and computing the age of
+#     the most recent one before posting a new one.
+#   - The four edit helpers are themselves idempotent — re-running on an
+#     issue whose `blocked` was just removed is a no-op (label already gone).
+
+name        = "revisit-blocked"
+description = "Revisit one stale blocked issue and unblock if the cause is gone"
+version     = 1
+
+# Bash allowlist envelope for the formula's claude session (#910).
+#
+# Note: claude is invoked with --dangerously-skip-permissions, so this list
+# is advisory rather than CLI-enforced. It is consumed by the prompt below
+# (see "## Tool envelope") to give the model an explicit, narrow command
+# set and to call out the commands that would expose loaded secrets if
+# run unrestricted (env / printenv / set / declare).
+allowed_tools = [
+  "curl",
+  "jq",
+  "awk",
+  "grep",
+  "sed",
+  "tr",
+  "sort",
+  "head",
+  "tail",
+  "printf",
+  "echo",
+  "cat",
+  "test",
+  "date",
+  "[",
+  "gardener_edit_body",
+  "gardener_add_label",
+  "gardener_remove_label",
+  "gardener_post_comment",
+]
+disallowed_commands = ["env", "printenv", "set", "declare", "export"]
+
+[[steps]]
+id    = "revisit"
+title = "Fetch issue + comments, parse latest Blocked, decide path, apply via helpers"
+description = """
+You are revisiting exactly ONE blocked issue identified in the classification
+payload (field `issue`). Do this in a single pass — no orchestration, no
+other issues.
+
+The issue carries the `blocked` label and has been stale for at least
+`BLOCKED_REVISIT_AGE_SECS` (default 4h). Your job: parse the most recent
+`### Blocked — issue #N` comment posted by dev-poll, classify the exit
+reason, and either remove `blocked` (transient or resolved-dep) or post a
+single nudge comment (operator-mediated, > 7d old, no recent nudge).
+
+## 1. Fetch the issue and its comments
+
+  ISSUE=<the .issue field from the payload>
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE" > /tmp/blocked-${ISSUE}.json
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE/comments" > /tmp/blocked-${ISSUE}.comments.json
+  TITLE=$(jq -r .title /tmp/blocked-${ISSUE}.json)
+  LABELS=$(jq -r '[.labels[].name] | join(",")' /tmp/blocked-${ISSUE}.json)
+  UPDATED_AT=$(jq -r .updated_at /tmp/blocked-${ISSUE}.json)
+
+## 2. Already-handled guard (idempotent no-op)
+
+If the `blocked` label is no longer on the issue (someone or a prior tick
+already removed it) or the issue is `in-progress` / closed, log and stop:
+
+  if ! printf ',%s,' "$LABELS" | grep -q ',blocked,'; then
+    echo "ACTION: noop on #$ISSUE — no blocked label"
+    exit 0
+  fi
+  if printf ',%s,' "$LABELS" | grep -q ',in-progress,'; then
+    echo "ACTION: noop on #$ISSUE — in-progress takes precedence"
+    exit 0
+  fi
+
+## 3. Find the latest `### Blocked — issue #N` comment
+
+dev-poll posts a structured comment via `lib/issue-lifecycle.sh::issue_block`
+in the form:
+
+    ### Blocked — issue #<N>
+
+    | Field | Value |
+    |---|---|
+    | Exit reason | `<reason>` |
+    | Timestamp | `<iso8601>` |
+
+Find the most recent comment matching this header and extract the exit
+reason from the `| Exit reason | \\`...\\` |` row:
+
+  LATEST_BLOCKED=$(jq -c '
+    [.[] | select((.body // "") | startswith("### Blocked — issue #"))]
+    | sort_by(.created_at) | last
+  ' /tmp/blocked-${ISSUE}.comments.json)
+
+  if [ -z "$LATEST_BLOCKED" ] || [ "$LATEST_BLOCKED" = "null" ]; then
+    EXIT_REASON=""
+    LATEST_BLOCKED_BODY=""
+  else
+    LATEST_BLOCKED_BODY=$(printf '%s' "$LATEST_BLOCKED" | jq -r '.body // ""')
+    EXIT_REASON=$(printf '%s' "$LATEST_BLOCKED_BODY" \\
+      | grep -oE '\\| Exit reason \\| `[^`]+`' \\
+      | head -1 \\
+      | sed -E 's/.*`([^`]+)`.*/\\1/')
+  fi
+
+If no `### Blocked` comment exists, the block was set by something other
+than dev-poll (operator, supervisor, etc.). Treat it as the operator-
+mediated path (step 6).
+
+## 4. Transient-state path: `no_push` / `exhausted` / `stuck-pr` / `ci_exhausted_poll`
+
+If the exit reason starts with any of these tokens (substring match on the
+beginning is fine — e.g. `ci_exhausted_poll (3 attempts, PR #888)` matches
+`ci_exhausted_poll`), the block is purely a dev-agent transient state.
+dev-poll will retry on its next 5-minute cycle once `blocked` is gone.
+
+  case "$EXIT_REASON" in
+    no_push*|exhausted*|stuck-pr*|ci_exhausted_poll*)
+      cat > /tmp/blocked-${ISSUE}.unblock-comment <<EOF
+  Removing \\`blocked\\` so dev-poll can retry on its next cycle.
+
+  **Why now**: gardener priority-6 revisit-blocked picked this up — the
+  most recent \\`### Blocked\\` comment recorded a transient agent exit
+  (\\`${EXIT_REASON}\\`), and the issue has been stale longer than the
+  revisit threshold. dev-poll will re-claim and either make progress or
+  re-block with a fresh diagnostic.
+  EOF
+
+      gardener_post_comment "$ISSUE" /tmp/blocked-${ISSUE}.unblock-comment || exit 1
+      gardener_remove_label "$ISSUE" blocked                                 || exit 1
+      echo "ACTION: unblocked #$ISSUE — transient (${EXIT_REASON}) — $TITLE"
+      exit 0
+      ;;
+  esac
+
+## 5. Dependency-resolved path: `dep #X not merged` (or similar)
+
+If the exit reason mentions a dependency reference like `dep #X` or
+`Dependency #X` or `blocked by #X`, parse out the dep number `X` and check
+its state via the Forgejo API. If `X` is closed (merged or otherwise
+resolved), the chain is unblocked — remove `blocked`. If `X` is still
+open, leave the issue alone (the next gardener tick will check again).
+
+Same-repo only — cross-repo `dep #X` is out of scope. Match on `#NNN`
+within the latest blocked comment body.
+
+  DEP_NUM=$(printf '%s' "$LATEST_BLOCKED_BODY" \\
+    | grep -oE '(dep|dependency|blocked by)[^#]*#[0-9]+' \\
+    | head -1 \\
+    | grep -oE '#[0-9]+' \\
+    | tr -d '#')
+
+  if [ -n "$DEP_NUM" ]; then
+    DEP_STATE=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+      "$FORGE_API/issues/$DEP_NUM" \\
+      | jq -r '.state // "unknown"')
+
+    case "$DEP_STATE" in
+      closed)
+        cat > /tmp/blocked-${ISSUE}.dep-resolved <<EOF
+  Removing \\`blocked\\` — dependency #${DEP_NUM} is now closed.
+
+  **Why now**: gardener priority-6 revisit-blocked picked this up — the
+  most recent \\`### Blocked\\` comment cited \\`#${DEP_NUM}\\` as the
+  blocker, and that issue has since been closed/merged. dev-poll will
+  re-claim on its next cycle.
+  EOF
+
+        gardener_post_comment "$ISSUE" /tmp/blocked-${ISSUE}.dep-resolved || exit 1
+        gardener_remove_label "$ISSUE" blocked                              || exit 1
+        echo "ACTION: unblocked #$ISSUE — dep #${DEP_NUM} resolved — $TITLE"
+        exit 0
+        ;;
+      open)
+        echo "ACTION: noop on #$ISSUE — dep #${DEP_NUM} still open"
+        exit 0
+        ;;
+      *)
+        echo "ACTION: noop on #$ISSUE — dep #${DEP_NUM} state=${DEP_STATE} (unknown)"
+        exit 0
+        ;;
+    esac
+  fi
+
+## 6. Operator-mediated / unrecognized path
+
+The exit reason is empty or doesn't match any known transient/dep pattern
+(human-set `blocked`, custom comment format, etc.). Do NOT remove
+`blocked` — only the operator can clear it. But if the issue has been
+blocked for more than `BLOCKED_NUDGE_AGE_DAYS` (default 7d), post a single
+one-line nudge so the staleness surfaces in the activity feed.
+
+Compute days since the last update:
+
+  NUDGE_AGE_DAYS="${BLOCKED_NUDGE_AGE_DAYS:-7}"
+  NOW_EPOCH=$(date -u +%s)
+  UPDATED_EPOCH=$(date -u -d "$UPDATED_AT" +%s 2>/dev/null || echo 0)
+  AGE_SECS=$(( NOW_EPOCH - UPDATED_EPOCH ))
+  THRESHOLD_SECS=$(( NUDGE_AGE_DAYS * 86400 ))
+
+If AGE_SECS < THRESHOLD_SECS: noop, exit 0.
+
+Otherwise, check for an existing nudge comment within the last
+NUDGE_AGE_DAYS (sentinel: `<!-- gardener: blocked-nudge -->`). If a recent
+nudge exists, do not double-nudge:
+
+  RECENT_NUDGE=$(jq -c --argjson cutoff "$(( NOW_EPOCH - THRESHOLD_SECS ))" '
+    [.[] | select((.body // "") | contains("<!-- gardener: blocked-nudge -->"))
+         | select((.created_at | fromdateiso8601) > $cutoff)]
+    | length
+  ' /tmp/blocked-${ISSUE}.comments.json)
+
+  if [ "${RECENT_NUDGE:-0}" -gt 0 ]; then
+    echo "ACTION: noop on #$ISSUE — recent nudge already posted"
+    exit 0
+  fi
+
+Post the nudge:
+
+  AGE_DAYS_RENDERED=$(( AGE_SECS / 86400 ))
+  cat > /tmp/blocked-${ISSUE}.nudge <<EOF
+  <!-- gardener: blocked-nudge -->
+  This issue has been \\`blocked\\` for ${AGE_DAYS_RENDERED} days with no
+  recognized auto-revisit signal. Operator review needed.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/blocked-${ISSUE}.nudge || exit 1
+  echo "ACTION: nudged #$ISSUE — ${AGE_DAYS_RENDERED}d blocked, no auto-revisit signal — $TITLE"
+  exit 0
+
+## Tool envelope (#910)
+
+You have shell access, but keep it narrow:
+
+- **Allowed**: `curl`, `jq`, `awk`, `grep`, `sed`, `tr`, `sort`, `head`,
+  `tail`, `printf`, `echo`, `cat`, `date`, `test`/`[ ]`, plus the four
+  `gardener_*` helpers exported above.
+- **Disallowed**: `env`, `printenv`, `set`, `declare`, `export` — these
+  enumerate the entire process environment, including loaded secrets
+  (`FORGE_*_TOKEN`, `VAULT_*`, etc.). The session's JSONL transcript is
+  written to `${DISINTO_LOG_DIR}/gardener/step.log`; do not let secret
+  values reach it.
+- If you need to verify a single variable is set, echo only that one var
+  by name — `printf '%s\\n' "$FORGE_API"` — never the whole environment.
+- Tokens (`$FORGE_TOKEN`, `$FORGE_GARDENER_TOKEN`) must only ever appear
+  inside a `-H "Authorization: token $FORGE_TOKEN"` curl header. Never
+  echo, log, or interpolate the value into stdout, comments, or files.
+
+A stream filter in `lib/agent-sdk.sh` masks token-shaped assignments
+before they hit disk as a backstop, but treat that as defense in depth,
+not permission to dump env.
+
+## Output discipline
+
+- One pass only. Do not loop, do not pick up a second issue, do not file
+  vault items. The gardener step driver runs ONE task per invocation.
+- Pick exactly one of the three paths (4, 5, or 6) and exit cleanly, or
+  no-op via step 2 when the issue is already unblocked / in-progress.
+- Every repo edit goes through the four exported helpers
+  (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) — never PATCH issues directly via curl, so the
+  audit journal stays complete.
+- This formula is a parser of dev-poll's existing `### Blocked` comment
+  format, not a producer of a new convention. Do not invent new fields.
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+"""

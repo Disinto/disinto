@@ -41,7 +41,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
-**Per-task formula dispatch (#871, #902, #906, #912)**: `gardener/gardener-step.sh` runs each
+**Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
 polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
@@ -52,7 +52,16 @@ parent as `blocked` when the dep is an external blocker —
 issue passing the impact/effort heuristic; the formula adds `backlog` if the
 body has `## Affected files` + `## Acceptance criteria`, otherwise marks it
 `underspecified` so the sibling enrich-underspecified formula fills it in
-next tick — and
+next tick —
+`revisit-blocked` (#916) — priority 6, surfaces a `blocked`-labeled issue
+whose `updated_at` is older than `BLOCKED_REVISIT_AGE_SECS` (default 4h);
+the formula parses dev-poll's latest `### Blocked — issue #N` comment
+(see `lib/issue-lifecycle.sh::issue_block`) and removes `blocked` for
+transient agent exits (`no_push`, `exhausted`, `stuck-pr`,
+`ci_exhausted_poll`) or for `dep #X` references where `#X` has since been
+closed; for operator-mediated blocks older than `BLOCKED_NUDGE_AGE_DAYS`
+(default 7d) it posts a single nudge comment per 7-day window using the
+`<!-- gardener: blocked-nudge -->` sentinel for idempotency — and
 `file-subissues` (#902) — for each open ops-repo `architect:` PR with a
 Forgejo APPROVED review state and no `## Filed:` marker, parse the pitch's
 `<!-- filer:begin -->` block, POST each entry as a `backlog`-labeled
