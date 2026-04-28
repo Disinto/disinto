@@ -206,7 +206,7 @@ has_filed_marker() {
 
 # extract_last_digest <pr_body> — extract <!-- architect-digest: ... -->
 extract_last_digest() {
-  printf '%s' "$1" | grep -oP '<!-- architect-digest: [^ ]* -->' 2>/dev/null | head -1 || echo ""
+  printf '%s' "$1" | grep -zoP '<!-- architect-digest: \K[\s\S]*?(?= -->)' 2>/dev/null | tr -d '\0' | head -1 || echo ""
 }
 
 # ── Project repo read helpers ───────────────────────────────────────────
@@ -245,8 +245,8 @@ check_subissue_green() {
   return 1
 }
 
-# get_last_digest_state <pr_body> — extract issue states from last digest comment
-# Returns space-separated "issueN:state" pairs
+# get_last_digest_state <pr_body> — extract issue states from last digest marker
+# Returns space-separated "issueN:state" pairs (normalized, no space after colon)
 get_last_digest_state() {
   local body="$1"
   local digest
@@ -255,8 +255,9 @@ get_last_digest_state() {
     echo ""
     return
   fi
-  # Extract issue states from the digest comment text
-  printf '%s' "$digest" | grep -oP '#[0-9]+:\s*(open|closed)' 2>/dev/null || echo ""
+  # Extract issue states from the marker content (format: #N:state)
+  printf '%s' "$digest" | grep -oP '#[0-9]+:\s*(open|closed|green|pending)' 2>/dev/null \
+    | sed 's/: */:/' | tr '\n' ' ' | sed 's/ *$//' | sed 's/$/ /' || echo ""
 }
 
 # ── Round-robin: list and sort PRs by last-seen marker ─────────────────
@@ -449,7 +450,8 @@ ${states}
 
 Your task:
 1. Write a digest comment summarizing the current state
-2. Update the PR body with a <!-- architect-digest: ... --> marker
+2. Update the PR body with a <!-- architect-digest: TIMESTAMP #N:state ... --> marker
+   (TIMESTAMP is ISO-8601 UTC; include each issue as #N:state where state is green/pending)
 3. Post the digest as a PR comment
 
 ## Project context
@@ -530,7 +532,13 @@ fi
 NOW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 # 4. Detect state and dispatch
-if has_approved_review "$PR_NUMBER"; then
+# Reject takes priority at any point in the lifecycle
+if has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
+  # reject at any point — bash-only (close PR)
+  log "PR #${PR_NUMBER}: reject detected → closing"
+  REASON=$(get_reject_reason "$PR_NUMBER" "$LAST_SEEN")
+  close_pr "$PR_NUMBER" "$REASON"
+elif has_approved_review "$PR_NUMBER"; then
   # [approved_idle] or [mergeable] — check for filed marker
   if has_filed_marker "$PR_BODY"; then
     # Check if mergeable
@@ -555,11 +563,6 @@ if has_approved_review "$PR_NUMBER"; then
     log "PR #${PR_NUMBER}: approved, no filed marker → approved_idle"
     dispatch_approved_idle "$PR_NUMBER" "$PR_BODY"
   fi
-elif has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
-  # [q_and_a] with reject — bash-only
-  log "PR #${PR_NUMBER}: reject detected → closing"
-  REASON=$(get_reject_reason "$PR_NUMBER" "$LAST_SEEN")
-  close_pr "$PR_NUMBER" "$REASON"
 else
   # [q_and_a] — check for engagement
   log "PR #${PR_NUMBER}: q_and_a state"

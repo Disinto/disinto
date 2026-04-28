@@ -38,7 +38,7 @@ check_pipeline_stall = false
 #
 # [agents.schedule]
 #   gardener_interval = 21600  # seconds (default: 21600 = 6 hours)
-#   architect_interval  = 21600  # seconds (default: 21600 = 6 hours)
+#   architect_interval  = 900  # seconds (default: 900 = 15 minutes)
 #   planner_interval    = 43200  # seconds (default: 43200 = 12 hours)
 
 # Local-model agents (optional) — configure to use llama-server or similar
