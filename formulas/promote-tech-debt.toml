@@ -1,0 +1,248 @@
+# formulas/promote-tech-debt.toml — Single tech-debt issue → backlog promotion
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"promote-tech-debt","issue":N,"ctx":{"title":"…","updated_at":"…"}}
+#
+# Context: classify.sh priority 4 surfaces a `tech-debt`-labeled issue that
+# already passed the impact/effort heuristic in `check_promote_tech_debt`
+# (gardener/classify.sh:235-283 — title or body matches
+# `impact|effort|cost|slow|performance|memory|bloat|debt|refactor|cleanup`).
+# Without this formula, those issues sit indefinitely with `tech-debt` but no
+# `backlog`, so dev-poll never claims them.
+#
+# Goal: re-validate the issue is well-formed and promote it to `backlog` so
+# dev-poll can pick it up; otherwise mark it `underspecified` so the
+# sibling enrich-underspecified formula can fill it in on the next gardener
+# tick (and then this formula will retry once it carries enough signal).
+#
+# On success: dep gets `backlog` (well-formed) OR `underspecified` (too thin).
+# On already-handled (backlog / in-progress / assignee set / awaiting-live-
+# verification / formula): no-op.
+#
+# All edits go through lib/gardener-edit.sh helpers and are journaled — no
+# pending-actions.json, same direct-API + journal pattern as siblings.
+#
+# Idempotency: re-running on the same issue is a no-op once `backlog` or
+# `underspecified` is on it (classify.sh stops surfacing those at priority 4
+# in subsequent ticks because the heuristic targets bare `tech-debt` with no
+# handling label, and the helpers themselves are idempotent).
+
+name        = "promote-tech-debt"
+description = "Promote one tech-debt issue to backlog, or flag underspecified"
+version     = 1
+
+# Bash allowlist envelope for the formula's claude session (#910).
+#
+# Note: claude is invoked with --dangerously-skip-permissions, so this list
+# is advisory rather than CLI-enforced. It is consumed by the prompt below
+# (see "## Tool envelope") to give the model an explicit, narrow command
+# set and to call out the commands that would expose loaded secrets if
+# run unrestricted (env / printenv / set / declare).
+allowed_tools = [
+  "curl",
+  "jq",
+  "awk",
+  "grep",
+  "sed",
+  "tr",
+  "sort",
+  "head",
+  "tail",
+  "printf",
+  "echo",
+  "cat",
+  "test",
+  "[",
+  "gardener_edit_body",
+  "gardener_add_label",
+  "gardener_remove_label",
+  "gardener_post_comment",
+]
+disallowed_commands = ["env", "printenv", "set", "declare", "export"]
+
+[[steps]]
+id    = "promote"
+title = "Fetch issue, decide path (backlog vs underspecified), apply via helpers"
+description = """
+You are promoting exactly ONE tech-debt issue identified in the
+classification payload (field `issue`). Do this in a single pass — no
+orchestration, no other issues.
+
+The issue carries the `tech-debt` label and already passed the
+impact/effort heuristic in classify.sh (title or body matches
+`impact|effort|cost|slow|performance|memory|bloat|debt|refactor|cleanup`).
+Your job: re-validate body shape and add `backlog` so dev-poll can claim
+it, OR add `underspecified` so the sibling enrich-underspecified formula
+fills it in on the next tick.
+
+## 1. Fetch the issue
+
+Read the classification payload's `issue` number, then fetch the full
+issue plus its labels and assignee state:
+
+  ISSUE=<the .issue field from the payload>
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE" > /tmp/techdebt-${ISSUE}.json
+  TITLE=$(jq -r .title /tmp/techdebt-${ISSUE}.json)
+  BODY=$(jq -r '.body // ""' /tmp/techdebt-${ISSUE}.json)
+  LABELS=$(jq -r '[.labels[].name] | join(",")' /tmp/techdebt-${ISSUE}.json)
+  ASSIGNEE=$(jq -r '.assignee.login // ""' /tmp/techdebt-${ISSUE}.json)
+
+  printf '%s' "$BODY" > /tmp/techdebt-${ISSUE}.body.orig
+
+## 2. Already-handled guard (idempotent no-op)
+
+If any of the following labels are already on the issue, someone (or a
+prior gardener tick) is already handling it. Log and stop:
+
+  - `backlog`                       (already queued for implementation)
+  - `in-progress`                   (dev-agent claimed)
+  - `blocked`                       (already flagged)
+  - `awaiting-live-verification`    (post-merge verification pending)
+  - `formula`                       (dispatcher-owned operational task)
+
+Also stop if an assignee is set — a human or agent has taken ownership and
+the gardener should not race them.
+
+Check:
+
+  for handled in backlog in-progress blocked awaiting-live-verification formula; do
+    if printf ',%s,' "$LABELS" | grep -q ",${handled},"; then
+      echo "ACTION: noop on #$ISSUE — already labeled '${handled}'"
+      exit 0
+    fi
+  done
+
+  if [ -n "$ASSIGNEE" ]; then
+    echo "ACTION: noop on #$ISSUE — assignee set ('${ASSIGNEE}')"
+    exit 0
+  fi
+
+## 3. Decide: backlog-ready vs too-thin
+
+Apply the same body-shape heuristic the sibling formulas use. The issue
+is BACKLOG-READY if its body has BOTH:
+
+  - an `## Affected files` section (or `## Affected file`) with at least
+    one path bullet, AND
+  - an `## Acceptance criteria` section with at least one `- [ ]` checkbox.
+
+Test:
+
+  HAS_AFFECTED=false
+  HAS_AC=false
+  if printf '%s' "$BODY" | grep -qiE '^##? *Affected file'; then
+    # Verify there is at least one bullet under it.
+    AFFECTED_BULLETS=$(printf '%s' "$BODY" | awk '
+      BEGIN { IGNORECASE=1; capture=0; n=0 }
+      /^##? *Affected file/ { capture=1; next }
+      capture && /^##? / { capture=0 }
+      capture && /^[[:space:]]*[-*+] / { n++ }
+      END { print n }
+    ')
+    if [ "${AFFECTED_BULLETS:-0}" -ge 1 ]; then
+      HAS_AFFECTED=true
+    fi
+  fi
+
+  if printf '%s' "$BODY" | grep -qiE '^##? *Acceptance criteria'; then
+    AC_BOXES=$(printf '%s' "$BODY" | awk '
+      BEGIN { IGNORECASE=1; capture=0; n=0 }
+      /^##? *Acceptance criteria/ { capture=1; next }
+      capture && /^##? / { capture=0 }
+      capture && /^[[:space:]]*-[[:space:]]*\\[[ xX]\\]/ { n++ }
+      END { print n }
+    ')
+    if [ "${AC_BOXES:-0}" -ge 1 ]; then
+      HAS_AC=true
+    fi
+  fi
+
+If HAS_AFFECTED = true AND HAS_AC = true: go to step 4 (backlog path).
+Otherwise: go to step 5 (underspecified path).
+
+## 4. Backlog path: promote so dev-poll can claim it
+
+Post a brief comment recording why we promoted, then add `backlog`:
+
+  cat > /tmp/techdebt-${ISSUE}.promote-comment <<EOF
+  Adding \\`backlog\\` so dev-poll can claim this issue.
+
+  **Why now**: gardener priority-4 promote-tech-debt picked this up — it
+  carries \\`tech-debt\\`, passed the impact/effort heuristic, and the body
+  has both an \\`## Affected files\\` section and \\`## Acceptance criteria\\`
+  checkboxes, so it is well-formed enough for a dev-agent to take.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/techdebt-${ISSUE}.promote-comment || exit 1
+  gardener_add_label    "$ISSUE" backlog                                || exit 1
+
+  echo "ACTION: promoted tech-debt #$ISSUE to backlog — $TITLE"
+  # Done. Stop the session.
+  exit 0
+
+## 5. Underspecified path: hand off to enrich-underspecified
+
+The body lacks affected files or acceptance criteria. Do NOT rewrite the
+body here (that is enrich-underspecified's job). Post a comment explaining
+the hand-off and add `underspecified` — on the next gardener tick, the
+priority-2 enrich-underspecified formula will pick it up. Once that
+finishes (which removes `underspecified` and adds `backlog`), this issue
+will already be on the backlog and promote-tech-debt no longer needs to
+retry.
+
+  cat > /tmp/techdebt-${ISSUE}.thin-comment <<EOF
+  This \\`tech-debt\\` issue passed the impact/effort heuristic but its
+  body lacks the structure dev-poll needs:
+
+  - \\`## Affected files\\` — concrete paths the work would touch
+  - \\`## Acceptance criteria\\` — verifiable \\`- [ ]\\` checkboxes describing
+    what "done" looks like
+
+  Marking \\`underspecified\\` so the sibling enrich-underspecified
+  gardener task can fill these in on the next tick. After that runs, the
+  issue will carry \\`backlog\\` and dev-poll will claim it.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/techdebt-${ISSUE}.thin-comment || exit 1
+  gardener_add_label    "$ISSUE" underspecified                      || exit 1
+
+  echo "ACTION: marked tech-debt #$ISSUE underspecified — handed off to enrich (#$TITLE)"
+  # Done. Stop the session.
+  exit 0
+
+## Tool envelope (#910)
+
+You have shell access, but keep it narrow:
+
+- **Allowed**: `curl`, `jq`, `awk`, `grep`, `sed`, `tr`, `sort`, `head`,
+  `tail`, `printf`, `echo`, `cat`, `test`/`[ ]`, plus the four
+  `gardener_*` helpers exported above.
+- **Disallowed**: `env`, `printenv`, `set`, `declare`, `export` — these
+  enumerate the entire process environment, including loaded secrets
+  (`FORGE_*_TOKEN`, `VAULT_*`, etc.). The session's JSONL transcript is
+  written to `${DISINTO_LOG_DIR}/gardener/step.log`; do not let secret
+  values reach it.
+- If you need to verify a single variable is set, echo only that one var
+  by name — `printf '%s\\n' "$FORGE_API"` — never the whole environment.
+- Tokens (`$FORGE_TOKEN`, `$FORGE_GARDENER_TOKEN`) must only ever appear
+  inside a `-H "Authorization: token $FORGE_TOKEN"` curl header. Never
+  echo, log, or interpolate the value into stdout, comments, or files.
+
+A stream filter in `lib/agent-sdk.sh` masks token-shaped assignments
+before they hit disk as a backstop, but treat that as defense in depth,
+not permission to dump env.
+
+## Output discipline
+
+- One pass only. Do not loop, do not pick up a second issue, do not file
+  vault items. The gardener step driver runs ONE task per invocation.
+- Pick exactly one of the two paths (4 or 5) and exit cleanly, or no-op
+  via step 2 when the issue is already handled.
+- Every repo edit goes through the four exported helpers
+  (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) — never PATCH issues directly via curl, so the
+  audit journal stays complete.
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+"""
