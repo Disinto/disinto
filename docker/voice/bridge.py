@@ -1454,6 +1454,9 @@ class VoiceSession:
         underlying WebSocket dies (subsequent ``receive()`` raises) or
         when the bridge's ``self.ws`` closes (caught via
         ``websockets.exceptions.ConnectionClosed`` in the inner sends).
+        Without this wrapper, turn 1 works and every subsequent user turn
+        is received by Gemini but emits no events back to the bridge —
+        because nobody is listening (#860).
         """
         while True:
             try:
@@ -1510,7 +1513,9 @@ class VoiceSession:
                     if tool_call:
                         await self._dispatch_tool_call(tool_call, live_session)
             except Exception as exc:
-                _log(f"live_session.receive() raised {exc!r} — exiting pump")
+                # Gemini session dropped or some upstream error. Log and exit
+                # the pump — caller will close the bridge WS.
+                _log(f"voice: live_session.receive() raised {exc!r} — exiting pump")
                 return
 
     async def _dispatch_tool_call(self, tool_call, live_session):

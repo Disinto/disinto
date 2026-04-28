@@ -327,6 +327,12 @@ EOT
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
+        # Don't let mobile browsers cache index.html — it references
+        # voice-client.js with a versioned query string, and a stale
+        # index.html would point at an old version (#860 fix delivery).
+        header Cache-Control "no-cache, no-store, must-revalidate"
+        header Pragma "no-cache"
+        header Expires "0"
         root * /var/voice/ui
         try_files {path} /index.html
         file_server
