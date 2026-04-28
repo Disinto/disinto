@@ -166,6 +166,12 @@ Interpret the result:
   An empty vault means agents have nothing queued for your decision — the
   factory is either idle or working autonomously inside its existing mandate.
 
+## Concept questions
+
+If the user asks "what is the action vault" or "what's the action vault",
+explain the concept (operator approval queue — sprint drafts, prediction flags,
+agent yes/no items) and mention the trigger phrases. Do **not** call any tool.
+
 # Delegated threads (#791)
 
 Delegated threads (spawned via `delegate`) are addressable by **number**
