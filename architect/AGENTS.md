@@ -1,40 +1,45 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 19e7acf8ab5e0b8fa87a6881e636e502d34a2911 -->
 # Architect — Agent Instructions
 
 ## What this agent is
 
-The architect is a strategic decomposition agent that breaks down vision issues
-into development sprints. It proposes sprints via PRs on the ops repo and
-converses with humans through PR comments.
+The architect is the design-Q&A agent for vision sprints. It converses with
+humans on existing architect sprint PRs (created by the gardener) and refines
+the sprint proposal toward a concrete sub-issue decomposition.
+
+Vision pitching (creating new sprint PRs from open vision issues) is owned by
+the gardener via `formulas/pitch-vision.toml` (#871, #877, #897). The
+architect no longer generates pitches.
 
 ## Role
 
-- **Input**: Vision issues from VISION.md, prerequisite tree from ops repo
-- **Output**: Sprint proposals as PRs on the ops repo (with embedded `## Sub-issues` blocks)
-- **Mechanism**: Bash-driven orchestration in `architect-run.sh`, pitching formula via `formulas/run-architect.toml`
+- **Input**: Existing open architect sprint PRs on the ops repo (created by the gardener), plus VISION.md and prerequisite-tree context
+- **Output**: PR-comment Q&A on existing architect PRs; finalized `## Sub-issues` block in the sprint spec once design forks are resolved
+- **Mechanism**: Bash-driven orchestration in `architect-run.sh`, response/Q&A formula via `formulas/run-architect.toml`
 - **Identity**: `architect-bot` on Forgejo (READ-ONLY on project repo, write on ops repo only — #764)
 
 ## Responsibilities
 
-1. **Strategic decomposition**: Break down large vision items into coherent
-   sprints that can be executed by the dev agent
-2. **Design fork identification**: When multiple implementation approaches exist,
-   identify the forks and file sub-issues for each path
-3. **Sprint PR creation**: Propose sprints as PRs on the ops repo with clear
-   acceptance criteria and dependencies
-4. **Human conversation**: Respond to PR comments, refine sprint proposals based
-   on human feedback
-5. **Sub-issue definition**: Define concrete sub-issues in the `## Sub-issues`
-   block of the sprint spec. Filing is handled by `filer-bot` after sprint PR
-   merge (#764)
+1. **Design fork identification**: On approved sprint PRs, identify the design
+   decisions that need human input and post initial questions
+2. **Human conversation**: Respond to PR comments, refine sprint proposals based
+   on human feedback (Q&A loop)
+3. **Sub-issue definition**: Once design forks are resolved, finalize concrete
+   sub-issues in the `## Sub-issues` block of the sprint spec. Filing is
+   handled by `filer-bot` after sprint PR merge (#764)
+4. **ACCEPT/REJECT response handling**: Process formal APPROVED reviews and
+   typed `ACCEPT`/`REJECT:` comments on existing architect PRs
 
 ## Formula
 
-The architect pitching is driven by `formulas/run-architect.toml`. This formula defines
+Architect response/Q&A is driven by `formulas/run-architect.toml`. This formula defines
 the steps for:
-- Research: analyzing vision items and prerequisite tree
-- Pitch: creating structured sprint PRs with embedded `## Sub-issues` blocks
 - Design Q&A: refining the sprint via PR comments after human ACCEPT
+- Sub-issue finalization: writing the `## Sub-issues` block once forks are resolved
+- ACCEPT/REJECT response processing on open architect PRs
+
+Vision pitching is owned by the gardener (`formulas/pitch-vision.toml` —
+#871, #877, #897), not by this formula.
 
 ## Bash-driven orchestration
 
@@ -46,13 +51,12 @@ Bash in `architect-run.sh` handles state detection and orchestration:
   directly into the research prompt as context
 - **Response processing**: When ACCEPT/REJECT responses are detected, bash invokes
   the agent with appropriate context (session resumed for questions phase)
-- **Pitch capture**: `pitch_output` is written to a temp file instead of captured via `$()` subshell, because `agent_run` writes to side-channels (`SID_FILE`, `LOGFILE`) that subshell capture would suppress (#716)
 - **PR URL construction**: existing-PR check uses `${FORGE_API}/pulls` directly (not `${FORGE_API}/repos/…`) — the base URL already includes the repos segment (#717)
 
 ### State transitions
 
 ```
-New vision issue → pitch PR (model generates pitch, bash creates PR)
+Sprint PR created by gardener (formulas/pitch-vision.toml — #871, #877, #897)
   ↓
 APPROVED review → start design questions (model posts Q1:, adds Design forks section)
   ↓
@@ -101,21 +105,13 @@ Run via `architect/architect-run.sh`, which:
 - Processes existing architect PRs via bash-driven design phase
 - Loads the formula and builds context from VISION.md, AGENTS.md, and ops repo
 - Bash orchestrates state management:
-  - Fetches open vision issues, open architect PRs, and merged sprint PRs from Forgejo API
-  - Filters out visions already with open PRs, in-progress label, sub-issues, or merged sprint PRs
-  - Selects up to `pitch_budget` (3 - open architect PRs) remaining vision issues
-  - For each selected issue, invokes stateless `claude -p` with issue body + context
-  - Creates PRs directly from pitch content (no scratch files)
-- Agent is invoked for stateless pitch generation and response processing (ACCEPT/REJECT handling)
+  - Scans open architect PRs on the ops repo for ACCEPT/REJECT/APPROVED responses
+  - Skips cleanly when there are no responses to process (early exit before invoking the model)
+  - Picks the appropriate session mode (`fresh`, `start_questions`, `questions_phase`) and resumes the per-PR session when continuing Q&A
+- Agent is invoked only for response processing (ACCEPT/REJECT handling, design Q&A)
 - NOTE: architect-bot is read-only on the project repo (#764) — sub-issue filing
   and in-progress label management are handled by filer-bot after sprint PR merge
-
-**Multi-sprint pitching**: The architect pitches up to 3 sprints per run. Bash handles all state management:
-- Fetches Forgejo API data (vision issues, open PRs, merged PRs)
-- Filters and deduplicates (no model-level dedup or journal-based memory)
-- For each selected vision issue, bash invokes stateless `claude -p` to generate pitch markdown
-- Bash creates the PR with pitch content and posts ACCEPT/REJECT footer comment
-- Branch names use issue number (architect/sprint-vision-{issue_number}) to avoid collisions
+- NOTE: vision pitching is handled by the gardener (`formulas/pitch-vision.toml` — #871, #877, #897); the architect no longer reads vision issues or creates sprint PRs
 
 ## Schedule
 

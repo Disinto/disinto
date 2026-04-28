@@ -351,90 +351,6 @@ detect_approved_pending_questions() {
   return 0
 }
 
-# ── Sub-issue existence check ────────────────────────────────────────────
-# Check if a vision issue already has sub-issues filed from it.
-# Returns 0 if sub-issues exist and are open, 1 otherwise.
-# Args: vision_issue_number
-has_open_subissues() {
-  local vision_issue="$1"
-  local subissue_count=0
-
-  # Search for issues whose body contains 'Decomposed from #N' pattern
-  # Fetch all open issues with bodies in one API call (avoids N+1 calls)
-  local issues_json
-  issues_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues?state=open&limit=100" 2>/dev/null) || return 1
-
-  # Check each issue for the decomposition pattern using jq to extract bodies
-  subissue_count=$(printf '%s' "$issues_json" | jq -r --arg vid "$vision_issue" '
-    [.[] | select(.number != ($vid | tonumber)) | select(.body // "" | contains("Decomposed from #" + $vid))] | length
-  ' 2>/dev/null) || subissue_count=0
-
-  if [ "$subissue_count" -gt 0 ]; then
-    log "Vision issue #${vision_issue} has ${subissue_count} open sub-issue(s) — skipping"
-    return 0  # Has open sub-issues
-  fi
-
-  log "Vision issue #${vision_issue} has no open sub-issues"
-  return 1  # No open sub-issues
-}
-
-# ── Merged sprint PR check ───────────────────────────────────────────────
-# Check if a vision issue already has a merged sprint PR on the ops repo.
-# Returns 0 if a merged sprint PR exists, 1 otherwise.
-# Args: vision_issue_number
-has_merged_sprint_pr() {
-  local vision_issue="$1"
-
-  # Get closed PRs from ops repo
-  local prs_json
-  prs_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=closed&limit=100" 2>/dev/null) || return 1
-
-  # Check each closed PR for architect markers and vision issue reference
-  local pr_numbers
-  pr_numbers=$(printf '%s' "$prs_json" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null) || return 1
-
-  local pr_num
-  while IFS= read -r pr_num; do
-    [ -z "$pr_num" ] && continue
-
-    # Get PR details including merged status
-    local pr_details
-    pr_details=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}" 2>/dev/null) || continue
-
-    # Check if PR is actually merged (not just closed)
-    local is_merged
-    is_merged=$(printf '%s' "$pr_details" | jq -r '.merged // false') || continue
-
-    if [ "$is_merged" != "true" ]; then
-      continue
-    fi
-
-    # Get PR body and check for vision issue reference
-    local pr_body
-    pr_body=$(printf '%s' "$pr_details" | jq -r '.body // ""') || continue
-
-    # Check if PR body references the vision issue number
-    # Look for patterns like "#N" where N is the vision issue number
-    if printf '%s' "$pr_body" | grep -qE "(#|refs|references)[[:space:]]*#${vision_issue}|#${vision_issue}[^0-9]|#${vision_issue}$"; then
-      log "Found merged sprint PR #${pr_num} referencing vision issue #${vision_issue} — skipping"
-      return 0  # Has merged sprint PR
-    fi
-  done <<< "$pr_numbers"
-
-  log "Vision issue #${vision_issue} has no merged sprint PR"
-  return 1  # No merged sprint PR
-}
-
-# ── Helper: Fetch all open vision issues from Forgejo API ─────────────────
-# Returns: JSON array of vision issue objects
-fetch_vision_issues() {
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues?labels=vision&state=open&limit=100" 2>/dev/null || echo '[]'
-}
-
 # NOTE: get_vision_subissues, all_subissues_closed, close_vision_issue,
 # check_and_close_completed_visions removed (#764) — architect-bot is read-only
 # on the project repo. Vision lifecycle (closing completed visions, adding
@@ -447,49 +363,16 @@ fetch_open_architect_prs() {
     "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
 }
 
-# ── Helper: Get vision issue body by number ──────────────────────────────
-# Args: issue_number
-# Returns: issue body text
-get_vision_issue_body() {
-  local issue_num="$1"
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues/${issue_num}" 2>/dev/null | jq -r '.body // ""'
-}
-
-# ── Helper: Get vision issue title by number ─────────────────────────────
-# Args: issue_number
-# Returns: issue title
-get_vision_issue_title() {
-  local issue_num="$1"
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues/${issue_num}" 2>/dev/null | jq -r '.title // ""'
-}
-
-# NOTE: generate_pitch() and create_sprint_pr() removed (#897). Vision pitching
-# moved to the gardener (formulas/pitch-vision.toml — see #871, #877). The
-# previous in-process pitch path was also silently broken: claude_run_with_watchdog
-# runs `claude` under a `script -qfc` PTY (workaround for #575) which appends
-# terminal mode-restore escape codes to the JSON output, causing the
-# `jq -r '.result'` extraction to fail under `set -euo pipefail`.
-
-# ── Helper: Post footer comment on PR ────────────────────────────────────
-# Args: pr_number
-post_pr_footer() {
-  local pr_number="$1"
-  local footer="Reply \`ACCEPT\` to proceed with design questions, or \`REJECT: <reason>\` to decline."
-
-  if curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" \
-    -d "{\"body\": \"${footer}\"}" >/dev/null 2>&1; then
-    log "Posted footer comment on PR #${pr_number}"
-    return 0
-  else
-    log "WARNING: failed to post footer comment on PR #${pr_number}"
-    return 1
-  fi
-}
+# NOTE: generate_pitch(), create_sprint_pr(), post_pr_footer(), and the
+# vision-issue read helpers (has_open_subissues, has_merged_sprint_pr,
+# fetch_vision_issues, get_vision_issue_body, get_vision_issue_title) removed
+# (#897, PR #900 review). Vision pitching moved to the gardener
+# (formulas/pitch-vision.toml — see #871, #877), which now owns vision
+# fetching, dedup, and footer posting. The previous in-process pitch path was
+# also silently broken: claude_run_with_watchdog runs `claude` under a
+# `script -qfc` PTY (workaround for #575) which appends terminal mode-restore
+# escape codes to the JSON output, causing the `jq -r '.result'` extraction
+# to fail under `set -euo pipefail`.
 
 # NOTE: add_inprogress_label removed (#764) — architect-bot is read-only on
 # project repo. in-progress label is now added by filer-bot via sprint-filer.sh.
@@ -545,9 +428,7 @@ fi
 # NOTE: Vision lifecycle check (close completed visions) moved to filer-bot (#764)
 # NOTE: Vision-issue selection logic and the per-issue pitch loop removed (#897).
 # Vision pitching is now owned by the gardener (formulas/pitch-vision.toml —
-# see #871, #877). The read-only helpers (fetch_vision_issues, has_open_subissues,
-# has_merged_sprint_pr, get_vision_issue_title, get_vision_issue_body) remain
-# above for Q&A grounding and broader-landscape awareness during response phase.
+# see #871, #877).
 
 # If there are no responses to process, exit cleanly.
 if [ "${has_responses_to_process:-false}" != "true" ]; then
