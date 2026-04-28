@@ -114,6 +114,27 @@ _ci_reduce_required_contexts() {
   ' 2>/dev/null || echo "pending"
 }
 
+# ci_required_passed <sha> — check if all required pipelines have passed.
+# Used by the reviewer agent: gate only on required pipelines (#920).
+#
+# Returns 0 if:
+#   - branch protection declares required status check contexts AND all of
+#     those contexts are "success"; OR
+#   - no required contexts are configured (nothing to gate on).
+# Returns 1 if any required context is failure/pending/missing.
+ci_required_passed() {
+  local sha="$1"
+  local required
+  # shellcheck disable=SC2119  # branch arg defaults to PRIMARY_BRANCH
+  required=$(ci_required_contexts) || true
+  if [ -z "$required" ]; then
+    return 0
+  fi
+  local state
+  state=$(_ci_reduce_required_contexts "$sha" "$required")
+  [ "$state" = "success" ]
+}
+
 # ci_passed <state> — check if CI is passing (or no CI configured)
 #   Returns 0 if state is "success", or if no CI is configured and
 #   state is empty/pending/unknown.
