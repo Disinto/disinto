@@ -1,70 +1,47 @@
 #!/usr/bin/env bash
 # =============================================================================
-# architect-run.sh — Polling-loop wrapper: architect execution via SDK + formula
+# architect-run.sh — Forgejo-state-driven architect lifecycle
 #
-# Synchronous bash loop using claude -p (one-shot invocation).
+# Bash-driven state machine operating on architect PRs on the ops repo.
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
-# Flow:
-#   1. Guards: run lock, memory check
-#   2. Precondition checks: skip if no responses to process on open architect PRs
-#   3. Load formula (formulas/run-architect.toml)
-#   4. Context: VISION.md, AGENTS.md, ops:prerequisites.md, structural graph
-#   5. Response processing: handle ACCEPT/REJECT/APPROVED on existing
-#      architect PRs (start design Q&A, continue Q&A, or general response)
+# Lifecycle states:
+#   [q_and_a]       — PR open, no APPROVED review, new operator comments
+#   [approved_idle] — PR APPROVED, no ## Filed: marker yet
+#   [tracking]      — ## Filed: marker present, sub-issues not all green
+#   [mergeable]     — ## Filed: marker present, all sub-issues green
 #
-# Vision pitching is owned by the gardener (formulas/pitch-vision.toml — see
-# #871, #877, #897). The architect now only handles the response/Q&A phase
-# on existing architect PRs.
+# Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
+# head of queue is picked each iteration. last-seen advances every iteration.
 #
-# Precondition checks (bash before model):
-#   - Skip if no open architect PRs and no vision issues
-#   - Only invoke model when there's actual response work to process
+# Write-permission contract:
+#   ops repo: PATCH PR body, POST comments, close PR, merge PR
+#   project repo: NONE (only reads — issues, acceptance scripts, vision)
 #
 # Usage:
-#   architect-run.sh [projects/disinto.toml]   # project config (default: disinto)
+#   architect-run.sh [projects/disinto.toml]
 #
-# Called by: entrypoint.sh polling loop (every 6 hours)
+# Called by: entrypoint.sh polling loop (every 15 min by default)
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Accept project config from argument; default to disinto
 export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
-# Set override BEFORE sourcing env.sh so it survives any later re-source of
-# env.sh from nested shells / claude -p tools (#762, #747)
 export FORGE_TOKEN_OVERRIDE="${FORGE_ARCHITECT_TOKEN:-}"
-# shellcheck source=../lib/env.sh
+
 source "$FACTORY_ROOT/lib/env.sh"
-# shellcheck source=../lib/formula-session.sh
 source "$FACTORY_ROOT/lib/formula-session.sh"
-# shellcheck source=../lib/worktree.sh
 source "$FACTORY_ROOT/lib/worktree.sh"
-# shellcheck source=../lib/guard.sh
 source "$FACTORY_ROOT/lib/guard.sh"
-# shellcheck source=../lib/agent-sdk.sh
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/architect/architect.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
-# shellcheck disable=SC2034  # consumed by agent-sdk.sh
-SID_FILE="/tmp/architect-session-${PROJECT_NAME}.sid"
-# Per-PR session files for stateful resumption across runs
-SID_DIR="/tmp/architect-sessions-${PROJECT_NAME}"
-mkdir -p "$SID_DIR"
-SCRATCH_FILE="/tmp/architect-${PROJECT_NAME}-scratch.md"
-SCRATCH_FILE_PREFIX="/tmp/architect-${PROJECT_NAME}-scratch"
-WORKTREE="/tmp/${PROJECT_NAME}-architect-run"
-
-# Override LOG_AGENT for consistent agent identification
-# shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh
 LOG_AGENT="architect"
 
-# Override log() to append to architect-specific log file
-# shellcheck disable=SC2034
 log() {
   local agent="${LOG_AGENT:-architect}"
   printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
@@ -77,86 +54,264 @@ memory_guard 2000
 
 log "--- Architect run start ---"
 
-# ── Resolve forge remote for git operations ─────────────────────────────
-# Run git operations from the project checkout, not the baked code dir
 cd "$PROJECT_REPO_ROOT"
-
 resolve_forge_remote
 
-# ── Resolve agent identity for .profile repo ────────────────────────────
-# FORGE_TOKEN was overridden to FORGE_ARCHITECT_TOKEN above (line 39) before
-# env.sh sourcing, so forge_whoami() resolves the architect bot's login.
+# ── Resolve agent identity ──────────────────────────────────────────────
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(forge_whoami)
 fi
 
-# ── Load formula + context ───────────────────────────────────────────────
-load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || exit 1
-build_context_block VISION.md AGENTS.md ops:prerequisites.md
+# ── Forgejo API helpers ─────────────────────────────────────────────────
+# All writes target ${FORGE_OPS_REPO} only.
 
-# ── Prepare .profile context (lessons injection) ─────────────────────────
-formula_prepare_profile_context
+# fetch_open_architect_prs — JSON array of architect PR objects
+fetch_open_architect_prs() {
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
+}
 
-# ── Build structural analysis graph ──────────────────────────────────────
-build_graph_section
+# get_pr_body <pr_number> — PR body text
+get_pr_body() {
+  local pr="$1"
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}" 2>/dev/null \
+    | jq -r '.body // empty' 2>/dev/null || echo ""
+}
 
-# ── Read scratch file (compaction survival) ───────────────────────────────
-SCRATCH_CONTEXT=$(read_scratch_context "$SCRATCH_FILE")
-SCRATCH_INSTRUCTION=$(build_scratch_instruction "$SCRATCH_FILE")
+# get_pr_reviews <pr_number> — JSON array of review objects
+get_pr_reviews() {
+  local pr="$1"
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}/reviews" 2>/dev/null || echo '[]'
+}
 
-# ── Build prompt ─────────────────────────────────────────────────────────
-build_sdk_prompt_footer
+# has_approved_review <pr_number> — 0 if APPROVED review exists
+has_approved_review() {
+  local pr="$1"
+  local reviews
+  reviews=$(get_pr_reviews "$pr")
+  if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
 
-# ── Build prompt for specific session mode ───────────────────────────────
-# Args: session_mode (fresh / questions_phase / start_questions)
-# Returns: prompt text via stdout
-# Note: Uses CONTEXT_BLOCK, GRAPH_SECTION, SCRATCH_CONTEXT from formula-session.sh
-# Architecture Decision: AD-003 — The runtime creates and destroys, the formula preserves.
-build_architect_prompt_for_mode() {
-  local session_mode="$1"
+# get_pr_comments <pr_number> — JSON array of comment objects
+get_pr_comments() {
+  local pr="$1"
+  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr}/comments" 2>/dev/null || echo '[]'
+}
 
-  case "$session_mode" in
-    "start_questions")
-      cat <<_PROMPT_EOF_
-You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+# has_reject_comment <pr_number> <since_iso> — 0 if Reject: comment since marker
+has_reject_comment() {
+  local pr="$1" since="$2"
+  local comments
+  comments=$(get_pr_comments "$pr")
+  # Extract comments newer than last-seen marker and check for Reject: prefix
+  printf '%s' "$comments" | jq -r --arg since "$since" '
+    [.[] | select(.updated_at > $since) | .body] | .[]
+  ' 2>/dev/null | grep -q '^Reject:' 2>/dev/null
+}
 
-Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments.
-You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
-DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
-specification must go only into the filer:begin/filer:end block of the sprint pitch.
-If you think sub-issues should be filed, write them into the sprint file's filer:begin
-block only. You do not have permission to POST to the project repo and any such call
-will return 403 and fail this run.
+# get_reject_reason <pr_number> <since_iso> — the reason after "Reject: "
+get_reject_reason() {
+  local pr="$1" since="$2"
+  local comments
+  comments=$(get_pr_comments "$pr")
+  printf '%s' "$comments" | jq -r --arg since "$since" '
+    [.[] | select(.updated_at > $since) | .body] | .[] | select(startswith("Reject:"))
+  ' 2>/dev/null | head -1 | sed 's/^Reject: *//' 2>/dev/null || echo "rejected"
+}
 
-## CURRENT STATE: Approved PR awaiting initial design questions
+# has_new_comment_since <pr_number> <since_iso> — 0 if non-reject comment exists
+has_new_comment_since() {
+  local pr="$1" since="$2"
+  local comments
+  comments=$(get_pr_comments "$pr")
+  # Check for any comment newer than last-seen that is NOT a Reject:
+  printf '%s' "$comments" | jq -r --arg since "$since" '
+    [.[] | select(.updated_at > $since) | .body] | .[] | select(test("^Reject:") | not)
+  ' 2>/dev/null | head -1 | grep -q . 2>/dev/null
+}
 
-A sprint pitch PR has been approved by the human (via APPROVED review), but the
-design conversation has not yet started. Your task is to:
+# post_pr_comment <pr_number> <body> — POST a comment
+post_pr_comment() {
+  local pr="$1" body="$2"
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr}/comments" \
+    -d "{\"body\":$(printf '%s' "$body" | jq -Rs '.')} " 2>/dev/null
+}
 
-1. Read the approved sprint pitch from the PR body
-2. Identify the key design decisions that need human input
-3. Post initial design questions (Q1:, Q2:, etc.) as comments on the PR
-4. Add a `## Design forks` section to the PR body documenting the design decisions
-5. Update the ## Sub-issues section in the sprint spec if design decisions affect decomposition
+# patch_pr_body <pr_number> <new_body> — PATCH the PR body
+patch_pr_body() {
+  local pr="$1" body="$2"
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}" \
+    -d "{\"body\":$(printf '%s' "$body" | jq -Rs '.')} " 2>/dev/null
+}
 
-This is NOT a pitch phase — the pitch is already approved. This is the START
-of the design Q&A phase. Sub-issues are filed by filer-bot after sprint PR merge (#764).
+# close_pr <pr_number> — close the PR with a comment
+close_pr() {
+  local pr="$1" reason="$2"
+  post_pr_comment "$pr" "Rejected: ${reason}" 2>/dev/null || true
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}" \
+    -d '{"state":"closed"}' 2>/dev/null || true
+}
 
-## Project context
-${CONTEXT_BLOCK}
-${GRAPH_SECTION}
-${SCRATCH_CONTEXT}
-$(formula_lessons_block)
-## Formula
-${FORMULA_CONTENT}
+# merge_pr <pr_number> — merge the PR
+merge_pr() {
+  local pr="$1"
+  curl -sf -X PUT \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}/merge" \
+    -d '{}' 2>/dev/null || true
+}
 
-${SCRATCH_INSTRUCTION}
-${PROMPT_FOOTER}
-_PROMPT_EOF_
-      ;;
-    "questions_phase")
-      cat <<_PROMPT_EOF_
+# ── PR body marker helpers ──────────────────────────────────────────────
+
+# extract_last_seen <pr_body> — extract <!-- architect-last-seen: ... -->
+extract_last_seen() {
+  printf '%s' "$1" | grep -oP '<!-- architect-last-seen:\s*\K[^ ]+' 2>/dev/null || echo ""
+}
+
+# update_last_seen <pr_body> <new_iso> — replace last-seen marker
+update_last_seen() {
+  local body="$1" new_iso="$2"
+  if printf '%s' "$body" | grep -q '<!-- architect-last-seen:'; then
+    printf '%s' "$body" | sed "s|<!-- architect-last-seen: *[^ ]* -->|<!-- architect-last-seen: ${new_iso} -->|"
+  else
+    printf '%s\n%s' "$body" "<!-- architect-last-seen: ${new_iso} -->"
+  fi
+}
+
+# extract_filed_issues <pr_body> — extract issue numbers from ## Filed: #N1 #N2 ...
+extract_filed_issues() {
+  printf '%s' "$1" | grep -oP '## Filed:\s*\K#([0-9]+)(\s+#([0-9]+))*' 2>/dev/null | grep -oP '#[0-9]+' || echo ""
+}
+
+# has_filed_marker <pr_body> — 0 if ## Filed: marker present
+has_filed_marker() {
+  printf '%s' "$1" | grep -q '## Filed:' 2>/dev/null
+}
+
+# extract_last_digest <pr_body> — extract <!-- architect-digest: ... -->
+extract_last_digest() {
+  printf '%s' "$1" | grep -zoP '<!-- architect-digest: \K[\s\S]*?(?= -->)' 2>/dev/null | tr -d '\0' | head -1 || echo ""
+}
+
+# ── Project repo read helpers ───────────────────────────────────────────
+
+# check_subissue_green <issue_number> — run acceptance test, check labels
+# Returns 0 if issue is green (closed + deployed label + acceptance rc=0)
+check_subissue_green() {
+  local issue="$1"
+  local issue_num="${issue#\#}"
+
+  # Check if issue is closed
+  local issue_state
+  issue_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_REPO}/issues/${issue_num}" 2>/dev/null \
+    | jq -r '.state // empty' 2>/dev/null) || return 1
+  if [ "$issue_state" != "closed" ]; then
+    return 1
+  fi
+
+  # Check for deployed label
+  local has_deployed
+  has_deployed=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_REPO}/issues/${issue_num}/labels" 2>/dev/null \
+    | jq -r '.[].name // empty' 2>/dev/null | grep -q '^deployed$' && echo yes || echo no) || return 1
+  if [ "$has_deployed" != "yes" ]; then
+    return 1
+  fi
+
+  # Run acceptance test
+  local test_script="${PROJECT_REPO_ROOT}/tests/acceptance/issue-${issue_num}.sh"
+  if [ -f "$test_script" ] && bash "$test_script" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # No acceptance test or it failed — not green
+  return 1
+}
+
+# get_last_digest_state <pr_body> — extract issue states from last digest marker
+# Returns space-separated "issueN:state" pairs (normalized, no space after colon)
+get_last_digest_state() {
+  local body="$1"
+  local digest
+  digest=$(extract_last_digest "$body")
+  if [ -z "$digest" ]; then
+    echo ""
+    return
+  fi
+  # Extract issue states from the marker content (format: #N:state)
+  printf '%s' "$digest" | grep -oP '#[0-9]+:\s*(open|closed|green|pending)' 2>/dev/null \
+    | sed 's/: */:/' | tr '\n' ' ' | sed 's/ *$//' | sed 's/$/ /' || echo ""
+}
+
+# ── Round-robin: list and sort PRs by last-seen marker ─────────────────
+
+list_architect_prs_sorted() {
+  local prs
+  prs=$(fetch_open_architect_prs)
+
+  # Extract PR number and last-seen timestamp, sort by timestamp ascending
+  printf '%s' "$prs" | jq -r '.[] | select(.title | startswith("architect:")) |
+    "\(.number)|\(.updated_at)"' 2>/dev/null | sort -t'|' -k2 || true
+}
+
+# ── State: q_and_a ──────────────────────────────────────────────────────
+# PR open, no APPROVED review, new operator comments since last-seen.
+# Reject branch: bash-only (close PR). Otherwise: opus session.
+
+dispatch_q_and_a() {
+  local pr="$1" body="$2" last_seen="$3"
+
+  # Check for Reject: comment
+  if has_reject_comment "$pr" "$last_seen"; then
+    local reason
+    reason=$(get_reject_reason "$pr" "$last_seen")
+    log "PR #${pr}: REJECT detected — closing PR"
+    close_pr "$pr" "$reason"
+    return
+  fi
+
+  # Check for new non-reject comments (engagement signal)
+  if has_new_comment_since "$pr" "$last_seen"; then
+    log "PR #${pr}: new engagement detected — dispatching opus session"
+    _dispatch_opus_qa "$pr" "$body"
+    return
+  fi
+
+  log "PR #${pr}: no new engagement — idle"
+}
+
+_dispatch_opus_qa() {
+  local pr="$1" body="$2"
+
+  # Load formula + context for the opus session
+  load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || return 1
+  build_context_block VISION.md AGENTS.md ops:prerequisites.md
+  formula_prepare_profile_context
+  build_graph_section
+
+  SCRATCH_CONTEXT=$(read_scratch_context "/tmp/architect-${PROJECT_NAME}-scratch.md")
+  SCRATCH_INSTRUCTION=$(build_scratch_instruction "/tmp/architect-${PROJECT_NAME}-scratch.md")
+  build_sdk_prompt_footer
+
+  local prompt
+  prompt=$(cat <<_PROMPT_EOF_
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 
 Your role: strategic decomposition of vision issues into development sprints.
@@ -170,18 +325,12 @@ will return 403 and fail this run.
 
 ## CURRENT STATE: Design Q&A in progress
 
-A sprint pitch PR is in the questions phase:
-- The PR has a `## Design forks` section
-- Initial questions (Q1:, Q2:, etc.) have been posted
-- Humans may have posted answers or follow-up questions
-
-Your task is to:
-1. Read the existing questions and the PR body
-2. Read human answers from PR comments
-3. Parse the answers and determine next steps
-4. Post follow-up questions if needed (Q3:, Q4:, etc.)
-5. If all design forks are resolved, finalize the ## Sub-issues section in the sprint spec
-6. Update the `## Design forks` section as you progress
+An architect PR has received new operator engagement (a non-reject comment).
+Your task:
+1. Read the PR body and new comments
+2. Refine the <!-- filer:begin --> ... <!-- filer:end --> block inline
+3. Post a reply comment with your response
+4. Do NOT close the PR — the operator drives the lifecycle
 
 ## Project context
 ${CONTEXT_BLOCK}
@@ -194,319 +343,152 @@ ${FORMULA_CONTENT}
 ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}
 _PROMPT_EOF_
-      ;;
-    "fresh"|*)
-      # Default: generic response-phase prompt (ACCEPT/REJECT handling on
-      # existing architect PRs). New-pitch generation has moved to the
-      # gardener (formulas/pitch-vision.toml) — see #871, #877, #897.
-      cat <<_PROMPT_EOF_
-You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+  )
 
-Your role: strategic decomposition of vision issues into development sprints.
-Converse with humans through PR comments on existing architect PRs on the ops repo.
-You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
-DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
-specification must go only into the filer:begin/filer:end block of the sprint pitch.
-If you think sub-issues should be filed, write them into the sprint file's filer:begin
-block only. You do not have permission to POST to the project repo and any such call
-will return 403 and fail this run.
-
-## CURRENT STATE: Response phase on an existing architect PR
-
-An open architect PR has received a response (ACCEPT / REJECT / APPROVED review,
-or a typed ACCEPT/REJECT comment). Read the PR body and comments, then handle
-the response: process REJECT reasons, acknowledge ACCEPTs, and continue any
-in-flight design conversation as appropriate.
-
-## Project context
-${CONTEXT_BLOCK}
-${GRAPH_SECTION}
-${SCRATCH_CONTEXT}
-$(formula_lessons_block)
-## Formula
-${FORMULA_CONTENT}
-
-${SCRATCH_INSTRUCTION}
-${PROMPT_FOOTER}
-_PROMPT_EOF_
-      ;;
-  esac
+  # Run opus session
+  agent_run --worktree "/tmp/${PROJECT_NAME}-architect-run" "$prompt"
+  log "opus q_and_a session complete"
 }
 
-# ── Create worktree ──────────────────────────────────────────────────────
-formula_worktree_setup "$WORKTREE"
+# ── State: approved_idle ────────────────────────────────────────────────
+# PR has APPROVED review, no ## Filed: marker.
+# Bash-only: post one "awaiting filer" comment per rotation.
 
-# ── Detect if PR is in questions-awaiting-answers phase ──────────────────
-# A PR is in the questions phase if it has a `## Design forks` section and
-# question comments. We check this to decide whether to resume the session
-# from the research/questions run (preserves codebase context for answer parsing).
-detect_questions_phase() {
-  local pr_number=""
-  local pr_body=""
+dispatch_approved_idle() {
+  local pr="$1" body="$2"
 
-  # Get open architect PRs on ops repo
-  local ops_repo="${OPS_REPO_ROOT:-/home/agent/data/ops}"
-  if [ ! -d "${ops_repo}/.git" ]; then
-    return 1
-  fi
-
-  # Use Forgejo API to find open architect PRs
-  local response
-  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
-
-  # Check each open PR for architect markers
-  pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
-
-  if [ -z "$pr_number" ]; then
-    return 1
-  fi
-
-  # Fetch PR body
-  pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
-
-  # Check for `## Design forks` section (added by #101 after ACCEPT)
-  if ! printf '%s' "$pr_body" | grep -q "## Design forks"; then
-    return 1
-  fi
-
-  # Check for question comments (Q1:, Q2:, etc.)
-  # Use jq to extract body text before grepping (handles JSON escaping properly)
+  # Check if we already posted an "awaiting filer" comment by looking at
+  # recent PR comments (avoid spamming on each rotation pass)
   local comments
-  comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
-
-  if ! printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
-    return 1
+  comments=$(get_pr_comments "$pr")
+  if printf '%s' "$comments" | jq -r '.[].body // empty' 2>/dev/null \
+    | grep -q 'awaiting filer' 2>/dev/null; then
+    log "PR #${pr}: already awaiting filer — no new comment needed"
+    return
   fi
 
-  # PR is in questions phase
-  log "Detected PR #${pr_number} in questions-awaiting-answers phase"
-  return 0
+  log "PR #${pr}: approved, awaiting filer — posting comment"
+  post_pr_comment "$pr" "Approved — awaiting filer. Sub-issues will be filed by the filer-bot after this PR merges." 2>/dev/null || true
 }
 
-# ── Detect if PR is approved and awaiting initial design questions ────────
-# A PR is in this state when:
-# - It's an open architect PR on ops repo
-# - It has an APPROVED review (from human acceptance)
-# - It has NO `## Design forks` section yet
-# - It has NO Q1:, Q2:, etc. comments yet
-# This means the human accepted the pitch and we need to start the design
-# conversation by posting initial questions and adding the Design forks section.
-detect_approved_pending_questions() {
-  local pr_number=""
-  local pr_body=""
+# ── State: tracking ─────────────────────────────────────────────────────
+# ## Filed: marker present, not all sub-issues green.
+# Opus-only when sub-issue state has changed since last digest.
 
-  # Get open architect PRs on ops repo
-  local ops_repo="${OPS_REPO_ROOT:-/home/agent/data/ops}"
-  if [ ! -d "${ops_repo}/.git" ]; then
-    return 1
+dispatch_tracking() {
+  local pr="$1" body="$2"
+
+  # Extract filed issue numbers
+  local filed_issues
+  filed_issues=$(extract_filed_issues "$body")
+  if [ -z "$filed_issues" ]; then
+    log "PR #${pr}: tracked but no filed issues — skipping"
+    return
   fi
 
-  # Use Forgejo API to find open architect PRs
-  local response
-  response=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open" 2>/dev/null) || return 1
-
-  # Check each open PR for architect markers
-  pr_number=$(printf '%s' "$response" | jq -r '.[] | select(.title | contains("architect:")) | .number' 2>/dev/null | head -1) || return 1
-
-  if [ -z "$pr_number" ]; then
-    return 1
-  fi
-
-  # Fetch PR body
-  pr_body=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}" 2>/dev/null | jq -r '.body // empty') || return 1
-
-  # Check for APPROVED review
-  local reviews
-  reviews=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
-
-  if ! printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
-    return 1
-  fi
-
-  # Check that PR does NOT have `## Design forks` section yet
-  # (we're in the "start questions" phase, not "process answers" phase)
-  if printf '%s' "$pr_body" | grep -q "## Design forks"; then
-    # Has design forks section — this is either in questions phase or past it
-    return 1
-  fi
-
-  # Check that PR has NO question comments yet (Q1:, Q2:, etc.)
-  local comments
-  comments=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_number}/comments" 2>/dev/null) || return 1
-
-  if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE 'Q[0-9]+:'; then
-    # Has question comments — this is either in questions phase or past it
-    return 1
-  fi
-
-  # PR is approved and awaiting initial design questions
-  log "Detected PR #${pr_number} approved and awaiting initial design questions"
-  return 0
-}
-
-# NOTE: get_vision_subissues, all_subissues_closed, close_vision_issue,
-# check_and_close_completed_visions removed (#764) — architect-bot is read-only
-# on the project repo. Vision lifecycle (closing completed visions, adding
-# in-progress labels) is now handled by filer-bot via lib/sprint-filer.sh.
-
-# ── Helper: Fetch open architect PRs from ops repo Forgejo API ───────────
-# Returns: JSON array of architect PR objects
-fetch_open_architect_prs() {
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null || echo '[]'
-}
-
-# NOTE: generate_pitch(), create_sprint_pr(), post_pr_footer(), and the
-# vision-issue read helpers (has_open_subissues, has_merged_sprint_pr,
-# fetch_vision_issues, get_vision_issue_body, get_vision_issue_title) removed
-# (#897, PR #900 review). Vision pitching moved to the gardener
-# (formulas/pitch-vision.toml — see #871, #877), which now owns vision
-# fetching, dedup, and footer posting. The previous in-process pitch path was
-# also silently broken: claude_run_with_watchdog runs `claude` under a
-# `script -qfc` PTY (workaround for #575) which appends terminal mode-restore
-# escape codes to the JSON output, causing the `jq -r '.result'` extraction
-# to fail under `set -euo pipefail`.
-
-# NOTE: add_inprogress_label removed (#764) — architect-bot is read-only on
-# project repo. in-progress label is now added by filer-bot via sprint-filer.sh.
-
-# ── Precondition checks in bash before invoking the model ─────────────────
-
-# Check 1: Skip if no vision issues exist and no open architect PRs to handle
-vision_count=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-  "$FORGE_API/issues?labels=vision&state=open&limit=1" 2>/dev/null | jq length) || vision_count=0
-if [ "${vision_count:-0}" -eq 0 ]; then
-  # Check for open architect PRs that need handling (ACCEPT/REJECT responses)
-  open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=10" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
-  if [ "${open_arch_prs:-0}" -eq 0 ]; then
-    log "no vision issues and no open architect PRs — skipping"
-    exit 0
-  fi
-fi
-
-# Check 2: Scan for ACCEPT/REJECT responses on open architect PRs (unconditional)
-# This ensures responses are processed regardless of open_arch_prs count
-has_responses_to_process=false
-pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-  "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
-for pr_num in $pr_numbers; do
-  # Check formal reviews first (Forgejo green check via review API)
-  reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews="[]"
-  if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED" or .state == "REQUEST_CHANGES")' >/dev/null 2>&1; then
-    has_responses_to_process=true
-    break
-  fi
-  # Then check ACCEPT/REJECT in comments (legacy / human-typed)
-  comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
-  if printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qE '(ACCEPT|REJECT):'; then
-    has_responses_to_process=true
-    break
-  fi
-done
-
-# Check 2 (continued): Skip if already at max open pitches (3), unless there are responses to process
-open_arch_prs=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-  "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq '[.[] | select(.title | startswith("architect:"))] | length') || open_arch_prs=0
-if [ "${open_arch_prs:-0}" -ge 3 ]; then
-  if [ "$has_responses_to_process" = false ]; then
-    log "already 3 open architect PRs with no responses to process — skipping"
-    exit 0
-  fi
-  log "3 open architect PRs found but responses detected — processing"
-fi
-
-# NOTE: Vision lifecycle check (close completed visions) moved to filer-bot (#764)
-# NOTE: Vision-issue selection logic and the per-issue pitch loop removed (#897).
-# Vision pitching is now owned by the gardener (formulas/pitch-vision.toml —
-# see #871, #877).
-
-# If there are no responses to process, exit cleanly.
-if [ "${has_responses_to_process:-false}" != "true" ]; then
-  log "No ACCEPT/REJECT/APPROVED responses on open architect PRs — signaling PHASE:done"
-  if [ -f "/tmp/architect-${PROJECT_NAME}.phase" ]; then
-    echo "PHASE:done" > "/tmp/architect-${PROJECT_NAME}.phase"
-  fi
-  exit 0
-fi
-
-# ── Run agent for response processing ─────────────────────────────────────
-# Always process ACCEPT/REJECT responses when present, regardless of new pitches
-if [ "${has_responses_to_process:-false}" = "true" ]; then
-  log "Processing ACCEPT/REJECT responses on existing PRs"
-
-  # Check if any PRs have responses that need agent handling
-  needs_agent=false
-  pr_numbers=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls?state=open&limit=100" 2>/dev/null | jq -r '.[] | select(.title | startswith("architect:")) | .number') || pr_numbers=""
-
-  for pr_num in $pr_numbers; do
-    # Check for ACCEPT/REJECT in comments
-    comments=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr_num}/comments" 2>/dev/null) || continue
-
-    # Check for review decisions (higher precedence)
-    reviews=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-      "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr_num}/reviews" 2>/dev/null) || reviews=""
-
-    # Check for ACCEPT (APPROVED review or ACCEPT comment)
-    if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
-      log "PR #${pr_num} has APPROVED review — needs agent handling"
-      needs_agent=true
-    elif printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qiE '^[^:]+: *ACCEPT'; then
-      log "PR #${pr_num} has ACCEPT comment — needs agent handling"
-      needs_agent=true
-    elif printf '%s' "$comments" | jq -r '.[].body // empty' | grep -qiE '^[^:]+: *REJECT:'; then
-      log "PR #${pr_num} has REJECT comment — needs agent handling"
-      needs_agent=true
-    fi
-  done
-
-  # Run agent only if there are responses to process
-  if [ "$needs_agent" = "true" ]; then
-    # Determine session handling based on PR state
-    RESUME_ARGS=()
-    SESSION_MODE="fresh"
-
-    if detect_questions_phase; then
-      # PR is in questions-awaiting-answers phase — resume from that session
-      if [ -f "$SID_FILE" ]; then
-        RESUME_SESSION=$(cat "$SID_FILE")
-        RESUME_ARGS=(--resume "$RESUME_SESSION")
-        SESSION_MODE="questions_phase"
-        log "PR in questions-awaiting-answers phase — resuming session: ${RESUME_SESSION:0:12}..."
-      else
-        log "PR in questions phase but no session file — starting fresh session"
-      fi
-    elif detect_approved_pending_questions; then
-      # PR is approved but awaiting initial design questions — start fresh with special prompt
-      SESSION_MODE="start_questions"
-      log "PR approved and awaiting initial design questions — starting fresh session"
+  # Check if all are green
+  local all_green=true
+  local current_states=""
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    if check_subissue_green "$issue"; then
+      current_states="${current_states}${issue}:green "
     else
-      log "PR not in questions phase — starting fresh session"
+      all_green=false
+      current_states="${current_states}${issue}:pending "
     fi
+  done <<< "$filed_issues"
 
-    # Build prompt with appropriate mode
-    PROMPT_FOR_MODE=$(build_architect_prompt_for_mode "$SESSION_MODE")
-
-    agent_run "${RESUME_ARGS[@]}" --worktree "$WORKTREE" "$PROMPT_FOR_MODE"
-    log "agent_run complete"
+  if [ "$all_green" = true ]; then
+    log "PR #${pr}: all filed issues green — ready for merge"
+    return
   fi
-fi
 
-# ── Regression guard: detect direct issue creation by architect session ──
-# Scans the architect log for any POST to the project repo's /issues endpoint.
-# This is a cheap guard — if the model used its Bash tool to curl POST /issues
-# on the project repo, it would appear in the log. Fails loudly on detection.
+  # Check if state changed since last digest
+  local last_digest last_digest_state needs_opus=false
+  last_digest=$(extract_last_digest "$body")
+  if [ -n "$last_digest" ]; then
+    last_digest_state=$(get_last_digest_state "$body")
+    if [ -n "$last_digest_state" ] && [ "$last_digest_state" != "$current_states" ]; then
+      needs_opus=true
+    fi
+  else
+    # No previous digest — always opus on first tracking pass
+    needs_opus=true
+  fi
+
+  if [ "$needs_opus" = true ]; then
+    log "PR #${pr}: state changed since last digest — dispatching opus digest"
+    _dispatch_opus_tracking_digest "$pr" "$current_states"
+  else
+    log "PR #${pr}: no state change since last digest — skipping opus"
+  fi
+}
+
+_dispatch_opus_tracking_digest() {
+  local pr="$1" states="$2"
+
+  load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || return 1
+  build_context_block VISION.md AGENTS.md ops:prerequisites.md
+  formula_prepare_profile_context
+  build_graph_section
+  build_sdk_prompt_footer
+
+  local prompt
+  prompt=$(cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}.
+
+## CURRENT STATE: Tracking filed sub-issues
+
+A sprint PR has been approved and sub-issues have been filed. You are tracking
+their progress. The current state of each filed issue:
+
+${states}
+
+"green" = closed AND has deployed label AND acceptance test rc=0
+"pending" = not yet green
+
+Your task:
+1. Write a digest comment summarizing the current state
+2. Update the PR body with a <!-- architect-digest: TIMESTAMP #N:state ... --> marker
+   (TIMESTAMP is ISO-8601 UTC; include each issue as #N:state where state is green/pending)
+3. Post the digest as a PR comment
+
+## Project context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+  )
+
+  agent_run --worktree "/tmp/${PROJECT_NAME}-architect-run" "$prompt"
+  log "opus tracking digest complete"
+}
+
+# ── State: mergeable ────────────────────────────────────────────────────
+# ## Filed: marker present, all sub-issues green.
+# Bash-only: merge PR, post closure summary.
+
+dispatch_mergeable() {
+  local pr="$1" body="$2"
+
+  log "PR #${pr}: all sub-issues green — merging"
+
+  # Post closure summary
+  local filed_issues
+  filed_issues=$(extract_filed_issues "$body")
+  post_pr_comment "$pr" "All sub-issues verified green. Merging sprint PR." 2>/dev/null || true
+
+  # Merge the PR
+  merge_pr "$pr"
+  log "PR #${pr}: merged"
+}
+
+# ── Regression guard ───────────────────────────────────────────────────
 check_architect_issue_filing() {
   local project_repo_path
   project_repo_path="/repos/${FORGE_REPO}/issues"
@@ -521,14 +503,80 @@ check_architect_issue_filing() {
   fi
 }
 
-# Run regression guard before cleanup
+# ── Main: single linear flow ───────────────────────────────────────────
+
+# 1. List open architect PRs sorted by last-seen (round-robin)
+pr_list=$(list_architect_prs_sorted)
+if [ -z "$pr_list" ]; then
+  log "No open architect PRs — exiting"
+  check_architect_issue_filing
+  exit 0
+fi
+
+# 2. Pick head of queue (first line = earliest last-seen)
+head_pr_line=$(printf '%s\n' "$pr_list" | head -1)
+PR_NUMBER="${head_pr_line%%|*}"
+PR_UPDATED_AT="${head_pr_line##*|}"
+
+log "Processing PR #${PR_NUMBER} (updated: ${PR_UPDATED_AT})"
+
+# 3. Read PR state
+PR_BODY=$(get_pr_body "$PR_NUMBER")
+LAST_SEEN=$(extract_last_seen "$PR_BODY")
+
+# If no last-seen marker exists, use PR updated_at as initial marker
+if [ -z "$LAST_SEEN" ]; then
+  LAST_SEEN="$PR_UPDATED_AT"
+fi
+
+NOW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# 4. Detect state and dispatch
+# Reject takes priority at any point in the lifecycle
+if has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
+  # reject at any point — bash-only (close PR)
+  log "PR #${PR_NUMBER}: reject detected → closing"
+  REASON=$(get_reject_reason "$PR_NUMBER" "$LAST_SEEN")
+  close_pr "$PR_NUMBER" "$REASON"
+elif has_approved_review "$PR_NUMBER"; then
+  # [approved_idle] or [mergeable] — check for filed marker
+  if has_filed_marker "$PR_BODY"; then
+    # Check if mergeable
+    filed_issues=$(extract_filed_issues "$PR_BODY")
+    all_green=true
+    while IFS= read -r issue; do
+      [ -z "$issue" ] && continue
+      if ! check_subissue_green "$issue"; then
+        all_green=false
+        break
+      fi
+    done <<< "$filed_issues"
+
+    if [ "$all_green" = true ]; then
+      log "PR #${PR_NUMBER}: approved + all green → mergeable"
+      dispatch_mergeable "$PR_NUMBER" "$PR_BODY"
+    else
+      log "PR #${PR_NUMBER}: approved + some pending → tracking"
+      dispatch_tracking "$PR_NUMBER" "$PR_BODY"
+    fi
+  else
+    log "PR #${PR_NUMBER}: approved, no filed marker → approved_idle"
+    dispatch_approved_idle "$PR_NUMBER" "$PR_BODY"
+  fi
+else
+  # [q_and_a] — check for engagement
+  log "PR #${PR_NUMBER}: q_and_a state"
+  dispatch_q_and_a "$PR_NUMBER" "$PR_BODY" "$LAST_SEEN"
+fi
+
+# 5. Update last-seen marker (always, whether work happened or not)
+UPDATED_BODY=$(update_last_seen "$PR_BODY" "$NOW_ISO")
+if [ -n "$UPDATED_BODY" ] && [ "$UPDATED_BODY" != "$PR_BODY" ]; then
+  patch_pr_body "$PR_NUMBER" "$UPDATED_BODY"
+  log "Updated last-seen marker on PR #${PR_NUMBER}"
+fi
+
+# ── Regression guard ───────────────────────────────────────────────────
 check_architect_issue_filing
-
-# ── Clean up scratch files (legacy single file + per-issue files) ──────────
-rm -f "$SCRATCH_FILE"
-rm -f "${SCRATCH_FILE_PREFIX}"-*.md
-
-# Write journal entry post-session
-profile_write_journal "architect-run" "Architect run $(date -u +%Y-%m-%d)" "complete" "" || true
 
 log "--- Architect run done ---"

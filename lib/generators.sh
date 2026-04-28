@@ -188,7 +188,7 @@ _generate_local_model_services() {
       POLL_INTERVAL: "${poll_interval_val}"
       # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
       # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
+      ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-900}"
       PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
       SUPERVISOR_INTERVAL: "${SUPERVISOR_INTERVAL:-1200}"
     depends_on:
@@ -452,7 +452,7 @@ services:
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
       # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
       # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
+      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
@@ -526,7 +526,7 @@ COMPOSEEOF
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
       # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
       # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
+      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     healthcheck:
       test: ["CMD", "pgrep", "-f", "entrypoint.sh"]

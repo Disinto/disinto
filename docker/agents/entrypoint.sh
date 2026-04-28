@@ -14,7 +14,7 @@ set -euo pipefail
 #   - gardener: every iteration (per-iteration step driver, #872 — single
 #     task per cycle, llama-friendly; previously every GARDENER_INTERVAL
 #     seconds in monolithic batch mode, now obsolete)
-#   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
+#   - architect: every ARCHITECT_INTERVAL seconds (default: 900 = 15 minutes)
 #   - planner: every PLANNER_INTERVAL seconds (default: 43200 = 12 hours)
 #   - predictor: every 24 hours (288 iterations * 5 min)
 #   - supervisor: every SUPERVISOR_INTERVAL seconds (default: 1200 = 20 min)
@@ -509,7 +509,7 @@ POLL_INTERVAL="${POLL_INTERVAL:-300}"
 # Architect / planner / supervisor intervals.
 # GARDENER_INTERVAL was dropped in #872 — gardener now runs every iteration
 # via gardener/gardener-step.sh (single task per cycle, paced by POLL_INTERVAL).
-ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
+ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-900}"
 PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
 SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
 
