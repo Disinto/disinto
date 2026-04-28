@@ -1,4 +1,4 @@
-<!-- last-reviewed: 901-lifecycle-rewrite -->
+<!-- last-reviewed: 1e3e3e61f2c6585d5279b6cc46c8cdb20a760f6c -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -58,7 +58,7 @@ transitions to tracking
 sub-issues are green.
 
 **Actions**:
-- For each sub-issue: read state (open/closed), check for `deployed` label,
+- For each sub-issue: read state (open/closed/green/pending), check for `deployed` label,
   run `tests/acceptance/issue-<n>.sh` and capture rc.
 - "Green" = closed AND has `deployed` label AND acceptance test rc=0.
 - If state changed since last digest comment → opus session writes one digest
@@ -126,7 +126,7 @@ Bash in `architect/architect-run.sh` handles state detection and orchestration:
 
 - **Deterministic state machine**: Bash reads the Forgejo reviews API to detect
   APPROVED state — the review state, not comment text, drives lifecycle transitions
-- **Reject detection**: `Reject:`-prefixed comments trigger PR close (bash-only)
+- **Reject detection**: `Reject:`-prefixed comments trigger PR close at **any** lifecycle point (bash-only)
 - **Round-robin**: PRs sorted by last-seen marker; head of queue processed per tick
 - **Last-seen cursor**: `<!-- architect-last-seen: ... -->` updated every iteration
 - **Opus gating**: Model only called when actual engagement or state change detected
@@ -145,7 +145,7 @@ tracking ←→ tracking (opus: digest when state changes; bash: check green)
   ↓ all sub-issues green
 mergeable → PR merged (bash-only)
   ↓
-Reject: comment at any point → PR closed (bash-only)
+Reject: comment at any point → PR closed (bash-only, takes priority over all states)
 ```
 
 ### Vision issue lifecycle
