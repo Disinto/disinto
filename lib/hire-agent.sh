@@ -13,7 +13,13 @@
 #
 # Usage:
 #   source "${FACTORY_ROOT}/lib/hire-agent.sh"
-#   disinto_hire_an_agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>]
+#   disinto_hire_an_agent <agent-name> <role> [--formula <path>] [--local-model <url>]
+#     [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>]
+#
+# Authentication precedence:
+#   1. --admin-token <pat>  (explicit flag)
+#   2. FORGE_ADMIN_PAT env var
+#   3. FORGE_ADMIN_PASS from env or .env (basic-auth flow)
 # =============================================================================
 set -euo pipefail
 
@@ -24,10 +30,11 @@ disinto_hire_an_agent() {
   local local_model=""
   local model_name=""
   local poll_interval=""
+  local admin_pat=""
 
   if [ -z "$agent_name" ] || [ -z "$role" ]; then
     echo "Error: agent-name and role required" >&2
-    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>]" >&2
+    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>]" >&2
     exit 1
   fi
 
@@ -72,6 +79,10 @@ disinto_hire_an_agent() {
         ;;
       --poll-interval)
         poll_interval="$2"
+        shift 2
+        ;;
+      --admin-token)
+        admin_pat="$2"
         shift 2
         ;;
       *)
@@ -119,37 +130,74 @@ disinto_hire_an_agent() {
 
   local user_pass=""
   local admin_pass=""
-
-  # Read admin password from .env for standalone runs (#184)
-  local env_file="${FACTORY_ROOT}/.env"
-  if [ -f "$env_file" ] && grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
-    admin_pass=$(grep '^FORGE_ADMIN_PASS=' "$env_file" | head -1 | cut -d= -f2-)
-  fi
-
-  # Get admin token early (needed for both user creation and password reset)
   local admin_user="disinto-admin"
-  admin_pass="${admin_pass:-admin}"
   local admin_token=""
-  local admin_token_name
-  admin_token_name="temp-token-$(date +%s)"
-  admin_token=$(curl -sf -X POST \
-    -u "${admin_user}:${admin_pass}" \
-    -H "Content-Type: application/json" \
-    "${forge_url}/api/v1/users/${admin_user}/tokens" \
-    -d "{\"name\":\"${admin_token_name}\",\"scopes\":[\"all\"]}" 2>/dev/null \
-    | jq -r '.sha1 // empty') || admin_token=""
-  if [ -z "$admin_token" ]; then
-    # Token might already exist — try listing
-    admin_token=$(curl -sf \
+  local use_pat=0
+
+  # ── Resolve admin credentials (precedence: flag > env var > password) ──
+
+  # 1. Explicit --admin-token flag
+  if [ -n "$admin_pat" ]; then
+    admin_token="$admin_pat"
+    use_pat=1
+    echo "Auth: PAT from --admin-token flag"
+  # 2. FORGE_ADMIN_PAT env var
+  elif [ -n "${FORGE_ADMIN_PAT:-}" ]; then
+    admin_token="${FORGE_ADMIN_PAT}"
+    use_pat=1
+    echo "Auth: PAT from FORGE_ADMIN_PAT env var"
+  else
+    # 3. Existing basic-auth flow (FORGE_ADMIN_PASS from env or .env)
+    local env_file="${FACTORY_ROOT}/.env"
+    if [ -f "$env_file" ] && grep -q '^FORGE_ADMIN_PASS=' "$env_file" 2>/dev/null; then
+      admin_pass=$(grep '^FORGE_ADMIN_PASS=' "$env_file" | head -1 | cut -d= -f2-)
+    fi
+    admin_pass="${admin_pass:-admin}"
+    local admin_token_name
+    admin_token_name="temp-token-$(date +%s)"
+    admin_token=$(curl -sf -X POST \
       -u "${admin_user}:${admin_pass}" \
-      "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
-      | jq -r '.[0].sha1 // empty') || admin_token=""
+      -H "Content-Type: application/json" \
+      "${forge_url}/api/v1/users/${admin_user}/tokens" \
+      -d "{\"name\":\"${admin_token_name}\",\"scopes\":[\"all\"]}" 2>/dev/null \
+      | jq -r '.sha1 // empty') || admin_token=""
+    if [ -z "$admin_token" ]; then
+      # Token might already exist — try listing
+      admin_token=$(curl -sf \
+        -u "${admin_user}:${admin_pass}" \
+        "${forge_url}/api/v1/users/${admin_user}/tokens" 2>/dev/null \
+        | jq -r '.[0].sha1 // empty') || admin_token=""
+    fi
   fi
+
   if [ -z "$admin_token" ]; then
     echo "Error: failed to obtain admin API token" >&2
     echo "  Cannot proceed without admin privileges" >&2
     exit 1
   fi
+
+  # ── Validate PAT scope (skip for basic-auth flow) ──
+  if [ "$use_pat" -eq 1 ]; then
+    local scope_code
+    scope_code=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
+      -H "Authorization: token ${admin_token}" \
+      "${forge_url}/api/v1/admin/users?limit=1" 2>/dev/null) || scope_code="000"
+    if [ "$scope_code" != "200" ]; then
+      echo "Error: --admin-token lacks admin scope (HTTP ${scope_code})" >&2
+      echo "  Ensure the PAT has admin/all scopes and try again." >&2
+      exit 1
+    fi
+    echo "Auth: admin scope verified"
+  fi
+
+  # ── Helper: build admin auth args (PAT or basic) ──
+  _admin_auth_args() {
+    if [ "$use_pat" -eq 1 ]; then
+      echo "-H \"Authorization: token ${admin_token}\""
+    else
+      echo "-u \"${admin_user}:${admin_pass}\""
+    fi
+  }
 
   if curl -sf --max-time 5 "${forge_url}/api/v1/users/${agent_name}" >/dev/null 2>&1; then
     echo "  User '${agent_name}' already exists"
@@ -165,11 +213,13 @@ disinto_hire_an_agent() {
       echo "  Warning: could not reset password for existing user" >&2
     fi
   else
-    # Create user using basic auth (admin token fallback would poison subsequent calls)
-    # Create the user
+    # Create user via admin API
     user_pass="agent-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)"
+    local auth_args
+    auth_args=$(_admin_auth_args)
+    # shellcheck disable=SC2086 # auth_args intentionally unquoted for arg splitting
     if curl -sf -X POST \
-      -u "${admin_user}:${admin_pass}" \
+      ${auth_args} \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/admin/users" \
       -d "{\"username\":\"${agent_name}\",\"password\":\"${user_pass}\",\"email\":\"${agent_name}@${PROJECT_NAME:-disinto}.local\",\"full_name\":\"${agent_name}\",\"active\":true,\"admin\":false,\"must_change_password\":false}" >/dev/null 2>&1; then
@@ -336,8 +386,11 @@ disinto_hire_an_agent() {
     # The admin API POST /api/v1/admin/users/{username}/repos explicitly creates in the
     # specified user's namespace.
     local create_output
+    local repo_auth_args
+    repo_auth_args=$(_admin_auth_args)
+    # shellcheck disable=SC2086 # auth_args intentionally unquoted for arg splitting
     create_output=$(curl -sf -X POST \
-      -u "${admin_user}:${admin_pass}" \
+      ${repo_auth_args} \
       -H "Content-Type: application/json" \
       "${forge_url}/api/v1/admin/users/${agent_name}/repos" \
       -d "{\"name\":\".profile\",\"description\":\"${agent_name}'s .profile repo\",\"private\":true,\"auto_init\":false}" 2>&1) || true

@@ -298,6 +298,18 @@ class ForgejoHandler(BaseHTTPRequestHandler):
         state["users"][username] = user
         json_response(self, 201, user)
 
+    def handle_GET_admin_users(self, query):
+        """GET /api/v1/admin/users — scope validation probe.
+
+        Returns 200 with an empty list if authenticated with a valid token.
+        Returns 401 if no valid authentication is provided.
+        This endpoint is used to verify that a PAT has admin scope.
+        """
+        if not require_token(self):
+            json_response(self, 401, {"message": "invalid authentication"})
+            return
+        json_response(self, 200, [])
+
     def handle_GET_users_username_tokens(self, query):
         """GET /api/v1/users/{username}/tokens"""
         # Support both token auth (for listing own tokens) and basic auth (for admin listing)

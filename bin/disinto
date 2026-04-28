@@ -70,7 +70,7 @@ Usage:
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
   disinto version                      Print the tree's VERSION file contents
-  disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
+  disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--admin-token <pat>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
   disinto role <subcommand>            Manage roles (enable/disable)
   disinto backup create <outfile>      Export factory state (issues + ops bundle)
@@ -2742,6 +2742,13 @@ disinto_shell() {
 
 # Creates a Forgejo user and .profile repo for an agent.
 # Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>]
+#   [--local-model <url>] [--model <name>] [--poll-interval <seconds>]
+#   [--admin-token <pat>]
+#
+# Authentication precedence (--admin-token > FORGE_ADMIN_PAT > FORGE_ADMIN_PASS):
+#   --admin-token <pat>  — use PAT directly (no password exchange)
+#   FORGE_ADMIN_PAT      — env var fallback for PAT auth
+#   FORGE_ADMIN_PASS     — legacy basic-auth flow (default)
 # disinto_hire_an_agent() is sourced from lib/hire-agent.sh
 
 # ── release command ───────────────────────────────────────────────────────────
