@@ -240,7 +240,9 @@ check_promote_tech_debt() {
 
   local candidates
   candidates=$(printf '%s' "$issues_json" | jq -c '
-    [.[] | select(.labels | any(.name == "tech-debt"))]
+    [.[] | select(.labels | any(.name == "tech-debt"))
+         | select(.labels | map(.name) | all(. != "backlog"))
+         | select(.labels | map(.name) | all(. != "underspecified"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
