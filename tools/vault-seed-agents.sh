@@ -40,7 +40,7 @@ TOKEN_BYTES=32   # 32 bytes → 64 hex chars
 PASS_BYTES=16    # 16 bytes → 32 hex chars
 
 # All bot roles seeded by this script.
-BOT_ROLES=(dev review gardener architect planner predictor supervisor vault)
+BOT_ROLES=(dev review gardener architect planner predictor supervisor vault filer)
 
 LOG_TAG="[vault-seed-agents]"
 log() { printf '%s %s\n' "$LOG_TAG" "$*"; }

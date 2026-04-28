@@ -1,0 +1,228 @@
+# formulas/file-subissues.toml — Fan out APPROVED architect pitch sub-issues
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"file-subissues","ops_pr":N,
+#    "ctx":{"pitch_body":"…","filer_block":"…"}}
+#
+# Goal: for one APPROVED architect-prefixed ops-repo PR, parse the
+# `<!-- filer:begin -->` ... `<!-- filer:end -->` block, POST each entry
+# as a project-repo issue with the `backlog` label, then PATCH the ops
+# PR body to append `## Filed: #N1 #N2 ...`. The architect's tracking
+# phase (#901) reads the marker on its next iteration and begins polling
+# sub-issue states.
+#
+# Identity: filer-bot — a dedicated forge user with issues:write on the
+# project repo and a write-permitted role on the ops repo (PR body
+# patch only). Token is exposed as $FORGE_FILER_TOKEN (vault-templated
+# via vault/policies/bot-filer.hcl).
+#
+# Idempotency:
+#   - Sentinel = presence of `## Filed:` on the PR body. classify.sh
+#     skips PRs that already carry the marker, so re-runs are no-ops.
+#   - Per-issue dedup: before POST, search project-repo issues for the
+#     exact title from filer:begin. If found, reuse the existing number
+#     in the marker. Guards against the POST-succeeded-but-PATCH-failed
+#     window in which a re-run would otherwise double-file.
+#   - The PATCH appends — it never overwrites prior content. If the
+#     marker is partially written from a prior failed run, the new run
+#     will detect the marker and exit early.
+#
+# Scope:
+#   - Writes to project repo: only the issue POSTs (one per filer entry).
+#   - Writes to ops repo: only the single PATCH that appends the marker.
+#   - No other side effects. No closures, no labels on the pitch PR
+#     beyond the body marker.
+
+name        = "file-subissues"
+description = "Fan out APPROVED architect pitch sub-issues to the project repo"
+version     = 1
+
+[[steps]]
+id    = "file"
+title = "Parse filer block, dedup-and-POST sub-issues, PATCH `## Filed:` marker"
+description = """
+You are filing sub-issues for exactly ONE approved architect pitch PR
+identified in the classification payload (field `ops_pr`). Do this in a
+single pass — no orchestration, no other PRs.
+
+The classification payload's `ctx` field contains:
+  - pitch_body:  the full ops-repo PR body (markdown)
+  - filer_block: the YAML-like content between `<!-- filer:begin -->`
+                 and `<!-- filer:end -->`, already extracted by classify.sh
+
+## 1. Pull inputs into shell variables and scratch files
+
+  OPS_PR=$(printf '%s' "$TASK_JSON" | jq -r '.ops_pr')
+  printf '%s' "$TASK_JSON" | jq -r '.ctx.pitch_body // ""' \\
+    > /tmp/file-subissues-${OPS_PR}.body
+  printf '%s' "$TASK_JSON" | jq -r '.ctx.filer_block // ""' \\
+    > /tmp/file-subissues-${OPS_PR}.block
+
+  if [ ! -s /tmp/file-subissues-${OPS_PR}.block ]; then
+    echo "ERROR: empty filer block for ops PR #${OPS_PR}; aborting"
+    exit 1
+  fi
+
+## 2. Defensive sentinel re-check
+
+classify.sh already skipped this PR if its body had a `## Filed:` marker.
+Re-check in case state moved between classify and dispatch:
+
+  if grep -qE '^## Filed:' /tmp/file-subissues-${OPS_PR}.body; then
+    echo "ACTION: skipping ops PR #${OPS_PR} — already filed"
+    exit 0
+  fi
+
+## 3. Parse the filer block into JSON
+
+The filer block is YAML-like:
+
+  - id: <kebab-case-id>
+    title: "<title>"
+    labels: [backlog]
+    depends_on: []
+    body: |
+      ## Goal
+      <multi-line body...>
+
+Reuse the parser from lib/sprint-filer.sh — it already handles this exact
+shape (the architect emits the same format that filer-bot historically
+consumed from merged sprint files):
+
+  source "$FACTORY_ROOT/lib/sprint-filer.sh"
+  ENTRIES_JSON=$(parse_subissue_entries < /tmp/file-subissues-${OPS_PR}.block)
+
+  if ! printf '%s' "$ENTRIES_JSON" | jq empty 2>/dev/null; then
+    echo "ERROR: filer block did not parse to valid JSON; aborting"
+    echo "---raw block---"
+    cat /tmp/file-subissues-${OPS_PR}.block
+    exit 1
+  fi
+
+  ENTRY_COUNT=$(printf '%s' "$ENTRIES_JSON" | jq 'length')
+  if [ "$ENTRY_COUNT" -eq 0 ]; then
+    echo "ERROR: filer block parsed to zero entries; aborting"
+    exit 1
+  fi
+
+## 4. Resolve project-repo `backlog` label id once
+
+  LABELS_JSON=$(curl -sf \\
+    -H "Authorization: token $FORGE_FILER_TOKEN" \\
+    "${FORGE_API}/labels" 2>/dev/null) || LABELS_JSON='[]'
+
+  BACKLOG_ID=$(printf '%s' "$LABELS_JSON" \\
+    | jq -r '.[] | select(.name == "backlog") | .id' | head -1)
+  if [ -z "$BACKLOG_ID" ]; then
+    echo "ERROR: project repo has no `backlog` label; aborting"
+    exit 1
+  fi
+
+## 5. Per-entry: dedup by title, POST if missing, accumulate numbers
+
+For each entry in ENTRIES_JSON, check whether an issue with the exact
+same title already exists on the project repo. If so, reuse the number
+in the `## Filed:` marker. Otherwise POST a new issue with the body
+verbatim from the filer block and the resolved `backlog` label id.
+
+The dedup pass uses a SINGLE GET of all project issues (any state) and
+greps in jq — saves N round-trips for N entries:
+
+  ALL_ISSUES_JSON=$(curl -sf \\
+    -H "Authorization: token $FORGE_FILER_TOKEN" \\
+    "${FORGE_API}/issues?state=all&type=issues&limit=50" 2>/dev/null) \\
+    || ALL_ISSUES_JSON='[]'
+
+  : > /tmp/file-subissues-${OPS_PR}.numbers   # accumulator for `## Filed:`
+  i=0
+  while [ "$i" -lt "$ENTRY_COUNT" ]; do
+    ENTRY=$(printf '%s' "$ENTRIES_JSON" | jq -c ".[$i]")
+    E_TITLE=$(printf '%s' "$ENTRY" | jq -r '.title')
+    E_BODY=$(printf '%s' "$ENTRY" | jq -r '.body')
+
+    # Title-based dedup — exact match.
+    EXISTING=$(printf '%s' "$ALL_ISSUES_JSON" \\
+      | jq -r --arg t "$E_TITLE" \\
+          '[.[] | select(.title == $t)] | first | .number // empty')
+
+    if [ -n "$EXISTING" ]; then
+      echo "INFO: entry $i title already exists as #${EXISTING}; reusing"
+      echo "$EXISTING" >> /tmp/file-subissues-${OPS_PR}.numbers
+      i=$((i + 1))
+      continue
+    fi
+
+    # Build the POST payload — title + body verbatim, only the `backlog`
+    # label is forced (per AC). Do NOT pass through the filer entry's
+    # labels list verbatim: the architect can request `priority` etc.,
+    # but the AC pins the filed issues to `backlog`.
+    PAYLOAD=$(jq -n \\
+      --arg title "$E_TITLE" \\
+      --arg body "$E_BODY" \\
+      --argjson labels "[${BACKLOG_ID}]" \\
+      '{title:$title, body:$body, labels:$labels}')
+
+    RESP=$(curl -sf \\
+      -X POST \\
+      -H "Authorization: token $FORGE_FILER_TOKEN" \\
+      -H "Content-Type: application/json" \\
+      "${FORGE_API}/issues" \\
+      -d "$PAYLOAD" 2>/dev/null) || {
+        echo "ERROR: POST failed for entry $i (title=$E_TITLE); aborting after $(wc -l < /tmp/file-subissues-${OPS_PR}.numbers) filed"
+        exit 1
+      }
+    NEW_NUM=$(printf '%s' "$RESP" | jq -r '.number // empty')
+    if [ -z "$NEW_NUM" ]; then
+      echo "ERROR: POST returned no .number for entry $i (resp=$RESP); aborting"
+      exit 1
+    fi
+    echo "ACTION: filed sub-issue #${NEW_NUM} — ${E_TITLE}"
+    echo "$NEW_NUM" >> /tmp/file-subissues-${OPS_PR}.numbers
+    i=$((i + 1))
+  done
+
+## 6. Append `## Filed:` marker to ops PR body
+
+Build a single space-separated `#N1 #N2 ...` list and PATCH the PR body.
+The new body is the original body + a blank line + the `## Filed:` line:
+
+  FILED_LIST=$(awk 'NF { printf "#%s ", $1 } END { printf "\\n" }' \\
+    /tmp/file-subissues-${OPS_PR}.numbers \\
+    | sed 's/  *$//')
+
+  {
+    cat /tmp/file-subissues-${OPS_PR}.body
+    echo
+    echo "## Filed: ${FILED_LIST}"
+  } > /tmp/file-subissues-${OPS_PR}.body.new
+
+  PATCH_PAYLOAD=$(jq -Rs '{body:.}' \\
+    < /tmp/file-subissues-${OPS_PR}.body.new)
+
+  PATCH_RESP=$(curl -sf \\
+    -X PATCH \\
+    -H "Authorization: token $FORGE_FILER_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${OPS_PR}" \\
+    -d "$PATCH_PAYLOAD" 2>/dev/null) || {
+      echo "ERROR: PATCH ops PR #${OPS_PR} body failed; sub-issues are filed but marker missing — next run will dedup by title"
+      exit 1
+    }
+
+  echo "ACTION: appended `## Filed:` marker to ops PR #${OPS_PR}"
+
+Done. Stop the session.
+
+## Output discipline
+
+- One ops PR per invocation. Never file for a second.
+- One PATCH on the ops repo (PR body). N POSTs on the project repo (one
+  per entry, minus dedup hits). No other writes anywhere.
+- The project-repo POSTs use the `backlog` label only — the architect's
+  filer block may request other labels, but AC pins the filed issues to
+  `backlog`.
+- The filer block parser lives in `lib/sprint-filer.sh` — do not
+  re-invent it. Source the lib and call `parse_subissue_entries`.
+- No JSON-schema declarations, no regex backreferences in your reasoning
+  — keep the structure plain prose + bash blocks (llama-friendly).
+"""
