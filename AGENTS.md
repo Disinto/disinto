@@ -77,7 +77,7 @@ bash dev/phase-test.sh
 |-------|-----------|------|---------|
 | Dev | `dev/` | Issue implementation | [AGENTS.md](dev/AGENTS.md) |
 | Review | `review/` | PR review | [AGENTS.md](review/AGENTS.md) |
-| Gardener | `gardener/` | Backlog grooming | [AGENTS.md](gardener/AGENTS.md) |
+| Gardener | `gardener/` | Backlog grooming (per-iteration, single task per cycle, llama-friendly — #872) | [AGENTS.md](gardener/AGENTS.md) |
 | Supervisor | `supervisor/` | Health monitoring | [AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure patterns | [AGENTS.md](predictor/AGENTS.md) |
