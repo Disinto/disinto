@@ -12,11 +12,12 @@
 #   source "$(dirname "$0")/../lib/gardener-edit.sh"
 #
 # Public surface:
-#   gardener_edit_body    <issue_num> <body_file>
-#   gardener_add_label    <issue_num> <label_name>   (idempotent)
-#   gardener_remove_label <issue_num> <label_name>   (idempotent)
-#   gardener_post_comment <issue_num> <body_file>
-#   gardener_close_issue  <issue_num>
+#   gardener_edit_body     <issue_num> <body_file>
+#   gardener_add_label     <issue_num> <label_name>   (idempotent)
+#   gardener_remove_label  <issue_num> <label_name>   (idempotent)
+#   gardener_post_comment  <issue_num> <body_file>
+#   gardener_close_issue   <issue_num>
+#   gardener_remove_assignee <issue_num>              (idempotent)
 #
 # Preconditions (callers — usually env.sh has already set them):
 #   FORGE_GARDENER_TOKEN — bot token (env.sh defaults this to FORGE_TOKEN)
@@ -321,6 +322,36 @@ gardener_close_issue() {
   _ge_journal "gardener_close_issue" "$issue" "${_GE_HTTP_CODE}" '{}'
   if ! _ge_is_2xx "${_GE_HTTP_CODE}"; then
     _ge_log "gardener_close_issue issue=${issue} http=${_GE_HTTP_CODE} body=${_GE_RESP_BODY}"
+    return 1
+  fi
+  return 0
+}
+
+# gardener_remove_assignee <issue_num>
+# PATCH /repos/.../issues/<n> with assignees:[]. Clears the assignee.
+# Idempotent: no-op (no API write) if the issue has no assignee.
+gardener_remove_assignee() {
+  local issue="${1:-}"
+  if [ -z "$issue" ]; then
+    _ge_log "gardener_remove_assignee: missing args (issue=$issue)"
+    return 2
+  fi
+  # Check if the issue already has no assignee (idempotent guard).
+  local assignee_login
+  _ge_split "$(_ge_curl GET "/issues/${issue}")"
+  if ! _ge_is_2xx "${_GE_HTTP_CODE}"; then
+    _ge_log "gardener_remove_assignee issue=${issue} GET failed http=${_GE_HTTP_CODE}"
+    return 1
+  fi
+  assignee_login=$(printf '%s' "$_GE_RESP_BODY" | jq -r '.assignee.login // empty' 2>/dev/null)
+  if [ -z "$assignee_login" ]; then
+    _ge_journal "gardener_remove_assignee" "$issue" "noop" '{}'
+    return 0
+  fi
+  _ge_split "$(_ge_curl PATCH "/issues/${issue}" --data '{"assignees":[]}')"
+  _ge_journal "gardener_remove_assignee" "$issue" "${_GE_HTTP_CODE}" '{}'
+  if ! _ge_is_2xx "${_GE_HTTP_CODE}"; then
+    _ge_log "gardener_remove_assignee issue=${issue} http=${_GE_HTTP_CODE} body=${_GE_RESP_BODY}"
     return 1
   fi
   return 0
