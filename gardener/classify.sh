@@ -7,14 +7,13 @@
 # deterministic.
 #
 # Priority (top to bottom):
-#   1. blocker-starving-the-factory — non-backlog dep of a backlog issue
-#   2. enrich-underspecified       — labeled underspecified with enough signal
-#   3. enrich-bug-report           — open unlabeled bug with reproduction steps
-#   4. promote-tech-debt           — tech-debt issue passing heuristic
-#   5. bundle-dust                 — dust group with >= 3 distinct issues
-#   6. agents-md-stale             — AGENTS.md watermark predates git log head
-#   7. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
-#   8. pitch-vision                — open vision issue with no architect pitch
+#   1. enrich-underspecified       — labeled underspecified with enough signal
+#   2. enrich-bug-report           — open unlabeled bug with reproduction steps
+#   3. promote-tech-debt           — tech-debt issue passing heuristic
+#   4. bundle-dust                 — dust group with >= 3 distinct issues
+#   5. agents-md-stale             — AGENTS.md watermark predates git log head
+#   6. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
+#   7. pitch-vision                — open vision issue with no architect pitch
 #
 # Usage:
 #   gardener/classify.sh [projects/disinto.toml]
@@ -62,78 +61,9 @@ fetch_open_issues() {
   forge_api_all "/issues?state=open"
 }
 
-# Extract dependency issue numbers from an issue body (inline with parse-deps.sh).
-extract_deps() {
-  local body="$1"
-  printf '%s' "$body" | awk '
-    BEGIN { IGNORECASE=1; capture=0 }
-    /^##? *(Depends on|Blocked by|Dependencies)/ { capture=1; next }
-    capture && /^##? / { capture=0 }
-    capture { print }
-  ' | grep -oP '#\K[0-9]+' || true
-}
-
 # ── Priority bucket checks ──────────────────────────────────────────────────
 
-# 1. blocker-starving-the-factory
-#    Find non-backlog issues that are dependencies of backlog issues.
-check_blocker_starving() {
-  local issues_json="$1"
-  local backlog_ids non_backlog_ids best_num="" best_time=""
-
-  # Collect IDs and bodies of backlog issues
-  backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels | any(.name == "backlog")) | .number] | .[]' 2>/dev/null) || backlog_ids=""
-  if [ -z "$backlog_ids" ]; then
-    return 0
-  fi
-
-  # Collect non-backlog issue IDs
-  non_backlog_ids=$(printf '%s' "$issues_json" | jq -r '[.[] | select(.labels | map(.name) | all(. != "backlog")) | .number] | .[]' 2>/dev/null) || non_backlog_ids=""
-  if [ -z "$non_backlog_ids" ]; then
-    return 0
-  fi
-
-  # For each backlog issue, check its deps against non-backlog set
-  while IFS= read -r bid; do
-    [ -z "$bid" ] && continue
-    # Get the body for this backlog issue
-    local bbody
-    bbody=$(printf '%s' "$issues_json" | jq -r --argjson n "$bid" \
-      '.[] | select(.number == $n) | .body // ""')
-
-    # Extract dependency numbers
-    local deps
-    deps=$(extract_deps "$bbody")
-    [ -z "$deps" ] && continue
-
-    while IFS= read -r dep; do
-      [ -z "$dep" ] && continue
-      # Check if this dep is a non-backlog issue
-      if printf '%s\n' "$non_backlog_ids" | grep -qx "$dep"; then
-        # Get the dep issue's updated_at timestamp
-        local dep_ts
-        dep_ts=$(printf '%s' "$issues_json" | jq -r --argjson n "$dep" \
-          '.[] | select(.number == $n) | .updated_at' 2>/dev/null) || continue
-        if [ -z "$best_time" ] || [[ "$dep_ts" > "$best_time" ]]; then
-          best_num="$dep"
-          best_time="$dep_ts"
-        fi
-      fi
-    done <<< "$deps"
-  done <<< "$backlog_ids"
-
-  if [ -n "$best_num" ]; then
-    local ctx
-    ctx=$(printf '%s' "$issues_json" | jq -c --argjson n "$best_num" \
-      '.[] | select(.number == $n) | {title, updated_at}')
-    printf '{"task":"blocker-starving-the-factory","issue":%s,"ctx":%s}\n' \
-      "$best_num" "$ctx"
-    return 0
-  fi
-  return 0
-}
-
-# 2. enrich-underspecified
+# 1. enrich-underspecified
 #    Issue labeled underspecified (or has had backlog stripped) with body
 #    containing enough signal to enrich (>= 100 chars of non-whitespace).
 check_enrich_underspecified() {
@@ -179,7 +109,7 @@ check_enrich_underspecified() {
   return 0
 }
 
-# 3. enrich-bug-report
+# 2. enrich-bug-report
 #    Open unlabeled issue describing a user-facing bug with reproduction steps.
 check_enrich_bug_report() {
   local issues_json="$1"
@@ -232,7 +162,7 @@ check_enrich_bug_report() {
   return 0
 }
 
-# 4. promote-tech-debt
+# 3. promote-tech-debt
 #    tech-debt issue passing impact/effort heuristic.
 check_promote_tech_debt() {
   local issues_json="$1"
@@ -282,7 +212,7 @@ check_promote_tech_debt() {
   return 0
 }
 
-# 5. bundle-dust
+# 4. bundle-dust
 #    dust group in gardener/dust.jsonl with >= 3 distinct issues.
 check_bundle_dust() {
   if [ ! -f "$DUST_FILE" ]; then
@@ -328,7 +258,7 @@ check_bundle_dust() {
   return 0
 }
 
-# 6. agents-md-stale
+# 5. agents-md-stale
 #    Any AGENTS.md whose watermark <!-- last-reviewed: <sha> --> predates
 #    git log head for its directory. Walks every AGENTS.md in the repo and
 #    surfaces the one with the oldest watermark relative to its directory's
@@ -392,7 +322,7 @@ check_agents_md_stale() {
   return 0
 }
 
-# 7. file-subissues
+# 6. file-subissues
 #    Open ops-repo PR with `architect:` title prefix that has been APPROVED
 #    via Forgejo review state and whose body lacks a `## Filed:` marker.
 #    Surfaces the pitch body and the parsed `<!-- filer:begin -->` ...
@@ -470,7 +400,7 @@ check_file_subissues() {
   return 0
 }
 
-# 8. pitch-vision
+# 7. pitch-vision
 #    Open vision issue with no open architect-prefixed PR and no merged
 #    sprint PR on the ops repo. Surfaces a curated codebase index by
 #    grepping vision keywords against AGENTS.md so the formula can load
@@ -620,50 +550,42 @@ main() {
   local issues_json
   issues_json=$(fetch_open_issues)
 
-  # Priority 1: blocker-starving-the-factory
-  local result
-  result=$(check_blocker_starving "$issues_json")
-  if [ -n "$result" ]; then
-    printf '%s\n' "$result"
-    exit 0
-  fi
-
-  # Priority 2: enrich-underspecified
+  # Priority 1: enrich-underspecified
   result=$(check_enrich_underspecified "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 3: enrich-bug-report
+  # Priority 2: enrich-bug-report
   result=$(check_enrich_bug_report "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 4: promote-tech-debt
+  # Priority 3: promote-tech-debt
   result=$(check_promote_tech_debt "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 5: bundle-dust
+  # Priority 4: bundle-dust
   result=$(check_bundle_dust)
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 6: agents-md-stale
+  # Priority 5: agents-md-stale
   result=$(check_agents_md_stale)
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0
   fi
 
-  # Priority 7: file-subissues — fan out APPROVED architect pitches first
+  # Priority 6: file-subissues — fan out APPROVED architect pitches first
   # so the project-repo work is unblocked before new pitches are generated.
   result=$(check_file_subissues)
   if [ -n "$result" ]; then
@@ -671,7 +593,7 @@ main() {
     exit 0
   fi
 
-  # Priority 8: pitch-vision
+  # Priority 7: pitch-vision
   result=$(check_pitch_vision "$issues_json")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
