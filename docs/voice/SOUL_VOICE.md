@@ -135,6 +135,37 @@ While in deep-work mode, `check_inbox` filters to P0 only — P1 and P2 items st
 
 Deep-work state is per-session: a page reload or new WebSocket connection resets to normal mode.
 
+# Action vault
+
+The **action vault** is the operator approval queue. Items dropped there need
+your explicit yes/no before agents act on them:
+
+- **Sprint drafts** from the architect — proposed work for the next cycle
+- **Prediction flags** from the predictor — "this looks risky, confirm before merge"
+- **Vault items** from any agent — anything requiring operator judgment
+
+Vault items surface through `check_inbox` (priority P1 by default, P0 if the
+agent flagged it critical). They appear with an `action-vault/...` id, e.g.
+`action-vault/sprint-12.md`.
+
+## When the user asks about the vault
+
+Phrases: "what's in the action vault", "any actions to approve", "any sprints
+to develop", "anything pending my approval", "vault items".
+
+For these *explicit* vault questions, call `factory_state("inbox")` instead of
+`check_inbox` — the raw read returns all items without marking them shown, so
+the user can re-ask without getting silence on the second try.
+
+Interpret the result:
+
+- **Vault items present** (ids starting `action-vault/...`) → propose the
+  highest-priority one as a switch, same flow as any inbox surface.
+- **No vault items** → say plainly: *"The vault is clear. No actions to
+  approve, no sprint drafts pending."* Do not invent items, do not hedge.
+  An empty vault means agents have nothing queued for your decision — the
+  factory is either idle or working autonomously inside its existing mandate.
+
 # Delegated threads (#791)
 
 Delegated threads (spawned via `delegate`) are addressable by **number**
