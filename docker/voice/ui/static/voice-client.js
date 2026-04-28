@@ -78,6 +78,8 @@
   // ── WebSocket plumbing ────────────────────────────────────────────────────
   let ws = null;
   let micVad = null;
+  // Expose mic VAD globally so PcmPlayer can pause/resume it during "speaking" state.
+  // (See PcmPlayer.enqueuePcm16 / src.onended for the pause/resume logic.)
   let player = null;
 
   function wsUrl() {
@@ -140,11 +142,28 @@
 
       this.activeSources++;
       setState("speaking", "Gemini is replying");
+      // Pause Silero VAD while Gemini is speaking. Without this, the
+      // assistant's audio output through speakers is picked up by the
+      // mic (Chrome's WebRTC echo canceller cannot see audio produced
+      // via a manual AudioContext, so echoCancellation does not apply).
+      // The result is VAD trapped in "speech" state — never fires
+      // onSpeechEnd, never sends end_of_turn, second user turn lost
+      // until stop/start cycle. Trade-off: loses barge-in (acceptable
+      // — barge-in is already broken via this echo path).
+      try { if (window.__micVad) window.__micVad.pause(); } catch (_) {}
       src.onended = () => {
         this.activeSources--;
         if (this.activeSources <= 0) {
           this.activeSources = 0;
           setState("listening", "listening for speech");
+          // Resume mic with a 250ms grace period for the echo tail to
+          // settle. Without the delay, VAD picks up the last fragment
+          // of Gemini's audio and fires onSpeechStart immediately.
+          try {
+            if (window.__micVad) {
+              setTimeout(() => { try { window.__micVad?.start(); } catch (_) {} }, 250);
+            }
+          } catch (_) {}
         }
       };
     }
@@ -225,7 +244,7 @@
     const onnxRuntimeBasePath =
       "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/";
 
-    micVad = await vad.MicVAD.new({
+    micVad = window.__micVad = await vad.MicVAD.new({
       // Asset paths for the WASM worker + Silero model (.onnx). Mirrors
       // the CDN URLs of the script tags in index.html so the runtime
       // pulls everything from the same pinned version set.
@@ -279,6 +298,7 @@
       try { micVad.pause(); } catch (_) { /* ignore */ }
       try { await micVad.destroy(); } catch (_) { /* ignore */ }
       micVad = null;
+      window.__micVad = null;
     }
   }
 
