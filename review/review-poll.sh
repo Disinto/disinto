@@ -122,13 +122,9 @@ if [ -n "$REVIEW_SIDS" ]; then
     current_sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')
     if [ -z "$current_sha" ] || [ "$current_sha" = "$reviewed_sha" ]; then continue; fi
 
-    ci_state=$(ci_commit_status "$current_sha")
-
-    if ! ci_passed "$ci_state"; then
-      if ci_required_for_pr "$pr_num"; then
-        log "  #${pr_num} awaiting_changes: new SHA ${current_sha:0:7} CI=${ci_state}, waiting"
-        continue
-      fi
+    if ! ci_required_passed "$current_sha"; then
+      log "  #${pr_num} awaiting_changes: new SHA ${current_sha:0:7} required CI not green, waiting"
+      continue
     fi
 
     log "  #${pr_num} re-review: new commits (${reviewed_sha:0:7}→${current_sha:0:7})"
@@ -148,16 +144,14 @@ while IFS= read -r line; do
   PR_NUM=$(echo "$line" | awk '{print $1}')
   PR_SHA=$(echo "$line" | awk '{print $2}')
 
-  CI_STATE=$(ci_commit_status "$PR_SHA")
-
-  # Skip if CI is running/failed. Allow "success", no CI configured, or non-code PRs
-  if ! ci_passed "$CI_STATE"; then
-    if ci_required_for_pr "$PR_NUM"; then
-      log "  #${PR_NUM} CI=${CI_STATE}, skip"
-      SKIPPED=$((SKIPPED + 1))
-      continue
-    fi
-    log "  #${PR_NUM} CI=${CI_STATE} but no code files — proceeding"
+  # Gate only on required pipelines (#920). When branch protection declares
+  # required status check contexts, wait for those to pass; optional workflows
+  # that fail or are stuck do not block the review. When no required contexts
+  # are configured, proceed without CI gating.
+  if ! ci_required_passed "$PR_SHA"; then
+    log "  #${PR_NUM} required CI not green, skip"
+    SKIPPED=$((SKIPPED + 1))
+    continue
   fi
 
   # Check formal forge reviews (not comment markers)

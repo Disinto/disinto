@@ -140,9 +140,14 @@ fi
 # =============================================================================
 CI_STATE=$(ci_commit_status "$PR_SHA")
 CI_NOTE=""
+# Gate only on required pipelines (#920). Optional/stuck workflows do not block.
+if ! ci_required_passed "$PR_SHA"; then
+  log "SKIP: required CI not green (CI=${CI_STATE})"
+  rm -f "$LOCKFILE"
+  exit 0
+fi
 if ! ci_passed "$CI_STATE"; then
-  ci_required_for_pr "$PR_NUMBER" && { log "SKIP: CI=${CI_STATE}"; rm -f "$LOCKFILE"; exit 0; }
-  CI_NOTE=" (not required — non-code PR)"
+  CI_NOTE=" (optional checks not green; required passed)"
 fi
 
 # =============================================================================

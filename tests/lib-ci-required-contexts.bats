@@ -231,3 +231,62 @@ setup() {
   # Falls back to .state from combined endpoint → "pending"
   [[ "$output" == "pending" ]]
 }
+
+# ── ci_required_passed (#920) ────────────────────────────────────────────────
+
+@test "ci_required_passed returns 0 when required ci passes (optional pending)" {
+  # Default mocks: "ci" required + success, "edge-subpath" optional + pending
+  run ci_required_passed "abc123"
+  [ "$status" -eq 0 ]
+}
+
+@test "ci_required_passed returns 1 when required ci fails (optional success)" {
+  export MOCK_STATUSES='[
+    {"id":1,"context":"ci","status":"failure","created_at":"2026-01-01T00:00:00Z"},
+    {"id":2,"context":"edge-subpath","status":"success","created_at":"2026-01-01T00:00:01Z"}
+  ]'
+  unset _CI_REQUIRED_CONTEXTS
+  run ci_required_passed "abc123"
+  [ "$status" -ne 0 ]
+}
+
+@test "ci_required_passed returns 1 when required ci pending" {
+  export MOCK_STATUSES='[
+    {"id":1,"context":"ci","status":"pending","created_at":"2026-01-01T00:00:00Z"},
+    {"id":2,"context":"edge-subpath","status":"success","created_at":"2026-01-01T00:00:01Z"}
+  ]'
+  unset _CI_REQUIRED_CONTEXTS
+  run ci_required_passed "abc123"
+  [ "$status" -ne 0 ]
+}
+
+@test "ci_required_passed returns 0 when no required contexts configured" {
+  # No required contexts → reviewer should not be gated on CI at all
+  export MOCK_BP_ENABLED="false"
+  unset _CI_REQUIRED_CONTEXTS
+  run ci_required_passed "abc123"
+  [ "$status" -eq 0 ]
+}
+
+@test "ci_required_passed returns 0 when all multi-context required pass (optional fails)" {
+  export MOCK_BP_CONTEXTS='["ci","lint"]'
+  export MOCK_STATUSES='[
+    {"id":1,"context":"ci","status":"success","created_at":"2026-01-01T00:00:00Z"},
+    {"id":2,"context":"lint","status":"success","created_at":"2026-01-01T00:00:01Z"},
+    {"id":3,"context":"edge-subpath","status":"failure","created_at":"2026-01-01T00:00:02Z"}
+  ]'
+  unset _CI_REQUIRED_CONTEXTS
+  run ci_required_passed "abc123"
+  [ "$status" -eq 0 ]
+}
+
+@test "ci_required_passed returns 1 when one of multi-context required fails" {
+  export MOCK_BP_CONTEXTS='["ci","lint"]'
+  export MOCK_STATUSES='[
+    {"id":1,"context":"ci","status":"success","created_at":"2026-01-01T00:00:00Z"},
+    {"id":2,"context":"lint","status":"error","created_at":"2026-01-01T00:00:01Z"}
+  ]'
+  unset _CI_REQUIRED_CONTEXTS
+  run ci_required_passed "abc123"
+  [ "$status" -ne 0 ]
+}
