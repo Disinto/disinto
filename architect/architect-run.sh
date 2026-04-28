@@ -54,8 +54,21 @@ memory_guard 2000
 
 log "--- Architect run start ---"
 
+# ── Scratch worktree ──────────────────────────────────────────────────────
+WORKTREE="/tmp/${PROJECT_NAME}-architect-run"
+
+# Cleanup worktree (and claude cache) on exit so re-runs get a fresh checkout
+trap 'worktree_cleanup "$WORKTREE" 2>/dev/null || true' EXIT
+
 cd "$PROJECT_REPO_ROOT"
-resolve_forge_remote
+if [ -z "${FORGE_REMOTE:-}" ]; then
+  resolve_forge_remote
+fi
+git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
+worktree_cleanup "$WORKTREE" 2>/dev/null || true
+git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null || {
+  log "WARNING: worktree add failed — q_and_a/tracking opus dispatch will fail"
+}
 
 # ── Resolve agent identity ──────────────────────────────────────────────
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
@@ -346,7 +359,11 @@ _PROMPT_EOF_
   )
 
   # Run opus session
-  agent_run --worktree "/tmp/${PROJECT_NAME}-architect-run" "$prompt"
+  agent_run --worktree "$WORKTREE" "$prompt" || {
+    log "PR #${pr}: opus q_and_a FAILED (exit $?)"
+    _OPUS_DISPATCH_FAILED=true
+    return 1
+  }
   log "opus q_and_a session complete"
 }
 
@@ -465,7 +482,11 @@ ${PROMPT_FOOTER}
 _PROMPT_EOF_
   )
 
-  agent_run --worktree "/tmp/${PROJECT_NAME}-architect-run" "$prompt"
+  agent_run --worktree "$WORKTREE" "$prompt" || {
+    log "PR #${pr}: opus tracking digest FAILED (exit $?)"
+    _OPUS_DISPATCH_FAILED=true
+    return 1
+  }
   log "opus tracking digest complete"
 }
 
@@ -504,6 +525,9 @@ check_architect_issue_filing() {
 }
 
 # ── Main: single linear flow ───────────────────────────────────────────
+
+# Track whether any opus dispatch failed (prevents silent marker advancement)
+_OPUS_DISPATCH_FAILED=false
 
 # 1. List open architect PRs sorted by last-seen (round-robin)
 pr_list=$(list_architect_prs_sorted)
@@ -557,7 +581,7 @@ elif has_approved_review "$PR_NUMBER"; then
       dispatch_mergeable "$PR_NUMBER" "$PR_BODY"
     else
       log "PR #${PR_NUMBER}: approved + some pending → tracking"
-      dispatch_tracking "$PR_NUMBER" "$PR_BODY"
+      dispatch_tracking "$PR_NUMBER" "$PR_BODY" || true
     fi
   else
     log "PR #${PR_NUMBER}: approved, no filed marker → approved_idle"
@@ -566,14 +590,19 @@ elif has_approved_review "$PR_NUMBER"; then
 else
   # [q_and_a] — check for engagement
   log "PR #${PR_NUMBER}: q_and_a state"
-  dispatch_q_and_a "$PR_NUMBER" "$PR_BODY" "$LAST_SEEN"
+  dispatch_q_and_a "$PR_NUMBER" "$PR_BODY" "$LAST_SEEN" || true
 fi
 
-# 5. Update last-seen marker (always, whether work happened or not)
-UPDATED_BODY=$(update_last_seen "$PR_BODY" "$NOW_ISO")
-if [ -n "$UPDATED_BODY" ] && [ "$UPDATED_BODY" != "$PR_BODY" ]; then
-  patch_pr_body "$PR_NUMBER" "$UPDATED_BODY"
-  log "Updated last-seen marker on PR #${PR_NUMBER}"
+# 5. Update last-seen marker only if opus dispatch succeeded
+#    (failed dispatches must be re-detected on the next cycle)
+if [ "$_OPUS_DISPATCH_FAILED" = false ]; then
+  UPDATED_BODY=$(update_last_seen "$PR_BODY" "$NOW_ISO")
+  if [ -n "$UPDATED_BODY" ] && [ "$UPDATED_BODY" != "$PR_BODY" ]; then
+    patch_pr_body "$PR_NUMBER" "$UPDATED_BODY"
+    log "Updated last-seen marker on PR #${PR_NUMBER}"
+  fi
+else
+  log "PR #${PR_NUMBER}: opus dispatch failed — skipping marker advance"
 fi
 
 # ── Regression guard ───────────────────────────────────────────────────
