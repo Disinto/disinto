@@ -1,0 +1,243 @@
+# formulas/blocker-starving-the-factory.toml — Single-dep starvation unblock
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"blocker-starving-the-factory","issue":N,"ctx":{"title":"…","updated_at":"…"}}
+#
+# Context: classify.sh priority 1 surfaces a NON-backlog issue that a backlog
+# issue depends on. No agent will pick the dep up (it is not in the backlog
+# and not in progress) so the parent backlog issue starves. This formula
+# unblocks the chain by classifying the dep and either adding `backlog` so
+# dev-poll can claim it, asking the operator for enrichment, or flagging the
+# parent as `blocked` when the dep is an external (non-factory) blocker.
+#
+# On success: dep gets one of `backlog` / `underspecified` / (parent gets
+# `blocked` + a starvation comment). All edits go through lib/gardener-edit.sh
+# helpers and are journaled — no pending-actions.json.
+#
+# Idempotency: re-running on the same dep within the same gardener cycle is a
+# no-op because the helpers are idempotent AND classify.sh stops surfacing the
+# dep once it carries `backlog` / `in-progress` / `blocked` (already-handled
+# labels are filtered upstream). The formula itself trusts classify's pick.
+
+name        = "blocker-starving-the-factory"
+description = "Unblock one non-backlog dep that a backlog issue depends on"
+version     = 1
+
+[[steps]]
+id    = "unblock"
+title = "Fetch dep, decide path (backlog vs enrich vs blocked-parent), apply via helpers"
+description = """
+You are unblocking exactly ONE starving dependency identified in the
+classification payload (field `issue`). Do this in a single pass — no
+orchestration, no other issues.
+
+The dep is a non-backlog issue that a backlog issue depends on. classify.sh
+has already verified that at least one open backlog issue references this
+dep number in a `## Dependencies` / `## Depends on` / `## Blocked by`
+section. Your job: pick the right intervention so the chain unstarves.
+
+## 1. Fetch the dep
+
+Read the classification payload's `issue` number, then fetch the full issue
+plus its labels:
+
+  ISSUE=<the .issue field from the payload>
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE" > /tmp/starve-${ISSUE}.json
+  TITLE=$(jq -r .title /tmp/starve-${ISSUE}.json)
+  BODY=$(jq -r '.body // ""' /tmp/starve-${ISSUE}.json)
+  LABELS=$(jq -r '[.labels[].name] | join(",")' /tmp/starve-${ISSUE}.json)
+
+  printf '%s' "$BODY" > /tmp/starve-${ISSUE}.body.orig
+
+## 2. Already-handled guard (idempotent no-op)
+
+If any of the following labels are already on the dep, someone (or a prior
+gardener tick) is already handling it. Log and stop:
+
+  - `backlog`            (queued for implementation)
+  - `in-progress`        (dev-agent claimed)
+  - `blocked`            (already flagged)
+  - `awaiting-live-verification`  (post-merge verification pending)
+  - `formula`            (dispatcher-owned operational task)
+
+Check:
+
+  for handled in backlog in-progress blocked awaiting-live-verification formula; do
+    if printf ',%s,' "$LABELS" | grep -q ",${handled},"; then
+      echo "ACTION: noop on #$ISSUE — already labeled '${handled}'"
+      exit 0
+    fi
+  done
+
+## 3. Find the parent (the backlog issue that depends on this dep)
+
+Re-derive the parent so its number is available for step 5 (the
+blocked-parent path) and for the journal log. Fetch open backlog issues
+and search their dependency sections for a `#$ISSUE` reference:
+
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues?state=open&type=issues&limit=50" \\
+    > /tmp/starve-${ISSUE}.allopen.json
+
+  PARENT=""
+  # Walk every open issue carrying `backlog`. For each, scan its body's
+  # dependency section for `#$ISSUE`. First match wins.
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    PBODY=$(jq -r --argjson n "$p" \\
+      '.[] | select(.number == $n) | .body // ""' \\
+      /tmp/starve-${ISSUE}.allopen.json)
+    # Extract the deps section the same way lib/parse-deps.sh / classify.sh do.
+    DEPS=$(printf '%s' "$PBODY" | awk '
+      BEGIN { IGNORECASE=1; capture=0 }
+      /^##? *(Depends on|Blocked by|Dependencies)/ { capture=1; next }
+      capture && /^##? / { capture=0 }
+      capture { print }
+    ' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+    if printf '%s\\n' "$DEPS" | grep -qx "$ISSUE"; then
+      PARENT="$p"
+      break
+    fi
+  done < <(jq -r '.[] | select(.labels | any(.name == "backlog")) | .number' \\
+            /tmp/starve-${ISSUE}.allopen.json)
+
+If no parent is found (race: parent moved to in-progress between classify
+and now), log and stop — the starvation has resolved itself:
+
+  if [ -z "$PARENT" ]; then
+    echo "ACTION: noop on #$ISSUE — no backlog parent depends on it now"
+    exit 0
+  fi
+
+## 4. Decide: backlog-ready vs too-thin vs external-blocker
+
+Apply these heuristics in order and pick the FIRST that matches:
+
+### 4a. External blocker (parent path)
+
+The dep is an external blocker if the title or body matches any of:
+  - mentions "waiting on" / "blocked by" / "depends on infra" / "external"
+  - is a `vision`-labeled goal (factory cannot resolve a vision via dev-poll)
+  - mentions a third-party service the factory cannot mutate (e.g. "AWS support",
+    "Forgejo upstream bug", "Cloudflare", "DNS provider")
+
+Quick test:
+
+  EXTERNAL=false
+  CHECK=$(printf '%s\\n%s' "$TITLE" "$BODY" | tr '[:upper:]' '[:lower:]')
+  if printf '%s' "$CHECK" | grep -qE '(waiting on|blocked by external|depends on infra|third[- ]party|forgejo upstream|aws support|dns provider|cloudflare)'; then
+    EXTERNAL=true
+  fi
+  if printf ',%s,' "$LABELS" | grep -q ',vision,'; then
+    EXTERNAL=true
+  fi
+
+If EXTERNAL is true: go to step 5 (blocked-parent path).
+
+### 4b. Body has enough signal → promote to backlog
+
+The dep is BACKLOG-READY if the body has BOTH:
+  - at least 5 non-blank lines, AND
+  - at least one concrete signal: a path like `dir/file.ext`, a backtick
+    symbol, a URL, an error string, or a numbered/bulleted repro step.
+
+Test:
+
+  NONBLANK=$(printf '%s' "$BODY" | grep -cE '\\S' || echo 0)
+  SIGNAL=false
+  if printf '%s' "$BODY" | grep -qE '`[^`]+`|https?://|[a-zA-Z_./-]+\\.(sh|py|js|ts|toml|md|hcl|yml|yaml|json|rs|go)|^[[:space:]]*[0-9]+\\.|^[[:space:]]*[-*+] '; then
+    SIGNAL=true
+  fi
+
+If NONBLANK >= 5 AND SIGNAL = true: go to step 6 (backlog path).
+
+### 4c. Body too thin → ask operator for enrichment
+
+Otherwise (not external, not backlog-ready): go to step 7 (enrich path).
+
+## 5. External-blocker path: flag the parent
+
+Post a starvation comment on the parent backlog issue and add `blocked` to
+it so dev-poll skips it until the human resolves the dep:
+
+  cat > /tmp/starve-${ISSUE}.parent-comment <<EOF
+  This issue is **starving on #${ISSUE}** ("${TITLE}").
+
+  The gardener detected that #${ISSUE} is a dependency of this issue but is
+  not itself in the backlog, in-progress, or blocked — and its body suggests
+  an external blocker the factory cannot resolve autonomously (third-party
+  service, infra dependency, or a vision goal).
+
+  Marking this parent as \\`blocked\\` until #${ISSUE} is unblocked. Once the
+  external blocker is resolved, remove \\`blocked\\` and the gardener will
+  re-pick this issue on its next pass.
+  EOF
+
+  gardener_post_comment "$PARENT" /tmp/starve-${ISSUE}.parent-comment || exit 1
+  gardener_add_label    "$PARENT" blocked                             || exit 1
+
+  echo "ACTION: flagged parent #$PARENT as blocked — external dep #$ISSUE ($TITLE)"
+  # Done. Stop the session.
+  exit 0
+
+## 6. Backlog path: promote the dep so dev-poll can claim it
+
+Post a brief comment recording why we promoted, then add `backlog`:
+
+  cat > /tmp/starve-${ISSUE}.promote-comment <<EOF
+  Adding \\`backlog\\` so dev-poll can claim this issue.
+
+  **Why now**: #${PARENT} depends on this issue but it was not in the
+  backlog, blocking the parent from making progress (gardener priority-1
+  starving-the-factory check). The body has enough signal (affected paths
+  / acceptance criteria / repro steps) for a dev-agent to pick it up.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/starve-${ISSUE}.promote-comment || exit 1
+  gardener_add_label    "$ISSUE" backlog                              || exit 1
+
+  echo "ACTION: promoted #$ISSUE to backlog — unblocks parent #$PARENT"
+  # Done. Stop the session.
+  exit 0
+
+## 7. Enrich path: ask operator to fill in details
+
+The body is too thin to promote safely. Post a comment explaining what the
+issue needs and add `underspecified` so the next gardener tick (priority 2,
+enrich-underspecified) can attempt to enrich it once the operator adds
+content:
+
+  cat > /tmp/starve-${ISSUE}.enrich-comment <<EOF
+  This issue blocks #${PARENT} but its body lacks enough signal for the
+  factory to act on it autonomously. Please add:
+
+  - **Affected files** — concrete paths (e.g. \\`lib/foo.sh\\`,
+    \\`dev/dev-poll.sh\\`) the work would touch
+  - **Acceptance criteria** — 2–5 verifiable \\`- [ ]\\` checkboxes describing
+    what "done" looks like (one observable outcome per checkbox)
+
+  Once added, the gardener will re-pick this on its next pass and promote
+  it to \\`backlog\\` so dev-poll can claim it. Until then, #${PARENT}
+  cannot make progress.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/starve-${ISSUE}.enrich-comment || exit 1
+  gardener_add_label    "$ISSUE" underspecified                     || exit 1
+
+  echo "ACTION: requested enrichment on #$ISSUE — body too thin to promote (parent #$PARENT)"
+  # Done. Stop the session.
+  exit 0
+
+## Output discipline
+
+- One pass only. Do not loop, do not pick up a second dep, do not file
+  vault items. The gardener step driver runs ONE task per invocation.
+- Pick exactly one of the three paths (5, 6, or 7) and exit cleanly.
+- Every repo edit goes through the four exported helpers
+  (`gardener_edit_body`, `gardener_add_label`, `gardener_remove_label`,
+  `gardener_post_comment`) — never PATCH issues directly via curl, so the
+  audit journal stays complete.
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+"""
