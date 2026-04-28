@@ -1,0 +1,312 @@
+# =============================================================================
+# .woodpecker/acceptance-tests.yml — post-merge acceptance verification on the
+# live box.
+#
+# Closes the gap that #851 calls out: agents pass paper acceptance criteria,
+# the merge lands, and only on the *next* sprint do we discover the change
+# never worked end-to-end on the live data path. This pipeline runs on every
+# `push` to `main`; for each issue the merge closes, it executes
+# `tests/acceptance/issue-<N>.sh` on the live box and reports back.
+#
+# Pipeline outline:
+#   1. detect-changes      — figure out whether the merge touched runtime
+#                              code (edge / voice / chat / snapshot / nomad
+#                              jobs). Sets a flag for step 2.
+#   2. rebuild-and-deploy  — (conditional) `docker build` the local image(s)
+#                              and `nomad job run` the affected jobspec; poll
+#                              `nomad job status` until the new alloc is
+#                              healthy, ≤120s. Failure here aborts the rest
+#                              of the pipeline.
+#   3. discover-closed     — parse the merge commit message + the closing
+#                              PR's body and emit the list of closed-issue
+#                              numbers (`tools/discover-closed-issues.sh`).
+#   4. run-acceptance      — for each issue: run `tools/run-acceptance.sh
+#                              --format json <N>` and post a result-comment
+#                              via `tools/comment-on-issue.sh`. Manage the
+#                              `awaiting-live-verification` label and reopen
+#                              on failure.
+#   5. summary             — collapse the per-issue outcomes into a single
+#                              comment on the merge commit.
+#
+# Concurrency:
+#   Two pushes to `main` arriving back-to-back must NOT race the deploy step
+#   (the second deploy could land on a half-spawned alloc). Woodpecker has
+#   no first-class workflow lock, so we serialise via `flock` against a
+#   well-known lock file on the runner host. The runner *must* be the
+#   disinto-nomad-box (so the lock file is shared); enforced via labels
+#   below. (When #786 lands a real CI rebuild pipeline, fold this deploy
+#   step into it and drop the duplication.)
+#
+# Secret:
+#   FACTORY_FORGE_PAT — same secret already used by publish-images.yml.
+#   PAT must carry write:issues so we can post comments, set/clear labels,
+#   and reopen issues that fail their acceptance test. If the existing PAT
+#   lacks that scope, broaden it (a separate bot account is overkill for v1).
+# =============================================================================
+
+when:
+  - event: push
+    branch: main
+
+# Pipeline-level timeout is generous: deploy + N acceptance tests can be slow.
+timeout: 30m
+
+# Pin the workflow to the live runner. Acceptance tests query the live box
+# directly (forge, nomad, snapshot state files at /srv/...), and the deploy
+# step needs the host's docker daemon + nomad CLI. The runner host is also
+# where the flock file lives.
+labels:
+  host: disinto-nomad-box
+
+# Authenticated clone — same shape as ci.yml. Forgejo requires sign-in.
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - |
+        # depth 2 (not 1) so the detect-changes step can `git diff HEAD^..HEAD`
+        # to decide whether the merge touched runtime paths.
+        if [ -n "${FORGE_TOKEN:-}" ]; then
+          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+          git clone --depth 2 "$AUTH_URL" .
+        else
+          git clone --depth 2 "$CI_REPO_CLONE_URL" .
+        fi
+      - git fetch --depth 2 origin "$CI_COMMIT_REF"
+      - git checkout FETCH_HEAD
+
+steps:
+  # ── 1. Decide whether a redeploy is needed ────────────────────────────────
+  # A merge that only touches docs / tests / formulas does not need to
+  # rebuild the edge image or restart the nomad job. Compare the merge
+  # commit's diff against its first parent and look for paths that *do*
+  # affect the live runtime. The decision is written to a workspace file
+  # so subsequent steps can read it without re-running git.
+  - name: detect-changes
+    image: alpine/git
+    commands:
+      - |
+        set -e
+        mkdir -p .ci
+        if git rev-parse HEAD^ >/dev/null 2>&1; then
+          changed="$(git diff --name-only HEAD^..HEAD)"
+        else
+          # Initial commit (no parent). Treat as "no runtime change".
+          changed=""
+        fi
+        echo "$changed" > .ci/changed-paths.txt
+        if echo "$changed" | grep -E \
+             '^(docker/(edge|voice|chat)/|bin/snapshot-|bin/threads\.sh$|nomad/jobs/edge\.hcl$)' \
+             >/dev/null; then
+          echo "yes" > .ci/needs-redeploy
+          echo "detect-changes: redeploy required (matched runtime paths)"
+        else
+          echo "no" > .ci/needs-redeploy
+          echo "detect-changes: docs/tests-only merge, skipping redeploy"
+        fi
+
+  # ── 2. Rebuild the edge image and re-launch the nomad job ─────────────────
+  # Runs on the host's docker + nomad CLIs (mounted from the runner). The
+  # flock guarantees that two simultaneous merges to main do not stomp on
+  # each other's deploy: the second pipeline blocks here until the first
+  # releases the lock. -w 600 caps wait at 10 minutes so a stuck pipeline
+  # does not block the queue indefinitely.
+  #
+  # Health-poll loop: `nomad job status edge` reports per-allocation health.
+  # We loop ≤24 times at 5s intervals (=120s) waiting for the latest version's
+  # allocs to be `running`. This is intentionally simple — the script is
+  # short enough to read; a more sophisticated check belongs in the
+  # nomad-cli wrapper (see #786 plan).
+  - name: rebuild-and-deploy
+    image: docker:24-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/disinto:/opt/disinto:ro
+      - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
+    commands:
+      - |
+        set -e
+        if [ "$(cat .ci/needs-redeploy 2>/dev/null || echo no)" != "yes" ]; then
+          echo "rebuild-and-deploy: skip (no runtime paths changed)"
+          exit 0
+        fi
+        apk add --no-cache util-linux jq curl bash
+        # Serialize across concurrent pipelines. -w 600 = 10-minute cap.
+        # mkdir MUST come before the `exec 9>` redirection — if the directory
+        # is missing, opening the fd fails and `set -e` aborts the step.
+        mkdir -p /var/lib/disinto/ci-locks
+        exec 9>/var/lib/disinto/ci-locks/acceptance-deploy.lock
+        flock -w 600 9 || { echo "could not acquire deploy lock"; exit 1; }
+
+        echo "rebuild-and-deploy: docker build disinto/edge:local"
+        docker build -t disinto/edge:local -f docker/edge/Dockerfile .
+
+        echo "rebuild-and-deploy: nomad job run /opt/disinto/nomad/jobs/edge.hcl"
+        nomad job run /opt/disinto/nomad/jobs/edge.hcl
+
+        # Poll until the new alloc is healthy, ≤120s.
+        deadline=$(( $(date +%s) + 120 ))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          status_json="$(nomad job status -json edge 2>/dev/null || echo '{}')"
+          # All the latest-version allocs must have ClientStatus=running.
+          # Two-pass: first compute the max JobVersion across all allocs, then
+          # filter for unhealthy allocs at that version. Doing it in one pass
+          # via `.[0].JobVersion` would compare against the first array element,
+          # not the latest deployment, and silently mis-report health.
+          unhealthy="$(echo "$status_json" \
+            | jq -r '(.Allocations // []) as $a
+                     | (($a | map(.JobVersion // 0) | max) // 0) as $v
+                     | $a
+                     | map(select((.JobVersion // 0) == $v
+                                  and .ClientStatus != "running"))
+                     | length')"
+          if [ "${unhealthy:-1}" = "0" ]; then
+            echo "rebuild-and-deploy: edge job healthy"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "rebuild-and-deploy: edge job not healthy after 120s" >&2
+        nomad job status edge >&2 || true
+        exit 1
+
+  # ── 3. Identify which issues this merge closed ────────────────────────────
+  # Builds the list of closed-issue numbers from two sources:
+  #   a. the merge commit message (subject + body),
+  #   b. the closing PR's body, fetched via the Forgejo API.
+  # The PR number is extracted from the merge subject `Merge pull request
+  # 'X' (#N) from ... into main`. If we can't find a PR number (e.g. a
+  # direct push to main, which the human policy forbids but the pipeline
+  # tolerates), we fall back to (a) only.
+  - name: discover-closed
+    image: alpine:3
+    secrets: [FACTORY_FORGE_PAT]
+    commands:
+      - apk add --no-cache bash curl jq grep git perl
+      - |
+        set -e
+        msg="$(git log -1 --format=%B HEAD)"
+        printf '%s\n' "$msg" > .ci/merge-msg.txt
+
+        # Pull the PR number out of the merge subject if present.
+        pr="$(printf '%s' "$msg" | head -n1 | grep -oP '\(#\K[0-9]+(?=\))' | head -n1 || true)"
+        body=""
+        if [ -n "$pr" ] && [ -n "${FACTORY_FORGE_PAT:-}" ] \
+           && [ -n "${FORGE_URL:-}" ] && [ -n "${FORGE_REPO:-}" ]; then
+          body="$(curl -sSf -H "Authorization: token ${FACTORY_FORGE_PAT}" \
+                  "${FORGE_URL%/}/api/v1/repos/${FORGE_REPO}/pulls/${pr}" \
+                  | jq -r '.body // ""' || true)"
+        fi
+        { printf '%s\n' "$msg"; printf '\n%s\n' "$body"; } \
+          | tools/discover-closed-issues.sh > .ci/closed-issues.json
+        echo "discover-closed: closed-issues = $(cat .ci/closed-issues.json)"
+
+  # ── 4. Run the acceptance test for each closed issue ──────────────────────
+  # For every issue number we found:
+  #   - test file missing → warning comment + apply awaiting-live-verification
+  #   - test PASS         → success comment + remove awaiting-live-verification
+  #   - test FAIL         → failure comment (truncated output) + reopen issue
+  #                          + apply awaiting-live-verification
+  # All per-issue outcomes are appended to .ci/results.jsonl so the summary
+  # step can produce a single roll-up.
+  - name: run-acceptance
+    image: alpine:3
+    secrets: [FACTORY_FORGE_PAT]
+    volumes:
+      - /etc/disinto:/etc/disinto:ro
+      - /srv/disinto:/srv/disinto:ro
+    commands:
+      - apk add --no-cache bash curl jq
+      - |
+        set -e
+        : > .ci/results.jsonl
+        issues="$(jq -r '.[]' .ci/closed-issues.json)"
+        if [ -z "$issues" ]; then
+          echo "run-acceptance: no closed issues, nothing to test"
+          exit 0
+        fi
+        artifact_link="${CI_PIPELINE_URL:-(no link)}"
+        for n in $issues; do
+          test_file="tests/acceptance/issue-${n}.sh"
+          if [ ! -f "$test_file" ]; then
+            echo "run-acceptance: #${n} has no test file — fallback to manual verification"
+            tools/comment-on-issue.sh "$n" \
+              --add-label awaiting-live-verification \
+              --body "⚠ no acceptance test on file (\`tests/acceptance/issue-${n}.sh\` missing) — fell back to manual verification per the inline-AC convention (#839). Apply 'awaiting-live-verification' label so the dashboard surfaces it." \
+              || true
+            jq -nc --arg n "$n" '{issue:($n|tonumber), result:"SKIP"}' >> .ci/results.jsonl
+            continue
+          fi
+          out_json="$(tools/run-acceptance.sh --format json "$n" 2>&1 || true)"
+          # The runner emits a single JSON object on stdout when --format json.
+          # Defensive: extract the last line that parses as JSON.
+          parsed="$(printf '%s\n' "$out_json" | tac | while IFS= read -r line; do
+                       if printf '%s' "$line" | jq -e . >/dev/null 2>&1; then
+                         printf '%s\n' "$line"; break
+                       fi
+                     done)"
+          [ -n "$parsed" ] || parsed='{"result":"FAIL","exit":1,"output":"<no parseable output>","duration_secs":0}'
+          result="$(printf '%s' "$parsed" | jq -r '.result')"
+          dur="$(printf '%s' "$parsed" | jq -r '.duration_secs')"
+          out="$(printf '%s' "$parsed" | jq -r '.output')"
+          if [ "$result" = "PASS" ]; then
+            tools/comment-on-issue.sh "$n" \
+              --remove-label awaiting-live-verification \
+              --body "✓ acceptance test passed in CI: ${dur}s ([pipeline](${artifact_link}))" \
+              || true
+            jq -nc --arg n "$n" --arg d "$dur" \
+              '{issue:($n|tonumber), result:"PASS", duration_secs:($d|tonumber)}' \
+              >> .ci/results.jsonl
+          else
+            # Truncate captured output to ~50 lines to keep the comment
+            # readable; full output remains in the pipeline artifact.
+            trunc="$(printf '%s' "$out" | head -n 50)"
+            body_file="$(mktemp)"
+            {
+              printf '✗ acceptance test FAILED in CI ([pipeline](%s))\n\n' "$artifact_link"
+              printf '```\n%s\n```\n' "$trunc"
+              if [ "$(printf '%s\n' "$out" | wc -l)" -gt 50 ]; then
+                printf '\n_(truncated to 50 lines — see pipeline log for full output)_\n'
+              fi
+            } > "$body_file"
+            tools/comment-on-issue.sh "$n" \
+              --body-file "$body_file" \
+              --add-label awaiting-live-verification \
+              --reopen \
+              || true
+            rm -f "$body_file"
+            jq -nc --arg n "$n" --arg d "$dur" \
+              '{issue:($n|tonumber), result:"FAIL", duration_secs:($d|tonumber)}' \
+              >> .ci/results.jsonl
+          fi
+        done
+        echo "run-acceptance: per-issue results:"
+        cat .ci/results.jsonl
+
+  # ── 5. Per-merge summary comment ──────────────────────────────────────────
+  # One comment so a human can see "did the post-merge verification pass
+  # overall?" without clicking into every issue. Posted on the *first* closed
+  # issue when there's at least one (the merge-commit comment endpoint is
+  # repo-level and not as discoverable). When there were zero closed issues,
+  # no summary is needed.
+  - name: summary
+    image: alpine:3
+    secrets: [FACTORY_FORGE_PAT]
+    when:
+      - status: [success, failure]
+    commands:
+      - apk add --no-cache bash curl jq
+      - |
+        set -e
+        if [ ! -s .ci/results.jsonl ]; then
+          echo "summary: no per-issue results, nothing to post"
+          exit 0
+        fi
+        pass="$(grep -c '"PASS"' .ci/results.jsonl || true)"
+        fail="$(grep -c '"FAIL"' .ci/results.jsonl || true)"
+        skip="$(grep -c '"SKIP"' .ci/results.jsonl || true)"
+        first_issue="$(jq -r '.issue' < <(head -n1 .ci/results.jsonl))"
+        merge_sha="${CI_COMMIT_SHA:-$(git rev-parse HEAD)}"
+        body="$(printf 'Post-merge acceptance summary for %s — pass: %s · fail: %s · skip: %s ([pipeline](%s))' \
+                "$merge_sha" "$pass" "$fail" "$skip" "${CI_PIPELINE_URL:-(no link)}")"
+        tools/comment-on-issue.sh "$first_issue" --body "$body" || true

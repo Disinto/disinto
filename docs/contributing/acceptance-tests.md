@@ -90,7 +90,38 @@ The runner:
   (`{"issue":N,"exit":0,"result":"PASS"|"FAIL","output":"…","duration_secs":N}`).
 
 The runner is deliberately standalone — no Woodpecker dependency. It runs from
-CI, from `tools/`, or by hand. CI pipeline integration ships separately.
+CI, from `tools/`, or by hand.
+
+### CI pipeline integration
+
+`.woodpecker/acceptance-tests.yml` (added in #851) closes the post-merge loop
+automatically. On every push to `main`, the pipeline:
+
+1. **Detects** whether the merge touched runtime paths (`docker/edge/`,
+   `docker/voice/`, `docker/chat/`, `bin/snapshot-*.sh`, `bin/threads.sh`,
+   `nomad/jobs/edge.hcl`). Docs- or test-only merges skip the redeploy.
+2. **Rebuilds + redeploys** the affected images (`disinto/edge:local`) and
+   re-launches the nomad job, polling `nomad job status` until the new alloc
+   is healthy (≤120s). Failures abort the pipeline before the test step.
+   Concurrent merges serialize via `flock` against
+   `/var/lib/disinto/ci-locks/acceptance-deploy.lock` so two pipelines never
+   race the deploy.
+3. **Discovers** the closed-issue numbers from the merge commit subject
+   (`(#NNN)`) and the PR body (`Closes #NNN` / `Resolves #NNN` / `Fixes
+   #NNN`) via `tools/discover-closed-issues.sh`.
+4. **Runs** `tools/run-acceptance.sh --format json <N>` for each closed
+   issue and posts the result back via `tools/comment-on-issue.sh`:
+   - PASS → success comment, clear `awaiting-live-verification`.
+   - FAIL → failure comment with truncated output, reopen the issue, set
+     `awaiting-live-verification`.
+   - missing test file → warning comment, set `awaiting-live-verification`
+     (manual fallback per #839).
+5. **Summarizes** the per-issue outcomes as a single comment so a human can
+   see at a glance whether the merge survived contact with the live box.
+
+The pipeline reuses the existing `FACTORY_FORGE_PAT` Woodpecker secret for
+forge writes. The deploy step pins to the `disinto-nomad-box` runner via
+`labels` — the same host where the lock file lives.
 
 ### Issue-body reference
 
