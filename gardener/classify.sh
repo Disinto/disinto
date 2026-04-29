@@ -240,10 +240,16 @@ check_promote_tech_debt() {
   local best_num="" best_ts=""
 
   local candidates
+  # Filter out `blocked`: revisit-blocked at priority 6 owns blocked issues.
+  # Without this, dev-poll failures on tech-debt issues (CI breakage, no_push,
+  # ci_timeout) cause classify to re-surface them at priority 4 every tick,
+  # thrashing through promote-tech-debt → backlog → dev-poll → blocked over
+  # and over (#932).
   candidates=$(printf '%s' "$issues_json" | jq -c '
     [.[] | select(.labels | any(.name == "tech-debt"))
          | select(.labels | map(.name) | all(. != "backlog"))
-         | select(.labels | map(.name) | all(. != "underspecified"))]
+         | select(.labels | map(.name) | all(. != "underspecified"))
+         | select(.labels | map(.name) | all(. != "blocked"))]
   ' 2>/dev/null) || candidates="[]"
 
   local count
