@@ -148,6 +148,19 @@ changes into a separate PR or justify them in the description.
 For non-infrastructure files, scope violations are advisory: leave a
 non-blocking COMMENT noting the scope creep.
 
+## 3e. Stale-base regression (conditional, #896)
+
+If the orchestrator injected a `## Stale-base regression check (BLOCKER)` section,
+it has already detected that the PR's merged result will silently overwrite
+upstream changes that landed on main since the PR's base. These regressions
+cannot be seen in the forward (head vs base) diff alone.
+
+Set verdict=REQUEST_CHANGES. Quote the file list verbatim in your review and
+instruct the author to rebase on main and re-resolve any conflicts so the
+upstream changes are preserved. The only exception is if the PR description
+explicitly states the reverts are intentional with a clear rationale —
+otherwise treat this as a blocker.
+
 ## 4. Vault item quality (conditional)
 
 If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these
