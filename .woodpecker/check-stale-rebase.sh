@@ -28,12 +28,11 @@ TARGET="${CI_COMMIT_TARGET_BRANCH:-main}"
 
 # Make sure we have the target branch fetched. The default Woodpecker clone
 # is shallow at depth 1; deepen so merge-base resolves correctly.
-git fetch --no-tags --depth 50 origin "$TARGET" 2>/dev/null || \
-  git fetch --no-tags origin "$TARGET" 2>/dev/null || true
+git fetch --no-tags origin "$TARGET" 2>/dev/null || true
 
 # Ensure the PR head is reachable as a local ref (depth-1 clone may not
 # have history). Best-effort — the check exits 0 silently if refs missing.
-git fetch --no-tags --depth 50 origin "$PR_HEAD" 2>/dev/null || true
+git fetch --no-tags origin "$PR_HEAD" 2>/dev/null || true
 
 TARGET_REF="origin/${TARGET}"
 git rev-parse --verify "$TARGET_REF" >/dev/null 2>&1 || {
