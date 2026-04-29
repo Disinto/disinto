@@ -26,6 +26,13 @@ prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal
 proceeds without it. **Acceptance test checking**: if the issue has an `## Acceptance test`
 section, the reviewer verifies commands reference correct file paths/schema, expected output
 matches actual behavior, and flags `needs-deploy-verification` for live-box-only commands.
+**Stale-base regression check (#896)**: before assembling the prompt, calls `stale_base_check`
+from `lib/stale-base-check.sh` to detect PRs whose merged result would silently revert upstream
+changes that landed on `$PRIMARY_BRANCH` since the PR's merge-base. When triggered, the
+orchestrator injects a `## Stale-base regression check (BLOCKER)` section listing the affected
+files; the formula instructs Claude to set verdict=REQUEST_CHANGES unless the reverts are
+explicitly intentional. A CI guard (`.woodpecker/check-stale-rebase.sh`) runs the same check
+as belt-and-braces.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN` — Dev-agent token (must not be the same account as FORGE_REVIEW_TOKEN)
