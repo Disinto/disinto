@@ -61,6 +61,17 @@ steps:
       - apk add --no-cache bash
       - bash .woodpecker/agent-smoke.sh
 
+  # #896 — block PRs whose merged result will silently revert upstream
+  # changes on shared files (the review-bot pre-check is the primary
+  # detector; this is the belt-and-braces CI guard).
+  - name: stale-base-check
+    image: alpine:3
+    when:
+      event: pull_request
+    commands:
+      - apk add --no-cache bash git diffutils grep
+      - bash .woodpecker/check-stale-rebase.sh
+
   - name: duplicate-detection
     image: python:3-alpine
     commands:

@@ -29,6 +29,8 @@ source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$(dirname "$0")/../lib/formula-session.sh"
+# shellcheck source=../lib/stale-base-check.sh
+source "$(dirname "$0")/../lib/stale-base-check.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -211,6 +213,25 @@ else
 fi
 
 # =============================================================================
+# STALE-BASE REGRESSION CHECK (#896)
+# =============================================================================
+# Detect PRs whose merged result will silently revert upstream changes that
+# landed on main since the PR's base. The forward (head vs base) diff would
+# look correct, so review-bot's normal pass would miss this.
+status "checking stale-base regressions"
+STALE_BASE_SECTION=""
+git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
+STALE_MAIN_REF="${FORGE_REMOTE}/${PRIMARY_BRANCH}"
+STALE_OUTPUT=$(stale_base_check "$PR_SHA" "$STALE_MAIN_REF" 2>/dev/null || true)
+if [ -n "$STALE_OUTPUT" ]; then
+  STALE_LIST=$(stale_base_check_format "$STALE_OUTPUT")
+  STALE_BASE_SECTION=$(printf '\n## Stale-base regression check (BLOCKER)\n\nThis PR is based on a stale main. After merge, the following files would be left missing lines that landed upstream since the PR'\''s merge-base:\n\n%s\n\nUnless the PR description explicitly states these reverts are intentional, you MUST set verdict=REQUEST_CHANGES and instruct the author to rebase on main and re-resolve. Reference issue #896.\n' "$STALE_LIST")
+  log "stale-base regression detected: $(printf '%s' "$STALE_OUTPUT" | tr '\n' ' ')"
+else
+  log "stale-base check: no regressions"
+fi
+
+# =============================================================================
 # BUILD STRUCTURAL ANALYSIS GRAPH
 # =============================================================================
 status "preparing review"
@@ -245,6 +266,7 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
   printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
+  [ -n "$STALE_BASE_SECTION" ] && printf '%s\n' "$STALE_BASE_SECTION"
   [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
   formula_lessons_block
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
