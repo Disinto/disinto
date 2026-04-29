@@ -70,6 +70,7 @@ pass `priority: "P0"`. For sprint-relevant or review-blocked work, `"P1"`. Defau
 - **State queries** (status, counts, current values) → always `factory_state`.
 - **Prose summaries of known content** (walk-throughs, explanations based on current state) → `narrate`.
 - **Real reasoning** (decisions, plans, code changes, judgment calls) → `think`.
+- **Background investigations** (work the user wants reported back later, not waited on now) → `delegate`.
 
 If you pick the wrong tool, the user will correct you. Just use the fastest path first.
 
@@ -199,8 +200,8 @@ than guessing.
 
 ## Announcing on spawn
 
-When you spawn a thread via `delegate`, always announce its number and
-slug back to the user:
+After `delegate` returns, announce the thread using the number and slug
+from the tool result:
 
 > "Started thread 4 — ci-flaky."
 

@@ -546,6 +546,56 @@ def _list_thread_metas():
     return metas
 
 
+def _active_threads_brief(limit_completed=2):
+    """One-line summary of active + recently-completed threads.
+
+    Injected into each user turn so the model has stable thread context
+    across turns. Returns "" when there is nothing to surface.
+    """
+    metas = _list_thread_metas()
+    if not metas:
+        return ""
+
+    cutoff = time.time() - 24 * 3600
+    running = []
+    completed = []
+    for _tid, m in metas:
+        status = (m.get("status") or "").lower()
+        if status == "running":
+            running.append(m)
+            continue
+        if status in ("completed", "failed"):
+            ts_str = m.get("completed") or m.get("last_turn_at") or ""
+            try:
+                dt = time.strptime(ts_str.rstrip("Z")[:19], "%Y-%m-%dT%H:%M:%S")
+                ts = calendar.timegm(dt)
+            except Exception:
+                ts = 0
+            if ts >= cutoff:
+                completed.append((ts, m))
+
+    if not running and not completed:
+        return ""
+
+    running.sort(key=lambda m: int(m.get("number", 0) or 0))
+    completed.sort(key=lambda pair: pair[0], reverse=True)
+
+    def _fmt(m):
+        n = m.get("number", "?")
+        slug = m.get("slug") or "?"
+        return f"{n} {slug}"
+
+    parts = []
+    if running:
+        parts.append("running: " + ", ".join(_fmt(m) for m in running))
+    if completed:
+        parts.append(
+            "recently done: "
+            + ", ".join(_fmt(m) for _ts, m in completed[:limit_completed])
+        )
+    return f"[threads — {'; '.join(parts)}]"
+
+
 def _next_thread_number():
     """Return max(existing number) + 1 across THREADS_ROOT, starting at 1."""
     max_n = 0
@@ -1357,6 +1407,9 @@ class VoiceSession:
         # When True, _run_check_inbox forces --min-priority P0 regardless of
         # the tool's min_priority arg, so P1/P2 items stay silent.
         self.deep_work = False
+        # Last thread-state line injected into Gemini Live, to skip
+        # redundant re-injection when nothing has changed.
+        self._last_thread_brief = None
 
     def _derive_claude_session_id(self, conv_id):
         # Siblings with chat's "<conv_id>-claude" (see docker/chat/server.py).
@@ -1368,6 +1421,29 @@ class VoiceSession:
             conv_id = uuid.uuid4().hex[:12]
         return _claude_session_id_for(conv_id, suffix="voice-claude")
 
+    async def _maybe_inject_thread_state(self, live_session):
+        """Send a non-completing user turn with current thread state.
+
+        Skipped when there are no threads, or when the brief has not
+        changed since the last injection. Keeps the model anchored to
+        live thread context across turns without polluting conversation
+        flow.
+        """
+        brief = _active_threads_brief()
+        if not brief or brief == self._last_thread_brief:
+            return
+        try:
+            await live_session.send_client_content(
+                turns=genai_types.Content(
+                    role="user",
+                    parts=[genai_types.Part(text=brief)],
+                ),
+                turn_complete=False,
+            )
+            self._last_thread_brief = brief
+        except Exception as exc:
+            _log(f"thread-state inject failed: {exc!r}")
+
     async def _handle_client_frame(self, frame, live_session):
         """Route a single incoming frame from the browser."""
         # Binary frame → audio sample bytes → forward to Gemini Live.
@@ -1378,6 +1454,7 @@ class VoiceSession:
         # bracketing requires server VAD disabled (see LiveConnectConfig).
         if isinstance(frame, (bytes, bytearray)):
             if not self._activity_open:
+                await self._maybe_inject_thread_state(live_session)
                 await live_session.send_realtime_input(
                     activity_start=genai_types.ActivityStart(),
                 )
@@ -1416,6 +1493,7 @@ class VoiceSession:
             # Optional text-in path (debug / wscat): inject as user text.
             content = data.get("content", "")
             if content:
+                await self._maybe_inject_thread_state(live_session)
                 await live_session.send_client_content(
                     turns=genai_types.Content(
                         role="user",
