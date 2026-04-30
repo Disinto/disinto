@@ -56,6 +56,17 @@ step verbatim alongside the diff context):
 
   cp "$AGENTS_MD" /tmp/agents-md-update.orig
 
+## 1b. Preflight — validate the watermark
+
+The watermark on line 1 of AGENTS.md must be a valid commit-ish. If it is not
+(a branch slug, a typo, or empty), treat it as a first-touch — there is no diff
+context to compute, and the watermark MUST be rewritten to HEAD.
+
+  if ! git rev-parse --verify --quiet "${WATERMARK}^{commit}" >/dev/null 2>&1; then
+    echo "WATERMARK_CORRUPT: '$WATERMARK' is not a valid commit-ish — treating as first-touch (no diff context, full rewrite to current HEAD)"
+    WATERMARK=""
+  fi
+
 ## 2. Bash preflight — compute the structural diff (zero tokens)
 
 This is the core of the formula. Three checks, output to scratch files that
@@ -63,12 +74,20 @@ the rewrite step reads.
 
 ### 2a. File inventory: watermark vs HEAD
 
-List the directory's tracked files at both revisions and diff them:
+List the directory's tracked files at both revisions and diff them.
+If WATERMARK is empty (corrupt/missing), skip the watermark-side comparison
+and treat all files as new:
 
-  git ls-tree -r --name-only "$WATERMARK" -- "$REL_DIR" \\
-    | sort > /tmp/agents-md-update.files-watermark
-  git ls-tree -r --name-only HEAD -- "$REL_DIR" \\
-    | sort > /tmp/agents-md-update.files-head
+  if [ -n "$WATERMARK" ]; then
+    git ls-tree -r --name-only "$WATERMARK" -- "$REL_DIR" \\
+      | sort > /tmp/agents-md-update.files-watermark
+    git ls-tree -r --name-only HEAD -- "$REL_DIR" \\
+      | sort > /tmp/agents-md-update.files-head
+  else
+    : > /tmp/agents-md-update.files-watermark
+    git ls-tree -r --name-only HEAD -- "$REL_DIR" \\
+      | sort > /tmp/agents-md-update.files-head
+  fi
 
   comm -13 /tmp/agents-md-update.files-watermark \\
            /tmp/agents-md-update.files-head \\
@@ -128,19 +147,25 @@ still resolves at HEAD. Flag every miss as a LIE for the rewrite step.
 
 ### 2c. Semantic diff: meaningful changes since watermark
 
-Show what actually changed in code/config files (not pure formatting):
+Show what actually changed in code/config files (not pure formatting).
+If WATERMARK is empty, skip the diff — there is no baseline to compare against:
 
-  git diff --stat "$WATERMARK"..HEAD -- \\
-      "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
-      "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
-    > /tmp/agents-md-update.semdiff-stat || true
+  if [ -n "$WATERMARK" ]; then
+    git diff --stat "$WATERMARK"..HEAD -- \\
+        "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
+        "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
+      > /tmp/agents-md-update.semdiff-stat || true
 
-  # Cap the full diff to keep the rewrite step within budget. ~400 lines is
-  # plenty of context for the model to spot new exports, removed flags, etc.
-  git diff "$WATERMARK"..HEAD -- \\
-      "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
-      "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
-    | head -n 400 > /tmp/agents-md-update.semdiff-head
+    # Cap the full diff to keep the rewrite step within budget. ~400 lines is
+    # plenty of context for the model to spot new exports, removed flags, etc.
+    git diff "$WATERMARK"..HEAD -- \\
+        "$REL_DIR/*.sh" "$REL_DIR/*.py" "$REL_DIR/*.toml" \\
+        "$REL_DIR/*.hcl" "$REL_DIR/*.yml" "$REL_DIR/*.yaml" \\
+      | head -n 400 > /tmp/agents-md-update.semdiff-head
+  else
+    : > /tmp/agents-md-update.semdiff-stat
+    : > /tmp/agents-md-update.semdiff-head
+  fi
 
   echo "SEMANTIC DIFF (stat):"
   cat /tmp/agents-md-update.semdiff-stat
@@ -151,11 +176,15 @@ Show what actually changed in code/config files (not pure formatting):
 ## 3. Decide: actionable or no-op?
 
 Skip the rewrite (no PR, log no-op, exit 0) if ALL of the following hold:
+  - WATERMARK is non-empty (a valid commit-ish was available)
   - /tmp/agents-md-update.files-new      is empty
   - /tmp/agents-md-update.files-deleted  is empty
   - /tmp/agents-md-update.lies           is empty
   - /tmp/agents-md-update.semdiff-stat   is empty (or only mentions purely
     cosmetic changes — the watermark moved but nothing structural changed)
+
+If WATERMARK is empty (corrupt or missing), ALWAYS proceed — the line 1
+watermark MUST be repaired even if no other structural change is needed.
 
 In that case:
 
