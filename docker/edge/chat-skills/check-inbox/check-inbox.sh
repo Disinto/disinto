@@ -29,7 +29,7 @@ SNAPSHOT_PATH="${SNAPSHOT_PATH:-/var/lib/disinto/snapshot/state.json}"
 INBOX_ROOT="${INBOX_ROOT:-/var/lib/disinto/inbox}"
 ACK_SCRIPT="$(dirname "$0")/../../../../bin/inbox-ack.sh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/../../../../.." && pwd)}"
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/../../../.." && pwd)}"
 source "${FACTORY_ROOT}/lib/inbox-sentinels.sh"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
