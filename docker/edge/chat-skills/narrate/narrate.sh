@@ -88,8 +88,8 @@ body=$(jq -n -c \
 curl -fsS --max-time "$TIMEOUT" \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-no-key-required" \
-  --data-utf8 "$body" \
-  "$LLAMA_URL/v1/messages" 2>/dev/null | \
+  --data-raw "$body" \
+  "$LLAMA_URL/v1/messages" | \
 while IFS= read -r line; do
   # Skip non-data lines
   [[ "$line" == data:* ]] || continue
