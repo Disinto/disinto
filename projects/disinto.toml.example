@@ -26,18 +26,19 @@ check_pipeline_stall = false
 # Agent scheduling configuration
 #
 # These values are passed to the agents container as environment variables.
-# The default values (6 hours each) work well for stable production projects.
+# The default values work well for stable production projects.
 # For active development on the disinto factory itself, you may want to
 # configure shorter intervals:
 #
-#   GARDENER_INTERVAL=3600    # 1 hour (default: 21600 = 6 hours)
 #   ARCHITECT_INTERVAL=300    # 5 minutes (default: 900 = 15 minutes)
 #   PLANNER_INTERVAL=660      # 11 minutes (default: 43200 = 12 hours)
+#
+# GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+# via gardener/gardener-step.sh, paced by POLL_INTERVAL.
 #
 # These can be set in docker-compose.yml environment section or in a .env file.
 #
 # [agents.schedule]
-#   gardener_interval = 21600  # seconds (default: 21600 = 6 hours)
 #   architect_interval  = 900  # seconds (default: 900 = 15 minutes)
 #   planner_interval    = 43200  # seconds (default: 43200 = 12 hours)
 

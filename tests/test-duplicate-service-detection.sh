@@ -58,7 +58,8 @@ export FORGE_TOKEN=""
 export FORGE_PASS=""
 export CLAUDE_TIMEOUT="7200"
 export POLL_INTERVAL="300"
-export GARDENER_INTERVAL="21600"
+# GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+# via gardener/gardener-step.sh, paced by POLL_INTERVAL.
 export ARCHITECT_INTERVAL="900"
 export PLANNER_INTERVAL="43200"
 export SUPERVISOR_INTERVAL="1200"
