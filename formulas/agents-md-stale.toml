@@ -247,6 +247,11 @@ Single small PR with one file changed:
   PR_NUMBER=$(jq -r '.number' /tmp/agents-md-update.pr.json)
   echo "ACTION: refreshed $AGENTS_MD — PR #${PR_NUMBER} (${BRANCH})"
 
+  # Write PR_NUMBER to scratch file so gardener-step.sh can detect it
+  if [ -n "${GARDENER_PR_FILE:-}" ]; then
+    echo "$PR_NUMBER" > "$GARDENER_PR_FILE"
+  fi
+
 Done. Stop the session.
 
 ## Output discipline
