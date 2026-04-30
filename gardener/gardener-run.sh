@@ -45,6 +45,8 @@ source "$FACTORY_ROOT/lib/guard.sh"
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 # shellcheck source=../lib/pr-lifecycle.sh
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
+# shellcheck source=../lib/gardener-pr.sh
+source "$FACTORY_ROOT/lib/gardener-pr.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/gardener.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -339,17 +341,7 @@ agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 # ── Detect PR ─────────────────────────────────────────────────────────────
-PR_NUMBER=""
-if [ -f "$GARDENER_PR_FILE" ]; then
-  PR_NUMBER=$(tr -d '[:space:]' < "$GARDENER_PR_FILE")
-fi
-
-# Fallback: search for open gardener PRs
-if [ -z "$PR_NUMBER" ]; then
-  PR_NUMBER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/pulls?state=open&limit=10" | \
-    jq -r '[.[] | select(.head.ref | startswith("chore/gardener-"))] | .[0].number // empty') || true
-fi
+detect_pr_number "chore/gardener-"
 
 # ── Walk PR to merge ──────────────────────────────────────────────────────
 if [ -n "$PR_NUMBER" ]; then

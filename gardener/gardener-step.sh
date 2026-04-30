@@ -46,6 +46,8 @@ source "$FACTORY_ROOT/lib/gardener-edit.sh"
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
 # shellcheck source=../lib/mirrors.sh
 source "$FACTORY_ROOT/lib/mirrors.sh"
+# shellcheck source=../lib/gardener-pr.sh
+source "$FACTORY_ROOT/lib/gardener-pr.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/step.log"
 # Tighten log perms (#910): sub-session JSONL transcripts may contain
@@ -217,17 +219,7 @@ agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 # ── Detect PR opened by the formula ───────────────────────────────────────
-PR_NUMBER=""
-if [ -f "$GARDENER_PR_FILE" ]; then
-  PR_NUMBER=$(tr -d '[:space:]' < "$GARDENER_PR_FILE")
-fi
-
-# Fallback: search for open agents-md PRs on this branch prefix
-if [ -z "$PR_NUMBER" ]; then
-  PR_NUMBER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/pulls?state=open&limit=10" | \
-    jq -r '[.[] | select(.head.ref | startswith("chore/agents-md-"))] | .[0].number // empty') || true
-fi
+detect_pr_number "chore/agents-md-"
 
 # ── Walk PR to merge ──────────────────────────────────────────────────────
 if [ -n "$PR_NUMBER" ]; then
