@@ -52,6 +52,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 
 try:
@@ -1515,7 +1516,10 @@ class VoiceSession:
             except Exception as exc:
                 # Gemini session dropped or some upstream error. Log and exit
                 # the pump — caller will close the bridge WS.
-                _log(f"voice: live_session.receive() raised {exc!r} — exiting pump")
+                tb = traceback.format_exc()
+                _log(
+                    f"voice: live_session.receive() raised {exc!r} — exiting pump\n{tb}"
+                )
                 return
 
     async def _dispatch_tool_call(self, tool_call, live_session):
