@@ -42,6 +42,12 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 source "$FACTORY_ROOT/lib/guard.sh"
 # shellcheck source=../lib/gardener-edit.sh
 source "$FACTORY_ROOT/lib/gardener-edit.sh"
+# shellcheck source=../lib/pr-lifecycle.sh
+source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
+# shellcheck source=../lib/mirrors.sh
+source "$FACTORY_ROOT/lib/mirrors.sh"
+# shellcheck source=../lib/gardener-pr.sh
+source "$FACTORY_ROOT/lib/gardener-pr.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/step.log"
 # Tighten log perms (#910): sub-session JSONL transcripts may contain
@@ -79,6 +85,10 @@ SCRATCH_DIR="$(mktemp -d /tmp/gardener-step-XXXXXX)"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh agent_run
 SID_FILE="${SCRATCH_DIR}/session.sid"
 WORKTREE="${SCRATCH_DIR}/worktree"
+
+# ── PR number scratch file (formula writes PR_NUMBER here) ────────────────
+GARDENER_PR_FILE="${SCRATCH_DIR}/pr-number.txt"
+: > "$GARDENER_PR_FILE"
 
 # ── Cleanup trap: scratch dir, worktree, and the flock fd ─────────────────
 _step_cleanup() {
@@ -207,6 +217,27 @@ git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev
 export CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
 agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
+
+# ── Detect PR opened by the formula ───────────────────────────────────────
+detect_pr_number "chore/agents-md-"
+
+# ── Walk PR to merge ──────────────────────────────────────────────────────
+if [ -n "$PR_NUMBER" ]; then
+  log "walking PR #${PR_NUMBER} to merge"
+  rc=0
+  pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log "PR #${PR_NUMBER} merged"
+    git -C "$PROJECT_REPO_ROOT" fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
+    git -C "$PROJECT_REPO_ROOT" pull --ff-only "${FORGE_REMOTE}" "$PRIMARY_BRANCH" 2>/dev/null || true
+    mirror_push
+  else
+    log "PR #${PR_NUMBER} not merged (reason: ${_PR_WALK_EXIT_REASON:-unknown})"
+  fi
+else
+  log "no PR created — gardener step complete"
+fi
 
 # ── Journal entry post-session ────────────────────────────────────────────
 profile_write_journal "gardener-step" \
