@@ -1,4 +1,4 @@
-<!-- last-reviewed: 901-lifecycle-rewrite -->
+<!-- last-reviewed: 069713a1a02098133d54ae0822355a3df0be3c14 -->
 # Architect — Agent Instructions
 
 ## What this agent is
