@@ -34,8 +34,8 @@ tea_file_issue() {
 
   local result
   result=$(tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
-    --title "$title" --body "$body" --labels "$labels" \
-    --output simple 2>&1) || {
+    --title "$title" -d "$body" --labels "$labels" \
+    2>&1) || {
     echo "tea-helpers: tea issues create failed: ${result}" >&2
     return 3
   }
