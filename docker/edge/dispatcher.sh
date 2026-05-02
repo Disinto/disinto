@@ -34,7 +34,7 @@ PROJECTS_DIR="${PROJECTS_DIR:-${FACTORY_ROOT:-/opt/disinto}-projects}"
 DISPATCHER_BACKEND="${DISPATCHER_BACKEND:-docker}"
 
 # Ops repo location (vault/actions directory)
-OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/debian/disinto-ops}"
+OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/disinto-ops}"
 VAULT_ACTIONS_DIR="${OPS_REPO_ROOT}/vault/actions"
 
 # Vault action validation
