@@ -359,6 +359,15 @@
           encodeURIComponent(window.location.pathname + window.location.search);
         return;
       }
+      // 1006 = abnormal closure — typically when Caddy's forward_auth
+      // blocks the WebSocket upgrade (no valid session cookie). Redirect
+      // to login so the user can re-authenticate.
+      if (ev.code === 1006) {
+        setState("error", "connection failed — ensure you're logged in");
+        window.location.href = "/chat/login?next=" +
+          encodeURIComponent(window.location.pathname + window.location.search);
+        return;
+      }
       if (body.dataset.state !== "error") {
         setState("idle", "disconnected");
       }
