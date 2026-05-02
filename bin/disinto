@@ -2694,7 +2694,7 @@ disinto_up() {
     echo "Decrypted secrets for compose"
   fi
 
-  docker compose -f "$compose_file" up -d --build --remove-orphans ${compose_args[@]+"${compose_args[@]}"}
+  docker compose -f "$compose_file" up -d --build ${compose_args[@]+"${compose_args[@]}"}
   echo "Stack is up"
 
   # Clean up temp .env (also handled by EXIT trap if compose fails)
