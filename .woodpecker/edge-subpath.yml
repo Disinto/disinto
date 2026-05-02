@@ -8,7 +8,8 @@
 # Checks:
 #   1. shellcheck — syntax check on tests/smoke-edge-subpath.sh
 #   2. caddyfile-routing-test — verify Caddyfile routing block shape
-#   3. test-caddyfile-routing — run standalone unit test for Caddyfile structure
+#   3. caddy-validate — validate rendered Caddyfile syntax with `caddy validate`
+#   4. test-caddyfile-routing — run standalone unit test for Caddyfile structure
 #
 # Triggers:
 #   - Pull requests that modify edge-related files
@@ -211,7 +212,25 @@ steps:
           exit 1
         fi
 
-  # ── 4. Standalone Caddyfile routing test ─────────────────────────────────
+  # ── 4. Caddyfile syntax validation ────────────────────────────────────────
+  # Validate the rendered Caddyfile with `caddy validate` using the official
+  # caddy:latest image. No docker.sock mount — we only need the Caddy binary
+  # to parse the config, not to spawn sibling containers.
+  #
+  # This replaces a previous approach that used Docker-in-Docker (spawning a
+  # Caddy container from within the CI step) which caused intermittent
+  # `context deadline exceeded` on the Docker socket under pipeline load
+  # (issue #552).
+  - name: caddy-validate
+    image: caddy:latest
+    commands:
+      - caddy validate --config edge-render/Caddyfile
+    # Generous timeout for the step — caddy validate is fast (<1s) but the
+    # image pull on a cold agent can take 30-60s. Workflow-level 10m cap
+    # still applies.
+    timeout: 5m
+
+  # ── 5. Standalone Caddyfile routing test ─────────────────────────────────
   # Run the standalone unit test for Caddyfile routing block validation.
   # This test extracts the Caddyfile template from edge.hcl and validates
   # its structure without requiring a running Caddy instance.
