@@ -177,6 +177,7 @@ bash /opt/disinto/docker/edge/dispatcher.sh &
 _AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
 _SECRETS_DIR="/opt/disinto/secrets"
 EDGE_REQUIRED_SECRETS="CADDY_SSH_KEY CADDY_SSH_HOST CADDY_SSH_USER CADDY_ACCESS_LOG"
+EDGE_CLIENT_LOG="${ENGAGEMENT_LOG:-/var/log/caddy/engagement.log}"
 EDGE_ENGAGEMENT_READY=0  # Assume not ready until proven otherwise
 
 _edge_decrypt_secret() {
@@ -221,20 +222,26 @@ if [ "$EDGE_ENGAGEMENT_READY" -eq 1 ]; then
     echo "edge: collect-engagement scheduled in ${_sleep_secs}s (next 23:50 UTC)" >&2
     sleep "$_sleep_secs"
     _fetch_log="/tmp/caddy-access-log-fetch.log"
+    _client_log="/tmp/caddy-engagement-client-fetch.log"
     _ssh_key_file=$(mktemp)
     printf '%s\n' "$CADDY_SSH_KEY" > "$_ssh_key_file"
     chmod 0600 "$_ssh_key_file"
+    # Fetch both Caddy access log and client-side engagement beacon log
     scp -i "$_ssh_key_file" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes \
       "${CADDY_SSH_USER}@${CADDY_SSH_HOST}:${CADDY_ACCESS_LOG}" \
       "$_fetch_log" 2>&1 | tee -a /opt/disinto-logs/collect-engagement.log || true
+    scp -i "$_ssh_key_file" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes \
+      "${CADDY_SSH_USER}@${CADDY_SSH_HOST}:${EDGE_CLIENT_LOG}" \
+      "$_client_log" 2>/dev/null || true
     rm -f "$_ssh_key_file"
     if [ -s "$_fetch_log" ]; then
-      CADDY_ACCESS_LOG="$_fetch_log" bash /opt/disinto/site/collect-engagement.sh 2>&1 \
+      ENGAGEMENT_LOG="$_client_log" CADDY_ACCESS_LOG="$_fetch_log" \
+        bash /opt/disinto/site/collect-engagement.sh 2>&1 \
         | tee -a /opt/disinto-logs/collect-engagement.log || true
     else
       echo "edge: collect-engagement: fetched log is empty, skipping parse" >&2
     fi
-    rm -f "$_fetch_log"
+    rm -f "$_fetch_log" "$_client_log"
   done) &
 else
   echo "edge: collect-engagement cron skipped (EDGE_ENGAGEMENT_READY=0)" >&2
@@ -313,6 +320,15 @@ _chat_ensure_session_dir() {
   chown -R agent:agent "$dir" 2>/dev/null || true
 }
 _chat_ensure_session_dir
+
+# Start engagement beacon server in background (issue #975)
+# Listens on loopback, accepts POST beacons from engagement.js, appends to log.
+# GET /api/engagement returns a JSON snapshot of aggregated data.
+(
+  ENGAGEMENT_LOG="${ENGAGEMENT_LOG:-/var/log/caddy/engagement.log}" \
+  ENGAGEMENT_PORT="${ENGAGEMENT_PORT:-8095}" \
+  python3 /usr/local/bin/engagement-server.py 2>&1 | tee -a /opt/disinto-logs/engagement.log
+) &
 
 # Start chat server in background (#1083 — merged from docker/chat into edge)
 (python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &

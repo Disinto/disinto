@@ -101,6 +101,40 @@ resolve_agent_identity || true
 load_formula_or_profile "gardener" "$FACTORY_ROOT/formulas/run-gardener.toml" || exit 1
 build_context_block AGENTS.md
 
+# ── Load latest engagement evidence (issue #975) ──────────────────────────
+# Reads the most recent engagement report from the ops repo evidence directory.
+# Provides the gardener with visitor counts, referrers, dwell time, and
+# scroll depth data to inform backlog decisions about the website addressable.
+load_engagement_evidence() {
+  local evidence_dir="${OPS_REPO_ROOT:-}/evidence/engagement"
+  local latest=""
+
+  if [ -d "$evidence_dir" ]; then
+    latest=$(ls -1 "$evidence_dir"/*.json 2>/dev/null | sort -r | head -1)
+  fi
+
+  if [ -n "$latest" ] && [ -f "$latest" ]; then
+    local report
+    report=$(jq -c '{
+      date: .date,
+      page_views: .page_views,
+      unique_visitors: .unique_visitors,
+      referred_visitors: .referred_visitors,
+      top_pages: .top_pages,
+      top_referrers: .top_referrers,
+      client_side: .client_side
+    }' "$latest" 2>/dev/null) || return 0
+
+    if [ -n "$report" ] && [ "$report" != "null" ]; then
+      ENGAGEMENT_EVIDENCE="$report"
+      log "loaded engagement evidence from ${latest}"
+    fi
+  fi
+}
+
+ENGAGEMENT_EVIDENCE=""
+load_engagement_evidence || true
+
 # ── Prepare .profile context (lessons injection) ─────────────────────────
 formula_prepare_profile_context
 
@@ -146,6 +180,9 @@ ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Result file
 Write actions and dust items to: ${RESULT_FILE}
+
+${ENGAGEMENT_EVIDENCE:+## Engagement evidence (latest report)
+${ENGAGEMENT_EVIDENCE}}
 
 ## Formula
 ${FORMULA_CONTENT}

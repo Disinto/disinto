@@ -66,6 +66,8 @@ RUN find /var/chat/skill-templates -type f -name '*.sh' -exec chmod 0755 {} +
 # Chat server and UI (merged from docker/chat into edge, #1083)
 COPY docker/chat/server.py /usr/local/bin/chat-server.py
 COPY docker/chat/ui/ /var/chat/ui/
+# Engagement beacon server (issue #975)
+COPY docker/edge/engagement-server.py /usr/local/bin/engagement-server.py
 # Voice bridge — Gemini Live ↔ `think` tool ↔ claude -r (#662)
 COPY docker/voice/bridge.py /usr/local/bin/voice-bridge.py
 # Voice UI — mic + Silero VAD + WebSocket client (#663). Caddy serves

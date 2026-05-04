@@ -108,9 +108,11 @@ if [ -z "$PARSED" ]; then
   jq -nc \
     --arg date "$REPORT_DATE" \
     --arg source "$CADDY_LOG" \
+    --arg client_source "${CLIENT_LOG:-/var/log/caddy/engagement.log}" \
     '{
       date: $date,
       source: $source,
+      client_source: $client_source,
       period_hours: 24,
       total_requests: 0,
       unique_visitors: 0,
@@ -119,6 +121,13 @@ if [ -z "$PARSED" ]; then
       top_pages: [],
       top_referrers: [],
       response_time: { p50_seconds: 0, p95_seconds: 0, p99_seconds: 0 },
+      client_side: {
+        total_events: 0,
+        dwell: { avg_seconds: 0, total_seconds: 0, count: 0 },
+        max_scroll_pct: 0,
+        scroll_events: 0,
+        exit_referrers: []
+      },
       note: "no entries in period"
     }' > "${EVIDENCE_DIR}/${REPORT_DATE}.json"
   log "Empty report written to ${EVIDENCE_DIR}/${REPORT_DATE}.json"
@@ -174,6 +183,57 @@ else
   P50=0; P95=0; P99=0
 fi
 
+# ── Client-side engagement metrics (issue #975) ────────────────────────────
+# Parse engagement.js beacon log for dwell time, scroll depth, and exit
+# referrers. These are metrics the server-side Caddy logs cannot capture.
+
+CLIENT_LOG="${ENGAGEMENT_LOG:-/var/log/caddy/engagement.log}"
+CLIENT_EVENTS="[]"
+CLIENT_DWELL_AVG=0
+CLIENT_DWELL_TOTAL=0
+CLIENT_DWELL_COUNT=0
+CLIENT_MAX_SCROLL=0
+CLIENT_SCROLL_EVENTS=0
+CLIENT_EXIT_REFERRERS="[]"
+
+if [ -f "$CLIENT_LOG" ] && [ -s "$CLIENT_LOG" ]; then
+  # Parse client-side beacon log: each line is a JSON event object
+  # Aggregate: event counts, top paths, avg dwell, max scroll, exit referrers
+  _client_data=$(jq -s -c '
+    # Filter to events within the cutoff window
+    map(select(.ts >= ($cutoff * 1000)))
+    | {
+        total_events: length,
+        event_counts: (group_by(.event) | map({key: .[0].event, value: length}) | from_entries),
+        top_paths: (group_by(.path) | map({path: .[0].path, count: length}) | sort_by(-.count) | .[:10]),
+        top_referrers: (group_by(.referrer) | map({source: .[0].referrer, count: length}) | sort_by(-.count) | .[:10]),
+        dwell: (
+          [.[] | select(.dwell_seconds != null)]
+          | if length > 0 then
+              {
+                avg_seconds: ((map(.dwell_seconds) | add / length) * 10 | round / 10),
+                total_seconds: (map(.dwell_seconds) | add),
+                count: length
+              }
+            else { avg_seconds: 0, total_seconds: 0, count: 0 }
+            end
+        ),
+        max_scroll: (map(.scroll_pct // 0) | max // 0)
+      }
+  ' --argjson cutoff "$CUTOFF_TS" "$CLIENT_LOG" 2>/dev/null || echo '{"total_events":0}')
+
+  CLIENT_EVENTS=$(printf '%s' "$_client_data" | jq -c '.total_events // 0')
+  CLIENT_DWELL_AVG=$(printf '%s' "$_client_data" | jq -c '.dwell.avg_seconds // 0')
+  CLIENT_DWELL_TOTAL=$(printf '%s' "$_client_data" | jq -c '.dwell.total_seconds // 0')
+  CLIENT_DWELL_COUNT=$(printf '%s' "$_client_data" | jq -c '.dwell.count // 0')
+  CLIENT_MAX_SCROLL=$(printf '%s' "$_client_data" | jq -c '.max_scroll // 0')
+  CLIENT_SCROLL_EVENTS=$(printf '%s' "$_client_data" | jq -c '(.event_counts.scroll // 0)')
+  CLIENT_EXIT_REFERRERS=$(printf '%s' "$_client_data" | jq -c '.top_referrers // []')
+  log "Client-side: ${CLIENT_EVENTS} events, avg dwell ${CLIENT_DWELL_AVG}s, max scroll ${CLIENT_MAX_SCROLL}%"
+else
+  log "Client-side engagement log not found or empty at ${CLIENT_LOG}"
+fi
+
 # ── Write evidence ──────────────────────────────────────────────────────────
 
 OUTPUT="${EVIDENCE_DIR}/${REPORT_DATE}.json"
@@ -181,6 +241,7 @@ OUTPUT="${EVIDENCE_DIR}/${REPORT_DATE}.json"
 jq -nc \
   --arg date "$REPORT_DATE" \
   --arg source "$CADDY_LOG" \
+  --arg client_source "$CLIENT_LOG" \
   --argjson total_requests "$TOTAL_REQUESTS" \
   --argjson page_views "$PAGE_VIEWS" \
   --argjson unique_visitors "$UNIQUE_VISITORS" \
@@ -190,9 +251,17 @@ jq -nc \
   --argjson p50 "${P50:-0}" \
   --argjson p95 "${P95:-0}" \
   --argjson p99 "${P99:-0}" \
+  --argjson client_events "$CLIENT_EVENTS" \
+  --argjson client_dwell_avg "$CLIENT_DWELL_AVG" \
+  --argjson client_dwell_total "$CLIENT_DWELL_TOTAL" \
+  --argjson client_dwell_count "$CLIENT_DWELL_COUNT" \
+  --argjson client_max_scroll "$CLIENT_MAX_SCROLL" \
+  --argjson client_scroll_events "$CLIENT_SCROLL_EVENTS" \
+  --argjson client_exit_referrers "$CLIENT_EXIT_REFERRERS" \
   '{
     date: $date,
     source: $source,
+    client_source: $client_source,
     period_hours: 24,
     total_requests: $total_requests,
     page_views: $page_views,
@@ -204,6 +273,17 @@ jq -nc \
       p50_seconds: $p50,
       p95_seconds: $p95,
       p99_seconds: $p99
+    },
+    client_side: {
+      total_events: $client_events,
+      dwell: {
+        avg_seconds: $client_dwell_avg,
+        total_seconds: $client_dwell_total,
+        count: $client_dwell_count
+      },
+      max_scroll_pct: $client_max_scroll,
+      scroll_events: $client_scroll_events,
+      exit_referrers: $client_exit_referrers
     }
   }' > "$OUTPUT"
 
