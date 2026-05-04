@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 46b9feaa27a204fa03331eb3e2c09c49c5a687f8 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -27,17 +27,19 @@ Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
 - **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **formulas/**: TOML issue templates for multi-step agent tasks (run-*, dispatch, grooming, enrichment)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, issue discovery)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+- **site/**: disinto.ai static site (engagement tracking, dashboard)
+- **tests/**: Acceptance tests, BATS tests, smoke tests
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`.
+Each agent has a `.profile` repository on Forgejo storing `lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
@@ -69,6 +71,26 @@ git ls-files '*.sh' | xargs shellcheck
 bash dev/phase-test.sh
 ```
 
+### Recent structural changes (since last watermark `e536077`)
+
+- **Architect rewritten**: `architect-run.sh` is now a Forgejo-state-driven state machine
+  operating on ops-repo PRs (states: q_and_a, approved_idle, tracking, mergeable).
+  No more formula sessions or tmux.
+- **Gardener step dispatch**: `gardener/classify.sh` + `gardener/gardener-step.sh`
+  replace monolithic grooming — each invocation runs one formula.
+- **New formulas**: agents-md-stale, blocker-starving-the-factory, bundle-dust,
+  enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision,
+  promote-tech-debt, revisit-blocked.
+- **Removed formulas**: add-rpc-method, collect-engagement, rent-a-human-caddy-ssh,
+  upgrade-dependency.
+- **New lib helpers**: `ci-fix-tracker.sh`, `forge-paginate.sh`, `gardener-edit.sh`,
+  `gardener-pr.sh`, `stale-base-check.sh`.
+- **Engagement tracking**: `docker/edge/engagement-server.py` + `site/engagement.js`
+  wire up engagement measurement for disinto.ai.
+- **Vault**: new `bot-filer.hcl` policy for filer-bot identity.
+- **Tests**: new acceptance tests (issue-851 through issue-882), BATS tests for
+  agent-sdk redaction, CI fix tracker, and stale base check.
+
 ---
 
 ## Agents
@@ -81,7 +103,7 @@ bash dev/phase-test.sh
 | Supervisor | `supervisor/` | Health monitoring | [AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure patterns | [AGENTS.md](predictor/AGENTS.md) |
-| Architect | `architect/` | Sprint decomposition | [AGENTS.md](architect/AGENTS.md) |
+| Architect | `architect/` | Sprint decomposition (state machine, ops repo PRs) | [AGENTS.md](architect/AGENTS.md) |
 | Filer | `lib/sprint-filer.sh` | Sub-issue filing (deferred, #779) | — |
 | Reproduce | `docker/reproduce/` | Bug reproduction (Playwright MCP) | — |
 | Triage | `docker/reproduce/` | Root cause analysis | — |
