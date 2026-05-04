@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 238a9d675e1ae0f4a0d1e4bb1857c982704e9b0d -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -25,19 +25,22 @@ See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
 
 Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
+- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, agent-sdk.sh, gardener-edit.sh, gardener-pr.sh, ci-fix-tracker.sh, forge-paginate.sh, stale-base-check.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **formulas/**: TOML issue templates for multi-step agent tasks (run-gardener, agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked, review-pr)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, agents)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+- **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh, edge-subpath.yml)
+- **tests/**: Acceptance tests (issue-851.sh, issue-852.sh, issue-859.sh, issue-861.sh, issue-868.sh, issue-882.sh), smoke tests, BATS tests
+- **vault/policies/**: Vault policies (bot-filer.hcl, service-agents.hcl)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`.
+Each agent has a `.profile` repository on Forgejo storing `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
@@ -67,7 +70,17 @@ git ls-files '*.sh' | xargs shellcheck
 
 # Run phase protocol test
 bash dev/phase-test.sh
+
+# Run acceptance tests (per-issue smoke checks)
+bash tests/acceptance/issue-<N>.sh
+
+# Run BATS tests
+bats tests/*.bats
 ```
+
+CI pipelines (`.woodpecker/`):
+- `ci.yml` — ShellCheck, acceptance-test-runner, agent-smoke, stale-base-check, duplicate-detection
+- `acceptance-tests.yml` — Post-merge acceptance verification on live box (rebuild + deploy + run-acceptance)
 
 ---
 
@@ -77,7 +90,7 @@ bash dev/phase-test.sh
 |-------|-----------|------|---------|
 | Dev | `dev/` | Issue implementation | [AGENTS.md](dev/AGENTS.md) |
 | Review | `review/` | PR review | [AGENTS.md](review/AGENTS.md) |
-| Gardener | `gardener/` | Backlog grooming (per-iteration, single task per cycle, llama-friendly — #872) | [AGENTS.md](gardener/AGENTS.md) |
+| Gardener | `gardener/` | Backlog grooming (per-iteration, single task per cycle, llama-friendly — #872; per-task dispatch via `gardener-step.sh` + `classify.sh` — #871, #902, #906, #912, #916) | [AGENTS.md](gardener/AGENTS.md) |
 | Supervisor | `supervisor/` | Health monitoring | [AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure patterns | [AGENTS.md](predictor/AGENTS.md) |
@@ -162,3 +175,7 @@ When running as a persistent tmux session, Claude must signal the orchestrator a
 
 Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`. Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec, orchestrator reaction matrix, sequence diagram, and crash recovery.
+
+## Recent structural changes
+
+- **2026-05-03** (`238a9d6`): Added post-merge acceptance pipeline (`.woodpecker/acceptance-tests.yml`, `tools/run-acceptance.sh`, `tools/comment-on-issue.sh`, `tools/discover-closed-issues.sh`, `tests/acceptance/issue-*.sh`). Added CI stale-base regression guard (`.woodpecker/check-stale-rebase.sh`, `lib/stale-base-check.sh`). Added per-task gardener dispatch (`gardener-step.sh`, `classify.sh`). Added formula-based operational tasks (`agents-md-stale`, `blocker-starving-the-factory`, `bundle-dust`, `enrich-bug-report`, `enrich-underspecified`, `file-subissues`, `pitch-vision`, `promote-tech-debt`, `revisit-blocked`). Added `lib/gardener-edit.sh`, `lib/gardener-pr.sh`, `lib/ci-fix-tracker.sh`, `lib/forge-paginate.sh`. Tightened log permissions in `lib/env.sh` (umask 077, chmod 700/600). Refactored gardener PR detection to use `detect_pr_number()` from `lib/gardener-pr.sh`.
