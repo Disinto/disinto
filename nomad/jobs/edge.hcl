@@ -337,6 +337,13 @@ EOT
         try_files {path} /index.html
         file_server
     }
+
+    # Engagement measurement — receives client-side beacons, proxies to
+    # local engagement-server.py (issue #975). POST appends to log; GET
+    # returns aggregated JSON snapshot for factory snapshot queries.
+    handle /api/engagement {
+        reverse_proxy 127.0.0.1:8095
+    }
 }
 EOT
       }
