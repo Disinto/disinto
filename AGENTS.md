@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 46b9fea27a204fa03331eb3e2c09c49c5a687f8 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -25,15 +25,19 @@ See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
 
 Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
+- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, agent-sdk.sh, ci-fix-tracker.sh, forge-paginate.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **formulas/**: TOML issue templates for multi-step agent tasks (agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement-server.py)
+- **site/**: Client-side engagement measurement (engagement.js)
+- **tools/**: Operational tools (comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh, vault provisioning, edge-control, acceptance test runner)
+- **tests/**: Acceptance tests (issue-851, issue-852, issue-859, issue-861, issue-868, issue-882), BATS tests (hire-an-agent-pat, lib-ci-fix-tracker, lib-stale-base-check), smoke tests (smoke-check-inbox-factory-root)
+- **.woodpecker/**: CI pipelines (acceptance-tests.yml, check-stale-rebase.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
+- **vault/policies/**: Vault policies (bot-filer.hcl, service-agents.hcl)
 
 ## Agent .profile Model
 
@@ -68,6 +72,21 @@ git ls-files '*.sh' | xargs shellcheck
 # Run phase protocol test
 bash dev/phase-test.sh
 ```
+
+### Semantic changes since last review
+
+- **Gardener step system**: `gardener/classify.sh` (task classifier), `gardener/gardener-step.sh` (pull-one-task driver) replace monolithic gardener runs with per-task formula dispatch (#871, #902, #906, #912, #916)
+- **New formulas**: agents-md-stale, blocker-starving-the-factory, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked
+- **Removed formulas**: add-rpc-method, collect-engagement, rent-a-human-caddy-ssh, upgrade-dependency
+- **CI acceptance pipeline**: `.woodpecker/acceptance-tests.yml` runs post-merge acceptance tests on the live box for each closed issue
+- **Stale-base CI guard**: `.woodpecker/check-stale-rebase.sh` blocks PRs that would silently revert upstream changes
+- **Architect refactor**: `architect/architect-run.sh` — major rewrite (1200+ line diff)
+- **Snapshot collectors**: `bin/snapshot-*.sh` — improved Nomad HTTP API usage
+- **Engagement measurement**: `docker/edge/engagement-server.py` + `site/engagement.js` — client-side beacon collection
+- **Gardener edit primitives**: `lib/gardener-edit.sh` (direct Forgejo API edits), `lib/gardener-pr.sh` (PR detection helpers)
+- **CI fix tracker**: `lib/ci-fix-tracker.sh` — per-PR CI fix counter with exhaustion detection
+- **Forge pagination**: `lib/forge-paginate.sh` — paginated Forge API helper
+- **Stale base check**: `lib/stale-base-check.sh` — detect PRs that would revert upstream changes
 
 ---
 
