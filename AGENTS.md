@@ -28,7 +28,7 @@ Key directories:
 - **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, parse-deps.sh, ci-fix-tracker.sh, forge-paginate.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
 - **formulas/**: TOML issue templates for multi-step agent tasks (agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked)
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement-server.py)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, edge/engagement-server.py)
 - **docker/agents/**: Local-model agents (llama-server)
 - **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
@@ -38,7 +38,7 @@ Key directories:
 - **site/**: Frontend assets (engagement.js)
 - **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
 - **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh)
-- **gardener/**: Gardener orchestrator (classify.sh, gardener-step.sh, dust.jsonl, pending-actions.jsonl)
+- **gardener/**: Gardener orchestrator (classify.sh, gardener-step.sh, dust.jsonl, pending-actions.json)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
 
 ## Agent .profile Model
