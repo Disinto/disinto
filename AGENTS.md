@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 46b9feaa27a204fa03331eb3e2c09c49c5a687f8 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -25,15 +25,19 @@ See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
 
 Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
+- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, parse-deps.sh, ci-fix-tracker.sh, forge-paginate.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks
+- **formulas/**: TOML issue templates for multi-step agent tasks (agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked)
 - **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
+- **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh)
+- **site/**: Frontend assets (engagement.js)
+- **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
+- **vault/policies/**: Vault HCL policies (bot-filer.hcl)
 
 ## Agent .profile Model
 
@@ -162,3 +166,20 @@ When running as a persistent tmux session, Claude must signal the orchestrator a
 
 Key phases: `PHASE:awaiting_ci` → `PHASE:awaiting_review` → `PHASE:done`. Also: `PHASE:escalate` (needs human input), `PHASE:failed`.
 See [docs/PHASE-PROTOCOL.md](docs/PHASE-PROTOCOL.md) for the complete spec, orchestrator reaction matrix, sequence diagram, and crash recovery.
+
+## Semantic changes since last review
+
+- **New**: `.woodpecker/acceptance-tests.yml` — post-merge acceptance verification pipeline (auto-rebuilds edge image, runs `tests/acceptance/issue-*.sh`, manages `awaiting-live-verification` label)
+- **New**: `.woodpecker/check-stale-rebase.sh` — CI guard blocking PRs that would silently revert upstream changes
+- **New**: `docker/edge/engagement-server.py` + `site/engagement.js` — engagement tracking (collected and sent to edge server)
+- **New**: `gardener/classify.sh` + `gardener/gardener-step.sh` — per-task formula dispatch (replaces monolithic gardener run; #871, #902, #906, #906, #912, #916)
+- **New**: `formulas/` — 9 formula TOMLs: agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked
+- **New**: `lib/ci-fix-tracker.sh` — CI fix tracking; `lib/forge-paginate.sh` — Forge API pagination; `lib/gardener-edit.sh` — gardener edit primitives; `lib/gardener-pr.sh` — gardener PR helpers; `lib/stale-base-check.sh` — stale-base regression detector
+- **New**: `tools/comment-on-issue.sh` — Forge issue comment tool; `tools/discover-closed-issues.sh` — parse closed issues from PR body/commit; `tools/migrate-ac-to-file.sh` — migrate inline AC to test files
+- **New**: `tests/acceptance/issue-851.sh`, `issue-852.sh`, `issue-859.sh`, `issue-861.sh`, `issue-868.sh`, `issue-882.sh` — post-merge acceptance tests
+- **New**: `vault/policies/bot-filer.hcl` — vault policy for bot-filer identity
+- **New**: `nomad/jobs/edge.hcl` — edge job Nomad config
+- **Modified**: `architect/architect-run.sh` — major rewrite (1236 lines changed)
+- **Modified**: `docker/voice/bridge.py` — 118 lines changed; `docker/edge/dispatcher.sh` — minor update
+- **Modified**: `bin/snapshot-forge.sh` — 69 lines changed; `dev/dev-poll.sh` — 56 lines changed
+- **Removed**: `formulas/add-rpc-method.toml`, `collect-engagement.toml`, `rent-a-human-caddy-ssh.toml`, `upgrade-dependency.toml`
