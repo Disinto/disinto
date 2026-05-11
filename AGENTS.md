@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: e817369428257b16ff541e7ce37318d6046b4be3 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -25,14 +25,17 @@ See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
 
 Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, etc.)
+- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, forge-paginate.sh, ci-fix-tracker.sh, ci-helpers.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, parse-deps.sh, profile.sh, issue-lifecycle.sh, pr-lifecycle.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner)
+- **formulas/**: TOML issue templates for multi-step agent tasks (agents-md-stale, blocker-starving-the-factory, bundle-dust, enrich-bug-report, enrich-underspecified, file-subissues, pitch-vision, promote-tech-debt, revisit-blocked, dev, groom-backlog, review-pr, reproduce, triage, run-architect, run-gardener, run-planner, run-predictor, run-publish-site, run-rent-a-human, run-supervisor)
+- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement-server.py)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh, sync-nomad-client-config.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+- **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh)
+- **site/**: Frontend assets (engagement.js)
+- **tests/acceptance/**: Post-merge acceptance test scripts (issue-846.sh, issue-850.sh, issue-851.sh, issue-852.sh, issue-859.sh, issue-861.sh, issue-868.sh, issue-882.sh)
 - **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
 
 ## Agent .profile Model
