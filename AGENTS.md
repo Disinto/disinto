@@ -1,4 +1,4 @@
-<!-- last-reviewed: e817369428257b16ff541e7ce37318d6046b4be3 -->
+<!-- last-reviewed: c3145b5b9bbfca2e13e24a5abaef226872855f0b -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -41,7 +41,7 @@ Key directories:
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`. (Note: `knowledge/lessons-learned.md` lives in the `.profile` repo, not the main repo.)
+Each agent has a `.profile` repository on Forgejo storing `lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`. (Note: `lessons-learned.md` lives in the `.profile` repo, not the main repo.)
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
