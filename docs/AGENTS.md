@@ -35,7 +35,9 @@ disinto/                 (code repo)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
 ├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator surface); voice/ (bridge.py, UI)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution); run-acceptance.sh — acceptance test runner for CI
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh; reserved-name
+│                  blocklist, admin-approved allowlist, per-caller attribution); run-acceptance.sh
+│                  — acceptance test runner for CI
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md); voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md)
