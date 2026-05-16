@@ -15,14 +15,14 @@ disinto/                 (code repo)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)
-│                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
-│                  write-incident.sh, commit-incidents.sh
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
 │                           cleanup-worktrees, close-stuck-pr, disk-pressure,
 │                           git-rebase-fix, memory-crisis, sweep-ci-exhausted, wp-agent-restart)
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
+│                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
+│                  write-incident.sh, commit-incidents.sh
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
