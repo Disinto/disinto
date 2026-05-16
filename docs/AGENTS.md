@@ -13,7 +13,6 @@ disinto/                 (code repo)
 │                  classify.sh — per-task formula dispatcher
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
-│                  pending-actions.jsonl — intermediate manifest (JSONL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)
 │                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
 │                  write-incident.sh, commit-incidents.sh
