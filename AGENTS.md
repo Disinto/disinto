@@ -1,4 +1,4 @@
-<!-- last-reviewed: 78de1e6a34d22cdcc225082beed22d6dac0ad31d -->
+<!-- last-reviewed: c872f282428861a735fbbb00609f77d063ad92b3 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -10,9 +10,7 @@ from the vision, and keep the system healthy — all via a polling loop (`docker
 The dispatcher executes formula-based operational tasks.
 
 Each agent has a `.profile` repository on Forgejo that stores lessons learned
-from prior sessions, providing continuous improvement across runs. The
-`lib/profile.sh` module manages the `.profile` repo lifecycle: cloning/pulling,
-lazy journal→digest→lessons-learned flow, and per-session journal writing.
+from prior sessions, providing continuous improvement across runs.
 
 > **Note:** The vault is being redesigned as a PR-based approval workflow on the
 > ops repo (see issues #73-#77). See [docs/VAULT.md](docs/VAULT.md) for details. Old vault scripts are being removed.
@@ -21,27 +19,62 @@ See `README.md` for the full architecture and `disinto-factory/SKILL.md` for set
 
 ## Directory layout
 
-See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
+```
+disinto/                 (code repo)
+├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
+├── review/        review-poll.sh, review-pr.sh — PR review
+├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
+│                  best-practices.md — gardener best-practice reference
+│                  pending-actions.json — queued gardener actions
+├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
+├── planner/       planner-run.sh — polling-loop executor for run-planner formula
+├── supervisor/    supervisor-run.sh — formula-driven health monitoring (polling-loop executor)
+│                  preflight.sh — pre-flight data collection for supervisor formula
+├── architect/     architect-run.sh — strategic decomposition of vision into sprints
+├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
+│                  SCHEMA.md — vault item schema documentation
+│                  validate.sh — vault item validator
+│                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
+├── lib/           env.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh
+│                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop, on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
+│                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, lib-systemd.sh (Nomad+Vault Step 0 installers, #821-#825); wp-oauth-register.sh (Forgejo OAuth2 app + Vault KV seeder for Woodpecker, S3.3); deploy.sh (dependency-ordered Nomad job deploy + health-wait, S4)
+├── nomad/         server.hcl, client.hcl (allow_privileged for woodpecker-agent, S3-fix-5), vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
+│                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1); vault-runner.hcl (parameterized batch dispatch, S5.3)
+├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
+├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
+├── docker/        Dockerfiles and entrypoints: agents, chat (server.py, ui/), edge (Dockerfile, dispatcher.sh, entrypoint-edge.sh), reproduce, runner, voice (bridge.py, ui/)
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh)
+│                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
+│                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>` (add a new file to support a new service)
+├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+├── site/          disinto.ai website content
+├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)
+├── templates/     Issue templates
+├── bin/           The `disinto` CLI script (`--with <svc>` deploys services + runs their Vault seeders)
+├── disinto-factory/  Setup documentation and skill
+├── state/         Runtime state
+├── .woodpecker/   Woodpecker CI pipeline configs
+├── VISION.md      High-level project vision
+└── CLAUDE.md      Claude Code project instructions
 
-Key directories:
-- **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, parse-deps.sh, ci-fix-tracker.sh, forge-paginate.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, etc.)
-- **nomad/jobs/**: Nomad job HCL configs
-- **formulas/**: TOML issue templates for multi-step agent tasks (*.toml, *.sh)
-- **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement-server.py)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
-- **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
-- **action-vault/**: Vault item validation and examples
-- **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
-- **vault/policies/**: Vault HCL policies (bot-filer.hcl)
-- **site/**: Frontend assets (engagement.js)
-- **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
-- **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh)
-- **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
+disinto-ops/             (ops repo — {project}-ops)
+├── vault/
+│   ├── actions/   where vault action TOMLs land (core of vault workflow)
+│   ├── pending/   vault items awaiting approval
+│   ├── approved/  approved vault items
+│   ├── fired/     executed vault items
+│   └── rejected/  rejected vault items
+├── sprints/       sprint planning artifacts
+├── knowledge/     shared agent knowledge + best practices
+├── evidence/      engagement data, experiment results
+├── portfolio.md   addressables + observables
+├── prerequisites.md  dependency graph
+└── RESOURCES.md   accounts, tokens (refs), infra inventory
+```
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing lessons-learned.md (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`. (Note: lessons-learned.md lives in the `.profile` repo, not the main repo.)
+Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/formula-session.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
@@ -77,25 +110,25 @@ bash dev/phase-test.sh
 
 ## Agents
 
-| Agent | Directory | Role | Details |
-|-------|-----------|------|---------|
-| Dev | `dev/` | Issue implementation | [AGENTS.md](dev/AGENTS.md) |
-| Review | `review/` | PR review | [AGENTS.md](review/AGENTS.md) |
-| Gardener | `gardener/` | Backlog grooming (per-iteration, single task per cycle, llama-friendly — #872) | [AGENTS.md](gardener/AGENTS.md) |
-| Supervisor | `supervisor/` | Health monitoring | [AGENTS.md](supervisor/AGENTS.md) |
-| Planner | `planner/` | Strategic planning | [AGENTS.md](planner/AGENTS.md) |
-| Predictor | `predictor/` | Infrastructure patterns | [AGENTS.md](predictor/AGENTS.md) |
-| Architect | `architect/` | Sprint decomposition | [AGENTS.md](architect/AGENTS.md) |
-| Filer | `lib/sprint-filer.sh` | Sub-issue filing (deferred, #779) | — |
-| Reproduce | `docker/reproduce/` | Bug reproduction (Playwright MCP) | — |
-| Triage | `docker/reproduce/` | Root cause analysis | — |
-| Edge dispatcher | `docker/edge/` | Vault action dispatch | — |
-| Local-model | `docker/agents/` | Llama-server agents | — |
+| Agent | Directory | Role | Guide |
+|-------|-----------|------|-------|
+| Dev | `dev/` | Issue implementation | [dev/AGENTS.md](dev/AGENTS.md) |
+| Review | `review/` | PR review | [review/AGENTS.md](review/AGENTS.md) |
+| Gardener | `gardener/` | Backlog grooming | [gardener/AGENTS.md](gardener/AGENTS.md) |
+| Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
+| Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
+| Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
+| Architect | `architect/` | Strategic decomposition (read-only on project repo) | [architect/AGENTS.md](architect/AGENTS.md) |
+| Filer | `lib/sprint-filer.sh` | Sub-issue filing from merged sprint PRs | ops repo pipeline (deferred, see #779) |
+| Reproduce | `docker/reproduce/` | Bug reproduction using Playwright MCP | `formulas/reproduce.toml` |
+| Triage | `docker/reproduce/` | Deep root cause analysis | `formulas/triage.toml` |
+| Edge dispatcher | `docker/edge/` | Polls ops repo for vault actions, executes via Claude sessions | `docker/edge/dispatcher.sh` |
+| Local-model agents | `docker/agents/` (same image) | Local llama-server agents configured via `[agents.X]` sections in project TOML | [docs/agents-llama.md](docs/agents-llama.md) |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
-> See [docs/VAULT.md](docs/VAULT.md) for details.
+> See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow details.
 
-Shared helpers: [lib/AGENTS.md](lib/AGENTS.md) · Nomad jobs: [nomad/AGENTS.md](nomad/AGENTS.md)
+See [lib/AGENTS.md](lib/AGENTS.md) for the full shared helper reference.
 
 ---
 
@@ -135,7 +168,7 @@ Concrete artifacts the factory has produced or is building. Observables have mea
 
 | Artifact | Location | Observable? |
 |----------|----------|-------------|
-| Website  | disinto.ai | Partial |
+| Website  | disinto.ai | No |
 | Repo     | codeberg.org/johba/disinto | Partial |
 | Skill    | ClawHub (in progress) | No |
 | GitHub org | github.com/Disinto | No |
@@ -149,16 +182,16 @@ Humans write these. Agents read and enforce them.
 | ID | Decision | Rationale |
 |---|---|---|
 | AD-001 | Nervous system runs from a polling loop (`docker/agents/entrypoint.sh`), not PR-based actions. | Planner, predictor, gardener, supervisor run directly via `*-run.sh`. They create work, they don't become work. (See PR #474 revert.) |
-| AD-002 | **Concurrency is bounded per LLM backend, not per project.** One concurrent Claude session per OAuth credential pool; one concurrent session per llama-server instance. | **(a) Anthropic OAuth** — each container uses per-session `CLAUDE_CONFIG_DIR`; native lockfile handles contention. (Rollback: `CLAUDE_EXTERNAL_LOCK=1`.) **(b) llama-server** — finite VRAM, one KV cache; parallel inference thrashes cache → OOM. All llama agents serialize. **(c) Disjoint backends parallelize freely.** `disinto-agents` (Anthropic) runs concurrently with `disinto-agents-llama` (llama). **(d) Per-project safety** enforced by `issue_claim` + per-issue worktrees (separate from this AD). |
+| AD-002 | **Concurrency is bounded per LLM backend, not per project.** One concurrent Claude session per OAuth credential pool; one concurrent session per llama-server instance. Containers with disjoint backends may run in parallel. | The single-thread invariant is about *backends*, not pipelines. **(a) Anthropic OAuth credentials race on token refresh** — each container uses a per-session `CLAUDE_CONFIG_DIR`, so Claude Code's native lockfile-based OAuth refresh handles contention automatically without external serialization. (Legacy: set `CLAUDE_EXTERNAL_LOCK=1` to re-enable the old `flock session.lock` wrapper for rollback.) **(b) llama-server has finite VRAM and one KV cache** — parallel inference thrashes the cache and risks OOM. All llama-backed agents serialize on the same lock. **(c) Disjoint backends are free to parallelize.** Today `disinto-agents` (Anthropic OAuth, runs `review,gardener`) runs concurrently with `disinto-agents-llama` (llama, runs `dev`) on the same project — they share neither OAuth state nor llama VRAM. **(d) Per-project work-conflict safety** (no duplicate dev work, no merge conflicts on the same branch) is enforced by `issue_claim` (assignee + `in-progress` label) and per-issue worktrees — that's a separate guard that does NOT depend on this AD. |
 | AD-003 | The runtime creates and destroys, the formula preserves. | Runtime manages worktrees/sessions/temp. Formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep. Use phase files, webhooks, or poll loops with backoff. |
 | AD-005 | Secrets via env var indirection, never in issue bodies. | Issue bodies become code. Agent secrets go in `.env.enc` (SOPS-encrypted), vault secrets in `secrets/<NAME>.enc` (age-encrypted, one file per key). Referenced as `$VAR_NAME`. Runner gets only vault secrets; agents get only agent secrets. |
 | AD-006 | External actions go through vault dispatch, never direct. | Agents build addressables; only the vault exercises them (publishes, deploys, posts). Tokens for external systems (`GITHUB_TOKEN`, `CLAWHUB_TOKEN`, deploy keys) live only in `secrets/<NAME>.enc` and are decrypted into the ephemeral runner container. `lib/env.sh` unsets them so agents never hold them. PRs with direct external actions without vault dispatch get REQUEST_CHANGES. (Vault redesign in progress: PR-based approval on ops repo, see #73-#77) |
 
 **Who enforces what:**
-- **Gardener** checks open backlog issues against ADs during grooming. **Planner** plans within the architecture.
+- **Planner** plans within the architecture; does not create issues that violate ADs.
 - **Dev-agent** reads AGENTS.md before implementing; refuses work that violates ADs.
-- **AD-002 is a runtime invariant** — OAuth concurrency handled by `CLAUDE_CONFIG_DIR` isolation; violations manifest as 401 or VRAM OOM in logs.
+- **AD-002 is a runtime invariant; nothing for the gardener to check at issue-groom time.** OAuth concurrency is handled by per-session `CLAUDE_CONFIG_DIR` isolation (with `CLAUDE_EXTERNAL_LOCK` as a rollback flag). Per-issue work is enforced by `issue_claim`. A violation manifests as a 401 or VRAM OOM in agent logs, not as a malformed issue.
 
 ## Phase-Signaling Protocol
 
