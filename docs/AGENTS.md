@@ -9,10 +9,10 @@ Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md
 disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
+├── gardener/      gardener-run.sh, gardener-step.sh — polling-loop executors
+│                  classify.sh — per-task formula dispatcher
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
-│                  pending-actions.jsonl — intermediate manifest (JSONL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
@@ -31,15 +31,27 @@ disinto/                 (code repo)
 │                  hooks/ — Claude Code session hooks
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh, wp-oauth-register.sh, wp-seed-secrets.sh
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
-│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1)
+│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1); edge-threads-gc.hcl (Caddy proxy thread GC, S5.1)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
-├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator surface); voice/ (bridge.py, UI)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution); run-acceptance.sh — acceptance test runner for CI
+│                  agents-md-stale.toml — per-directory AGENTS.md watermark walk
+│                  blocker-starving-the-factory.toml — surface backlog dep blocking factory
+│                  bundle-dust.toml — bundle dust accumulator into backlog issues
+│                  enrich-bug-report.toml — enrich underspecified bug reports
+│                  enrich-underspecified.toml — fill in missing AC for vague issues
+│                  file-subissues.toml — file sub-issues from approved ops PRs
+│                  pitch-vision.toml — vision pitch template
+│                  promote-tech-debt.toml — promote tech-debt issues to backlog
+│                  revisit-blocked.toml — revisit stale blocked issues
+├── docker/        Dockerfiles: agents, edge, reproduce, runner; chat (server.py, ui/); edge/ (Dockerfile, dispatcher.sh, entrypoint-edge.sh, chat-skills/); voice/ (bridge.py, ui/)
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh); run-acceptance.sh — acceptance test runner for CI
+│                  comment-on-issue.sh — post comments and manage labels on issues
+│                  discover-closed-issues.sh — extract closed issue numbers from PR/merge
+│                  migrate-ac-to-file.sh — migrate inline AC to test files
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md); voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md)
-├── site/          disinto.ai website content
+├── site/          disinto.ai website content; engagement.js — frontend engagement assets
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats, vault-import.bats, disinto-init-nomad.bats)
 ├── tests/acceptance/  Acceptance test scripts per issue (issue-<n>.sh); runner at tools/run-acceptance.sh; helpers at tests/lib/acceptance-helpers.sh
 ├── tests/lib/       Shared test helpers (acceptance-helpers.sh)
@@ -48,6 +60,8 @@ disinto/                 (code repo)
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
+│                  ci.yml — main CI pipeline; acceptance-tests.yml — post-merge acceptance
+│                  check-stale-rebase.sh — stale-base regression guard
 ├── VISION.md      High-level project vision
 └── CLAUDE.md      Claude Code project instructions
 
