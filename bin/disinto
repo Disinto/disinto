@@ -14,7 +14,7 @@
 #   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
 #   disinto backup create <outfile>     Export factory state for migration
 #   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
-#   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice)
+#   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
 #   disinto wp reseed-secrets           Re-seed Woodpecker repo secrets from .env
 #
 # Usage:
@@ -77,7 +77,7 @@ Usage:
   disinto edge <verb> [options]        Manage edge tunnel registrations
   disinto backup <subcommand>          Backup and restore factory state
   disinto validate <subcommand>        Validate factory artifacts
-  disinto vault <subcommand>           Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice)
+  disinto vault <subcommand>           Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
   disinto wp reseed-secrets            Re-seed Woodpecker repo secrets from .env
 
 Validate subcommands:
@@ -2069,6 +2069,97 @@ with open(sys.argv[1], 'rb') as f:
     echo ""
   done
 
+  # ── Secret seeding health checks (issue #634) ─────────────────────
+  echo "── Secret seeding health ────────────────────────────────"
+  local health_ok=true
+
+  # Check 1: kv/disinto/runner/ tokens (needed by vault-runner job)
+  if [ -n "${VAULT_ADDR:-}" ]; then
+    _hvault_default_env 2>/dev/null || true
+    if hvault_token_lookup >/dev/null 2>&1; then
+      local runner_keys
+      runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
+      if [ -n "$runner_keys" ]; then
+        local key_count
+        key_count="$(printf '%s' "$runner_keys" | jq 'length')"
+        if [ "${key_count:-0}" -gt 0 ]; then
+          echo "  kv/disinto/runner/* : ${key_count} key(s) — OK"
+        else
+          echo "  kv/disinto/runner/* : EMPTY — run 'disinto vault reseed-runner'"
+          health_ok=false
+        fi
+      else
+        echo "  kv/disinto/runner/* : (vault reachable but list failed)"
+      fi
+
+      # Check 2: kv/disinto/shared/ops-repo token (needed by edge dispatcher)
+      local ops_raw
+      ops_raw="$(hvault_get_or_empty "kv/data/disinto/shared/ops-repo" 2>/dev/null || true)"
+      if [ -n "$ops_raw" ]; then
+        local ops_token
+        ops_token="$(printf '%s' "$ops_raw" | jq -r '.data.data.token // ""' 2>/dev/null || true)"
+        if [ -n "$ops_token" ]; then
+          echo "  kv/disinto/shared/ops-repo : token present — OK"
+        else
+          echo "  kv/disinto/shared/ops-repo : token missing — run 'disinto vault reseed-ops-repo'"
+          health_ok=false
+        fi
+      else
+        echo "  kv/disinto/shared/ops-repo : EMPTY — run 'disinto vault reseed-ops-repo'"
+        health_ok=false
+      fi
+    else
+      echo "  Vault: not reachable (set VAULT_ADDR + VAULT_TOKEN to check)"
+    fi
+  else
+    echo "  Vault: VAULT_ADDR not set (skip; run 'disinto vault reseed-all' to seed)"
+  fi
+
+  # Check 3: Woodpecker repo secrets
+  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
+  local wp_secrets_ok=false
+  if [ ! -f "$wp_db" ]; then
+    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
+      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
+    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
+      wp_db="/woodpecker-data/woodpecker.sqlite"
+    fi
+  fi
+  if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
+    local wp_secret_count
+    wp_secret_count="$(python3 -c "
+import sqlite3, sys
+c = sqlite3.connect('${wp_db}')
+# Handle schema variants across Woodpecker versions
+pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
+cols = {r[1] for r in pragma}
+rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
+if not rid:
+    print(0); sys.exit(0)
+count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
+print(count)
+" 2>/dev/null)" || wp_secret_count="?"
+    if [ "$wp_secret_count" = "?" ] || [ "$wp_secret_count" -eq 0 ] 2>/dev/null; then
+      echo "  Woodpecker secrets (repo_id=1) : EMPTY — run 'disinto wp reseed-secrets'"
+      health_ok=false
+    else
+      echo "  Woodpecker secrets (repo_id=1) : ${wp_secret_count} secret(s) — OK"
+      wp_secrets_ok=true
+    fi
+  elif [ -f "$wp_db" ]; then
+    echo "  Woodpecker secrets: python3 required for check"
+  fi
+
+  if [ "$health_ok" = true ] && [ "$wp_secrets_ok" = true ]; then
+    echo ""
+    echo "  All secret paths seeded — factory is healthy."
+  elif [ "$health_ok" = true ] && [ "$wp_secrets_ok" = false ]; then
+    echo ""
+    echo "  Vault secrets seeded, but Woodpecker needs reseeding."
+    echo "  Run: disinto wp reseed-secrets"
+  fi
+  echo ""
+
   if [ "$found" = false ]; then
     echo "No projects configured."
     echo "Run 'disinto init <repo-url>' to get started."
@@ -2696,6 +2787,80 @@ disinto_up() {
 
   docker compose -f "$compose_file" up -d --build ${compose_args[@]+"${compose_args[@]}"}
   echo "Stack is up"
+
+  # ── Post-upgrade migration: warn about unseeded secrets (issue #634) ──
+  # Factories initialized before #603/#604/#1035 landed have no retroactive
+  # migration. If we detect common missing-secrets patterns, suggest the
+  # reseed commands.
+  _post_upgrade_migration_check() {
+    local migration_marker="${FACTORY_ROOT}/state/migration-634-done"
+    if [ -f "$migration_marker" ]; then
+      return 0
+    fi
+
+    local needs_reseed=false
+    local suggestions=()
+
+    # Check 1: Woodpecker DB exists but may have no secrets
+    local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
+    if [ ! -f "$wp_db" ]; then
+      if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
+        wp_db="/var/lib/woodpecker/woodpecker.sqlite"
+      elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
+        wp_db="/woodpecker-data/woodpecker.sqlite"
+      fi
+    fi
+    if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
+      local wp_secret_count
+      wp_secret_count="$(python3 -c "
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
+cols = {r[1] for r in pragma}
+rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
+if not rid:
+    print(0); sys.exit(0)
+count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
+print(count)
+" "$wp_db" 2>/dev/null)" || wp_secret_count="?"
+      if [ "$wp_secret_count" = "0" ]; then
+        needs_reseed=true
+        suggestions+=("Woodpecker has no secrets — run 'disinto wp reseed-secrets'")
+      fi
+    fi
+
+    # Check 2: .env exists but Vault may not be seeded
+    if [ -f "${FACTORY_ROOT}/.env" ] && [ -n "${VAULT_ADDR:-}" ]; then
+      if hvault_token_lookup >/dev/null 2>&1; then
+        local runner_keys
+        runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
+        if [ -n "$runner_keys" ]; then
+          local key_count
+          key_count="$(printf '%s' "$runner_keys" | jq 'length')"
+          if [ "${key_count:-0}" -eq 0 ]; then
+            needs_reseed=true
+            suggestions+=("Vault runner KV tree is empty — run 'disinto vault reseed-runner'")
+          fi
+        fi
+      fi
+    fi
+
+    if [ "$needs_reseed" = true ]; then
+      echo ""
+      echo "── Post-upgrade check ─────────────────────────────────"
+      echo "Some secrets may not be seeded on this factory."
+      echo "Run the following to fix:"
+      for s in "${suggestions[@]}"; do
+        echo "  - $s"
+      done
+      echo "  - or run 'disinto vault reseed-all' to seed everything"
+      echo ""
+      # Create migration marker so we don't warn again
+      mkdir -p "$(dirname "$migration_marker")"
+      touch "$migration_marker"
+    fi
+  }
+  _post_upgrade_migration_check
 
   # Clean up temp .env (also handled by EXIT trap if compose fails)
   if [ -n "$tmp_env" ] && [ -f "$tmp_env" ]; then
@@ -3406,11 +3571,92 @@ disinto_vault() {
         sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
       fi
       ;;
+    reseed-all)
+      # Run every vault reseed + wp reseed-secrets in sequence.
+      # Idempotent: each subcommand is safe to re-run on already-seeded
+      # factories. Missing env vars produce warnings (not hard errors).
+      local dry_run=0
+      for _arg in "$@"; do
+        case "$_arg" in
+          --dry-run) dry_run=1 ;;
+          -h|--help)
+            cat <<EOF
+Usage: disinto vault reseed-all [--dry-run]
+
+Run all vault + Woodpecker reseed operations in sequence.
+
+Idempotent: safe to re-run on already-seeded factories.
+Missing env vars produce warnings, not hard errors.
+
+Subcommands executed:
+  vault reseed-ops-repo   Seed kv/disinto/shared/ops-repo (FORGE_TOKEN)
+  vault reseed-runner     Seed kv/disinto/runner/* tokens from .env
+  vault reseed-voice      Seed kv/disinto/voice.gemini_api_key from .env
+  vault reseed-chat-oauth Seed kv/disinto/chat OAuth + secrets from .env
+  wp reseed-secrets       Seed Woodpecker repo secrets (GHCR_TOKEN, FORGE_TOKEN)
+
+Options:
+  --dry-run   Show what would be seeded without writing
+EOF
+            exit 0
+            ;;
+          *)
+            echo "Error: unknown option: $_arg" >&2
+            echo "Usage: disinto vault reseed-all [--dry-run]" >&2
+            exit 1
+            ;;
+        esac
+      done
+
+      local -a _reseed_args=()
+      if [ "$dry_run" -eq 1 ]; then
+        _reseed_args=(--dry-run)
+      fi
+
+      echo "── Vault + Woodpecker reseed-all ──────────────────────"
+      echo "dry_run=${dry_run}"
+      echo ""
+
+      local _rc=0
+      local _subcmd
+      for _subcmd in reseed-ops-repo reseed-runner reseed-voice reseed-chat-oauth; do
+        echo ""
+        echo "── ${_subcmd} ─────────────────────────────────────────"
+        if [ "$dry_run" -eq 1 ]; then
+          echo "[dry-run] would run: disinto vault ${_subcmd} --dry-run"
+        fi
+        disinto_vault "$_subcmd" "${_reseed_args[@]}" || _rc=$?
+        if [ "$_rc" -ne 0 ]; then
+          echo "Warning: disinto vault ${_subcmd} exited with code ${_rc}" >&2
+        fi
+      done
+
+      # WP reseed-secrets (separate from vault, uses sqlite3)
+      echo ""
+      echo "── wp reseed-secrets ──────────────────────────────────"
+      if [ "$dry_run" -eq 1 ]; then
+        echo "[dry-run] would run: disinto wp reseed-secrets --dry-run"
+      fi
+      disinto_wp reseed-secrets "${_reseed_args[@]}" || _rc=$?
+      if [ "$_rc" -ne 0 ]; then
+        echo "Warning: disinto wp reseed-secrets exited with code ${_rc}" >&2
+      fi
+
+      echo ""
+      echo "── Done ───────────────────────────────────────────────"
+      if [ "$_rc" -ne 0 ]; then
+        echo "Some reseed operations failed. Check warnings above." >&2
+      fi
+      return "$_rc"
+      ;;
     *)
       cat <<EOF >&2
 Usage: disinto vault <subcommand>
 
 Subcommands:
+  reseed-all        Run all vault reseed operations + wp reseed-secrets in
+                    sequence (idempotent; convenient for post-init seeding;
+                    fixes #634)
   reseed-ops-repo   Seed kv/disinto/shared/ops-repo from kv/disinto/bots/vault
                     (idempotent — safe on already-seeded factories; fixes
                     edge dispatcher stuck pending on missing KV path)
