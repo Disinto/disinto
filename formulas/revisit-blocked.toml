@@ -14,18 +14,19 @@
 # based on the exit reason:
 #
 #   1. Transient agent state (`no_push`, `exhausted`, `stuck-pr`,
-#      `ci_exhausted_poll`) → remove `blocked`. dev-poll retries on its next
-#      cycle and either makes progress or re-blocks with a fresh comment.
+#      `ci_exhausted_poll`, `ci_timeout`) → remove `blocked`. dev-poll
+#      retries on its next cycle and either makes progress or re-blocks
+#      with a fresh comment.
 #   2. Dependency-based block (`dep #X not merged`, or any reference to
 #      `dep #X` in the comment) → check the state of `#X` via the Forgejo
 #      API. If `#X` is closed/merged → remove `blocked` (the dep landed,
 #      the chain can move). If `#X` is still open → leave alone.
 #   3. Operator-mediated / unrecognized format → leave `blocked` alone. If
-#      the issue has been blocked for more than `BLOCKED_NUDGE_AGE_DAYS`
-#      (default 7d) AND no prior nudge comment exists in the last 7d
+#      the issue has been blocked for more than `BLOCKED_NUDGE_AGE_HOURS`
+#      (default 4h) AND no prior nudge comment exists in the last 4h
 #      (sentinel: HTML comment `<!-- gardener: blocked-nudge -->`), post a
 #      one-line nudge so the operator sees the staleness in the activity
-#      feed. Cap one nudge per 7-day window per issue.
+#      feed. Cap one nudge per 4-hour window per issue.
 #
 # All writes go through lib/gardener-edit.sh helpers and are journaled to
 # ${DISINTO_LOG_DIR}/gardener/journal.jsonl.
@@ -33,7 +34,7 @@
 # Idempotency:
 #   - The classify.sh stale-threshold gate (default 4h) keeps this from
 #     fighting a freshly-blocked dev-poll cycle.
-#   - The 7-day nudge cap is enforced by reading existing comments authored
+#   - The 4-hour nudge cap is enforced by reading existing comments authored
 #     by gardener-bot matching the sentinel string and computing the age of
 #     the most recent one before posting a new one.
 #   - The four edit helpers are themselves idempotent — re-running on an
@@ -85,7 +86,7 @@ The issue carries the `blocked` label and has been stale for at least
 `BLOCKED_REVISIT_AGE_SECS` (default 4h). Your job: parse the most recent
 `### Blocked — issue #N` comment posted by dev-poll, classify the exit
 reason, and either remove `blocked` (transient or resolved-dep) or post a
-single nudge comment (operator-mediated, > 7d old, no recent nudge).
+single nudge comment (operator-mediated, > 4h old, no recent nudge).
 
 ## 1. Fetch the issue and its comments
 
@@ -147,7 +148,7 @@ If no `### Blocked` comment exists, the block was set by something other
 than dev-poll (operator, supervisor, etc.). Treat it as the operator-
 mediated path (step 6).
 
-## 4. Transient-state path: `no_push` / `exhausted` / `stuck-pr` / `ci_exhausted_poll`
+## 4. Transient-state path: `no_push` / `exhausted` / `stuck-pr` / `ci_exhausted_poll` / `ci_timeout`
 
 If the exit reason starts with any of these tokens (substring match on the
 beginning is fine — e.g. `ci_exhausted_poll (3 attempts, PR #888)` matches
@@ -155,7 +156,7 @@ beginning is fine — e.g. `ci_exhausted_poll (3 attempts, PR #888)` matches
 dev-poll will retry on its next 5-minute cycle once `blocked` is gone.
 
   case "$EXIT_REASON" in
-    no_push*|exhausted*|stuck-pr*|ci_exhausted_poll*)
+    no_push*|exhausted*|stuck-pr*|ci_exhausted_poll*|ci_timeout*)
       cat > /tmp/blocked-${ISSUE}.unblock-comment <<EOF
   Removing \\`blocked\\` so dev-poll can retry on its next cycle.
 
@@ -227,21 +228,21 @@ within the latest blocked comment body.
 The exit reason is empty or doesn't match any known transient/dep pattern
 (human-set `blocked`, custom comment format, etc.). Do NOT remove
 `blocked` — only the operator can clear it. But if the issue has been
-blocked for more than `BLOCKED_NUDGE_AGE_DAYS` (default 7d), post a single
+blocked for more than `BLOCKED_NUDGE_AGE_HOURS` (default 4h), post a single
 one-line nudge so the staleness surfaces in the activity feed.
 
-Compute days since the last update:
+Compute hours since the last update:
 
-  NUDGE_AGE_DAYS="${BLOCKED_NUDGE_AGE_DAYS:-7}"
+  NUDGE_AGE_HOURS="${BLOCKED_NUDGE_AGE_HOURS:-4}"
   NOW_EPOCH=$(date -u +%s)
   UPDATED_EPOCH=$(date -u -d "$UPDATED_AT" +%s 2>/dev/null || echo 0)
   AGE_SECS=$(( NOW_EPOCH - UPDATED_EPOCH ))
-  THRESHOLD_SECS=$(( NUDGE_AGE_DAYS * 86400 ))
+  THRESHOLD_SECS=$(( NUDGE_AGE_HOURS * 3600 ))
 
 If AGE_SECS < THRESHOLD_SECS: noop, exit 0.
 
 Otherwise, check for an existing nudge comment within the last
-NUDGE_AGE_DAYS (sentinel: `<!-- gardener: blocked-nudge -->`). If a recent
+NUDGE_AGE_HOURS (sentinel: `<!-- gardener: blocked-nudge -->`). If a recent
 nudge exists, do not double-nudge:
 
   RECENT_NUDGE=$(jq -c --argjson cutoff "$(( NOW_EPOCH - THRESHOLD_SECS ))" '
@@ -257,15 +258,15 @@ nudge exists, do not double-nudge:
 
 Post the nudge:
 
-  AGE_DAYS_RENDERED=$(( AGE_SECS / 86400 ))
+  AGE_HOURS_RENDERED=$(( AGE_SECS / 3600 ))
   cat > /tmp/blocked-${ISSUE}.nudge <<EOF
   <!-- gardener: blocked-nudge -->
-  This issue has been \\`blocked\\` for ${AGE_DAYS_RENDERED} days with no
+  This issue has been \\`blocked\\` for ${AGE_HOURS_RENDERED}h with no
   recognized auto-revisit signal. Operator review needed.
   EOF
 
   gardener_post_comment "$ISSUE" /tmp/blocked-${ISSUE}.nudge || exit 1
-  echo "ACTION: nudged #$ISSUE — ${AGE_DAYS_RENDERED}d blocked, no auto-revisit signal — $TITLE"
+  echo "ACTION: nudged #$ISSUE — ${AGE_HOURS_RENDERED}h blocked, no auto-revisit signal — $TITLE"
   exit 0
 
 ## Tool envelope (#910)

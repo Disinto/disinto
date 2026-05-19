@@ -344,7 +344,7 @@ check_bundle_dust() {
 #    comment, classify the exit reason, and decide whether to remove
 #    `blocked` (transient agent state or resolved dep), leave it alone
 #    (operator-mediated, dep still open), or post a one-time nudge once the
-#    issue has been blocked longer than BLOCKED_NUDGE_AGE_DAYS (default 7d).
+#    issue has been blocked longer than BLOCKED_NUDGE_AGE_HOURS (default 4h).
 #    The stale-threshold gate avoids fighting a freshly-blocked dev-poll
 #    cycle.
 check_revisit_blocked() {

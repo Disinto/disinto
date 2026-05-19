@@ -59,8 +59,8 @@ the formula parses dev-poll's latest `### Blocked — issue #N` comment
 (see `lib/issue-lifecycle.sh::issue_block`) and removes `blocked` for
 transient agent exits (`no_push`, `exhausted`, `stuck-pr`,
 `ci_exhausted_poll`) or for `dep #X` references where `#X` has since been
-closed; for operator-mediated blocks older than `BLOCKED_NUDGE_AGE_DAYS`
-(default 7d) it posts a single nudge comment per 7-day window using the
+closed; for operator-mediated blocks older than `BLOCKED_NUDGE_AGE_HOURS`
+(default 4h) it posts a single nudge comment per 4-hour window using the
 `<!-- gardener: blocked-nudge -->` sentinel for idempotency — and
 `file-subissues` (#902) — for each open ops-repo `architect:` PR with a
 Forgejo APPROVED review state and no `## Filed:` marker, parse the pitch's
