@@ -40,6 +40,14 @@ predictor, and supervisor on every polling iteration.
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
 
+**Notable changes since last review**:
+- Entrypoint switched from calling `gardener/gardener-run.sh` to `gardener/gardener-step.sh`
+  as the per-iteration driver (#872). The old batch model is preserved for manual use.
+- `gardener/gardener-run.sh` now sources `lib/gardener-pr.sh` and uses
+  `detect_pr_number("chore/gardener-")` instead of manual PR detection logic.
+- `gardener/gardener-run.sh` added engagement evidence loading from ops repo
+  (`evidence/engagement/*.json`) for website addressable decisions (#975).
+
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
