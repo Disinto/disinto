@@ -90,8 +90,7 @@ resources or human decisions, formula files a vault item instead of escalating.
   driver, single task per cycle, #872) — primary behavioral change.
 - `gardener/gardener-run.sh` now documented as legacy; `gardener-step.sh` (~250 lines)
   and `gardener/classify.sh` (~760 lines) are the new per-iteration drivers.
-- `lib/gardener-pr.sh` sourced by gardener-step.sh; `detect_pr_number("chore/gardener-")`
+- `lib/gardener-pr.sh` sourced by gardener-step.sh; `detect_pr_number "chore/agents-md-"`
   extracts PR number from formula's scratch worktree commits (#762, #906).
-- Engagement evidence loaded from `evidence/engagement/*.json` to inform formula context.
 - `BLOCKED_NUDGE_AGE_DAYS` (7d) renamed to `BLOCKED_NUDGE_AGE_HOURS` (4h); old
   variable removed.
