@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 17a89f4e000583cac9ea2992cb2678945e3bd62d -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -7,24 +7,23 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
-`check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
-**Early-exit optimization**: if no issues, PRs, or repo files have changed since the last
-run (checked via Forgejo API and `git diff`), the model is not invoked — the run exits
-immediately (no tmux session, no tokens consumed). Otherwise, creates a tmux session with
-`claude --model sonnet`, injects `formulas/run-gardener.toml` as context, monitors the
-phase file, and cleans up on completion or timeout (2h max session). No action issues —
-the gardener runs as part of the polling loop alongside the planner, predictor, and supervisor.
+**Trigger**: `gardener/gardener-step.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+on every iteration (line 602-604). Guards against overlap via `flock` (line 79) and a
+`pgrep` check in the entrypoint. Sources `lib/guard.sh` and calls `check_active gardener`.
+**Classify-then-dispatch**: each invocation runs `gardener/classify.sh` which emits one
+`{"task":...}` JSON line (or empty for CLEAN). CLEAN exits immediately (~1s, no slot used).
+Otherwise loads the matching `formulas/<task>.toml` and dispatches a single task via
+`lib/formula-session.sh` (one `claude --model sonnet` session, no tmux). The step driver
+itself has no phase-monitoring — after `agent_run` completes, it walks the PR to merge
+via `pr_walk_to_merge` (3 retries, 5s backoff). No action issues — the gardener runs as
+part of the polling loop alongside the planner, predictor, and supervisor.
 
 **Key files**:
-- `gardener/gardener-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
-  sources disinto project config, creates tmux session, injects formula prompt,
-  monitors phase file via custom `_gardener_on_phase_change` callback (passed to
-  `run_formula_and_monitor`). Stays alive through CI/review/merge cycle after
-  `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
-  `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
-  Executes pending-actions manifest after PR merge.
+- `gardener/gardener-step.sh` — Per-iteration step driver (~250 lines): acquires `flock`,
+  runs `classify.sh` to emit one task JSON, dispatches via `formula-session.sh` (single
+  claude session, no tmux/phase-monitoring), walks PR to merge after completion.
+- `gardener/classify.sh` — Task classifier (~760 lines): scans backlog for issues needing
+  grooming; emits one `{"task":...}` JSON line or empty for CLEAN.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
@@ -34,13 +33,17 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   (label changes, closures, comments, issue creation, body edits). Written during
   grooming steps as one JSON object per line.
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
-  reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
+  reviewed alongside AGENTS.md changes, executed by gardener-step.sh after merge.
   Converted from JSONL at commit time.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
-- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
+- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-step.sh)
 
+**Entrypoint switch (#872)**: `docker/agents/entrypoint.sh` now calls
+`gardener/gardener-step.sh` (per-iteration step driver) instead of the old
+one-shot `gardener-run.sh`. This replaced the 6h batch model with per-iteration
+classify-then-dispatch.
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
 polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
@@ -72,11 +75,9 @@ carry `## Filed:`, and the formula dedups per-issue by exact title match
 against existing project-repo issues to guard against POST-then-PATCH-failure
 windows.
 
-**Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
-lock + memory guard → load formula + context → create tmux session →
-Claude grooms backlog (writes proposed actions to manifest), bundles dust,
-updates AGENTS.md, commits manifest + docs to PR →
-`PHASE:awaiting_ci` (stays alive) → CI pass → `PHASE:awaiting_review` →
-review feedback → address + re-signal → merge → gardener-run.sh executes
-manifest actions via API → `PHASE:done`. When blocked on external resources
-or human decisions, files a vault item instead of escalating.
+**Lifecycle**: entrypoint calls `gardener-step.sh` each iteration → `gardener-step.sh`
+acquires `flock` → runs `classify.sh` → CLEAN exits (~1s, no slot) or task JSON
+dispatches to `formulas/<task>.toml` via `formula-session.sh` → single claude session
+executes the formula (edits repo via `gardener-edit.sh` helpers, opens PR) →
+`pr_walk_to_merge` walks PR through CI/review/merge cycle → journal entry written.
+When blocked on external resources or human decisions, files a vault item instead of escalating.
