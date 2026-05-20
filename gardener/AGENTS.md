@@ -39,13 +39,20 @@ predictor, and supervisor on every polling iteration.
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
+- `gardener/classify.sh` — Bash-only priority-ordered task classifier that scans
+  all open issues and emits one JSON task line per invocation. Covers 9 task
+  buckets (blocker-starving-the-factory through pitch-vision). ~760 lines.
+- `gardener/gardener-step.sh` — Per-iteration pull-one-task driver that replaces
+  the monolithic `gardener/gardener-run.sh` batch model. Acquires a flock, runs
+  `gardener/classify.sh`, and dispatches the selected task to a single claude session via
+  `lib/formula-session.sh`. ~250 lines.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
