@@ -73,6 +73,7 @@ Key directories:
 - **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
+- **vault/policies/**: Vault HCL policies (bot-filer.hcl, runner-*.hcl, service-*.hcl, etc.)
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
 - **site/**: Frontend assets (engagement.js)
 - **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
