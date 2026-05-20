@@ -122,7 +122,7 @@ bash dev/phase-test.sh
 |-------|-----------|------|-------|
 | Dev | `dev/` | Issue implementation | [dev/AGENTS.md](dev/AGENTS.md) |
 | Review | `review/` | PR review | [review/AGENTS.md](review/AGENTS.md) |
-| Gardener | `gardener/` | Backlog grooming | [gardener/AGENTS.md](gardener/AGENTS.md) |
+| Gardener | `gardener/` | Backlog grooming & step-based task dispatch | [gardener/AGENTS.md](gardener/AGENTS.md) |
 | Supervisor | `supervisor/` | Health monitoring | [supervisor/AGENTS.md](supervisor/AGENTS.md) |
 | Planner | `planner/` | Strategic planning | [planner/AGENTS.md](planner/AGENTS.md) |
 | Predictor | `predictor/` | Infrastructure pattern detection | [predictor/AGENTS.md](predictor/AGENTS.md) |
