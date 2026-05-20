@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 17a89f4545dc95e3d42dd672f764f72dc171c831 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -7,7 +7,7 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+**Trigger**: `gardener/gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
 every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
 **Early-exit optimization**: if no issues, PRs, or repo files have changed since the last
@@ -34,15 +34,32 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   (label changes, closures, comments, issue creation, body edits). Written during
   grooming steps as one JSON object per line.
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
-  reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
+  reviewed alongside AGENTS.md changes, executed by gardener/gardener-run.sh after merge.
   Converted from JSONL at commit time.
+- `gardener/classify.sh` — Bash-only priority-ordered task classifier that scans
+  all open issues and emits one JSON task line per invocation. Covers 9 task
+  buckets (blocker-starving-the-factory through pitch-vision). ~760 lines.
+- `gardener/gardener-step.sh` — Per-iteration pull-one-task driver that replaces
+  the monolithic `gardener/gardener-run.sh` batch model. Acquires a flock, runs
+  `gardener/classify.sh`,
+  and dispatches the selected task to a single claude session via
+  lib/formula-session.sh. ~250 lines.
+
+**Notable changes since last review**:
+- `gardener/gardener-run.sh` now sources `lib/gardener-pr.sh` and uses
+  `detect_pr_number("chore/gardener-")` instead of manual PR detection logic.
+- `gardener/gardener-run.sh` added engagement evidence loading from ops repo
+  (`evidence/engagement/*.json`) for website addressable decisions (issue #975).
+- New per-iteration dispatch pattern: `gardener/gardener-step.sh` + `gardener/classify.sh` replace
+  the monolithic one-shot batch run. `gardener/gardener-run.sh` remains the polling-loop
+  orchestrator; `gardener/gardener-step.sh` is the per-iteration driver.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
-- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
+- `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener/gardener-run.sh)
 
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
