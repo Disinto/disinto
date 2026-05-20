@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 17a89f4545dc95e3d42dd672f764f72dc171c831 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -25,8 +25,31 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
   `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
   Executes pending-actions manifest after PR merge.
+- `gardener/gardener-step.sh` — Per-iteration pull-one-task driver that replaces
+  the monolithic `gardener/gardener-run.sh` batch model. Acquires a flock, runs
+  `gardener/classify.sh`,
+  and dispatches the selected task to a single claude session via
+  lib/formula-session.sh. ~250 lines.
+- `gardener/classify.sh` — Bash-only priority-ordered task classifier that scans
+  all open issues and emits one JSON task line per invocation. Covers 9 task
+  buckets (blocker-starving-the-factory through pitch-vision). ~760 lines.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
+- `formulas/agents-md-stale.toml` — Per-directory AGENTS.md watermark walk;
+  refreshes exactly one AGENTS.md per claude session, replacing the monolithic
+  agents-update step. ~298 lines.
+- `formulas/bundle-dust.toml` — Auto-bundles 3+ dust items into single backlog
+  issues.
+- `formulas/enrich-bug-report.toml` — Enriches `bug-report` issues with
+  acceptance criteria and affected files sections.
+- `formulas/enrich-underspecified.toml` — Enriches `underspecified` issues
+  via Claude session.
+- `formulas/file-subissues.toml` — Files subissues from approved architect PRs.
+- `formulas/pitch-vision.toml` — Converts vision items into actionable PRs.
+- `formulas/promote-tech-debt.toml` — Promotes `tech-debt` issues to backlog.
+- `formulas/revisit-blocked.toml` — Revisits stale `blocked` issues for
+  transient recovery or nudge.
+- `formulas/review-pr.toml` — PR review formula.
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
   item: `{"issue":NNN,"group":"...","title":"...","reason":"...","ts":"..."}`.
   30-day TTL; groups of 3+ distinct issues auto-bundled into single backlog issues.
@@ -41,8 +64,14 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
+**Direct-edit primitives** (exported by `lib/gardener-edit.sh`):
+- `gardener_edit_body` — PATCH issue body from file
+- `gardener_add_label` — idempotent label addition
+- `gardener_remove_label` — idempotent label removal
+- `gardener_post_comment` — post comment with file body
+
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
