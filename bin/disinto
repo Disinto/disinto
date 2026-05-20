@@ -2000,6 +2000,40 @@ p.write_text(text)
   echo "  Run 'disinto status' to verify."
 }
 
+# ── shared helpers ──────────────────────────────────────────────────────────
+
+# Resolve the Woodpecker DB path and return the count of repo_id=1 secrets.
+# Prints "0" if no DB found, "?" if python3 unavailable or DB unreadable.
+_wp_secret_count() {
+  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
+  if [ ! -f "$wp_db" ]; then
+    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
+      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
+    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
+      wp_db="/woodpecker-data/woodpecker.sqlite"
+    fi
+  fi
+  if [ ! -f "$wp_db" ]; then
+    echo "0"; return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "?"; return 0
+  fi
+  local count
+  count="$(python3 -c "
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
+cols = {r[1] for r in pragma}
+rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
+if not rid:
+    print(0); sys.exit(0)
+count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
+print(count)
+" "$wp_db" 2>/dev/null)" || count="?"
+  echo "$count"
+}
+
 # ── status command ───────────────────────────────────────────────────────────
 
 disinto_status() {
@@ -2116,38 +2150,17 @@ with open(sys.argv[1], 'rb') as f:
   fi
 
   # Check 3: Woodpecker repo secrets
-  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
   local wp_secrets_ok=false
-  if [ ! -f "$wp_db" ]; then
-    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
-      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
-    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
-      wp_db="/woodpecker-data/woodpecker.sqlite"
-    fi
-  fi
-  if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
-    local wp_secret_count
-    wp_secret_count="$(python3 -c "
-import sqlite3, sys
-c = sqlite3.connect('${wp_db}')
-# Handle schema variants across Woodpecker versions
-pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
-cols = {r[1] for r in pragma}
-rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
-if not rid:
-    print(0); sys.exit(0)
-count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
-print(count)
-" 2>/dev/null)" || wp_secret_count="?"
-    if [ "$wp_secret_count" = "?" ] || [ "$wp_secret_count" -eq 0 ] 2>/dev/null; then
-      echo "  Woodpecker secrets (repo_id=1) : EMPTY — run 'disinto wp reseed-secrets'"
-      health_ok=false
-    else
-      echo "  Woodpecker secrets (repo_id=1) : ${wp_secret_count} secret(s) — OK"
-      wp_secrets_ok=true
-    fi
-  elif [ -f "$wp_db" ]; then
+  local wp_secret_count
+  wp_secret_count="$(_wp_secret_count)"
+  if [ "$wp_secret_count" = "?" ]; then
     echo "  Woodpecker secrets: python3 required for check"
+  elif [ "$wp_secret_count" -eq 0 ] 2>/dev/null; then
+    echo "  Woodpecker secrets (repo_id=1) : EMPTY — run 'disinto wp reseed-secrets'"
+    health_ok=false
+  else
+    echo "  Woodpecker secrets (repo_id=1) : ${wp_secret_count} secret(s) — OK"
+    wp_secrets_ok=true
   fi
 
   if [ "$health_ok" = true ] && [ "$wp_secrets_ok" = true ]; then
@@ -2802,31 +2815,11 @@ disinto_up() {
     local suggestions=()
 
     # Check 1: Woodpecker DB exists but may have no secrets
-    local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
-    if [ ! -f "$wp_db" ]; then
-      if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
-        wp_db="/var/lib/woodpecker/woodpecker.sqlite"
-      elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
-        wp_db="/woodpecker-data/woodpecker.sqlite"
-      fi
-    fi
-    if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
-      local wp_secret_count
-      wp_secret_count="$(python3 -c "
-import sqlite3, sys
-c = sqlite3.connect(sys.argv[1])
-pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
-cols = {r[1] for r in pragma}
-rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
-if not rid:
-    print(0); sys.exit(0)
-count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
-print(count)
-" "$wp_db" 2>/dev/null)" || wp_secret_count="?"
-      if [ "$wp_secret_count" = "0" ]; then
-        needs_reseed=true
-        suggestions+=("Woodpecker has no secrets — run 'disinto wp reseed-secrets'")
-      fi
+    local wp_secret_count
+    wp_secret_count="$(_wp_secret_count)"
+    if [ "$wp_secret_count" = "0" ]; then
+      needs_reseed=true
+      suggestions+=("Woodpecker has no secrets — run 'disinto wp reseed-secrets'")
     fi
 
     # Check 2: .env exists but Vault may not be seeded
@@ -3573,8 +3566,9 @@ disinto_vault() {
       ;;
     reseed-all)
       # Run every vault reseed + wp reseed-secrets in sequence.
-      # Idempotent: each subcommand is safe to re-run on already-seeded
+      # Best-effort: each subcommand is safe to re-run on already-seeded
       # factories. Missing env vars produce warnings (not hard errors).
+      # Continues across failures and reports exit codes at the end.
       local dry_run=0
       for _arg in "$@"; do
         case "$_arg" in
@@ -3585,7 +3579,8 @@ Usage: disinto vault reseed-all [--dry-run]
 
 Run all vault + Woodpecker reseed operations in sequence.
 
-Idempotent: safe to re-run on already-seeded factories.
+Best-effort: safe to re-run on already-seeded factories. Continues
+across failures and reports exit codes at the end.
 Missing env vars produce warnings, not hard errors.
 
 Subcommands executed:
@@ -3655,8 +3650,8 @@ Usage: disinto vault <subcommand>
 
 Subcommands:
   reseed-all        Run all vault reseed operations + wp reseed-secrets in
-                    sequence (idempotent; convenient for post-init seeding;
-                    fixes #634)
+                    sequence (best-effort; continues across failures;
+                    convenient for post-init seeding; fixes #634)
   reseed-ops-repo   Seed kv/disinto/shared/ops-repo from kv/disinto/bots/vault
                     (idempotent — safe on already-seeded factories; fixes
                     edge dispatcher stuck pending on missing KV path)

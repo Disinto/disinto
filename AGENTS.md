@@ -25,6 +25,8 @@ disinto/                 (code repo)
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
 │                  best-practices.md — gardener best-practice reference
+│                  classify.sh — issue classification utilities (stale-threshold, etc.)
+│                  gardener-step.sh — single-step gardener executor
 │                  pending-actions.json — queued gardener actions
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
@@ -41,7 +43,13 @@ disinto/                 (code repo)
 ├── nomad/         server.hcl, client.hcl (allow_privileged for woodpecker-agent, S3-fix-5), vault.hcl — HCL configs deployed to /etc/nomad.d/ and /etc/vault.d/ by lib/init/nomad/cluster-up.sh
 │                  jobs/ — Nomad jobspecs: forgejo.hcl (Vault secrets via template, S2.4); woodpecker-server.hcl + woodpecker-agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles, llama, Vault-templated bot tokens, S4.1); vault-runner.hcl (parameterized batch dispatch, S5.3)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
-├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
+├── formulas/      Issue templates (TOML specs for multi-step agent tasks):
+│                  run-gardener, run-predictor, run-planner, run-supervisor,
+│                  run-architect, run-rent-a-human; review-pr, triage, reproduce,
+│                  groom-backlog, pitch-vision, promote-tech-debt, file-subissues,
+│                  enrich-bug-report, enrich-underspecified, blocker-starving-the-factory,
+│                  agents-md-stale, dev, release, add-rpc-method, collect-engagement,
+│                  rent-a-human-caddy-ssh, upgrade-dependency, revisit-blocked
 ├── docker/        Dockerfiles and entrypoints: agents, chat (server.py, ui/), edge (Dockerfile, dispatcher.sh, entrypoint-edge.sh), reproduce, runner, voice (bridge.py, ui/)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
@@ -67,17 +75,16 @@ Key directories:
 - **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
 - **action-vault/**: Vault item validation and examples
 - **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
-- **vault/policies/**: Vault HCL policies (bot-filer.hcl)
 - **site/**: Frontend assets (engagement.js)
 - **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
 - **.woodpecker/**: CI pipelines (ci.yml, acceptance-tests.yml, check-stale-rebase.sh)
-- **disinto-ops/**: Ops repo (vault workflow, sprints, knowledge, evidence)
 
 ## Agent .profile Model
 
 Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/formula-session.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
+> Formulas fall into two categories: **dispatched** (run by the formula dispatcher: run-gardener, run-predictor, run-planner, run-supervisor, run-architect, run-rent-a-human) and **template-only** (consumed by agents during issue work, not dispatched: review-pr, triage, reproduce, groom-backlog, pitch-vision, promote-tech-debt, file-subissues, enrich-bug-report, enrich-underspecified, blocker-starving-the-factory, agents-md-stale, dev, release, add-rpc-method, collect-engagement, rent-a-human-caddy-ssh, upgrade-dependency, revisit-blocked).
 
 ## Tech stack
 
