@@ -21,10 +21,8 @@ run-gardener        = "medium"
 run-predictor       = "medium"
 run-supervisor      = "medium"
 run-architect       = "medium"
-upgrade-dependency  = "medium"
 
 # External-facing or irreversible operations
 run-publish-site    = "high"
 run-rent-a-human    = "high"
-add-rpc-method      = "high"
 release             = "high"

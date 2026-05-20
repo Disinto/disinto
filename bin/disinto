@@ -2002,6 +2002,21 @@ p.write_text(text)
 
 # ── shared helpers ──────────────────────────────────────────────────────────
 
+# Return the number of keys under a Vault KV path.
+# Prints "0" if vault is unreachable, list fails, or path is empty.
+_vault_kv_count() {
+  local path="$1"
+  if [ -z "${VAULT_ADDR:-}" ] || ! hvault_token_lookup >/dev/null 2>&1; then
+    echo "0"; return 0
+  fi
+  local keys
+  keys="$(hvault_kv_list "$path" 2>/dev/null || true)"
+  if [ -z "$keys" ]; then
+    echo "0"; return 0
+  fi
+  printf '%s' "$keys" | jq 'length' 2>/dev/null || echo "0"
+}
+
 # Resolve the Woodpecker DB path and return the count of repo_id=1 secrets.
 # Prints "0" if no DB found, "?" if python3 unavailable or DB unreadable.
 _wp_secret_count() {
@@ -2111,19 +2126,13 @@ with open(sys.argv[1], 'rb') as f:
   if [ -n "${VAULT_ADDR:-}" ]; then
     _hvault_default_env 2>/dev/null || true
     if hvault_token_lookup >/dev/null 2>&1; then
-      local runner_keys
-      runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
-      if [ -n "$runner_keys" ]; then
-        local key_count
-        key_count="$(printf '%s' "$runner_keys" | jq 'length')"
-        if [ "${key_count:-0}" -gt 0 ]; then
-          echo "  kv/disinto/runner/* : ${key_count} key(s) — OK"
-        else
-          echo "  kv/disinto/runner/* : EMPTY — run 'disinto vault reseed-runner'"
-          health_ok=false
-        fi
+      local runner_count
+      runner_count="$(_vault_kv_count "disinto/runner")"
+      if [ "$runner_count" -gt 0 ] 2>/dev/null; then
+        echo "  kv/disinto/runner/* : ${runner_count} key(s) — OK"
       else
-        echo "  kv/disinto/runner/* : (vault reachable but list failed)"
+        echo "  kv/disinto/runner/* : EMPTY — run 'disinto vault reseed-runner'"
+        health_ok=false
       fi
 
       # Check 2: kv/disinto/shared/ops-repo token (needed by edge dispatcher)
@@ -2824,17 +2833,11 @@ disinto_up() {
 
     # Check 2: .env exists but Vault may not be seeded
     if [ -f "${FACTORY_ROOT}/.env" ] && [ -n "${VAULT_ADDR:-}" ]; then
-      if hvault_token_lookup >/dev/null 2>&1; then
-        local runner_keys
-        runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
-        if [ -n "$runner_keys" ]; then
-          local key_count
-          key_count="$(printf '%s' "$runner_keys" | jq 'length')"
-          if [ "${key_count:-0}" -eq 0 ]; then
-            needs_reseed=true
-            suggestions+=("Vault runner KV tree is empty — run 'disinto vault reseed-runner'")
-          fi
-        fi
+      local runner_count
+      runner_count="$(_vault_kv_count "disinto/runner")"
+      if [ "$runner_count" -eq 0 ]; then
+        needs_reseed=true
+        suggestions+=("Vault runner KV tree is empty — run 'disinto vault reseed-runner'")
       fi
     fi
 

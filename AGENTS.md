@@ -48,8 +48,7 @@ disinto/                 (code repo)
 │                  run-architect, run-rent-a-human; review-pr, triage, reproduce,
 │                  groom-backlog, pitch-vision, promote-tech-debt, file-subissues,
 │                  enrich-bug-report, enrich-underspecified, blocker-starving-the-factory,
-│                  agents-md-stale, dev, release, add-rpc-method, collect-engagement,
-│                  rent-a-human-caddy-ssh, upgrade-dependency, revisit-blocked
+│                  agents-md-stale, dev, release, revisit-blocked
 ├── docker/        Dockerfiles and entrypoints: agents, chat (server.py, ui/), edge (Dockerfile, dispatcher.sh, entrypoint-edge.sh), reproduce, runner, voice (bridge.py, ui/)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
@@ -84,7 +83,7 @@ Key directories:
 Each agent has a `.profile` repository on Forgejo storing `knowledge/lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `formula_prepare_profile_context()` loads lessons. Post-session: `profile_write_journal` records reflections. See `lib/formula-session.sh`.
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
-> Formulas fall into two categories: **dispatched** (run by the formula dispatcher: run-gardener, run-predictor, run-planner, run-supervisor, run-architect, run-rent-a-human) and **template-only** (consumed by agents during issue work, not dispatched: review-pr, triage, reproduce, groom-backlog, pitch-vision, promote-tech-debt, file-subissues, enrich-bug-report, enrich-underspecified, blocker-starving-the-factory, agents-md-stale, dev, release, add-rpc-method, collect-engagement, rent-a-human-caddy-ssh, upgrade-dependency, revisit-blocked).
+> Formulas fall into two categories: **dispatched** (run by the formula dispatcher: run-gardener, run-predictor, run-planner, run-supervisor, run-architect, run-rent-a-human) and **template-only** (consumed by agents during issue work, not dispatched: review-pr, triage, reproduce, groom-backlog, pitch-vision, promote-tech-debt, file-subissues, enrich-bug-report, enrich-underspecified, blocker-starving-the-factory, agents-md-stale, dev, release, revisit-blocked).
 
 ## Tech stack
 

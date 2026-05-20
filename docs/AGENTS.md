@@ -65,19 +65,6 @@ disinto/                 (code repo)
 ├── VISION.md      High-level project vision
 └── CLAUDE.md      Claude Code project instructions
 
-disinto-ops/             (ops repo — {project}-ops)
-├── vault/
-│   ├── actions/   where vault action TOMLs land (core of vault workflow)
-│   ├── pending/   vault items awaiting approval
-│   ├── approved/  approved vault items
-│   ├── fired/     executed vault items
-│   └── rejected/  rejected vault items
-├── sprints/       sprint planning artifacts
-├── knowledge/     shared agent knowledge + best practices
-├── evidence/      engagement data, experiment results
-├── portfolio.md   addressables + observables
-├── prerequisites.md  dependency graph
-└── RESOURCES.md   accounts, tokens (refs), infra inventory
 ```
 
 ## Per-directory AGENTS.md files
