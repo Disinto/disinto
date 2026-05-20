@@ -176,7 +176,7 @@ Concrete artifacts the factory has produced or is building. Observables have mea
 
 | Artifact | Location | Observable? |
 |----------|----------|-------------|
-| Website  | disinto.ai | No |
+| Website  | disinto.ai | Partial (engagement tracking via `site/engagement.js`) |
 | Repo     | codeberg.org/johba/disinto | Partial |
 | Skill    | ClawHub (in progress) | No |
 | GitHub org | github.com/Disinto | No |
