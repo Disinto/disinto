@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 17a89f4545dc95e3d42dd672f764f72dc171c831 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -25,6 +25,14 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
   `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
   Executes pending-actions manifest after PR merge.
+- `gardener/classify.sh` — Bash-only task classifier (priority-ordered). Scans all open
+  issues and emits one highest-priority undone task as a JSON line. Covers 9 task types:
+  blocker-starving-the-factory, enrich-underspecified, enrich-bug-report,
+  promote-tech-debt, bundle-dust, revisit-blocked, agents-md-stale, file-subissues,
+  pitch-vision. Pure bash + curl + jq — no model calls.
+- `gardener/gardener-step.sh` — Per-task formula executor. Reads the classification JSON
+  from `gardener/classify.sh`, loads the matching formula from `formulas/<task>.toml`, and runs it
+  in an isolated tmux session. Enables the per-task dispatch model introduced in #871/#902.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
@@ -34,7 +42,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   (label changes, closures, comments, issue creation, body edits). Written during
   grooming steps as one JSON object per line.
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
-  reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
+  reviewed alongside AGENTS.md changes, executed by gardener/gardener-run.sh after merge.
   Converted from JSONL at commit time.
 
 **Environment variables consumed**:
@@ -42,7 +50,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
@@ -72,7 +80,7 @@ carry `## Filed:`, and the formula dedups per-issue by exact title match
 against existing project-repo issues to guard against POST-then-PATCH-failure
 windows.
 
-**Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
+**Lifecycle**: gardener/gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
 lock + memory guard → load formula + context → create tmux session →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 updates AGENTS.md, commits manifest + docs to PR →
