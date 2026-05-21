@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -62,7 +62,7 @@ fast polls — the loop only waits for review-poll and dev-poll (the fast agents
 the dev-agent subprocess itself.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
-tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box).
+tmux session → phase file drives CI/review loop → merge + `mirror_push()` → close issue.
 On respawn after `PHASE:escalate`, the stale phase file is cleared first so the session
 starts clean; the reinject prompt tells Claude not to re-escalate for the same reason.
 On respawn for any active PR, the prompt explicitly tells Claude the PR already exists

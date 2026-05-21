@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -19,8 +19,9 @@ see issues #821–#992 for the step breakdown.
 | `jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
 | `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
-| `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
-| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; **both Caddy and dispatcher tasks use `network_mode = "host"`** — upstreams are `127.0.0.1:<port>` (forgejo :3000, woodpecker :8000, chat :8080), not Docker hostnames (#1031, #1034); `FORGE_URL` rendered via Nomad service discovery template (`nomadService "forgejo"` — switched from Consul `service` lookup to Nomad native service discovery, #1114) to handle bridge vs. host network differences (#1034); dispatcher Vault secret path changed to `kv/data/disinto/shared/ops-repo` (#1041); Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988); `/forge/*` handler adds `uri strip_prefix /forge` before proxying to forgejo (#1103); `/staging/*` strips `/staging` prefix before proxying (#1079); WebSocket endpoint `/chat/ws` uses `header_up` inside `reverse_proxy` block (moved from handle-block top level — Caddy rejects top-level `header_up`, #1117); `/chat/ws` added for streaming (#1026) |
+| `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; internal-only via edge proxy (S5.2, #989) |
+| `jobs/chat.hcl` | submitted via `lib/init/nomad/deploy.sh` | Claude chat UI; custom `disinto/chat:local` image; sandbox hardening (cap_drop ALL, tmpfs, pids_limit 128); Vault-templated OAuth secrets via `service-chat` policy (S5.2, #989) |
+| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
