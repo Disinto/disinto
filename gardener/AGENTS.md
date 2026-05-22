@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 17a89f4545dc95e3d42dd672f764f72dc171c831 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -7,7 +7,7 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+**Trigger**: `gardener/gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
 every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
 **Early-exit optimization**: if no issues, PRs, or repo files have changed since the last
@@ -36,13 +36,19 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
+- `gardener/classify.sh` — Bash-only priority-ordered task classifier (9 buckets):
+  scans open issues, emits one `{"task":...,"issue":...,"ctx":{...}}` JSON line
+  to stdout. Pure bash + curl + jq — no model calls.
+- `gardener/gardener-step.sh` — Per-step formula runner: reads the JSON payload
+  from gardener/classify.sh, sources the matching `formulas/<task>.toml`, and executes
+  the selected formula in an isolated tmux session.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
-**Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+**Per-task formula dispatch (#871, #902, #916, #977)**: `gardener/gardener-step.sh` runs each
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
