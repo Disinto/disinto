@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 65d0494545dc95e3d42dd672f764f72dc171c831 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -7,7 +7,7 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+**Trigger**: `gardener/gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
 every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
 **Early-exit optimization**: if no issues, PRs, or repo files have changed since the last
@@ -24,7 +24,16 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   `run_formula_and_monitor`). Stays alive through CI/review/merge cycle after
   `PHASE:awaiting_ci` — injects CI results and review feedback, re-signals
   `PHASE:awaiting_ci` after fixes, signals `PHASE:awaiting_review` on CI pass.
-  Executes pending-actions manifest after PR merge.
+  Executes pending-actions manifest after PR merge. Sources `lib/gardener-pr.sh` for
+  PR detection helper (`detect_pr_number`). Loads engagement evidence from ops repo
+  (`load_engagement_evidence`) for website addressable decisions.
+- `gardener/gardener-step.sh` — Per-iteration step executor: sources `classify.sh`,
+  reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
+  Manages scratch worktree, phase monitoring, and PR creation for single-file updates.
+- `gardener/classify.sh` — Bash-only task classifier: scans open issues and emits
+  one highest-priority undone task as JSON. Priority-ordered buckets (blocker-starving,
+  enrich-underspecified, promote-tech-debt, bundle-dust, revisit-blocked, agents-md-stale,
+  file-subissues, pitch-vision). Pure bash + curl + jq — no model calls.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
@@ -42,7 +51,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `classify.sh` emits one `{"task":..., ...}` JSON line that
+polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
