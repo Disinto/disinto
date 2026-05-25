@@ -1,4 +1,4 @@
-<!-- last-reviewed: 65d0494545dc95e3d42dd672f764f72dc171c831 -->
+<!-- last-reviewed: 5347057ea9859d13ca9fada67813b59ce1317daa -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -27,7 +27,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   Executes pending-actions manifest after PR merge. Sources `lib/gardener-pr.sh` for
   PR detection helper (`detect_pr_number`). Loads engagement evidence from ops repo
   (`load_engagement_evidence`) for website addressable decisions.
-- `gardener/gardener-step.sh` — Per-iteration step executor: sources `classify.sh`,
+- `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree, phase monitoring, and PR creation for single-file updates.
 - `gardener/classify.sh` — Bash-only task classifier: scans open issues and emits
