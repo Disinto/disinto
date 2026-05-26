@@ -1,4 +1,4 @@
-<!-- last-reviewed: 65d0494545dc95e3d42dd672f764f72dc171c831 -->
+<!-- last-reviewed: 5347057ea9859d13ca9fada67813b59ce1317daa -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -34,6 +34,7 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
   one highest-priority undone task as JSON. Priority-ordered buckets (blocker-starving,
   enrich-underspecified, promote-tech-debt, bundle-dust, revisit-blocked, agents-md-stale,
   file-subissues, pitch-vision). Pure bash + curl + jq — no model calls.
+  Also reads `gardener/best-practices.md` for issue quality heuristics.
 - `formulas/run-gardener.toml` — Execution spec: preflight, grooming, dust-bundling,
   agents-update, commit-and-pr
 - `gardener/dust.jsonl` — Persistent dust accumulator (JSONL). Each line is a DUST
@@ -45,6 +46,8 @@ the gardener runs as part of the polling loop alongside the planner, predictor, 
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
   Converted from JSONL at commit time.
+- `gardener/best-practices.md` — Gardener runbook: issue quality checklist, when to
+  close/escalate, escalation format template, and anti-patterns (e.g. never dump env).
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
