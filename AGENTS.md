@@ -1,4 +1,4 @@
-<!-- last-reviewed: c3145b5b9bbfca2e13e24a5abaef226872855f0b -->
+<!-- last-reviewed: cb7afe83704f81e0b4fc634e09390e4aebf2731a -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -41,7 +41,7 @@ Key directories:
 
 ## Agent .profile Model
 
-Each agent has a `.profile` repository on Forgejo storing `lessons-learned.md` (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`. (Note: `lessons-learned.md` lives in the `.profile` repo, not the main repo.)
+Each agent has a `.profile` repository on Forgejo storing lessons-learned.md (injected into each session prompt) and `journal/` reflection entries (digested into lessons). Pre-session: `profile_prepare_context()` loads lessons. Post-session: `profile_write_journal` records reflections. Lazy digestion triggers when undigested journal count exceeds `PROFILE_DIGEST_THRESHOLD`. See `lib/profile.sh`. (Note: `lessons-learned.md` lives in the `.profile` repo, not the main repo.)
 
 > **Terminology note:** "Formulas" are TOML issue templates in `formulas/` that orchestrate multi-step agent tasks. Distinct from "processes" in `docs/EVIDENCE-ARCHITECTURE.md`.
 
@@ -96,6 +96,11 @@ bash dev/phase-test.sh
 > See [docs/VAULT.md](docs/VAULT.md) for details.
 
 Shared helpers: [lib/AGENTS.md](lib/AGENTS.md) · Nomad jobs: [nomad/AGENTS.md](nomad/AGENTS.md)
+
+> **Drift note** (2026-06-01): `formulas/revisit-blocked.toml` added `ci_timeout`
+> to transient exit reasons and changed the nudge threshold from 7d
+> (`BLOCKED_NUDGE_AGE_DAYS`) to 4h (`BLOCKED_NUDGE_AGE_HOURS`).
+> `gardener/classify.sh` comment updated to match.
 
 ---
 
