@@ -1,4 +1,4 @@
-<!-- last-reviewed: 48e744ad3a103c1c46c690a9edffb0089b9d9615 -->
+<!-- last-reviewed: 82550a8caae244e422a00eaa37a8168353c0b6fb -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -10,6 +10,8 @@ disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
+│                  gardener-step.sh — per-iteration step executor
+│                  classify.sh — bash-only task classifier (emits JSON)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
 │                  pending-actions.jsonl — intermediate manifest (JSONL)
@@ -30,10 +32,10 @@ disinto/                 (code repo)
 ├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh, load-project.sh, parse-deps.sh, guard.sh, mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh, formula-session.sh, profile.sh, stack-lock.sh, forge-setup.sh, forge-push.sh, ops-setup.sh, ci-setup.sh, generators.sh, hire-agent.sh, release.sh, build-graph.py, branch-protection.sh, secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py, git-creds.sh, sprint-filer.sh, hvault.sh, backfill-labels.sh, claude-config.sh, backup.sh
 │                  hooks/ — Claude Code session hooks
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh, wp-oauth-register.sh, wp-seed-secrets.sh
-├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
-│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1)
+├── nomad/         server.hcl, client.hcl, vault.hcl, AGENTS.md — HCL configs for /etc/nomad.d/ and /etc/vault.d/
+│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1); agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy + dispatcher, S5.1); woodpecker-agent.hcl; woodpecker-server.hcl; edge-threads-gc.hcl
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
-├── formulas/      Issue templates (TOML specs for multi-step agent tasks)
+├── formulas/      Issue templates (TOML specs for multi-step agent tasks); revisit-blocked.toml (revisit blocked issues, ci_timeout exit reason, 4h nudge window)
 ├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator surface); voice/ (bridge.py, UI)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh; reserved-name blocklist, admin-approved allowlist, per-caller attribution); run-acceptance.sh — acceptance test runner for CI
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault provisioning (S2.1/S2.2)
