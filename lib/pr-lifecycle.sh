@@ -15,13 +15,11 @@
 #
 # Functions:
 #   pr_create              BRANCH TITLE BODY [BASE_BRANCH]
-#   pr_find_for_issue      ISSUE_NUMBER ISSUE_BODY BRANCH
 #   pr_find_by_branch      BRANCH
 #   pr_poll_ci             PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_poll_review         PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_merge               PR_NUMBER [COMMIT_MSG]
 #   pr_is_merged           PR_NUMBER
-#   pr_close               PR_NUMBER
 #   pr_walk_to_merge       PR_NUMBER SESSION_ID WORKTREE [MAX_CI_FIXES] [MAX_REVIEW_ROUNDS]
 #   build_phase_protocol_prompt  BRANCH [REMOTE]
 #
@@ -38,10 +36,6 @@
 #   _PR_WALK_EXIT_REASON  merged | ci_exhausted | review_exhausted |
 #                         ci_timeout | review_timeout | merge_blocked |
 #                         closed_externally | unexpected_verdict
-#   _PR_FOUND_NUMBER      PR number found (set by pr_find_for_issue)
-#   _PR_FOUND_BRANCH      head branch (set by pr_find_for_issue, empty for prior_art)
-#   _PR_FOUND_MODE        open | prior_art (set by pr_find_for_issue)
-#   _PR_PRIOR_ART_DIFF    diff excerpt (set by pr_find_for_issue when mode=prior_art)
 #
 # shellcheck shell=bash
 
@@ -114,100 +108,6 @@ pr_create() {
       return 1
       ;;
   esac
-}
-
-# ---------------------------------------------------------------------------
-# pr_find_for_issue — Four-strategy cascade to find an existing PR for an issue.
-#
-# Tries, in order:
-#   1. "Existing PR: #NNN" hint in ISSUE_BODY
-#   2. Branch match via pr_find_by_branch
-#   3. Open PR whose body matches the canonical "fixes-NNN" rule (see below)
-#   4. Closed-unmerged PR as prior art — body matches the same rule, OR
-#      title contains "#NNN" as a substring (fetches first 500 lines of .diff)
-#
-# Canonical PR→issue matching rule (applies to strategies 3 and 4):
-#   Body:  regex /ixes #NNN\b/i — matches "Fixes #NNN", "fixes #NNN", etc.,
-#          with a trailing word boundary so "#12" does not match "#1234".
-#   Title: literal substring "#NNN" (strategy 4 only). Intentionally looser
-#          than the body regex — title cross-refs like "Fix issue #NNN" often
-#          omit the word "fixes", and prior-art lookup benefits from wider
-#          net. Applied only to closed PRs, never to open ones.
-#
-# Args: issue_number issue_body branch
-# Sets: _PR_FOUND_NUMBER _PR_FOUND_BRANCH _PR_FOUND_MODE
-#       _PR_PRIOR_ART_DIFF (only when mode=prior_art)
-# Returns: 0 on any hit, 1 if nothing found
-# ---------------------------------------------------------------------------
-pr_find_for_issue() {
-  local issue="$1" issue_body="$2" branch="$3"
-
-  _PR_FOUND_NUMBER=""
-  _PR_FOUND_BRANCH=""
-  _PR_FOUND_MODE=""
-  _PR_PRIOR_ART_DIFF=""
-
-  # Strategy 1: explicit "Existing PR: #NNN" hint in issue body
-  local body_pr
-  body_pr=$(printf '%s' "$issue_body" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
-  if [ -n "$body_pr" ]; then
-    local pr_check pr_check_state
-    pr_check=$(forge_api GET "/pulls/${body_pr}") || true
-    pr_check_state=$(printf '%s' "$pr_check" | jq -r '.state')
-    if [ "$pr_check_state" = "open" ]; then
-      _PR_FOUND_NUMBER="$body_pr"
-      _PR_FOUND_BRANCH=$(printf '%s' "$pr_check" | jq -r '.head.ref')
-      _PR_FOUND_MODE="open"
-      _prl_log "found existing PR #${_PR_FOUND_NUMBER} on branch ${_PR_FOUND_BRANCH} (from issue body)"
-      return 0
-    fi
-  fi
-
-  # Strategy 2: match by branch name
-  local pr_num
-  pr_num=$(pr_find_by_branch "$branch") || true
-  if [ -n "$pr_num" ]; then
-    _PR_FOUND_NUMBER="$pr_num"
-    _PR_FOUND_BRANCH="$branch"
-    _PR_FOUND_MODE="open"
-    _prl_log "found existing PR #${_PR_FOUND_NUMBER} (from branch match)"
-    return 0
-  fi
-
-  # Canonical body matcher for strategies 3 and 4 — single source of truth.
-  local body_pattern="ixes #${issue}\\b"
-  local title_ref="#${issue}"
-
-  # Strategy 3: match the canonical body rule on open PRs
-  local found_pr
-  found_pr=$(forge_api GET "/pulls?state=open&limit=20" | \
-    jq -r --arg pat "$body_pattern" \
-    '.[] | select((.body // "") | test($pat; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
-  if [ -n "$found_pr" ]; then
-    _PR_FOUND_NUMBER=$(printf '%s' "$found_pr" | awk '{print $1}')
-    _PR_FOUND_BRANCH=$(printf '%s' "$found_pr" | awk '{print $2}')
-    _PR_FOUND_MODE="open"
-    _prl_log "found existing PR #${_PR_FOUND_NUMBER} on branch ${_PR_FOUND_BRANCH} (from body match)"
-    return 0
-  fi
-
-  # Strategy 4: check closed PRs for prior art (same body rule + loose title contains)
-  local closed_pr
-  closed_pr=$(forge_api GET "/pulls?state=closed&limit=30" | \
-    jq -r --arg pat "$body_pattern" --arg ref "$title_ref" \
-    '.[] | select(.merged != true) | select((.title | contains($ref)) or ((.body // "") | test($pat; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
-  if [ -n "$closed_pr" ]; then
-    local closed_pr_num
-    closed_pr_num=$(printf '%s' "$closed_pr" | awk '{print $1}')
-    _PR_FOUND_NUMBER="$closed_pr_num"
-    _PR_FOUND_MODE="prior_art"
-    _PR_PRIOR_ART_DIFF=$(forge_api GET "/pulls/${closed_pr_num}.diff" 2>/dev/null \
-      | head -500) || true
-    _prl_log "found closed (unmerged) PR #${_PR_FOUND_NUMBER} as prior art"
-    return 0
-  fi
-
-  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -529,100 +429,19 @@ pr_walk_to_merge() {
 
       _prl_log "CI failed — invoking agent (attempt ${ci_fix_count}/${max_ci_fixes})"
 
-      # Build per-workflow/per-step CI diagnostics prompt
-      local ci_prompt_body=""
-      local passing_workflows=""
-      local built_diagnostics=false
-
-      if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${WOODPECKER_REPO_ID:-}" ]; then
-        local pip_json
-        pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${_PR_CI_PIPELINE}" 2>/dev/null) || pip_json=""
-
-        if [ -n "$pip_json" ]; then
-          local wf_count
-          wf_count=$(printf '%s' "$pip_json" | jq '[.workflows[]?] | length' 2>/dev/null) || wf_count=0
-
-          if [ "$wf_count" -gt 0 ]; then
-            built_diagnostics=true
-            local wf_idx=0
-            while [ "$wf_idx" -lt "$wf_count" ]; do
-              local wf_name wf_state
-              wf_name=$(printf '%s' "$pip_json" | jq -r ".workflows[$wf_idx].name // \"workflow-$wf_idx\"" 2>/dev/null)
-              wf_state=$(printf '%s' "$pip_json" | jq -r ".workflows[$wf_idx].state // \"unknown\"" 2>/dev/null)
-
-              if [ "$wf_state" = "failure" ] || [ "$wf_state" = "error" ] || [ "$wf_state" = "killed" ]; then
-                # Collect failed children for this workflow
-                local failed_children
-                failed_children=$(printf '%s' "$pip_json" | jq -r "
-                  .workflows[$wf_idx].children[]? |
-                  select(.state == \"failure\" or .state == \"error\" or .state == \"killed\") |
-                  \"\(.name)\t\(.exit_code)\t\(.pid)\"" 2>/dev/null) || failed_children=""
-
-                ci_prompt_body="${ci_prompt_body}
---- Failed workflow: ${wf_name} ---"
-                if [ -n "$failed_children" ]; then
-                  while IFS=$'\t' read -r step_name step_exit step_pid; do
-                    [ -z "$step_name" ] && continue
-                    local exit_annotation=""
-                    case "$step_exit" in
-                      126) exit_annotation=" (permission denied or not executable)" ;;
-                      127) exit_annotation=" (command not found)" ;;
-                      128) exit_annotation=" (invalid exit argument / signal+128)" ;;
-                    esac
-                    ci_prompt_body="${ci_prompt_body}
-  Step: ${step_name}
-  Exit code: ${step_exit}${exit_annotation}"
-
-                    # Fetch per-step logs
-                    if [ -n "$step_pid" ] && [ "$step_pid" != "null" ]; then
-                      local step_logs
-                      step_logs=$(ci_get_step_logs "$_PR_CI_PIPELINE" "$step_pid" 2>/dev/null | tail -50) || step_logs=""
-                      if [ -n "$step_logs" ]; then
-                        ci_prompt_body="${ci_prompt_body}
-  Log tail (last 50 lines):
-\`\`\`
-${step_logs}
-\`\`\`"
-                      fi
-                    fi
-                  done <<< "$failed_children"
-                else
-                  ci_prompt_body="${ci_prompt_body}
-  (no failed step details available)"
-                fi
-              else
-                # Track passing/other workflows
-                if [ -n "$passing_workflows" ]; then
-                  passing_workflows="${passing_workflows}, ${wf_name}"
-                else
-                  passing_workflows="${wf_name}"
-                fi
-              fi
-              wf_idx=$((wf_idx + 1))
-            done
-          fi
-        fi
+      # Get CI logs from SQLite database if available
+      local ci_logs=""
+      if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${FACTORY_ROOT:-}" ]; then
+        ci_logs=$(ci_get_logs "$_PR_CI_PIPELINE" 2>/dev/null | tail -50) || ci_logs=""
       fi
 
-      # Fallback: use legacy log fetch if per-workflow diagnostics unavailable
-      if [ "$built_diagnostics" = false ]; then
-        local ci_logs=""
-        if [ -n "$_PR_CI_PIPELINE" ] && [ -n "${FACTORY_ROOT:-}" ]; then
-          ci_logs=$(ci_get_logs "$_PR_CI_PIPELINE" 2>/dev/null | tail -50) || ci_logs=""
-        fi
-        if [ -n "$ci_logs" ]; then
-          ci_prompt_body="
+      local logs_section=""
+      if [ -n "$ci_logs" ]; then
+        logs_section="
 CI Log Output (last 50 lines):
 \`\`\`
 ${ci_logs}
-\`\`\`"
-        fi
-      fi
-
-      local passing_line=""
-      if [ -n "$passing_workflows" ]; then
-        passing_line="
-Passing workflows (do not modify): ${passing_workflows}
+\`\`\`
 "
       fi
 
@@ -631,10 +450,9 @@ Passing workflows (do not modify): ${passing_workflows}
 
 Pipeline: #${_PR_CI_PIPELINE:-?}
 Failure type: ${_PR_CI_FAILURE_TYPE:-unknown}
-${passing_line}
+
 Error log:
-${_PR_CI_ERROR_LOG:-No logs available.}
-${ci_prompt_body}
+${_PR_CI_ERROR_LOG:-No logs available.}${logs_section}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}

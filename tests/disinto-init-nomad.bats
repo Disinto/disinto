@@ -105,40 +105,6 @@ setup_file() {
   [[ "$output" == *"--empty is only valid with --backend=nomad"* ]]
 }
 
-# ── vault-runner submission (regression guard for #602) ─────────────────────
-#
-# vault-runner is the parameterized batch job the edge dispatcher invokes
-# via `nomad job dispatch vault-runner …`. It must be registered on every
-# nomad init run regardless of --with selection — otherwise the dispatcher
-# fails with "No job(s) with prefix or ID 'vault-runner' found" (the #602
-# symptom observed after cutover). A prior implementation nested the
-# vault-runner deploy inside the `if [ -n "$with_services" ]` block,
-# silently omitting it on `disinto init --backend=nomad` with no --with.
-
-@test "disinto init --backend=nomad --dry-run submits vault-runner even without --with" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"── Vault-runner dry-run ──"* ]]
-  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job validate"* ]]
-  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job run -detach"* ]]
-}
-
-@test "disinto init --backend=nomad --with=forgejo --dry-run still submits vault-runner" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with=forgejo --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"── Vault-runner dry-run ──"* ]]
-  [[ "$output" == *"[deploy] vault-runner: [dry-run] nomad job validate"* ]]
-}
-
-@test "disinto init --backend=nomad --empty --dry-run does NOT submit vault-runner" {
-  # --empty is the cluster-only escape hatch — no policies, no auth, no
-  # jobs of any kind. vault-runner must not appear on this path.
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --empty --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"── Vault-runner dry-run ──"* ]]
-  [[ "$output" != *"vault-runner"* ]]
-}
-
 # ── Positional vs flag-first invocation (#835) ───────────────────────────────
 #
 # Before the #835 fix, disinto_init eagerly consumed $1 as repo_url *before*
@@ -249,7 +215,7 @@ setup_file() {
   run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with unknown-service --dry-run
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown service"* ]]
-  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, edge"* ]]
+  [[ "$output" == *"known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat, edge"* ]]
 }
 
 # S3.4: woodpecker auto-expansion and forgejo auto-inclusion
@@ -459,39 +425,4 @@ setup_file() {
   # forgejo is auto-included by agents
   [[ "$output" == *"services to deploy: forgejo,woodpecker-server,woodpecker-agent,agents"* ]]
   [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents"* ]]
-}
-
-# S5.1 / #1035 — edge service seeds ops-repo (dispatcher FORGE_TOKEN)
-@test "disinto init --backend=nomad --with edge deploys edge" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with edge --dry-run
-  [ "$status" -eq 0 ]
-  # edge depends on all backend services, so all are included
-  [[ "$output" == *"services to deploy: edge,forgejo"* ]]
-  [[ "$output" == *"deployment order: forgejo woodpecker-server woodpecker-agent agents staging edge"* ]]
-  [[ "$output" == *"[deploy] [dry-run] nomad job validate"*"edge.hcl"* ]]
-}
-
-@test "disinto init --backend=nomad --with edge seeds ops-repo" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --with edge --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"tools/vault-seed-ops-repo.sh --dry-run"* ]]
-}
-
-# #601 — ops-repo seed must run unconditionally at init (after vault-import),
-# not only inside --with edge, so that a later direct `nomad job run edge.hcl`
-# finds kv/disinto/shared/ops-repo already populated.
-@test "disinto init --backend=nomad --import-env seeds ops-repo unconditionally (issue #601)" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --import-env /tmp/.env --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Vault seed ops-repo dry-run"* ]]
-  [[ "$output" == *"tools/vault-seed-ops-repo.sh --dry-run"* ]]
-}
-
-# Without --import-* the ops-repo seeder is skipped: running it before
-# kv/disinto/bots/vault is populated would write a random fallback token
-# that later copies from bots/vault can no longer overwrite.
-@test "disinto init --backend=nomad (no --import-*) skips unconditional ops-repo seed (issue #601)" {
-  run "$DISINTO_BIN" init placeholder/repo --backend=nomad --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"Vault seed ops-repo dry-run"* ]]
 }

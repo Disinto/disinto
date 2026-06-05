@@ -29,8 +29,6 @@ source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 # shellcheck source=../lib/formula-session.sh
 source "$(dirname "$0")/../lib/formula-session.sh"
-# shellcheck source=../lib/stale-base-check.sh
-source "$(dirname "$0")/../lib/stale-base-check.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -54,35 +52,8 @@ REVIEW_TMPDIR=$(mktemp -d)
 
 log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"; }
 status() { printf '[%s] PR #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" > "$STATUSFILE"; log "$*"; }
-
-# cleanup — remove temp files (NOT lockfile — cleanup_on_exit handles that)
-cleanup() {
-  rm -rf "$REVIEW_TMPDIR" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"
-}
-
-# cleanup_on_exit — defensive cleanup: remove lockfile if we own it, kill residual children
-# This handles the case where review-pr.sh is terminated unexpectedly (e.g., watchdog SIGTERM)
-cleanup_on_exit() {
-  local ec=$?
-  # Remove lockfile only if we own it (PID matches $$)
-  if [ -f "$LOCKFILE" ] && [ -n "$(cat "$LOCKFILE" 2>/dev/null)" ]; then
-    if [ "$(cat "$LOCKFILE" 2>/dev/null)" = "$$" ]; then
-      rm -f "$LOCKFILE"
-      log "cleanup_on_exit: removed lockfile (we owned it)"
-    fi
-  fi
-  # Kill any direct children that may have been spawned by this process
-  # (e.g., bash -c commands from Claude's Bash tool that didn't get reaped)
-  pkill -P $$ 2>/dev/null || true
-  # Call the main cleanup function to remove temp files
-  cleanup
-  exit "$ec"
-}
-trap cleanup_on_exit EXIT INT TERM
-
-# Note: EXIT trap is already set above. The cleanup function is still available for
-# non-error exits (e.g., normal completion via exit 0 after verdict posted).
-# When review succeeds, we want to skip lockfile removal since the verdict was posted.
+cleanup() { rm -rf "$REVIEW_TMPDIR" "$LOCKFILE" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"; }
+trap cleanup EXIT
 
 # =============================================================================
 # LOG ROTATION
@@ -133,7 +104,6 @@ if [ "$PR_STATE" != "open" ]; then
   log "SKIP: state=${PR_STATE}"
   worktree_cleanup "$WORKTREE"
   rm -f "$OUTPUT_FILE" "$SID_FILE" 2>/dev/null || true
-  rm -f "$LOCKFILE"
   exit 0
 fi
 
@@ -142,14 +112,9 @@ fi
 # =============================================================================
 CI_STATE=$(ci_commit_status "$PR_SHA")
 CI_NOTE=""
-# Gate only on required pipelines (#920). Optional/stuck workflows do not block.
-if ! ci_required_passed "$PR_SHA"; then
-  log "SKIP: required CI not green (CI=${CI_STATE})"
-  rm -f "$LOCKFILE"
-  exit 0
-fi
 if ! ci_passed "$CI_STATE"; then
-  CI_NOTE=" (optional checks not green; required passed)"
+  ci_required_for_pr "$PR_NUMBER" && { log "SKIP: CI=${CI_STATE}"; exit 0; }
+  CI_NOTE=" (not required — non-code PR)"
 fi
 
 # =============================================================================
@@ -158,10 +123,10 @@ fi
 ALL_COMMENTS=$(forge_api_all "/issues/${PR_NUMBER}/comments")
 HAS_CMT=$(printf '%s' "$ALL_COMMENTS" | jq --arg s "$PR_SHA" \
   '[.[]|select(.body|contains("<!-- reviewed: "+$s+" -->"))]|length')
-[ "${HAS_CMT:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: reviewed ${PR_SHA:0:7}"; rm -f "$LOCKFILE"; exit 0; }
+[ "${HAS_CMT:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: reviewed ${PR_SHA:0:7}"; exit 0; }
 HAS_FML=$(forge_api_all "/pulls/${PR_NUMBER}/reviews" | jq --arg s "$PR_SHA" \
   '[.[]|select(.commit_id==$s)|select(.state!="COMMENT")]|length')
-[ "${HAS_FML:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: formal review"; rm -f "$LOCKFILE"; exit 0; }
+[ "${HAS_FML:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: formal review"; exit 0; }
 
 # =============================================================================
 # RE-REVIEW DETECTION
@@ -213,25 +178,6 @@ else
 fi
 
 # =============================================================================
-# STALE-BASE REGRESSION CHECK (#896)
-# =============================================================================
-# Detect PRs whose merged result will silently revert upstream changes that
-# landed on main since the PR's base. The forward (head vs base) diff would
-# look correct, so review-bot's normal pass would miss this.
-status "checking stale-base regressions"
-STALE_BASE_SECTION=""
-git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
-STALE_MAIN_REF="${FORGE_REMOTE}/${PRIMARY_BRANCH}"
-STALE_OUTPUT=$(stale_base_check "$PR_SHA" "$STALE_MAIN_REF" 2>/dev/null || true)
-if [ -n "$STALE_OUTPUT" ]; then
-  STALE_LIST=$(stale_base_check_format "$STALE_OUTPUT")
-  STALE_BASE_SECTION=$(printf '\n## Stale-base regression check (BLOCKER)\n\nThis PR is based on a stale main. After merge, the following files would be left missing lines that landed upstream since the PR'\''s merge-base:\n\n%s\n\nUnless the PR description explicitly states these reverts are intentional, you MUST set verdict=REQUEST_CHANGES and instruct the author to rebase on main and re-resolve. Reference issue #896.\n' "$STALE_LIST")
-  log "stale-base regression detected: $(printf '%s' "$STALE_OUTPUT" | tr '\n' ' ')"
-else
-  log "stale-base check: no regressions"
-fi
-
-# =============================================================================
 # BUILD STRUCTURAL ANALYSIS GRAPH
 # =============================================================================
 status "preparing review"
@@ -266,7 +212,6 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
   printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
     "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
-  [ -n "$STALE_BASE_SECTION" ] && printf '%s\n' "$STALE_BASE_SECTION"
   [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
   formula_lessons_block
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
@@ -379,7 +324,3 @@ esac
 profile_write_journal "review-${PR_NUMBER}" "Review PR #${PR_NUMBER} (${VERDICT})" "${VERDICT,,}" "" || true
 
 log "DONE: ${VERDICT} (re-review: ${IS_RE_REVIEW})"
-
-# Remove lockfile on successful completion (cleanup_on_exit will also do this,
-# but we do it here to avoid the trap running twice)
-rm -f "$LOCKFILE"

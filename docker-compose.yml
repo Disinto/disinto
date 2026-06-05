@@ -45,9 +45,8 @@ services:
       - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
       - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-900}
+      - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
+      - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-21600}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
       - SUPERVISOR_INTERVAL=${SUPERVISOR_INTERVAL:-1200}
     healthcheck:
@@ -171,9 +170,8 @@ services:
       - WOODPECKER_REPO_ID=${WOODPECKER_REPO_ID:-}
       - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-900}
+      - GARDENER_INTERVAL=${GARDENER_INTERVAL:-21600}
+      - ARCHITECT_INTERVAL=${ARCHITECT_INTERVAL:-21600}
       - PLANNER_INTERVAL=${PLANNER_INTERVAL:-43200}
       - SUPERVISOR_INTERVAL=${SUPERVISOR_INTERVAL:-1200}
       - AGENT_ROLES=review,dev,gardener,architect,planner,predictor,supervisor
@@ -210,8 +208,8 @@ services:
 
   edge:
     build:
-      context: .
-      dockerfile: docker/edge/Dockerfile
+      context: docker/edge
+      dockerfile: Dockerfile
     image: disinto/edge:latest
     container_name: disinto-edge
     security_opt:
@@ -222,8 +220,6 @@ services:
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/root/.claude.json:ro
       - ${CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
-      # Chat history persistence (merged from chat container, #1083)
-      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -235,25 +231,6 @@ services:
       - PRIMARY_BRANCH=main
       - DISINTO_CONTAINER=1
       - FORGE_ADMIN_USERS=disinto-admin,vault-bot,admin
-      # Chat env vars (merged from chat container into edge, #1083)
-      - CHAT_HOST=127.0.0.1
-      - CHAT_PORT=8080
-      - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
-      - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
-      - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
-      - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
-      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
-      - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
-      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
-      # GEMINI_API_KEY is intentionally NOT set here — the bridge reads
-      # it from ${GEMINI_API_KEY_FILE} (rendered by Vault in the Nomad
-      # path; local-compose dev can bind-mount a file or leave it unset
-      # and the bridge will decline to start, which is safe).
-      - VOICE_HOST=127.0.0.1
-      - VOICE_PORT=8090
-      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
-      # Rate limiting removed (#1084)
     ports:
       - "80:80"
       - "443:443"

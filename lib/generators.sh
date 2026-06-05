@@ -26,28 +26,6 @@ PROJECT_NAME="${PROJECT_NAME:-project}"
 # PRIMARY_BRANCH defaults to main (env.sh may have set it to 'master')
 PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
 
-# Track service names for duplicate detection
-declare -A _seen_services
-declare -A _service_sources
-
-# Record a service name and its source; return 0 if unique, 1 if duplicate
-_record_service() {
-  local service_name="$1"
-  local source="$2"
-
-  if [ -n "${_seen_services[$service_name]:-}" ]; then
-    local original_source="${_service_sources[$service_name]}"
-    echo "ERROR: Duplicate service name '$service_name' detected —" >&2
-    echo "  '$service_name' emitted twice — from $original_source and from $source" >&2
-    echo "  Remove one of the conflicting activations to proceed." >&2
-    return 1
-  fi
-
-  _seen_services[$service_name]=1
-  _service_sources[$service_name]="$source"
-  return 0
-}
-
 # Helper: extract woodpecker_repo_id from a project TOML file
 # Returns empty string if not found or file doesn't exist
 _get_woodpecker_repo_id() {
@@ -119,16 +97,6 @@ _generate_local_model_services() {
         POLL_INTERVAL) poll_interval_val="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
-            # Record service for duplicate detection using the full service name
-            local full_service_name="agents-${service_name}"
-            local toml_basename
-            toml_basename=$(basename "$toml")
-            if ! _record_service "$full_service_name" "[agents.$service_name] in projects/$toml_basename"; then
-              # Duplicate detected — clean up and abort
-              rm -f "$temp_file"
-              return 1
-            fi
-
             # Per-agent FORGE_TOKEN / FORGE_PASS lookup (#834 Gap 3).
             # Two hired llama agents must not share the same Forgejo identity,
             # so we key the env-var lookup by forge_user (which hire-agent.sh
@@ -146,7 +114,20 @@ _generate_local_model_services() {
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
-    image: ghcr.io/disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
+    # Local image ref (#853): registry-less name matches what \`disinto init --build\`
+    # and the legacy agents-llama stanza produce. Paired with build: so hosts without
+    # a pre-built image can rebuild locally; ghcr.io/disinto/agents is not publicly
+    # pullable, and emitting that prefix caused \`docker compose up\` to fail with
+    # \`denied\` on every hired agent.
+    build:
+      context: .
+      dockerfile: docker/agents/Dockerfile
+    image: disinto/agents:\${DISINTO_IMAGE_TAG:-latest}
+    # Rebuild on every up (#887): without this, \`docker compose up -d --force-recreate\`
+    # reuses the cached image and silently keeps running stale docker/agents/ code
+    # even after the repo is updated. \`pull_policy: build\` makes Compose rebuild
+    # the image on every up; BuildKit layer cache makes unchanged rebuilds fast.
+    pull_policy: build
     container_name: disinto-agents-${service_name}
     restart: unless-stopped
     security_opt:
@@ -186,9 +167,8 @@ _generate_local_model_services() {
       WOODPECKER_REPO_ID: "${wp_repo_id}"
       FORGE_BOT_USER_${user_upper}: "${forge_user}"
       POLL_INTERVAL: "${poll_interval_val}"
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-900}"
+      GARDENER_INTERVAL: "${GARDENER_INTERVAL:-21600}"
+      ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-21600}"
       PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
       SUPERVISOR_INTERVAL: "${SUPERVISOR_INTERVAL:-1200}"
     depends_on:
@@ -301,20 +281,6 @@ _generate_compose_impl() {
     return 0
   fi
 
-  # Reset duplicate detection state for fresh run
-  _seen_services=()
-  _service_sources=()
-
-  # Initialize duplicate detection with base services defined in the template
-  _record_service "forgejo" "base compose template" || return 1
-  _record_service "woodpecker" "base compose template" || return 1
-  _record_service "woodpecker-agent" "base compose template" || return 1
-  _record_service "agents" "base compose template" || return 1
-  _record_service "runner" "base compose template" || return 1
-  _record_service "edge" "base compose template" || return 1
-  _record_service "staging" "base compose template" || return 1
-  _record_service "staging-deploy" "base compose template" || return 1
-
   # Extract primary woodpecker_repo_id from project TOML files
   local wp_repo_id
   wp_repo_id=$(_get_primary_woodpecker_repo_id)
@@ -392,9 +358,6 @@ services:
       WOODPECKER_SERVER: localhost:9000
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-}
       WOODPECKER_GRPC_SECURE: "false"
-      WOODPECKER_GRPC_KEEPALIVE_TIME: "10s"
-      WOODPECKER_GRPC_KEEPALIVE_TIMEOUT: "20s"
-      WOODPECKER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS: "true"
       WOODPECKER_HEALTHCHECK_ADDR: ":3333"
       WOODPECKER_BACKEND_DOCKER_NETWORK: ${WOODPECKER_CI_NETWORK:-disinto_disinto-net}
       WOODPECKER_MAX_WORKFLOWS: 1
@@ -450,9 +413,8 @@ services:
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
+      GARDENER_INTERVAL: ${GARDENER_INTERVAL:-21600}
+      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-21600}
       PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
@@ -473,77 +435,6 @@ services:
       - disinto-net
 
 COMPOSEEOF
-
-  # ── Conditional agents-llama block (ENABLE_LLAMA_AGENT=1) ──────────────
-  # This legacy flag was removed in #846 but kept for duplicate detection testing
-  if [ "${ENABLE_LLAMA_AGENT:-0}" = "1" ]; then
-    if ! _record_service "agents-llama" "ENABLE_LLAMA_AGENT=1"; then
-      return 1
-    fi
-    cat >> "$compose_file" <<'COMPOSEEOF'
-
-  agents-llama:
-    image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}
-    container_name: disinto-agents-llama
-    restart: unless-stopped
-    security_opt:
-      - apparmor=unconfined
-    volumes:
-      - agent-data:/home/agent/data
-      - project-repos:/home/agent/repos
-      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
-      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
-      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
-      - woodpecker-data:/woodpecker-data:ro
-      - ./projects:/home/agent/disinto/projects:ro
-      - ./.env:/home/agent/disinto/.env:ro
-      - ./state:/home/agent/disinto/state
-    environment:
-      FORGE_URL: http://forgejo:3000
-      FORGE_REPO: ${FORGE_REPO:-disinto-admin/disinto}
-      FORGE_TOKEN: ${FORGE_TOKEN:-}
-      FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
-      FORGE_PLANNER_TOKEN: ${FORGE_PLANNER_TOKEN:-}
-      FORGE_GARDENER_TOKEN: ${FORGE_GARDENER_TOKEN:-}
-      FORGE_VAULT_TOKEN: ${FORGE_VAULT_TOKEN:-}
-      FORGE_SUPERVISOR_TOKEN: ${FORGE_SUPERVISOR_TOKEN:-}
-      FORGE_PREDICTOR_TOKEN: ${FORGE_PREDICTOR_TOKEN:-}
-      FORGE_ARCHITECT_TOKEN: ${FORGE_ARCHITECT_TOKEN:-}
-      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
-      WOODPECKER_TOKEN: ${WOODPECKER_TOKEN:-}
-      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      FORGE_PASS: ${FORGE_PASS:-}
-      FORGE_ADMIN_PASS: ${FORGE_ADMIN_PASS:-}
-      FACTORY_REPO: ${FORGE_REPO:-disinto-admin/disinto}
-      DISINTO_CONTAINER: "1"
-      PROJECT_NAME: ${PROJECT_NAME:-project}
-      PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
-      WOODPECKER_DATA_DIR: /woodpecker-data
-      WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
-      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
-      POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
-      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      forgejo:
-        condition: service_healthy
-      woodpecker:
-        condition: service_started
-    networks:
-      - disinto-net
-
-COMPOSEEOF
-  fi
 
   # Resume the rest of the compose file (runner onward)
   cat >> "$compose_file" <<'COMPOSEEOF'
@@ -569,7 +460,6 @@ COMPOSEEOF
 
   # Edge proxy — reverse proxy to Forgejo, Woodpecker, and staging
   # Serves on ports 80/443, routes based on path
-  # ghcr.io/disinto/edge is now public (#670, follow-up to #606).
   edge:
     image: ghcr.io/disinto/edge:${DISINTO_IMAGE_TAG:-latest}
     container_name: disinto-edge
@@ -597,28 +487,11 @@ COMPOSEEOF
       - EDGE_TUNNEL_USER=${EDGE_TUNNEL_USER:-tunnel}
       - EDGE_TUNNEL_PORT=${EDGE_TUNNEL_PORT:-}
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
-      # Subdomain fallback (#1028): per-service FQDNs for subdomain routing mode.
-      # Set EDGE_ROUTING_MODE=subdomain to activate. See docs/edge-routing-fallback.md.
-      - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
-      - EDGE_TUNNEL_FQDN_FORGE=${EDGE_TUNNEL_FQDN_FORGE:-}
-      - EDGE_TUNNEL_FQDN_CI=${EDGE_TUNNEL_FQDN_CI:-}
-      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
+      # Subdomain fallback (#713): if subpath routing (#704/#708) fails, add:
+      #   EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT
+      # See docs/edge-routing-fallback.md for the full pivot plan.
       # Shared secret for Caddy ↔ chat forward_auth (#709)
       - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
-      # Chat env vars (merged from chat container into edge, #1083)
-      - CHAT_HOST=127.0.0.1
-      - CHAT_PORT=8080
-      - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
-      - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
-      - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
-      # GEMINI_API_KEY is NOT set here — the bridge reads it from
-      # ${GEMINI_API_KEY_FILE} so it never lands in the task env where
-      # chat-server.py or its `claude -p` children could inherit it.
-      - VOICE_HOST=127.0.0.1
-      - VOICE_PORT=8090
-      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
-      # Rate limiting removed (#1084)
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -626,8 +499,6 @@ COMPOSEEOF
       - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
-      # Chat history persistence (merged from chat container, #1083)
-      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:2019/config/"]
       interval: 30s
@@ -679,7 +550,6 @@ COMPOSEEOF
   # Chat container — Claude chat UI backend (#705)
   # Internal service only; edge proxy routes to chat:8080
   # Sandbox hardened per #706 — no docker.sock, read-only rootfs, minimal caps
-  # Rate limiting removed (#1084)
   chat:
     build:
       context: ./docker/chat
@@ -703,9 +573,6 @@ COMPOSEEOF
       - chat-config:/var/chat/config
       # Chat history persistence: per-user NDJSON files on bind-mounted host volume
       - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
-      # Workspace directory: bind-mounted project working tree for Claude access (#1027)
-      # Mounted when CHAT_WORKSPACE_DIR is set (defaults to ./workspace)
-      - ${CHAT_WORKSPACE_DIR:-./workspace}:/var/workspace
     environment:
       CHAT_HOST: "0.0.0.0"
       CHAT_PORT: "8080"
@@ -713,14 +580,13 @@ COMPOSEEOF
       CHAT_OAUTH_CLIENT_ID: ${CHAT_OAUTH_CLIENT_ID:-}
       CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
       EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
-      EDGE_TUNNEL_FQDN_CHAT: ${EDGE_TUNNEL_FQDN_CHAT:-}
-      EDGE_ROUTING_MODE: ${EDGE_ROUTING_MODE:-subpath}
       DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
       # Shared secret for Caddy forward_auth verify endpoint (#709)
       FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
-      # Rate limiting removed (#1084)
-      # Workspace directory for Claude code access (#1027)
-      CHAT_WORKSPACE_DIR: ${CHAT_WORKSPACE_DIR:-./workspace}
+      # Cost caps / rate limiting (#711)
+      CHAT_MAX_REQUESTS_PER_HOUR: ${CHAT_MAX_REQUESTS_PER_HOUR:-60}
+      CHAT_MAX_REQUESTS_PER_DAY: ${CHAT_MAX_REQUESTS_PER_DAY:-500}
+      CHAT_MAX_TOKENS_PER_DAY: ${CHAT_MAX_TOKENS_PER_DAY:-1000000}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
@@ -736,6 +602,7 @@ volumes:
   agent-data:
   project-repos:
   caddy_data:
+  chat-config:
 
 networks:
   disinto-net:
@@ -764,10 +631,7 @@ COMPOSEEOF
   fi
 
   # Append local-model agent services if any are configured
-  if ! _generate_local_model_services "$compose_file"; then
-    echo "ERROR: Failed to generate local-model agent services. See errors above." >&2
-    return 1
-  fi
+  _generate_local_model_services "$compose_file"
 
   # Resolve the Claude CLI binary path and persist as CLAUDE_BIN_DIR in .env.
   # Only used by reproduce and edge services which still use host-mounted CLI.
@@ -793,8 +657,9 @@ COMPOSEEOF
 
   # In build mode, replace image: with build: for locally-built images
   if [ "$use_build" = true ]; then
+    sed -i 's|^\(  agents:\)|\1|' "$compose_file"
     sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile\n    pull_policy: build|}' "$compose_file"
-    sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build:\n      context: .\n      dockerfile: docker/edge/Dockerfile\n    pull_policy: build|}' "$compose_file"
+    sed -i '/^    image: ghcr\.io\/disinto\/edge:/{s|image: ghcr\.io/disinto/edge:.*|build: ./docker/edge\n    pull_policy: build|}' "$compose_file"
   fi
 
   echo "Created: ${compose_file}"
@@ -818,11 +683,6 @@ _generate_agent_docker_impl() {
 # Output path: ${FACTORY_ROOT}/docker/Caddyfile (gitignored — generated artifact).
 # The edge compose service mounts this path as /etc/caddy/Caddyfile.
 # On a fresh clone, `disinto init` calls generate_caddyfile before first `disinto up`.
-#
-# Routing mode (EDGE_ROUTING_MODE env var):
-#   subpath   — (default) all services under <project>.disinto.ai/{forge,ci,chat,staging}
-#   subdomain — per-service subdomains: forge.<project>, ci.<project>, chat.<project>
-# See docs/edge-routing-fallback.md for the full pivot plan.
 _generate_caddyfile_impl() {
   local docker_dir="${FACTORY_ROOT}/docker"
   local caddyfile="${docker_dir}/Caddyfile"
@@ -832,22 +692,8 @@ _generate_caddyfile_impl() {
     return
   fi
 
-  local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
-
-  if [ "$routing_mode" = "subdomain" ]; then
-    _generate_caddyfile_subdomain "$caddyfile"
-  else
-    _generate_caddyfile_subpath "$caddyfile"
-  fi
-
-  echo "Created: ${caddyfile} (routing_mode=${routing_mode})"
-}
-
-# Subpath Caddyfile: all services under a single :80 block with path-based routing.
-_generate_caddyfile_subpath() {
-  local caddyfile="$1"
   cat > "$caddyfile" <<'CADDYFILEEOF'
-# Caddyfile — edge proxy configuration (subpath mode)
+# Caddyfile — edge proxy configuration
 # IP-only binding at bootstrap; domain + TLS added later via vault resource request
 
 :80 {
@@ -858,7 +704,6 @@ _generate_caddyfile_subpath() {
 
     # Reverse proxy to Forgejo
     handle /forge/* {
-        uri strip_prefix /forge
         reverse_proxy forgejo:3000
     }
 
@@ -869,73 +714,30 @@ _generate_caddyfile_subpath() {
 
     # Reverse proxy to staging
     handle /staging/* {
-        uri strip_prefix /staging
         reverse_proxy staging:80
     }
 
-    # Chat service — reverse proxy to in-process chat server (#705, #1083)
+    # Chat service — reverse proxy to disinto-chat backend (#705)
     # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
     handle /chat/login {
-        reverse_proxy 127.0.0.1:8080
+        reverse_proxy chat:8080
     }
     handle /chat/oauth/callback {
-        reverse_proxy 127.0.0.1:8080
+        reverse_proxy chat:8080
     }
     # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
     handle /chat/* {
-        forward_auth 127.0.0.1:8080 {
+        forward_auth chat:8080 {
             uri /chat/auth/verify
             copy_headers X-Forwarded-User
             header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
         }
-        reverse_proxy 127.0.0.1:8080
+        reverse_proxy chat:8080
     }
 }
 CADDYFILEEOF
-}
 
-# Subdomain Caddyfile: four host blocks per docs/edge-routing-fallback.md.
-# Uses env vars EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT,
-# and EDGE_TUNNEL_FQDN (main project domain → staging).
-_generate_caddyfile_subdomain() {
-  local caddyfile="$1"
-  cat > "$caddyfile" <<'CADDYFILEEOF'
-# Caddyfile — edge proxy configuration (subdomain mode)
-# Per-service subdomains; see docs/edge-routing-fallback.md
-
-# Main project domain — staging / landing
-{$EDGE_TUNNEL_FQDN} {
-    reverse_proxy staging:80
-}
-
-# Forgejo — root path, no subpath rewrite needed
-{$EDGE_TUNNEL_FQDN_FORGE} {
-    reverse_proxy forgejo:3000
-}
-
-# Woodpecker CI — root path
-{$EDGE_TUNNEL_FQDN_CI} {
-    reverse_proxy woodpecker:8000
-}
-
-# Chat — with forward_auth (#709, on its own host)
-{$EDGE_TUNNEL_FQDN_CHAT} {
-    handle /login {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle /oauth/callback {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle /* {
-        forward_auth 127.0.0.1:8080 {
-            uri /auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        reverse_proxy 127.0.0.1:8080
-    }
-}
-CADDYFILEEOF
+  echo "Created: ${caddyfile}"
 }
 
 # Generate docker/index.html default page.

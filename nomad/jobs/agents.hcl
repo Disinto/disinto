@@ -2,9 +2,8 @@
 # nomad/jobs/agents.hcl — All-role agent polling loop (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S4.1, issue #955). Runs the main bot
-# polling loop with 6 agent roles (review, dev, gardener, architect,
-# planner, predictor) against the local llama server.
-# Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
+# polling loop with all 7 agent roles (review, dev, gardener, architect,
+# planner, predictor, supervisor) against the local llama server.
 #
 # Host_volume contract:
 #   This job mounts agent-data, project-repos, and ops-repo from
@@ -15,7 +14,7 @@
 #   - vault { role = "service-agents" } at group scope — workload-identity
 #     JWT exchanged for a Vault token carrying the composite service-agents
 #     policy (vault/policies/service-agents.hcl), which grants read access
-#     to the 6 bot KV namespaces (supervisor is separate) + vault bot + shared forge config.
+#     to all 7 bot KV namespaces + vault bot + shared forge config.
 #   - template stanza renders per-bot FORGE_*_TOKEN + FORGE_PASS from Vault
 #     KV v2 at kv/disinto/bots/<role>.
 #   - Seeded on fresh boxes by tools/vault-seed-agents.sh.
@@ -58,16 +57,6 @@ job "agents" {
     volume "ops-repo" {
       type      = "host"
       source    = "ops-repo"
-      read_only = true
-    }
-
-    # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
-    # the path bootstrap_factory_repo already reads from, so per-env config
-    # changes do not require an image rebuild. Backed by /srv/disinto/projects/
-    # on the host (see nomad/client.hcl).
-    volume "factory-projects" {
-      type      = "host"
-      source    = "factory-projects"
       read_only = true
     }
 
@@ -121,58 +110,24 @@ job "agents" {
         read_only   = true
       }
 
-      # factory-projects: surfaces /srv/disinto/projects/ inside the container
-      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
-      # already reads from (#794).
-      volume_mount {
-        volume      = "factory-projects"
-        destination = "/srv/disinto/project-repos/_factory/projects"
-        read_only   = true
-      }
-
       # ── Non-secret env ─────────────────────────────────────────────────────
-      # FORGE_URL is rendered from Nomad service discovery in the template
-      # block below — the bridge-network netns cannot resolve the `forgejo`
-      # hostname (no Consul DNS). Same pattern as edge.hcl post-#1157 (issue
-      # #567).
       env {
+        FORGE_URL          = "http://forgejo:3000"
         FORGE_REPO         = "disinto-admin/disinto"
-        # Activate bootstrap_factory_repo so DISINTO_DIR switches to the
-        # live clone and per-env TOMLs from factory-projects are picked up
-        # rather than the stale baked image copy (#794).
-        FACTORY_REPO       = "disinto-admin/disinto"
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"
-        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor"
+        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor,supervisor"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
         PROJECT_REPO_ROOT  = "/home/agent/repos/project"
         CLAUDE_TIMEOUT     = "7200"
-        CLAUDE_MAX_TURNS   = "60"
-        # GARDENER_INTERVAL dropped (#872): gardener now runs per-iteration
-        # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
 
         # llama-specific Claude Code tuning
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
         CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "60"
-      }
-
-      # ── Nomad-discovered FORGE_URL (issue #567) ───────────────────────────
-      # Bridge netns cannot resolve `forgejo:3000`. Render from Nomad service
-      # discovery — matches edge.hcl (post-#1157) and keeps the job portable
-      # across boxes with different bridge IPs.
-      template {
-        destination = "secrets/forge-url.env"
-        env         = true
-        change_mode = "restart"
-        data        = <<EOT
-{{ range nomadService "forgejo" -}}
-FORGE_URL=http://{{ .Address }}:{{ .Port }}
-{{- end }}
-EOT
       }
 
       # ── Vault-templated bot tokens (S4.1, issue #955) ─────────────────────
@@ -238,12 +193,6 @@ FORGE_SUPERVISOR_TOKEN=seed-me
 FORGE_VAULT_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_VAULT_TOKEN=seed-me
-{{- end }}
-
-{{ with secret "kv/data/disinto/bots/filer" -}}
-FORGE_FILER_TOKEN={{ .Data.data.token }}
-{{- else -}}
-FORGE_FILER_TOKEN=seed-me
 {{- end }}
 EOT
       }

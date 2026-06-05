@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -8,10 +8,10 @@ issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `data/logs/supervisor/supervisor.log` (canonical sink — both `supervisor-run.sh` internal logging and entrypoint stderr redirect write to this single file).
+- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `supervisor.log` in the agents container.
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
-Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
+Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
@@ -30,25 +30,14 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
   automatic container restart + `blocked:ci_exhausted` issue recovery in
   `supervisor-run.sh` before the Claude session starts.
-- `formulas/run-supervisor.toml` — Execution spec: six steps (preflight review,
-  health-assessment, decide-actions, report, incidents, journal) with `needs`
-  dependencies. Claude evaluates all metrics and takes actions in a single
-  interactive session. Health-assessment now includes P2 **Woodpecker agent
-  unhealthy** classification (container not running, ≥3 gRPC errors/20m, or
-  ≥3 fast-failure pipelines/15m); decide-actions documents the pre-session
-  auto-recovery path
-- `supervisor/write-incident.sh` — Writes one markdown incident file per fired
-  recipe (P0–P2 only) under `${OPS_REPO_ROOT}/incidents/`. Sources
-  `lib/secret-scan.sh` for redaction; graceful exit in degraded mode.
-- `supervisor/commit-incidents.sh` — Commits and pushes incident markdown files
-  to the ops repo after the Claude session writes them.
+- `formulas/run-supervisor.toml` — Execution spec: five steps (preflight review,
+  health-assessment, decide-actions, report, journal) with `needs` dependencies.
+  Claude evaluates all metrics and takes actions in a single interactive session.
+  Health-assessment now includes P2 **Woodpecker agent unhealthy** classification
+  (container not running, ≥3 gRPC errors/20m, or ≥3 fast-failure pipelines/15m);
+  decide-actions documents the pre-session auto-recovery path
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
-
-**Canonical log sink**: `data/logs/supervisor/supervisor.log` — all supervisor output
-(structured log from `supervisor-run.sh` and stderr from the entrypoint invocation)
-goes to this single file. Do not introduce a second path; see #1150 for the dual-sink
-incident that motivated unification.
 
 **Alert priorities**: P0 (memory crisis), P1 (disk), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
@@ -66,10 +55,6 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Logs a WARNING message at startup indicating degraded mode
 
 **Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
-→ lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
-(if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
-(`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
-and none require LLM, skip to journal + exit (fast path); otherwise proceed → load formula + context
-→ run claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes,
-writes journal → `incidents` step writes markdown files for fired P0–P2 recipes
-→ `commit-incidents.sh` commits and pushes to ops repo → `PHASE:done`.
+→ lock + memory guard → run preflight.sh (collect metrics) → **WP agent health recovery**
+(if unhealthy: restart container + recover ci_exhausted issues) → load formula + context → run
+claude -p via agent-sdk.sh → Claude assesses health, auto-fixes, writes journal → `PHASE:done`.

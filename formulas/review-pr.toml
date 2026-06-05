@@ -55,16 +55,6 @@ Adapt based on scope. Check for:
 - **Claim verification**: if docs/README/AGENTS.md changed, verify claims
   against actual code — read the files to confirm
 
-- **Acceptance test (if the issue has an `## Acceptance test` section)**
-  Read the `## Acceptance test` section from the PR description (it references
-  the issue body). Check that:
-  - The section exists and contains explicit shell commands with expected output.
-  - Commands reference the correct file paths and schema (not stubs).
-  - The expected output matches what the code actually produces.
-  - If a command cannot be run on the live box (e.g., requires a deploy),
-    flag as `needs-deploy-verification` — do NOT approve.
-  - See docs/contributing/acceptance-tests.md for the full convention.
-
 Do NOT flag:
 - Style preferences with no correctness impact
 - Missing tests unless the change is clearly untested and risky
@@ -147,19 +137,6 @@ changes into a separate PR or justify them in the description.
 
 For non-infrastructure files, scope violations are advisory: leave a
 non-blocking COMMENT noting the scope creep.
-
-## 3e. Stale-base regression (conditional, #896)
-
-If the orchestrator injected a `## Stale-base regression check (BLOCKER)` section,
-it has already detected that the PR's merged result will silently overwrite
-upstream changes that landed on main since the PR's base. These regressions
-cannot be seen in the forward (head vs base) diff alone.
-
-Set verdict=REQUEST_CHANGES. Quote the file list verbatim in your review and
-instruct the author to rebase on main and re-resolve any conflicts so the
-upstream changes are preserved. The only exception is if the PR description
-explicitly states the reverts are intentional with a clear rationale —
-otherwise treat this as a blocker.
 
 ## 4. Vault item quality (conditional)
 

@@ -45,8 +45,6 @@ source "$FACTORY_ROOT/lib/guard.sh"
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 # shellcheck source=../lib/pr-lifecycle.sh
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
-# shellcheck source=../lib/gardener-pr.sh
-source "$FACTORY_ROOT/lib/gardener-pr.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/gardener.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -101,40 +99,6 @@ resolve_agent_identity || true
 load_formula_or_profile "gardener" "$FACTORY_ROOT/formulas/run-gardener.toml" || exit 1
 build_context_block AGENTS.md
 
-# ── Load latest engagement evidence (issue #975) ──────────────────────────
-# Reads the most recent engagement report from the ops repo evidence directory.
-# Provides the gardener with visitor counts, referrers, dwell time, and
-# scroll depth data to inform backlog decisions about the website addressable.
-load_engagement_evidence() {
-  local evidence_dir="${OPS_REPO_ROOT:-}/evidence/engagement"
-  local latest=""
-
-  if [ -d "$evidence_dir" ]; then
-    latest=$(ls -1 "$evidence_dir"/*.json 2>/dev/null | sort -r | head -1)
-  fi
-
-  if [ -n "$latest" ] && [ -f "$latest" ]; then
-    local report
-    report=$(jq -c '{
-      date: .date,
-      page_views: .page_views,
-      unique_visitors: .unique_visitors,
-      referred_visitors: .referred_visitors,
-      top_pages: .top_pages,
-      top_referrers: .top_referrers,
-      client_side: .client_side
-    }' "$latest" 2>/dev/null) || return 0
-
-    if [ -n "$report" ] && [ "$report" != "null" ]; then
-      ENGAGEMENT_EVIDENCE="$report"
-      log "loaded engagement evidence from ${latest}"
-    fi
-  fi
-}
-
-ENGAGEMENT_EVIDENCE=""
-load_engagement_evidence || true
-
 # ── Prepare .profile context (lessons injection) ─────────────────────────
 formula_prepare_profile_context
 
@@ -180,9 +144,6 @@ ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ## Result file
 Write actions and dust items to: ${RESULT_FILE}
-
-${ENGAGEMENT_EVIDENCE:+## Engagement evidence (latest report)
-${ENGAGEMENT_EVIDENCE}}
 
 ## Formula
 ${FORMULA_CONTENT}
@@ -378,7 +339,17 @@ agent_run --worktree "$WORKTREE" "$PROMPT"
 log "agent_run complete"
 
 # ── Detect PR ─────────────────────────────────────────────────────────────
-detect_pr_number "chore/gardener-"
+PR_NUMBER=""
+if [ -f "$GARDENER_PR_FILE" ]; then
+  PR_NUMBER=$(tr -d '[:space:]' < "$GARDENER_PR_FILE")
+fi
+
+# Fallback: search for open gardener PRs
+if [ -z "$PR_NUMBER" ]; then
+  PR_NUMBER=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/pulls?state=open&limit=10" | \
+    jq -r '[.[] | select(.head.ref | startswith("chore/gardener-"))] | .[0].number // empty') || true
+fi
 
 # ── Walk PR to merge ──────────────────────────────────────────────────────
 if [ -n "$PR_NUMBER" ]; then

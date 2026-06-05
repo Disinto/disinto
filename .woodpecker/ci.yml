@@ -4,15 +4,9 @@
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
-#
-# Timeouts:
-#   Workflow-level default (10m) applies to all steps unless overridden.
 
 when:
   event: [push, pull_request]
-
-# Workflow-level timeout default — propagates to all steps without their own timeout.
-timeout: 10m
 
 # Override default clone to authenticate against Forgejo using FORGE_TOKEN.
 # Required because Forgejo is configured with REQUIRE_SIGN_IN, so anonymous
@@ -22,29 +16,9 @@ clone:
   git:
     image: alpine/git
     commands:
-      - |
-        if [ -n "${FORGE_TOKEN:-}" ]; then
-          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
-          git clone --depth 1 "$AUTH_URL" .
-        else
-          git clone --depth 1 "$CI_REPO_CLONE_URL" .
-        fi
-      # Retry the fetch — for pull_request events, $CI_COMMIT_REF is
-      # refs/pull/<n>/head, which Forgejo creates asynchronously after the
-      # PR webhook fires. The pipeline can start before the ref appears,
-      # producing exit 128 ("couldn't find remote ref"). Backoff: 1s, 2s,
-      # 4s, 8s, 16s — covers ~30s of webhook lag in practice.
-      - |
-        set -e
-        n=0
-        until git fetch --depth 1 origin "$CI_COMMIT_REF"; do
-          n=$((n + 1))
-          if [ "$n" -ge 5 ]; then
-            echo "git fetch '$CI_COMMIT_REF' failed after 5 attempts" >&2
-            exit 128
-          fi
-          sleep $((1 << (n - 1)))
-        done
+      - AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:$FORGE_TOKEN@|")
+      - git clone --depth 1 "$AUTH_URL" .
+      - git fetch --depth 1 origin "$CI_COMMIT_REF"
       - git checkout FETCH_HEAD
 
 steps:
@@ -60,17 +34,6 @@ steps:
     commands:
       - apk add --no-cache bash
       - bash .woodpecker/agent-smoke.sh
-
-  # #896 — block PRs whose merged result will silently revert upstream
-  # changes on shared files (the review-bot pre-check is the primary
-  # detector; this is the belt-and-braces CI guard).
-  - name: stale-base-check
-    image: alpine:3
-    when:
-      event: pull_request
-    commands:
-      - apk add --no-cache bash git diffutils grep
-      - bash .woodpecker/check-stale-rebase.sh
 
   - name: duplicate-detection
     image: python:3-alpine

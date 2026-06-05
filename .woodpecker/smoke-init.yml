@@ -8,9 +8,6 @@ when:
       - "tests/**"
       - ".woodpecker/smoke-init.yml"
 
-# Workflow-level timeout default — propagates to all steps without their own timeout.
-timeout: 5m
-
 steps:
   - name: smoke-init
     image: python:3-alpine
@@ -20,4 +17,3 @@ steps:
       - sleep 2
       - bash tests/smoke-init.sh
       - kill $(cat /tmp/mock-forgejo.pid) 2>/dev/null || true
-      - bash tests/smoke-nomad-bootstrap.sh

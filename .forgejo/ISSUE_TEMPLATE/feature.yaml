@@ -49,18 +49,3 @@ body:
     attributes:
       label: Additional context
       description: Links to docs, prior art, design decisions, related issues.
-  - type: textarea
-    id: acceptance-test
-    attributes:
-      label: Acceptance test
-      description: |
-        Path to the bash file under `tests/acceptance/` that proves the
-        feature works on the live box. Add the file in the same PR; it must
-        exit 0 on success and `FAIL: <reason>` on failure. Run via
-        `tools/run-acceptance.sh <issue-number>`.
-        See docs/contributing/acceptance-tests.md for the convention.
-      placeholder: |
-        `tests/acceptance/issue-<this-number>.sh` — runs via
-        `tools/run-acceptance.sh <this-number>`.
-    validations:
-      required: true

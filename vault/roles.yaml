@@ -70,6 +70,13 @@ roles:
     namespace: default
     job_id:    agents
 
+  # ── Chat UI (nomad/jobs/chat.hcl — S5.2) ─────────────────────────────────
+  # Claude chat UI service with OAuth secrets. Uses vault/policies/service-chat.hcl.
+  - name:      service-chat
+    policy:    service-chat
+    namespace: default
+    job_id:    chat
+
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the
@@ -123,16 +130,6 @@ roles:
   # ── Edge dispatcher ────────────────────────────────────────────────────────
   - name:      service-dispatcher
     policy:    service-dispatcher
-    namespace: default
-    job_id:    edge
-
-  # ── Edge chat-Claude control surface (#650) ────────────────────────────────
-  # Caddy task in nomad/jobs/edge.hcl binds this role so the chat subprocess
-  # can read the operator Forge PAT + scoped Nomad ACL token from Vault KV.
-  # Same job_id as service-dispatcher (both tasks live in the edge job); per-
-  # task vault { role = ... } stanzas pick which role each task gets.
-  - name:      service-edge-chat
-    policy:    service-edge-chat
     namespace: default
     job_id:    edge
 

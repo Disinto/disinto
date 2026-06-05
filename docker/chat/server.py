@@ -8,16 +8,8 @@ Routes:
     GET /chat/oauth/callback -> exchange code for token, validate user, set session
     GET /chat/               -> serves index.html (session required)
     GET /chat/static/*       -> serves static assets (session required)
-    POST /chat               -> spawns `claude -r <session-id> -p <msg>` with user message (session required)
-    POST /chat/delegate      -> fire-and-forget: spawns detached claude -p, returns task-id (session required)
-    POST /chat/delegate-followup -> resume an existing thread by number/slug/keyword (session required)
+    POST /chat               -> spawns `claude --print` with user message (session required)
     GET /ws                  -> reserved for future streaming upgrade (returns 501)
-    GET /threads             -> list all threads, newest first (session required)
-    GET /threads/<id>        -> thread detail JSON (session required)
-    GET /threads/<id>/stream -> WebSocket upgrade, tails stream.jsonl (session required)
-    GET /factory-state       -> backlog/in_progress counts from thread store (session required)
-    POST /chat/check-inbox   -> read prioritized inbox items (session required)
-    POST /chat/ack-inbox     -> acknowledge an inbox item (session required)
 
 OAuth flow:
     1. User hits any /chat/* route without a valid session cookie -> 302 /chat/login
@@ -28,97 +20,31 @@ OAuth flow:
     6. Redirects to /chat/
 
 The claude binary is expected to be mounted from the host at /usr/local/bin/claude.
-
-Workspace access:
-    - CHAT_WORKSPACE_DIR environment variable: bind-mounted project working tree
-    - Claude invocation uses --permission-mode acceptEdits for code modification
-    - CWD is set to workspace directory when configured, enabling Claude to
-      inspect, explain, or modify code scoped to that tree only
 """
 
-import asyncio
+import datetime
 import json
 import os
-import pwd
 import re
 import secrets
 import subprocess
 import sys
 import time
-import threading
-import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, urlencode
-import socket
-import struct
-import base64
-import hashlib
 
 # Configuration
-HOST = os.environ.get("CHAT_HOST", "127.0.0.1")
+HOST = os.environ.get("CHAT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("CHAT_PORT", 8080))
 UI_DIR = "/var/chat/ui"
 STATIC_DIR = os.path.join(UI_DIR, "static")
 CLAUDE_BIN = "/usr/local/bin/claude"
 
-# Workspace directory: bind-mounted project working tree for Claude access.
-# Default /opt/disinto so chat-Claude acts as a factory operator (#650); this
-# is the factory source clone inside the edge container. Override via env for
-# local dev or alternate workspace bind-mounts.
-WORKSPACE_DIR = os.environ.get("CHAT_WORKSPACE_DIR", "/opt/disinto")
-
-# Claude model pinned for the chat subprocess (#648). Defaults to Opus 4.7 —
-# overridable via CHAT_CLAUDE_MODEL so ops can swap the model without a
-# code change (e.g. to roll back after a bad release).
-CHAT_CLAUDE_MODEL = os.environ.get("CHAT_CLAUDE_MODEL", "claude-opus-4-7")
-
-# SOUL.md path (#727) — persona prompt for the chat-Claude assistant.
-# Loaded via --append-system-prompt on session creation so chat-Claude
-# answers "who are you?" with operator-grade context (factory co-pilot,
-# boundaries, where-it-keeps-state). Mirrors voice bridge's
-# --system-prompt-file pattern (docker/voice/bridge.py uses
-# docs/voice/SOUL_THINK.md). Skipped silently if the file is missing
-# (e.g. local dev workspace without a SOUL.md).
-SOUL_MD_PATH = os.environ.get(
-    "CHAT_SOUL_MD_PATH", os.path.join(WORKSPACE_DIR, "SOUL.md"))
-
-# SOUL_THINK.md path — system prompt for delegate sessions.
-SOUL_THINK_PATH = os.environ.get(
-    "CHAT_SOUL_THINK_PATH", os.path.join(WORKSPACE_DIR, "docs/voice/SOUL_THINK.md"))
-
-# Threads root — where delegate task state lands.
-THREADS_ROOT = os.environ.get("CHAT_THREADS_ROOT", "/var/lib/disinto/threads")
-
-# Fast-path skills live in the chat-skills tree inside the container.
-CHAT_SKILLS_DIR = os.environ.get(
-    "CHAT_SKILLS_DIR", os.path.join(WORKSPACE_DIR, "docker/edge/chat-skills"))
-
-# Inbox skill scripts.
-CHECK_INBOX_SH = os.environ.get(
-    "CHECK_INBOX_SH",
-    os.path.join(CHAT_SKILLS_DIR, "check-inbox", "check-inbox.sh"),
-)
-ACK_INBOX_SH = os.environ.get(
-    "ACK_INBOX_SH",
-    os.path.join(CHAT_SKILLS_DIR, "ack-inbox", "ack-inbox.sh"),
-)
-
-# Timeouts for inbox skills (seconds).
-CHECK_INBOX_TIMEOUT = int(os.environ.get("CHAT_CHECK_INBOX_TIMEOUT_SECS", "10"))
-ACK_INBOX_TIMEOUT = int(os.environ.get("CHAT_ACK_INBOX_TIMEOUT_SECS", "10"))
-
 # OAuth configuration
 FORGE_URL = os.environ.get("FORGE_URL", "http://localhost:3000")
-# Browser-reachable Forgejo URL — only needed when FORGE_URL is internal
-# (used for git clone + server-to-server calls) and the /chat/login
-# authorize redirect needs to land on a URL the user's browser can reach.
-FORGE_PUBLIC_URL = os.environ.get("FORGE_PUBLIC_URL", FORGE_URL)
 CHAT_OAUTH_CLIENT_ID = os.environ.get("CHAT_OAUTH_CLIENT_ID", "")
 CHAT_OAUTH_CLIENT_SECRET = os.environ.get("CHAT_OAUTH_CLIENT_SECRET", "")
 EDGE_TUNNEL_FQDN = os.environ.get("EDGE_TUNNEL_FQDN", "")
-EDGE_TUNNEL_FQDN_CHAT = os.environ.get("EDGE_TUNNEL_FQDN_CHAT", "")
-EDGE_ROUTING_MODE = os.environ.get("EDGE_ROUTING_MODE", "subpath")
 
 # Shared secret for Caddy forward_auth verify endpoint (#709).
 # When set, only requests carrying this value in X-Forward-Auth-Secret are
@@ -126,41 +52,10 @@ EDGE_ROUTING_MODE = os.environ.get("EDGE_ROUTING_MODE", "subpath")
 # (acceptable during local dev; production MUST set this).
 FORWARD_AUTH_SECRET = os.environ.get("FORWARD_AUTH_SECRET", "")
 
-
-# Privilege drop for the spawned claude binary (#743).
-#
-# claude-code 2.1.84 hard-refuses --permission-mode=bypassPermissions when
-# launched with euid 0 ("--dangerously-skip-permissions cannot be used with
-# root/sudo privileges for security reasons"). chat-server.py runs as root
-# inside the edge container (entrypoint-edge.sh stays root to bind privileged
-# ports for caddy and to manage /home/agent), so each Popen of `claude` must
-# drop to the unprivileged `agent` user (uid 1000) via preexec_fn before exec.
-#
-# uid 1000 matches the ownership of the shared host volume at
-# /var/lib/disinto/claude-shared/config (CLAUDE_CONFIG_DIR), so the child
-# can still read .credentials.json. Resolved once at import — a missing
-# `agent` account means the image is misconfigured and we want to fail
-# fast rather than silently keep running as root.
-try:
-    _agent_pw = pwd.getpwnam("agent")
-    _AGENT_UID = _agent_pw.pw_uid
-    _AGENT_GID = _agent_pw.pw_gid
-except KeyError as _agent_err:
-    raise RuntimeError(
-        "chat-server.py requires the 'agent' user (uid 1000) in the image; "
-        "see docker/edge/Dockerfile (#743)"
-    ) from _agent_err
-
-
-def _drop_to_agent():
-    """preexec_fn: drop privileges to the agent user before exec().
-
-    Called in the forked child after fork() but before exec(); setgid must
-    happen before setuid so the gid change is still permitted.
-    """
-    os.setgid(_AGENT_GID)
-    os.setuid(_AGENT_UID)
-
+# Rate limiting / cost caps (#711)
+CHAT_MAX_REQUESTS_PER_HOUR = int(os.environ.get("CHAT_MAX_REQUESTS_PER_HOUR", 60))
+CHAT_MAX_REQUESTS_PER_DAY = int(os.environ.get("CHAT_MAX_REQUESTS_PER_DAY", 500))
+CHAT_MAX_TOKENS_PER_DAY = int(os.environ.get("CHAT_MAX_TOKENS_PER_DAY", 1000000))
 
 # Allowed users - disinto-admin always allowed; CSV allowlist extends it
 _allowed_csv = os.environ.get("DISINTO_CHAT_ALLOWED_USERS", "")
@@ -179,7 +74,6 @@ CHAT_HISTORY_DIR = os.environ.get("CHAT_HISTORY_DIR", "/var/lib/chat/history")
 
 # Regex for valid conversation_id (12-char hex, no slashes)
 CONVERSATION_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
-TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # In-memory session store: token -> {"user": str, "expires": float}
 _sessions = {}
@@ -187,10 +81,11 @@ _sessions = {}
 # Pending OAuth state tokens: state -> expires (float)
 _oauth_states = {}
 
-
-# WebSocket message queues per user
-# user -> asyncio.Queue (for streaming messages to connected clients)
-_websocket_queues = {}
+# Per-user rate limiting state (#711)
+# user -> list of request timestamps (for sliding-window hourly/daily caps)
+_request_log = {}
+# user -> {"tokens": int, "date": "YYYY-MM-DD"}
+_daily_tokens = {}
 
 # MIME types for static files
 MIME_TYPES = {
@@ -204,22 +99,9 @@ MIME_TYPES = {
     ".ico": "image/x-icon",
 }
 
-# WebSocket subprotocol for chat streaming
-WEBSOCKET_SUBPROTOCOL = "chat-stream-v1"
-
-# WebSocket opcodes
-OPCODE_CONTINUATION = 0x0
-OPCODE_TEXT = 0x1
-OPCODE_BINARY = 0x2
-OPCODE_CLOSE = 0x8
-OPCODE_PING = 0x9
-OPCODE_PONG = 0xA
-
 
 def _build_callback_uri():
     """Build the OAuth callback URI based on tunnel configuration."""
-    if EDGE_ROUTING_MODE == "subdomain" and EDGE_TUNNEL_FQDN_CHAT:
-        return f"https://{EDGE_TUNNEL_FQDN_CHAT}/oauth/callback"
     if EDGE_TUNNEL_FQDN:
         return f"https://{EDGE_TUNNEL_FQDN}/chat/oauth/callback"
     return "http://localhost/chat/oauth/callback"
@@ -227,34 +109,27 @@ def _build_callback_uri():
 
 def _session_cookie_flags():
     """Return cookie flags appropriate for the deployment mode."""
-    flags = "HttpOnly; SameSite=Lax; Path=/"
+    flags = "HttpOnly; SameSite=Lax; Path=/chat"
     if EDGE_TUNNEL_FQDN:
         flags += "; Secure"
     return flags
 
 
 def _validate_session(cookie_header):
-    """Return the first VALID session for cookies named SESSION_COOKIE.
-
-    Multiple cookies of the same name can coexist with different ``Path``
-    attributes (e.g. when a previous deploy used a narrower ``Path``).
-    The browser sends all of them in one ``Cookie`` header — keep
-    iterating until we find one that resolves to a live session.
-    """
+    """Check session cookie and return username if valid, else None."""
     if not cookie_header:
-        return None, None
+        return None
     for part in cookie_header.split(";"):
         part = part.strip()
         if part.startswith(SESSION_COOKIE + "="):
             token = part[len(SESSION_COOKIE) + 1:]
             session = _sessions.get(token)
             if session and session["expires"] > time.time():
-                return session["user"], session.get("session_id")
-            # Stale or unknown — pop opportunistically and keep looking
-            # (a later cookie with a different Path may still be valid).
+                return session["user"]
+            # Expired - clean up
             _sessions.pop(token, None)
-            continue
-    return None, None
+            return None
+    return None
 
 
 def _gc_sessions():
@@ -312,9 +187,69 @@ def _fetch_user(access_token):
         return None
 
 
+# =============================================================================
+# Rate Limiting Functions (#711)
+# =============================================================================
+
+def _check_rate_limit(user):
+    """Check per-user rate limits. Returns (allowed, retry_after, reason) (#711).
+
+    Checks hourly request cap, daily request cap, and daily token cap.
+    """
+    now = time.time()
+    one_hour_ago = now - 3600
+    today = datetime.date.today().isoformat()
+
+    # Prune old entries from request log
+    timestamps = _request_log.get(user, [])
+    timestamps = [t for t in timestamps if t > now - 86400]
+    _request_log[user] = timestamps
+
+    # Hourly request cap
+    hourly = [t for t in timestamps if t > one_hour_ago]
+    if len(hourly) >= CHAT_MAX_REQUESTS_PER_HOUR:
+        oldest_in_window = min(hourly)
+        retry_after = int(oldest_in_window + 3600 - now) + 1
+        return False, max(retry_after, 1), "hourly request limit"
+
+    # Daily request cap
+    start_of_day = time.mktime(datetime.date.today().timetuple())
+    daily = [t for t in timestamps if t >= start_of_day]
+    if len(daily) >= CHAT_MAX_REQUESTS_PER_DAY:
+        next_day = start_of_day + 86400
+        retry_after = int(next_day - now) + 1
+        return False, max(retry_after, 1), "daily request limit"
+
+    # Daily token cap
+    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
+    if token_info["date"] != today:
+        token_info = {"tokens": 0, "date": today}
+        _daily_tokens[user] = token_info
+    if token_info["tokens"] >= CHAT_MAX_TOKENS_PER_DAY:
+        next_day = start_of_day + 86400
+        retry_after = int(next_day - now) + 1
+        return False, max(retry_after, 1), "daily token limit"
+
+    return True, 0, ""
+
+
+def _record_request(user):
+    """Record a request timestamp for the user (#711)."""
+    _request_log.setdefault(user, []).append(time.time())
+
+
+def _record_tokens(user, tokens):
+    """Record token usage for the user (#711)."""
+    today = datetime.date.today().isoformat()
+    token_info = _daily_tokens.get(user, {"tokens": 0, "date": today})
+    if token_info["date"] != today:
+        token_info = {"tokens": 0, "date": today}
+    token_info["tokens"] += tokens
+    _daily_tokens[user] = token_info
+
 
 def _parse_stream_json(output):
-    """Parse stream-json output from claude --print.
+    """Parse stream-json output from claude --print (#711).
 
     Returns (text_content, total_tokens).  Falls back gracefully if the
     usage event is absent or malformed.
@@ -358,1106 +293,6 @@ def _parse_stream_json(output):
                 total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
     return "".join(text_parts), total_tokens
-
-
-# =============================================================================
-# Claude session UUID helpers (#706)
-# =============================================================================
-
-# Fixed namespace UUID for deterministic UUID5 derivation from conv_id.
-_CLAUDE_SESSION_NAMESPACE = uuid.UUID("6d436c61-7564-6553-6573-736964000000")
-
-
-def _claude_session_id_for(conv_id, suffix="claude"):
-    """Derive a stable UUID5 from *conv_id* + *suffix*.
-
-    Chat uses ``suffix="claude"``, voice uses ``suffix="voice-claude"``.
-    Passes through an existing UUID unchanged (the caller may already
-    supply a valid UUID from a prior session).
-    """
-    # If the value is already a valid UUID, return it as-is.
-    try:
-        uuid.UUID(conv_id)
-        return conv_id
-    except ValueError:
-        pass
-    return str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, f"{conv_id}-{suffix}"))
-
-
-def _claude_session_flag(session_uuid, cwd=None):
-    """Return ``(flag, uuid)`` for the next claude invocation.
-
-    If the session file already exists on disk use ``-r`` (resume);
-    otherwise use ``--session-id`` (create).
-    """
-    cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
-    encoded = (cwd or os.getcwd()).replace("/", "-")
-    sess_path = os.path.join(cfg, "projects", encoded, session_uuid + ".jsonl")
-    if os.path.exists(sess_path):
-        return ("-r", session_uuid)
-    return ("--session-id", session_uuid)
-
-
-def _soul_append_args(flag):
-    """Return claude args to append SOUL.md as a system prompt (#727).
-
-    Only applied on session creation (``--session-id``); on resume (``-r``)
-    the system prompt is already baked into the session jsonl. Empty list
-    when SOUL.md is absent or unreadable so local dev workspaces without a
-    SOUL.md keep working.
-    """
-    if flag != "--session-id":
-        return []
-    try:
-        with open(SOUL_MD_PATH, "r", encoding="utf-8") as f:
-            soul = f.read()
-    except (IOError, OSError):
-        return []
-    if not soul.strip():
-        return []
-    return ["--append-system-prompt", soul]
-
-
-# =============================================================================
-# `delegate` tool — fire-and-forget claude-p with task-id
-# =============================================================================
-
-DELEGATE_TOOL_DECLARATION = {
-    "name": "delegate",
-    "description": (
-        "Fire-and-forget: spawn a detached Claude session for long-running "
-        "investigations. Use when the user's request will take more than a "
-        "few seconds to answer (e.g. 'why are PRs stuck?', 'audit the "
-        "latest PR'). Returns immediately with a task-id; the result lands "
-        "in the threads store so it can be checked later."
-    ),
-    "parameters": {
-        "type": "object",
-        "required": ["query"],
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": (
-                    "The task description the Claude session should work on."
-                ),
-            },
-            "context": {
-                "type": "string",
-                "description": (
-                    "Optional additional context or instructions for the "
-                    "Claude session."
-                ),
-            },
-            "priority": {
-                "type": "string",
-                "enum": ["P0", "P1", "P2"],
-                "description": (
-                    "Inbox priority for the completion notification. Default P2."
-                ),
-            },
-        },
-    },
-}
-
-
-# ── `check_inbox` tool — read prioritized inbox items ─────────────────────────
-
-CHECK_INBOX_TOOL_DECLARATION = {
-    "name": "check_inbox",
-    "description": (
-        "Read prioritized unread inbox items. Call when the user shows "
-        "readiness for a context switch (see SOUL_VOICE.md). Returns "
-        "empty if nothing to surface."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "min_priority": {
-                "type": "string",
-                "enum": ["P0", "P1", "P2"],
-                "description": "Optional minimum priority. Defaults to P2 (all).",
-            },
-        },
-        "required": [],
-    },
-}
-
-
-# ── `ack_inbox` tool — acknowledge an inbox item ─────────────────────────────
-
-ACK_INBOX_TOOL_DECLARATION = {
-    "name": "ack_inbox",
-    "description": (
-        "Acknowledge an inbox item the user has acted on, dismissed, or "
-        "wants to defer."
-    ),
-    "parameters": {
-        "type": "object",
-        "required": ["item_id", "action"],
-        "properties": {
-            "item_id": {"type": "string"},
-            "action":  {"type": "string", "enum": ["dismiss", "accept", "snooze"]},
-        },
-    },
-}
-
-
-# ── Thread addressing helpers (#791) ──────────────────────────────────────────
-
-# Stopwords stripped from queries when building slugs. Mirrors the voice
-# bridge list so chat-side and voice-side delegate spawns produce identical
-# slugs for a given query (#791).
-_SLUG_STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be",
-    "been", "being", "of", "to", "for", "in", "on", "at", "by", "with",
-    "from", "as", "into", "onto", "about",
-    "why", "how", "what", "when", "where", "who", "which",
-    "this", "that", "these", "those", "it", "its",
-    "do", "does", "did", "can", "could", "should", "would", "will",
-    "shall", "may", "might",
-    "i", "we", "you", "they", "he", "she", "my", "our", "your", "their",
-    "me", "us", "them", "him", "her", "please",
-    "investigate", "check", "summarize", "audit", "analyze",
-    "look", "find", "explain", "describe", "show",
-    "tell", "ask", "list", "report",
-})
-
-_SLUG_MAX_LEN = 24
-_SLUG_MAX_WORDS = 3
-
-
-def _slugify_query(query):
-    """Derive a 1–3 word lowercase hyphenated slug from *query*."""
-    if not query:
-        return "thread"
-    text = re.sub(r"[^a-z0-9]+", " ", query.lower())
-    words = [w for w in text.split() if w and w not in _SLUG_STOPWORDS]
-    if not words:
-        words = [w for w in text.split() if w]
-    if not words:
-        return "thread"
-    picked = words[:_SLUG_MAX_WORDS]
-    slug = "-".join(picked)
-    if len(slug) > _SLUG_MAX_LEN:
-        while len(picked) > 1 and len("-".join(picked)) > _SLUG_MAX_LEN:
-            picked.pop()
-        slug = "-".join(picked)
-        if len(slug) > _SLUG_MAX_LEN:
-            slug = slug[:_SLUG_MAX_LEN].rstrip("-") or "thread"
-    return slug
-
-
-def _list_thread_metas():
-    """Return a list of (task_id, meta_dict) for every thread on disk."""
-    metas = []
-    if not os.path.isdir(THREADS_ROOT):
-        return metas
-    try:
-        entries = os.listdir(THREADS_ROOT)
-    except OSError:
-        return metas
-    for entry in entries:
-        meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
-        if not os.path.isfile(meta_path):
-            continue
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
-        metas.append((entry, meta))
-    return metas
-
-
-def _next_thread_number():
-    """Return max(existing number) + 1 across THREADS_ROOT, starting at 1."""
-    max_n = 0
-    for _, meta in _list_thread_metas():
-        try:
-            n = int(meta.get("number", 0) or 0)
-        except (TypeError, ValueError):
-            n = 0
-        if n > max_n:
-            max_n = n
-    return max_n + 1
-
-
-def _unique_slug(base_slug):
-    """Return *base_slug* with -2/-3/... suffix on collision with open threads."""
-    open_slugs = set()
-    for _, meta in _list_thread_metas():
-        status = meta.get("status", "")
-        if status in ("running", "completed", "failed"):
-            existing = meta.get("slug")
-            if existing:
-                open_slugs.add(existing)
-    if base_slug not in open_slugs:
-        return base_slug
-    n = 2
-    while True:
-        candidate = f"{base_slug}-{n}"
-        if candidate not in open_slugs:
-            return candidate
-        n += 1
-
-
-def _resolve_thread_ref(thread_ref):
-    """Resolve *thread_ref* to (task_id, meta) or (None, error_message).
-
-    Resolution order: numeric → slug exact → query substring →
-    most-recent on tie → ambiguous error → not-found error.
-    """
-    ref = (thread_ref or "").strip()
-    if not ref:
-        return None, "missing thread reference"
-
-    metas = _list_thread_metas()
-    if not metas:
-        return None, f"no thread matches '{ref}'"
-
-    if ref.isdigit():
-        wanted = int(ref)
-        matches = [(tid, m) for tid, m in metas
-                   if int(m.get("number", 0) or 0) == wanted]
-        if len(matches) == 1:
-            tid, m = matches[0]
-            return tid, m
-        if len(matches) > 1:
-            matches.sort(key=lambda im: im[1].get("last_turn_at") or
-                         im[1].get("started") or "", reverse=True)
-            return matches[0][0], matches[0][1]
-
-    matches = [(tid, m) for tid, m in metas if m.get("slug") == ref]
-    if len(matches) == 1:
-        tid, m = matches[0]
-        return tid, m
-    if len(matches) > 1:
-        matches.sort(key=lambda im: im[1].get("last_turn_at") or
-                     im[1].get("started") or "", reverse=True)
-        return matches[0][0], matches[0][1]
-
-    needle = ref.lower()
-    matches = [(tid, m) for tid, m in metas
-               if needle in (m.get("query") or "").lower()
-               or needle in (m.get("slug") or "").lower()]
-    if not matches:
-        return None, f"no thread matches '{ref}'"
-    if len(matches) == 1:
-        tid, m = matches[0]
-        return tid, m
-
-    matches.sort(key=lambda im: im[1].get("last_turn_at") or
-                 im[1].get("started") or "", reverse=True)
-    top_ts = matches[0][1].get("last_turn_at") or matches[0][1].get("started") or ""
-    same_ts = [m for m in matches
-               if (m[1].get("last_turn_at") or m[1].get("started") or "") == top_ts]
-    if len(same_ts) == 1:
-        tid, m = same_ts[0]
-        return tid, m
-    return None, (
-        f"ambiguous thread_ref — matched {len(matches)} threads, "
-        "please specify by number or slug"
-    )
-
-
-def _ensure_threads_dir(task_id):
-    """Create the thread directory and return its path."""
-    thread_dir = os.path.join(THREADS_ROOT, task_id)
-    os.makedirs(thread_dir, exist_ok=True)
-    return thread_dir
-
-
-def _write_meta(task_id, meta):
-    """Atomically write meta.json for a delegate task."""
-    thread_dir = _ensure_threads_dir(task_id)
-    meta_path = os.path.join(thread_dir, "meta.json")
-    tmp_path = meta_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, meta_path)
-
-
-def _update_meta(task_id, updates):
-    """Merge *updates* into the existing meta.json (atomic read-modify-write)."""
-    thread_dir = _ensure_threads_dir(task_id)
-    meta_path = os.path.join(thread_dir, "meta.json")
-    try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        meta = {"id": task_id}
-    meta.update(updates)
-    _write_meta(task_id, meta)
-
-
-def _spawn_delegate_sync(query, context="", priority="P2"):
-    """Synchronous fire-and-forget: spawn a detached claude -p session.
-
-    Returns a dict with ``task_id`` and ``started_at`` immediately.
-    The spawned process streams stdout to ``stream.jsonl`` and updates
-    ``meta.json`` on exit via a background thread.
-    """
-    task_id = f"del-{uuid.uuid4().hex[:12]}"
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    number = _next_thread_number()
-    slug = _unique_slug(_slugify_query(query))
-
-    # Build the full prompt from query + optional context.
-    full_prompt = query
-    if context:
-        full_prompt = f"{query}\n\nContext:\n{context}"
-
-    # Write initial meta.json
-    _write_meta(task_id, {
-        "id": task_id,
-        "number": number,
-        "slug": slug,
-        "query": query,
-        "priority": priority,
-        "started": started_at,
-        "status": "running",
-        "completed": None,
-        "result_summary": None,
-        "turns": 1,
-        "last_turn_at": started_at,
-    })
-
-    thread_dir = _ensure_threads_dir(task_id)
-    stream_path = os.path.join(thread_dir, "stream.jsonl")
-
-    # Build claude args (mirrors handle_chat but without session resume).
-    flag, _ = _claude_session_flag(task_id, cwd=WORKSPACE_DIR)
-    claude_args = [
-        CLAUDE_BIN,
-        flag, task_id,
-        "-p", full_prompt,
-        "--output-format", "stream-json",
-        "--permission-mode", "bypassPermissions",
-        "--model", CHAT_CLAUDE_MODEL,
-        "--verbose",
-    ]
-    if os.path.isfile(SOUL_THINK_PATH):
-        claude_args.extend(["--system-prompt-file", SOUL_THINK_PATH])
-
-    def _worker():
-        """Worker thread: run claude, stream output, update meta on exit."""
-        stream_fh = open(stream_path, "w", encoding="utf-8")
-        try:
-            proc = subprocess.Popen(
-                claude_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
-                bufsize=1,
-                preexec_fn=_drop_to_agent,
-                start_new_session=True,
-            )
-            # Stream stdout to file.
-            for line in proc.stdout:
-                stream_fh.write(line)
-                stream_fh.flush()
-            proc.wait()
-
-            # Parse result and update meta.
-            stream_fh.close()
-            stream_fh = open(stream_path, "r", encoding="utf-8")
-            stdout = stream_fh.read()
-            stream_fh.close()
-            text = _parse_stream_json(stdout)[0]
-            if not text:
-                text = stdout.strip() or "The delegate session completed with no output."
-            status = "completed" if proc.returncode == 0 else "failed"
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            _update_meta(task_id, {
-                "status": status,
-                "completed": now,
-                "result_summary": text,
-                "last_turn_at": now,
-            })
-        except Exception as exc:
-            _log_chat(f"delegate exit error for {task_id}: {exc!r}")
-            try:
-                _update_meta(task_id, {
-                    "status": "failed",
-                    "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "result_summary": f"Delegate failed: {exc}",
-                })
-            except Exception:
-                pass
-            try:
-                stream_fh.close()
-            except Exception:
-                pass
-
-    _log_chat(f"delegate: spawn {task_id} (cwd={WORKSPACE_DIR})")
-    threading.Thread(target=_worker, daemon=True, name=f"delegate-{task_id}").start()
-
-    return {
-        "task_id": task_id,
-        "started_at": started_at,
-        "number": number,
-        "slug": slug,
-        "turns": 1,
-        "status": "running",
-    }
-
-
-def _spawn_delegate_followup_sync(thread_ref, message):
-    """Resume a delegated thread with a followup *message* (chat-side mirror).
-
-    Returns ``{"error": "..."}`` on failure, otherwise a dict with
-    ``task_id``, ``slug``, ``number``, ``turns``, ``status``.
-    """
-    task_id, meta = _resolve_thread_ref(thread_ref)
-    if task_id is None:
-        return {"error": meta}
-
-    if meta.get("status") == "running":
-        slug = meta.get("slug", task_id)
-        return {"error": (
-            f"thread {slug} is still running, wait or use list_threads "
-            "to check status."
-        )}
-
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    new_turns = int(meta.get("turns", 1) or 1) + 1
-
-    thread_dir = _ensure_threads_dir(task_id)
-    stream_path = os.path.join(thread_dir, "stream.jsonl")
-
-    _update_meta(task_id, {
-        "status": "running",
-        "last_turn_at": started_at,
-    })
-
-    sep_line = json.dumps({
-        "_turn_separator": new_turns,
-        "ts": started_at,
-    }, ensure_ascii=False) + "\n"
-    try:
-        with open(stream_path, "a", encoding="utf-8") as f:
-            f.write(sep_line)
-    except OSError as exc:
-        _log_chat(f"delegate_followup: stream append failed for {task_id}: {exc!r}")
-
-    claude_args = [
-        CLAUDE_BIN,
-        "-r", task_id,
-        "-p", message,
-        "--output-format", "stream-json",
-        "--permission-mode", "bypassPermissions",
-        "--model", CHAT_CLAUDE_MODEL,
-        "--verbose",
-    ]
-    if os.path.isfile(SOUL_THINK_PATH):
-        claude_args.extend(["--system-prompt-file", SOUL_THINK_PATH])
-
-    def _worker():
-        stream_fh = open(stream_path, "a", encoding="utf-8")
-        try:
-            proc = subprocess.Popen(
-                claude_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
-                bufsize=1,
-                preexec_fn=_drop_to_agent,
-                start_new_session=True,
-            )
-            for line in proc.stdout:
-                stream_fh.write(line)
-                stream_fh.flush()
-            proc.wait()
-            stream_fh.close()
-
-            # Re-read the stream and isolate the most recent turn segment
-            # so result_summary reflects only the followup turn output.
-            with open(stream_path, "r", encoding="utf-8") as fh:
-                full = fh.read()
-            last_sep = full.rfind('"_turn_separator"')
-            segment = full
-            if last_sep != -1:
-                line_start = full.rfind("\n", 0, last_sep) + 1
-                sep_end = full.find("\n", line_start)
-                if sep_end != -1:
-                    segment = full[sep_end + 1:]
-            text = _parse_stream_json(segment)[0]
-            if not text:
-                text = segment.strip() or "The followup turn completed with no output."
-            status = "completed" if proc.returncode == 0 else "failed"
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            _update_meta(task_id, {
-                "status": status,
-                "completed": now,
-                "result_summary": text,
-                "turns": new_turns,
-                "last_turn_at": now,
-            })
-        except Exception as exc:
-            _log_chat(f"delegate_followup exit error for {task_id}: {exc!r}")
-            try:
-                _update_meta(task_id, {
-                    "status": "failed",
-                    "completed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "result_summary": f"Followup failed: {exc}",
-                    "turns": new_turns,
-                    "last_turn_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                })
-            except Exception:
-                pass
-            try:
-                stream_fh.close()
-            except Exception:
-                pass
-
-    _log_chat(f"delegate_followup: resume {task_id} (turn={new_turns})")
-    threading.Thread(
-        target=_worker, daemon=True, name=f"followup-{task_id}-{new_turns}",
-    ).start()
-
-    return {
-        "task_id": task_id,
-        "slug": meta.get("slug"),
-        "number": meta.get("number"),
-        "turns": new_turns,
-        "status": "running",
-    }
-
-
-def _log_chat(msg):
-    """Log a message to stderr with timestamp."""
-    print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] chat: {msg}",
-          file=sys.stderr, flush=True)
-
-
-# =============================================================================
-# Inbox skill helpers
-# =============================================================================
-
-def _read_inbox_snapshot():
-    """Read inbox items from the snapshot state.json.
-
-    Returns the raw inbox section dict, or None if snapshot is missing/invalid.
-    """
-    snap_path = os.environ.get(
-        "SNAPSHOT_PATH", "/var/lib/disinto/snapshot/state.json")
-    if not os.path.isfile(snap_path):
-        return None
-    try:
-        with open(snap_path, "r", encoding="utf-8") as f:
-            snap = json.load(f)
-        return snap.get("inbox", {})
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _is_item_excluded(item_id, inbox_root):
-    """Check if an inbox item should be excluded (acked, shown, or snoozed)."""
-    acked_dir = os.path.join(inbox_root, ".acked")
-    shown_dir = os.path.join(inbox_root, ".shown")
-    snoozed_dir = os.path.join(inbox_root, ".snoozed")
-
-    # Acked: always exclude
-    if os.path.isfile(os.path.join(acked_dir, item_id)):
-        return True
-
-    # Shown: exclude (read-once semantics)
-    if os.path.isfile(os.path.join(shown_dir, item_id)):
-        return True
-
-    # Snoozed: exclude while mtime > now
-    snooze_file = os.path.join(snoozed_dir, item_id)
-    if os.path.isfile(snooze_file):
-        try:
-            mtime = os.path.getmtime(snooze_file)
-            if mtime > time.time():
-                return True
-        except OSError:
-            pass
-
-    return False
-
-
-PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
-
-
-def _get_inbox_items(min_priority=None):
-    """Read inbox snapshot, filter by priority and sentinels, return list of dicts."""
-    inbox = _read_inbox_snapshot()
-    if not inbox:
-        return []
-
-    items = inbox.get("items", [])
-    if not items:
-        return []
-
-    inbox_root = os.environ.get(
-        "INBOX_ROOT", "/var/lib/disinto/inbox")
-
-    # Determine minimum priority rank (default P2 = all)
-    min_rank = PRIORITY_RANK.get(min_priority, 2) if min_priority else 2
-
-    result = []
-    for item in items:
-        item_id = item.get("id", "")
-        if not item_id:
-            continue
-
-        priority = item.get("priority", "P2")
-        rank = PRIORITY_RANK.get(priority, 2)
-        if rank > min_rank:
-            continue
-
-        if _is_item_excluded(item_id, inbox_root):
-            continue
-
-        result.append({
-            "id": item_id,
-            "priority": priority,
-            "title": item.get("title", ""),
-            "summary": item.get("summary", ""),
-            "ts": item.get("ts", ""),
-            "kind": item.get("kind", ""),
-            "ref": item.get("ref", ""),
-        })
-
-    return result
-
-
-def _run_check_inbox(min_priority=None):
-    """Run check-inbox.sh and return the plain-text output."""
-    if not os.path.isfile(CHECK_INBOX_SH):
-        return "The check-inbox skill is unavailable: script not found."
-
-    args = [CHECK_INBOX_SH]
-    if min_priority:
-        args.extend(["--min-priority", min_priority])
-
-    _log_chat(f"check_inbox: spawn {CHECK_INBOX_SH}{' ' + min_priority if min_priority else ''}")
-
-    try:
-        proc = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
-            preexec_fn=_drop_to_agent,
-        )
-    except FileNotFoundError:
-        return "The check-inbox skill is unavailable: script not found."
-
-    try:
-        stdout_b, stderr_b = proc.communicate(timeout=CHECK_INBOX_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        return "The check-inbox call timed out."
-
-    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
-    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
-
-    if proc.returncode != 0:
-        _log_chat(f"check_inbox: exit={proc.returncode} stderr={stderr[:400]}")
-        return "The check-inbox call returned an error. Try again in a moment."
-
-    text = stdout.strip()
-    if not text:
-        text = "Nothing to surface right now."
-
-    _log_chat(f"check_inbox: ok ({len(text)} chars)")
-    return text
-
-
-def _run_ack_inbox(item_id, action):
-    """Run ack-inbox.sh and return the plain-text output."""
-    if not os.path.isfile(ACK_INBOX_SH):
-        return "The ack-inbox skill is unavailable: script not found."
-
-    _log_chat(f"ack_inbox: spawn {ACK_INBOX_SH} item_id={item_id} action={action}")
-
-    try:
-        proc = subprocess.Popen(
-            [ACK_INBOX_SH, item_id, action],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=WORKSPACE_DIR if os.path.isdir(WORKSPACE_DIR) else None,
-            preexec_fn=_drop_to_agent,
-        )
-    except FileNotFoundError:
-        return "The ack-inbox skill is unavailable: script not found."
-
-    try:
-        stdout_b, stderr_b = proc.communicate(timeout=ACK_INBOX_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        return "The ack-inbox call timed out."
-
-    stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
-    stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
-
-    if proc.returncode != 0:
-        _log_chat(f"ack_inbox: exit={proc.returncode} stderr={stderr[:400]}")
-        return "The ack-inbox call returned an error. Try again in a moment."
-
-    text = stdout.strip()
-    if not text:
-        text = "Item acknowledged."
-
-    _log_chat(f"ack_inbox: ok ({len(text)} chars)")
-    return text
-
-
-# =============================================================================
-# WebSocket Handler Class
-# =============================================================================
-
-class _WebSocketHandler:
-    """Handle WebSocket connections for chat streaming."""
-
-    def __init__(self, reader, writer, user, message_queue, conv_id=None):
-        self.reader = reader
-        self.writer = writer
-        self.user = user
-        self.message_queue = message_queue
-        self.conv_id = conv_id
-        self.closed = False
-
-    async def accept_connection(self, sec_websocket_key, sec_websocket_protocol=None):
-        """Accept the WebSocket handshake.
-
-        The HTTP request has already been parsed by BaseHTTPRequestHandler,
-        so we use the provided key and protocol instead of re-reading from socket.
-        """
-        # Validate subprotocol
-        if sec_websocket_protocol and sec_websocket_protocol != WEBSOCKET_SUBPROTOCOL:
-            self._send_http_error(
-                400,
-                "Bad Request",
-                f"Unsupported subprotocol. Expected: {WEBSOCKET_SUBPROTOCOL}",
-            )
-            self._close_connection()
-            return False
-
-        # Generate accept key
-        accept_key = self._generate_accept_key(sec_websocket_key)
-
-        # Send handshake response
-        response = (
-            "HTTP/1.1 101 Switching Protocols\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept_key}\r\n"
-        )
-
-        if sec_websocket_protocol:
-            response += f"Sec-WebSocket-Protocol: {sec_websocket_protocol}\r\n"
-
-        response += "\r\n"
-        self.writer.write(response.encode("utf-8"))
-        await self.writer.drain()
-        return True
-
-    def _generate_accept_key(self, sec_key):
-        """Generate the Sec-WebSocket-Accept key."""
-        GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-        combined = sec_key + GUID
-        sha1 = hashlib.sha1(combined.encode("utf-8"))
-        return base64.b64encode(sha1.digest()).decode("utf-8")
-
-    async def _read_line(self):
-        """Read a line from the socket."""
-        data = await self.reader.read(1)
-        line = ""
-        while data:
-            if data == b"\r":
-                data = await self.reader.read(1)
-                continue
-            if data == b"\n":
-                return line
-            line += data.decode("utf-8", errors="replace")
-            data = await self.reader.read(1)
-        return line
-
-    def _send_http_error(self, code, title, message):
-        """Send an HTTP error response."""
-        response = (
-            f"HTTP/1.1 {code} {title}\r\n"
-            "Content-Type: text/plain; charset=utf-8\r\n"
-            "Content-Length: " + str(len(message)) + "\r\n"
-            "\r\n"
-            + message
-        )
-        try:
-            self.writer.write(response.encode("utf-8"))
-            self.writer.drain()
-        except Exception:
-            pass
-
-    def _close_connection(self):
-        """Close the connection."""
-        try:
-            self.writer.close()
-        except Exception:
-            pass
-
-    async def send_text(self, data):
-        """Send a text frame."""
-        if self.closed:
-            return
-        try:
-            frame = self._encode_frame(OPCODE_TEXT, data.encode("utf-8"))
-            self.writer.write(frame)
-            await self.writer.drain()
-        except Exception as e:
-            print(f"WebSocket send error: {e}", file=sys.stderr)
-
-    async def send_binary(self, data):
-        """Send a binary frame."""
-        if self.closed:
-            return
-        try:
-            if isinstance(data, str):
-                data = data.encode("utf-8")
-            frame = self._encode_frame(OPCODE_BINARY, data)
-            self.writer.write(frame)
-            await self.writer.drain()
-        except Exception as e:
-            print(f"WebSocket send error: {e}", file=sys.stderr)
-
-    def _encode_frame(self, opcode, payload):
-        """Encode a WebSocket frame."""
-        frame = bytearray()
-        frame.append(0x80 | opcode)  # FIN + opcode
-
-        length = len(payload)
-        if length < 126:
-            frame.append(length)
-        elif length < 65536:
-            frame.append(126)
-            frame.extend(struct.pack(">H", length))
-        else:
-            frame.append(127)
-            frame.extend(struct.pack(">Q", length))
-
-        frame.extend(payload)
-        return bytes(frame)
-
-    async def _decode_frame(self):
-        """Decode a WebSocket frame. Returns (opcode, payload)."""
-        try:
-            # Read first two bytes (use readexactly for guaranteed length)
-            header = await self.reader.readexactly(2)
-
-            fin = (header[0] >> 7) & 1
-            opcode = header[0] & 0x0F
-            masked = (header[1] >> 7) & 1
-            length = header[1] & 0x7F
-
-            # Extended payload length
-            if length == 126:
-                ext = await self.reader.readexactly(2)
-                length = struct.unpack(">H", ext)[0]
-            elif length == 127:
-                ext = await self.reader.readexactly(8)
-                length = struct.unpack(">Q", ext)[0]
-
-            # Masking key
-            if masked:
-                mask_key = await self.reader.readexactly(4)
-
-            # Payload
-            payload = await self.reader.readexactly(length)
-
-            # Unmask if needed
-            if masked:
-                payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
-
-            return opcode, payload
-        except Exception as e:
-            print(f"WebSocket decode error: {e}", file=sys.stderr)
-            return None, None
-
-    async def handle_connection(self):
-        """Handle the WebSocket connection loop."""
-        try:
-            while not self.closed:
-                opcode, payload = await self._decode_frame()
-                if opcode is None:
-                    break
-
-                if opcode == OPCODE_CLOSE:
-                    await self._send_close()
-                    break
-                elif opcode == OPCODE_PING:
-                    await self._send_pong(payload)
-                elif opcode == OPCODE_PONG:
-                    pass  # Ignore pong
-                elif opcode in (OPCODE_TEXT, OPCODE_BINARY):
-                    # Handle text messages from client (e.g., chat_request)
-                    try:
-                        msg = payload.decode("utf-8")
-                        data = json.loads(msg)
-                        if data.get("type") == "chat_request":
-                            # Invoke Claude with the message
-                            await self._handle_chat_request(
-                                data.get("message", ""),
-                                data.get("conversation_id"),
-                            )
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        pass
-
-                # Check if we should stop waiting for messages
-                if self.closed:
-                    break
-
-        except Exception as e:
-            print(f"WebSocket connection error: {e}", file=sys.stderr)
-        finally:
-            self._close_connection()
-            # Clean up the message queue on disconnect
-            if self.user in _websocket_queues:
-                del _websocket_queues[self.user]
-
-    async def _send_close(self):
-        """Send a close frame."""
-        try:
-            # Close code 1000 = normal closure
-            frame = self._encode_frame(OPCODE_CLOSE, struct.pack(">H", 1000))
-            self.writer.write(frame)
-            await self.writer.drain()
-        except Exception:
-            pass
-
-    async def _send_pong(self, payload):
-        """Send a pong frame."""
-        try:
-            frame = self._encode_frame(OPCODE_PONG, payload)
-            self.writer.write(frame)
-            await self.writer.drain()
-        except Exception:
-            pass
-
-    async def _handle_chat_request(self, message, message_conv_id=None):
-        """Handle a chat_request WebSocket frame by invoking Claude."""
-        if not message:
-            return
-
-        # Validate Claude binary exists
-        if not os.path.exists(CLAUDE_BIN):
-            await self.send_text(json.dumps({
-                "type": "error",
-                "message": "Claude CLI not found",
-            }))
-            return
-
-        # Derive claude session_id from conv_id so each conversation has its own claude context
-        conv_id = message_conv_id or self.conv_id or _generate_conversation_id()
-        if not _validate_conversation_id(conv_id):
-            conv_id = _generate_conversation_id()
-        session_uuid = _claude_session_id_for(conv_id, suffix="claude")
-
-        try:
-            # Save user message to history (#709)
-            _write_message(self.user, conv_id, "user", message)
-
-            # Build claude command with session continuity (-r) for conversation memory
-            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
-            flag, session_uuid = _claude_session_flag(session_uuid, cwd=cwd)
-            claude_args = [
-                CLAUDE_BIN, flag, session_uuid, "-p", message,
-                "--output-format", "stream-json",
-                "--permission-mode", "bypassPermissions",
-                "--model", CHAT_CLAUDE_MODEL,
-                "--verbose",
-                *_soul_append_args(flag),
-            ]
-
-            # Spawn claude --print with stream-json for streaming output
-            # Set cwd to workspace directory if configured, allowing Claude to access project code
-            # Drop to the agent user before exec — claude-code refuses
-            # bypassPermissions when euid is 0 (#743).
-            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
-            proc = subprocess.Popen(
-                claude_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=cwd,
-                bufsize=1,
-                preexec_fn=_drop_to_agent,
-            )
-
-            # Stream output line by line, accumulating for history persistence (#709)
-            response_parts = []
-            for line in iter(proc.stdout.readline, ""):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    etype = event.get("type", "")
-
-                    # 2.0 streaming
-                    if etype == "content_block_delta":
-                        delta = event.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            text = delta.get("text", "")
-                            if text:
-                                response_parts.append(text)
-                                await self.send_text(json.dumps(
-                                    {"type": "token", "token": text}))
-
-                    # 2.1 single-event per turn
-                    elif etype == "assistant":
-                        msg = event.get("message", {}) or {}
-                        for part in (msg.get("content") or []):
-                            if part.get("type") == "text":
-                                text = part.get("text", "")
-                                if text:
-                                    response_parts.append(text)
-                                    await self.send_text(json.dumps(
-                                        {"type": "token", "token": text}))
-
-                    # Check for usage event to know when complete
-                    if etype == "result":
-                        pass  # Will send complete after loop
-
-                except json.JSONDecodeError:
-                    pass
-
-            # Wait for process to complete
-            proc.wait()
-
-            if proc.returncode != 0:
-                await self.send_text(json.dumps({
-                    "type": "error",
-                    "message": f"Claude CLI failed with exit code {proc.returncode}",
-                }))
-                return
-
-            # Save assistant response to history (#709)
-            _write_message(self.user, conv_id, "assistant", "".join(response_parts))
-
-            # Send complete signal with conversation_id so client can refresh sidebar (#709)
-            await self.send_text(json.dumps({
-                "type": "complete",
-                "conversation_id": conv_id,
-            }))
-
-        except FileNotFoundError:
-            await self.send_text(json.dumps({
-                "type": "error",
-                "message": "Claude CLI not found",
-            }))
-        except Exception as e:
-            await self.send_text(json.dumps({
-                "type": "error",
-                "message": str(e),
-            }))
 
 
 # =============================================================================
@@ -1605,7 +440,7 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _require_session(self):
         """Check session; redirect to /chat/login if missing. Returns username or None."""
-        user, _sid = _validate_session(self.headers.get("Cookie"))
+        user = _validate_session(self.headers.get("Cookie"))
         if user:
             return user
         self.send_response(302)
@@ -1709,65 +544,9 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.serve_static(path)
             return
 
-        # WebSocket upgrade endpoint
-        if path == "/chat/ws" or path == "/ws" or path.startswith("/ws"):
-            self.handle_websocket_upgrade()
-            return
-
-        # Thread list endpoint: GET /threads
-        if path == "/threads":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_threads_list()
-            return
-
-        # Thread detail endpoint: GET /threads/<task-id>
-        if path.startswith("/threads/") and not path.startswith("/threads/static/"):
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            task_id = path[len("/threads/"):]
-            is_stream = False
-            if "/" in task_id:
-                if task_id.endswith("/stream"):
-                    is_stream = True
-                    task_id = task_id[:-len("/stream")]
-                else:
-                    # Slash in path but not /stream suffix → 404
-                    self.send_error_page(404, "Not found")
-                    return
-            if not TASK_ID_PATTERN.match(task_id):
-                self.send_error_page(404, "Not found")
-                return
-            if is_stream:
-                self.handle_thread_stream(task_id)
-            else:
-                self.handle_thread_detail(task_id)
-            return
-
-        # Factory-state endpoint: GET /factory-state
-        if path == "/factory-state":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_factory_state()
-            return
-
-        # Inbox list endpoint: GET /inbox
-        if path == "/inbox":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_inbox_list()
+        # Reserved WebSocket endpoint (future use)
+        if path == "/ws" or path.startswith("/ws"):
+            self.send_error_page(501, "WebSocket upgrade not yet implemented")
             return
 
         # 404 for unknown paths
@@ -1798,60 +577,6 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.handle_chat(user)
             return
 
-        # Delegate endpoint (session required) — fire-and-forget claude-p
-        if path == "/chat/delegate":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_delegate(user)
-            return
-
-        # Delegate followup (#791) — resume an existing thread by ref.
-        if path == "/chat/delegate-followup":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_delegate_followup(user)
-            return
-
-        # Check-inbox endpoint (session required)
-        if path == "/chat/check-inbox":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_check_inbox(user)
-            return
-
-        # Ack-inbox endpoint (session required)
-        if path == "/chat/ack-inbox":
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            self.handle_ack_inbox(user)
-            return
-
-        # Per-item ack endpoint: POST /inbox/<id>/ack
-        if path.startswith("/inbox/") and path.endswith("/ack"):
-            user = self._require_session()
-            if not user:
-                return
-            if not self._check_forwarded_user(user):
-                return
-            item_id = path[len("/inbox/"):-len("/ack")]
-            if not item_id or not TASK_ID_PATTERN.match(item_id):
-                self.send_error_page(404, "Not found")
-                return
-            self.handle_inbox_ack(item_id)
-            return
-
         # 404 for unknown paths
         self.send_error_page(404, "Not found")
 
@@ -1874,17 +599,8 @@ class ChatHandler(BaseHTTPRequestHandler):
                 self.send_error_page(403, "Forbidden: invalid forward-auth secret")
                 return
 
-        user, _sid = _validate_session(self.headers.get("Cookie"))
+        user = _validate_session(self.headers.get("Cookie"))
         if not user:
-            upgrade = (self.headers.get("Upgrade") or "").lower()
-            sec_fetch_dest = self.headers.get("Sec-Fetch-Dest", "")
-            if upgrade != "websocket" and sec_fetch_dest == "document":
-                self.send_response(302)
-                self.send_header("Location", "/chat/login")
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"redirect to login")
-                return
             self.send_error_page(401, "Unauthorized: no valid session")
             return
 
@@ -1912,7 +628,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             "state": state,
         })
         self.send_response(302)
-        self.send_header("Location", f"{FORGE_PUBLIC_URL}/login/oauth/authorize?{params}")
+        self.send_header("Location", f"{FORGE_URL}/login/oauth/authorize?{params}")
         self.end_headers()
 
     def handle_oauth_callback(self, query_string):
@@ -2020,12 +736,32 @@ class ChatHandler(BaseHTTPRequestHandler):
         except IOError as e:
             self.send_error_page(500, f"Error reading file: {e}")
 
- 
+    def _send_rate_limit_response(self, retry_after, reason):
+        """Send a 429 response with Retry-After header and HTMX fragment (#711)."""
+        body = (
+            f'<div class="rate-limit-error">'
+            f"Rate limit exceeded: {reason}. "
+            f"Please try again in {retry_after} seconds."
+            f"</div>"
+        )
+        self.send_response(429)
+        self.send_header("Retry-After", str(retry_after))
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
     def handle_chat(self, user):
         """
         Handle chat requests by spawning `claude --print` with the user message.
-        Streams tokens over WebSocket if connected.
+        Enforces per-user rate limits and tracks token usage (#711).
         """
+
+        # Check rate limits before processing (#711)
+        allowed, retry_after, reason = _check_rate_limit(user)
+        if not allowed:
+            self._send_rate_limit_response(retry_after, reason)
+            return
 
         # Read request body
         content_length = int(self.headers.get("Content-Length", 0))
@@ -2049,7 +785,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             return
 
         # Get user from session
-        user, _ = _validate_session(self.headers.get("Cookie"))
+        user = _validate_session(self.headers.get("Cookie"))
         if not user:
             self.send_error_page(401, "Unauthorized")
             return
@@ -2063,77 +799,23 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not conv_id or not _validate_conversation_id(conv_id):
             conv_id = _generate_conversation_id()
 
-        # Derive claude session_id from conv_id so each conversation has its own claude context
-        session_uuid = _claude_session_id_for(conv_id, suffix="claude")
+        # Record request for rate limiting (#711)
+        _record_request(user)
 
         try:
             # Save user message to history
             _write_message(user, conv_id, "user", message)
 
-            # Build claude command with session continuity (-r) for conversation memory
-            cwd = WORKSPACE_DIR if WORKSPACE_DIR else None
-            flag, session_uuid = _claude_session_flag(session_uuid, cwd=cwd)
-            claude_args = [
-                CLAUDE_BIN, flag, session_uuid, "-p", message,
-                "--output-format", "stream-json",
-                "--permission-mode", "bypassPermissions",
-                "--model", CHAT_CLAUDE_MODEL,
-                "--verbose",
-                *_soul_append_args(flag),
-            ]
-
             # Spawn claude --print with stream-json for token tracking (#711)
-            # Set cwd to workspace directory if configured, allowing Claude to access project code
-            # Drop to the agent user before exec — claude-code refuses
-            # bypassPermissions when euid is 0 (#743).
             proc = subprocess.Popen(
-                claude_args,
+                [CLAUDE_BIN, "--print", "--output-format", "stream-json", message],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=cwd,
-                bufsize=1,  # Line buffered
-                preexec_fn=_drop_to_agent,
             )
 
-            # Stream output line by line
-            response_parts = []
-            total_tokens = 0
-            for line in iter(proc.stdout.readline, ""):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    etype = event.get("type", "")
+            raw_output = proc.stdout.read()
 
-                    # Extract text content from content_block_delta events
-                    if etype == "content_block_delta":
-                        delta = event.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            text = delta.get("text", "")
-                            if text:
-                                response_parts.append(text)
-                                # Stream to WebSocket if connected
-                                if user in _websocket_queues:
-                                    try:
-                                        _websocket_queues[user].put_nowait(text)
-                                    except Exception:
-                                        pass  # Client disconnected
-
-                    # Parse usage from result event
-                    if etype == "result":
-                        usage = event.get("usage", {})
-                        total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-                    elif "usage" in event:
-                        usage = event["usage"]
-                        if isinstance(usage, dict):
-                            total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-
-                except json.JSONDecodeError:
-                    pass
-
-            # Wait for process to complete
             error_output = proc.stderr.read()
             if error_output:
                 print(f"Claude stderr: {error_output}", file=sys.stderr)
@@ -2144,12 +826,20 @@ class ChatHandler(BaseHTTPRequestHandler):
                 self.send_error_page(500, f"Claude CLI failed with exit code {proc.returncode}")
                 return
 
-            # Combine response parts
-            response = "".join(response_parts)
+            # Parse stream-json for text and token usage (#711)
+            response, total_tokens = _parse_stream_json(raw_output)
+
+            # Track token usage - does not block *this* request (#711)
+            if total_tokens > 0:
+                _record_tokens(user, total_tokens)
+                print(
+                    f"Token usage: user={user} tokens={total_tokens}",
+                    file=sys.stderr,
+                )
 
             # Fall back to raw output if stream-json parsing yielded no text
             if not response:
-                response = proc.stdout.getvalue() if hasattr(proc.stdout, 'getvalue') else ""
+                response = raw_output
 
             # Save assistant response to history
             _write_message(user, conv_id, "assistant", response)
@@ -2166,179 +856,6 @@ class ChatHandler(BaseHTTPRequestHandler):
             self.send_error_page(500, "Claude CLI not found")
         except Exception as e:
             self.send_error_page(500, f"Error: {e}")
-
-    def handle_delegate(self, user):
-        """Handle delegate requests by spawning a detached claude -p session."""
-
-        # Read request body
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
-            self.send_error_page(400, "No query provided")
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            body_str = body.decode("utf-8")
-            params = parse_qs(body_str)
-            query = params.get("query", [""])[0]
-            context = params.get("context", [""])[0]
-            priority = params.get("priority", ["P2"])[0]
-            if priority not in ("P0", "P1", "P2"):
-                priority = "P2"
-        except (UnicodeDecodeError, KeyError):
-            self.send_error_page(400, "Invalid query format")
-            return
-
-        if not query:
-            self.send_error_page(400, "Empty query")
-            return
-
-        # Validate Claude binary exists
-        if not os.path.exists(CLAUDE_BIN):
-            self.send_error_page(500, "Claude CLI not found")
-            return
-
-        try:
-            result = _spawn_delegate_sync(query, context, priority)
-        except Exception as e:
-            self.send_error_page(500, f"Delegate failed: {e}")
-            return
-
-        self.send_response(202)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-
-    def handle_delegate_followup(self, user):
-        """Continue an existing delegate thread by ref (#791)."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
-            self.send_error_page(400, "No body provided")
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            body_str = body.decode("utf-8")
-            params = parse_qs(body_str)
-            thread_ref = params.get("thread_ref", [""])[0]
-            message = params.get("message", [""])[0]
-        except (UnicodeDecodeError, KeyError):
-            self.send_error_page(400, "Invalid format")
-            return
-
-        if not thread_ref or not message:
-            self.send_error_page(400, "Missing required args: thread_ref and message")
-            return
-
-        if not os.path.exists(CLAUDE_BIN):
-            self.send_error_page(500, "Claude CLI not found")
-            return
-
-        try:
-            result = _spawn_delegate_followup_sync(thread_ref, message)
-        except Exception as e:
-            self.send_error_page(500, f"Followup failed: {e}")
-            return
-
-        if "error" in result:
-            self.send_response(409)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-            return
-
-        self.send_response(202)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-
-    # =======================================================================
-    # Inbox Skill Handlers
-    # =======================================================================
-
-    def handle_check_inbox(self, user):
-        """Handle check-inbox requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-        min_priority = None
-        try:
-            if body:
-                body_str = body.decode("utf-8")
-                params = parse_qs(body_str)
-                min_priority = params.get("min_priority", [None])[0]
-        except (UnicodeDecodeError, KeyError):
-            pass
-
-        result_text = _run_check_inbox(min_priority)
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps({"result": result_text}, ensure_ascii=False).encode("utf-8"))
-
-    def handle_ack_inbox(self, user):
-        """Handle ack-inbox requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
-            self.send_error_page(400, "No body provided")
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            body_str = body.decode("utf-8")
-            params = parse_qs(body_str)
-            item_id = params.get("item_id", [""])[0]
-            action = params.get("action", [""])[0]
-        except (UnicodeDecodeError, KeyError):
-            self.send_error_page(400, "Invalid format")
-            return
-
-        if not item_id or action not in ("dismiss", "accept", "snooze"):
-            self.send_error_page(400, "Missing or invalid args: item_id and action (dismiss|accept|snooze)")
-            return
-
-        result_text = _run_ack_inbox(item_id, action)
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps({"result": result_text}, ensure_ascii=False).encode("utf-8"))
-
-    def handle_inbox_list(self):
-        """Handle GET /inbox — return JSON list of unacked inbox items."""
-        items = _get_inbox_items()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(items, ensure_ascii=False).encode("utf-8"))
-
-    def handle_inbox_ack(self, item_id):
-        """Handle POST /inbox/<id>/ack — dismiss or snooze an inbox item."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
-            self.send_error_page(400, "No body provided")
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            body_str = body.decode("utf-8")
-            params = parse_qs(body_str)
-            action = params.get("action", [""])[0]
-        except (UnicodeDecodeError, KeyError):
-            self.send_error_page(400, "Invalid format")
-            return
-
-        if action not in ("dismiss", "snooze"):
-            self.send_error_page(400, "Invalid action: must be dismiss or snooze")
-            return
-
-        # Map action to inbox-ack.sh flag: dismiss -> no flag (default ack), snooze -> --snooze
-        ack_action = "dismiss" if action == "dismiss" else "snooze"
-
-        result_text = _run_ack_inbox(item_id, ack_action)
-
-        self.send_response(204)
-        self.end_headers()
 
     # =======================================================================
     # Conversation History Handlers
@@ -2392,116 +909,6 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({"conversation_id": conv_id}, ensure_ascii=False).encode("utf-8"))
 
-    @staticmethod
-    def push_to_websocket(user, message):
-        """Push a message to a WebSocket connection for a user.
-
-        This is called from the chat handler to stream tokens to connected clients.
-        The message is added to the user's WebSocket message queue.
-        """
-        # Get the message queue from the WebSocket handler's queue
-        # We store the queue in a global dict keyed by user
-        if user in _websocket_queues:
-            _websocket_queues[user].put_nowait(message)
-
-    def handle_websocket_upgrade(self):
-        """Handle WebSocket upgrade request for chat streaming."""
-        # Check session cookie
-        user, _ = _validate_session(self.headers.get("Cookie"))
-        if not user:
-            self.send_error_page(401, "Unauthorized: no valid session")
-            return
-
-        # Extract conv_id from query params so claude sessions are scoped to a
-        # conversation for the lifetime of the socket. Clients may still override
-        # per-frame via `conversation_id`, but without this the upgrade-time
-        # conv_id was being dropped and each frame could start a fresh session.
-        parsed = urlparse(self.path)
-        params = parse_qs(parsed.query)
-        conv_id = params.get("conversation_id", [None])[0]
-        if conv_id is not None and not _validate_conversation_id(conv_id):
-            conv_id = None
-
-        # Create message queue for this user (preserve existing to avoid clobbering concurrent connections)
-        _websocket_queues.setdefault(user, asyncio.Queue())
-
-        # Get WebSocket upgrade headers from the HTTP request
-        sec_websocket_key = self.headers.get("Sec-WebSocket-Key", "")
-        sec_websocket_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
-
-        # Validate Sec-WebSocket-Key
-        if not sec_websocket_key:
-            self.send_error_page(400, "Bad Request", "Missing Sec-WebSocket-Key")
-            return
-
-        # Get the socket from the connection
-        sock = self.connection
-        sock.setblocking(False)
-
-        # Create async server to handle the connection
-        async def handle_ws():
-            try:
-                # Wrap the socket in asyncio streams using open_connection
-                reader, writer = await asyncio.open_connection(sock=sock)
-
-                # Create WebSocket handler (pass conv_id for claude session scoping)
-                ws_handler = _WebSocketHandler(reader, writer, user, _websocket_queues[user], conv_id=conv_id)
-
-                # Accept the connection (pass headers from HTTP request)
-                if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
-                    return
-
-                # Start a task to read from the queue and send to client
-                async def send_stream():
-                    while not ws_handler.closed:
-                        try:
-                            data = await asyncio.wait_for(ws_handler.message_queue.get(), timeout=1.0)
-                            await ws_handler.send_text(data)
-                        except asyncio.TimeoutError:
-                            # Send ping to keep connection alive
-                            try:
-                                frame = ws_handler._encode_frame(OPCODE_PING, b"")
-                                writer.write(frame)
-                                await writer.drain()
-                            except Exception:
-                                break
-                        except Exception as e:
-                            print(f"Send stream error: {e}", file=sys.stderr)
-                            break
-
-                # Start sending task
-                send_task = asyncio.create_task(send_stream())
-
-                # Handle incoming WebSocket frames
-                await ws_handler.handle_connection()
-
-                # Cancel send task
-                send_task.cancel()
-                try:
-                    await send_task
-                except asyncio.CancelledError:
-                    pass
-
-            except Exception as e:
-                print(f"WebSocket handler error: {e}", file=sys.stderr)
-            finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-
-        # Run the async handler in a thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(handle_ws())
-        except Exception as e:
-            print(f"WebSocket error: {e}", file=sys.stderr)
-        finally:
-            loop.close()
-            sock.close()
-
     def do_DELETE(self):
         """Handle DELETE requests."""
         parsed = urlparse(self.path)
@@ -2522,184 +929,8 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.send_error_page(404, "Not found")
 
 
-   # =======================================================================
-    # Thread Store Handlers (issues #764/#765)
-    # =======================================================================
-
-    def handle_threads_list(self):
-        """List all threads from THREADS_ROOT, newest first."""
-        threads = []
-        if os.path.isdir(THREADS_ROOT):
-            for entry in sorted(
-                os.listdir(THREADS_ROOT), reverse=True
-            ):
-                meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
-                if not os.path.isfile(meta_path):
-                    continue
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        meta = json.load(f)
-                    threads.append(meta)
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(threads, ensure_ascii=False).encode("utf-8"))
-
-    def handle_thread_detail(self, task_id):
-        """Return full detail for a single thread."""
-        meta_path = os.path.join(THREADS_ROOT, task_id, "meta.json")
-        if not os.path.isfile(meta_path):
-            self.send_error_page(404, "Thread not found")
-            return
-
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            self.send_error_page(500, "Failed to read thread meta")
-            return
-
-        # Attach stream tail if available
-        stream_path = os.path.join(THREADS_ROOT, task_id, "stream.jsonl")
-        if os.path.isfile(stream_path):
-            try:
-                with open(stream_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                # Last 50 lines as a convenience
-                meta["_stream_tail"] = [l.rstrip("\n") for l in lines[-50:]]
-            except OSError:
-                pass
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(meta, ensure_ascii=False).encode("utf-8"))
-
-    def handle_thread_stream(self, task_id):
-        """Upgrade to WebSocket and tail stream.jsonl for a thread."""
-        stream_path = os.path.join(THREADS_ROOT, task_id, "stream.jsonl")
-        if not os.path.isfile(stream_path):
-            self.send_error_page(404, "Stream not found")
-            return
-
-        # Validate session (same pattern as other WS handlers)
-        user, _ = _validate_session(self.headers.get("Cookie"))
-        if not user:
-            self.send_error_page(401, "Unauthorized: no valid session")
-            return
-
-        parsed = urlparse(self.path)
-        params = parse_qs(parsed.query)
-        conv_id = params.get("conversation_id", [None])[0]
-
-        _websocket_queues.setdefault(user, asyncio.Queue())
-
-        sec_websocket_key = self.headers.get("Sec-WebSocket-Key", "")
-        sec_websocket_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
-
-        if not sec_websocket_key:
-            self.send_error_page(400, "Bad Request", "Missing Sec-WebSocket-Key")
-            return
-
-        sock = self.connection
-        sock.setblocking(False)
-
-        async def handle_stream_ws():
-            reader, writer = await asyncio.open_connection(sock=sock)
-            ws_handler = _WebSocketHandler(
-                reader, writer, user, _websocket_queues[user], conv_id=conv_id
-            )
-            if not await ws_handler.accept_connection(sec_websocket_key, sec_websocket_protocol):
-                return
-
-            # Drain initial tail (last 20 lines)
-            try:
-                with open(stream_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                for line in lines[-20:]:
-                    await ws_handler.send_text(line.rstrip("\n"))
-            except OSError:
-                pass
-
-            # Then tail for new lines
-            async def tail_stream():
-                try:
-                    with open(stream_path, "r", encoding="utf-8") as f:
-                        f.seek(0, 2)  # seek to end
-                        while not ws_handler.closed:
-                            line = f.readline()
-                            if line:
-                                await ws_handler.send_text(line.rstrip("\n"))
-                            else:
-                                await asyncio.sleep(0.2)
-                except OSError:
-                    pass
-
-            tail_task = asyncio.create_task(tail_stream())
-            await ws_handler.handle_connection()
-            tail_task.cancel()
-            try:
-                await tail_task
-            except asyncio.CancelledError:
-                pass
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(handle_stream_ws())
-        except Exception as e:
-            print(f"Thread stream error: {e}", file=sys.stderr)
-        finally:
-            loop.close()
-            sock.close()
-
-    def handle_factory_state(self):
-        """Read the snapshot file and return factory state summary."""
-        snapshot_dir = "/var/lib/disinto/snapshot"
-        snapshot_path = os.path.join(snapshot_dir, "state.json")
-
-        state = {}
-        try:
-            with open(snapshot_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
-
-        # Compute summary counts from threads
-        backlog = 0
-        in_progress = 0
-        current_worker = ""
-        if os.path.isdir(THREADS_ROOT):
-            for entry in os.listdir(THREADS_ROOT):
-                meta_path = os.path.join(THREADS_ROOT, entry, "meta.json")
-                if not os.path.isfile(meta_path):
-                    continue
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        meta = json.load(f)
-                    status = meta.get("status", "")
-                    if status == "running":
-                        in_progress += 1
-                        current_worker = entry
-                    elif status in ("pending", "queued"):
-                        backlog += 1
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps({
-            "backlog": backlog,
-            "in_progress": in_progress,
-            "current_worker": current_worker,
-            "snapshot": state,
-        }, ensure_ascii=False).encode("utf-8"))
-
 def main():
+    """Start the HTTP server."""
     server_address = (HOST, PORT)
     httpd = HTTPServer(server_address, ChatHandler)
     print(f"Starting disinto-chat server on {HOST}:{PORT}", file=sys.stderr)
@@ -2713,6 +944,12 @@ def main():
         print("forward_auth secret configured (#709)", file=sys.stderr)
     else:
         print("WARNING: FORWARD_AUTH_SECRET not set - verify endpoint unrestricted", file=sys.stderr)
+    print(
+        f"Rate limits (#711): {CHAT_MAX_REQUESTS_PER_HOUR}/hr, "
+        f"{CHAT_MAX_REQUESTS_PER_DAY}/day, "
+        f"{CHAT_MAX_TOKENS_PER_DAY} tokens/day",
+        file=sys.stderr,
+    )
     httpd.serve_forever()
 
 

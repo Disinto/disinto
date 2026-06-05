@@ -4,19 +4,12 @@
 #   - ghcr.io/disinto/reproduce:<tag>
 #   - ghcr.io/disinto/edge:<tag>
 #
-# Timeouts:
-#   Workflow-level default (20m) applies to all steps unless overridden.
-#   Image builds can be slow for large images.
-#
 # Requires GHCR_TOKEN secret configured in Woodpecker with push access
 # to ghcr.io/disinto.
 
 when:
   event: tag
   ref: refs/tags/v*
-
-# Workflow-level timeout default — propagates to all steps without their own timeout.
-timeout: 20m
 
 clone:
   git:
@@ -62,7 +55,7 @@ steps:
       repo: ghcr.io/disinto/edge
       registry: ghcr.io
       dockerfile: docker/edge/Dockerfile
-      context: .
+      context: docker/edge
       tags:
         - ${CI_COMMIT_TAG}
         - latest

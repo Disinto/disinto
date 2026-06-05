@@ -12,10 +12,6 @@
 #   disinto secrets <subcommand>        Manage encrypted secrets
 #   disinto run <action-id>              Run action in ephemeral runner container
 #   disinto ci-logs <pipeline> [--step <name>]  Read CI logs from Woodpecker SQLite
-#   disinto backup create <outfile>     Export factory state for migration
-#   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
-#   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
-#   disinto wp reseed-secrets           Re-seed Woodpecker repo secrets from .env
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -43,15 +39,9 @@ source "${FACTORY_ROOT}/lib/generators.sh"
 source "${FACTORY_ROOT}/lib/forge-push.sh"
 source "${FACTORY_ROOT}/lib/ci-setup.sh"
 source "${FACTORY_ROOT}/lib/release.sh"
-source "${FACTORY_ROOT}/lib/backup.sh"
 source "${FACTORY_ROOT}/lib/claude-config.sh"
-source "${FACTORY_ROOT}/lib/disinto/backup.sh"  # backup create/import
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-cmd_version() {
-  cat "${FACTORY_ROOT}/VERSION"
-}
 
 usage() {
   cat <<EOF
@@ -69,37 +59,22 @@ Usage:
   disinto ci-logs <pipeline> [--step <name>]
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
-  disinto version                      Print the tree's VERSION file contents
-  disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--admin-token <pat>]
+  disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
-  disinto role <subcommand>            Manage roles (enable/disable)
-  disinto backup create <outfile>      Export factory state (issues + ops bundle)
+  disinto agent <subcommand>           Manage agent state (enable/disable)
   disinto edge <verb> [options]        Manage edge tunnel registrations
-  disinto backup <subcommand>          Backup and restore factory state
-  disinto validate <subcommand>        Validate factory artifacts
-  disinto vault <subcommand>           Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
-  disinto wp reseed-secrets            Re-seed Woodpecker repo secrets from .env
-
-Validate subcommands:
-  lint-ci                              Lint .woodpecker/*.yml for missing timeouts
-
-Vault subcommands:
-  reseed-ops-repo                      Seed kv/disinto/shared/ops-repo (idempotent; fixes #634)
-  reseed-runner                        Seed kv/disinto/runner/* tokens from .env (idempotent; refs #634)
-  reseed-voice                         Seed kv/disinto/voice.gemini_api_key from .env (idempotent; #664)
 
 Edge subcommands:
-  register [project]        Register a new tunnel (generates keypair if needed)
-  deregister <project>      Remove a tunnel registration
-  status                    Show registered tunnels
-  cutover-finalize [path]   Repoint git origin to new Forgejo host
+  register [project]    Register a new tunnel (generates keypair if needed)
+  deregister <project>  Remove a tunnel registration
+  status                Show registered tunnels
 
-Role subcommands:
-  disable <role>       Remove state file to disable role
-  enable <role>        Create state file to enable role
-  disable --all        Disable all roles
-  enable --all         Enable all roles
-  status               Show which roles are enabled/disabled
+Agent subcommands:
+  disable <agent>      Remove state file to disable agent
+  enable <agent>       Create state file to enable agent
+  disable --all        Disable all agents
+  enable --all         Enable all agents
+  status               Show which agents are enabled/disabled
 
 Init options:
   --branch <name>      Primary branch (default: auto-detect)
@@ -107,7 +82,7 @@ Init options:
   --ci-id <n>          Woodpecker CI repo ID (default: 0 = no CI)
   --forge-url <url>    Forge base URL (default: http://localhost:3000)
   --backend <value>    Orchestration backend: docker (default) | nomad
-  --with <services>    (nomad) Deploy services: forgejo,woodpecker,agents,staging,edge[,...] (S1.3, S3.4, S4.2, S5.2, S5.5)
+  --with <services>    (nomad) Deploy services: forgejo,woodpecker,agents,staging,chat,edge[,...] (S1.3, S3.4, S4.2, S5.2, S5.5)
   --empty              (nomad) Bring up cluster only, no jobs (S0.4)
   --bare               Skip compose generation (bare-metal setup)
   --build              Use local docker build instead of registry images (dev mode)
@@ -126,18 +101,6 @@ Hire an agent options:
 
 CI logs options:
   --step <name>        Filter logs to a specific step (e.g., smoke-init)
-
-Backup subcommands:
-  create <file>        Create backup of factory state to tarball
-  import <file>        Restore factory state from backup tarball
-
-Import behavior:
-  - Unpacks tarball to temp directory
-  - Creates disinto repo via Forgejo API (mirror config is manual)
-  - Creates disinto-ops repo and pushes refs from bundle
-  - Imports issues from issues/*.json (idempotent - skips existing)
-  - Logs issue number mapping (Forgejo auto-assigns numbers)
-  - Prints summary: created X repos, pushed Y refs, imported Z issues, skipped W
 EOF
   exit 1
 }
@@ -166,37 +129,6 @@ parse_repo_slug() {
 clone_url_from_slug() {
   local slug="$1" forge_url="${2:-${FORGE_URL:-http://localhost:3000}}"
   printf '%s/%s.git' "$forge_url" "$slug"
-}
-
-# Generate a default project TOML for nomad backend init.
-# Writes to <output_path> (creates parent directories as needed).
-# Signature: generate_default_toml project_name forge_url output_path (#574)
-generate_default_toml() {
-  local project_name="$1" forge_url="$2" output_path="$3"
-  mkdir -p "$(dirname "$output_path")"
-  cat > "${output_path}" <<TOML
-# Auto-generated by disinto init --backend=nomad (#574)
-name            = "${project_name}"
-repo            = "${project_name}"
-ops_repo        = "${project_name}-ops"
-forge_url       = "${forge_url}"
-repo_root       = "/home/${USER}/${project_name}"
-ops_repo_root   = "/home/${USER}/${project_name}-ops"
-primary_branch  = "main"
-
-[ci]
-woodpecker_repo_id = 0
-stale_minutes      = 60
-
-[services]
-containers = []
-
-[monitoring]
-check_prs            = true
-check_dev_agent      = true
-check_pipeline_stall = false
-TOML
-  log "Generated default project config: ${output_path}"
 }
 
 # Ensure an age key exists; generate one if missing.
@@ -736,22 +668,12 @@ prompt_admin_password() {
 _disinto_init_nomad() {
   local dry_run="${1:-false}" empty="${2:-false}" with_services="${3:-}"
   local import_env="${4:-}" import_sops="${5:-}" age_key="${6:-}"
-  local repo_url="${7:-}" forge_url_flag="${8:-}"
-  # Derive project name (shared by dry-run and real deploy paths)
-  local project_name="disinto"
-  if [ -n "$repo_url" ]; then
-    project_name=$(parse_repo_slug "$repo_url")
-    project_name="${project_name##*/}"
-  fi
-  local forge_url="${forge_url_flag:-${FORGE_URL:-http://localhost:3000}}"
   local cluster_up="${FACTORY_ROOT}/lib/init/nomad/cluster-up.sh"
   local deploy_sh="${FACTORY_ROOT}/lib/init/nomad/deploy.sh"
   local vault_engines_sh="${FACTORY_ROOT}/lib/init/nomad/vault-engines.sh"
   local vault_policies_sh="${FACTORY_ROOT}/tools/vault-apply-policies.sh"
   local vault_auth_sh="${FACTORY_ROOT}/lib/init/nomad/vault-nomad-auth.sh"
   local vault_import_sh="${FACTORY_ROOT}/tools/vault-import.sh"
-  local vault_seed_ops_repo_sh="${FACTORY_ROOT}/tools/vault-seed-ops-repo.sh"
-  local vault_seed_runner_sh="${FACTORY_ROOT}/tools/vault-seed-runner.sh"
 
   if [ ! -x "$cluster_up" ]; then
     echo "Error: ${cluster_up} not found or not executable" >&2
@@ -860,34 +782,12 @@ _disinto_init_nomad() {
       echo ""
     fi
 
-    # Unconditional ops-repo seed (infrastructure, issue #601). Runs after
-    # vault-import so that kv/disinto/bots/vault has a real token that
-    # vault-seed-ops-repo.sh can copy to kv/disinto/shared/ops-repo. Must
-    # run even without --with edge so that a later `nomad job run
-    # nomad/jobs/edge.hcl` — the cutover path that surfaced #601 — has the
-    # KV path already seeded. Gated on import_any to avoid writing a
-    # random fallback token when bots/vault is empty.
-    if [ "$import_any" = true ] && [ -x "$vault_seed_ops_repo_sh" ]; then
-      echo "── Vault seed ops-repo dry-run ────────────────────────"
-      echo "[seed] [dry-run] ${vault_seed_ops_repo_sh} --dry-run"
-      echo ""
-    fi
-
-    # Runner token seed (unconditional, issue #604). Reads .env and writes
-    # kv/disinto/runner/<TOKEN>/value for each present token. Also seeds
-    # kv/disinto/shared/ops-repo with remote + deploy_key.
-    if [ -x "$vault_seed_runner_sh" ]; then
-      echo "── Vault seed runner dry-run ──────────────────────────"
-      echo "[seed] [dry-run] ${vault_seed_runner_sh} --dry-run"
-      echo ""
-    fi
-
     if [ -n "$with_services" ]; then
       # Interleaved seed/deploy per service (S2.6, #928, #948): match the
       # real-run path so dry-run output accurately represents execution order.
       # Build ordered deploy list: only include services present in with_services
       local DEPLOY_ORDER=""
-      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging edge; do
+      for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat edge; do
         if echo ",$with_services," | grep -q ",$ordered_svc,"; then
           DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
         fi
@@ -901,7 +801,7 @@ _disinto_init_nomad() {
         case "$svc" in
           woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
           agents) seed_name="agents" ;;
-          edge) seed_name="ops-repo" ;;
+          chat) seed_name="chat" ;;
         esac
         local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
         if [ -x "$seed_script" ]; then
@@ -920,22 +820,6 @@ _disinto_init_nomad() {
         fi
         echo "[deploy] [dry-run] nomad job validate ${jobspec_path}"
         echo "[deploy] [dry-run] nomad job run -detach ${jobspec_path}"
-        # Post-deploy: forgejo-bootstrap
-        if [ "$svc" = "forgejo" ]; then
-          local bootstrap_script="${FACTORY_ROOT}/lib/init/nomad/forgejo-bootstrap.sh"
-          echo "[deploy] [dry-run] [post-deploy] would run ${bootstrap_script}"
-        fi
-        # Seed project TOML for agents (#574)
-        if [ "$svc" = "agents" ]; then
-          echo "[deploy] [dry-run] [seed] would generate default projects/${project_name}.toml"
-        fi
-        # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
-        if [ "$svc" = "edge" ]; then
-          local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
-          if [ -x "$chat_init_sh" ]; then
-            echo "[deploy] [dry-run] [post-deploy] would run ${chat_init_sh}"
-          fi
-        fi
       done
       echo "[deploy] dry-run complete"
     fi
@@ -951,15 +835,18 @@ _disinto_init_nomad() {
       echo "[deploy] vault-runner: jobspec not found, skipping"
     fi
 
-    # Build custom images dry-run (if agents or edge services are included)
-    if echo ",$with_services," | grep -qE ",(agents|edge),"; then
+    # Build custom images dry-run (if agents, chat, or edge services are included)
+    if echo ",$with_services," | grep -qE ",(agents|chat|edge),"; then
       echo ""
       echo "── Build images dry-run ──────────────────────────────"
       if echo ",$with_services," | grep -q ",agents,"; then
         echo "[build] [dry-run] docker build -t disinto/agents:local -f ${FACTORY_ROOT}/docker/agents/Dockerfile ${FACTORY_ROOT}"
       fi
+      if echo ",$with_services," | grep -q ",chat,"; then
+        echo "[build] [dry-run] docker build -t disinto/chat:local -f ${FACTORY_ROOT}/docker/chat/Dockerfile ${FACTORY_ROOT}/docker/chat"
+      fi
       if echo ",$with_services," | grep -q ",edge,"; then
-        echo "[build] [dry-run] docker build -t disinto/edge:local -f ${FACTORY_ROOT}/docker/edge/Dockerfile ${FACTORY_ROOT}"
+        echo "[build] [dry-run] docker build -t disinto/edge:local -f ${FACTORY_ROOT}/docker/edge/Dockerfile ${FACTORY_ROOT}/docker/edge"
       fi
     fi
     exit 0
@@ -1049,51 +936,10 @@ _disinto_init_nomad() {
     echo "[import] no --import-env/--import-sops — skipping; set them or seed kv/disinto/* manually before deploying secret-dependent services"
   fi
 
-  # Unconditional ops-repo seed (infrastructure, issue #601). Runs after
-  # vault-import so kv/disinto/bots/vault has a real token that
-  # vault-seed-ops-repo.sh can copy to kv/disinto/shared/ops-repo. Must
-  # run even without --with edge so that a later `nomad job run
-  # nomad/jobs/edge.hcl` — the cutover path that surfaced #601 — has the
-  # KV path already seeded. Gated on import_any to avoid writing a
-  # random fallback token when bots/vault is empty.
-  if [ "$import_any" = true ] && [ -x "$vault_seed_ops_repo_sh" ]; then
-    local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-    echo ""
-    echo "── Seeding Vault for ops-repo ─────────────────────────"
-    if [ "$(id -u)" -eq 0 ]; then
-      VAULT_ADDR="$vault_addr" "$vault_seed_ops_repo_sh" || exit $?
-    else
-      if ! command -v sudo >/dev/null 2>&1; then
-        echo "Error: vault-seed-ops-repo.sh must run as root and sudo is not installed" >&2
-        exit 1
-      fi
-      sudo -n -- env "VAULT_ADDR=$vault_addr" "$vault_seed_ops_repo_sh" || exit $?
-    fi
-  fi
-
-  # Runner token seed (unconditional, issue #604). Reads .env and writes
-  # kv/disinto/runner/<TOKEN>/value for each present token. Also seeds
-  # kv/disinto/shared/ops-repo with remote + deploy_key. Warns on absent
-  # secrets; does not hard-fail (factory can start without mirrors).
-  local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-  if [ -x "$vault_seed_runner_sh" ]; then
-    echo ""
-    echo "── Seeding Vault for runner ────────────────────────────"
-    if [ "$(id -u)" -eq 0 ]; then
-      VAULT_ADDR="$vault_addr" "$vault_seed_runner_sh" || exit $?
-    else
-      if ! command -v sudo >/dev/null 2>&1; then
-        echo "Error: vault-seed-runner.sh must run as root and sudo is not installed" >&2
-        exit 1
-      fi
-      sudo -n -- env "VAULT_ADDR=$vault_addr" "$vault_seed_runner_sh" || exit $?
-    fi
-  fi
-
   # Build custom images required by Nomad jobs (S4.2, S5.2, S5.5) — before deploy.
   # Single-node factory dev box: no multi-node pull needed, no registry auth.
   # Can upgrade to approach B (registry push/pull) later if multi-node.
-  if echo ",$with_services," | grep -qE ",(agents|edge),"; then
+  if echo ",$with_services," | grep -qE ",(agents|chat|edge),"; then
     echo ""
     echo "── Building custom images ─────────────────────────────"
     if echo ",$with_services," | grep -q ",agents,"; then
@@ -1101,10 +947,15 @@ _disinto_init_nomad() {
       echo "── Building $tag ─────────────────────────────"
       docker build -t "$tag" -f "${FACTORY_ROOT}/docker/agents/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
     fi
+    if echo ",$with_services," | grep -q ",chat,"; then
+      local tag="disinto/chat:local"
+      echo "── Building $tag ─────────────────────────────"
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/chat/Dockerfile" "${FACTORY_ROOT}/docker/chat" 2>&1 | tail -5
+    fi
     if echo ",$with_services," | grep -q ",edge,"; then
       local tag="disinto/edge:local"
       echo "── Building $tag ─────────────────────────────"
-      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/edge/Dockerfile" "${FACTORY_ROOT}" 2>&1 | tail -5
+      docker build -t "$tag" -f "${FACTORY_ROOT}/docker/edge/Dockerfile" "${FACTORY_ROOT}/docker/edge" 2>&1 | tail -5
     fi
   fi
 
@@ -1116,9 +967,9 @@ _disinto_init_nomad() {
   if [ -n "$with_services" ]; then
     local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
 
-    # Build ordered deploy list (S3.4, S4.2, S5.2, S5.5): forgejo → woodpecker-server → woodpecker-agent → agents → staging → edge
+    # Build ordered deploy list (S3.4, S4.2, S5.2, S5.5): forgejo → woodpecker-server → woodpecker-agent → agents → staging → chat → edge
     local DEPLOY_ORDER=""
-    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging edge; do
+    for ordered_svc in forgejo woodpecker-server woodpecker-agent agents staging chat edge; do
       if echo ",$with_services," | grep -q ",$ordered_svc,"; then
         DEPLOY_ORDER="${DEPLOY_ORDER:+${DEPLOY_ORDER} }${ordered_svc}"
       fi
@@ -1131,7 +982,7 @@ _disinto_init_nomad() {
       case "$svc" in
         woodpecker-server|woodpecker-agent) seed_name="woodpecker" ;;
         agents) seed_name="agents" ;;
-        edge) seed_name="ops-repo" ;;
+        chat) seed_name="chat" ;;
       esac
       local seed_script="${FACTORY_ROOT}/tools/vault-seed-${seed_name}.sh"
       if [ -x "$seed_script" ]; then
@@ -1166,18 +1017,6 @@ _disinto_init_nomad() {
             fi
           fi
           ;;
-        agents)
-          # Seed factory-projects host volume with a default project TOML so
-          # the agents container finds a real .toml at the path that the
-          # entrypoint reads from (#574, #794). The factory-projects volume
-          # is the single source of truth for per-env project config and is
-          # decoupled from the baked image and from project-repos.
-          local projects_dir="/srv/disinto/projects"
-          if [ ! -f "${projects_dir}/${project_name}.toml" ]; then
-            echo "[agents] seeding factory-projects volume with default config..."
-            generate_default_toml "$project_name" "$forge_url" "${projects_dir}/${project_name}.toml"
-          fi
-          ;;
       esac
 
       local jobspec_path="${FACTORY_ROOT}/nomad/jobs/${svc}.hcl"
@@ -1194,119 +1033,31 @@ _disinto_init_nomad() {
           echo "Error: deploy.sh must run as root and sudo is not installed" >&2
           exit 1
         fi
-        sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "${deploy_cmd[@]}" || exit $?
-      fi
-
-      # Post-deploy: bootstrap Forgejo admin user after forgejo deployment
-      if [ "$svc" = "forgejo" ]; then
-        echo ""
-        echo "── Bootstrapping Forgejo admin user ───────────────────────"
-        local bootstrap_script="${FACTORY_ROOT}/lib/init/nomad/forgejo-bootstrap.sh"
-        if [ -x "$bootstrap_script" ]; then
-          if [ "$(id -u)" -eq 0 ]; then
-            "$bootstrap_script" || exit $?
-          else
-            if ! command -v sudo >/dev/null 2>&1; then
-              echo "Error: forgejo-bootstrap.sh must run as root and sudo is not installed" >&2
-              exit 1
-            fi
-            sudo -n --preserve-env=FORGE_ADMIN_PASS,FORGE_TOKEN,FORGE_URL -- "$bootstrap_script" || exit $?
-          fi
-        else
-          echo "warning: forgejo-bootstrap.sh not found or not executable" >&2
-        fi
-      fi
-
-      # Post-deploy: seed Woodpecker repo secrets (#603) after woodpecker-agent
-      # is up. Reads GHCR_TOKEN + FORGE_TOKEN from env and upserts them into
-      # the WP secrets table so tag-triggered pipelines (publish-images.yml)
-      # can authenticate. Missing env vars are warned, not fatal.
-      # Precondition: wp-activate-repo.sh must have inserted the repo row.
-      if [ "$svc" = "woodpecker-agent" ]; then
-        echo ""
-        echo "── Seeding Woodpecker repo secrets ─────────────────────────"
-        local wp_seed_script="${FACTORY_ROOT}/lib/init/nomad/wp-seed-secrets.sh"
-        if [ -x "$wp_seed_script" ]; then
-          if [ "$(id -u)" -eq 0 ]; then
-            FORGE_REPO="${FORGE_REPO:-}" "$wp_seed_script" \
-              || echo "warning: wp-seed-secrets.sh failed (non-fatal)" >&2
-          else
-            if ! command -v sudo >/dev/null 2>&1; then
-              echo "Error: wp-seed-secrets.sh must run as root and sudo is not installed" >&2
-              exit 1
-            fi
-            sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN,WP_DB,SECRET_NAMES -- \
-              "$wp_seed_script" \
-              || echo "warning: wp-seed-secrets.sh failed (non-fatal)" >&2
-          fi
-        else
-          echo "warning: wp-seed-secrets.sh not found or not executable" >&2
-        fi
-      fi
-
-      # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
-      # Initializes Forgejo OAuth2 app, seeds kv/disinto/chat, and
-      # conditionally applies Nomad ACL policy + token for the chat task.
-      if [ "$svc" = "edge" ]; then
-        echo ""
-        echo "── Chat OAuth + Vault bootstrap ────────────────────────"
-        local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
-        if [ -x "$chat_init_sh" ]; then
-          if [ "$(id -u)" -eq 0 ]; then
-            FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
-              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
-              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
-              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
-              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
-              VAULT_ADDR="$vault_addr" \
-              "$chat_init_sh" || exit $?
-          else
-            if ! command -v sudo >/dev/null 2>&1; then
-              echo "Error: chat-init.sh must run as root and sudo is not installed" >&2
-              exit 1
-            fi
-            sudo -n --preserve-env=FORGE_URL,FORGE_TOKEN,FORGE_ADMIN_PASS,EDGE_TUNNEL_FQDN,EDGE_TUNNEL_FQDN_CHAT,EDGE_ROUTING_MODE,VAULT_ADDR -- \
-              FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
-              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
-              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
-              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
-              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
-              VAULT_ADDR="$vault_addr" \
-              "$chat_init_sh" || exit $?
-          fi
-        else
-          echo "warning: chat-init.sh not found or not executable" >&2
-        fi
+        sudo -n -- "${deploy_cmd[@]}" || exit $?
       fi
     done
-  fi
 
-  # Run vault-runner (unconditionally, not gated by --with) — infrastructure job
-  # vault-runner is the parameterized batch job the edge dispatcher invokes via
-  # `nomad job dispatch vault-runner …`. It must be registered on every nomad
-  # init run regardless of --with selection, otherwise the dispatcher fails with
-  # "No job(s) with prefix or ID 'vault-runner' found" (#602). Idempotent —
-  # Nomad accepts re-submission of a parameterized batch job.
-  echo ""
-  echo "── Running vault-runner ────────────────────────────────────"
-  local vault_runner_path="${FACTORY_ROOT}/nomad/jobs/vault-runner.hcl"
-  if [ -f "$vault_runner_path" ]; then
-    echo "[deploy] vault-runner: running Nomad job (infrastructure)"
-    local -a vault_runner_cmd=("$deploy_sh" "vault-runner")
-    if [ "$(id -u)" -eq 0 ]; then
-      "${vault_runner_cmd[@]}" || exit $?
-    else
-      if ! command -v sudo >/dev/null 2>&1; then
-        echo "Error: deploy.sh must run as root and sudo is not installed" >&2
-        exit 1
+    # Run vault-runner (unconditionally, not gated by --with) — infrastructure job
+    # vault-runner is always present since it's needed for vault action dispatch
+    echo ""
+    echo "── Running vault-runner ────────────────────────────────────"
+    local vault_runner_path="${FACTORY_ROOT}/nomad/jobs/vault-runner.hcl"
+    if [ -f "$vault_runner_path" ]; then
+      echo "[deploy] vault-runner: running Nomad job (infrastructure)"
+      local -a vault_runner_cmd=("$deploy_sh" "vault-runner")
+      if [ "$(id -u)" -eq 0 ]; then
+        "${vault_runner_cmd[@]}" || exit $?
+      else
+        if ! command -v sudo >/dev/null 2>&1; then
+          echo "Error: deploy.sh must run as root and sudo is not installed" >&2
+          exit 1
+        fi
+        sudo -n -- "${vault_runner_cmd[@]}" || exit $?
       fi
-      sudo -n -- "${vault_runner_cmd[@]}" || exit $?
+    else
+      echo "[deploy] vault-runner: jobspec not found, skipping"
     fi
-  else
-    echo "[deploy] vault-runner: jobspec not found, skipping"
-  fi
 
-  if [ -n "$with_services" ]; then
     # Print final summary
     echo ""
     echo "── Summary ────────────────────────────────────────────"
@@ -1336,6 +1087,9 @@ _disinto_init_nomad() {
     fi
     if echo ",$with_services," | grep -q ",staging,"; then
       echo "             staging: (internal, no external port)"
+    fi
+    if echo ",$with_services," | grep -q ",chat,"; then
+      echo "             chat: 8080"
     fi
     echo "────────────────────────────────────────────────────────"
   fi
@@ -1463,7 +1217,7 @@ disinto_init() {
     # Auto-include all dependencies when edge is requested (S5.5)
     if echo ",$with_services," | grep -q ",edge,"; then
       # Edge depends on all backend services
-      for dep in forgejo woodpecker-server woodpecker-agent agents staging; do
+      for dep in forgejo woodpecker-server woodpecker-agent agents staging chat; do
         if ! echo ",$with_services," | grep -q ",${dep},"; then
           echo "Note: --with edge implies --with ${dep} (edge depends on all backend services)"
           with_services="${with_services},${dep}"
@@ -1476,9 +1230,9 @@ disinto_init() {
     for _svc in $with_services; do
       _svc=$(echo "$_svc" | xargs)
       case "$_svc" in
-        forgejo|woodpecker-server|woodpecker-agent|agents|staging|edge) ;;
+        forgejo|woodpecker-server|woodpecker-agent|agents|staging|chat|edge) ;;
         *)
-          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, edge" >&2
+          echo "Error: unknown service '${_svc}' — known: forgejo, woodpecker-server, woodpecker-agent, agents, staging, chat, edge" >&2
           exit 1
           ;;
       esac
@@ -1519,8 +1273,7 @@ disinto_init() {
   # will branch on $empty to add job deployment to the default path.
   if [ "$backend" = "nomad" ]; then
     _disinto_init_nomad "$dry_run" "$empty" "$with_services" \
-                        "$import_env" "$import_sops" "$age_key" \
-                        "$repo_url" "$forge_url_flag"
+                        "$import_env" "$import_sops" "$age_key"
     # shellcheck disable=SC2317  # _disinto_init_nomad always exits today;
     # `return` is defensive against future refactors.
     return
@@ -1677,36 +1430,6 @@ p.write_text(text)
     exit 0
   fi
 
-  # Configure Forgejo and Woodpecker URLs when EDGE_TUNNEL_FQDN is set.
-  # In subdomain mode, uses per-service FQDNs at root path instead of subpath URLs.
-  # Must run BEFORE generate_compose so the .env file is available for variable substitution.
-  if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
-    local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
-    # Create .env file if it doesn't exist yet (needed before compose generation)
-    if [ "$bare" = false ] && [ ! -f "${FACTORY_ROOT}/.env" ]; then
-      touch "${FACTORY_ROOT}/.env"
-    fi
-    if [ "$routing_mode" = "subdomain" ]; then
-      # Subdomain mode: Forgejo at forge.<project>.disinto.ai (root path)
-      if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-        echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN_FORGE:-forge.${EDGE_TUNNEL_FQDN}}/" >> "${FACTORY_ROOT}/.env"
-      fi
-      # Subdomain mode: Woodpecker at ci.<project>.disinto.ai (root path)
-      if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-        echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN_CI:-ci.${EDGE_TUNNEL_FQDN}}" >> "${FACTORY_ROOT}/.env"
-      fi
-    else
-      # Subpath mode: Forgejo ROOT_URL with /forge/ subpath (trailing slash required)
-      if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-        echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN}/forge/" >> "${FACTORY_ROOT}/.env"
-      fi
-      # Subpath mode: Woodpecker WOODPECKER_HOST with /ci subpath (no trailing slash for v3)
-      if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
-        echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
-      fi
-    fi
-  fi
-
   # Generate compose files (unless --bare)
   if [ "$bare" = false ]; then
     local forge_port
@@ -1719,6 +1442,18 @@ p.write_text(text)
     # Create empty .env so docker compose can parse the agents service
     # env_file reference before setup_forge generates the real tokens (#769)
     touch "${FACTORY_ROOT}/.env"
+  fi
+
+  # Configure Forgejo and Woodpecker subpath URLs when EDGE_TUNNEL_FQDN is set
+  if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
+    # Forgejo ROOT_URL with /forge/ subpath (note trailing slash - Forgejo needs it)
+    if ! grep -q '^FORGEJO_ROOT_URL=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+      echo "FORGEJO_ROOT_URL=https://${EDGE_TUNNEL_FQDN}/forge/" >> "${FACTORY_ROOT}/.env"
+    fi
+    # Woodpecker WOODPECKER_HOST with /ci subpath (no trailing slash for v3)
+    if ! grep -q '^WOODPECKER_HOST=' "${FACTORY_ROOT}/.env" 2>/dev/null; then
+      echo "WOODPECKER_HOST=https://${EDGE_TUNNEL_FQDN}/ci" >> "${FACTORY_ROOT}/.env"
+    fi
   fi
 
   # Prompt for FORGE_ADMIN_PASS before setup_forge
@@ -1824,15 +1559,9 @@ p.write_text(text)
   create_woodpecker_oauth "$forge_url" "$forge_repo"
 
   # Create OAuth2 app on Forgejo for disinto-chat (#708)
-  # In subdomain mode, callback is at chat.<project> root instead of /chat/ subpath.
   local chat_redirect_uri
   if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
-    local chat_routing_mode="${EDGE_ROUTING_MODE:-subpath}"
-    if [ "$chat_routing_mode" = "subdomain" ]; then
-      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN_CHAT:-chat.${EDGE_TUNNEL_FQDN}}/oauth/callback"
-    else
-      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
-    fi
+    chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
   else
     chat_redirect_uri="http://localhost/chat/oauth/callback"
   fi
@@ -2068,97 +1797,6 @@ with open(sys.argv[1], 'rb') as f:
 
     echo ""
   done
-
-  # ── Secret seeding health checks (issue #634) ─────────────────────
-  echo "── Secret seeding health ────────────────────────────────"
-  local health_ok=true
-
-  # Check 1: kv/disinto/runner/ tokens (needed by vault-runner job)
-  if [ -n "${VAULT_ADDR:-}" ]; then
-    _hvault_default_env 2>/dev/null || true
-    if hvault_token_lookup >/dev/null 2>&1; then
-      local runner_keys
-      runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
-      if [ -n "$runner_keys" ]; then
-        local key_count
-        key_count="$(printf '%s' "$runner_keys" | jq 'length')"
-        if [ "${key_count:-0}" -gt 0 ]; then
-          echo "  kv/disinto/runner/* : ${key_count} key(s) — OK"
-        else
-          echo "  kv/disinto/runner/* : EMPTY — run 'disinto vault reseed-runner'"
-          health_ok=false
-        fi
-      else
-        echo "  kv/disinto/runner/* : (vault reachable but list failed)"
-      fi
-
-      # Check 2: kv/disinto/shared/ops-repo token (needed by edge dispatcher)
-      local ops_raw
-      ops_raw="$(hvault_get_or_empty "kv/data/disinto/shared/ops-repo" 2>/dev/null || true)"
-      if [ -n "$ops_raw" ]; then
-        local ops_token
-        ops_token="$(printf '%s' "$ops_raw" | jq -r '.data.data.token // ""' 2>/dev/null || true)"
-        if [ -n "$ops_token" ]; then
-          echo "  kv/disinto/shared/ops-repo : token present — OK"
-        else
-          echo "  kv/disinto/shared/ops-repo : token missing — run 'disinto vault reseed-ops-repo'"
-          health_ok=false
-        fi
-      else
-        echo "  kv/disinto/shared/ops-repo : EMPTY — run 'disinto vault reseed-ops-repo'"
-        health_ok=false
-      fi
-    else
-      echo "  Vault: not reachable (set VAULT_ADDR + VAULT_TOKEN to check)"
-    fi
-  else
-    echo "  Vault: VAULT_ADDR not set (skip; run 'disinto vault reseed-all' to seed)"
-  fi
-
-  # Check 3: Woodpecker repo secrets
-  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
-  local wp_secrets_ok=false
-  if [ ! -f "$wp_db" ]; then
-    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
-      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
-    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
-      wp_db="/woodpecker-data/woodpecker.sqlite"
-    fi
-  fi
-  if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
-    local wp_secret_count
-    wp_secret_count="$(python3 -c "
-import sqlite3, sys
-c = sqlite3.connect('${wp_db}')
-# Handle schema variants across Woodpecker versions
-pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
-cols = {r[1] for r in pragma}
-rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
-if not rid:
-    print(0); sys.exit(0)
-count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
-print(count)
-" 2>/dev/null)" || wp_secret_count="?"
-    if [ "$wp_secret_count" = "?" ] || [ "$wp_secret_count" -eq 0 ] 2>/dev/null; then
-      echo "  Woodpecker secrets (repo_id=1) : EMPTY — run 'disinto wp reseed-secrets'"
-      health_ok=false
-    else
-      echo "  Woodpecker secrets (repo_id=1) : ${wp_secret_count} secret(s) — OK"
-      wp_secrets_ok=true
-    fi
-  elif [ -f "$wp_db" ]; then
-    echo "  Woodpecker secrets: python3 required for check"
-  fi
-
-  if [ "$health_ok" = true ] && [ "$wp_secrets_ok" = true ]; then
-    echo ""
-    echo "  All secret paths seeded — factory is healthy."
-  elif [ "$health_ok" = true ] && [ "$wp_secrets_ok" = false ]; then
-    echo ""
-    echo "  Vault secrets seeded, but Woodpecker needs reseeding."
-    echo "  Run: disinto wp reseed-secrets"
-  fi
-  echo ""
 
   if [ "$found" = false ]; then
     echo "No projects configured."
@@ -2785,82 +2423,8 @@ disinto_up() {
     echo "Decrypted secrets for compose"
   fi
 
-  docker compose -f "$compose_file" up -d --build ${compose_args[@]+"${compose_args[@]}"}
+  docker compose -f "$compose_file" up -d --build --remove-orphans ${compose_args[@]+"${compose_args[@]}"}
   echo "Stack is up"
-
-  # ── Post-upgrade migration: warn about unseeded secrets (issue #634) ──
-  # Factories initialized before #603/#604/#1035 landed have no retroactive
-  # migration. If we detect common missing-secrets patterns, suggest the
-  # reseed commands.
-  _post_upgrade_migration_check() {
-    local migration_marker="${FACTORY_ROOT}/state/migration-634-done"
-    if [ -f "$migration_marker" ]; then
-      return 0
-    fi
-
-    local needs_reseed=false
-    local suggestions=()
-
-    # Check 1: Woodpecker DB exists but may have no secrets
-    local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
-    if [ ! -f "$wp_db" ]; then
-      if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
-        wp_db="/var/lib/woodpecker/woodpecker.sqlite"
-      elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
-        wp_db="/woodpecker-data/woodpecker.sqlite"
-      fi
-    fi
-    if [ -f "$wp_db" ] && command -v python3 >/dev/null 2>&1; then
-      local wp_secret_count
-      wp_secret_count="$(python3 -c "
-import sqlite3, sys
-c = sqlite3.connect(sys.argv[1])
-pragma = c.execute('PRAGMA table_info(secrets)').fetchall()
-cols = {r[1] for r in pragma}
-rid = next((c for c in cols if c in ('secret_repo_id','repo_id')), None)
-if not rid:
-    print(0); sys.exit(0)
-count = c.execute(f'SELECT COUNT(*) FROM secrets WHERE {rid}=1').fetchone()[0]
-print(count)
-" "$wp_db" 2>/dev/null)" || wp_secret_count="?"
-      if [ "$wp_secret_count" = "0" ]; then
-        needs_reseed=true
-        suggestions+=("Woodpecker has no secrets — run 'disinto wp reseed-secrets'")
-      fi
-    fi
-
-    # Check 2: .env exists but Vault may not be seeded
-    if [ -f "${FACTORY_ROOT}/.env" ] && [ -n "${VAULT_ADDR:-}" ]; then
-      if hvault_token_lookup >/dev/null 2>&1; then
-        local runner_keys
-        runner_keys="$(hvault_kv_list "disinto/runner" 2>/dev/null || true)"
-        if [ -n "$runner_keys" ]; then
-          local key_count
-          key_count="$(printf '%s' "$runner_keys" | jq 'length')"
-          if [ "${key_count:-0}" -eq 0 ]; then
-            needs_reseed=true
-            suggestions+=("Vault runner KV tree is empty — run 'disinto vault reseed-runner'")
-          fi
-        fi
-      fi
-    fi
-
-    if [ "$needs_reseed" = true ]; then
-      echo ""
-      echo "── Post-upgrade check ─────────────────────────────────"
-      echo "Some secrets may not be seeded on this factory."
-      echo "Run the following to fix:"
-      for s in "${suggestions[@]}"; do
-        echo "  - $s"
-      done
-      echo "  - or run 'disinto vault reseed-all' to seed everything"
-      echo ""
-      # Create migration marker so we don't warn again
-      mkdir -p "$(dirname "$migration_marker")"
-      touch "$migration_marker"
-    fi
-  }
-  _post_upgrade_migration_check
 
   # Clean up temp .env (also handled by EXIT trap if compose fails)
   if [ -n "$tmp_env" ] && [ -f "$tmp_env" ]; then
@@ -2907,13 +2471,6 @@ disinto_shell() {
 
 # Creates a Forgejo user and .profile repo for an agent.
 # Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>]
-#   [--local-model <url>] [--model <name>] [--poll-interval <seconds>]
-#   [--admin-token <pat>]
-#
-# Authentication precedence (--admin-token > FORGE_ADMIN_PAT > FORGE_ADMIN_PASS):
-#   --admin-token <pat>  — use PAT directly (no password exchange)
-#   FORGE_ADMIN_PAT      — env var fallback for PAT auth
-#   FORGE_ADMIN_PASS     — legacy basic-auth flow (default)
 # disinto_hire_an_agent() is sourced from lib/hire-agent.sh
 
 # ── release command ───────────────────────────────────────────────────────────
@@ -2972,15 +2529,15 @@ disinto_ci_logs() {
   fi
 }
 
-# ── role command ──────────────────────────────────────────────────────────────
-# Manage role state files (enable/disable roles)
-# Usage: disinto role <subcommand> [role-name]
-#   disable <role>       Remove state file to disable role
-#   enable <role>        Create state file to enable role
-#   disable --all        Disable all roles
-#   enable --all         Enable all roles
-#   status               Show enabled/disabled roles
-disinto_role() {
+# ── agent command ─────────────────────────────────────────────────────────────
+# Manage agent state files (enable/disable agents)
+# Usage: disinto agent <subcommand> [agent-name]
+#   disable <agent>      Remove state file to disable agent
+#   enable <agent>       Create state file to enable agent
+#   disable --all        Disable all agents
+#   enable --all         Enable all agents
+#   status               Show enabled/disabled agents
+disinto_agent() {
   local subcmd="${1:-}"
   local state_dir="${FACTORY_ROOT}/state"
   local all_agents=("dev" "reviewer" "gardener" "architect" "planner" "predictor")
@@ -2992,13 +2549,13 @@ disinto_role() {
     disable)
       local agent="${2:-}"
       if [ -z "$agent" ]; then
-        echo "Error: role name required" >&2
-        echo "Usage: disinto role disable <role-name>" >&2
-        echo "       disinto role disable --all" >&2
+        echo "Error: agent name required" >&2
+        echo "Usage: disinto agent disable <agent-name>" >&2
+        echo "       disinto agent disable --all" >&2
         exit 1
       fi
       if [ "$agent" = "--all" ]; then
-        echo "Disabling all roles..."
+        echo "Disabling all agents..."
         for a in "${all_agents[@]}"; do
           local state_file="${state_dir}/.${a}-active"
           if [ -f "$state_file" ]; then
@@ -3018,8 +2575,8 @@ disinto_role() {
           fi
         done
         if [ "$valid" = false ]; then
-          echo "Error: unknown role '${agent}'" >&2
-          echo "Valid roles: ${all_agents[*]}" >&2
+          echo "Error: unknown agent '${agent}'" >&2
+          echo "Valid agents: ${all_agents[*]}" >&2
           exit 1
         fi
         local state_file="${state_dir}/.${agent}-active"
@@ -3034,13 +2591,13 @@ disinto_role() {
     enable)
       local agent="${2:-}"
       if [ -z "$agent" ]; then
-        echo "Error: role name required" >&2
-        echo "Usage: disinto role enable <role-name>" >&2
-        echo "       disinto role enable --all" >&2
+        echo "Error: agent name required" >&2
+        echo "Usage: disinto agent enable <agent-name>" >&2
+        echo "       disinto agent enable --all" >&2
         exit 1
       fi
       if [ "$agent" = "--all" ]; then
-        echo "Enabling all roles..."
+        echo "Enabling all agents..."
         for a in "${all_agents[@]}"; do
           local state_file="${state_dir}/.${a}-active"
           if [ -f "$state_file" ]; then
@@ -3060,8 +2617,8 @@ disinto_role() {
           fi
         done
         if [ "$valid" = false ]; then
-          echo "Error: unknown role '${agent}'" >&2
-          echo "Valid roles: ${all_agents[*]}" >&2
+          echo "Error: unknown agent '${agent}'" >&2
+          echo "Valid agents: ${all_agents[*]}" >&2
           exit 1
         fi
         local state_file="${state_dir}/.${agent}-active"
@@ -3074,10 +2631,10 @@ disinto_role() {
       fi
       ;;
     status)
-      echo "Role Status"
-      echo "=========="
-      printf "%-12s %s\n" "ROLE" "STATUS"
-      printf "%-12s %s\n" "----" "------"
+      echo "Agent Status"
+      echo "============"
+      printf "%-12s %s\n" "AGENT" "STATUS"
+      printf "%-12s %s\n" "------" "------"
       for a in "${all_agents[@]}"; do
         local state_file="${state_dir}/.${a}-active"
         local status
@@ -3091,17 +2648,17 @@ disinto_role() {
       ;;
     *)
       cat <<EOF >&2
-Usage: disinto role <subcommand>
+Usage: disinto agent <subcommand>
 
-Manage roles (enable/disable):
+Manage agent state files (enable/disable agents):
 
-  disable <role>       Remove state file to disable role
-  enable <role>        Create state file to enable role
-  disable --all        Disable all roles
-  enable --all         Enable all roles
-  status               Show which roles are enabled/disabled
+  disable <agent>      Remove state file to disable agent
+  enable <agent>       Create state file to enable agent
+  disable --all        Disable all agents
+  enable --all         Enable all agents
+  status               Show which agents are enabled/disabled
 
-Valid roles: dev, reviewer, gardener, architect, planner, predictor
+Valid agents: dev, reviewer, gardener, architect, planner, predictor
 EOF
       exit 1
       ;;
@@ -3111,10 +2668,9 @@ EOF
 # ── edge command ──────────────────────────────────────────────────────────────
 # Manage edge tunnel registrations (reverse SSH tunnels to edge hosts)
 # Usage: disinto edge <verb> [options]
-#   register [project]        Register a new tunnel (generates keypair if needed)
-#   deregister <project>      Remove a tunnel registration
-#   status                    Show registered tunnels
-#   cutover-finalize [path]   Repoint /opt/disinto origin to new Forgejo host
+#   register [project]    Register a new tunnel (generates keypair if needed)
+#   deregister <project>  Remove a tunnel registration
+#   status                Show registered tunnels
 disinto_edge() {
   local subcmd="${1:-}"
   local EDGE_HOST="${EDGE_HOST:-}"
@@ -3205,29 +2761,15 @@ disinto_edge() {
       # Write to .env (replace existing entries to avoid duplicates)
       local tmp_env
       tmp_env=$(mktemp)
-      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN|FQDN_FORGE|FQDN_CI|FQDN_CHAT)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN)=" "$env_file" > "$tmp_env" 2>/dev/null || true
       mv "$tmp_env" "$env_file"
       echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
       echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
       echo "EDGE_TUNNEL_FQDN=${fqdn}" >> "$env_file"
 
-      # Subdomain mode: write per-service FQDNs (#1028)
-      local reg_routing_mode="${EDGE_ROUTING_MODE:-subpath}"
-      if [ "$reg_routing_mode" = "subdomain" ]; then
-        echo "EDGE_TUNNEL_FQDN_FORGE=forge.${fqdn}" >> "$env_file"
-        echo "EDGE_TUNNEL_FQDN_CI=ci.${fqdn}" >> "$env_file"
-        echo "EDGE_TUNNEL_FQDN_CHAT=chat.${fqdn}" >> "$env_file"
-      fi
-
       echo "Registered: ${project}"
       echo "  Port:    ${port}"
       echo "  FQDN:    ${fqdn}"
-      if [ "$reg_routing_mode" = "subdomain" ]; then
-        echo "  Mode:    subdomain"
-        echo "  Forge:   forge.${fqdn}"
-        echo "  CI:      ci.${fqdn}"
-        echo "  Chat:    chat.${fqdn}"
-      fi
       echo "  Saved to: ${env_file}"
       ;;
 
@@ -3261,23 +2803,12 @@ disinto_edge() {
         edge_host="${EDGE_HOST:-edge.disinto.ai}"
       fi
 
-      # Read tunnel pubkey for ownership proof
-      local secrets_dir="${FACTORY_ROOT}/secrets"
-      local tunnel_pubkey="${secrets_dir}/tunnel_key.pub"
-      if [ ! -f "$tunnel_pubkey" ]; then
-        echo "Error: tunnel keypair not found at ${tunnel_pubkey}" >&2
-        echo "Cannot prove ownership without the tunnel public key." >&2
-        exit 1
-      fi
-      local pubkey
-      pubkey=$(tr -d '\n' < "$tunnel_pubkey")
-
       # SSH to edge host and deregister
       echo "Deregistering tunnel for ${project} on ${edge_host}..."
       local response
       response=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
         "disinto-register@${edge_host}" \
-        "deregister ${project} ${pubkey}" 2>&1) || {
+        "deregister ${project}" 2>&1) || {
         echo "Error: failed to deregister tunnel" >&2
         echo "Response: ${response}" >&2
         exit 1
@@ -3336,733 +2867,28 @@ disinto_edge() {
       fi
       ;;
 
-    cutover-finalize)
-      # Repoint /opt/disinto git origin to the new Forgejo host after nomad cutover.
-      # Usage: disinto edge cutover-finalize [--repo-path <path>] [--forge-host <host>]
-      # Idempotent: no-op if origin already points at the new host.
-      local repo_path="${FACTORY_ROOT}"
-      shift || true
-
-      # Parse flags
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          --repo-path)
-            repo_path="$2"
-            shift 2
-            ;;
-          --forge-host)
-            shift
-            # Accept host with or without port/protocol
-            local forge_host="${1:-}"
-            shift
-            # Strip protocol prefix if present
-            forge_host="${forge_host#http://}"
-            forge_host="${forge_host#https://}"
-            # Strip trailing slash
-            forge_host="${forge_host%/}"
-            # Strip path if present
-            forge_host="${forge_host%%/*}"
-            ;;
-          *)
-            # Positional arg: repo path if not yet set
-            if [ -z "$repo_path" ] || [ "$repo_path" = "${FACTORY_ROOT}" ]; then
-              repo_path="$1"
-            fi
-            shift
-            ;;
-        esac
-      done
-
-      # Default forge host from env or derive from FORGE_URL
-      local forge_host="${forge_host:-${FORGE_HOST:-${FORGE_URL:-}}}"
-      if [ -n "$forge_host" ]; then
-        forge_host="${forge_host#http://}"
-        forge_host="${forge_host#https://}"
-        forge_host="${forge_host%/}"
-        forge_host="${forge_host%%/*}"
-      fi
-
-      if [ -z "$forge_host" ]; then
-        echo "Error: --forge-host is required (or set FORGE_HOST / FORGE_URL)" >&2
-        exit 1
-      fi
-
-      # Resolve repo path (default /opt/disinto)
-      if [ "$repo_path" = "${FACTORY_ROOT}" ]; then
-        repo_path="/opt/disinto"
-      fi
-
-      if [ ! -d "$repo_path/.git" ]; then
-        echo "Error: not a git repository: ${repo_path}" >&2
-        exit 1
-      fi
-
-      # Determine current origin URL
-      local current_origin
-      current_origin=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || current_origin=""
-
-      if [ -z "$current_origin" ]; then
-        echo "Error: no 'origin' remote found in ${repo_path}" >&2
-        exit 1
-      fi
-
-      # Normalize: strip .git suffix, protocol, and path components for comparison
-      local current_host
-      current_host=$(printf '%s' "$current_origin" | sed 's|https\?://||; s|\.git$||; s|/.*||')
-
-      if [ "$current_host" = "$forge_host" ]; then
-        echo "origin already points at ${forge_host} — no change needed"
-        return 0
-      fi
-
-      # Build the canonical origin URL
-      local new_url="http://${forge_host}/disinto-admin/disinto.git"
-
-      echo "Repointing origin in ${repo_path}:"
-      echo "  from: ${current_origin}"
-      echo "  to:   ${new_url}"
-
-      git -C "$repo_path" remote set-url origin "$new_url"
-
-      # Fetch to verify connectivity
-      echo "Fetching origin to verify..."
-      if git -C "$repo_path" fetch origin main 2>&1; then
-        echo "origin updated and verified: ${new_url}"
-      else
-        echo "Warning: fetch failed — remote may be unreachable (check network/credentials)" >&2
-        echo "  URL was set to: ${new_url}"
-      fi
-      ;;
-
     *)
       cat <<EOF >&2
 Usage: disinto edge <verb> [options]
 
 Manage edge tunnel registrations:
 
-  register [project]        Register a new tunnel (generates keypair if needed)
-  deregister <project>      Remove a tunnel registration
-  status                    Show registered tunnels
-  cutover-finalize [path]   Repoint git origin to new Forgejo host
+  register [project]    Register a new tunnel (generates keypair if needed)
+  deregister <project>  Remove a tunnel registration
+  status                Show registered tunnels
 
 Options:
   --edge-host <fqdn>    Edge host FQDN (default: edge.disinto.ai or EDGE_HOST env)
-  --forge-host <host>   Forgejo host for cutover-finalize (default: FORGE_HOST / FORGE_URL)
-  --repo-path <path>    Repository path for cutover-finalize (default: /opt/disinto)
 
 Examples:
   disinto edge register myproject
   disinto edge register myproject --edge-host custom.example.com
   disinto edge deregister myproject
   disinto edge status
-  disinto edge cutover-finalize --forge-host 10.10.10.132:3000
-  disinto edge cutover-finalize /opt/disinto --forge-host 10.10.10.132:3000
 EOF
       exit 1
       ;;
   esac
-}
-
-# ── vault command ────────────────────────────────────────────────────────────
-# Usage: disinto vault <subcommand>
-# Subcommands:
-#   reseed-ops-repo   Run tools/vault-seed-ops-repo.sh against the running Vault
-#   reseed-runner     Run tools/vault-seed-runner.sh against the running Vault
-#   reseed-voice      Run tools/vault-seed-voice.sh against the running Vault
-#
-# reseed-ops-repo is a one-shot for factories upgraded past the nomad-vault
-# migration (#1035) whose kv/disinto/shared/ops-repo path was never seeded —
-# the edge dispatcher's template stanza stalls forever on the missing key
-# (observed post-2026-04-21, #634). The underlying script is idempotent, so
-# this is safe to run on an already-seeded factory.
-#
-# reseed-runner is a one-shot for factories whose kv/disinto/runner/* tree
-# was never seeded — vault-runner.hcl template stanzas render empty token
-# strings and the release formula's push-mirrors step silently fails
-# (refs #634). The underlying script is idempotent and skip-warns on
-# missing .env vars, so this is safe to re-run.
-#
-# reseed-voice (re)seeds kv/disinto/voice.gemini_api_key from GEMINI_API_KEY
-# in .env so the voice bridge template stanza in nomad/jobs/edge.hcl renders
-# a real key into /secrets/gemini-api-key (#664). The underlying script is
-# idempotent — missing GEMINI_API_KEY in .env leaves Vault untouched.
-disinto_vault() {
-  local subcmd="${1:-}"
-  shift || true
-
-  case "$subcmd" in
-    reseed-ops-repo)
-      local seed_script="${FACTORY_ROOT}/tools/vault-seed-ops-repo.sh"
-      if [ ! -x "$seed_script" ]; then
-        echo "Error: ${seed_script} not found or not executable" >&2
-        exit 1
-      fi
-
-      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-      echo "── Reseeding Vault for ops-repo ───────────────────────"
-      echo "[vault] VAULT_ADDR=${vault_addr}"
-      if [ "$(id -u)" -eq 0 ]; then
-        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
-      else
-        if ! command -v sudo >/dev/null 2>&1; then
-          echo "Error: vault-seed-ops-repo.sh must run as root and sudo is not installed" >&2
-          exit 1
-        fi
-        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
-      fi
-      ;;
-    reseed-runner)
-      local seed_script="${FACTORY_ROOT}/tools/vault-seed-runner.sh"
-      if [ ! -x "$seed_script" ]; then
-        echo "Error: ${seed_script} not found or not executable" >&2
-        exit 1
-      fi
-
-      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-      echo "── Reseeding Vault for runner tokens ──────────────────"
-      echo "[vault] VAULT_ADDR=${vault_addr}"
-      if [ "$(id -u)" -eq 0 ]; then
-        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
-      else
-        if ! command -v sudo >/dev/null 2>&1; then
-          echo "Error: vault-seed-runner.sh must run as root and sudo is not installed" >&2
-          exit 1
-        fi
-        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
-      fi
-      ;;
-    reseed-voice)
-      local seed_script="${FACTORY_ROOT}/tools/vault-seed-voice.sh"
-      if [ ! -x "$seed_script" ]; then
-        echo "Error: ${seed_script} not found or not executable" >&2
-        exit 1
-      fi
-
-      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-      echo "── Reseeding Vault for voice (Gemini API key) ─────────"
-      echo "[vault] VAULT_ADDR=${vault_addr}"
-      if [ "$(id -u)" -eq 0 ]; then
-        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
-      else
-        if ! command -v sudo >/dev/null 2>&1; then
-          echo "Error: vault-seed-voice.sh must run as root and sudo is not installed" >&2
-          exit 1
-        fi
-        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
-      fi
-      ;;
-    reseed-chat-oauth)
-      local seed_script="${FACTORY_ROOT}/tools/vault-seed-chat.sh"
-      if [ ! -x "$seed_script" ]; then
-        echo "Error: ${seed_script} not found or not executable" >&2
-        exit 1
-      fi
-
-      local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-      echo "── Reseeding Vault for chat OAuth + secrets ────────────"
-      echo "[vault] VAULT_ADDR=${vault_addr}"
-      if [ "$(id -u)" -eq 0 ]; then
-        VAULT_ADDR="$vault_addr" "$seed_script" "$@"
-      else
-        if ! command -v sudo >/dev/null 2>&1; then
-          echo "Error: vault-seed-chat.sh must run as root and sudo is not installed" >&2
-          exit 1
-        fi
-        sudo -n -- env "VAULT_ADDR=$vault_addr" "$seed_script" "$@"
-      fi
-      ;;
-    reseed-all)
-      # Run every vault reseed + wp reseed-secrets in sequence.
-      # Idempotent: each subcommand is safe to re-run on already-seeded
-      # factories. Missing env vars produce warnings (not hard errors).
-      local dry_run=0
-      for _arg in "$@"; do
-        case "$_arg" in
-          --dry-run) dry_run=1 ;;
-          -h|--help)
-            cat <<EOF
-Usage: disinto vault reseed-all [--dry-run]
-
-Run all vault + Woodpecker reseed operations in sequence.
-
-Idempotent: safe to re-run on already-seeded factories.
-Missing env vars produce warnings, not hard errors.
-
-Subcommands executed:
-  vault reseed-ops-repo   Seed kv/disinto/shared/ops-repo (FORGE_TOKEN)
-  vault reseed-runner     Seed kv/disinto/runner/* tokens from .env
-  vault reseed-voice      Seed kv/disinto/voice.gemini_api_key from .env
-  vault reseed-chat-oauth Seed kv/disinto/chat OAuth + secrets from .env
-  wp reseed-secrets       Seed Woodpecker repo secrets (GHCR_TOKEN, FORGE_TOKEN)
-
-Options:
-  --dry-run   Show what would be seeded without writing
-EOF
-            exit 0
-            ;;
-          *)
-            echo "Error: unknown option: $_arg" >&2
-            echo "Usage: disinto vault reseed-all [--dry-run]" >&2
-            exit 1
-            ;;
-        esac
-      done
-
-      local -a _reseed_args=()
-      if [ "$dry_run" -eq 1 ]; then
-        _reseed_args=(--dry-run)
-      fi
-
-      echo "── Vault + Woodpecker reseed-all ──────────────────────"
-      echo "dry_run=${dry_run}"
-      echo ""
-
-      local _rc=0
-      local _subcmd
-      for _subcmd in reseed-ops-repo reseed-runner reseed-voice reseed-chat-oauth; do
-        echo ""
-        echo "── ${_subcmd} ─────────────────────────────────────────"
-        if [ "$dry_run" -eq 1 ]; then
-          echo "[dry-run] would run: disinto vault ${_subcmd} --dry-run"
-        fi
-        disinto_vault "$_subcmd" "${_reseed_args[@]}" || _rc=$?
-        if [ "$_rc" -ne 0 ]; then
-          echo "Warning: disinto vault ${_subcmd} exited with code ${_rc}" >&2
-        fi
-      done
-
-      # WP reseed-secrets (separate from vault, uses sqlite3)
-      echo ""
-      echo "── wp reseed-secrets ──────────────────────────────────"
-      if [ "$dry_run" -eq 1 ]; then
-        echo "[dry-run] would run: disinto wp reseed-secrets --dry-run"
-      fi
-      disinto_wp reseed-secrets "${_reseed_args[@]}" || _rc=$?
-      if [ "$_rc" -ne 0 ]; then
-        echo "Warning: disinto wp reseed-secrets exited with code ${_rc}" >&2
-      fi
-
-      echo ""
-      echo "── Done ───────────────────────────────────────────────"
-      if [ "$_rc" -ne 0 ]; then
-        echo "Some reseed operations failed. Check warnings above." >&2
-      fi
-      return "$_rc"
-      ;;
-    *)
-      cat <<EOF >&2
-Usage: disinto vault <subcommand>
-
-Subcommands:
-  reseed-all        Run all vault reseed operations + wp reseed-secrets in
-                    sequence (idempotent; convenient for post-init seeding;
-                    fixes #634)
-  reseed-ops-repo   Seed kv/disinto/shared/ops-repo from kv/disinto/bots/vault
-                    (idempotent — safe on already-seeded factories; fixes
-                    edge dispatcher stuck pending on missing KV path)
-  reseed-runner     Seed kv/disinto/runner/<NAME> tokens from .env for the
-                    release formula's push-mirrors step (idempotent — skips
-                    missing .env vars with warning; refs #634)
-  reseed-voice      Seed kv/disinto/voice.gemini_api_key from GEMINI_API_KEY
-                    in .env for the voice bridge (#664). Idempotent — missing
-                    GEMINI_API_KEY leaves Vault untouched.
-  reseed-chat-oauth Seed kv/disinto/chat with OAuth credentials, forge PAT,
-                    forward_auth_secret, and nomad_token from .env or env
-                    vars (#678). Idempotent — merges with existing KV data.
-
-Environment:
-  VAULT_ADDR   Vault server address (default: http://127.0.0.1:8200)
-  VAULT_TOKEN  Vault token (or /etc/vault.d/root.token when running as root)
-EOF
-      exit 1
-      ;;
-  esac
-}
-
-# ── backup command ────────────────────────────────────────────────────────────
-# Usage: disinto backup <subcommand> [args]
-# Subcommands:
-#   create <outfile.tar.gz>  Create backup of factory state
-#   import <infile.tar.gz>   Restore factory state from backup
-disinto_backup() {
-  local subcmd="${1:-}"
-  shift || true
-
-  case "$subcmd" in
-    create)
-      backup_create "$@"
-      ;;
-    import)
-      backup_import "$@"
-      ;;
-    *)
-      echo "Usage: disinto backup <subcommand> [args]" >&2
-      echo "" >&2
-      echo "Subcommands:" >&2
-      echo "  create <outfile.tar.gz>  Create backup of factory state" >&2
-      echo "  import <infile.tar.gz>   Restore factory state from backup" >&2
-      exit 1
-      ;;
-  esac
-}
-
-# ── validate command ─────────────────────────────────────────────────────────
-# Validates CI pipeline configs and other factory artifacts.
-# Usage: disinto validate [subcommand]
-#   lint-ci        Lint .woodpecker/*.yml for missing timeouts and unsafe commands
-disinto_validate() {
-  local subcmd="${1:-lint-ci}"
-  shift || true
-
-  case "$subcmd" in
-    lint-ci)
-      _validate_lint_ci "$@"
-      ;;
-    *)
-      cat <<EOF >&2
-Usage: disinto validate <subcommand>
-
-Validate factory artifacts:
-
-  lint-ci        Lint .woodpecker/*.yml for missing timeouts and unsafe commands
-
-Subcommands:
-  lint-ci        Check CI pipeline files for:
-                   - Steps missing a timeout declaration
-                   - Network-fetch commands without per-command timeouts
-EOF
-      exit 1
-      ;;
-  esac
-}
-
-# Lint .woodpecker/*.yml files for missing timeouts and unsafe commands.
-#
-# Checks:
-#   1. Step-level timeout: every step must declare a `timeout:` value or
-#      inherit from a workflow-level default.
-#   2. Command-level timeout: network-fetch commands (curl, wget, pip, etc.)
-#      must include an explicit timeout flag (e.g. --max-time, --timeout).
-_validate_lint_ci() {
-  local lint_dir="${1:-.}"
-  local woodpecker_dir="${lint_dir}/.woodpecker"
-  local errors=0
-  local warnings=0
-
-  if [ ! -d "$woodpecker_dir" ]; then
-    echo "No .woodpecker/ directory found at ${woodpecker_dir}"
-    exit 0
-  fi
-
-  local -a yml_files=()
-  while IFS= read -r f; do
-    yml_files+=("$f")
-  done < <(find "$woodpecker_dir" -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null | sort)
-
-  if [ ${#yml_files[@]} -eq 0 ]; then
-    echo "No .woodpecker/*.yml files found"
-    exit 0
-  fi
-
-  echo "Linting CI pipeline files in ${woodpecker_dir}..."
-  echo ""
-
-  for yml in "${yml_files[@]}"; do
-    local rel_path
-    rel_path=$(realpath --relative-to="$(pwd)" "$yml" 2>/dev/null || echo "$yml")
-
-    # Use Python to parse YAML and check for timeouts
-    local result
-    result=$(python3 -c "
-import yaml, sys, re
-
-with open('$yml') as f:
-    try:
-        doc = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        print(f'FATAL:YAML parse error: {e}', file=sys.stderr)
-        sys.exit(1)
-
-if not isinstance(doc, dict):
-    sys.exit(0)
-
-# Check workflow-level timeout default
-workflow_timeout = doc.get('timeout')
-if isinstance(workflow_timeout, (int, float)):
-    workflow_timeout = str(workflow_timeout)
-
-errors = []
-warnings = []
-
-steps = doc.get('steps', [])
-if not isinstance(steps, list):
-    sys.exit(0)
-
-for step in steps:
-    if not isinstance(step, dict):
-        continue
-    name = step.get('name', '<unnamed>')
-    commands = step.get('commands', [])
-    if not isinstance(commands, list):
-        continue
-
-    # Check step-level timeout (unless workflow default exists)
-    if 'timeout' not in step and workflow_timeout is None:
-        errors.append(f'error: {name} — step has no timeout; add \`timeout: 5m\` or inherit from workflow default')
-
-    # Check commands for network-fetch without timeout flags
-    cmd_text = ' '.join(str(c) for c in commands)
-    lines = commands  # check each command individually
-
-    for cmd in lines:
-        cmd_str = str(cmd)
-        # Skip comments and empty lines
-        stripped = cmd_str.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-
-        # Skip package manager installs (e.g., apk add ... curl)
-        if re.search(r'\b(apk|apt|yum|dnf|brew)\s+(add|install)\b', cmd_str):
-            continue
-
-        # Skip shell/python invocations (commands that execute scripts)
-        if re.match(r'\s*(bash|sh|zsh|python3?|node)\s', cmd_str):
-            continue
-
-        # Network-fetch binaries to check
-        # curl — check for --max-time, -m, or --connect-timeout
-        if re.search(r'\bcurl\b', cmd_str):
-            if not re.search(r'(--max-time|-m\s+\d|--connect-timeout)', cmd_str):
-                warnings.append(f'warning: {name}/command — curl without --max-time; consider: curl --max-time 30 ...')
-
-        # wget — check for --timeout
-        if re.search(r'\bwget\b', cmd_str):
-            if not re.search(r'--timeout=', cmd_str):
-                warnings.append(f'warning: {name}/command — wget without --timeout; consider: wget --timeout=30 ...')
-
-        # pip/pip3 — check for --default-timeout or --timeout
-        if re.search(r'\b(pip3?|pipenv)\b', cmd_str) and re.search(r'\b(install|i)\b', cmd_str):
-            if not re.search(r'(--default-timeout|--timeout)', cmd_str):
-                warnings.append(f'warning: {name}/command — pip install without --default-timeout; consider: --default-timeout 30')
-
-        # npm — check for --timeout
-        if re.search(r'\bnpm\b', cmd_str) and re.search(r'\b(install|add)\b', cmd_str):
-            if not re.search(r'--timeout', cmd_str):
-                warnings.append(f'warning: {name}/command — npm install without --timeout; consider: --timeout 30000')
-
-        # yarn — check for --timeout
-        if re.search(r'\byarn\b', cmd_str) and re.search(r'\b(add|install)\b', cmd_str):
-            if not re.search(r'--timeout', cmd_str):
-                warnings.append(f'warning: {name}/command — yarn add without --timeout; consider: --timeout 30000')
-
-        # go get — no direct timeout flag, but we warn about it
-        if re.search(r'\bgo\s+get\b', cmd_str):
-            warnings.append(f'warning: {name}/command — go get has no timeout flag; wrap in a timeout(1) command')
-
-        # cargo install — check for --timeout (cargo doesn't have one natively)
-        if re.search(r'\bcargo\s+install\b', cmd_str):
-            warnings.append(f'warning: {name}/command — cargo install has no timeout flag; wrap in a timeout(1) command')
-
-        # gem install — no timeout flag
-        if re.search(r'\bgem\s+install\b', cmd_str):
-            warnings.append(f'warning: {name}/command — gem install has no timeout flag; wrap in a timeout(1) command')
-
-        # brew install — no timeout flag
-        if re.search(r'\bbrew\s+install\b', cmd_str):
-            warnings.append(f'warning: {name}/command — brew install has no timeout flag; wrap in a timeout(1) command')
-
-if errors:
-    for e in errors:
-        print(f'E:{e}')
-if warnings:
-    for w in warnings:
-        print(f'W:{w}')
-" 2>&1) || {
-      echo "ERROR: failed to parse $rel_path" >&2
-      echo "$result" >&2
-      exit 1
-    }
-
-    # Parse Python output
-    while IFS= read -r line; do
-      case "$line" in
-        E:*)
-          echo "${line#E:}" >&2
-          errors=$((errors + 1))
-          ;;
-        W:*)
-          echo "${line#W:}"
-          warnings=$((warnings + 1))
-          ;;
-      esac
-    done <<< "$result"
-  done
-
-  echo ""
-  echo "lint-ci: ${errors} error(s), ${warnings} warning(s)"
-
-  if [ "$errors" -gt 0 ]; then
-    echo ""
-    echo "Fix: add \`timeout:\` to each step, or set a workflow-level default at the top of the pipeline file." >&2
-    exit 1
-  fi
-
-  if [ "$warnings" -gt 0 ]; then
-    echo "(warnings are non-blocking — add per-command timeouts for network calls)" >&2
-  fi
-
-  exit 0
-}
-
-# ── wp command ────────────────────────────────────────────────────────────────
-
-# Usage: disinto wp reseed-secrets [--dry-run]
-# Re-seed Woodpecker repo secrets from .env for factories initialized
-# before #603 landed. Reads GHCR_TOKEN / FORGE_TOKEN from .env (already
-# sourced by lib/env.sh at the top of this script) and upserts them into
-# the Woodpecker secrets table via wp-seed-secrets.sh.
-#
-# Idempotent: re-running overwrites values with current .env contents.
-# Missing env vars produce a warning (not a hard error).
-disinto_wp() {
-  # Extract subcommand before flag parsing.
-  local subcmd="${1:-}"
-  case "$subcmd" in
-    reseed-secrets) shift ;;
-    -h|--help)
-      cat <<EOF
-Usage: disinto wp reseed-secrets [--dry-run]
-
-Re-seed Woodpecker repo secrets from .env for post-init factories.
-
-Reads GHCR_TOKEN and FORGE_TOKEN (and any other names in SECRET_NAMES)
-from the environment (sourced from .env or .env.enc at startup) and
-upserts them into the Woodpecker secrets table for the project repo.
-
-Idempotent: re-running overwrites values with current .env contents.
-Missing env vars produce a warning, not a hard error.
-
-Options:
-  --dry-run   Show what would be seeded without writing
-EOF
-      exit 0
-      ;;
-    "")
-      echo "Error: missing wp subcommand" >&2
-      echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
-      exit 1
-      ;;
-    *)
-      echo "Error: unknown wp subcommand: $subcmd" >&2
-      echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
-      exit 1
-      ;;
-  esac
-
-  local dry_run=0
-  for arg in "$@"; do
-    case "$arg" in
-      --dry-run) dry_run=1 ;;
-      -h|--help)
-        cat <<EOF
-Usage: disinto wp reseed-secrets [--dry-run]
-
-Re-seed Woodpecker repo secrets from .env for post-init factories.
-
-Reads GHCR_TOKEN and FORGE_TOKEN (and any other names in SECRET_NAMES)
-from the environment (sourced from .env or .env.enc at startup) and
-upserts them into the Woodpecker secrets table for the project repo.
-
-Idempotent: re-running overwrites values with current .env contents.
-Missing env vars produce a warning, not a hard error.
-
-Options:
-  --dry-run   Show what would be seeded without writing
-EOF
-        exit 0
-        ;;
-      *)
-        echo "Error: unknown option: $arg" >&2
-        echo "Usage: disinto wp reseed-secrets [--dry-run]" >&2
-        exit 1
-        ;;
-    esac
-  done
-
-  local wp_seed_script="${FACTORY_ROOT}/lib/init/nomad/wp-seed-secrets.sh"
-
-  # Verify the seed script exists and is executable.
-  if [ ! -x "$wp_seed_script" ]; then
-    echo "Error: wp-seed-secrets.sh not found or not executable at ${wp_seed_script}" >&2
-    echo "  This subcommand requires the Woodpecker init scripts." >&2
-    exit 1
-  fi
-
-  # FORGE_REPO is required — sourced from .env by lib/env.sh at script top.
-  if [ -z "${FORGE_REPO:-}" ]; then
-    echo "Error: FORGE_REPO not set" >&2
-    echo "  Ensure .env (or .env.enc) contains FORGE_REPO (e.g. disinto-admin/disinto)" >&2
-    exit 1
-  fi
-
-  # WP_DB defaults to the nomad path; fall back to docker compose volume path.
-  local wp_db="${WP_DB:-/srv/disinto/woodpecker-data/woodpecker.sqlite}"
-  local -a checked_paths=("$wp_db")
-  if [ ! -f "$wp_db" ]; then
-    # Try the docker-compose volume mount path.
-    if [ -f "/var/lib/woodpecker/woodpecker.sqlite" ]; then
-      wp_db="/var/lib/woodpecker/woodpecker.sqlite"
-    elif [ -f "/woodpecker-data/woodpecker.sqlite" ]; then
-      wp_db="/woodpecker-data/woodpecker.sqlite"
-    fi
-    # Collect fallback paths that were also probed.
-    if [ "$wp_db" = "${checked_paths[0]}" ]; then
-      # None of the fallbacks matched — record them.
-      checked_paths+=("/var/lib/woodpecker/woodpecker.sqlite" "/woodpecker-data/woodpecker.sqlite")
-    fi
-  fi
-
-  if [ ! -f "$wp_db" ]; then
-    echo "Error: Woodpecker sqlite DB not found" >&2
-    echo "  Checked: ${checked_paths[*]}" >&2
-    echo "  Ensure Woodpecker is running and the DB volume is mounted." >&2
-    exit 1
-  fi
-
-  # Export WP_DB so wp-seed-secrets.sh picks it up.
-  export WP_DB="$wp_db"
-
-  # Run the seed script. It reads GHCR_TOKEN / FORGE_TOKEN from env
-  # (already populated by lib/env.sh sourcing .env/.env.enc).
-  # Handle root/non-root the same way the init path does: if running
-  # as root, invoke directly; otherwise try sudo.
-  local wp_args=()
-  if [ "$dry_run" -eq 1 ]; then
-    wp_args=(--dry-run)
-  fi
-
-  echo "── Reseeding Woodpecker repo secrets ────────────────────────"
-  echo "FORGE_REPO=${FORGE_REPO}  WP_DB=${wp_db}"
-
-  local rc=0
-  if [ "$(id -u)" -eq 0 ]; then
-    FORGE_REPO="${FORGE_REPO}" WP_DB="${wp_db}" \
-      "$wp_seed_script" "${wp_args[@]}" || rc=$?
-  else
-    if ! command -v sudo >/dev/null 2>&1; then
-      echo "Error: wp-seed-secrets.sh requires root; sudo is not installed" >&2
-      exit 1
-    fi
-    sudo -n --preserve-env=FORGE_REPO,GHCR_TOKEN,FORGE_TOKEN,WP_DB,SECRET_NAMES -- \
-      "$wp_seed_script" "${wp_args[@]}" || rc=$?
-  fi
-
-  if [ "$rc" -ne 0 ]; then
-    echo "Error: wp-seed-secrets.sh exited with code ${rc}" >&2
-    exit "$rc"
-  fi
-
-  echo "── Done ─────────────────────────────────────────────────────"
 }
 
 # ── Main dispatch ────────────────────────────────────────────────────────────
@@ -4078,15 +2904,9 @@ case "${1:-}" in
   run)             shift; disinto_run "$@" ;;
   ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
-  version)         shift; cmd_version "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
-  role)            shift; disinto_role "$@" ;;
-  agent)           echo "Unknown command 'agent'. Did you mean 'role'?" >&2; exit 1 ;;
+  agent)           shift; disinto_agent "$@" ;;
   edge)            shift; disinto_edge "$@" ;;
-  backup)          shift; disinto_backup "$@" ;;
-  validate)        shift; disinto_validate "$@" ;;
- vault)           shift; disinto_vault "$@" ;;
-  wp)              shift; disinto_wp "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac

@@ -43,16 +43,6 @@ client {
     read_only = false
   }
 
-  # operator-managed per-env factory project TOMLs (#794).
-  # Decoupled from the baked image: agents mount this read-only at
-  # /srv/disinto/project-repos/_factory/projects/ (the path the entrypoint
-  # already reads from) so per-env config can change without rebuilding.
-  # `disinto init --backend=nomad` writes the default disinto.toml here.
-  host_volume "factory-projects" {
-    path      = "/srv/disinto/projects"
-    read_only = false
-  }
-
   # caddy config + ACME state.
   host_volume "caddy-data" {
     path      = "/srv/disinto/caddy-data"
@@ -75,54 +65,6 @@ client {
   host_volume "ops-repo" {
     path      = "/srv/disinto/ops-repo"
     read_only = false
-  }
-
-  # supervisor agent runtime data (logs, state files for Opus supervisor).
-  host_volume "agent-data-opus-supervisor" {
-    path      = "/srv/disinto/agent-data-opus-supervisor"
-    read_only = false
-  }
-
-  # Claude OAuth credentials for the Opus supervisor agent.
-  # Mounted at /home/agent/.claude inside the container.
-  host_volume "claude-creds" {
-    path      = "/srv/disinto/claude-creds"
-    read_only = true
-  }
-
-  # factory-state snapshot output (written by snapshot-daemon, read RO by
-  # consumers such as the factory-state skill). Host path is
-  # /srv/disinto/snapshot-state — must match the SNAPSHOT_PATH env in
-  # nomad/jobs/edge.hcl's snapshot task (raw_exec writes to host directly,
-  # bypassing the volume_mount). Container consumers see this path
-  # remapped to /var/lib/disinto/snapshot via volume_mount destination.
-  host_volume "snapshot-state" {
-    path      = "/srv/disinto/snapshot-state"
-    read_only = false
-  }
-
-  # delegate thread state (meta.json + stream.jsonl per task-id). Host
-  # path is /srv/disinto/threads-state; container consumers see this
-  # remapped to /var/lib/disinto/threads via volume_mount destination.
-  host_volume "threads-state" {
-    path      = "/srv/disinto/threads-state"
-    read_only = false
-  }
-
-  # inbox sentinel state (.acked, .shown, .snoozed per item). Host
-  # path is /srv/disinto/inbox-state; RW for snapshot-daemon, RO for
-  # caddy/consumers. Container consumers see this remapped to
-  # /var/lib/disinto/inbox via volume_mount destination.
-  host_volume "inbox-state" {
-    path      = "/srv/disinto/inbox-state"
-    read_only = false
-  }
-}
-
-# raw_exec driver for the snapshot-daemon (issue #755).
-plugin "raw_exec" {
-  config {
-    enabled = true
   }
 }
 

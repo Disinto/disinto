@@ -11,10 +11,8 @@ set -euo pipefail
 # (default: all seven). Uses while-true loop with staggered intervals:
 #   - review-poll: every 5 minutes (offset by 0s)
 #   - dev-poll: every 5 minutes (offset by 2 minutes)
-#   - gardener: every iteration (per-iteration step driver, #872 — single
-#     task per cycle, llama-friendly; previously every GARDENER_INTERVAL
-#     seconds in monolithic batch mode, now obsolete)
-#   - architect: every ARCHITECT_INTERVAL seconds (default: 900 = 15 minutes)
+#   - gardener: every GARDENER_INTERVAL seconds (default: 21600 = 6 hours)
+#   - architect: every ARCHITECT_INTERVAL seconds (default: 21600 = 6 hours)
 #   - planner: every PLANNER_INTERVAL seconds (default: 43200 = 12 hours)
 #   - predictor: every 24 hours (288 iterations * 5 min)
 #   - supervisor: every SUPERVISOR_INTERVAL seconds (default: 1200 = 20 min)
@@ -58,17 +56,8 @@ LOGFILE="/home/agent/data/agent-entrypoint.log"
 
 # Create all expected log subdirectories and set ownership as root before dropping to agent.
 # This handles both fresh volumes and stale root-owned dirs from prior container runs.
-# Tighten perms (#910): formula sub-session JSONL transcripts may contain
-# tool_result stdout that echoes loaded env (FORGE_*_TOKEN, etc.). umask
-# 077 ensures both subdirs and any log files we create after this point
-# are agent-only readable; the find sweeps fix stale 644 from previous
-# container runs (umask 022 default).
-umask 077
 mkdir -p /home/agent/data/logs/{dev,action,review,supervisor,vault,site,metrics,gardener,planner,predictor,architect,dispatcher}
 chown -R agent:agent /home/agent/data
-chmod 700 /home/agent/data/logs 2>/dev/null || true
-find /home/agent/data/logs -mindepth 1 -type d -exec chmod 700 {} + 2>/dev/null || true
-find /home/agent/data/logs -type f -exec chmod 600 {} + 2>/dev/null || true
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
@@ -111,7 +100,9 @@ configure_git_identity() {
   # Resolve BOT_USER from FORGE_TOKEN if not already set (configure_git_creds
   # exports BOT_USER on success, so this is a fallback for edge cases only).
   if [ -z "${BOT_USER:-}" ] && [ -n "${FORGE_TOKEN:-}" ]; then
-    BOT_USER=$(forge_whoami)
+    BOT_USER=$(curl -sf --max-time 10 \
+      -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_URL:-http://localhost:3000}/api/v1/user" 2>/dev/null | jq -r '.login // empty') || true
   fi
 
   if [ -z "${BOT_USER:-}" ]; then
@@ -135,14 +126,11 @@ configure_tea_login() {
     case "$FORGE_URL" in
       *codeberg.org*) local_tea_login="codeberg" ;;
     esac
-    # NOTE: --no-version-check was dropped (#733) — the bundled tea version
-    # rejects the flag and exits non-zero, which under set -euo pipefail in
-    # callers would crash. The version-check warning is cosmetic; tea login
-    # add succeeds without it.
     gosu agent bash -c "tea login add \
       --name '${local_tea_login}' \
       --url '${FORGE_URL}' \
-      --token '${FORGE_TOKEN}' 2>/dev/null || true"
+      --token '${FORGE_TOKEN}' \
+      --no-version-check 2>/dev/null || true"
     log "tea login configured: ${local_tea_login} → ${FORGE_URL}"
   else
     log "tea login: skipped (tea not found or FORGE_TOKEN/FORGE_URL not set)"
@@ -162,47 +150,26 @@ export HOME=/home/agent
 # shellcheck source=lib/env.sh
 source "${DISINTO_BAKED}/lib/env.sh"
 
-# Claude CLI auth gate (#733). Roles like the edge dispatcher reuse this image
-# but never invoke claude — they only poll the ops repo. The auth check would
-# spuriously trip them. Set AGENT_REQUIRES_CLAUDE=0 in those task blocks to
-# skip the gate; default (unset / non-zero) preserves the legacy behavior
-# expected by review/architect/dev/etc.
-if [ "${AGENT_REQUIRES_CLAUDE:-1}" != "0" ]; then
-  # Verify Claude CLI is available (expected via volume mount from host).
-  if ! command -v claude &>/dev/null; then
-    log "FATAL: claude CLI not found in PATH."
-    log "Mount the host binary into the container, e.g.:"
-    log "  volumes:"
-    log "    - /usr/local/bin/claude:/usr/local/bin/claude:ro"
-    exit 1
-  fi
-  log "Claude CLI: $(claude --version 2>&1 || true)"
+# Verify Claude CLI is available (expected via volume mount from host).
+if ! command -v claude &>/dev/null; then
+  log "FATAL: claude CLI not found in PATH."
+  log "Mount the host binary into the container, e.g.:"
+  log "  volumes:"
+  log "    - /usr/local/bin/claude:/usr/local/bin/claude:ro"
+  exit 1
+fi
+log "Claude CLI: $(claude --version 2>&1 || true)"
 
-  # Ensure CLAUDE_CONFIG_DIR exists before Claude runs (issue #579).
-  # Setting CLAUDE_CONFIG_DIR to a missing path causes Claude to silently
-  # hang at turn zero — 0 bytes stdout, no llama calls, no error, until
-  # CLAUDE_TIMEOUT fires. bin/disinto's setup_claude_config_dir() creates
-  # this on the host side during `disinto init`, but on Nomad the agents
-  # alloc runs the container cold without that setup ever executing.
-  if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -d "$CLAUDE_CONFIG_DIR" ]; then
-    log "Creating CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR} (missing)"
-    install -d -m 0700 -o agent -g agent "$CLAUDE_CONFIG_DIR" \
-      || log "WARNING: failed to create $CLAUDE_CONFIG_DIR — Claude may hang"
-  fi
-
-  # ANTHROPIC_API_KEY fallback: when set, Claude uses the API key directly
-  # and OAuth token refresh is not needed (no rotation race).  Log which
-  # auth method is active so operators can debug 401s.
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    log "Auth: ANTHROPIC_API_KEY is set — using API key (no OAuth rotation)"
-  elif [ -f "${CLAUDE_CONFIG_DIR:-/home/agent/.claude}/.credentials.json" ]; then
-    log "Auth: OAuth credentials mounted from host (${CLAUDE_CONFIG_DIR:-~/.claude})"
-  else
-    log "WARNING: No ANTHROPIC_API_KEY and no OAuth credentials found."
-    log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
-  fi
+# ANTHROPIC_API_KEY fallback: when set, Claude uses the API key directly
+# and OAuth token refresh is not needed (no rotation race).  Log which
+# auth method is active so operators can debug 401s.
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  log "Auth: ANTHROPIC_API_KEY is set — using API key (no OAuth rotation)"
+elif [ -f "${CLAUDE_CONFIG_DIR:-/home/agent/.claude}/.credentials.json" ]; then
+  log "Auth: OAuth credentials mounted from host (${CLAUDE_CONFIG_DIR:-~/.claude})"
 else
-  log "Claude auth gate: skipped (AGENT_REQUIRES_CLAUDE=0)"
+  log "WARNING: No ANTHROPIC_API_KEY and no OAuth credentials found."
+  log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
 fi
 
 # Bootstrap ops repos for each project TOML (#586).
@@ -258,49 +225,32 @@ print(cfg.get('primary_branch', 'main'))
       if gosu agent git clone --quiet "$remote_url" "$ops_root" 2>/dev/null; then
         log "Ops bootstrap: ${ops_slug} cloned successfully"
       else
-        # Remote may not exist yet (first run before init); create empty repo.
-        # Use idempotent remote setup so a partially-initialized volume from
-        # a prior failed run doesn't crash with "remote origin already exists"
-        # (#733).
+        # Remote may not exist yet (first run before init); create empty repo
         log "Ops bootstrap: clone failed for ${ops_slug} — initializing empty repo"
-        # Pass TOML-derived values via environment, not via outer-shell string
-        # expansion into `bash -c`, so shell metacharacters in TOML values
-        # cannot escape into the command (#738).
-        gosu agent env \
-          OPS_ROOT="$ops_root" \
-          PRIMARY_BRANCH="$primary_branch" \
-          REMOTE_URL="$remote_url" \
-          bash -s <<'EOF'
-          mkdir -p "$OPS_ROOT" && \
-          git -C "$OPS_ROOT" init --initial-branch="$PRIMARY_BRANCH" -q && \
-          ( git -C "$OPS_ROOT" remote | grep -qx origin \
-              || git -C "$OPS_ROOT" remote add origin "$REMOTE_URL" ) && \
-          git -C "$OPS_ROOT" remote set-url origin "$REMOTE_URL"
-EOF
+        gosu agent bash -c "
+          mkdir -p '${ops_root}' && \
+          git -C '${ops_root}' init --initial-branch='${primary_branch}' -q && \
+          git -C '${ops_root}' remote add origin '${remote_url}'
+        "
       fi
     else
-      # Repo exists — ensure remote is configured and pull latest.
-      # Use `git remote` listing (not get-url) for the existence check —
-      # get-url can return empty in edge cases (legacy config, permissions
-      # quirks under gosu) while origin is actually defined, which previously
-      # caused a non-idempotent `git remote add` crash on every restart (#733).
-      if ! gosu agent git -C "$ops_root" remote | grep -qx origin; then
+      # Repo exists — ensure remote is configured and pull latest
+      local current_remote
+      current_remote=$(git -C "$ops_root" remote get-url origin 2>/dev/null || true)
+      if [ -z "$current_remote" ]; then
         log "Ops bootstrap: adding missing remote to ${ops_root}"
         gosu agent git -C "$ops_root" remote add origin "$remote_url"
+      elif [ "$current_remote" != "$remote_url" ]; then
+        log "Ops bootstrap: fixing remote URL in ${ops_root}"
+        gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
       fi
-      # Always reconcile the URL — cheap and idempotent.
-      gosu agent git -C "$ops_root" remote set-url origin "$remote_url"
       # Pull latest from forgejo to pick up any host-side migrations
       log "Ops bootstrap: pulling latest for ${project_name}-ops"
-      # See #738 — pass values via env to avoid outer-shell expansion into bash -c.
-      gosu agent env \
-        OPS_ROOT="$ops_root" \
-        PRIMARY_BRANCH="$primary_branch" \
-        bash -s <<'EOF' || log "Ops bootstrap: pull failed for ${ops_slug} (remote may not exist yet)"
-        cd "$OPS_ROOT" && \
-        git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
-        git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
-EOF
+      gosu agent bash -c "
+        cd '${ops_root}' && \
+        git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+        git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+      " || log "Ops bootstrap: pull failed for ${ops_slug} (remote may not exist yet)"
     fi
   done
 }
@@ -328,15 +278,11 @@ bootstrap_factory_repo() {
     fi
   else
     log "Factory bootstrap: pulling latest ${repo}"
-    # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
-    gosu agent env \
-      DISINTO_LIVE="$DISINTO_LIVE" \
-      PRIMARY_BRANCH="$primary_branch" \
-      bash -s <<'EOF' || log "Factory bootstrap: pull failed — using existing checkout"
-      cd "$DISINTO_LIVE" && \
-      git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
-      git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
-EOF
+    gosu agent bash -c "
+      cd '${DISINTO_LIVE}' && \
+      git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+      git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+    " || log "Factory bootstrap: pull failed — using existing checkout"
   fi
 
   # Copy project TOMLs from baked dir — they are gitignored AND docker-ignored,
@@ -346,24 +292,7 @@ EOF
     mkdir -p "${DISINTO_LIVE}/projects"
     cp "${DISINTO_BAKED}"/projects/*.toml "${DISINTO_LIVE}/projects/"
     chown -R agent:agent "${DISINTO_LIVE}/projects"
-    log "Factory bootstrap: copied project TOMLs from baked copy to live checkout"
-  fi
-
-  # Also copy from host-volume path (/srv/disinto/project-repos/_factory/)
-  # where disinto init --backend=nomad seeds default TOMLs (#574).
-  local host_projects="/srv/disinto/project-repos/_factory/projects"
-  if [ -d "$host_projects" ]; then
-    mkdir -p "${DISINTO_LIVE}/projects"
-    local copied=false
-    for toml in "${host_projects}"/*.toml; do
-      [ -f "$toml" ] || continue
-      cp "$toml" "${DISINTO_LIVE}/projects/"
-      copied=true
-    done
-    if [ "$copied" = true ]; then
-      chown -R agent:agent "${DISINTO_LIVE}/projects"
-      log "Factory bootstrap: copied project TOMLs from host volume to live checkout"
-    fi
+    log "Factory bootstrap: copied project TOMLs to live checkout"
   fi
 
   # Verify the live checkout has the expected structure
@@ -406,15 +335,11 @@ ensure_project_clone() {
 pull_factory_repo() {
   [ "$DISINTO_DIR" = "$DISINTO_LIVE" ] || return 0
   local primary_branch="${PRIMARY_BRANCH:-main}"
-  # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
-  gosu agent env \
-    DISINTO_LIVE="$DISINTO_LIVE" \
-    PRIMARY_BRANCH="$primary_branch" \
-    bash -s <<'EOF' || log "Factory pull failed — continuing with current checkout"
-    cd "$DISINTO_LIVE" && \
-    git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
-    git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
-EOF
+  gosu agent bash -c "
+    cd '${DISINTO_LIVE}' && \
+    git fetch origin '${primary_branch}' --quiet 2>/dev/null && \
+    git reset --hard 'origin/${primary_branch}' --quiet 2>/dev/null
+  " || log "Factory pull failed — continuing with current checkout"
 }
 
 # Configure git and tea once at startup (as root, then drop to agent)
@@ -449,28 +374,6 @@ bootstrap_ops_repos
 # Bootstrap factory repo — switch DISINTO_DIR to live checkout (#593)
 bootstrap_factory_repo
 
-# Copy project TOMLs from the factory-projects host_volume mount into
-# DISINTO_DIR/projects/ so validate_projects_dir succeeds even when
-# FACTORY_REPO is unset and bootstrap_factory_repo returned early without
-# switching DISINTO_DIR to the live checkout (#794).
-#
-# Operator-managed per-env config lives at /srv/disinto/projects/ on the host
-# and is mounted RO into the container at the path below via the
-# `factory-projects` Nomad host_volume. This mirrors the copy already done in
-# bootstrap_factory_repo's success path, but runs unconditionally so the
-# baked-image fallback path is no longer fatal.
-seed_projects_from_host_volume() {
-  local host_projects="/srv/disinto/project-repos/_factory/projects"
-  [ -d "$host_projects" ] || return 0
-  if ! compgen -G "${host_projects}/*.toml" >/dev/null 2>&1; then
-    return 0
-  fi
-  mkdir -p "${DISINTO_DIR}/projects"
-  cp "${host_projects}"/*.toml "${DISINTO_DIR}/projects/" 2>/dev/null || true
-  chown -R agent:agent "${DISINTO_DIR}/projects" 2>/dev/null || true
-  log "Seeded ${DISINTO_DIR}/projects from host volume ${host_projects} (#794)"
-}
-
 # Validate that projects directory has at least one real .toml file (not .example)
 # This prevents the silent-zombie mode where the polling loop matches zero files
 # and does nothing forever.
@@ -480,16 +383,10 @@ validate_projects_dir() {
   # can log a diagnostic (#877).  Use the conditional form already adopted at
   # lines above (see bootstrap_factory_repo, PROJECT_NAME parsing).
   if ! compgen -G "${DISINTO_DIR}/projects/*.toml" >/dev/null 2>&1; then
-    # Graceful degrade (#794): if the factory-projects host_volume is mounted
-    # and contains TOMLs, seed_projects_from_host_volume should already have
-    # populated DISINTO_DIR. Reaching here means neither path produced any
-    # real config — that is genuinely fatal.
     log "FATAL: No real .toml files found in ${DISINTO_DIR}/projects/"
     log "Expected at least one project config file (e.g., disinto.toml)"
     log "The directory only contains *.toml.example template files."
-    log "Populate /srv/disinto/projects/ on the host (mounted via the"
-    log "factory-projects host_volume) or set FACTORY_REPO to clone a"
-    log "checkout with project TOMLs."
+    log "Mount the host ./projects volume or copy real .toml files into the container."
     exit 1
   fi
   local toml_count
@@ -499,10 +396,6 @@ validate_projects_dir() {
 
 # Initialize state directory for check_active guards
 init_state_dir
-
-# Seed projects from factory-projects host_volume — runs after both bootstrap
-# paths so it covers the FACTORY_REPO-unset / clone-failed cases too (#794).
-seed_projects_from_host_volume
 
 # Validate projects directory before entering polling loop
 validate_projects_dir
@@ -515,18 +408,16 @@ log "Agent roles configured: ${AGENT_ROLES}"
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
-# Architect / planner / supervisor intervals.
-# GARDENER_INTERVAL was dropped in #872 — gardener now runs every iteration
-# via gardener/gardener-step.sh (single task per cycle, paced by POLL_INTERVAL).
-ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-900}"
+# Gardener and architect intervals (default 6 hours = 21600 seconds)
+GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
+ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-21600}"
 PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
 SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
 
 log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
-log "Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s, Supervisor interval: ${SUPERVISOR_INTERVAL}s"
+log "Gardener interval: ${GARDENER_INTERVAL}s, Architect interval: ${ARCHITECT_INTERVAL}s, Planner interval: ${PLANNER_INTERVAL}s, Supervisor interval: ${SUPERVISOR_INTERVAL}s"
 
-# Main polling loop. Iteration counter paces architect/planner/predictor/
-# supervisor (modulo their intervals); gardener and review/dev run every tick.
+# Main polling loop using iteration counter for gardener scheduling
 iteration=0
 while true; do
   iteration=$((iteration + 1))
@@ -593,21 +484,20 @@ print(cfg.get('primary_branch', 'main'))
       wait "${FAST_PIDS[@]}"
     fi
 
-    # Gardener (per-iteration step driver, #872 — single task per cycle).
-    # Runs alongside dev-poll/review-poll on every loop tick. The script's
-    # own flock guards against overlap; the pgrep check is a cheap belt-and-
-    # braces skip to avoid the gosu/source overhead when a step is already
-    # in flight.
+    # --- Slow agents: run in background with pgrep guard ---
+
+    # Gardener (interval configurable via GARDENER_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
-      if ! pgrep -f "gardener-step.sh" >/dev/null; then
-        log "Running gardener-step (iteration ${iteration}) for ${toml}"
-        gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-step.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener/step.log" 2>&1 &
-      else
-        log "Skipping gardener-step — previous step still in flight"
+      gardener_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((gardener_iteration % GARDENER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
+        if ! pgrep -f "gardener-run.sh" >/dev/null; then
+          log "Running gardener (iteration ${iteration}, ${GARDENER_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener.log" 2>&1 &
+        else
+          log "Skipping gardener — already running"
+        fi
       fi
     fi
-
-    # --- Slow agents: run in background with pgrep guard ---
 
     # Architect (interval configurable via ARCHITECT_INTERVAL env var)
     if [[ ",${AGENT_ROLES}," == *",architect,"* ]]; then
@@ -655,7 +545,7 @@ print(cfg.get('primary_branch', 'main'))
       if [ $((supervisor_iteration % SUPERVISOR_INTERVAL)) -eq 0 ] && [ "$now" -ge "$supervisor_iteration" ]; then
         if ! pgrep -f "supervisor-run.sh" >/dev/null; then
           log "Running supervisor (iteration ${iteration}, ${SUPERVISOR_INTERVAL}s interval) for ${toml}"
-          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor/supervisor.log" 2>&1 &
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor.log" 2>&1 &
         else
           log "Skipping supervisor — already running"
         fi

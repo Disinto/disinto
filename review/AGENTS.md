@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 8fc3ba5b59cd6cb15bd01ca0658cfea2bcb12068 -->
 # Review Agent
 
 **Role**: AI-powered PR review — post structured findings and formal
@@ -23,16 +23,7 @@ Calls `resolve_forge_remote()` at startup to determine the correct git remote na
 hardcoded 'origin'). Before starting the session, runs `lib/build-graph.py --changed-files
 <PR files>` and appends the JSON structural analysis (affected objectives, orphaned
 prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review
-proceeds without it. **Acceptance test checking**: if the issue has an `## Acceptance test`
-section, the reviewer verifies commands reference correct file paths/schema, expected output
-matches actual behavior, and flags `needs-deploy-verification` for live-box-only commands.
-**Stale-base regression check (#896)**: before assembling the prompt, calls `stale_base_check`
-from `lib/stale-base-check.sh` to detect PRs whose merged result would silently revert upstream
-changes that landed on `$PRIMARY_BRANCH` since the PR's merge-base. When triggered, the
-orchestrator injects a `## Stale-base regression check (BLOCKER)` section listing the affected
-files; the formula instructs Claude to set verdict=REQUEST_CHANGES unless the reverts are
-explicitly intentional. A CI guard (`.woodpecker/check-stale-rebase.sh`) runs the same check
-as belt-and-braces.
+proceeds without it.
 
 **Environment variables consumed**:
 - `FORGE_TOKEN` — Dev-agent token (must not be the same account as FORGE_REVIEW_TOKEN)

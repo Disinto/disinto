@@ -4,7 +4,7 @@
 # supervisor-run.sh runs claude -p via agent-sdk.sh and injects
 # this formula with pre-collected metrics as context.
 #
-# Steps: preflight → health-assessment → decide-actions → report → incidents → journal
+# Steps: preflight → health-assessment → decide-actions → report → journal
 #
 # Key differences from planner/gardener:
 #   - Runs every 20min — lightweight health check
@@ -102,7 +102,7 @@ title = "Fix what you can, file vault items for what you cannot"
 description = """
 For each finding from the health assessment, decide and execute an action.
 
-### Auto-fixable (executed procedurally by recipe action scripts)
+### Auto-fixable (execute these directly)
 
 **P2 Woodpecker agent unhealthy:**
 The supervisor-run.sh script automatically handles WP agent recovery:
@@ -114,20 +114,46 @@ The supervisor-run.sh script automatically handles WP agent recovery:
 - Avoids duplicate restarts via 5-minute cooldown in history file
 
 **P0 Memory crisis:**
-Action script: `supervisor/actions/memory-crisis.sh` — kills stale claude processes, drops caches.
+  # Kill stale one-shot claude processes (>3h old)
+  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
+  # Drop filesystem caches
+  sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
 
 **P1 Disk pressure:**
-Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log truncation.
+  # First pass: dangling only (cheap, safe)
+  sudo docker system prune -f >/dev/null 2>&1 || true
+  # If still > 80%, escalate to all unused images (more aggressive but necessary)
+  _pct=$(df -h / | awk 'NR==2{print $5}' | tr -d '%')
+  if [ "${_pct:-0}" -gt 80 ]; then
+    sudo docker system prune -a -f >/dev/null 2>&1 || true
+  fi
+  # Truncate logs > 10MB
+  for f in "$FACTORY_ROOT"/{dev,review,supervisor,gardener,planner,predictor}/*.log; do
+    [ -f "$f" ] && [ "$(du -k "$f" | cut -f1)" -gt 10240 ] && truncate -s 0 "$f"
+  done
+
+**P2 Dead lock files:**
+  rm -f /path/to/stale.lock
+
+**P2 Stale rebase:**
+  cd "$PROJECT_REPO_ROOT"
+  git rebase --abort 2>/dev/null
+  git checkout "$PRIMARY_BRANCH" 2>/dev/null
+
+**P2 Wrong branch:**
+  cd "$PROJECT_REPO_ROOT"
+  git checkout "$PRIMARY_BRANCH" 2>/dev/null
+
+**P4 Stale PHASE:escalate files (closed issues):**
+  Already handled by preflight.sh auto-cleanup. Check "Stale Phase Cleanup"
+  in the metrics for results. Log any cleanups in the journal.
 
 **P4 Stale worktrees:**
-Action script: `supervisor/actions/cleanup-worktrees.sh` — git worktree prune.
+  git -C "$PROJECT_REPO_ROOT" worktree remove --force /tmp/stale-worktree 2>/dev/null
+  git -C "$PROJECT_REPO_ROOT" worktree prune 2>/dev/null
 
-**P4 Dead lock files:**
-Action script: `supervisor/actions/cleanup-locks.sh` — removes lock files for dead PIDs.
-
-**P4 Stale PHASE:escalate files:**
-Action script: `supervisor/actions/cleanup-phase-files.sh` — removes PHASE:escalate files
-for closed issues (24h grace period).
+**P4 Stale claude processes:**
+  pgrep -f "claude -p" --older 10800 2>/dev/null | xargs kill 2>/dev/null || true
 
 **P3 Stale PRs (CI done >20min, no push since):**
   Do NOT read dev-poll.sh, push branches, attempt merges, or investigate pipeline code.
@@ -207,39 +233,6 @@ in the previous run (check journal for prior messages).
 needs = ["decide-actions"]
 
 [[steps]]
-id    = "incidents"
-title = "Write per-incident markdown files for P0-P2 findings"
-description = """
-For each P0-P2 finding from the recipe evaluation (see "Recipe evaluation" section above),
-write a per-incident markdown file and ensure it gets committed and pushed.
-
-### When recipes fired (P0-P2)
-
-For each fired recipe in the recipe evaluation output, run:
-
-  bash supervisor/write-incident.sh '<json-record>' '<preflight-section-excerpt>'
-
-Where <json-record> is the JSON object for that recipe (name, severity, evidence,
-action, action_script) and <preflight-section-excerpt> is the relevant preflight
-section text (e.g. the System Resources section for disk-pressure).
-
-The script writes the file to ${OPS_REPO_ROOT}/incidents/<iso-time>-<slug>.md
-and returns the file path.
-
-### When no recipes fired
-
-Skip this step entirely — no incident files to write.
-
-### After writing incident files
-
-The supervisor-run.sh wrapper will automatically commit and push all incident
-files to the ops repo. Do NOT run git operations yourself.
-
-Keep the action taken for each incident brief and factual.
-"""
-needs = ["report"]
-
-[[steps]]
 id    = "journal"
 title = "Write health journal entry"
 description = """
@@ -304,4 +297,4 @@ review-agent.md, git.md.
 
 After writing the journal, the agent session completes automatically.
 """
-needs = ["incidents"]
+needs = ["report"]

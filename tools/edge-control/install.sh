@@ -7,12 +7,10 @@
 #
 # What it does:
 #   1. Creates users: disinto-register, disinto-tunnel
-#   2. Creates /var/lib/disinto/ with registry.json, registry.lock, allowlist.json
-#   3. On upgrade: auto-populates allowlist.json from existing registry entries
-#   4. On fresh install: seeds empty allowlist with warning (registration gated)
-#   5. Installs Caddy with Gandi DNS plugin
-#   6. Sets up SSH authorized_keys for both users
-#   7. Installs control plane scripts to /opt/disinto-edge/
+#   2. Creates /var/lib/disinto/ with registry.json, registry.lock
+#   3. Installs Caddy with Gandi DNS plugin
+#   4. Sets up SSH authorized_keys for both users
+#   5. Installs control plane scripts to /opt/disinto-edge/
 #
 # Requirements:
 #   - Fresh Debian 12 (Bookworm)
@@ -46,7 +44,6 @@ REGISTRY_DIR="/var/lib/disinto"
 CADDY_VERSION="2.8.4"
 DOMAIN_SUFFIX="disinto.ai"
 EXTRA_CADDYFILE="/etc/caddy/extra.d/*.caddy"
-ADMIN_TAG="admin"
 
 usage() {
   cat <<EOF
@@ -60,7 +57,6 @@ Options:
   --domain-suffix <suffix>    Domain suffix for tunnels (default: disinto.ai)
   --extra-caddyfile <path>    Import path for operator-owned Caddy config
                               (default: /etc/caddy/extra.d/*.caddy)
-  --admin-tag <name>          Caller tag for the initial admin key (default: admin)
   -h, --help                  Show this help
 
 Example:
@@ -93,10 +89,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --extra-caddyfile)
       EXTRA_CADDYFILE="$2"
-      shift 2
-      ;;
-    --admin-tag)
-      ADMIN_TAG="$2"
       shift 2
       ;;
     -h|--help)
@@ -160,80 +152,8 @@ LOCK_FILE="${REGISTRY_DIR}/registry.lock"
 touch "$LOCK_FILE"
 chmod 0644 "$LOCK_FILE"
 
-# Initialize allowlist.json
-ALLOWLIST_FILE="${REGISTRY_DIR}/allowlist.json"
-_ALLOWLIST_MODE=""
-if [ ! -f "$ALLOWLIST_FILE" ]; then
-  # Check whether the registry already has projects that need allowlisting
-  _EXISTING_PROJECTS=""
-  if [ -f "$REGISTRY_FILE" ]; then
-    _EXISTING_PROJECTS=$(jq -r '.projects // {} | keys[]' "$REGISTRY_FILE" 2>/dev/null) || _EXISTING_PROJECTS=""
-  fi
-
-  if [ -n "$_EXISTING_PROJECTS" ]; then
-    # Upgrade path: auto-populate allowlist with existing projects (unbound).
-    # This preserves current behavior — existing tunnels keep working.
-    # Operator can tighten pubkey bindings later.
-    _ALLOWED='{}'
-    _PROJECT_COUNT=0
-    while IFS= read -r _proj; do
-      _ALLOWED=$(echo "$_ALLOWED" | jq --arg p "$_proj" '. + {($p): {"pubkey_fingerprint": ""}}')
-      _PROJECT_COUNT=$((_PROJECT_COUNT + 1))
-    done <<< "$_EXISTING_PROJECTS"
-    echo "{\"version\":1,\"allowed\":${_ALLOWED}}" | jq '.' > "$ALLOWLIST_FILE"
-    chmod 0644 "$ALLOWLIST_FILE"
-    chown root:root "$ALLOWLIST_FILE"
-    _ALLOWLIST_MODE="upgraded:${_PROJECT_COUNT}"
-    log_info "Initialized allowlist with ${_PROJECT_COUNT} existing project(s): ${ALLOWLIST_FILE}"
-  else
-    # Fresh install: seed empty allowlist and warn the operator.
-    echo '{"version":1,"allowed":{}}' > "$ALLOWLIST_FILE"
-    chmod 0644 "$ALLOWLIST_FILE"
-    chown root:root "$ALLOWLIST_FILE"
-    _ALLOWLIST_MODE="fresh-empty"
-    log_warn "Allowlist seeded empty — no project can register until you add entries to ${ALLOWLIST_FILE}."
-  fi
-  log_info "Initialized allowlist: ${ALLOWLIST_FILE}"
-fi
-
 # =============================================================================
-# Step 3: Create audit log directory and logrotate config
-# =============================================================================
-log_info "Setting up audit log..."
-
-LOG_DIR="/var/log/disinto"
-LOG_FILE="${LOG_DIR}/edge-register.log"
-
-mkdir -p "$LOG_DIR"
-chown root:disinto-register "$LOG_DIR"
-chmod 0750 "$LOG_DIR"
-
-# Touch the log file so it exists from day one
-touch "$LOG_FILE"
-chmod 0660 "$LOG_FILE"
-chown root:disinto-register "$LOG_FILE"
-
-# Install logrotate config (daily rotation, 30 days retention)
-LOGROTATE_CONF="/etc/logrotate.d/disinto-edge"
-cat > "$LOGROTATE_CONF" <<EOF
-${LOG_FILE} {
-    daily
-    rotate 30
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0660 root disinto-register
-    copytruncate
-}
-EOF
-chmod 0644 "$LOGROTATE_CONF"
-
-log_info "Audit log: ${LOG_FILE}"
-log_info "Logrotate config: ${LOGROTATE_CONF}"
-
-# =============================================================================
-# Step 4: Install Caddy with Gandi DNS plugin
+# Step 3: Install Caddy with Gandi DNS plugin
 # =============================================================================
 log_info "Installing Caddy ${CADDY_VERSION} with Gandi DNS plugin..."
 
@@ -364,7 +284,7 @@ systemctl restart caddy 2>/dev/null || {
 log_info "Caddy configured with admin API on 127.0.0.1:2019"
 
 # =============================================================================
-# Step 5: Install control plane scripts
+# Step 4: Install control plane scripts
 # =============================================================================
 log_info "Installing control plane scripts to ${INSTALL_DIR}..."
 
@@ -386,7 +306,7 @@ chmod 750 "${INSTALL_DIR}/lib"
 log_info "Control plane scripts installed"
 
 # =============================================================================
-# Step 6: Set up SSH authorized_keys
+# Step 5: Set up SSH authorized_keys
 # =============================================================================
 log_info "Setting up SSH authorized_keys..."
 
@@ -428,7 +348,7 @@ source "${INSTALL_DIR}/lib/authorized_keys.sh"
 rebuild_authorized_keys
 
 # =============================================================================
-# Step 7: Configure forced command for disinto-register
+# Step 6: Configure forced command for disinto-register
 # =============================================================================
 log_info "Configuring forced command for disinto-register..."
 
@@ -439,8 +359,8 @@ if [ -n "$ADMIN_PUBKEY" ]; then
   KEY_TYPE="${ADMIN_PUBKEY%% *}"
   KEY_DATA="${ADMIN_PUBKEY#* }"
 
-  # Create forced command entry with caller attribution tag
-  FORCED_CMD="restrict,command=\"${INSTALL_DIR}/register.sh --as ${ADMIN_TAG}\" ${KEY_TYPE} ${KEY_DATA}"
+  # Create forced command entry
+  FORCED_CMD="restrict,command=\"${INSTALL_DIR}/register.sh\" ${KEY_TYPE} ${KEY_DATA}"
 
   # Replace the pubkey line
   echo "$FORCED_CMD" > /home/disinto-register/.ssh/authorized_keys
@@ -451,7 +371,7 @@ if [ -n "$ADMIN_PUBKEY" ]; then
 fi
 
 # =============================================================================
-# Step 8: Final configuration
+# Step 7: Final configuration
 # =============================================================================
 log_info "Configuring domain suffix: ${DOMAIN_SUFFIX}"
 
@@ -469,30 +389,12 @@ echo ""
 echo "Configuration:"
 echo "  Install directory: ${INSTALL_DIR}"
 echo "  Registry: ${REGISTRY_FILE}"
-echo "  Allowlist: ${ALLOWLIST_FILE}"
 echo "  Caddy admin API: http://127.0.0.1:2019"
 echo "  Operator site blocks: ${EXTRA_DIR}/ (import ${EXTRA_CADDYFILE})"
 echo ""
 echo "Users:"
 echo "  disinto-register - SSH forced command (runs ${INSTALL_DIR}/register.sh)"
 echo "  disinto-tunnel   - Reverse tunnel receiver (no shell)"
-echo ""
-echo "Allowlist:"
-case "${_ALLOWLIST_MODE:-}" in
-  upgraded:*)
-    echo "  Allowlist was auto-populated from existing registry entries."
-    echo "  Existing projects can register without further action."
-    ;;
-  fresh-empty)
-    echo "  Allowlist is empty — registration is GATED until you add entries."
-    echo "  Edit ${ALLOWLIST_FILE} as root:"
-    echo '    {"version":1,"allowed":{"myproject":{"pubkey_fingerprint":""}}}'
-    echo "  See ${INSTALL_DIR}/../README.md for the full workflow."
-    ;;
-  *)
-    echo "  Allowlist already existed (no changes made)."
-    ;;
-esac
 echo ""
 echo "Next steps:"
 echo "  1. Verify Caddy is running: systemctl status caddy"

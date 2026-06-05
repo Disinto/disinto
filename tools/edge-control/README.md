@@ -21,7 +21,6 @@ This control plane runs on the public edge host (Debian DO box) and provides:
 │  │  disinto-register│    │  /var/lib/disinto/                            │  │
 │  │  (authorized_keys│    │  ├── registry.json (source of truth)          │  │
 │  │   forced cmd)    │    │  ├── registry.lock (flock)                    │  │
-│  │                  │    │  └── allowlist.json (admin-approved names)    │  │
 │  │                  │    │  └── authorized_keys (rebuildable)            │  │
 │  └────────┬─────────┘    └───────────────────────────────────────────────┘  │
 │           │                                                                   │
@@ -80,7 +79,7 @@ curl -sL https://raw.githubusercontent.com/disinto-admin/disinto/fix/issue-621/t
    - `disinto-tunnel` — no password, no shell, only receives reverse tunnels
 
 2. **Creates data directory**:
-   - `/var/lib/disinto/` with `registry.json`, `registry.lock`, `allowlist.json`
+   - `/var/lib/disinto/` with `registry.json`, `registry.lock`
    - Permissions: `root:disinto-register 0750`
 
 3. **Installs Caddy**:
@@ -181,48 +180,6 @@ Shows all registered tunnels with their ports and FQDNs.
 }
 ```
 
-## Allowlist
-
-The allowlist prevents project name squatting by requiring admin approval before a name can be registered. It is **opt-in**: when `allowlist.json` does not exist, registration is unrestricted. When the file exists, only project names listed in the `allowed` map can be registered.
-
-### Install-time behavior
-
-- **Fresh install**: `install.sh` seeds an empty allowlist (`{"version":1,"allowed":{}}`) and prints a warning that registration is now gated until entries are added.
-- **Upgrade onto an existing box**: if `registry.json` has registered projects but `allowlist.json` does not exist, `install.sh` auto-populates the allowlist with each existing project name (unbound — `pubkey_fingerprint: ""`). This preserves current behavior so existing tunnels keep working. The operator can tighten pubkey bindings later.
-
-### Format
-
-`/var/lib/disinto/allowlist.json` (root-owned, `0644`):
-
-```json
-{
-  "version": 1,
-  "allowed": {
-    "myproject": {
-      "pubkey_fingerprint": "SHA256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    },
-    "open-project": {
-      "pubkey_fingerprint": ""
-    }
-  }
-}
-```
-
-- **With `pubkey_fingerprint`** (non-empty): only the SSH key with that exact SHA256 fingerprint can register this project name.
-- **With empty `pubkey_fingerprint`**: any caller may register this project name (name reservation without key binding).
-- **Not listed in `allowed`**: registration is refused with `{"error":"name not approved"}`.
-
-### Workflow
-
-1. Admin edits `/var/lib/disinto/allowlist.json` (via ops repo PR, or direct `ssh root@edge`).
-2. File is `root:root 0644` — `disinto-register` only reads it; `register.sh` never mutates it.
-3. Callers run `register` as usual. The allowlist is checked transparently.
-
-### Security
-
-- The allowlist is a **first-come-first-serve defense**: once a name is approved for a key, no one else can claim it.
-- It does **not** replace per-operation ownership checks (sibling issue #1094) — it only prevents the initial race.
-
 ## Recovery
 
 ### After State Loss
@@ -317,7 +274,6 @@ ssh disinto-register@edge.disinto.ai "register myproject $(cat ~/.ssh/id_ed25519
 - `lib/ports.sh` — Port allocator over `20000-29999`, jq-based, flockd
 - `lib/authorized_keys.sh` — Deterministic rebuild of `disinto-tunnel` authorized_keys
 - `lib/caddy.sh` — POST to Caddy admin API for route mapping
-- `/var/lib/disinto/allowlist.json` — Admin-approved project name allowlist (root-owned, read-only by register.sh)
 
 ## Dependencies
 

@@ -11,50 +11,12 @@
 #   source "$(dirname "$0")/../lib/agent-sdk.sh"
 #   agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
 #
-# After each call, these globals are set:
-#   _AGENT_SESSION_ID  — session ID (also persisted to SID_FILE)
-#   _AGENT_LAST_OUTPUT — raw stream-json output of the last run
-#                        (also written to $DISINTO_LOG_DIR/$LOG_AGENT/agent-run-last.json)
-#
+# After each call, _AGENT_SESSION_ID holds the session ID (also saved to SID_FILE).
 # Call agent_recover_session() on startup to restore a previous session.
 
 set -euo pipefail
 
 _AGENT_SESSION_ID=""
-
-# redact_log_secrets — stream filter that masks token-shaped env-var
-# assignments before they hit disk (#910).
-#
-# A formula's claude session can shell out to commands that echo loaded
-# environment (e.g. `env | grep -i forge`); the resulting tool_result
-# stdout is captured into ${DISINTO_LOG_DIR}/<agent>/step.log verbatim.
-# If FORGE_*_TOKEN / VAULT_* / GH_* / GITHUB_* / CLAW_* / CLAUDE_* /
-# ANTHROPIC_* secrets are present in the process env, that log line
-# leaks them onto a host volume.
-#
-# This filter masks the value half of any KEY=value where KEY matches
-# one of the well-known secret-bearing prefixes (case-insensitive),
-# regardless of whether the line is plain shell output or embedded in
-# a JSON string. The variable name is preserved so operators can still
-# audit *which* secret was about to leak; only the value is redacted.
-#
-# Reads stdin, writes redacted stdout. Pure sed — no buffering, safe to
-# splice into a `tail -F` pipeline.
-redact_log_secrets() {
-  # Note on the regex:
-  #   - Anchored on the well-known prefix list (FORGE/VAULT/GH/GITHUB/
-  #     CLAW/CLAUDE/ANTHROPIC) so we don't redact unrelated KEY= pairs.
-  #   - `[A-Za-z0-9_]*` (greedy with backtracking) chews everything up
-  #     to the trailing TOKEN|PASS|KEY|SECRET — covers FORGE_TOKEN as
-  #     well as FORGE_ARCHITECT_TOKEN, GH_API_KEY, etc.
-  #   - Value class `[^[:space:]",}\\]+` stops at JSON quote/brace,
-  #     whitespace, or backslash so we don't eat past the value when
-  #     the line is JSON-embedded.
-  #   - GNU sed `I` flag = case-insensitive match while preserving the
-  #     original case in the captured group.
-  sed -uE \
-    's/((FORGE|VAULT|GH|GITHUB|CLAW|CLAUDE|ANTHROPIC)[A-Za-z0-9_]*(TOKEN|PASS|KEY|SECRET))=[^[:space:]",}\\]+/\1=<redacted>/gI'
-}
 
 # agent_recover_session — restore session_id from SID_FILE if it exists.
 # Call this before agent_run --resume to enable session continuity.
@@ -86,47 +48,13 @@ claude_run_with_watchdog() {
   local -a cmd=("$@")
   local out_file pid grace_pid rc
 
-  # Create temp files for stdout capture and PTY runner script
+  # Create temp file for stdout capture
   out_file=$(mktemp) || return 1
-  local runner
-  runner=$(mktemp) || { rm -f "$out_file"; return 1; }
-  trap 'rm -f "$out_file" "$runner"' RETURN
+  trap 'rm -f "$out_file"' RETURN
 
-  # Start claude under a PTY in a new process group.
-  #
-  # Why the PTY (issue #575): Claude Code 2.1.84's ink/TUI layer blocks during
-  # turn-zero initialization when stdout is a plain pipe/file — node sleeps in
-  # S state with 0 bytes emitted, no llama activity, no syscalls, until
-  # CLAUDE_TIMEOUT fires. Verified: identical `claude -p` completes in ~10s
-  # under `script -qfc` and hangs indefinitely without it.
-  #
-  # Why the runner tempfile (follow-up to #575): `script -c <cmdline>` passes
-  # the cmdline to `/bin/sh -c`, which on Debian/Ubuntu is `dash`. Bash
-  # `printf %q` output isn't dash-compatible — ANSI-C $'...' quoting blows up
-  # dash's parser with "Syntax error: '(' unexpected" when the Claude prompt
-  # contains parentheses (every issue body does). Writing the argv to a
-  # `#!/bin/bash` script file bypasses sh re-parsing entirely — dash just
-  # spawns the script via its shebang, and bash handles the %q'd args.
-  {
-    printf '#!/bin/bash\nexec '
-    printf '%q ' "${cmd[@]}"
-    printf '\n'
-  } > "$runner"
-  chmod +x "$runner"
-  setsid script -qfc "$runner" /dev/null > "$out_file" 2>>"$LOGFILE" &
+  # Start claude in background, capturing stdout to temp file
+  "${cmd[@]}" > "$out_file" 2>>"$LOGFILE" &
   pid=$!
-
-  # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
-  # arrive — without this, a run that hangs mid-stream shows no progress to
-  # operators for up to CLAUDE_TIMEOUT seconds (issue #568).
-  # Stream is piped through redact_log_secrets so token-shaped env-var
-  # assignments (FORGE_TOKEN=…, GITHUB_TOKEN=…, etc.) are masked before
-  # they land on the host volume (#910).
-  (
-    tail -F -n 0 --pid="$pid" "$out_file" 2>/dev/null \
-      | redact_log_secrets >> "$LOGFILE"
-  ) &
-  local tail_pid=$!
 
   # Background watchdog: poll for final result marker
   (
@@ -134,17 +62,19 @@ claude_run_with_watchdog() {
     local detected=0
 
     while kill -0 "$pid" 2>/dev/null; do
-      # Match the terminal result object specifically. `"type":"result"` alone
-      # would also match if Claude's thinking/text content happens to echo
-      # that literal string; `"type":"result","subtype":` only appears in the
-      # real result frame emitted when the run completes (issue #581).
-      if grep -q '"type":"result","subtype":' "$out_file" 2>/dev/null; then
+      # Check for stream-json result marker first (more reliable)
+      if grep -q '"type":"result"' "$out_file" 2>/dev/null; then
         detected=1
         break
       fi
-      # Pre-stream-json fallback removed (#581): in stream-json mode every
-      # message ends `}\n` and carries `session_id`, so that heuristic fired
-      # on the first system-init message, SIGTERMing Claude mid-run.
+      # Fallback: check for closing brace of top-level result object
+      if tail -c 100 "$out_file" 2>/dev/null | grep -q '}[[:space:]]*$'; then
+        # Verify it looks like a JSON result (has session_id or result key)
+        if grep -qE '"(session_id|result)":' "$out_file" 2>/dev/null; then
+          detected=1
+          break
+        fi
+      fi
       sleep 2
     done
 
@@ -154,12 +84,12 @@ claude_run_with_watchdog() {
       sleep "$grace"
       if kill -0 "$pid" 2>/dev/null; then
         log "watchdog: claude -p idle for ${grace}s after final result; SIGTERM"
-        kill -TERM -- "-$pid" 2>/dev/null || true
+        kill -TERM "$pid" 2>/dev/null || true
         # Give it a moment to clean up
         sleep 5
         if kill -0 "$pid" 2>/dev/null; then
           log "watchdog: force kill after SIGTERM timeout"
-          kill -KILL -- "-$pid" 2>/dev/null || true
+          kill -KILL "$pid" 2>/dev/null || true
         fi
       fi
     fi
@@ -170,26 +100,20 @@ claude_run_with_watchdog() {
   timeout --foreground "${CLAUDE_TIMEOUT:-7200}" tail --pid="$pid" -f /dev/null 2>/dev/null
   rc=$?
 
-  # Clean up the watchdog (target process group if it spawned children)
-  kill -- "-$grace_pid" 2>/dev/null || true
+  # Clean up the watchdog
+  kill "$grace_pid" 2>/dev/null || true
   wait "$grace_pid" 2>/dev/null || true
-  # Clean up the log tailer — tail -F --pid exits automatically when claude
-  # exits, but be defensive.
-  kill "$tail_pid" 2>/dev/null || true
-  wait "$tail_pid" 2>/dev/null || true
 
-  # When timeout fires (rc=124), explicitly kill the orphaned claude process group
+  # When timeout fires (rc=124), explicitly kill the orphaned claude process
   # tail --pid is a passive waiter, not a supervisor
   if [ "$rc" -eq 124 ]; then
-    kill -TERM -- "-$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
     sleep 1
-    kill -KILL -- "-$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
   fi
 
-  # Output the captured stdout, redacting token-shaped vars on the way out
-  # so the captured `output` (and anything written from it, e.g. diag_file)
-  # is also clean (#910).
-  redact_log_secrets < "$out_file"
+  # Output the captured stdout
+  cat "$out_file"
   return "$rc"
 }
 
@@ -209,15 +133,7 @@ agent_run() {
 
   _AGENT_LAST_OUTPUT=""
 
-  # stream-json streams each turn incrementally instead of buffering the whole
-  # run — lets the watchdog see progress and the LOGFILE capture real-time
-  # tool-use activity. With buffered `json` a hang before the first turn
-  # produces zero output for the full CLAUDE_TIMEOUT (issue #568).
-  #
-  # max-turns lowered from 200 to CLAUDE_MAX_TURNS (default 30). Single-file
-  # bug fixes never need 200 turns; tighter bound surfaces stuck runs faster.
-  local max_turns="${CLAUDE_MAX_TURNS:-60}"
-  local -a args=(-p "$prompt" --output-format stream-json --verbose --dangerously-skip-permissions --max-turns "$max_turns")
+  local -a args=(-p "$prompt" --output-format json --dangerously-skip-permissions --max-turns 200)
   [ -n "$resume_id" ] && args+=(--resume "$resume_id")
   [ -n "${CLAUDE_MODEL:-}" ] && args+=(--model "$CLAUDE_MODEL")
 
@@ -246,18 +162,9 @@ agent_run() {
     log "agent_run: empty output (claude may have crashed or failed, exit code: $rc)"
   fi
 
-  # Extract and persist session_id.
-  #
-  # With --output-format stream-json (post #568) the output is a stream of
-  # JSON objects, each carrying `session_id`. A naive `jq -r '.session_id'`
-  # emits the same UUID once per message — concatenated with newlines the
-  # value becomes `uuid\nuuid\n...` which breaks `--resume <sid>` in the
-  # nudge path with "Session IDs must be in UUID format".
-  #
-  # Use `jq -s 'last'` to slurp the stream and take only the final object's
-  # session_id. For plain `json` output (one object) this still works.
+  # Extract and persist session_id
   local new_sid
-  new_sid=$(printf '%s' "$output" | jq -rs 'last.session_id // empty' 2>/dev/null) || true
+  new_sid=$(printf '%s' "$output" | jq -r '.session_id // empty' 2>/dev/null) || true
   if [ -n "$new_sid" ]; then
     _AGENT_SESSION_ID="$new_sid"
     printf '%s' "$new_sid" > "$SID_FILE"

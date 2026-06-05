@@ -133,7 +133,8 @@ if printf '%s' "$ISSUE_LABELS" | grep -qw 'formula'; then
 fi
 
 # --- Append human comments to issue body ---
-_bot_login=$(forge_whoami)
+_bot_login=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+  "${FORGE_API%%/repos*}/user" | jq -r '.login // empty' 2>/dev/null || true)
 _bot_logins="${_bot_login}"
 [ -n "${FORGE_BOT_USERNAMES:-}" ] && \
   _bot_logins="${_bot_logins:+${_bot_logins},}${FORGE_BOT_USERNAMES}"
@@ -196,21 +197,54 @@ CLAIMED=true
 # CHECK FOR EXISTING PR (recovery mode)
 # =============================================================================
 RECOVERY_MODE=false
-PRIOR_ART_DIFF=""
 
-if pr_find_for_issue "$ISSUE" "$ISSUE_BODY_ORIGINAL" "$BRANCH"; then
-  case "$_PR_FOUND_MODE" in
-    open)
-      PR_NUMBER="$_PR_FOUND_NUMBER"
-      BRANCH="$_PR_FOUND_BRANCH"
-      RECOVERY_MODE=true
-      log "found existing PR #${PR_NUMBER} on branch ${BRANCH}"
-      ;;
-    prior_art)
-      PRIOR_ART_DIFF="$_PR_PRIOR_ART_DIFF"
-      log "found closed PR #${_PR_FOUND_NUMBER} as prior art"
-      ;;
-  esac
+# Check issue body for explicit PR reference
+BODY_PR=$(printf '%s' "$ISSUE_BODY_ORIGINAL" | grep -oP 'Existing PR:\s*#\K[0-9]+' | head -1) || true
+if [ -n "$BODY_PR" ]; then
+  PR_CHECK=$(forge_api GET "/pulls/${BODY_PR}") || true
+  PR_CHECK_STATE=$(printf '%s' "$PR_CHECK" | jq -r '.state')
+  if [ "$PR_CHECK_STATE" = "open" ]; then
+    PR_NUMBER="$BODY_PR"
+    BRANCH=$(printf '%s' "$PR_CHECK" | jq -r '.head.ref')
+    log "found existing PR #${PR_NUMBER} on branch ${BRANCH} (from issue body)"
+  fi
+fi
+
+# Priority 1: match by branch name
+if [ -z "$PR_NUMBER" ]; then
+  PR_NUMBER=$(pr_find_by_branch "$BRANCH") || true
+  [ -n "$PR_NUMBER" ] && log "found existing PR #${PR_NUMBER} (from branch match)"
+fi
+
+# Priority 2: match "Fixes #NNN" in PR body
+if [ -z "$PR_NUMBER" ]; then
+  FOUND_PR=$(forge_api GET "/pulls?state=open&limit=20" | \
+    jq -r --arg issue "ixes #${ISSUE}\\b" \
+    '.[] | select(.body | test($issue; "i")) | "\(.number) \(.head.ref)"' | head -1) || true
+  if [ -n "$FOUND_PR" ]; then
+    PR_NUMBER=$(printf '%s' "$FOUND_PR" | awk '{print $1}')
+    BRANCH=$(printf '%s' "$FOUND_PR" | awk '{print $2}')
+    log "found existing PR #${PR_NUMBER} on branch ${BRANCH} (from body match)"
+  fi
+fi
+
+# Priority 3: check closed PRs for prior art
+PRIOR_ART_DIFF=""
+if [ -z "$PR_NUMBER" ]; then
+  CLOSED_PR=$(forge_api GET "/pulls?state=closed&limit=30" | \
+    jq -r --arg issue "#${ISSUE}" \
+    '.[] | select(.merged != true) | select((.title | contains($issue)) or (.body // "" | test("ixes " + $issue + "\\b"; "i"))) | "\(.number) \(.head.ref)"' | head -1) || true
+  if [ -n "$CLOSED_PR" ]; then
+    CLOSED_PR_NUM=$(printf '%s' "$CLOSED_PR" | awk '{print $1}')
+    log "found closed (unmerged) PR #${CLOSED_PR_NUM} as prior art"
+    PRIOR_ART_DIFF=$(forge_api GET "/pulls/${CLOSED_PR_NUM}.diff" 2>/dev/null \
+      | head -500) || true
+  fi
+fi
+
+if [ -n "$PR_NUMBER" ]; then
+  RECOVERY_MODE=true
+  log "RECOVERY MODE: adopting PR #${PR_NUMBER} on branch ${BRANCH}"
 fi
 
 # Recover session_id from .sid file (crash recovery)
@@ -541,9 +575,9 @@ rc=0
 pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
 
 if [ "$rc" -eq 0 ]; then
-  # Merged successfully — keep open with awaiting-live-verification label
+  # Merged successfully
   log "PR #${PR_NUMBER} merged"
-  issue_close_after_verification "$ISSUE"
+  issue_close "$ISSUE"
 
   # Capture files changed for journal entry (after agent work)
   FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""
