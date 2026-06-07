@@ -1,4 +1,4 @@
-<!-- last-reviewed: 063b5971be5bf2da62696959a95b7db5b1bc3abd -->
+<!-- last-reviewed: 4f2b10018608043872e1c24dd42cf7ee3d2ef039 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -25,14 +25,14 @@ See [docs/AGENTS.md](docs/AGENTS.md) for the full directory tree.
 
 Key directories:
 - **Agent dirs**: `dev/`, `review/`, `gardener/`, `supervisor/`, `planner/`, `predictor/`, `architect/` — each has a `*-run.sh` executor and `AGENTS.md`
-- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, parse-deps.sh, ci-fix-tracker.sh, forge-paginate.sh, gardener-edit.sh, gardener-pr.sh, stale-base-check.sh, etc.)
+- **lib/**: Shared helpers (env.sh, secrets.sh, forge-setup.sh, profile.sh, parse-deps.sh, ci-fix-tracker.sh, forge-paginate.sh, forge-helpers.sh, gardener-edit.sh, gardener-pr.sh, inbox-sentinels.sh, stale-base-check.sh, etc.)
 - **nomad/jobs/**: Nomad job HCL configs
 - **formulas/**: TOML issue templates for multi-step agent tasks (*.toml, *.sh)
 - **docker/**: Dockerfiles and edge container (Caddy, chat, voice, chat-skills, dispatcher, engagement-server.py)
-- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
-- **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI)
+- **tools/**: Operational tools (vault provisioning, edge-control, acceptance test runner, sync-nomad-client-config.sh, comment-on-issue.sh, discover-closed-issues.sh, migrate-ac-to-file.sh)
+- **bin/**: The `disinto` CLI script; snapshot collectors (snapshot-agents.sh, snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, snapshot-daemon.sh — use Nomad HTTP API, not CLI); inbox-ack.sh, threads.sh, uninstall.sh
 - **action-vault/**: Vault item validation and examples
-- **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md)
+- **docs/**: Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md)
 - **vault/policies/**: Vault HCL policies (bot-filer.hcl)
 - **site/**: Frontend assets (engagement.js)
 - **tests/acceptance/**: Post-merge acceptance test scripts (issue-*.sh)
