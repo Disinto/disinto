@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 48e744ad3a103c1c46c690a9edffb0089b9d9615 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -18,9 +18,9 @@ see issues #821–#992 for the step breakdown.
 | `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 | `jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
-| `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
+| `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978); `GARDENER_INTERVAL` dropped (#872): gardener now runs per-iteration via `gardener/gardener-step.sh`, paced by `POLL_INTERVAL`; `FORGE_FILER_TOKEN` added via `kv/data/disinto/bots/filer` secret for filer-bot identity (#871) |
 | `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
-| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; **both Caddy and dispatcher tasks use `network_mode = "host"`** — upstreams are `127.0.0.1:<port>` (forgejo :3000, woodpecker :8000, chat :8080), not Docker hostnames (#1031, #1034); `FORGE_URL` rendered via Nomad service discovery template (`nomadService "forgejo"` — switched from Consul `service` lookup to Nomad native service discovery, #1114) to handle bridge vs. host network differences (#1034); dispatcher Vault secret path changed to `kv/data/disinto/shared/ops-repo` (#1041); Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988); `/forge/*` handler adds `uri strip_prefix /forge` before proxying to forgejo (#1103); `/staging/*` strips `/staging` prefix before proxying (#1079); WebSocket endpoint `/chat/ws` uses `header_up` inside `reverse_proxy` block (moved from handle-block top level — Caddy rejects top-level `header_up`, #1117); `/chat/ws` added for streaming (#1026) |
+| `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; **both Caddy and dispatcher tasks use `network_mode = "host"`** — upstreams are `127.0.0.1:<port>` (forgejo :3000, woodpecker :8000, chat :8080), not Docker hostnames (#1031, #1034); `FORGE_URL` rendered via Nomad service discovery template (`nomadService "forgejo"` — switched from Consul `service` lookup to Nomad native service discovery, #1114) to handle bridge vs. host network differences (#1034); dispatcher Vault secret path changed to `kv/data/disinto/shared/ops-repo` (#1041); Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988); `/forge/*` handler adds `uri strip_prefix /forge` before proxying to forgejo (#1103); `/staging/*` strips `/staging` prefix before proxying (#1079); WebSocket endpoint `/chat/ws` uses `header_up` inside `reverse_proxy` block (moved from handle-block top level — Caddy rejects top-level `header_up`, #1117); `/chat/ws` added for streaming (#1026); `Cache-Control: no-cache` headers on voice UI to prevent stale index.html pointing at old voice-client.js (#860); `/api/engagement` endpoint proxies to local engagement-server.py for client-side beacon collection (issue #975) |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
@@ -56,7 +56,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    client.hcl host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
-4. No pipeline edit required — step 2 of `nomad-validate.yml` globs
+4. No pipeline edit required — step 2 of `.woodpecker/nomad-validate.yml` globs
    over `nomad/jobs/*.hcl` and validates every match. Just make sure
    the existing `nomad/**` trigger path still covers your file (it
    does for anything under `nomad/jobs/`).
@@ -121,14 +121,14 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 **Secret-scan coverage.** Policy HCL files under `vault/policies/` are
 already swept by the P11 secret-scan gate
 (`.woodpecker/secret-scan.yml`, #798), whose `vault/**/*` trigger path
-covers everything in this directory. `nomad-validate.yml` intentionally
+covers everything in this directory. `.woodpecker/nomad-validate.yml` intentionally
 does NOT duplicate that gate — one scanner, one source of truth.
 
 If a PR breaks `nomad/server.hcl` (e.g. typo in a block name), step 1
 fails with a clear error; if it breaks a jobspec (e.g. misspells
 `task` as `tsak`, or adds a `volume` stanza without a `source`), step
 2 fails; a typo in a `path "..."` block in a vault policy fails step 5
-with the Vault parser's error; a `roles.yaml` entry that points at a
+with the Vault parser's error; a `vault/roles.yaml` entry that points at a
 policy basename that does not exist fails step 6. PRs that don't touch
 any of the trigger paths skip this pipeline entirely.
 
