@@ -1,4 +1,4 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 48e744ad3a103c1c46c690a9edffb0089b9d9615 -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -21,6 +21,10 @@ see issues #821–#992 for the step breakdown.
 | `jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978) |
 | `jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
 | `jobs/edge.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy reverse proxy + dispatcher sidecar; routes /forge, /woodpecker, /staging, /chat; uses `disinto/edge:local` image built by `bin/disinto --with edge`; **both Caddy and dispatcher tasks use `network_mode = "host"`** — upstreams are `127.0.0.1:<port>` (forgejo :3000, woodpecker :8000, chat :8080), not Docker hostnames (#1031, #1034); `FORGE_URL` rendered via Nomad service discovery template (`nomadService "forgejo"` — switched from Consul `service` lookup to Nomad native service discovery, #1114) to handle bridge vs. host network differences (#1034); dispatcher Vault secret path changed to `kv/data/disinto/shared/ops-repo` (#1041); Vault-templated ops-repo creds via `service-dispatcher` policy (S5.1, #988); `/forge/*` handler adds `uri strip_prefix /forge` before proxying to forgejo (#1103); `/staging/*` strips `/staging` prefix before proxying (#1079); WebSocket endpoint `/chat/ws` uses `header_up` inside `reverse_proxy` block (moved from handle-block top level — Caddy rejects top-level `header_up`, #1117); `/chat/ws` added for streaming (#1026) |
+| `acl-policies/chat-ops.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault ACL policy for chat operations; grants read access to chat-related KV paths. |
+| `jobs/agents-supervisor-opus.hcl` | submitted via `lib/init/nomad/deploy.sh` | Supervisor agent job using Opus model; separate from the general `agents.hcl` to isolate supervisor workloads. |
+| `jobs/edge-threads-gc.hcl` | submitted via `lib/init/nomad/deploy.sh` | Edge threads garbage collection job; periodically cleans stale thread state. |
+| `jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault runner job; executes Vault operations with scoped credentials. |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
 split between `server.hcl` and `client.hcl` is for readability, not
@@ -30,7 +34,7 @@ it owns.
 ## Vault ACL policies
 
 `vault/policies/` holds one `.hcl` file per Vault policy; see
-[`vault/policies/AGENTS.md`](../vault/policies/AGENTS.md) for the naming
+[`vault/policies/AGENTS.md`](vault/policies/AGENTS.md) for the naming
 convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 
 ## Not yet implemented
@@ -46,17 +50,17 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    these files" below). Anything else in `nomad/jobs/` is silently
    skipped by CI.
 2. If it needs persistent state, reference a `host_volume` already
-   declared in `client.hcl` — *don't* add ad-hoc host paths in the
+   declared in `nomad/client.hcl` — *don't* add ad-hoc host paths in the
    jobspec. If a new volume is needed, add it to **both**:
      - `nomad/client.hcl` — the `host_volume "<name>" { path = … }` block
      - `lib/init/nomad/cluster-up.sh` — the `HOST_VOLUME_DIRS` array
    The two must stay in sync or nomad fingerprinting will fail and the
    node stays in "initializing". Note that offline `nomad job validate`
    will NOT catch a typo in the jobspec's `source = "..."` against the
-   client.hcl host_volume list (see step 2 below) — the scheduler
+   `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
-4. No pipeline edit required — step 2 of `nomad-validate.yml` globs
+4. No pipeline edit required — step 2 of `.woodpecker/nomad-validate.yml` globs
    over `nomad/jobs/*.hcl` and validates every match. Just make sure
    the existing `nomad/**` trigger path still covers your file (it
    does for anything under `nomad/jobs/`).
@@ -79,7 +83,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    successfully"; it means "the HCL itself is well-formed". What this
    step does NOT catch:
      - cross-file references (`source = "forgejo-data"` typo against the
-       `host_volume` list in `client.hcl`) — that's a scheduling-time
+       `host_volume` list in `nomad/client.hcl`) — that's a scheduling-time
        check on the live cluster, not validate-time.
      - image reachability — `image = "codeberg.org/forgejo/forgejo:11.0"`
        is accepted even if the registry is down or the tag is wrong.
@@ -121,14 +125,14 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 **Secret-scan coverage.** Policy HCL files under `vault/policies/` are
 already swept by the P11 secret-scan gate
 (`.woodpecker/secret-scan.yml`, #798), whose `vault/**/*` trigger path
-covers everything in this directory. `nomad-validate.yml` intentionally
+covers everything in this directory. `.woodpecker/nomad-validate.yml` intentionally
 does NOT duplicate that gate — one scanner, one source of truth.
 
 If a PR breaks `nomad/server.hcl` (e.g. typo in a block name), step 1
 fails with a clear error; if it breaks a jobspec (e.g. misspells
 `task` as `tsak`, or adds a `volume` stanza without a `source`), step
 2 fails; a typo in a `path "..."` block in a vault policy fails step 5
-with the Vault parser's error; a `roles.yaml` entry that points at a
+with the Vault parser's error; a `vault/roles.yaml` entry that points at a
 policy basename that does not exist fails step 6. PRs that don't touch
 any of the trigger paths skip this pipeline entirely.
 
@@ -152,11 +156,11 @@ accept (or vice versa).
 - `.woodpecker/nomad-validate.yml` — this directory's CI pipeline.
 - `vault/policies/` — Vault ACL policy HCL files (S2.1); the
   `vault-policy-fmt` / `vault-policy-validate` CI steps above enforce
-  their shape. See [`../vault/policies/AGENTS.md`](../vault/policies/AGENTS.md)
+  their shape. See [`vault/policies/AGENTS.md`](vault/policies/AGENTS.md)
   for the policy lifecycle, CI enforcement details, and common failure
   modes.
 - `vault/roles.yaml` — JWT-auth role → policy bindings (S2.3); the
   `vault-roles-validate` CI step above keeps it in lockstep with the
   policies directory.
-- Top-of-file headers in `server.hcl` / `client.hcl` / `vault.hcl`
+- Top-of-file headers in `nomad/server.hcl` / `nomad/client.hcl` / `nomad/vault.hcl`
   document the per-file ownership contract.
