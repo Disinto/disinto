@@ -50,7 +50,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    these files" below). Anything else in `nomad/jobs/` is silently
    skipped by CI.
 2. If it needs persistent state, reference a `host_volume` already
-   declared in `client.hcl` — *don't* add ad-hoc host paths in the
+   declared in `nomad/client.hcl` — *don't* add ad-hoc host paths in the
    jobspec. If a new volume is needed, add it to **both**:
      - `nomad/client.hcl` — the `host_volume "<name>" { path = … }` block
      - `lib/init/nomad/cluster-up.sh` — the `HOST_VOLUME_DIRS` array
@@ -60,7 +60,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
-4. No pipeline edit required — step 2 of `nomad-validate.yml` globs
+4. No pipeline edit required — step 2 of `.woodpecker/nomad-validate.yml` globs
    over `nomad/jobs/*.hcl` and validates every match. Just make sure
    the existing `nomad/**` trigger path still covers your file (it
    does for anything under `nomad/jobs/`).
@@ -125,14 +125,14 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 **Secret-scan coverage.** Policy HCL files under `vault/policies/` are
 already swept by the P11 secret-scan gate
 (`.woodpecker/secret-scan.yml`, #798), whose `vault/**/*` trigger path
-covers everything in this directory. `nomad-validate.yml` intentionally
+covers everything in this directory. `.woodpecker/nomad-validate.yml` intentionally
 does NOT duplicate that gate — one scanner, one source of truth.
 
 If a PR breaks `nomad/server.hcl` (e.g. typo in a block name), step 1
 fails with a clear error; if it breaks a jobspec (e.g. misspells
 `task` as `tsak`, or adds a `volume` stanza without a `source`), step
 2 fails; a typo in a `path "..."` block in a vault policy fails step 5
-with the Vault parser's error; a `roles.yaml` entry that points at a
+with the Vault parser's error; a `vault/roles.yaml` entry that points at a
 policy basename that does not exist fails step 6. PRs that don't touch
 any of the trigger paths skip this pipeline entirely.
 
@@ -162,5 +162,5 @@ accept (or vice versa).
 - `vault/roles.yaml` — JWT-auth role → policy bindings (S2.3); the
   `vault-roles-validate` CI step above keeps it in lockstep with the
   policies directory.
-- Top-of-file headers in `server.hcl` / `client.hcl` / `vault.hcl`
+- Top-of-file headers in `nomad/server.hcl` / `nomad/client.hcl` / `nomad/vault.hcl`
   document the per-file ownership contract.
