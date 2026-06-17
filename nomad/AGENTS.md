@@ -1,4 +1,4 @@
-<!-- last-reviewed: 48e744ad3a103c1c46c690a9edffb0089b9d9615 -->
+<!-- last-reviewed: 9a7b92e5b917259553df79b19494a6b1133f788e -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -57,7 +57,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    The two must stay in sync or nomad fingerprinting will fail and the
    node stays in "initializing". Note that offline `nomad job validate`
    will NOT catch a typo in the jobspec's `source = "..."` against the
-  `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
+   `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
 4. No pipeline edit required — step 2 of `.woodpecker/nomad-validate.yml` globs
