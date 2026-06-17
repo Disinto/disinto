@@ -27,7 +27,7 @@ see issues #821–#992 for the step breakdown.
 | `jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault runner job; executes Vault operations with scoped credentials. |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
-split between `server.hcl` and `client.hcl` is for readability, not
+split between `nomad/server.hcl` and `nomad/client.hcl` is for readability, not
 semantics. The top-of-file header in each config documents which blocks
 it owns.
 
@@ -57,7 +57,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    The two must stay in sync or nomad fingerprinting will fail and the
    node stays in "initializing". Note that offline `nomad job validate`
    will NOT catch a typo in the jobspec's `source = "..."` against the
-   `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
+  `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
 4. No pipeline edit required — step 2 of `.woodpecker/nomad-validate.yml` globs
