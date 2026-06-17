@@ -15,6 +15,10 @@ see issues #821–#992 for the step breakdown.
 | `server.hcl` | `/etc/nomad.d/server.hcl` | agent role, bind, ports, `data_dir` (S0.2) |
 | `client.hcl` | `/etc/nomad.d/client.hcl` | Docker driver cfg + `host_volume` declarations (S0.2); `allow_privileged = true` for woodpecker-agent Docker-in-Docker (S3-fix-5, #961) |
 | `vault.hcl`  | `/etc/vault.d/vault.hcl`  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
+| `acl-policies/chat-ops.hcl` | applied via `lib/init/nomad/chat-init.sh` | Nomad ACL policy for the chat-Claude operator token; grants submit-job/read-job/list-jobs/read-logs in default namespace, read on agents and nodes (#650) |
+| `jobs/agents-supervisor-opus.hcl` | submitted via `lib/init/nomad/deploy.sh` | Supervisor agent as standalone Nomad service (opus model, claude-opus-4-6 via OAuth, rw docker.sock, ops-repo volume, agent-data-opus-supervisor host_volume) — replaces the supervisor loop in edge caddy task (#589, #275) |
+| `jobs/edge-threads-gc.hcl` | submitted via `lib/init/nomad/deploy.sh` | Periodic batch job (daily 03:00 UTC) — garbage-collects completed/failed/error threads older than THREADS_TTL (7 days) via `bin/threads.sh gc` |
+| `jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Parameterized batch job for vault action dispatch (S5.3, #990); dispatched by edge dispatcher via `nomad job dispatch` with `action_id` + `secrets_csv` meta; renders 6 runner secrets from Vault KV via template stanzas |
 | `jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 | `jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
@@ -53,7 +57,7 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    The two must stay in sync or nomad fingerprinting will fail and the
    node stays in "initializing". Note that offline `nomad job validate`
    will NOT catch a typo in the jobspec's `source = "..."` against the
-   client.hcl host_volume list (see step 2 below) — the scheduler
+   `nomad/client.hcl` host_volume list (see step 2 below) — the scheduler
    rejects the mismatch at placement time instead.
 3. Pin image tags — `image = "forgejo/forgejo:1.22.5"`, not `:latest`.
 4. No pipeline edit required — step 2 of `nomad-validate.yml` globs
