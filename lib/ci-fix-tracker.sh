@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by: dev/dev-poll.sh
+# Sourced by: dev-agent (CI fix limits)
 # ci-fix-tracker.sh — Per-PR CI fix counter with exhaustion detection.
 #
 # Persists to $CI_FIX_TRACKER as JSON: {"<pr>": <count>, ...}.
