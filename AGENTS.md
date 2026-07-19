@@ -1,4 +1,4 @@
-<!-- last-reviewed: a28f451cc4c5aefcd4919766a8db5d648955c733 -->
+<!-- last-reviewed: e6eaad00ddef012df459dfe67d526429956d8aaf -->
 # Disinto — Agent Instructions
 
 ## What this repo is
