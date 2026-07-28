@@ -2,6 +2,8 @@
 # =============================================================================
 # lib/forge-paginate.sh — Paginated Forge API helper
 #
+# Sourced by: gardener/classify.sh (paginated Forge API calls)
+#
 # Provides forge_api_all() for paginating Forge API GET endpoints.
 # Source this from any script that needs to fetch all pages of results.
 #
