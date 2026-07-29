@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo starting
+echo starting (pr touch)
