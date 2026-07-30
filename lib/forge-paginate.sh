@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Sourced by: gardener/classify.sh (paginated Forge API calls)
 # =============================================================================
 # lib/forge-paginate.sh — Paginated Forge API helper
 #
