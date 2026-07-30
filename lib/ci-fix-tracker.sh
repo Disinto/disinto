@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ci-fix-tracker.sh — Per-PR CI fix counter with exhaustion detection.
+# Sourced by dev-agent (CI fix limits) for per-PR CI fix attempt tracking.
 #
 # Persists to $CI_FIX_TRACKER as JSON: {"<pr>": <count>, ...}.
 # Locks via flock on $CI_FIX_LOCK.
