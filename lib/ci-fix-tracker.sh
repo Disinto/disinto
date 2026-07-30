@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
+# Sourced by: dev/dev-poll.sh (CI fix attempt tracking)
 # ci-fix-tracker.sh — Per-PR CI fix counter with exhaustion detection.
-# Sourced by dev/dev-poll.sh for per-PR CI fix attempt tracking.
 #
 # Persists to $CI_FIX_TRACKER as JSON: {"<pr>": <count>, ...}.
 # Locks via flock on $CI_FIX_LOCK.
