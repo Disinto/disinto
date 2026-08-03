@@ -232,82 +232,52 @@ backup_import_disinto_ops_repo() {
     return 1
   fi
 
-  # Build authenticated push URL
-  local admin_user
-  admin_user=$(forge_whoami)
-  if [ -z "$admin_user" ] || [ "$admin_user" = "null" ]; then
-    backup_log "ERROR: could not resolve admin username from token"
-    rm -rf "$clone_dir"
-    return 1
-  fi
-  # Inject credentials: http(s)://user:token@host/path
-  local push_url
-  local scheme="${FORGE_URL%%://*}"
-  local rest="${FORGE_URL#*://}"
-  push_url="${scheme}://${admin_user}:${FORGE_TOKEN}@${rest}"
-  push_url="${push_url}/disinto-admin/disinto-ops.git"
-
   # Push all refs to Forgejo
   backup_log "Pushing refs to Forgejo..."
-  local push_output
-  if ! push_output=$(git -C "$clone_dir/disinto-ops.git" push --mirror "$push_url" 2>&1); then
-    backup_log "ERROR: git push failed:"
-    backup_log "$push_output"
+  if ! cd "$clone_dir/disinto-ops.git" && \
+     git push --mirror "${FORGE_URL}/disinto-admin/disinto-ops.git" 2>&1; then
+    backup_log "ERROR: failed to push refs"
     rm -rf "$clone_dir"
     return 1
   fi
-  backup_log "$push_output"
 
   local ref_count
-  ref_count=$(git -C "$clone_dir/disinto-ops.git" show-ref | wc -l)
+  ref_count=$(cd "$clone_dir/disinto-ops.git" && git show-ref | wc -l)
   BACKUP_PUSHED_REFS=$((BACKUP_PUSHED_REFS + ref_count))
 
-  # Verify the target repo is not empty
-  local repo_empty
-  repo_empty=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_URL}/api/v1/repos/disinto-admin/disinto-ops" \
-    | jq -r '.empty') || repo_empty="unknown"
-  if [ "$repo_empty" = "true" ]; then
-    backup_log "ERROR: push reported success but target repo is still empty"
-    rm -rf "$clone_dir"
-    return 1
-  fi
-
-  backup_log "Pushed ${ref_count} refs to disinto-ops (verified: repo not empty)"
+  backup_log "Pushed ${ref_count} refs to disinto-ops"
   rm -rf "$clone_dir"
 
   return 0
 }
 
 # ── Step 4: Import issues from backup ────────────────────────────────────────
-# Usage: backup_import_issues <slug> <issues_file>
-#        issues_file is a JSON array of issues (per create schema)
+# Usage: backup_import_issues <slug> <issues_dir>
 # Returns: 0 on success
 backup_import_issues() {
   local slug="$1"
-  local issues_file="$2"
+  local issues_dir="$2"
 
-  if [ ! -f "$issues_file" ]; then
-    backup_log "No issues file found, skipping"
+  if [ ! -d "$issues_dir" ]; then
+    backup_log "No issues directory found, skipping"
     return 0
   fi
-
-  local count
-  count=$(jq 'length' "$issues_file")
-  backup_log "Importing ${count} issues from ${issues_file}"
 
   local created=0
   local skipped=0
 
-  for i in $(seq 0 $((count - 1))); do
-    local issue_num title body src_state
-    issue_num=$(jq -r ".[${i}].number" "$issues_file")
-    title=$(jq -r ".[${i}].title" "$issues_file")
-    body=$(jq -r ".[${i}].body" "$issues_file")
-    src_state=$(jq -r ".[${i}].state // \"open\"" "$issues_file")
+  for issue_file in "${issues_dir}"/*.json; do
+    [ -f "$issue_file" ] || continue
+
+    backup_log "Processing issue file: $(basename "$issue_file")"
+
+    local issue_num title body
+    issue_num=$(jq -r '.number // empty' "$issue_file")
+    title=$(jq -r '.title // empty' "$issue_file")
+    body=$(jq -r '.body // empty' "$issue_file")
 
     if [ -z "$issue_num" ] || [ "$issue_num" = "null" ]; then
-      backup_log "WARNING: skipping issue without number at index ${i}"
+      backup_log "WARNING: skipping issue without number: $(basename "$issue_file")"
       continue
     fi
 
@@ -322,22 +292,12 @@ backup_import_issues() {
     local -a labels=()
     while IFS= read -r label; do
       [ -n "$label" ] && labels+=("$label")
-    done < <(jq -r ".[${i}].labels[]? // empty" "$issues_file")
+    done < <(jq -r '.labels[]? // empty' "$issue_file")
 
     # Create issue
     local new_num
     if new_num=$(backup_create_issue "$slug" "$issue_num" "$title" "$body" "${labels[@]}"); then
       created=$((created + 1))
-
-      # Forgejo POST /issues always creates open — PATCH closed issues
-      if [ "$src_state" = "closed" ]; then
-        curl -sf -X PATCH \
-          -H "Authorization: token ${FORGE_TOKEN}" \
-          -H 'Content-Type: application/json' \
-          "${FORGE_URL}/api/v1/repos/${slug}/issues/${new_num}" \
-          -d '{"state":"closed"}' >/dev/null 2>&1 || \
-          backup_log "WARNING: failed to close issue #${new_num} (PATCH)" >&2
-      fi
     fi
   done
 
@@ -385,24 +345,19 @@ backup_import() {
     exit 1
   fi
 
-  # Step 4: Import issues — iterate issues/<slug>.json files, each is a JSON array
-  for issues_file in "${BACKUP_TEMP_DIR}/issues"/*.json; do
-    [ -f "$issues_file" ] || continue
+  # Step 4: Import issues for each repo with issues/*.json
+  for repo_dir in "${BACKUP_TEMP_DIR}/repos"/*/; do
+    [ -d "$repo_dir" ] || continue
 
-    local slug_filename
-    slug_filename=$(basename "$issues_file" .json)
-
-    # Map slug-filename → forgejo-slug: "disinto" → "disinto-admin/disinto",
-    #                                    "disinto-ops" → "disinto-admin/disinto-ops"
     local slug
-    case "$slug_filename" in
-      "disinto") slug="${FORGE_REPO}" ;;
-      "disinto-ops") slug="${FORGE_OPS_REPO}" ;;
-      *) slug="disinto-admin/${slug_filename}" ;;
-    esac
+    slug=$(basename "$repo_dir")
 
-    backup_log "Processing issues from ${slug_filename}.json (${slug})"
-    backup_import_issues "$slug" "$issues_file"
+    backup_log "Processing repo: ${slug}"
+
+    local issues_dir="${repo_dir}issues"
+    if [ -d "$issues_dir" ]; then
+      backup_import_issues "$slug" "$issues_dir"
+    fi
   done
 
   # Summary
