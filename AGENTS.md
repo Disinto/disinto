@@ -111,6 +111,7 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 | `priority` | Queue tier above plain backlog. Issues with both `priority` and `backlog` are picked before plain `backlog` issues. FIFO within each tier. | Planner, humans |
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. Also set on vision issues by filer-bot when sub-issues are filed (#764). | dev-agent.sh (claims issue), filer-bot (vision issues) |
 | `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, dev-poll.sh (on failure) |
+| `waiting-on-compute` | Readiness flag: work is dispatched and waiting on an external run (e.g. a long compute job). Dev-poll skips the issue and moves on; it is not a priority. A person or formula removes the label when the run lands, making the issue claimable again. | Humans, formulas |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |
 | `bug-report` | Issue describes user-facing broken behavior with reproduction steps. Separate triage track for reproduction automation. | Gardener (bug-report detection in grooming) |
