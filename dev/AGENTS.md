@@ -19,7 +19,8 @@ dev-agent session is active.
 of approved PRs, tracks CI fix attempts. Invoked by `docker/agents/entrypoint.sh` every 5
 minutes. `BOT_USER` is resolved once at startup via the Forge `/user` API and cached for
 all assignee checks. Formula guard skips issues labeled `formula`, `prediction/dismissed`,
-or `prediction/unreviewed`. **Race prevention**: checks issue assignee before claiming —
+`prediction/unreviewed`, or `waiting-on-compute` (readiness flag: work waiting on an
+external run — see root AGENTS.md label table, #1072). **Race prevention**: checks issue assignee before claiming —
 skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and
 deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start).
 **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`.

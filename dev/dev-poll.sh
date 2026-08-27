@@ -747,9 +747,12 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     continue
   fi
 
-  # Formula guard: formula-labeled issues must not be picked up by dev-agent.
+  # Guard: skip issues that are not claimable right now.
+  # formula/dismissed/unreviewed: handled by other tracks, not dev-agent.
+  # waiting-on-compute: readiness flag — work is dispatched and waiting on an
+  # external run; a person or formula removes the label when the run lands (#1072).
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
-  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed)$' | head -1) || true
+  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed|waiting-on-compute)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — skipping in backlog scan"
     continue
