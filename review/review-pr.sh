@@ -32,8 +32,10 @@ source "$(dirname "$0")/../lib/formula-session.sh"
 # shellcheck source=../lib/stale-base-check.sh
 source "$(dirname "$0")/../lib/stale-base-check.sh"
 
-# Auto-pull factory code to pick up merged fixes before any logic runs
-git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
+# Auto-pull factory code to pick up merged fixes before any logic runs.
+# stdout must stay silent: the poller tail's this script's output for
+# failure messages, and "Already up to date." is not a useful reason (#1075).
+git -C "$FACTORY_ROOT" pull --ff-only origin main >/dev/null 2>&1 || true
 
 # --- Config ---
 PR_NUMBER="${1:?Usage: review-pr.sh <pr-number> [--force]}"
@@ -172,7 +174,9 @@ PREV_REV=$(printf '%s' "$ALL_COMMENTS" | jq -r --arg s "$PR_SHA" \
 if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
   PREV_BODY=$(printf '%s' "$PREV_REV" | jq -r '.body')
   PREV_SHA=$(printf '%s' "$PREV_BODY" | grep -oP '<!-- reviewed: \K[a-f0-9]+' | head -1)
-  cd "${PROJECT_REPO_ROOT}"; git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>/dev/null || true
+  cd "${PROJECT_REPO_ROOT}"
+  FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>&1 >/dev/null) || \
+    log "WARN: git fetch ${FORGE_REMOTE} ${PR_HEAD} failed: ${FETCH_ERR} — incremental diff may be incomplete"
   INCR=$(git diff "${PREV_SHA}..${PR_SHA}" 2>/dev/null | head -c "$MAX_DIFF") || true
   if [ -n "$INCR" ]; then
     IS_RE_REVIEW=true; log "re-review: previous at ${PREV_SHA:0:7}"
@@ -202,14 +206,40 @@ DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes
 # =============================================================================
 # WORKTREE SETUP
 # =============================================================================
-git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>/dev/null || true
+# Fetch the PR head objects into this clone before checking them out. A
+# swallowed fetch failure here made every review of an unfetched branch die
+# with exit 128 and an unrelated message (#1075).
+FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>&1 >/dev/null) || {
+  log "WARN: git fetch ${FORGE_REMOTE} ${PR_HEAD} failed: ${FETCH_ERR}"
+  # The PR head branch may have been deleted while the PR is still open;
+  # retry by fetching the commit SHA directly.
+  FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "$PR_SHA" 2>&1 >/dev/null) || \
+    log "WARN: git fetch ${FORGE_REMOTE} ${PR_SHA} failed: ${FETCH_ERR}"
+}
+
+if ! git cat-file -e "${PR_SHA}^{commit}" 2>/dev/null; then
+  # Objects are still missing. Record a review error naming the SHA so the
+  # poll's error counter backs off instead of retrying blind (#1075).
+  log "ERROR: objects for ${PR_SHA} missing after git fetch ${FORGE_REMOTE} (${FETCH_ERR})"
+  jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed: cannot fetch objects for \`${PR_SHA:0:7}\` from remote \`${FORGE_REMOTE}\` (head ref \`${PR_HEAD}\`). Both \`git fetch ${FORGE_REMOTE} ${PR_HEAD}\` and \`git fetch ${FORGE_REMOTE} ${PR_SHA}\` failed.\n---\n*${PR_SHA:0:7}*" \
+    '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
+  echo "ERROR: git fetch ${FORGE_REMOTE} ${PR_HEAD}/${PR_SHA} failed — objects for ${PR_SHA} missing, cannot check out"
+  exit 128
+fi
 
 if [ -d "$WORKTREE" ]; then
-  cd "$WORKTREE"; git checkout --detach "$PR_SHA" 2>/dev/null || {
+  CO_ERR=$(cd "$WORKTREE" && git checkout --detach "$PR_SHA" 2>&1 >/dev/null) || {
+    log "git checkout --detach ${PR_SHA} failed in existing worktree (${CO_ERR}); recreating"
     worktree_cleanup "$WORKTREE"
-    git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null; }
-else
-  git worktree add "$WORKTREE" "$PR_SHA" --detach 2>/dev/null
+  }
+fi
+if [ ! -d "$WORKTREE" ]; then
+  WT_ERR=$(git worktree add "$WORKTREE" "$PR_SHA" --detach 2>&1 >/dev/null) || {
+    log "ERROR: git worktree add ${WORKTREE} ${PR_SHA} --detach failed: ${WT_ERR}"
+    echo "ERROR: git worktree add failed to check out ${PR_SHA}: ${WT_ERR}"
+    exit 128
+  }
 fi
 
 # =============================================================================
