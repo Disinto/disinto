@@ -53,6 +53,11 @@ log() {
   printf '[%s] #%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" >> "$LOGFILE"
 }
 
+# Record what this run actually resolved (#1070). WORKTREE and IMPL_SUMMARY_FILE
+# come from PROJECT_NAME; the issue and the prompt come from FORGE_REPO. A run
+# was observed where those two named different projects.
+log "context: PROJECT_TOML=${PROJECT_TOML:-(unset)} PROJECT_NAME=${PROJECT_NAME:-(unset)} FORGE_REPO=${FORGE_REPO:-(unset)} REPO_ROOT=${REPO_ROOT:-(unset)} WORKTREE=${WORKTREE}"
+
 status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"

@@ -47,6 +47,13 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
+# Record what this run actually resolved (#1070). One dev-agent run was seen
+# holding PROJECT_NAME from one project and FORGE_REPO from another, which
+# produced a worktree named for one project working an issue from the other.
+# Every path below is derived from one of these four values, so logging them
+# at entry makes the next occurrence explain itself.
+log "context: PROJECT_TOML=${PROJECT_TOML:-(unset)} PROJECT_NAME=${PROJECT_NAME:-(unset)} FORGE_REPO=${FORGE_REPO:-(unset)} FORGE_API=${FORGE_API:-(unset)} LOCKFILE=${LOCKFILE}"
+
 # Resolve current agent identity once at startup — cache for all assignee checks
 BOT_USER=$(forge_whoami)
 log "running as agent: ${BOT_USER}"
