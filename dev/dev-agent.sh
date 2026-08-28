@@ -46,6 +46,9 @@ WORKTREE="/tmp/${PROJECT_NAME}-worktree-${ISSUE}"
 SID_FILE="/tmp/dev-session-${PROJECT_NAME}-${ISSUE}.sid"
 PREFLIGHT_RESULT="/tmp/dev-agent-preflight.json"
 IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
+# claude_run_with_watchdog records the claude process-group ID here so any
+# exit path (release, crash, signal) can kill leftover claude (#1070).
+CLAUDE_PGID_FILE="/tmp/dev-claude-pgid-${PROJECT_NAME:-default}-${ISSUE}"
 
 LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
 
@@ -69,7 +72,30 @@ status() {
 CLAIMED=false
 PR_NUMBER=""
 
+# kill_stale_claude — kill any claude process group left behind by
+# claude_run_with_watchdog (#1070: a session was observed outliving its
+# watchdog and holding a llama slot until a manual pkill). The watchdog
+# removes the pgid file once the group is dead, so a present file means
+# claude is still running (or a kill is in flight).
+kill_stale_claude() {
+  [ -f "$CLAUDE_PGID_FILE" ] || return 0
+  local pgid
+  pgid=$(head -n1 "$CLAUDE_PGID_FILE" 2>/dev/null) || return 0
+  [ -n "$pgid" ] || return 0
+  if kill -0 "$pgid" 2>/dev/null; then
+    log "cleanup: killing leftover claude process group ${pgid}"
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pgid" 2>/dev/null; then
+      log "cleanup: SIGKILL leftover claude process group ${pgid}"
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$CLAUDE_PGID_FILE"
+}
+
 cleanup() {
+  kill_stale_claude
   rm -f "$LOCKFILE" "$STATUSFILE"
   # If we claimed the issue but never created a PR, release it
   if [ "$CLAIMED" = true ] && [ -z "$PR_NUMBER" ]; then
@@ -77,7 +103,16 @@ cleanup() {
     issue_release "$ISSUE"
   fi
 }
+# Route HUP/INT/TERM through exit so the EXIT trap (cleanup) always runs,
+# including on signal death — otherwise a signalled dev-agent leaves its
+# claude child running (#1070).
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 trap cleanup EXIT
+# Note: no rm of $CLAUDE_PGID_FILE at startup — a stale file from a crashed
+# prior run points at the leaked claude group, and cleanup() will kill it
+# (self-healing). claude_run_with_watchdog overwrites the file each run.
 
 # =============================================================================
 # LOG ROTATION
