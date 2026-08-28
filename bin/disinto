@@ -2980,13 +2980,90 @@ disinto_ci_logs() {
 #   disable --all        Disable all roles
 #   enable --all         Enable all roles
 #   status               Show enabled/disabled roles
+#
+# State-dir resolution (#1067): inside the agent container,
+# bootstrap_factory_repo() switches DISINTO_DIR to the live clone whenever
+# <live>/lib/env.sh exists (docker/agents/entrypoint.sh:370), so the runtime
+# reads ${DISINTO_PROJECT_REPOS:-/srv/disinto/project-repos}/_factory/state on
+# the host — not the baked copy this CLI ships in. resolve_runtime_state_dir()
+# mirrors that switch condition so the CLI reads and writes where the agents
+# actually read.
+
+# resolve_runtime_state_dir
+#   Print the state dir the agent runtime actually reads (#1067). The live
+#   clone root is ${DISINTO_PROJECT_REPOS:-/srv/disinto/project-repos}/_factory
+#   (host side of the project-repos host volume the agents mount at
+#   /home/agent/repos — see nomad/jobs/agents.hcl). Use it only when
+#   <live>/lib/env.sh exists — the same condition bootstrap_factory_repo()
+#   checks — otherwise fall back to the baked FACTORY_ROOT.
+resolve_runtime_state_dir() {
+  local live_root="${DISINTO_PROJECT_REPOS:-/srv/disinto/project-repos}/_factory"
+  if [ -f "${live_root}/lib/env.sh" ]; then
+    printf '%s\n' "${live_root}/state"
+  else
+    printf '%s\n' "${FACTORY_ROOT}/state"
+  fi
+}
+
+# active_role_names <state-dir>
+#   Print the roles whose .<role>-active flag exists in <state-dir>, one per
+#   line, in canonical order. Prints nothing for a missing dir.
+active_role_names() {
+  local dir="$1" a
+  for a in dev reviewer gardener architect planner predictor; do
+    if [ -f "${dir}/.${a}-active" ]; then
+      printf '%s\n' "$a"
+    fi
+  done
+  return 0
+}
+
+# nomad_agent_role_gates
+#   Print "<job>: <AGENT_ROLES>" for each running Nomad job whose task env
+#   defines AGENT_ROLES — the effective role gate on a Nomad box (#1067).
+#   Prints nothing when the nomad CLI or server is unavailable.
+nomad_agent_role_gates() {
+  command -v nomad >/dev/null 2>&1 || return 0
+  local jobs_json job roles
+  jobs_json=$(nomad job list -json 2>/dev/null) || return 0
+  [ -n "$jobs_json" ] || return 0
+  while IFS= read -r job; do
+    [ -n "$job" ] || continue
+    roles=$(nomad job status "$job" -json 2>/dev/null | jq -r '
+      [ .Job.TaskGroups[]?.Tasks[]?
+        | select(.Env.AGENT_ROLES != null)
+        | .Env.AGENT_ROLES ] | unique | join(",")' 2>/dev/null) || continue
+    if [ -n "$roles" ] && [ "$roles" != "null" ]; then
+      printf '%s: %s\n' "$job" "$roles"
+    fi
+  done < <(printf '%s' "$jobs_json" | jq -r '.[] | select(.Status == "running") | .Name' 2>/dev/null)
+  return 0
+}
+
+# role_gate_note
+#   After writing a flag, name the real job-level lever on Nomad: AGENT_ROLES
+#   in the job spec, and `nomad job stop` per running agent job (#1067).
+#   Prints nothing when no Nomad agent jobs are running.
+role_gate_note() {
+  local gates
+  gates=$(nomad_agent_role_gates)
+  if [ -n "$gates" ]; then
+    echo "Note: the flag file gates each poll iteration; the job-level gate on"
+    echo "Nomad is AGENT_ROLES in the job spec. To stop a role's loop outright:"
+    printf '%s\n' "$gates" | sed 's/^/  nomad job stop /'
+  fi
+  return 0
+}
+
 disinto_role() {
   local subcmd="${1:-}"
-  local state_dir="${FACTORY_ROOT}/state"
   local all_agents=("dev" "reviewer" "gardener" "architect" "planner" "predictor")
 
-  # Ensure state directory exists
-  mkdir -p "$state_dir"
+  # Where the agents actually read/write their state (#1067) — live clone
+  # when present, otherwise the baked copy this CLI ships in.
+  local state_dir
+  state_dir=$(resolve_runtime_state_dir)
+  local baked_state_dir="${FACTORY_ROOT}/state"
 
   case "$subcmd" in
     disable)
@@ -2997,6 +3074,9 @@ disinto_role() {
         echo "       disinto role disable --all" >&2
         exit 1
       fi
+      # Ensure state directory exists
+      mkdir -p "$state_dir"
+      echo "State dir: ${state_dir}"
       if [ "$agent" = "--all" ]; then
         echo "Disabling all roles..."
         for a in "${all_agents[@]}"; do
@@ -3030,6 +3110,7 @@ disinto_role() {
           echo "Already disabled: ${agent}"
         fi
       fi
+      role_gate_note
       ;;
     enable)
       local agent="${2:-}"
@@ -3039,6 +3120,9 @@ disinto_role() {
         echo "       disinto role enable --all" >&2
         exit 1
       fi
+      # Ensure state directory exists
+      mkdir -p "$state_dir"
+      echo "State dir: ${state_dir}"
       if [ "$agent" = "--all" ]; then
         echo "Enabling all roles..."
         for a in "${all_agents[@]}"; do
@@ -3072,9 +3156,11 @@ disinto_role() {
           echo "Enabled: ${agent}"
         fi
       fi
+      role_gate_note
       ;;
     status)
       echo "Role Status"
+      echo "State dir: ${state_dir}"
       echo "=========="
       printf "%-12s %s\n" "ROLE" "STATUS"
       printf "%-12s %s\n" "----" "------"
@@ -3088,6 +3174,30 @@ disinto_role() {
         fi
         printf "%-12s %s\n" "$a" "$status"
       done
+
+      # Effective gate on Nomad: AGENT_ROLES in the running jobs' task env.
+      local gates
+      gates=$(nomad_agent_role_gates)
+      if [ -n "$gates" ]; then
+        echo ""
+        echo "Nomad AGENT_ROLES gate (effective for running jobs):"
+        printf '%s\n' "$gates" | sed 's/^/  /'
+      fi
+
+      # The CLI and the agents can resolve different state dirs (#1067).
+      # When both exist and disagree, say so and name both.
+      if [ "$state_dir" != "$baked_state_dir" ] \
+         && [ -d "$state_dir" ] && [ -d "$baked_state_dir" ]; then
+        local live_set baked_set
+        live_set=$(active_role_names "$state_dir")
+        baked_set=$(active_role_names "$baked_state_dir")
+        if [ "$live_set" != "$baked_set" ]; then
+          echo ""
+          echo "WARNING: state dirs disagree — the agents read the live dir, not the baked copy:"
+          echo "  live (runtime): ${state_dir}"
+          echo "  baked (image):  ${baked_state_dir}"
+        fi
+      fi
       ;;
     *)
       cat <<EOF >&2
@@ -3100,6 +3210,10 @@ Manage roles (enable/disable):
   disable --all        Disable all roles
   enable --all         Enable all roles
   status               Show which roles are enabled/disabled
+
+State files live in the dir the agent runtime reads — the live factory
+clone when one is present, otherwise this install's copy (printed by
+`status` and by enable/disable as "State dir:").
 
 Valid roles: dev, reviewer, gardener, architect, planner, predictor
 EOF
