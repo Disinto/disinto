@@ -84,7 +84,7 @@ agent_recover_session() {
 # Returns: exit code from claude or timeout
 claude_run_with_watchdog() {
   local -a cmd=("$@")
-  local out_file pid grace_pid rc
+  local out_file pid grace_pid rc limit start_ts end_ts elapsed
 
   # Create temp files for stdout capture and PTY runner script
   out_file=$(mktemp) || return 1
@@ -115,6 +115,15 @@ claude_run_with_watchdog() {
   chmod +x "$runner"
   setsid script -qfc "$runner" /dev/null > "$out_file" 2>>"$LOGFILE" &
   pid=$!
+
+  # Optional: record the claude process-group ID for the caller's exit-path
+  # cleanup (#1070). setsid made $pid the session+group leader (pid == pgid),
+  # so the caller (dev-agent.sh) can `kill -- -PGID` on any of its exit paths
+  # and guarantee no claude survives its shell. Removed below once the group
+  # is dead.
+  if [ -n "${CLAUDE_PGID_FILE:-}" ]; then
+    printf '%s\n' "$pid" > "$CLAUDE_PGID_FILE"
+  fi
 
   # Background tailer: mirror $out_file into $LOGFILE as stream-json messages
   # arrive — without this, a run that hangs mid-stream shows no progress to
@@ -166,24 +175,62 @@ claude_run_with_watchdog() {
   ) &
   grace_pid=$!
 
-  # Hard ceiling timeout (existing behavior) — use tail --pid to wait for process
-  timeout --foreground "${CLAUDE_TIMEOUT:-7200}" tail --pid="$pid" -f /dev/null 2>/dev/null
-  rc=$?
+  # Hard ceiling timeout — use tail --pid to wait for the process to die.
+  #
+  # #1070: this used to be an unguarded `timeout ...` line. Callers run this
+  # function inside a command substitution that inherits `set -e`, and when the
+  # ceiling fired, `timeout` exited 124 and ABORTED the subshell right here —
+  # the process-group kill below never ran. The caller still saw rc=124 and
+  # logged "timeout", but the claude group (already re-parented to PID 1 via
+  # setsid) was orphaned and ran on until CLAUDE_MAX_TURNS or a manual pkill.
+  # `|| rc=$?` captures the exit status without tripping set -e.
+  limit="${CLAUDE_TIMEOUT:-7200}"
+  start_ts=$(date +%s)
+  rc=0
+  timeout --foreground "$limit" tail --pid="$pid" -f /dev/null 2>/dev/null || rc=$?
+  end_ts=$(date +%s)
+  elapsed=$((end_ts - start_ts))
+  # Log the watchdog's observed wall-clock and the timeout exit status on
+  # EVERY run so timeout enforcement is auditable from $LOGFILE (#1070).
+  log "watchdog: timeout_exit=${rc} elapsed_wall=${elapsed}s limit=${limit}s pgid=${pid}"
 
-  # Clean up the watchdog (target process group if it spawned children)
-  kill -- "-$grace_pid" 2>/dev/null || true
+  # When the hard ceiling fires (rc=124), kill the whole claude process group.
+  # tail --pid is a passive waiter, not a supervisor. $pid is the group leader
+  # (setsid), so -PID reaches every child claude spawned, including hung
+  # Bash-tool commands — no claude may survive its shell (#1070).
+  if [ "$rc" -eq 124 ]; then
+    log "watchdog: CLAUDE_TIMEOUT (${limit}s) exceeded after ${elapsed}s — SIGTERM group ${pid}"
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    # Give it a moment to clean up
+    sleep 5
+    if kill -0 "$pid" 2>/dev/null; then
+      log "watchdog: SIGKILL group ${pid} after SIGTERM grace"
+      kill -KILL -- "-$pid" 2>/dev/null || true
+    fi
+  fi
+
+  # Clean up the helper subshells.
+  #
+  # #1070: the old order was `kill -- "-$grace_pid"` — a silent no-op, because
+  # the grace subshell is NOT a process-group leader (its pgid is the caller
+  # shell's) — followed by `wait "$grace_pid"` BEFORE the claude group kill.
+  # The grace loop only exits when claude dies, so the wait deadlocked and the
+  # claude group leaked. Now: plain TERM (effective on the direct child), then
+  # a bounded wait (the subshell finishes its current sleep and sees claude
+  # gone), then the log tailer, then reap the claude group leader.
+  kill "$grace_pid" 2>/dev/null || true
   wait "$grace_pid" 2>/dev/null || true
   # Clean up the log tailer — tail -F --pid exits automatically when claude
   # exits, but be defensive.
   kill "$tail_pid" 2>/dev/null || true
   wait "$tail_pid" 2>/dev/null || true
+  # Reap the claude group leader so the pgid check below is reliable.
+  wait "$pid" 2>/dev/null || true
 
-  # When timeout fires (rc=124), explicitly kill the orphaned claude process group
-  # tail --pid is a passive waiter, not a supervisor
-  if [ "$rc" -eq 124 ]; then
-    kill -TERM -- "-$pid" 2>/dev/null || true
-    sleep 1
-    kill -KILL -- "-$pid" 2>/dev/null || true
+  # Drop the pgid file once the group leader is dead so the caller's
+  # exit-path cleanup doesn't act on a stale group ID (#1070).
+  if [ -n "${CLAUDE_PGID_FILE:-}" ] && ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$CLAUDE_PGID_FILE"
   fi
 
   # Output the captured stdout, redacting token-shaped vars on the way out
