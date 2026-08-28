@@ -3050,7 +3050,9 @@ role_gate_note() {
   if [ -n "$gates" ]; then
     echo "Note: the flag file gates each poll iteration; the job-level gate on"
     echo "Nomad is AGENT_ROLES in the job spec. To stop a role's loop outright:"
-    printf '%s\n' "$gates" | sed 's/^/  nomad job stop /'
+    # gates lines are "<job>: <AGENT_ROLES>" — drop the suffix so the
+    # suggested command is copy-pasteable.
+    printf '%s\n' "$gates" | sed -e 's/:.*//' -e 's/^/  nomad job stop /'
   fi
   return 0
 }
@@ -3213,7 +3215,7 @@ Manage roles (enable/disable):
 
 State files live in the dir the agent runtime reads — the live factory
 clone when one is present, otherwise this install's copy (printed by
-`status` and by enable/disable as "State dir:").
+\`status\` and by enable/disable as "State dir:").
 
 Valid roles: dev, reviewer, gardener, architect, planner, predictor
 EOF

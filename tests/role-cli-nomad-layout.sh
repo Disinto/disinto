@@ -20,6 +20,9 @@
 #      and never touch the baked copy.
 #   4. Without a live clone, the CLI falls back to the baked state dir.
 #   5. Without the nomad CLI, status degrades gracefully (no gate section).
+#   6. An unknown subcommand prints the usage text cleanly — the heredoc
+#      must not trigger command substitution (no `command not found` noise,
+#      the backticked `status` renders literally).
 #
 # Hermetic — no Nomad, no network, no sudo.
 # Required tools: bash, jq, sed, coreutils.
@@ -104,8 +107,8 @@ FAKE
 chmod +x "$FAKEBIN/nomad"
 export PATH="$FAKEBIN:${PATH}"
 
-# ── 1/5 status resolves the live state dir + reports AGENT_ROLES ─────────────
-echo "=== 1/5 role status uses the live clone state dir ==="
+# ── 1/6 status resolves the live state dir + reports AGENT_ROLES ─────────────
+echo "=== 1/6 role status uses the live clone state dir ==="
 rc=0
 out=$("$DISINTO" role status 2>&1) || rc=$?
 if [ "$rc" -eq 0 ]; then
@@ -143,8 +146,8 @@ else
   pass "status ignored jobs without AGENT_ROLES / stopped jobs"
 fi
 
-# ── 2/5 disagreement between live and baked state dirs is reported ───────────
-echo "=== 2/5 status reports live-vs-baked disagreement, naming both ==="
+# ── 2/6 disagreement between live and baked state dirs is reported ───────────
+echo "=== 2/6 status reports live-vs-baked disagreement, naming both ==="
 if printf '%s\n' "$out" | grep -q 'state dirs disagree'; then
   pass "status reports the disagreement"
 else
@@ -160,8 +163,8 @@ else
   printf '%s\n' "$out" >&2
 fi
 
-# ── 3/5 enable/disable write the live dir, never the baked copy ──────────────
-echo "=== 3/5 enable/disable target the live state dir ==="
+# ── 3/6 enable/disable write the live dir, never the baked copy ──────────────
+echo "=== 3/6 enable/disable target the live state dir ==="
 rm -f "$LIVE/state/.planner-active"
 
 rc=0
@@ -175,8 +178,8 @@ else
 fi
 
 if printf '%s\n' "$out" | grep -qF "State dir: ${LIVE}/state" \
-   && printf '%s\n' "$out" | grep -qF "nomad job stop agents-dev-qwen"; then
-  pass "enable names the live state dir and the nomad job stop lever"
+   && printf '%s\n' "$out" | grep -qE '^  nomad job stop agents-dev-qwen$'; then
+  pass "enable names the live state dir and a copy-pasteable nomad job stop command"
 else
   fail "enable output missing state dir or nomad job stop note"
   printf '%s\n' "$out" >&2
@@ -197,8 +200,8 @@ else
   fail "baked state dir was modified: $(ls -A "$BAKED/state")"
 fi
 
-# ── 4/5 without a live clone, the baked state dir is used ────────────────────
-echo "=== 4/5 no live clone falls back to the baked state dir ==="
+# ── 4/6 without a live clone, the baked state dir is used ────────────────────
+echo "=== 4/6 no live clone falls back to the baked state dir ==="
 rc=0
 out=$(env DISINTO_PROJECT_REPOS="${TMPROOT}/no-such-project-repos" \
   "$DISINTO" role status 2>&1) || rc=$?
@@ -215,14 +218,48 @@ else
   pass "no disagreement reported when live == baked"
 fi
 
-# ── 5/5 without the nomad CLI, status degrades gracefully ────────────────────
-echo "=== 5/5 no nomad CLI → no gate section, still exits 0 ==="
+# ── 5/6 without the nomad CLI, status degrades gracefully ────────────────────
+echo "=== 5/6 no nomad CLI → no gate section, still exits 0 ==="
 rc=0
 out=$(env PATH="/usr/local/bin:/usr/bin:/bin" "$DISINTO" role status 2>&1) || rc=$?
 if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -q 'Nomad AGENT_ROLES gate'; then
   pass "status degrades gracefully without nomad"
 else
   fail "status with no nomad: rc=$rc"
+  printf '%s\n' "$out" >&2
+fi
+
+# ── 6/6 usage path: unknown subcommand → clean usage, no command substitution ─
+echo "=== 6/6 unknown subcommand prints clean usage (no command not found) ==="
+rc=0
+out=$("$DISINTO" role bogus 2>&1) || rc=$?
+if [ "$rc" -eq 1 ]; then
+  pass "unknown subcommand exits 1"
+else
+  fail "unknown subcommand exited $rc (want 1)"
+  printf '%s\n' "$out" >&2
+fi
+
+if printf '%s\n' "$out" | grep -qi 'command not found'; then
+  fail "usage path emitted command-substitution noise (unescaped backticks?)"
+  printf '%s\n' "$out" >&2
+else
+  pass "usage path emits no command-substitution noise"
+fi
+
+# The backticked `status` must render literally — catches both a missing
+# `status` binary (word eaten) and one present on PATH (output spliced in).
+if printf '%s\n' "$out" | grep -qF '`status` and by enable/disable as "State dir:").'; then
+  pass "usage text renders the backticked status literally"
+else
+  fail 'usage text did not render the backticked status line verbatim'
+  printf '%s\n' "$out" >&2
+fi
+
+if printf '%s\n' "$out" | grep -qF 'Usage: disinto role <subcommand>'; then
+  pass "usage path prints the usage header"
+else
+  fail "usage path missing the usage header"
   printf '%s\n' "$out" >&2
 fi
 
