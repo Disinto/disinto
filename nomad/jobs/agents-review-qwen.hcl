@@ -1,0 +1,252 @@
+# =============================================================================
+# nomad/jobs/agents-review-qwen.hcl — review-role agent job (local Qwen model)
+#
+# Per-role variant of nomad/jobs/agents.hcl for the review-qwen bot: same
+# image, volumes, and Vault-templated bot tokens, with AGENT_ROLES pinned to
+# "review". Runs against the local llama-server (ANTHROPIC_BASE_URL) instead
+# of the Anthropic API.
+#
+# Autocompact lane (#1069):
+#   CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is a percentage of the context window
+#   Claude Code *believes* the model has — resolved from the model name
+#   (200k for unsloth/Qwen3.8-27B), NOT the llama-server's real n_ctx.
+#   CLAUDE_CODE_AUTO_COMPACT_WINDOW can only clamp that belief *downward*
+#   (cli.js gF(): K = Math.min(K, z)), so any value above the believed
+#   window is a no-op. It is pinned to 200000 to say so.
+#
+#   50% of the 200k believed window = a 100k compaction lane. The server
+#   runs --kv-unified with --ctx-size 327680, so the budget is the sum of
+#   all concurrent sessions against one shared pool, not a per-slot cap —
+#   two agents at a 100k lane leave roughly a third of the pool for other
+#   consumers on this host.
+#
+#   CLAUDE_MAX_TURNS stays 60 deliberately: more turns at a thrashing lane
+#   buys more thrash. Widening the lane is the lever.
+#
+# Host_volume contract: same as nomad/jobs/agents.hcl — agent-data,
+# project-repos, ops-repo, and factory-projects are declared in
+# nomad/client.hcl and created by lib/init/nomad/cluster-up.sh.
+# =============================================================================
+
+job "agents-review-qwen" {
+  type        = "service"
+  datacenters = ["dc1"]
+
+  group "agents" {
+    count = 1
+
+    # ── Vault workload identity ─────────────────────────────────────────────
+    # Composite role covering all bot identities (vault/policies/
+    # service-agents.hcl) — same role as nomad/jobs/agents.hcl. The template
+    # below renders the full bot token set; this job authenticates as the
+    # review bot (kv/disinto/bots/review).
+    vault {
+      role = "service-agents"
+    }
+
+    # No network port — the agent is outbound-only (polls forgejo, calls
+    # llama). No service check — task lifecycle is the health signal, same
+    # as nomad/jobs/agents.hcl.
+
+    volume "agent-data" {
+      type      = "host"
+      source    = "agent-data"
+      read_only = false
+    }
+
+    volume "project-repos" {
+      type      = "host"
+      source    = "project-repos"
+      read_only = false
+    }
+
+    volume "ops-repo" {
+      type      = "host"
+      source    = "ops-repo"
+      read_only = true
+    }
+
+    # Operator-managed per-env factory project TOMLs (#794), mounted RO into
+    # the path bootstrap_factory_repo already reads from.
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
+    # Conservative restart — fail fast to the scheduler.
+    restart {
+      attempts = 3
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
+    service {
+      name     = "agents-review-qwen"
+      provider = "nomad"
+    }
+
+    task "agents" {
+      driver = "docker"
+
+      config {
+        image      = "disinto/agents:local"
+        force_pull = false
+
+        # apparmor=unconfined matches docker-compose — Claude Code needs
+        # ptrace for node.js inspector and /proc access.
+        security_opt = ["apparmor=unconfined"]
+      }
+
+      volume_mount {
+        volume      = "agent-data"
+        destination = "/home/agent/data"
+        read_only   = false
+      }
+
+      volume_mount {
+        volume      = "project-repos"
+        destination = "/home/agent/repos"
+        read_only   = false
+      }
+
+      volume_mount {
+        volume      = "ops-repo"
+        destination = "/home/agent/repos/disinto-ops"
+        read_only   = true
+      }
+
+      # factory-projects: surfaces /srv/disinto/projects/ inside the container
+      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
+      # already reads from (#794).
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/home/agent/repos/_factory/projects"
+        read_only   = true
+      }
+
+      # ── Non-secret env ─────────────────────────────────────────────────────
+      # FORGE_URL is rendered from Nomad service discovery in the template
+      # block below — the bridge-network netns cannot resolve the `forgejo`
+      # hostname (no Consul DNS). Same pattern as nomad/jobs/agents.hcl.
+      env {
+        FORGE_REPO         = "disinto-admin/disinto"
+        FACTORY_REPO       = "disinto-admin/disinto"
+        PROJECT_TOML       = "/home/agent/repos/_factory/projects/disinto.toml"
+        ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
+        ANTHROPIC_API_KEY  = "sk-no-key-required"
+        CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
+        AGENT_ROLES        = "review"
+        POLL_INTERVAL      = "300"
+        DISINTO_CONTAINER  = "1"
+        CLAUDE_TIMEOUT     = "7200"
+        CLAUDE_MAX_TURNS   = "60"
+
+        # llama-specific Claude Code tuning
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
+        CLAUDE_CODE_DISABLE_THINKING             = "1"
+
+        # Autocompact lane (#1069) — see the file header for the rationale:
+        # 50% of the 200k believed window = 100k lane; the window var is
+        # pinned to the believed window because it can only clamp downward.
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE   = "50"
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW   = "200000"
+      }
+
+      # ── Nomad-discovered FORGE_URL ────────────────────────────────────────
+      # Bridge netns cannot resolve `forgejo:3000`. Render from Nomad service
+      # discovery — matches nomad/jobs/agents.hcl and keeps the job portable
+      # across boxes with different bridge IPs.
+      template {
+        destination = "secrets/forge-url.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range nomadService "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
+      # ── Vault-templated bot tokens ────────────────────────────────────────
+      # Renders the full bot token set from Vault KV v2, same as
+      # nomad/jobs/agents.hcl. This job authenticates as the review bot:
+      # FORGE_TOKEN/FORGE_PASS come from kv/disinto/bots/review.
+      #
+      # Placeholder values kept < 16 chars to avoid secret-scan CI failures.
+      # error_on_missing_key = false prevents template-pending hangs.
+      template {
+        destination          = "secrets/bots.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/bots/review" -}}
+FORGE_TOKEN={{ .Data.data.token }}
+FORGE_PASS={{ .Data.data.pass }}
+{{- else -}}
+# WARNING: run tools/vault-seed-agents.sh
+FORGE_TOKEN=seed-me
+FORGE_PASS=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/dev" -}}
+FORGE_DEV_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_DEV_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/gardener" -}}
+FORGE_GARDENER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_GARDENER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/architect" -}}
+FORGE_ARCHITECT_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_ARCHITECT_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/planner" -}}
+FORGE_PLANNER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_PLANNER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/predictor" -}}
+FORGE_PREDICTOR_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_PREDICTOR_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/supervisor" -}}
+FORGE_SUPERVISOR_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_SUPERVISOR_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/vault" -}}
+FORGE_VAULT_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_VAULT_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/filer" -}}
+FORGE_FILER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_FILER_TOKEN=seed-me
+{{- end }}
+EOT
+      }
+
+      # Agents run Claude/llama sessions — need CPU + memory headroom.
+      resources {
+        cpu    = 500
+        memory = 1024
+      }
+    }
+  }
+}

@@ -155,6 +155,26 @@ poll_interval = 60
   context windows
 - Agents serialize on the llama-server's single KV cache (AD-002)
 
+## Autocompact window (#1069)
+
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is a percentage of the context window
+Claude Code *believes* the model has — resolved from the **model name**
+(200,000 tokens for `unsloth/Qwen3.8-27B`), **not** the llama-server's real
+`n_ctx`. The percentage therefore acts on the believed window.
+
+That believed window comes from the model name and **cannot be raised** by
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW`: the variable can only clamp the belief
+*downward* (`K = Math.min(K, z)` in Claude Code's window-resolution code), so
+any value above the believed window is a no-op. Pin it to the believed window
+(200000) to make that explicit. To get a wider compaction lane, lower the
+percentage — e.g. `50` gives a 100k lane on the 200k believed window.
+
+When the server runs with `--kv-unified`, the context budget is the **sum of
+all concurrent sessions** against one shared KV pool, not a per-slot cap:
+`--parallel` slots do not each get their own context window. Size each
+agent's lane (percentage × believed window) so the combined concurrent
+usage leaves headroom in the pool for other consumers on the host.
+
 ## Per-env config on Nomad boxes (#794)
 
 Under the Nomad backend, per-env factory project TOMLs live at
