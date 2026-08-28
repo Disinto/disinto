@@ -166,8 +166,12 @@ That believed window comes from the model name and **cannot be raised** by
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`: the variable can only clamp the belief
 *downward* (`K = Math.min(K, z)` in Claude Code's window-resolution code), so
 any value above the believed window is a no-op. Pin it to the believed window
-(200000) to make that explicit. To get a wider compaction lane, lower the
-percentage — e.g. `50` gives a 100k lane on the 200k believed window.
+(200000) to make that explicit.
+
+Note the percentage acts on the *usable* window — the believed window minus a
+20k output reservation — not the raw believed window: `50` gives a ~90k
+compaction threshold on the 200k believed window (50% of 200k − 20k = 90k).
+To get a wider compaction lane, lower the percentage.
 
 When the server runs with `--kv-unified`, the context budget is the **sum of
 all concurrent sessions** against one shared KV pool, not a per-slot cap:
@@ -186,6 +190,8 @@ restart the agent job — no image rebuild needed:
 sudo $EDITOR /srv/disinto/projects/disinto.toml
 nomad job restart agents
 nomad job restart agents-supervisor-opus
+nomad job restart agents-dev-qwen
+nomad job restart agents-review-qwen
 ```
 
 If you are coming from a pre-#794 box that kept TOMLs at

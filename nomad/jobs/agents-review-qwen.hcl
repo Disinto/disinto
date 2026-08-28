@@ -14,10 +14,13 @@
 #   (cli.js gF(): K = Math.min(K, z)), so any value above the believed
 #   window is a no-op. It is pinned to 200000 to say so.
 #
-#   50% of the 200k believed window = a 100k compaction lane. The server
-#   runs --kv-unified with --ctx-size 327680, so the budget is the sum of
-#   all concurrent sessions against one shared pool, not a per-slot cap —
-#   two agents at a 100k lane leave roughly a third of the pool for other
+#   The threshold is pct of the *usable* window: believed window minus a
+#   20k output reservation (cli.js gF(): min(window, AUTO_COMPACT_WINDOW)
+#   - min(max_output, 20000)). So 50% of (200k - 20k) = a 90k threshold —
+#   auto-compact fires when a session's context exceeds ~90k tokens.
+#   The server runs --kv-unified with --ctx-size 327680, so the budget is
+#   the sum of all concurrent sessions against one shared pool, not a
+#   per-slot cap — two agents at 90k lanes leave ~145k of pool for other
 #   consumers on this host.
 #
 #   CLAUDE_MAX_TURNS stays 60 deliberately: more turns at a thrashing lane
@@ -117,12 +120,13 @@ job "agents-review-qwen" {
         read_only   = true
       }
 
-      # factory-projects: surfaces /srv/disinto/projects/ inside the container
-      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
-      # already reads from (#794).
+      # factory-projects: surfaces /srv/disinto/projects/ (host) inside the
+      # container at the contracted path /srv/disinto/project-repos/_factory/
+      # projects — the path bootstrap_factory_repo /
+      # seed_projects_from_host_volume read from (#794, nomad/client.hcl).
       volume_mount {
         volume      = "factory-projects"
-        destination = "/home/agent/repos/_factory/projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
         read_only   = true
       }
 
@@ -133,7 +137,12 @@ job "agents-review-qwen" {
       env {
         FORGE_REPO         = "disinto-admin/disinto"
         FACTORY_REPO       = "disinto-admin/disinto"
-        PROJECT_TOML       = "/home/agent/repos/_factory/projects/disinto.toml"
+        # Set explicitly (not left to the entrypoint's first-TOML parse):
+        # under set -u, ensure_project_clone aborts on an unbound
+        # PROJECT_NAME, and the baked image carries no projects/*.toml.
+        PROJECT_NAME       = "disinto"
+        PROJECT_REPO_ROOT  = "/home/agent/repos/disinto"
+        PROJECT_TOML       = "/srv/disinto/project-repos/_factory/projects/disinto.toml"
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
@@ -149,8 +158,9 @@ job "agents-review-qwen" {
         CLAUDE_CODE_DISABLE_THINKING             = "1"
 
         # Autocompact lane (#1069) — see the file header for the rationale:
-        # 50% of the 200k believed window = 100k lane; the window var is
-        # pinned to the believed window because it can only clamp downward.
+        # 50% of the usable window (200k believed - 20k output reservation)
+        # = 90k threshold; the window var is pinned to the believed window
+        # because it can only clamp downward.
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE   = "50"
         CLAUDE_CODE_AUTO_COMPACT_WINDOW   = "200000"
       }
