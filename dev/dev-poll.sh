@@ -47,6 +47,13 @@ log() {
   printf '[%s] poll: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" >> "$LOGFILE"
 }
 
+# Record what this run actually resolved (#1070). One dev-agent run was seen
+# holding PROJECT_NAME from one project and FORGE_REPO from another, which
+# produced a worktree named for one project working an issue from the other.
+# Every path below is derived from one of these four values, so logging them
+# at entry makes the next occurrence explain itself.
+log "context: PROJECT_TOML=${PROJECT_TOML:-(unset)} PROJECT_NAME=${PROJECT_NAME:-(unset)} FORGE_REPO=${FORGE_REPO:-(unset)} FORGE_API=${FORGE_API:-(unset)} LOCKFILE=${LOCKFILE}"
+
 # Resolve current agent identity once at startup — cache for all assignee checks
 BOT_USER=$(forge_whoami)
 log "running as agent: ${BOT_USER}"
@@ -376,6 +383,18 @@ git fetch origin --prune 2>/dev/null || true
 memory_guard 2000
 
 # =============================================================================
+# Return 0 when a dev-agent process for this issue is already alive.
+#
+# Two dev-agent sessions ran on issue #1067 at the same time, each with its
+# own claude process, each holding a llama slot with ~136k of context, and
+# neither produced a branch (issue #1070). The lock file and the remote
+# branch are both checked below, but a session that has started and not yet
+# written either one is invisible to those checks. The process table is not.
+_dev_agent_running() {
+  local issue="$1"
+  pgrep -f "dev-agent\.sh ${issue}\$" >/dev/null 2>&1
+}
+
 # PRIORITY 1: orphaned in-progress issues
 # =============================================================================
 log "checking for in-progress issues"
@@ -443,9 +462,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           log "issue #${ISSUE_NUM} assigned to me — my thread is busy (lock=$([ -f "$LOCK_FILE" ] && echo y || echo n) remote_branch=$REMOTE_BRANCH_EXISTS)"
           BLOCKED_BY_INPROGRESS=true
         else
-          log "issue #${ISSUE_NUM} self-assigned but orphaned (no lock, no branch, no PR) — recovering"
-          nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
-          log "started dev-agent PID $! for issue #${ISSUE_NUM} (post-crash recovery)"
+          if _dev_agent_running "$ISSUE_NUM"; then
+            log "issue #${ISSUE_NUM} already has a live dev-agent — not starting a second (#1070)"
+          else
+            log "issue #${ISSUE_NUM} self-assigned but orphaned (no lock, no branch, no PR) — recovering"
+            nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+            log "started dev-agent PID $! for issue #${ISSUE_NUM} (post-crash recovery)"
+          fi
           BLOCKED_BY_INPROGRESS=true
         fi
       fi
@@ -588,9 +611,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             "${API}/issues/${ISSUE_NUM}/labels/${IP_ID}" >/dev/null 2>&1 || true
           # Don't block — fall through to backlog
         else
-          log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
-          ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
-          log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+          if _dev_agent_running "$ISSUE_NUM"; then
+            log "issue #${ISSUE_NUM} already has a live dev-agent — not starting a second (#1070)"
+          else
+            log "recovering orphaned issue #${ISSUE_NUM} (no PR found, assigned to ${BOT_USER:-unassigned})"
+            ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
+            log "started dev-agent PID $! for issue #${ISSUE_NUM} (recovery)"
+          fi
           BLOCKED_BY_INPROGRESS=true
         fi
       fi

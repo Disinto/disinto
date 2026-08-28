@@ -34,7 +34,11 @@ block). If no assignee, no open PR, and no agent lock file — removes `in-progr
 issue is self-assigned (this bot) but there is no open PR, dev-poll now checks for a lock
 file (`/tmp/dev-impl-summary-$PROJECT_NAME-$ISSUE_NUM.txt`) AND a remote branch
 (`fix/issue-$ISSUE_NUM`) before declaring "my thread is busy". If neither exists after a cold
-boot, it spawns a fresh dev-agent for recovery instead of looping forever. **Per-agent open-PR gate**: before starting new work,
+boot, it spawns a fresh dev-agent for recovery instead of looping forever. Before any such
+spawn it also checks the process table (`pgrep`) and never starts a second `dev-agent.sh`
+for an issue that already has a live one (#1070) — a started session that has written
+neither lock nor branch yet is invisible to both of those checks, but not to the process
+table. **Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents'
 PRs do not block this agent's pipeline (#358, #369). **Pre-lock merge scan own-PRs only**:
 the direct-merge scan only merges PRs whose linked issue is assigned to this agent — skips

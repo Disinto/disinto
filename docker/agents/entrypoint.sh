@@ -380,25 +380,98 @@ EOF
 # On first startup, if the project repo is missing, clone it from FORGE_URL/FORGE_REPO.
 # This makes the agents container self-healing and independent of init's host clone.
 ensure_project_clone() {
-  # shellcheck disable=SC2153
-  local repo_dir="/home/agent/repos/${PROJECT_NAME}"
-  if [ -d "${repo_dir}/.git" ]; then
-    log "Project repo present at ${repo_dir}"
-    return 0
+  # Clone every project a TOML names — not only the one the jobspec names.
+  #
+  # The polling loop below iterates every *.toml in the projects directory,
+  # so a factory configured with two projects polls two projects and needs
+  # two checkouts. This function used to clone exactly one, from the
+  # jobspec's $PROJECT_NAME/$FORGE_REPO, and the second project then failed
+  # on every cycle with "REPO_ROOT=<path> does not exist — cannot cd"
+  # (issue #1068). bootstrap_ops_repos() already loops; this now matches it.
+  #
+  # A failure on one project is logged and does not stop the others — and is
+  # deliberately not propagated either: the call site runs under
+  # `set -euo pipefail`, so a non-zero return would exit the entrypoint and
+  # crash-loop the container, taking healthy sibling projects down with one
+  # unclonable repo. The per-project log lines are the signal; the broken
+  # project's dev-poll then fails loudly on its missing REPO_ROOT until the
+  # repo is fixed and the container is restarted. (The no-TOML fallback
+  # below keeps the old return-1 contract — on a box with no TOMLs,
+  # validate_projects_dir exits anyway, and a restart is the only clone
+  # retry.)
+  local found_toml=0
+
+  for toml in "${DISINTO_DIR}"/projects/*.toml; do
+    [ -f "$toml" ] || continue
+    found_toml=1
+
+    local _vals _name _repo _root repo_dir
+    _vals=$(python3 -c "
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    cfg = tomllib.load(f)
+print(cfg.get('name', ''))
+print(cfg.get('repo', ''))
+print(cfg.get('repo_root', ''))
+" "$toml" 2>/dev/null) || _vals=""
+
+    _name=$(sed -n '1p' <<< "$_vals")
+    _repo=$(sed -n '2p' <<< "$_vals")
+    _root=$(sed -n '3p' <<< "$_vals")
+
+    if [ -z "$_name" ] || [ -z "$_repo" ]; then
+      log "Project clone: ${toml} has no name or repo — skipping"
+      continue
+    fi
+
+    # The TOML's repo_root is authoritative: dev-agent.sh cds to it.
+    repo_dir="${_root:-/home/agent/repos/${_name}}"
+
+    if [ -d "${repo_dir}/.git" ]; then
+      log "Project repo present at ${repo_dir} (${_name})"
+      continue
+    fi
+    if [ -z "${FORGE_URL:-}" ]; then
+      log "Cannot clone ${_name}: FORGE_URL unset — that project will fail until fixed"
+      continue
+    fi
+
+    log "Cloning ${FORGE_URL}/${_repo}.git -> ${repo_dir} (${_name})"
+    mkdir -p "$(dirname "$repo_dir")"
+    chown -R agent:agent "$(dirname "$repo_dir")" 2>/dev/null || true
+    if gosu agent git clone --quiet "${FORGE_URL}/${_repo}.git" "$repo_dir"; then
+      log "Project repo cloned: ${_name}"
+    else
+      log "Project repo clone failed for ${_name} — that project will fail until fixed"
+    fi
+  done
+
+  # No TOMLs yet (fresh box, before the projects volume is seeded): fall back
+  # to the single-project behaviour this function used to have.
+  if [ "$found_toml" -eq 0 ]; then
+    local repo_dir="/home/agent/repos/${PROJECT_NAME}"
+    if [ -d "${repo_dir}/.git" ]; then
+      log "Project repo present at ${repo_dir}"
+      return 0
+    fi
+    if [ -z "${FORGE_REPO:-}" ] || [ -z "${FORGE_URL:-}" ]; then
+      log "Cannot clone project repo: FORGE_REPO or FORGE_URL unset"
+      return 1
+    fi
+    log "Cloning ${FORGE_URL}/${FORGE_REPO}.git -> ${repo_dir} (first run)"
+    mkdir -p "$(dirname "$repo_dir")"
+    chown -R agent:agent "$(dirname "$repo_dir")"
+    if gosu agent git clone --quiet "${FORGE_URL}/${FORGE_REPO}.git" "$repo_dir"; then
+      log "Project repo cloned"
+    else
+      log "Project repo clone failed — agents may fail until manually fixed"
+      return 1
+    fi
   fi
-  if [ -z "${FORGE_REPO:-}" ] || [ -z "${FORGE_URL:-}" ]; then
-    log "Cannot clone project repo: FORGE_REPO or FORGE_URL unset"
-    return 1
-  fi
-  log "Cloning ${FORGE_URL}/${FORGE_REPO}.git -> ${repo_dir} (first run)"
-  mkdir -p "$(dirname "$repo_dir")"
-  chown -R agent:agent "$(dirname "$repo_dir")"
-  if gosu agent git clone --quiet "${FORGE_URL}/${FORGE_REPO}.git" "$repo_dir"; then
-    log "Project repo cloned"
-  else
-    log "Project repo clone failed — agents may fail until manually fixed"
-    return 1
-  fi
+
+  # Every TOML was attempted above; a per-project clone failure must not fail
+  # the entrypoint (see the note at the top of the loop).
+  return 0
 }
 
 # Pull latest factory code at the start of each poll iteration (#593).
