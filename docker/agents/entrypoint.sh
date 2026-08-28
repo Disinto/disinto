@@ -389,8 +389,17 @@ ensure_project_clone() {
   # on every cycle with "REPO_ROOT=<path> does not exist — cannot cd"
   # (issue #1068). bootstrap_ops_repos() already loops; this now matches it.
   #
-  # A failure on one project is logged and does not stop the others.
-  local found_toml=0 rc=0
+  # A failure on one project is logged and does not stop the others — and is
+  # deliberately not propagated either: the call site runs under
+  # `set -euo pipefail`, so a non-zero return would exit the entrypoint and
+  # crash-loop the container, taking healthy sibling projects down with one
+  # unclonable repo. The per-project log lines are the signal; the broken
+  # project's dev-poll then fails loudly on its missing REPO_ROOT until the
+  # repo is fixed and the container is restarted. (The no-TOML fallback
+  # below keeps the old return-1 contract — on a box with no TOMLs,
+  # validate_projects_dir exits anyway, and a restart is the only clone
+  # retry.)
+  local found_toml=0
 
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
@@ -423,8 +432,7 @@ print(cfg.get('repo_root', ''))
       continue
     fi
     if [ -z "${FORGE_URL:-}" ]; then
-      log "Cannot clone ${_name}: FORGE_URL unset"
-      rc=1
+      log "Cannot clone ${_name}: FORGE_URL unset — that project will fail until fixed"
       continue
     fi
 
@@ -435,7 +443,6 @@ print(cfg.get('repo_root', ''))
       log "Project repo cloned: ${_name}"
     else
       log "Project repo clone failed for ${_name} — that project will fail until fixed"
-      rc=1
     fi
   done
 
@@ -462,7 +469,9 @@ print(cfg.get('repo_root', ''))
     fi
   fi
 
-  return "$rc"
+  # Every TOML was attempted above; a per-project clone failure must not fail
+  # the entrypoint (see the note at the top of the loop).
+  return 0
 }
 
 # Pull latest factory code at the start of each poll iteration (#593).
