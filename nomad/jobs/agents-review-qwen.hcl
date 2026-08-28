@@ -51,6 +51,13 @@ job "agents-review-qwen" {
     # llama). No service check — task lifecycle is the health signal, same
     # as nomad/jobs/agents.hcl.
 
+    # agent-data: intentionally the same host_volume source as the base
+    # `agents` job (nomad/client.hcl) — per-role log subdirs
+    # (logs/dev/, logs/review/) keep output separate, only
+    # agent-entrypoint.log interleaves. If the base job still runs on this
+    # node during the cutover overlap it would double-write the role log
+    # dirs and race the mv-based rotation in dev/dev-agent.sh; give these
+    # jobs dedicated sources if that overlap proves longer than expected.
     volume "agent-data" {
       type      = "host"
       source    = "agent-data"
