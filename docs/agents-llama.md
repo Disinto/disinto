@@ -42,13 +42,25 @@ The command performs these steps:
    - `FORGE_TOKEN_DEV_QWEN` — the API token
    - `FORGE_PASS_DEV_QWEN` — the password
    - `ANTHROPIC_BASE_URL` — the llama endpoint (required by the agent)
-4. **Writes `[agents.dev-qwen]` to `projects/<project>.toml`** with:
+4. **Writes `[agents.dev-qwen]` to the project TOML** with:
    - `base_url`, `model`, `api_key`
    - `roles = ["dev"]`
    - `forge_user = "dev-qwen"`
    - `compact_pct = 60`
    - `poll_interval = 60`
-5. **Regenerates `docker-compose.yml`** to include the `agents-dev-qwen` service
+5. **Brings the agent up per backend**:
+   - **Compose boxes** (no `nomad` CLI, or no live projects dir): the TOML is
+     written to `${FACTORY_ROOT}/projects/` and `docker-compose.yml` is
+     regenerated to include the `agents-dev-qwen` service.
+   - **Nomad boxes** (`nomad` CLI present **and**
+     `/srv/disinto/projects/` exists — the live per-env projects dir #794):
+     the TOML is written to `/srv/disinto/projects/` (the directory the jobs
+     mount, overridable via `FACTORY_PROJECTS_DIR`) and **no**
+     `docker-compose.yml` is written or regenerated. Instead the command
+     seeds the bot's Vault KV entry, ensures the `bot-<name>` policy/role,
+     renders a `bot-<name>` jobspec, and deploys it with
+     `nomad job run -detach` — the agent is running when the command exits.
+     See [Hiring on a Nomad box](#hiring-on-a-nomad-box).
 
 ### Anthropic backend agents
 
@@ -62,10 +74,52 @@ disinto hire-an-agent dev-claude dev
 
 This writes `ANTHROPIC_API_KEY` to `.env` instead of `ANTHROPIC_BASE_URL`.
 
+### Hiring on a Nomad box
+
+On a box running the Nomad backend (detected by the presence of the `nomad`
+CLI and the live projects directory `/srv/disinto/projects/`), step 5 above
+replaces compose regeneration with a Nomad deploy:
+
+1. **TOML lands in the live directory.** `[agents.<name>]` is written to
+   `${FACTORY_PROJECTS_DIR:-/srv/disinto/projects}/<project>.toml` — the
+   directory the Nomad jobs mount RO as `factory-projects` (#794). Writing to
+   the baked `${FACTORY_ROOT}/projects/` there has no effect, so it is
+   deliberately not touched.
+2. **Vault KV is seeded.** The bot's token and password are merged into
+   `kv/data/disinto/bots/<name>` (`token` + `pass`), which the job's
+   `template` stanza renders into `secrets/bots.env` as unprefixed
+   `FORGE_TOKEN`/`FORGE_PASS` (the per-user `FORGE_TOKEN_<USER_UPPER>`
+   variables in `.env` are still written on both backends).
+3. **Policy and role are ensured.** The ACL policy `bot-<name>` (read on
+   `kv/data/disinto/bots/<name>`, list+read on its metadata path, read on
+   `kv/data/disinto/shared/forge`) and the JWT role `bot-<name>` (bound to
+   `nomad_job_id = bot-<name>`, namespace `default`) are upserted, matching
+   the jobspec's `vault { role = "bot-<name>" }` stanza.
+4. **A per-agent job is deployed.** A jobspec named `bot-<name>` — modeled on
+   `nomad/jobs/agents.hcl` (same host volumes, docker driver on
+   `disinto/agents:local`, `FORGE_URL` template off the `forgejo` Nomad
+   service) — is validated with `nomad job validate` and deployed with
+   `nomad job run -detach`. The agent is running when the command exits; no
+   further action is needed.
+
+If Vault is unreachable at hire time, the command warns and degrades
+gracefully: it skips the KV seed and policy/role setup but still deploys the
+job. The job then starts with `seed-me` placeholder credentials
+(`error_on_missing_key = false`) and its tokens are picked up once you re-run
+`disinto hire-an-agent` with Vault up.
+
+Manage the deployed job with the usual Nomad tools:
+
+```bash
+nomad status bot-dev-qwen
+nomad job stop bot-dev-qwen
+```
+
 ## Activation and running
 
-Once hired, the agent service is added to `docker-compose.yml`. Start the
-service with `docker compose up -d`:
+On compose boxes, the hired agent service is added to `docker-compose.yml`.
+Start the service with `docker compose up -d` (on Nomad boxes the job is
+already deployed — see [Hiring on a Nomad box](#hiring-on-a-nomad-box)):
 
 ```bash
 # Start all agent services
