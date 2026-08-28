@@ -28,7 +28,12 @@ The convention: **every acceptance test is a bash file under
 ### Location and naming
 
 `tests/acceptance/issue-<N>.sh` — one file per issue number. The runner
-discovers tests by this exact path; deviating breaks discovery.
+discovers tests by this exact path. A suffixed name,
+`tests/acceptance/issue-<N>-<slug>.sh` (e.g.
+`issue-1082-stale-worktree-registration.sh`), is also accepted: when the
+plain `issue-<N>.sh` is missing, the runner (and the post-merge CI
+pipeline) fall back to the suffixed form, provided it matches exactly one
+file.
 
 ### File shape
 
@@ -78,7 +83,8 @@ tools/run-acceptance.sh --format json 844   # JSON for CI / pipelines
 
 The runner:
 
-- Locates `tests/acceptance/issue-<N>.sh`.
+- Locates `tests/acceptance/issue-<N>.sh`, falling back to a uniquely
+  matching `issue-<N>-<slug>.sh` when the plain name is missing.
 - Sources the daemon's env (`FORGE_URL`, `NOMAD_ADDR`, `FACTORY_FORGE_PAT`,
   `NOMAD_TOKEN`, …) from one of:
   - `$RUN_ACCEPTANCE_ENV_FILE` if set
@@ -193,7 +199,8 @@ Problems:
 
 When reviewing a PR, the reviewer checks that:
 
-1. `tests/acceptance/issue-<N>.sh` exists for the issue's number.
+1. `tests/acceptance/issue-<N>.sh` (or a uniquely matching
+   `issue-<N>-<slug>.sh`) exists for the issue's number.
 2. It sources `tests/lib/acceptance-helpers.sh` (or has a documented reason
    not to).
 3. It is read-only — no `curl -X POST`, no `nomad job run`, no `tea issues

@@ -230,15 +230,19 @@ steps:
           test_file="tests/acceptance/issue-${n}.sh"
           if [ ! -f "$test_file" ]; then
             # Fallback: suffixed test names (issue-<N>-<slug>.sh). Require
-            # exactly one match before accepting it.
-            suffixed=()
+            # exactly one match before accepting it. This step runs under
+            # alpine /bin/sh (no arrays — see edge-subpath.yml), so collect
+            # with a counter instead of a list.
+            suffixed_count=0
+            suffixed_first=""
             for tf in "tests/acceptance/issue-${n}"-*.sh; do
               if [ -f "$tf" ]; then
-                suffixed+=("$tf")
+                suffixed_count=$((suffixed_count + 1))
+                suffixed_first="$tf"
               fi
             done
-            if [ "${#suffixed[@]}" -eq 1 ]; then
-              test_file="${suffixed[0]}"
+            if [ "$suffixed_count" -eq 1 ]; then
+              test_file="$suffixed_first"
             fi
           fi
           if [ ! -f "$test_file" ]; then
@@ -318,7 +322,8 @@ steps:
         pass="$(grep -c '"PASS"' .ci/results.jsonl || true)"
         fail="$(grep -c '"FAIL"' .ci/results.jsonl || true)"
         skip="$(grep -c '"SKIP"' .ci/results.jsonl || true)"
-        first_issue="$(jq -r '.issue' < <(head -n1 .ci/results.jsonl))"
+        # POSIX pipe (alpine /bin/sh has no process substitution).
+        first_issue="$(head -n1 .ci/results.jsonl | jq -r '.issue')"
         merge_sha="${CI_COMMIT_SHA:-$(git rev-parse HEAD)}"
         body="$(printf 'Post-merge acceptance summary for %s — pass: %s · fail: %s · skip: %s ([pipeline](%s))' \
                 "$merge_sha" "$pass" "$fail" "$skip" "${CI_PIPELINE_URL:-(no link)}")"
