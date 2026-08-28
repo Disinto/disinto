@@ -462,11 +462,29 @@ bootstrap_factory_repo
 seed_projects_from_host_volume() {
   local host_projects="/srv/disinto/project-repos/_factory/projects"
   [ -d "$host_projects" ] || return 0
-  if ! compgen -G "${host_projects}/*.toml" >/dev/null 2>&1; then
-    return 0
-  fi
   mkdir -p "${DISINTO_DIR}/projects"
-  cp "${host_projects}"/*.toml "${DISINTO_DIR}/projects/" 2>/dev/null || true
+
+  # Mirror the host volume rather than overlay it (#1074): copy every TOML
+  # the volume holds...
+  local toml
+  for toml in "${host_projects}"/*.toml; do
+    [ -f "$toml" ] || continue
+    cp "$toml" "${DISINTO_DIR}/projects/" 2>/dev/null || true
+  done
+
+  # ...and remove any live TOML the volume no longer holds, so a project
+  # deleted from /srv/disinto/projects/ stops being polled. A removed project
+  # previously survived in the live checkout forever, making project removal
+  # a silent no-op. *.toml.example files come from the repository, not the
+  # volume, so the *.toml glob never touches them.
+  for toml in "${DISINTO_DIR}/projects"/*.toml; do
+    [ -f "$toml" ] || continue
+    if [ ! -f "${host_projects}/$(basename "$toml")" ]; then
+      log "Project seed: removing stale ${toml##*/} — no longer in ${host_projects} (#1074)"
+      rm -f -- "$toml"
+    fi
+  done
+
   chown -R agent:agent "${DISINTO_DIR}/projects" 2>/dev/null || true
   log "Seeded ${DISINTO_DIR}/projects from host volume ${host_projects} (#794)"
 }
