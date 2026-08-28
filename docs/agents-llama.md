@@ -153,7 +153,36 @@ poll_interval = 60
 - Each agent runs with `AGENT_ROLES` set to its configured roles
 - `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60` — more aggressive compaction for smaller
   context windows
-- Agents serialize on the llama-server's single KV cache (AD-002)
+- Agents share the llama-server's KV pool. With `--kv-unified` the budget is
+  the **sum of all concurrent sessions** against one pool sized by `--ctx-size`
+  (not a per-slot cap); size each agent's autocompact lane so the sum leaves
+  headroom (AD-002, #1069).
+
+## Autocompact window (#1069)
+
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is a percentage of the context window
+Claude Code *believes* the model has — resolved from the **model name**
+(200,000 tokens for `unsloth/Qwen3.8-27B`), **not** the llama-server's real
+`n_ctx`.
+
+That believed window comes from the model name and **cannot be raised** by
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW`: the variable can only clamp the belief
+*downward* (`K = Math.min(K, z)` in Claude Code's window-resolution code), so
+any value above the believed window is a no-op. Pin it to the believed window
+(200000) to make that explicit.
+
+The percentage is applied to the *usable* window, not the raw believed window:
+Claude Code reserves a 20k output budget out of the believed window
+(`usable = min(believed, AUTO_COMPACT_WINDOW) − 20k` in the CLI's window code),
+so the percentage acts on `believed − 20k`. Thus `50` gives a ~90k compaction
+threshold on the 200k believed window (50% of (200k − 20k) = 90k). To get a
+wider compaction lane, lower the percentage.
+
+When the server runs with `--kv-unified`, the context budget is the **sum of
+all concurrent sessions** against one shared KV pool, not a per-slot cap:
+`--parallel` slots do not each get their own context window. Size each
+agent's lane (percentage × usable window) so the combined concurrent
+usage leaves headroom in the pool for other consumers on the host.
 
 ## Per-env config on Nomad boxes (#794)
 
@@ -166,6 +195,8 @@ restart the agent job — no image rebuild needed:
 sudo $EDITOR /srv/disinto/projects/disinto.toml
 nomad job restart agents
 nomad job restart agents-supervisor-opus
+nomad job restart agents-dev-qwen
+nomad job restart agents-review-qwen
 ```
 
 If you are coming from a pre-#794 box that kept TOMLs at
