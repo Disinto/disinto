@@ -107,8 +107,26 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_FILE="$REPO_ROOT/tests/acceptance/issue-${ISSUE}.sh"
 
 if [ ! -f "$TEST_FILE" ]; then
-  echo "error: acceptance test not found: $TEST_FILE" >&2
-  exit 2
+  # Fallback: suffixed test names (issue-<N>-<slug>.sh), e.g.
+  # tests/acceptance/issue-1082-stale-worktree-registration.sh. Exactly one
+  # match is required — two would be ambiguous, none means no test exists.
+  SUFFIXED=()
+  SUFFIX_PREFIX="$REPO_ROOT/tests/acceptance/issue-${ISSUE}-"
+  for f in "${SUFFIX_PREFIX}"*.sh; do
+    if [ -f "$f" ]; then
+      SUFFIXED+=("$f")
+    fi
+  done
+  if [ "${#SUFFIXED[@]}" -eq 1 ]; then
+    TEST_FILE="${SUFFIXED[0]}"
+  elif [ "${#SUFFIXED[@]}" -gt 1 ]; then
+    echo "error: ambiguous acceptance tests for issue ${ISSUE}:" >&2
+    printf '  %s\n' "${SUFFIXED[@]}" >&2
+    exit 2
+  else
+    echo "error: acceptance test not found: $TEST_FILE" >&2
+    exit 2
+  fi
 fi
 
 # ── Env sourcing ─────────────────────────────────────────────────────────────
@@ -195,7 +213,7 @@ fi
 case "$FORMAT" in
   text)
     echo "issue:    $ISSUE"
-    echo "test:     tests/acceptance/issue-${ISSUE}.sh"
+    echo "test:     ${TEST_FILE#"$REPO_ROOT"/}"
     echo "env:      $ENV_SOURCE"
     echo "duration: ${DURATION}s"
     echo "result:   $RESULT (exit=$TEST_EXIT)"

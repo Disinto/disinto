@@ -229,6 +229,19 @@ steps:
         for n in $issues; do
           test_file="tests/acceptance/issue-${n}.sh"
           if [ ! -f "$test_file" ]; then
+            # Fallback: suffixed test names (issue-<N>-<slug>.sh). Require
+            # exactly one match before accepting it.
+            suffixed=()
+            for tf in "tests/acceptance/issue-${n}"-*.sh; do
+              if [ -f "$tf" ]; then
+                suffixed+=("$tf")
+              fi
+            done
+            if [ "${#suffixed[@]}" -eq 1 ]; then
+              test_file="${suffixed[0]}"
+            fi
+          fi
+          if [ ! -f "$test_file" ]; then
             echo "run-acceptance: #${n} has no test file — fallback to manual verification"
             tools/comment-on-issue.sh "$n" \
               --add-label awaiting-live-verification \

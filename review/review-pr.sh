@@ -235,8 +235,23 @@ if [ -d "$WORKTREE" ]; then
   }
 fi
 if [ ! -d "$WORKTREE" ]; then
+  # A registration can outlive the worktree directory (a container restart
+  # wiped this container's /tmp while the shared clone kept the record), in
+  # which case `git worktree add` fails with "missing, but already registered"
+  # and blocks every future review of this PR (#1082). Clear only this
+  # path's stale registration before claiming it — never a blanket prune,
+  # since the clone also registers live worktrees of other containers.
+  worktree_clear_stale "$WORKTREE"
   WT_ERR=$(git worktree add "$WORKTREE" "$PR_SHA" --detach 2>&1 >/dev/null) || {
     log "ERROR: git worktree add ${WORKTREE} ${PR_SHA} --detach failed: ${WT_ERR}"
+    # Record a review error naming the SHA so the poll's circuit breaker
+    # backs off after N identical failures instead of retrying silently
+    # forever (#1082).
+    WT_MSG=$(printf '## AI Review — Error\n<!-- review-error: %s -->\nReview failed: could not create the review worktree at `%s` for `%s`.\n```\n%s\n```\n---\n*%s*' \
+      "$PR_SHA" "$WORKTREE" "${PR_SHA:0:7}" "$WT_ERR" "${PR_SHA:0:7}")
+    jq -n --arg b "$WT_MSG" '{body: $b}' | curl -sf -o /dev/null -X POST \
+      -H "Authorization: token ${FORGE_TOKEN}" -H "Content-Type: application/json" \
+      "${API}/issues/${PR_NUMBER}/comments" -d @- || true
     echo "ERROR: git worktree add failed to check out ${PR_SHA}: ${WT_ERR}"
     exit 128
   }

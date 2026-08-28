@@ -9,6 +9,11 @@ truth.
 `tests/acceptance/issue-<N>.sh` — one file per issue number, e.g.
 `tests/acceptance/issue-844.sh`. The runner discovers tests by this exact path.
 
+A suffixed name, `tests/acceptance/issue-<N>-<slug>.sh` (e.g.
+`issue-1082-stale-worktree-registration.sh`), is also accepted: when the plain
+`issue-<N>.sh` is missing, the runner (and the post-merge CI pipeline) fall
+back to the suffixed form, provided it matches exactly one file.
+
 ## Contract
 
 Every acceptance test:
