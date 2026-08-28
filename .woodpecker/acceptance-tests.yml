@@ -216,7 +216,7 @@ steps:
       - /etc/disinto:/etc/disinto:ro
       - /srv/disinto:/srv/disinto:ro
     commands:
-      - apk add --no-cache bash curl jq
+      - apk add --no-cache bash curl jq git
       - |
         set -e
         : > .ci/results.jsonl
