@@ -16,6 +16,8 @@
 #   7. agents-md-stale             — AGENTS.md watermark predates git log head
 #   8. file-subissues              — APPROVED architect pitch PR with no `## Filed:` marker
 #   9. pitch-vision                — open vision issue with no architect pitch
+#  10. deploy-drift                — deployed checkout behind origin/main, or
+#                                    uncommitted changes under nomad/
 #
 # Usage:
 #   gardener/classify.sh [projects/disinto.toml]
@@ -681,6 +683,42 @@ check_pitch_vision() {
   return 0
 }
 
+# 10. deploy-drift
+#    The deployed checkout (DEPLOY_CHECKOUT, default /opt/disinto) — the
+#    source tree for every Nomad jobspec — has drifted: it is behind
+#    origin/main, or it carries uncommitted changes under nomad/ (#1119).
+#    Runs tools/check-deploy-drift.sh: exit 1 surfaces the drift report so
+#    the formula can file the finding; exit 0 (clean) or exit 2 (checkout
+#    not visible from this host — e.g. an agent container) skip silently.
+#    Lowest priority so a drift finding never starves issue work.
+check_deploy_drift() {
+  local rc=0 report
+  report=$("${FACTORY_ROOT}/tools/check-deploy-drift.sh" 2>/dev/null) || rc=$?
+
+  if [ "$rc" -ne 1 ]; then
+    return 0
+  fi
+
+  local behind dirty_files
+  behind=$(printf '%s\n' "$report" | sed -n 's/^BEHIND=//p' | head -1)
+  dirty_files=$(printf '%s\n' "$report" | sed -n 's/^DIRTY_FILES=//p' | head -1)
+  case "$behind" in
+    ''|*[!0-9]*) behind=0 ;;
+  esac
+  if ! printf '%s' "$dirty_files" | jq -e . >/dev/null 2>&1; then
+    dirty_files="[]"
+  fi
+
+  local checkout="${DEPLOY_CHECKOUT:-/opt/disinto}"
+  jq -n -c \
+    --arg checkout "$checkout" \
+    --argjson behind "$behind" \
+    --argjson dirty "$dirty_files" \
+    '{"task":"deploy-drift","issue":0,
+      "ctx":{"checkout":$checkout,"behind_commits":$behind,"dirty_files":$dirty}}'
+  return 0
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
   # Fetch all open issues (single API call with pagination)
@@ -747,6 +785,13 @@ main() {
 
   # Priority 9: pitch-vision
   result=$(check_pitch_vision "$issues_json")
+  if [ -n "$result" ]; then
+    printf '%s\n' "$result"
+    exit 0
+  fi
+
+  # Priority 10: deploy-drift — last, so a drift finding never starves issue work
+  result=$(check_deploy_drift)
   if [ -n "$result" ]; then
     printf '%s\n' "$result"
     exit 0

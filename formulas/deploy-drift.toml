@@ -1,0 +1,208 @@
+# formulas/deploy-drift.toml — File a deployed-checkout drift finding
+#
+# Consumed by gardener/gardener-step.sh when classify.sh emits
+#   {"task":"deploy-drift","issue":0,"ctx":{"checkout":"/opt/disinto","behind_commits":N,"dirty_files":[...]}}
+#
+# Context: the deployed checkout (DEPLOY_CHECKOUT, default /opt/disinto) is
+# the source tree for every Nomad jobspec (#1119). tools/check-deploy-drift.sh
+# (invoked by classify.sh priority 10) reports drift when the checkout is
+# behind origin/main or carries uncommitted changes under nomad/ — meaning
+# merged jobspec fixes are not reaching the live cluster.
+#
+# Goal: make the finding visible in the issue tracker. Find-or-create the
+# single canonical issue labeled `deploy-drift`, then post a throttled
+# finding comment on it so the operator sees the drift in the activity feed
+# and can reconcile the checkout (pull + redeploy, or commit the live
+# changes back).
+#
+# Idempotency:
+#   - Find-or-create: an existing OPEN issue labeled `deploy-drift` is
+#     reused; a new issue is filed only when none exists.
+#   - Comment throttle: at most one finding comment per
+#     DEPLOY_DRIFT_COMMENT_THROTTLE_HOURS (default 4h), enforced by looking
+#     for a comment containing the sentinel `<!-- gardener: deploy-drift -->`
+#     with created_at inside the window.
+
+name        = "deploy-drift"
+description = "File the deployed-checkout drift finding and post a throttled update"
+version     = 1
+
+# Bash allowlist envelope for the formula's claude session (#910).
+#
+# Note: claude is invoked with --dangerously-skip-permissions, so this list
+# is advisory rather than CLI-enforced. It is consumed by the prompt below
+# (see "## Tool envelope") to give the model an explicit, narrow command
+# set and to call out the commands that would expose loaded secrets if
+# run unrestricted (env / printenv / set / declare).
+allowed_tools = [
+  "curl",
+  "jq",
+  "awk",
+  "grep",
+  "sed",
+  "tr",
+  "sort",
+  "head",
+  "tail",
+  "printf",
+  "echo",
+  "cat",
+  "test",
+  "date",
+  "[",
+  "gardener_add_label",
+  "gardener_post_comment",
+]
+disallowed_commands = ["env", "printenv", "set", "declare", "export"]
+
+[[steps]]
+id    = "file-finding"
+title = "Find-or-create the deploy-drift issue, post a throttled finding comment"
+description = """
+You are recording ONE deployed-checkout drift finding identified in the
+classification payload. Do this in a single pass — no orchestration, no
+other tasks, no touching the deployed checkout itself.
+
+## 1. Extract the finding from the classification payload
+
+  CHECKOUT=$(printf '%s' "$TASK_JSON" | jq -r '.ctx.checkout')
+  BEHIND=$(printf '%s' "$TASK_JSON" | jq -r '.ctx.behind_commits')
+  DIRTY_FILES=$(printf '%s' "$TASK_JSON" | jq -c '.ctx.dirty_files')
+
+These came from tools/check-deploy-drift.sh: the deployed checkout at
+`CHECKOUT` is `BEHIND` commit(s) behind origin/main, and/or `DIRTY_FILES`
+lists the uncommitted paths under nomad/.
+
+## 2. Find-or-create the canonical `deploy-drift` issue
+
+List open issues and pick the one already labeled `deploy-drift`:
+
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues?state=open&limit=50" > /tmp/dd-issues.json
+  ISSUE=$(jq -r '
+    [.[] | select(.labels | any(.name == "deploy-drift"))]
+    | first | .number // empty
+  ' /tmp/dd-issues.json)
+
+If `ISSUE` is empty, file a new issue (this is the only direct POST —
+issue creation is not covered by the exported helpers):
+
+  cat > /tmp/dd-body.md <<'EOF'
+  The deployed checkout is drifting from origin/main, so merged jobspec
+  fixes are not reaching the live Nomad cluster (#1119).
+
+  **Detected by** `tools/check-deploy-drift.sh` (gardener priority 10).
+
+  **Remediation** (on the deployment host):
+  1. Reconcile any uncommitted changes under `nomad/` into a PR (commit
+     them to the repo, or revert them if they are stale).
+  2. `git -C <checkout> fetch origin && git -C <checkout> reset --hard origin/main`
+     (or pull, once nomad/ is clean).
+  3. Redeploy the Nomad jobspecs from the reconciled tree.
+
+  Finding updates are posted on this issue at most once every 4 hours
+  (sentinel: `<!-- gardener: deploy-drift -->`). Close this issue once the
+  checkout is reconciled.
+  EOF
+
+  curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    -d '{"title":"deploy: deployed checkout drifting from origin/main","body":'\\
+    '"$(cat /tmp/dd-body.md | jq -Rs '.')",
+      "labels":[{"name":"deploy-drift"}]}' \\
+    "$FORGE_API/issues" > /tmp/dd-issued.json
+  ISSUE=$(jq -r .number /tmp/dd-issued.json)
+
+If the issue was just created, make sure the label is applied (creation
+with `labels` usually handles it; `gardener_add_label` is idempotent):
+
+  gardener_add_label "$ISSUE" deploy-drift || true
+
+## 3. Throttle: skip if a finding comment was posted recently
+
+  curl -sf -H "Authorization: token $FORGE_TOKEN" \\
+    "$FORGE_API/issues/$ISSUE/comments?limit=50" > /tmp/dd-comments.json
+
+  THROTTLE_HOURS="${DEPLOY_DRIFT_COMMENT_THROTTLE_HOURS:-4}"
+  NOW_EPOCH=$(date -u +%s)
+  CUTOFF=$(( NOW_EPOCH - THROTTLE_HOURS * 3600 ))
+  RECENT=$(jq --argjson cutoff "$CUTOFF" '
+    [ .[]
+      | select((.body // "") | contains("<!-- gardener: deploy-drift -->"))
+      | select((.created_at | fromdateiso8601) > $cutoff)
+    ] | length
+  ' /tmp/dd-comments.json)
+
+If RECENT > 0, the finding is already on the issue — do not post another:
+
+  echo "ACTION: noop on #$ISSUE — recent deploy-drift finding already posted"
+  exit 0
+
+## 4. Post the finding comment
+
+Render the dirty-files list (one line per path, or "none" if clean of
+uncommitted changes):
+
+  DIRTY_RENDERED=$(printf '%s' "$DIRTY_FILES" \\
+    | jq -r '.[] | "  - `\(.)`"' )
+  [ -n "$DIRTY_RENDERED" ] || DIRTY_RENDERED="  - none"
+
+Then:
+
+  cat > /tmp/dd-finding.md <<EOF
+  <!-- gardener: deploy-drift -->
+  **Deploy drift found** ($(date -u '+%Y-%m-%d %H:%M UTC'))
+
+  | Field | Value |
+  |---|---|
+  | Checkout | \`${CHECKOUT}\` |
+  | Commits behind origin/main | ${BEHIND} |
+  | Uncommitted under nomad/ | $(printf '%s' "$DIRTY_FILES" | jq 'length') path(s) |
+
+  ${DIRTY_RENDERED}
+
+  Merged jobspec fixes are not reaching the live cluster until this is
+  reconciled — see the issue body for the remediation steps.
+  EOF
+
+  gardener_post_comment "$ISSUE" /tmp/dd-finding.md || exit 1
+  echo "ACTION: filed deploy-drift finding on #$ISSUE — ${CHECKOUT} ${BEHIND} commit(s) behind, $(printf '%s' "$DIRTY_FILES" | jq 'length') dirty path(s)"
+  exit 0
+
+## Tool envelope (#910)
+
+You have shell access, but keep it narrow:
+
+- **Allowed**: `curl`, `jq`, `awk`, `grep`, `sed`, `tr`, `sort`, `head`,
+  `tail`, `printf`, `echo`, `cat`, `date`, `test`/`[ ]`, plus the
+  `gardener_add_label` and `gardener_post_comment` helpers exported above.
+- **Disallowed**: `env`, `printenv`, `set`, `declare`, `export` — these
+  enumerate the entire process environment, including loaded secrets
+  (`FORGE_*_TOKEN`, `VAULT_*`, etc.). The session's JSONL transcript is
+  written to `${DISINTO_LOG_DIR}/gardener/step.log`; do not let secret
+  values reach it.
+- If you need to verify a single variable is set, echo only that one var
+  by name — `printf '%s\\n' "$FORGE_API"` — never the whole environment.
+- Tokens (`$FORGE_TOKEN`, `$FORGE_GARDENER_TOKEN`) must only ever appear
+  inside a `-H "Authorization: token $FORGE_TOKEN"` curl header. Never
+  echo, log, or interpolate the value into stdout, comments, or files.
+
+A stream filter in `lib/agent-sdk.sh` masks token-shaped assignments
+before they hit disk as a backstop, but treat that as defense in depth,
+not permission to dump env.
+
+## Output discipline
+
+- One pass only. Do not loop, do not reconcile the checkout, do not touch
+  Nomad, do not pick up any other task. The gardener step driver runs ONE
+  task per invocation.
+- All issue mutations go through the exported helpers
+  (`gardener_add_label`, `gardener_post_comment`) — the direct POST is used
+  only for issue creation, which the helpers do not cover. This keeps the
+  audit journal complete for edits.
+- Never touch the deployed checkout at `$CHECKOUT` — reading drift is the
+  gardener's job, fixing it is the operator's (or a dev agent's, via the
+  filed issue).
+- No JSON-schema declarations, no regex backreferences in your reasoning —
+  keep the structure plain prose + bash blocks (llama-friendly).
+"""
