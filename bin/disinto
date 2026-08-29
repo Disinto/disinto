@@ -306,11 +306,6 @@ generate_deploy_pipelines() {
   _generate_deploy_pipelines_impl "$@"
 }
 
-# Check whether compose mode is active (docker-compose.yml exists).
-is_compose_mode() {
-  [ -f "${FACTORY_ROOT}/docker-compose.yml" ]
-}
-
 # Create and seed the {project}-ops repo on Forgejo with initial directory structure.
 # The ops repo holds operational data: vault items, journals, evidence, prerequisites.
 # ops repo setup is now in lib/ops-setup.sh

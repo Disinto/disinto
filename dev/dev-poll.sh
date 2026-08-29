@@ -101,22 +101,6 @@ in_progress_recently_added() {
   return 1
 }
 
-# Check if there's an open PR for a specific issue
-# Args: issue_number
-# Returns: 0 if open PR exists, 1 if not
-open_pr_exists() {
-  local issue="$1"
-  local branch="fix/issue-${issue}"
-  local pr_num
-
-  pr_num=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=open&limit=20" | \
-    jq -r --arg branch "$branch" \
-    '.[] | select(.head.ref == $branch) | .number' | head -1) || true
-
-  [ -n "$pr_num" ]
-}
-
 # Relabel a stale in-progress issue to blocked with diagnostic comment
 # Args: issue_number reason
 # Uses shared helpers from lib/issue-lifecycle.sh
