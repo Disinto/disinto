@@ -40,10 +40,11 @@ set -euo pipefail
 #      Vault-templated secrets/bots.env for its own KV path) and deploys it
 #      via `nomad job validate` + `nomad job run -detach`.
 #
-# Steps 1–2 degrade to warnings when Vault is unreachable: the job still
-# deploys, and its bots.env template renders seed-me placeholders
-# (error_on_missing_key = false) until the KV path is seeded and the job
-# restarted.
+# Vault is required, not optional. The rendered jobspec declares
+# vault { role = "bot-<name>" }, so a task deployed without that role cannot
+# exchange its workload identity for a token and crash-loops instead of
+# starting with placeholders. If the role cannot be confirmed the command
+# reports why and exits non-zero rather than deploying (#1073).
 #
 # Arguments:
 #   $1 agent_name  - validated agent name (also the Nomad job ID)
@@ -73,6 +74,10 @@ disinto_hire_an_agent_nomad() {
   # ── Vault: KV seed + policy + JWT role (degrades to warnings when
   #    Vault is unreachable) ────────────────────────────────────────────────
   local vault_ok="no"
+  # The rendered jobspec declares vault { role = "bot-<name>" }. If that role
+  # does not exist the task cannot exchange its workload identity for a token
+  # and crash-loops, so the deploy is refused rather than attempted (#1073).
+  local role_ok="no"
   local hvault_script="${FACTORY_ROOT}/lib/hvault.sh"
   if [ -f "$hvault_script" ]; then
     # shellcheck source=/dev/null
@@ -146,18 +151,39 @@ POLICY
     role_current="$(hvault_get_or_empty "auth/jwt-nomad/role/${vault_name}")" || role_current=""
     if [ -n "$role_current" ]; then
       echo "  Vault role exists: ${vault_name}"
+      role_ok="yes"
     elif _hvault_request POST "auth/jwt-nomad/role/${vault_name}" "$role_payload" >/dev/null 2>&1; then
       echo "  Vault role created: ${vault_name}"
+      role_ok="yes"
     else
       echo "  Warning: failed to create Vault role ${vault_name}" >&2
     fi
   else
     echo "  Warning: Vault unreachable — skipping KV seed + policy/role setup" >&2
-    echo "  The job starts with seed-me placeholders until ${kv_api} is seeded" >&2
-    echo "  (re-run 'disinto hire-an-agent' once Vault is up)." >&2
+  fi
+
+  if [ "$role_ok" != "yes" ]; then
+    echo "" >&2
+    echo "  Error: Vault role '${vault_name}' is not in place — refusing to deploy." >&2
+    echo "  The jobspec declares vault { role = \"${vault_name}\" }. Without that role" >&2
+    echo "  the task cannot exchange its workload identity for a token, so it would" >&2
+    echo "  crash-loop rather than start with placeholder secrets." >&2
+    echo "  Bring Vault up, then re-run: disinto hire-an-agent ${agent_name} ${role}" >&2
+    exit 1
   fi
 
   # ── Render + deploy the Nomad jobspec (modeled on nomad/jobs/agents.hcl) ──
+  #
+  # Derive the same values the compose backend derives (lib/generators.sh), so
+  # a Nomad-backend agent is configured identically to a compose one and the
+  # command works for a repository other than the disinto factory itself.
+  local forge_repo factory_repo claude_timeout claude_max_turns compact_pct
+  forge_repo="${FORGE_REPO:-disinto-admin/disinto}"
+  factory_repo="${FACTORY_REPO:-$forge_repo}"
+  claude_timeout="${CLAUDE_TIMEOUT:-7200}"
+  claude_max_turns="${CLAUDE_MAX_TURNS:-60}"
+  compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
+
   local jobspec_file
   jobspec_file="$(mktemp)"
   cat > "$jobspec_file" <<JOB
@@ -242,8 +268,8 @@ job "bot-${agent_name}" {
       }
 
       env {
-        FORGE_REPO         = "disinto-admin/disinto"
-        FACTORY_REPO       = "disinto-admin/disinto"
+        FORGE_REPO         = "${forge_repo}"
+        FACTORY_REPO       = "${factory_repo}"
         ANTHROPIC_BASE_URL = "${local_model}"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "${model}"
@@ -252,11 +278,11 @@ job "bot-${agent_name}" {
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "${project_name}"
         PROJECT_REPO_ROOT  = "/home/agent/repos/${project_name}"
-        CLAUDE_TIMEOUT     = "7200"
-        CLAUDE_MAX_TURNS   = "60"
+        CLAUDE_TIMEOUT     = "${claude_timeout}"
+        CLAUDE_MAX_TURNS   = "${claude_max_turns}"
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
         CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
-        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "60"
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "${compact_pct}"
       }
 
       template {
@@ -313,11 +339,13 @@ JOB
   rm -f "$jobspec_file"
 
   echo ""
-  echo "  Nomad job:  ${vault_name} (deployed)"
+  echo "  Nomad job:  ${vault_name} (submitted)"
   echo "  Model endpoint: ${local_model}"
   echo "  Model: ${model}"
   echo ""
-  echo "  The agent is running — no further action needed."
+  echo "  The job is registered. \`nomad job run -detach\` returns before the"
+  echo "  allocation is healthy, so confirm it started:"
+  echo "    nomad job status ${vault_name}"
 }
 
 disinto_hire_an_agent() {

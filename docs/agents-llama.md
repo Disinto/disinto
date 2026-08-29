@@ -59,7 +59,8 @@ The command performs these steps:
      `docker-compose.yml` is written or regenerated. Instead the command
      seeds the bot's Vault KV entry, ensures the `bot-<name>` policy/role,
      renders a `bot-<name>` jobspec, and deploys it with
-     `nomad job run -detach` — the agent is running when the command exits.
+     `nomad job run -detach`, which returns once the job is registered.
+     Confirm the allocation started with `nomad job status bot-<name>`.
      See [Hiring on a Nomad box](#hiring-on-a-nomad-box).
 
 ### Anthropic backend agents
@@ -99,8 +100,8 @@ replaces compose regeneration with a Nomad deploy:
    `nomad/jobs/agents.hcl` (same host volumes, docker driver on
    `disinto/agents:local`, `FORGE_URL` template off the `forgejo` Nomad
    service) — is validated with `nomad job validate` and deployed with
-   `nomad job run -detach`. The agent is running when the command exits; no
-   further action is needed.
+   `nomad job run -detach`, which returns once the job is *registered*, not
+   once it is healthy — confirm with `nomad job status bot-<name>`.
 
 If Vault is unreachable at hire time, the command warns and degrades
 gracefully: it skips the KV seed and policy/role setup but still deploys the
