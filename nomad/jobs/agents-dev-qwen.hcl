@@ -44,7 +44,8 @@ job "agents-dev-qwen" {
     # below renders the full bot token set; this job authenticates as the
     # dev bot (kv/disinto/bots/dev).
     vault {
-      role = "service-agents"
+      role        = "service-agents"
+      change_mode = "noop"
     }
 
     # No network port — the agent is outbound-only (polls forgejo, calls
