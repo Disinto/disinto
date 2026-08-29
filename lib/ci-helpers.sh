@@ -135,6 +135,34 @@ ci_required_passed() {
   [ "$state" = "success" ]
 }
 
+# ci_unsatisfied_required_contexts <sha> [branch]
+# List required status check contexts that are NOT "success" on the given
+# commit — failing, pending, or absent (no status reported yet). Used by
+# pr_merge to name the exact checks blocking a 405 merge (#1090).
+#
+# Stdout: one context name per line; empty when all required contexts pass
+# or none are configured. Never fails — an API error yields an empty list.
+ci_unsatisfied_required_contexts() {
+  local sha="$1"
+  local branch="${2:-${PRIMARY_BRANCH:-main}}"
+  local required
+  required=$(ci_required_contexts "$branch") || true
+  if [ -z "$required" ]; then
+    return 0
+  fi
+  local status_json
+  status_json=$(forge_api GET "/commits/${sha}/status" 2>/dev/null) || return 0
+  printf '%s' "$status_json" | jq -r --arg req "$required" '
+    ($req | split("\n") | map(select(. != ""))) as $contexts |
+    .statuses as $all |
+    [ $contexts[] as $ctx |
+      ([ $all[] | select(.context == $ctx) ] | sort_by(.id) | last | .status) as $st |
+      select($st != "success") | $ctx
+    ] | .[]
+  ' 2>/dev/null
+  return 0
+}
+
 # ci_passed <state> — check if CI is passing (or no CI configured)
 #   Returns 0 if state is "success", or if no CI is configured and
 #   state is empty/pending/unknown.

@@ -209,14 +209,34 @@ handle_ci_exhaustion() {
 # Merging an approved, CI-green PR is a single API call. Spawning dev-agent
 # for this fails when the issue is already closed (forge auto-closes issues
 # on PR creation when body contains "Fixes #N"), causing a respawn loop (#344).
+#
+# A merge blocked for the same reason at the same head (e.g. branch
+# protection requires a status check CI can never report) is escalated once
+# after MERGE_BLOCK_RETRY_LIMIT identical failures instead of retrying every
+# poll cycle forever (#1090).
+#
+# Args: pr_num issue_num [head_sha]
+# Returns: 0=merged, 1=failed (caller may fall back to dev-agent),
+#          2=merge-blocked and escalated (caller must NOT retry or spawn)
 # =============================================================================
 try_direct_merge() {
   local pr_num="$1" issue_num="$2"
+  local head_sha="${3:-}"
+
+  # Already escalated for this exact head SHA: retrying is pointless and the
+  # dev-agent fallback cannot help either. A newer head SHA gets a fresh try.
+  if [ -n "$head_sha" ] && pr_merge_block_escalated "$pr_num" "$head_sha"; then
+    log "PR #${pr_num} (issue #${issue_num}) merge blocked and already escalated — not retrying (#1090)"
+    return 2
+  fi
 
   log "PR #${pr_num} (issue #${issue_num}) approved + CI green → attempting direct merge"
 
-  if pr_merge "$pr_num"; then
+  local rc=0
+  pr_merge "$pr_num" || rc=$?
+  if [ "$rc" -eq 0 ]; then
     log "PR #${pr_num} merged successfully"
+    pr_merge_block_clear "$pr_num"
     if [ "$issue_num" -gt 0 ]; then
       issue_close "$issue_num"
       # Remove in-progress label (don't re-add backlog — issue is closed)
@@ -236,8 +256,23 @@ try_direct_merge() {
     return 0
   fi
 
-  log "PR #${pr_num} direct merge failed — falling back to dev-agent"
-  return 1
+  local decision
+  decision=$(pr_merge_block_record "$pr_num" "${_PR_MERGE_HEAD_SHA:-${head_sha}}" "${_PR_MERGE_ERROR:-merge failed (HTTP ${rc})}") || decision="retry"
+  case "$decision" in
+    escalate)
+      log "PR #${pr_num} (issue #${issue_num}) merge failing repeatedly with the same reason — escalating instead of retrying forever (#1090)"
+      escalate_merge_blocked_pr "$pr_num" "$issue_num"
+      return 2
+      ;;
+    skip)
+      log "PR #${pr_num} (issue #${issue_num}) still merge-blocked, already escalated — not retrying (#1090)"
+      return 2
+      ;;
+    *)
+      log "PR #${pr_num} direct merge failed — falling back to dev-agent"
+      return 1
+      ;;
+  esac
 }
 
 # =============================================================================
@@ -302,6 +337,77 @@ escalate_wedged_pr() {
   fi
 
   log "escalated PR #${pr_num} (issue #${issue_num}) — no actionable next step; queue not held (#1089)"
+}
+
+# =============================================================================
+# HELPER: escalate a PR whose merge is repeatedly blocked for the same reason
+#
+# When the direct merge keeps failing with the same body on the same head
+# (e.g. branch protection requires a status check that no pipeline reports,
+# or a check CI can never pass), retrying every poll cycle is pure waste and
+# the log fills with identical lines (#1090). Report it instead: post a
+# dedup'd comment with the full, untruncated forge response, label the issue
+# "blocked", and drop "in-progress" so the queue is not held.
+#
+# Args: pr_num issue_num
+# =============================================================================
+escalate_merge_blocked_pr() {
+  local pr_num="$1" issue_num="${2:-0}"
+
+  if [ "$issue_num" -le 0 ]; then
+    log "PR #${pr_num} merge blocked and escalated, but no issue number — logging only"
+    return 0
+  fi
+
+  # Dedup: don't re-post (or re-relabel) if an escalation already exists.
+  local marker
+  marker="<!-- pr-merge-blocked: ${pr_num} -->"
+  local already
+  already=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${issue_num}/comments?limit=10" 2>/dev/null \
+    | jq -r --arg m "$marker" '[.[] | (.body // "") | contains($m)] | any | tostring') || true
+  if [ "$already" = "true" ]; then
+    log "PR #${pr_num} (issue #${issue_num}) merge-block escalation already posted — skipping"
+    return 0
+  fi
+
+  local comment_body
+  comment_body=$(
+    printf '%s\n\n' "$marker"
+    printf '%s\n' '### Merge repeatedly blocked'
+    printf '%s\n' '| Field | Value |'
+    printf '%s\n' '|---|---|'
+    printf '| PR | #%s |\n' "$pr_num"
+    printf '| Head SHA | `%s` |\n' "${_PR_MERGE_HEAD_SHA:-unknown}"
+    if [ -n "${_PR_MERGE_MISSING_CONTEXTS:-}" ]; then
+      printf '| Unsatisfied required checks | %s |\n' "${_PR_MERGE_MISSING_CONTEXTS}"
+    fi
+    printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s\n' '**Status:** the direct merge keeps failing for the same reason on the same commit, so the factory stopped retrying it. Full forge response (untruncated):'
+    printf '\n```\n%s\n```\n' "${_PR_MERGE_ERROR:-unknown}"
+  )
+  _ilc_post_comment "$issue_num" "$comment_body"
+
+  # Add blocked label
+  local bk_id
+  bk_id=$(_ilc_blocked_id)
+  if [ -n "$bk_id" ]; then
+    curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${issue_num}/labels" \
+      -d "{\"labels\":[${bk_id}]}" >/dev/null 2>&1 || true
+  fi
+
+  # Remove in-progress label so the next poll no longer treats the issue as
+  # in-flight (a claim clears "blocked" again — escalation is reversible).
+  local ip_id
+  ip_id=$(_ilc_in_progress_id)
+  if [ -n "$ip_id" ]; then
+    curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${issue_num}/labels/${ip_id}" >/dev/null 2>&1 || true
+  fi
+
+  log "escalated PR #${pr_num} (issue #${issue_num}) — merge blocked: ${_PR_MERGE_ERROR:-unknown} (#1090)"
 }
 
 # =============================================================================
@@ -417,10 +523,14 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
         continue
       fi
     fi
-    if try_direct_merge "$PL_PR_NUM" "$PL_ISSUE"; then
+    PL_TDM_RC=0
+    try_direct_merge "$PL_PR_NUM" "$PL_ISSUE" "$PL_PR_SHA" || PL_TDM_RC=$?
+    if [ "$PL_TDM_RC" -eq 0 ]; then
       PL_MERGED_ANY=true
+    elif [ "$PL_TDM_RC" -eq 2 ]; then
+      : # merge-blocked and already escalated — no retry, no fallback (#1090)
     fi
-    # Direct merge failed — will fall through to post-lock dev-agent fallback
+    # Direct merge failed (rc 1) — will fall through to post-lock dev-agent fallback
   fi
 done
 
@@ -612,8 +722,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "REQUEST_CHANGES")
 
           if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-            if try_direct_merge "$HAS_PR" "$ISSUE_NUM"; then
+            IP_TDM_RC=0
+            try_direct_merge "$HAS_PR" "$ISSUE_NUM" "$PR_SHA" || IP_TDM_RC=$?
+            if [ "$IP_TDM_RC" -eq 0 ]; then
               BLOCKED_BY_INPROGRESS=true
+            elif [ "$IP_TDM_RC" -eq 2 ]; then
+              # Merge-blocked and escalated — no retry, no dev-agent. The
+              # issue is now "blocked"-labeled, so the queue is not held (#1090).
+              :
             else
               # Direct merge failed (conflicts?) — fall back to dev-agent
               log "falling back to dev-agent for PR #${HAS_PR} merge"
@@ -744,8 +860,13 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
 
   # Merge directly if approved + CI green (no Claude needed — single API call)
   if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-    if try_direct_merge "$PR_NUM" "$STUCK_ISSUE"; then
+    STUCK_TDM_RC=0
+    try_direct_merge "$PR_NUM" "$STUCK_ISSUE" "$PR_SHA" || STUCK_TDM_RC=$?
+    if [ "$STUCK_TDM_RC" -eq 0 ]; then
       exit 0
+    elif [ "$STUCK_TDM_RC" -eq 2 ]; then
+      # merge-blocked and already escalated — no retry, no fallback (#1090)
+      continue
     fi
     # Direct merge failed — dev-agent fallback requires a real issue number
     if [ "$STUCK_ISSUE" -eq 0 ]; then
@@ -905,8 +1026,14 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "REQUEST_CHANGES")
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
-      if try_direct_merge "$EXISTING_PR" "$ISSUE_NUM"; then
+      BL_TDM_RC=0
+      try_direct_merge "$EXISTING_PR" "$ISSUE_NUM" "$PR_SHA" || BL_TDM_RC=$?
+      if [ "$BL_TDM_RC" -eq 0 ]; then
         exit 0
+      elif [ "$BL_TDM_RC" -eq 2 ]; then
+        # merge-blocked and already escalated — no retry, no fallback
+        # (#1090); keep scanning the backlog
+        continue
       fi
       # Direct merge failed (conflicts?) — fall back to dev-agent
       log "falling back to dev-agent for PR #${EXISTING_PR} merge"

@@ -22,6 +22,10 @@
 #   pr_poll_ci             PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_poll_review         PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_merge               PR_NUMBER [COMMIT_MSG]
+#   pr_merge_block_state   PR_NUMBER            (print state file path)
+#   pr_merge_block_record  PR_NUMBER HEAD_SHA REASON [LIMIT]  (print retry|escalate|skip)
+#   pr_merge_block_clear   PR_NUMBER
+#   pr_merge_block_escalated PR_NUMBER [HEAD_SHA]
 #   pr_is_merged           PR_NUMBER
 #   pr_close               PR_NUMBER
 #   pr_walk_to_merge       PR_NUMBER SESSION_ID WORKTREE [MAX_CI_FIXES] [MAX_REVIEW_ROUNDS]
@@ -36,7 +40,11 @@
 #   _PR_REVIEW_VERDICT    APPROVE | REQUEST_CHANGES | DISCUSS | TIMEOUT |
 #                         MERGED_EXTERNALLY | CLOSED_EXTERNALLY
 #   _PR_REVIEW_TEXT       review feedback body text
-#   _PR_MERGE_ERROR       merge error description (on failure)
+#   _PR_MERGE_ERROR       merge error description, UNTRUNCATED (on failure)
+#   _PR_MERGE_HEAD_SHA    head commit SHA of the PR (on failure, if known)
+#   _PR_MERGE_MISSING_CONTEXTS
+#                         comma-separated required status check contexts not
+#                         satisfied on the head (on 405, if evaluable)
 #   _PR_WALK_EXIT_REASON  merged | ci_exhausted | review_exhausted |
 #                         ci_timeout | review_timeout | merge_blocked |
 #                         closed_externally | unexpected_verdict
@@ -433,15 +441,21 @@ pr_poll_review() {
 # ---------------------------------------------------------------------------
 # pr_merge — Merge a PR via forge API.
 # Args: pr_number [commit_message]
-# Sets: _PR_MERGE_ERROR (on failure)
+# Sets: _PR_MERGE_ERROR (on failure, untruncated),
+#       _PR_MERGE_HEAD_SHA (head SHA, if known),
+#       _PR_MERGE_MISSING_CONTEXTS (required checks not satisfied on the head,
+#       comma-separated; on 405 when evaluable)
 # Returns: 0=merged, 1=error, 2=blocked (HTTP 405)
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2034  # _PR_MERGE_ERROR read by callers
+# shellcheck disable=SC2034  # _PR_MERGE_* read by callers
 pr_merge() {
   local pr_num="$1" commit_msg="${2:-}"
   local merge_data resp http_code body
+  local pr_json merged
 
   _PR_MERGE_ERROR=""
+  _PR_MERGE_HEAD_SHA=""
+  _PR_MERGE_MISSING_CONTEXTS=""
 
   merge_data='{"Do":"merge","delete_branch_after_merge":true}'
   if [ -n "$commit_msg" ]; then
@@ -464,22 +478,134 @@ pr_merge() {
       ;;
     405)
       # Check if already merged (race with another agent)
-      local merged
-      merged=$(forge_api GET "/pulls/${pr_num}" | jq -r '.merged // false') || true
+      pr_json=$(forge_api GET "/pulls/${pr_num}" 2>/dev/null) || pr_json=""
+      merged=$(printf '%s' "$pr_json" | jq -r '.merged // false' 2>/dev/null) || merged="false"
       if [ "$merged" = "true" ]; then
         _prl_log "PR #${pr_num} already merged"
         return 0
       fi
-      _PR_MERGE_ERROR="blocked (HTTP 405): ${body:0:200}"
+      _prl_merge_failure_diagnostics "$pr_json"
+      _PR_MERGE_ERROR="blocked (HTTP 405): ${body}${_PRL_MERGE_DETAIL}"
       _prl_log "PR #${pr_num} merge blocked: ${_PR_MERGE_ERROR}"
       return 2
       ;;
     *)
-      _PR_MERGE_ERROR="failed (HTTP ${http_code}): ${body:0:200}"
+      _PR_MERGE_ERROR="failed (HTTP ${http_code}): ${body}"
       _prl_log "PR #${pr_num} merge failed: ${_PR_MERGE_ERROR}"
       return 1
       ;;
   esac
+}
+
+# _prl_merge_failure_diagnostics <pr_json>
+# Internal: after a merge failure, record the PR's head SHA and the required
+# status check contexts that are not satisfied on it (#1090). Sets
+# _PR_MERGE_HEAD_SHA, _PR_MERGE_MISSING_CONTEXTS (comma-separated), and
+# _PRL_MERGE_DETAIL (" [required status checks unsatisfied: ...]" or empty).
+# Never fails — diagnostics must not break the merge call itself.
+_prl_merge_failure_diagnostics() {
+  local pr_json="$1"
+  local head_sha missing
+
+  _PR_MERGE_HEAD_SHA=""
+  _PR_MERGE_MISSING_CONTEXTS=""
+  _PRL_MERGE_DETAIL=""
+
+  head_sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // empty' 2>/dev/null) || head_sha=""
+  _PR_MERGE_HEAD_SHA="${head_sha:-}"
+  [ -n "$head_sha" ] || return 0
+
+  missing=$(ci_unsatisfied_required_contexts "$head_sha" 2>/dev/null) || missing=""
+  if [ -n "$missing" ]; then
+    _PR_MERGE_MISSING_CONTEXTS=$(printf '%s' "$missing" \
+      | jq -Rrs 'split("\n") | map(select(length > 0)) | join(", ")')
+    _PRL_MERGE_DETAIL=" [required status checks unsatisfied: ${_PR_MERGE_MISSING_CONTEXTS}]"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Merge-block retry limit (#1090)
+#
+# A PR whose merge is blocked for the same reason (same head SHA + same
+# failure body) must not be retried forever by dev-poll's merge scans. The
+# per-PR state lives in a small JSON file so it survives across poll
+# processes. The limit is MERGE_BLOCK_RETRY_LIMIT (default 3): the first
+# N-1 identical failures return "retry", the Nth returns "escalate" (and sets
+# the sticky escalated flag), and every later identical failure returns
+# "skip". A new head commit or a changed reason resets the counter.
+# ---------------------------------------------------------------------------
+
+# pr_merge_block_state <pr_number> — print the state file path for a PR.
+pr_merge_block_state() {
+  printf '/tmp/dev-merge-block-%s-%s.json' "${PROJECT_NAME:-default}" "$1"
+}
+
+# pr_merge_block_record <pr_number> <head_sha> <reason> [limit]
+# Record one merge failure; print the decision: retry | escalate | skip.
+pr_merge_block_record() {
+  local pr_num="$1" sha="${2:-}" reason="${3:-}"
+  local limit="${4:-${MERGE_BLOCK_RETRY_LIMIT:-3}}"
+  local state_file prev_sha prev_reason prev_count prev_escalated
+  local count decision escalated
+
+  state_file=$(pr_merge_block_state "$pr_num")
+  prev_sha=""
+  prev_reason=""
+  prev_count=0
+  prev_escalated="false"
+  if [ -f "$state_file" ]; then
+    prev_sha=$(jq -r '.sha // empty' "$state_file" 2>/dev/null) || prev_sha=""
+    prev_reason=$(jq -r '.reason // empty' "$state_file" 2>/dev/null) || prev_reason=""
+    prev_count=$(jq -r '.count // 0' "$state_file" 2>/dev/null) || prev_count=0
+    prev_escalated=$(jq -r '.escalated // false' "$state_file" 2>/dev/null) || prev_escalated="false"
+  fi
+
+  # New head commit or changed reason → fresh counter.
+  if [ "$prev_sha" != "$sha" ] || [ "$prev_reason" != "$reason" ]; then
+    prev_count=0
+    prev_escalated="false"
+  fi
+
+  count=$(( prev_count + 1 ))
+  decision="retry"
+  escalated="$prev_escalated"
+  if [ "$prev_escalated" = "true" ]; then
+    decision="skip"
+  elif [ "$count" -ge "$limit" ]; then
+    decision="escalate"
+    escalated="true"
+  fi
+
+  jq -n --arg sha "$sha" --arg reason "$reason" \
+    --argjson count "$count" --argjson escalated "$escalated" \
+    '{sha: $sha, reason: $reason, count: $count, escalated: $escalated}' \
+    > "$state_file"
+
+  printf '%s' "$decision"
+}
+
+# pr_merge_block_clear <pr_number> — drop the state (call after a successful merge).
+pr_merge_block_clear() {
+  rm -f "$(pr_merge_block_state "$1")"
+}
+
+# pr_merge_block_escalated <pr_number> [head_sha]
+# Returns 0 if the PR is already escalated (and, when head_sha is given, for
+# that head SHA — a newer head still gets a fresh merge attempt).
+pr_merge_block_escalated() {
+  local pr_num="$1" sha="${2:-}"
+  local state_file esc rec_sha
+
+  state_file=$(pr_merge_block_state "$pr_num")
+  [ -f "$state_file" ] || return 1
+  esc=$(jq -r '.escalated // false' "$state_file" 2>/dev/null) || return 1
+  [ "$esc" = "true" ] || return 1
+  if [ -n "$sha" ]; then
+    rec_sha=$(jq -r '.sha // empty' "$state_file" 2>/dev/null)
+    [ "$rec_sha" = "$sha" ] || return 1
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
