@@ -11,6 +11,8 @@
 #   setup_vault_branch_protection — Set up admin-only branch protection for main
 #   verify_branch_protection — Verify protection is configured correctly
 #   setup_profile_branch_protection — Set up admin-only branch protection for .profile repos
+#   setup_project_branch_protection — Set up CI-gated branch protection for project repos
+#   project_branch_protection_payload — Render the project-repo protection JSON
 #   remove_branch_protection — Remove branch protection (for cleanup/testing)
 #
 # Branch protection settings:
@@ -407,6 +409,46 @@ remove_branch_protection() {
 }
 
 # -----------------------------------------------------------------------------
+# project_branch_protection_payload — Render the branch protection JSON for
+# project repos
+#
+# Single source of truth for the protection gate that
+# setup_project_branch_protection() applies to project repos (e.g.,
+# disinto-admin/disinto). Prints the JSON to stdout; performs no network I/O,
+# so tests can assert on the rendered payload without touching the forge.
+#
+# The status-check gate is declared explicitly (version-controlled) rather
+# than existing only as live, hand-applied state:
+# - required_status_checks: true — the head must satisfy the declared checks
+# - status_check_contexts: ["ci/woodpecker/pr/ci"] — the Woodpecker
+#   pull_request pipeline context
+#
+# Why pr/ci and not a push-event context: a force-pushed head gets no
+# ci/woodpecker/push/* pipeline (the event type is the discriminator, not the
+# pushing account), so requiring a push-event context would make any rebased
+# PR unmergeable forever. pr/ci is the context that actually validates the PR
+# head. See docs/branch-protection.md.
+# -----------------------------------------------------------------------------
+project_branch_protection_payload() {
+  cat <<'EOF'
+{
+  "enable_push": false,
+  "enable_force_push": false,
+  "enable_merge_commit": true,
+  "enable_rebase": true,
+  "enable_rebase_merge": true,
+  "required_approvals": 1,
+  "required_signatures": false,
+  "enable_merge_whitelist": true,
+  "merge_whitelist_usernames": ["dev-bot"],
+  "required_status_checks": true,
+  "status_check_contexts": ["ci/woodpecker/pr/ci"],
+  "required_linear_history": false
+}
+EOF
+}
+
+# -----------------------------------------------------------------------------
 # setup_project_branch_protection — Set up branch protection for project repos
 #
 # Configures the following protection rules:
@@ -414,6 +456,9 @@ remove_branch_protection() {
 # - Require 1 approval before merge
 # - Allow merge only via dev-bot (for auto-merge after review+CI)
 # - Allow review-bot to approve PRs
+# - Require the head to pass the declared status check context
+#   (ci/woodpecker/pr/ci) before merge — see
+#   project_branch_protection_payload()
 #
 # Args:
 #   $1 - Repo path in format 'owner/repo' (e.g., 'disinto-admin/disinto')
@@ -451,29 +496,12 @@ setup_project_branch_protection() {
     _bp_log "Updating existing protection rules"
   fi
 
-  # Create/update branch protection
-  # Forgejo API for branch protection (factory mode):
-  # - enable_push: false (block direct pushes)
-  # - enable_merge_whitelist: true (only whitelisted users can merge)
-  # - merge_whitelist_usernames: ["dev-bot"] (dev-bot merges after CI)
-  # - required_approvals: 1 (review-bot must approve)
+  # Create/update branch protection. The payload — including the required
+  # status check context (ci/woodpecker/pr/ci) — is rendered by
+  # project_branch_protection_payload() so the gate lives in this file rather
+  # than only in live, hand-applied forge state.
   local protection_json
-  protection_json=$(cat <<EOF
-{
-  "enable_push": false,
-  "enable_force_push": false,
-  "enable_merge_commit": true,
-  "enable_rebase": true,
-  "enable_rebase_merge": true,
-  "required_approvals": 1,
-  "required_signatures": false,
-  "enable_merge_whitelist": true,
-  "merge_whitelist_usernames": ["dev-bot"],
-  "required_status_checks": false,
-  "required_linear_history": false
-}
-EOF
-)
+  protection_json="$(project_branch_protection_payload)"
 
   local http_code
   if [ "$protection_exists" = "200" ]; then
@@ -505,6 +533,7 @@ EOF
   _bp_log "  - Required approvals: 1"
   _bp_log "  - Merge whitelist: dev-bot only"
   _bp_log "  - review-bot can approve: yes"
+  _bp_log "  - Required status check context: ci/woodpecker/pr/ci"
 
   return 0
 }
