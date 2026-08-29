@@ -145,6 +145,13 @@ job "agents-review-qwen" {
       env {
         FORGE_REPO         = "disinto-admin/disinto"
         FACTORY_REPO       = "disinto-admin/disinto"
+        # CI log access (#1114). lib/ci-debug.sh reads pipeline status and
+        # step logs over the Woodpecker REST API so the dev agent can see why
+        # a PR's CI failed. The server is addressed by container IP because
+        # port 8000 bare serves the SPA -- the API lives under the /ci subpath
+        # that edge's Caddy strips. WOODPECKER_TOKEN comes from Vault below.
+        WOODPECKER_SERVER  = "http://10.10.10.132:8000/ci"
+        WOODPECKER_REPO_ID = "1"
         # Set explicitly (not left to the entrypoint's first-TOML parse):
         # under set -u, ensure_project_clone aborts on an unbound
         # PROJECT_NAME, and the baked image carries no projects/*.toml.
@@ -256,6 +263,12 @@ FORGE_VAULT_TOKEN=seed-me
 FORGE_FILER_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_FILER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/shared/ci" -}}
+WOODPECKER_TOKEN={{ .Data.data.woodpecker_token }}
+{{- else -}}
+WOODPECKER_TOKEN=seed-me
 {{- end }}
 EOT
       }

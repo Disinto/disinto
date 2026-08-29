@@ -386,9 +386,26 @@ ci_get_step_logs() {
     return 1
   fi
 
+  # Woodpecker returns each log record with its payload base64-encoded in
+  # `data`, and some records carry a null `data`. Decode here so every caller
+  # gets log text rather than base64 (#1114).
   woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${pipeline_num}/${step_id}" \
     --max-time 15 2>/dev/null \
-    | jq -r '.[].data // empty' 2>/dev/null
+    | python3 -c '
+import base64, json, sys
+try:
+    records = json.load(sys.stdin)
+except Exception:
+    sys.exit("ERROR: could not parse Woodpecker log response")
+for rec in records:
+    blob = rec.get("data")
+    if not blob:
+        continue
+    try:
+        sys.stdout.write(base64.b64decode(blob).decode("utf-8", "replace"))
+    except Exception:
+        pass
+'
 }
 
 # ci_get_logs <pipeline_number> [--step <step_name>]

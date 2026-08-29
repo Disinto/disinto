@@ -11,9 +11,21 @@ set -euo pipefail
 
 # Load shared environment
 source "$(dirname "$0")/../lib/env.sh"
+# shellcheck source=ci-helpers.sh
+source "$(dirname "$0")/../lib/ci-helpers.sh"
 
-# WOODPECKER_TOKEN loaded from .env via env.sh
-REPO="${FORGE_REPO}"
+# WOODPECKER_TOKEN reaches the agent containers from Vault, rendered into
+# secrets/bots.env by the jobspec template stanza (#1114). Name the missing
+# piece: under `set -u` the bare unbound-variable abort told a reader nothing.
+for _v in WOODPECKER_TOKEN WOODPECKER_SERVER WOODPECKER_REPO_ID; do
+  if [ -z "${!_v:-}" ]; then
+    echo "ERROR: ${_v} is not set — cannot query Woodpecker." >&2
+    echo "       Agent containers get it from Vault (kv/disinto/shared/ci)." >&2
+    exit 1
+  fi
+done
+unset _v
+
 API="${WOODPECKER_SERVER}/api/repos/${WOODPECKER_REPO_ID}"
 
 api() {
@@ -27,6 +39,25 @@ api() {
 
 get_latest() {
   api "pipelines?per_page=1" | jq -r '.[0].number'
+}
+
+# step_log <pipeline> <pid> — print one step's log.
+#
+# Fetches over the REST API rather than shelling out to `woodpecker-cli`: that
+# binary is not installed in the agent container, and the SQLite path used by
+# lib/ci-log-reader.py needs /woodpecker-data mounted, which it is not (#1114).
+#
+# The logs endpoint is keyed on the step's `id`, not the `pid` that `status`
+# prints, so resolve that first and hand off to the shared helper.
+step_log() {
+  local pipeline="$1" pid="$2" step_id
+  step_id=$(api "pipelines/${pipeline}" | \
+    jq -r --arg pid "$pid" '.workflows[]?.children[]? | select(.pid == ($pid|tonumber)) | .id' | head -1)
+  if [ -z "$step_id" ] || [ "$step_id" = "null" ]; then
+    echo "ERROR: no step id for pid ${pid} in pipeline ${pipeline}" >&2
+    return 1
+  fi
+  ci_get_step_logs "$pipeline" "$step_id"
 }
 
 case "${1:-help}" in
@@ -49,7 +80,7 @@ case "${1:-help}" in
   logs)
     P="${2:?Usage: ci-debug.sh logs <pipeline> <step#>}"
     S="${3:?Usage: ci-debug.sh logs <pipeline> <step#>}"
-    woodpecker-cli pipeline log show "$REPO" "$P" "$S"
+    step_log "$P" "$S"
     ;;
 
   failures)
@@ -64,7 +95,7 @@ case "${1:-help}" in
 
     while IFS=$'\t' read -r pid name; do
       echo "=== FAILED: ${name} (step ${pid}) ==="
-      woodpecker-cli pipeline log show "$REPO" "$P" "$pid" 2>/dev/null | tail -200
+      step_log "$P" "$pid" 2>/dev/null | tail -200
       echo ""
     done <<< "$FAILED"
     ;;
