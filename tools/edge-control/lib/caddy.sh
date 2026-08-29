@@ -165,24 +165,3 @@ reload_caddy() {
 
   echo "Caddy reloaded" >&2
 }
-
-# Get Caddy config for debugging
-# Usage: get_caddy_config
-get_caddy_config() {
-  curl -s "${CADDY_ADMIN_URL}/config"
-}
-
-# Check if Caddy admin API is reachable
-# Usage: check_caddy_health
-check_caddy_health() {
-  local response
-  response=$(curl -s -o /dev/null -w "%{http_code}" \
-    "${CADDY_ADMIN_URL}/" 2>/dev/null) || response="000"
-
-  if [ "$response" = "200" ]; then
-    return 0
-  else
-    echo "Caddy admin API not reachable (HTTP ${response})" >&2
-    return 1
-  fi
-}

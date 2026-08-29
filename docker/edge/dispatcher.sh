@@ -1043,36 +1043,6 @@ is_verify_running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# Check if an issue is a parent with sub-issues (identified by sub-issues
-# whose body contains "Decomposed from #N" where N is the parent's number).
-# Returns: 0 if parent with sub-issues found, 1 otherwise
-_is_parent_issue() {
-  local parent_num="$1"
-
-  # Fetch all issues (open and closed) to find sub-issues
-  local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
-  local all_issues_json
-  all_issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
-
-  # Find issues whose body contains "Decomposed from #<parent_num>"
-  local sub_issues
-  sub_issues=$(python3 -c '
-import sys, json
-parent_num = sys.argv[1]
-data = json.load(open("/dev/stdin"))
-sub_issues = []
-for issue in data:
-    body = issue.get("body") or ""
-    if f"Decomposed from #{parent_num}" in body:
-        sub_issues.append(str(issue["number"]))
-print(" ".join(sub_issues))
-' "$parent_num" < <(echo "$all_issues_json")) || return 1
-
-  [ -n "$sub_issues" ]
-}
-
 # Check if all sub-issues of a parent are closed.
 # Returns: 0 if all closed, 1 if any still open
 _are_all_sub_issues_closed() {
