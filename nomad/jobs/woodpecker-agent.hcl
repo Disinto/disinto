@@ -82,12 +82,18 @@ job "woodpecker-agent" {
       }
 
       # Non-secret env — server address, gRPC security, concurrency limit,
-      # and health check endpoint. Nothing sensitive here.
+      # health check endpoint, and host label. Nothing sensitive here.
       #
       # WOODPECKER_SERVER uses Nomad's attribute template to get the host's
       # IP address (10.10.10.x). The server's gRPC port 9000 is bound via
       # Nomad's port stanza to the allocation's IP (not localhost), so the
       # agent must use the LXC's eth0 IP, not 127.0.0.1.
+      #
+      # WOODPECKER_AGENT_LABELS advertises the host label that
+      # .woodpecker/acceptance-tests.yml selects on
+      # (`labels: host=disinto-nomad-box`). A workflow whose label selector
+      # no agent satisfies is never dispatched — without this label every
+      # acceptance-tests pipeline queues forever (issue #1116).
       env {
         WOODPECKER_SERVER                   = "${attr.unique.network.ip-address}:9000"
         WOODPECKER_GRPC_SECURE              = "false"
@@ -96,6 +102,7 @@ job "woodpecker-agent" {
         WOODPECKER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS = "true"
         WOODPECKER_MAX_WORKFLOWS            = "1"
         WOODPECKER_HEALTHCHECK_ADDR         = ":3333"
+        WOODPECKER_AGENT_LABELS             = "host=disinto-nomad-box"
       }
 
       # ── Vault-templated agent secret ──────────────────────────────────
