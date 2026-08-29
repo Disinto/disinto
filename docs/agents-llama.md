@@ -103,11 +103,22 @@ replaces compose regeneration with a Nomad deploy:
    `nomad job run -detach`, which returns once the job is *registered*, not
    once it is healthy — confirm with `nomad job status bot-<name>`.
 
-If Vault is unreachable at hire time, the command warns and degrades
-gracefully: it skips the KV seed and policy/role setup but still deploys the
-job. The job then starts with `seed-me` placeholder credentials
-(`error_on_missing_key = false`) and its tokens are picked up once you re-run
-`disinto hire-an-agent` with Vault up.
+Vault is a hard requirement, not a soft one. The rendered jobspec declares
+`vault { role = "bot-<name>" }`, so a task deployed without that role cannot
+exchange its workload identity for a token and crash-loops — it does not start
+with placeholder credentials. If the role cannot be confirmed, the command
+reports why and exits non-zero **without deploying anything**:
+
+```
+Error: Vault role 'bot-dev-qwen' is not in place — refusing to deploy.
+```
+
+Bring Vault up and re-run `disinto hire-an-agent` with the same arguments; the
+KV seed, policy and role creation are idempotent.
+
+(The `seed-me` placeholders in the `secrets/bots.env` template still guard a
+missing KV *key* via `error_on_missing_key = false`. They do not cover a
+missing JWT role, which is why the command refuses instead.)
 
 Manage the deployed job with the usual Nomad tools:
 
