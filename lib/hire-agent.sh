@@ -23,6 +23,331 @@
 # =============================================================================
 set -euo pipefail
 
+# disinto_hire_an_agent_nomad — Nomad-backend deploy for a hired
+# local-model agent (called from disinto_hire_an_agent when the box runs
+# the Nomad backend instead of docker-compose).
+#
+# Compose boxes regenerate docker-compose.yml and rely on `disinto up`;
+# Nomad boxes do not consume the compose file. Instead this helper:
+#   1. Seeds the bot's Vault KV path (kv/data/disinto/bots/<name>) with the
+#      fresh Forge token + user password, merging into any existing data.
+#   2. Ensures the ACL policy `bot-<name>` (same 3-path shape as
+#      vault/policies/bot-*.hcl) and the JWT-auth role `bot-<name>`
+#      (same payload shape as tools/vault-apply-roles.sh) exist.
+#   3. Renders a single-role jobspec modeled on nomad/jobs/agents.hcl
+#      (job/group/task `bot-<name>`, vault role `bot-<name>`, the four host
+#      volume mounts, FORGE_URL from Nomad service discovery, and a
+#      Vault-templated secrets/bots.env for its own KV path) and deploys it
+#      via `nomad job validate` + `nomad job run -detach`.
+#
+# Vault is required, not optional. The rendered jobspec declares
+# vault { role = "bot-<name>" }, so a task deployed without that role cannot
+# exchange its workload identity for a token and crash-loops instead of
+# starting with placeholders. If the role cannot be confirmed the command
+# reports why and exits non-zero rather than deploying (#1073).
+#
+# Arguments:
+#   $1 agent_name  - validated agent name (also the Nomad job ID)
+#   $2 role        - agent role
+#   $3 local_model - model endpoint URL
+#   $4 model       - model name
+#   $5 interval    - poll interval (seconds)
+#   $6 project_name - project TOML basename
+#   $7 agent_token - Forge PAT for the agent user (may be empty)
+#   $8 user_pass   - generated password for the agent user
+disinto_hire_an_agent_nomad() {
+  local agent_name="$1"
+  local role="$2"
+  local local_model="$3"
+  local model="$4"
+  local interval="$5"
+  local project_name="$6"
+  local agent_token="$7"
+  local user_pass="$8"
+
+  local vault_name="bot-${agent_name}"
+  local kv_mount="${VAULT_KV_MOUNT:-kv}"
+  local kv_api="${kv_mount}/data/disinto/bots/${agent_name}"
+
+  echo "  Backend: Nomad — deploying job '${vault_name}'"
+
+  # ── Vault: KV seed + policy + JWT role (degrades to warnings when
+  #    Vault is unreachable) ────────────────────────────────────────────────
+  local vault_ok="no"
+  # The rendered jobspec declares vault { role = "bot-<name>" }. If that role
+  # does not exist the task cannot exchange its workload identity for a token
+  # and crash-loops, so the deploy is refused rather than attempted (#1073).
+  local role_ok="no"
+  local hvault_script="${FACTORY_ROOT}/lib/hvault.sh"
+  if [ -f "$hvault_script" ]; then
+    # shellcheck source=/dev/null
+    . "$hvault_script"
+    _hvault_default_env
+    if hvault_token_lookup >/dev/null 2>&1; then
+      vault_ok="yes"
+    fi
+  fi
+
+  if [ "$vault_ok" = "yes" ]; then
+    # Seed KV: merge token+pass into any existing data at the path. KV v2
+    # replaces .data atomically on write, so read-modify-write (same
+    # pattern as _hvault_seed_key in lib/hvault.sh).
+    if [ -n "$agent_token" ] && [ -n "$user_pass" ]; then
+      local raw existing_data payload
+      raw="$(hvault_get_or_empty "$kv_api")" || raw=""
+      existing_data="{}"
+      if [ -n "$raw" ]; then
+        existing_data="$(printf '%s' "$raw" | jq '.data.data // {}')" || existing_data="{}"
+      fi
+      payload="$(printf '%s' "$existing_data" | jq \
+        --arg t "$agent_token" --arg p "$user_pass" \
+        '{data: (. + {token: $t, pass: $p})}')"
+      if _hvault_request POST "$kv_api" "$payload" >/dev/null; then
+        echo "  Vault KV seeded: ${kv_api} (token + pass)"
+      else
+        echo "  Warning: failed to seed Vault KV at ${kv_api}" >&2
+      fi
+    else
+      echo "  Warning: no agent token/password available — skipping Vault KV write" >&2
+    fi
+
+    # Ensure the ACL policy (same 3-path shape as vault/policies/bot-*.hcl).
+    local policy_file
+    policy_file="$(mktemp)"
+    cat > "$policy_file" <<POLICY
+path "kv/data/disinto/bots/${agent_name}" {
+  capabilities = ["read"]
+}
+
+path "kv/metadata/disinto/bots/${agent_name}" {
+  capabilities = ["list", "read"]
+}
+
+path "kv/data/disinto/shared/forge" {
+  capabilities = ["read"]
+}
+POLICY
+    if hvault_policy_apply "$vault_name" "$policy_file" >/dev/null 2>&1; then
+      echo "  Vault policy ensured: ${vault_name}"
+    else
+      echo "  Warning: failed to apply Vault policy ${vault_name}" >&2
+    fi
+    rm -f "$policy_file"
+
+    # Ensure the JWT-auth role (same payload shape as
+    # tools/vault-apply-roles.sh: bound to this job's nomad_job_id claim).
+    local role_payload
+    role_payload="$(jq -n --arg job "${vault_name}" --arg policy "$vault_name" '{
+      role_type: "jwt",
+      bound_audiences: ["vault.io"],
+      user_claim: "nomad_job_id",
+      bound_claims: { nomad_namespace: "default", nomad_job_id: $job },
+      token_type: "service",
+      token_policies: [$policy],
+      token_ttl: "1h",
+      token_max_ttl: "24h"
+    }')"
+    local role_current
+    role_current="$(hvault_get_or_empty "auth/jwt-nomad/role/${vault_name}")" || role_current=""
+    if [ -n "$role_current" ]; then
+      echo "  Vault role exists: ${vault_name}"
+      role_ok="yes"
+    elif _hvault_request POST "auth/jwt-nomad/role/${vault_name}" "$role_payload" >/dev/null 2>&1; then
+      echo "  Vault role created: ${vault_name}"
+      role_ok="yes"
+    else
+      echo "  Warning: failed to create Vault role ${vault_name}" >&2
+    fi
+  else
+    echo "  Warning: Vault unreachable — skipping KV seed + policy/role setup" >&2
+  fi
+
+  if [ "$role_ok" != "yes" ]; then
+    echo "" >&2
+    echo "  Error: Vault role '${vault_name}' is not in place — refusing to deploy." >&2
+    echo "  The jobspec declares vault { role = \"${vault_name}\" }. Without that role" >&2
+    echo "  the task cannot exchange its workload identity for a token, so it would" >&2
+    echo "  crash-loop rather than start with placeholder secrets." >&2
+    echo "  Bring Vault up, then re-run: disinto hire-an-agent ${agent_name} ${role}" >&2
+    exit 1
+  fi
+
+  # ── Render + deploy the Nomad jobspec (modeled on nomad/jobs/agents.hcl) ──
+  #
+  # Derive the same values the compose backend derives (lib/generators.sh), so
+  # a Nomad-backend agent is configured identically to a compose one and the
+  # command works for a repository other than the disinto factory itself.
+  local forge_repo factory_repo claude_timeout claude_max_turns compact_pct
+  forge_repo="${FORGE_REPO:-disinto-admin/disinto}"
+  factory_repo="${FACTORY_REPO:-$forge_repo}"
+  claude_timeout="${CLAUDE_TIMEOUT:-7200}"
+  claude_max_turns="${CLAUDE_MAX_TURNS:-60}"
+  compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
+
+  local jobspec_file
+  jobspec_file="$(mktemp)"
+  cat > "$jobspec_file" <<JOB
+job "bot-${agent_name}" {
+  type        = "service"
+  datacenters = ["dc1"]
+
+  group "bot-${agent_name}" {
+    count = 1
+
+    vault {
+      role = "${vault_name}"
+    }
+
+    volume "agent-data" {
+      type      = "host"
+      source    = "agent-data"
+      read_only = false
+    }
+
+    volume "project-repos" {
+      type      = "host"
+      source    = "project-repos"
+      read_only = false
+    }
+
+    volume "ops-repo" {
+      type      = "host"
+      source    = "ops-repo"
+      read_only = true
+    }
+
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
+    restart {
+      attempts = 3
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
+    service {
+      name     = "bot-${agent_name}"
+      provider = "nomad"
+    }
+
+    task "bot-${agent_name}" {
+      driver = "docker"
+
+      config {
+        image      = "disinto/agents:local"
+        force_pull = false
+        security_opt = ["apparmor=unconfined"]
+      }
+
+      volume_mount {
+        volume      = "agent-data"
+        destination = "/home/agent/data"
+        read_only   = false
+      }
+
+      volume_mount {
+        volume      = "project-repos"
+        destination = "/home/agent/repos"
+        read_only   = false
+      }
+
+      volume_mount {
+        volume      = "ops-repo"
+        destination = "/home/agent/repos/_factory/disinto-ops"
+        read_only   = true
+      }
+
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
+        read_only   = true
+      }
+
+      env {
+        FORGE_REPO         = "${forge_repo}"
+        FACTORY_REPO       = "${factory_repo}"
+        ANTHROPIC_BASE_URL = "${local_model}"
+        ANTHROPIC_API_KEY  = "sk-no-key-required"
+        CLAUDE_MODEL       = "${model}"
+        AGENT_ROLES        = "${role}"
+        POLL_INTERVAL      = "${interval}"
+        DISINTO_CONTAINER  = "1"
+        PROJECT_NAME       = "${project_name}"
+        PROJECT_REPO_ROOT  = "/home/agent/repos/${project_name}"
+        CLAUDE_TIMEOUT     = "${claude_timeout}"
+        CLAUDE_MAX_TURNS   = "${claude_max_turns}"
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "${compact_pct}"
+      }
+
+      template {
+        destination = "secrets/forge-url.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range nomadService "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
+      template {
+        destination          = "secrets/bots.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/bots/${agent_name}" -}}
+FORGE_TOKEN={{ .Data.data.token }}
+FORGE_PASS={{ .Data.data.pass }}
+{{- else -}}
+# WARNING: seed ${kv_api} (re-run 'disinto hire-an-agent')
+FORGE_TOKEN=seed-me
+FORGE_PASS=seed-me
+{{- end }}
+EOT
+      }
+
+      resources {
+        cpu    = 500
+        memory = 1024
+      }
+    }
+  }
+}
+JOB
+
+  local validate_out
+  if ! validate_out="$(nomad job validate "$jobspec_file" 2>&1)"; then
+    echo "  Error: nomad job validate failed for ${vault_name}:" >&2
+    printf '%s\n' "$validate_out" | sed 's/^/    /' >&2
+    rm -f "$jobspec_file"
+    exit 1
+  fi
+
+  echo "  Deploying Nomad job: ${vault_name}"
+  if ! nomad job run -detach "$jobspec_file"; then
+    echo "  Error: nomad job run failed for ${vault_name}" >&2
+    rm -f "$jobspec_file"
+    exit 1
+  fi
+  rm -f "$jobspec_file"
+
+  echo ""
+  echo "  Nomad job:  ${vault_name} (submitted)"
+  echo "  Model endpoint: ${local_model}"
+  echo "  Model: ${model}"
+  echo ""
+  echo "  The job is registered. \`nomad job run -detach\` returns before the"
+  echo "  allocation is healthy, so confirm it started:"
+  echo "    nomad job status ${vault_name}"
+}
+
 disinto_hire_an_agent() {
   local agent_name="${1:-}"
   local role="${2:-}"
@@ -553,15 +878,31 @@ EOF
       echo "  Model endpoint is reachable"
     fi
 
-    # Find project TOML
+    # Pick the projects directory per backend.
+    # Compose boxes read the project TOMLs from ${FACTORY_ROOT}/projects/ (baked
+    # at image build time). Nomad boxes mount the live per-env TOMLs from
+    # /srv/disinto/projects/ (overridable via FACTORY_PROJECTS_DIR) into every
+    # agent job (#794) — writing the section into the baked directory there
+    # has no effect. A box counts as Nomad when the `nomad` CLI is present
+    # AND the live projects directory exists (cluster-up.sh creates it).
+    local backend projects_dir
+    if command -v nomad >/dev/null 2>&1 \
+       && [ -d "${FACTORY_PROJECTS_DIR:-/srv/disinto/projects}" ]; then
+      backend="nomad"
+      projects_dir="${FACTORY_PROJECTS_DIR:-/srv/disinto/projects}"
+    else
+      backend="compose"
+      projects_dir="${FACTORY_ROOT}/projects"
+    fi
+
     local project_name="${PROJECT_NAME:-}"
     local toml_file=""
     if [ -n "$project_name" ]; then
-      toml_file="${FACTORY_ROOT}/projects/${project_name}.toml"
+      toml_file="${projects_dir}/${project_name}.toml"
     fi
-    # Fallback: find the first .toml in projects/
+    # Fallback: find the first .toml in the projects dir
     if [ -z "$toml_file" ] || [ ! -f "$toml_file" ]; then
-      for f in "${FACTORY_ROOT}/projects/"*.toml; do
+      for f in "${projects_dir}"/*.toml; do
         if [ -f "$f" ]; then
           toml_file="$f"
           break
@@ -570,12 +911,20 @@ EOF
     fi
 
     if [ -z "$toml_file" ] || [ ! -f "$toml_file" ]; then
-      echo "  Error: no project TOML found in ${FACTORY_ROOT}/projects/" >&2
-      echo "  Run 'disinto init' first to create a project config" >&2
+      echo "  Error: no project TOML found in ${projects_dir}/" >&2
+      if [ "$backend" = "nomad" ]; then
+        echo "  The live projects dir is empty — seed a project TOML first," >&2
+        echo "  e.g.: sudo cp ${FACTORY_ROOT}/projects/*.toml ${projects_dir}/" >&2
+      else
+        echo "  Run 'disinto init' first to create a project config" >&2
+      fi
       exit 1
     fi
 
     echo "  Project TOML: ${toml_file}"
+    if [ -z "$project_name" ]; then
+      project_name="$(basename "${toml_file%.toml}")"
+    fi
 
     # Derive a safe section name from the agent name (lowercase, alphanumeric+hyphens)
     local section_name
@@ -641,30 +990,38 @@ p.write_text(output)
 
     echo "  Agent config written to TOML"
 
-    # Regenerate docker-compose.yml to include the new agent container
-    local compose_file="${FACTORY_ROOT}/docker-compose.yml"
-    if [ -f "$compose_file" ]; then
-      echo "  Regenerating docker-compose.yml..."
-      rm -f "$compose_file"
-      # generate_compose is defined in the calling script (bin/disinto) via generators.sh
-      # Use _generate_compose_impl directly since generators.sh is already sourced
-      local forge_port="3000"
-      if [ -n "${FORGE_URL:-}" ]; then
-        forge_port=$(printf '%s' "$FORGE_URL" | sed -E 's|.*:([0-9]+)/?$|\1|')
-        forge_port="${forge_port:-3000}"
+    # Compose boxes: regenerate docker-compose.yml to include the new agent
+    # container. Nomad boxes: deploy a per-agent Nomad job instead (the
+    # compose file is not consumed by the Nomad backend).
+    if [ "$backend" = "compose" ]; then
+      local compose_file="${FACTORY_ROOT}/docker-compose.yml"
+      if [ -f "$compose_file" ]; then
+        echo "  Regenerating docker-compose.yml..."
+        rm -f "$compose_file"
+        # generate_compose is defined in the calling script (bin/disinto) via generators.sh
+        # Use _generate_compose_impl directly since generators.sh is already sourced
+        local forge_port="3000"
+        if [ -n "${FORGE_URL:-}" ]; then
+          forge_port=$(printf '%s' "$FORGE_URL" | sed -E 's|.*:([0-9]+)/?$|\1|')
+          forge_port="${forge_port:-3000}"
+        fi
+        _generate_compose_impl "$forge_port"
+        echo "  Compose regenerated with agents-${section_name} service"
       fi
-      _generate_compose_impl "$forge_port"
-      echo "  Compose regenerated with agents-${section_name} service"
-    fi
 
-    local service_name="agents-${section_name}"
-    echo ""
-    echo "  Service name: ${service_name}"
-    echo "  Model endpoint: ${local_model}"
-    echo "  Model: ${model}"
-    echo ""
-    echo "  To start the agent, run:"
-    echo "    disinto up"
+      local service_name="agents-${section_name}"
+      echo ""
+      echo "  Service name: ${service_name}"
+      echo "  Model endpoint: ${local_model}"
+      echo "  Model: ${model}"
+      echo ""
+      echo "  To start the agent, run:"
+      echo "    disinto up"
+    else
+      disinto_hire_an_agent_nomad \
+        "$agent_name" "$role" "$local_model" "$model" \
+        "$interval" "$project_name" "$agent_token" "$user_pass"
+    fi
   fi
 
   echo ""
