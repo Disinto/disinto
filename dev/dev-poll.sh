@@ -657,12 +657,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             fi
 
           else
-            if [ "$CI_STATE" = "success" ]; then
+            if ci_passed "$CI_STATE"; then
               # CI green + zero live reviews = no actionable next step —
               # escalate instead of holding this thread forever (#1089).
               # escalate_wedged_pr drops the in-progress label, so the next
               # poll no longer blocks on this issue.
-              log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: success, no live review) — escalating instead of waiting (#1089)"
+              log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, no live review) — escalating instead of waiting (#1089)"
               escalate_wedged_pr "$ISSUE_NUM" "$HAS_PR" "$PR_SHA"
             fi
             log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
@@ -930,11 +930,11 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       break
 
     else
-      if [ "$CI_STATE" = "success" ]; then
+      if ci_passed "$CI_STATE"; then
         # CI green + zero live reviews = no actionable next step. Holding the
         # queue here would block every other backlog issue indefinitely
         # (#1089) — escalate instead.
-        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI green but no live review — no actionable next step; escalating instead of holding the queue (#1089)"
+        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI passed (${CI_STATE}) but no live review — no actionable next step; escalating instead of holding the queue (#1089)"
         escalate_wedged_pr "$ISSUE_NUM" "$EXISTING_PR" "$PR_SHA"
         continue
       fi
