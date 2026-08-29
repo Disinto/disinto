@@ -17,6 +17,8 @@
 #   pr_create              BRANCH TITLE BODY [BASE_BRANCH]
 #   pr_find_for_issue      ISSUE_NUMBER ISSUE_BODY BRANCH
 #   pr_find_by_branch      BRANCH
+#   pr_live_reviews        REVIEWS_JSON HEAD_SHA
+#   pr_live_review_count   REVIEWS_JSON HEAD_SHA STATE
 #   pr_poll_ci             PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_poll_review         PR_NUMBER [TIMEOUT_SECS] [POLL_INTERVAL]
 #   pr_merge               PR_NUMBER [COMMIT_MSG]
@@ -233,6 +235,47 @@ pr_find_by_branch() {
 }
 
 # ---------------------------------------------------------------------------
+# Live-review filtering (#1089).
+#
+# Forgejo marks ALL of a PR's reviews stale when the PR is closed and later
+# reopened — including reviews whose commit_id equals the current head. A
+# review is therefore "live" if it is not stale, OR if it is pinned to the
+# current head (commit_id matches the head SHA by prefix in either
+# direction — the API may return a shortened commit_id). Trusting the stale
+# flag alone made a reopened PR with an unsatisfied REQUEST_CHANGES at its
+# head both unpickable and unmergeable, wedging the issue and the queue.
+# ---------------------------------------------------------------------------
+_PR_LIVE_REVIEWS_JQ='
+  def headmatch($c):
+    (($c | type) == "string")
+    and (($c | length) > 0)
+    and (($head | length) > 0)
+    and (($c | startswith($head)) or ($head | startswith($c)));
+  (if type == "array" then . else [.] end)
+  | [ .[] | select(.stale == false or headmatch(.commit_id // "")) ]
+'
+
+# pr_live_reviews REVIEWS_JSON HEAD_SHA
+# Stdout: JSON array of live reviews (see above).
+pr_live_reviews() {
+  local reviews_json="${1:-[]}" head_sha="${2:-}"
+  printf '%s' "$reviews_json" \
+    | jq -c --arg head "$head_sha" "$_PR_LIVE_REVIEWS_JQ" 2>/dev/null \
+    || printf '[]'
+}
+
+# pr_live_review_count REVIEWS_JSON HEAD_SHA STATE
+# Stdout: number of live reviews with the given state (e.g. "APPROVED").
+pr_live_review_count() {
+  local reviews_json="${1:-[]}" head_sha="${2:-}" state="$3"
+  local live
+  live=$(pr_live_reviews "$reviews_json" "$head_sha")
+  printf '%s' "$live" \
+    | jq -r --arg s "$state" '[.[] | select(.state == $s)] | length' 2>/dev/null \
+    || printf '0'
+}
+
+# ---------------------------------------------------------------------------
 # pr_poll_ci — Poll CI status until complete or timeout.
 # Args: pr_number [timeout_secs=1800] [poll_interval=30]
 # Sets: _PR_CI_STATE _PR_CI_SHA _PR_CI_PIPELINE _PR_CI_FAILURE_TYPE _PR_CI_ERROR_LOG
@@ -358,10 +401,13 @@ pr_poll_review() {
         grep -oP '\*\*(APPROVE|REQUEST_CHANGES|DISCUSS)\*\*' | head -1 | tr -d '*') || true
     fi
 
-    # Fallback: formal forge reviews
+    # Fallback: formal forge reviews (head-aware — #1089: a reopened PR has
+    # every review marked stale, including the one pinned to the current head)
     if [ -z "$verdict" ]; then
-      verdict=$(forge_api GET "/pulls/${pr_num}/reviews" | \
-        jq -r '[.[] | select(.stale == false)] | last | .state // empty') || true
+      local reviews_json
+      reviews_json=$(forge_api GET "/pulls/${pr_num}/reviews") || true
+      verdict=$(pr_live_reviews "$reviews_json" "${sha:-}" | \
+        jq -r 'last | .state // empty') || true
       case "$verdict" in
         APPROVED) verdict="APPROVE" ;;
         REQUEST_CHANGES) ;;

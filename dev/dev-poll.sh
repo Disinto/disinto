@@ -241,6 +241,70 @@ try_direct_merge() {
 }
 
 # =============================================================================
+# HELPER: escalate a PR that can be neither picked up nor merged (#1089)
+#
+# A reopened PR whose reviews are all stale (Forgejo marks every review stale
+# on close/reopen, including the one pinned to the head) can end up with zero
+# LIVE reviews: no REQUEST_CHANGES to pick it up, no APPROVE to merge it.
+# Nothing in the factory can move that PR — only a re-review can — so holding
+# the queue for it wedges every other backlog issue. Instead, report it:
+# post a dedup'd comment, label the issue "blocked", and drop "in-progress"
+# so the next poll no longer treats it as in-flight work.
+#
+# Args: issue_num pr_num [head_sha]
+# =============================================================================
+escalate_wedged_pr() {
+  local issue_num="$1" pr_num="$2"
+  local head_sha="${3:-}"
+
+  # Dedup: don't re-post (or re-relabel) if an escalation already exists.
+  local marker
+  marker="<!-- pr-wedged: ${pr_num} -->"
+  local already
+  already=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${issue_num}/comments?limit=10" 2>/dev/null \
+    | jq -r --arg m "$marker" '[.[] | (.body // "") | contains($m)] | any | tostring') || true
+  if [ "$already" = "true" ]; then
+    log "PR #${pr_num} (issue #${issue_num}) already escalated — skipping"
+    return 0
+  fi
+
+  local comment_body
+  comment_body=$(
+    printf '%s\n\n' "$marker"
+    printf '%s\n' '### PR has no actionable next step'
+    printf '%s\n' '| Field | Value |'
+    printf '%s\n' '|---|---|'
+    printf '| PR | #%s |\n' "$pr_num"
+    printf '| Head SHA | `%s` |\n' "${head_sha:-unknown}"
+    printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s\n' '**Status:** CI is green, but the PR has no live review: every review is marked stale and none is pinned to the current head, so the factory can neither pick it up (no live REQUEST_CHANGES) nor merge it (no live APPROVE). This is the Forgejo close/reopen quirk where all reviews go stale (#1089). A human or bot re-review of the PR will unblock it automatically.'
+  )
+  _ilc_post_comment "$issue_num" "$comment_body"
+
+  # Add blocked label
+  local bk_id
+  bk_id=$(_ilc_blocked_id)
+  if [ -n "$bk_id" ]; then
+    curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${API}/issues/${issue_num}/labels" \
+      -d "{\"labels\":[${bk_id}]}" >/dev/null 2>&1 || true
+  fi
+
+  # Remove in-progress label so the next poll no longer treats the issue
+  # as in-flight (a claim clears "blocked" again — escalation is reversible).
+  local ip_id
+  ip_id=$(_ilc_in_progress_id)
+  if [ -n "$ip_id" ]; then
+    curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${issue_num}/labels/${ip_id}" >/dev/null 2>&1 || true
+  fi
+
+  log "escalated PR #${pr_num} (issue #${issue_num}) — no actionable next step; queue not held (#1089)"
+}
+
+# =============================================================================
 # HELPER: extract issue number from PR branch/title/body
 # =============================================================================
 extract_issue_from_pr() {
@@ -336,11 +400,11 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     continue
   fi
 
-  # Check for approval (non-stale)
+  # Check for approval (head-aware live review — #1089: a reopened PR has
+  # every review marked stale, including the one pinned to the current head)
   PL_REVIEWS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls/${PL_PR_NUM}/reviews") || true
-  PL_HAS_APPROVE=$(echo "$PL_REVIEWS" | \
-    jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
+  PL_HAS_APPROVE=$(pr_live_review_count "$PL_REVIEWS" "$PL_PR_SHA" "APPROVED")
 
   if [ "${PL_HAS_APPROVE:-0}" -gt 0 ]; then
     # Check if issue is assigned to this agent — only merge own PRs
@@ -438,11 +502,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         '.[] | select(.head.ref == $branch) | .number' | head -1) || true
 
       if [ -n "$HAS_PR" ]; then
-        # Check for REQUEST_CHANGES review feedback
+        # Check for REQUEST_CHANGES review feedback (head-aware — #1089)
+        HAS_PR_SHA=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${API}/pulls/${HAS_PR}" | jq -r '.head.sha // empty') || true
         REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${API}/pulls/${HAS_PR}/reviews") || true
-        HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
-          jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+        HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$HAS_PR_SHA" "REQUEST_CHANGES")
 
         if [ "${HAS_CHANGES:-0}" -gt 0 ]; then
           log "issue #${ISSUE_NUM} has review feedback — spawning agent"
@@ -539,13 +604,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             log "PR #${HAS_PR} has no code files — treating CI as passed"
           fi
 
-          # Check formal reviews (single fetch to avoid race window)
+          # Check formal reviews (single fetch to avoid race window;
+          # head-aware live reviews — #1089)
           REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
             "${API}/pulls/${HAS_PR}/reviews") || true
-          HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
-            jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
-          HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
-            jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+          HAS_APPROVE=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "APPROVED")
+          HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "REQUEST_CHANGES")
 
           if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
             if try_direct_merge "$HAS_PR" "$ISSUE_NUM"; then
@@ -593,6 +657,14 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             fi
 
           else
+            if [ "$CI_STATE" = "success" ]; then
+              # CI green + zero live reviews = no actionable next step —
+              # escalate instead of holding this thread forever (#1089).
+              # escalate_wedged_pr drops the in-progress label, so the next
+              # poll no longer blocks on this issue.
+              log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: success, no live review) — escalating instead of waiting (#1089)"
+              escalate_wedged_pr "$ISSUE_NUM" "$HAS_PR" "$PR_SHA"
+            fi
             log "issue #${ISSUE_NUM} has open PR #${HAS_PR} (CI: ${CI_STATE}, waiting)"
             BLOCKED_BY_INPROGRESS=true
           fi
@@ -664,12 +736,11 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
   fi
 
   # Single fetch to avoid race window between review checks
+  # (head-aware live reviews — #1089)
   REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls/${PR_NUM}/reviews") || true
-  HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
-    jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
-  HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
-    jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
+  HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "REQUEST_CHANGES")
+  HAS_APPROVE=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "APPROVED")
 
   # Merge directly if approved + CI green (no Claude needed — single API call)
   if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
@@ -827,12 +898,11 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     fi
 
     # Single fetch to avoid race window between review checks
+    # (head-aware live reviews — #1089)
     REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
       "${API}/pulls/${EXISTING_PR}/reviews") || true
-    HAS_APPROVE=$(echo "$REVIEWS_JSON" | \
-      jq -r '[.[] | select(.state == "APPROVED") | select(.stale == false)] | length') || true
-    HAS_CHANGES=$(echo "$REVIEWS_JSON" | \
-      jq -r '[.[] | select(.state == "REQUEST_CHANGES") | select(.stale == false)] | length') || true
+    HAS_APPROVE=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "APPROVED")
+    HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$PR_SHA" "REQUEST_CHANGES")
 
     if ci_passed "$CI_STATE" && [ "${HAS_APPROVE:-0}" -gt 0 ]; then
       if try_direct_merge "$EXISTING_PR" "$ISSUE_NUM"; then
@@ -860,6 +930,14 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       break
 
     else
+      if [ "$CI_STATE" = "success" ]; then
+        # CI green + zero live reviews = no actionable next step. Holding the
+        # queue here would block every other backlog issue indefinitely
+        # (#1089) — escalate instead.
+        log "#${ISSUE_NUM} PR #${EXISTING_PR} CI green but no live review — no actionable next step; escalating instead of holding the queue (#1089)"
+        escalate_wedged_pr "$ISSUE_NUM" "$EXISTING_PR" "$PR_SHA"
+        continue
+      fi
       log "#${ISSUE_NUM} PR #${EXISTING_PR} exists (CI: ${CI_STATE}, waiting)"
       WAITING_PRS="${WAITING_PRS:-}${WAITING_PRS:+, }#${EXISTING_PR}"
       continue
