@@ -337,11 +337,35 @@ pr_poll_ci() {
           _PR_CI_FAILURE_TYPE=$(classify_pipeline_failure \
             "$WOODPECKER_REPO_ID" "$_PR_CI_PIPELINE" 2>/dev/null \
             | cut -d' ' -f1) || _PR_CI_FAILURE_TYPE="code"
-          if [ -n "${FACTORY_ROOT:-}" ]; then
-            _PR_CI_ERROR_LOG=$(bash "${FACTORY_ROOT}/lib/ci-debug.sh" \
-              failures "$_PR_CI_PIPELINE" 2>/dev/null \
-              | tail -80 | head -c 8000) || true
+          # Never leave _PR_CI_ERROR_LOG empty on a retrieval problem: the
+          # prompt's fallback reads as "the pipeline produced no output", which
+          # sent agents hunting for a code fault that was really a missing
+          # credential. Say which it was (#1114).
+          if [ -z "${FACTORY_ROOT:-}" ]; then
+            _PR_CI_ERROR_LOG="CI log retrieval failed: FACTORY_ROOT is unset, so lib/ci-debug.sh could not be located."
+            _prl_log "CI log retrieval failed: FACTORY_ROOT unset"
+          elif [ -z "${WOODPECKER_TOKEN:-}" ]; then
+            _PR_CI_ERROR_LOG="CI log retrieval failed: WOODPECKER_TOKEN is not set in this container, so the Woodpecker API cannot be queried. This is an environment fault, not a CI fault - do not infer anything about the failure from its absence."
+            _prl_log "CI log retrieval failed: WOODPECKER_TOKEN unset"
+          else
+            local ci_dbg_out ci_dbg_err ci_dbg_rc=0
+            ci_dbg_err=$(mktemp)
+            ci_dbg_out=$(bash "${FACTORY_ROOT}/lib/ci-debug.sh" \
+              failures "$_PR_CI_PIPELINE" 2>"$ci_dbg_err") || ci_dbg_rc=$?
+            if [ "$ci_dbg_rc" -ne 0 ]; then
+              _PR_CI_ERROR_LOG="CI log retrieval failed (ci-debug.sh exit ${ci_dbg_rc}): $(head -c 500 "$ci_dbg_err")"
+              _prl_log "CI log retrieval failed: ci-debug.sh exit ${ci_dbg_rc}"
+            elif [ -z "$ci_dbg_out" ]; then
+              _PR_CI_ERROR_LOG="CI log retrieval returned no output for pipeline #${_PR_CI_PIPELINE}."
+              _prl_log "CI log retrieval returned no output for pipeline #${_PR_CI_PIPELINE}"
+            else
+              _PR_CI_ERROR_LOG=$(printf '%s' "$ci_dbg_out" | tail -80 | head -c 8000)
+            fi
+            rm -f "$ci_dbg_err"
           fi
+        else
+          _PR_CI_ERROR_LOG="CI log retrieval skipped: pipeline number = ${_PR_CI_PIPELINE:-unresolved} for commit ${_PR_CI_SHA:-unknown}, WOODPECKER_REPO_ID = ${WOODPECKER_REPO_ID:-unset}. This is an environment fault, not a CI fault."
+          _prl_log "CI log retrieval skipped: pipeline=${_PR_CI_PIPELINE:-none} repo_id=${WOODPECKER_REPO_ID:-unset}"
         fi
         _prl_log "CI failed (type: ${_PR_CI_FAILURE_TYPE:-unknown})"
         return 1
@@ -805,7 +829,7 @@ Pipeline: #${_PR_CI_PIPELINE:-?}
 Failure type: ${_PR_CI_FAILURE_TYPE:-unknown}
 ${passing_line}
 Error log:
-${_PR_CI_ERROR_LOG:-No logs available.}
+${_PR_CI_ERROR_LOG:-CI log retrieval failed: no diagnostic was recorded.}
 ${ci_prompt_body}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
