@@ -86,6 +86,17 @@ if mirrors:
 # that would break container API calls and path resolution.  Skip overriding
 # any env var that is already set when running inside the container.
 #
+# #1085 exception: the repo-identity vars (FORGE_REPO, FORGE_OPS_REPO,
+# PRIMARY_BRANCH, WOODPECKER_REPO_ID) are identical from the host and the
+# container perspective.  The jobspec sets one FORGE_REPO for the whole
+# container, but in a multi-project factory each TOML's own `repo` must win —
+# otherwise every project's poll queries the jobspec's forge repo.  A non-empty
+# TOML value therefore overrides the already-set container value; an empty one
+# (the emitter always emits FORGE_REPO=, empty when the TOML has no `repo`)
+# never clobbers it, so single-project boxes keep the jobspec value.  The
+# host-perspective keys (FORGE_URL, PROJECT_REPO_ROOT, OPS_REPO_ROOT, mirrors)
+# still skip.
+#
 # #852 defence: validate that $_key is a legal shell identifier before
 # `export`.  A hand-edited TOML can smuggle in keys that survive the
 # Python emitter but fail `export`'s identifier rule — e.g.
@@ -102,6 +113,13 @@ while IFS='=' read -r _key _val; do
     continue
   fi
   if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${!_key:-}" ]; then
+    case "$_key" in
+      FORGE_REPO|FORGE_OPS_REPO|PRIMARY_BRANCH|WOODPECKER_REPO_ID)
+        # #1085: repo-identity is the same from inside the container — let a
+        # non-empty TOML value override the jobspec value (see note above).
+        [ -n "$_val" ] && export "$_key=$_val"
+        ;;
+    esac
     continue
   fi
   export "$_key=$_val"
