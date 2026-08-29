@@ -11,10 +11,13 @@ ps -p $(cat /path/to/lock.file) 2>/dev/null || rm -f /path/to/lock.file
 ```
 
 ### Stale Worktree Cleanup
+NEVER run a blanket `git worktree prune` — the project clone is shared across
+dev/review/supervisor containers with separate /tmps, so a blanket prune
+destroys the other containers' live worktree registrations (#1082). Clear only
+the exact path you are reclaiming, via the scoped helpers in `lib/worktree.sh`:
 ```bash
-cd "$PROJECT_REPO_ROOT"
-git worktree remove --force /tmp/stale-worktree 2>/dev/null || true
-git worktree prune 2>/dev/null || true
+worktree_cleanup /tmp/stale-worktree     # dir + registration + claude cache
+worktree_clear_stale /tmp/stale-worktree # registration only (dir already gone)
 ```
 
 ### Blocked Pipeline

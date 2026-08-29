@@ -5,8 +5,15 @@
 #   worktree_create   PATH BRANCH [BASE_REF]  — create worktree, checkout base, fetch submodules
 #   worktree_recover  ISSUE_NUMBER PROJECT_NAME — detect existing PR/branch, reuse or recreate worktree
 #   worktree_cleanup  PATH                     — remove worktree + Claude Code project cache
-#   worktree_cleanup_stale [MAX_AGE_HOURS]     — prune orphaned /tmp worktrees older than threshold
-#   worktree_preserve PATH REASON              — mark worktree as preserved (skip cleanup on exit)
+#   worktree_clear_stale PATH                 — drop the registration of PATH when the dir is gone
+#   worktree_cleanup_stale [MAX_AGE_HOURS]    — remove orphaned /tmp worktrees older than threshold
+#   worktree_preserve PATH REASON             — mark worktree as preserved (skip cleanup on exit)
+#
+# IMPORTANT — no blanket `git worktree prune`: the project clone is shared
+# across dev/review/supervisor containers that each have their own /tmp.
+# From one container the other containers' live worktrees look "missing",
+# so a blanket prune would destroy their registrations. Clearing is scoped
+# to the exact path being claimed (see worktree_clear_stale).
 #
 # Requires: lib/env.sh sourced (for FACTORY_ROOT, PROJECT_REPO_ROOT, log()).
 # Globals set by callers: FORGE_REMOTE (git remote name, default "origin").
@@ -79,8 +86,42 @@ worktree_recover() {
   return 0
 }
 
+# worktree_clear_stale PATH
+# If the directory at PATH is gone but a worktree registration for it still
+# exists, removes just that one registration. Without this, a registration
+# left behind after the container's /tmp was wiped (container restart) makes
+# `git worktree add PATH` fail with "missing, but already registered"
+# forever. Scoped to the single path being claimed — never a blanket prune —
+# because the shared clone also registers live worktrees owned by other
+# containers whose /tmp directories we cannot see.
+# Requires: PROJECT_REPO_ROOT (falls back to current directory).
+# Returns 0 always (no-op when the path exists or no registration exists).
+worktree_clear_stale() {
+  local wt_path="$1"
+  local repo_root="${PROJECT_REPO_ROOT:-$(pwd)}"
+  # Only act when the local directory is actually gone.
+  [ -d "$wt_path" ] && return 0
+  # No-op if there is no registration for this exact path.
+  if ! git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+      | grep -qFx "worktree ${wt_path}"; then
+    return 0
+  fi
+  local common_dir
+  common_dir=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null) || return 0
+  # Normalize a relative common-dir (printed relative to $repo_root).
+  case "$common_dir" in
+    /*) : ;;
+    *) common_dir="$repo_root/$common_dir" ;;
+  esac
+  rm -rf "${common_dir%/}/worktrees/$(basename "$wt_path")"
+  log "worktree_clear_stale: cleared stale registration for ${wt_path}"
+  return 0
+}
+
 # worktree_cleanup PATH
 # Removes a git worktree and clears the Claude Code project cache for it.
+# Also clears a lingering registration when the directory is already gone,
+# so a re-claim (e.g. after a container restart) can `git worktree add` again.
 # Safe to call multiple times or on non-existent paths.
 # Requires: PROJECT_REPO_ROOT (falls back to current directory).
 worktree_cleanup() {
@@ -90,12 +131,14 @@ worktree_cleanup() {
   git worktree remove "$wt_path" --force 2>/dev/null || true
   rm -rf "$wt_path"
   _worktree_clear_claude_cache "$wt_path"
+  worktree_clear_stale "$wt_path"
 }
 
 # worktree_cleanup_stale [MAX_AGE_HOURS]
 # Scans /tmp for orphaned worktrees older than MAX_AGE_HOURS (default 24).
 # Skips worktrees that have active tmux panes or are marked as preserved.
-# Prunes dangling worktree references after cleanup.
+# Only removes the local directory and its own registration (never a blanket
+# `git worktree prune` — see worktree_clear_stale for why).
 # Requires: PROJECT_REPO_ROOT.
 worktree_cleanup_stale() {
   local max_age_hours="${1:-24}"
@@ -128,18 +171,20 @@ worktree_cleanup_stale() {
       continue
     fi
 
-    # Remove the worktree and its Claude cache
+    # Remove the worktree, its registration, and its Claude cache.
+    # Scoped removal only — a blanket `git worktree prune` here would destroy
+    # registrations for live worktrees owned by other containers (#1082).
     local repo_root="${PROJECT_REPO_ROOT:-$(pwd)}"
     git -C "$repo_root" worktree remove "$wt_dir" --force 2>/dev/null || rm -rf "$wt_dir"
     _worktree_clear_claude_cache "$wt_dir"
+    worktree_clear_stale "$wt_dir"
     log "cleaned stale worktree: ${wt_dir} (age: $((age / 3600))h)"
     cleaned=$((cleaned + 1))
   done
 
-  # Prune any dangling worktree references
-  git -C "${PROJECT_REPO_ROOT:-$(pwd)}" worktree prune 2>/dev/null || true
-
-  [ "$cleaned" -gt 0 ] && log "cleaned ${cleaned} stale worktree(s)"
+  if [ "$cleaned" -gt 0 ]; then
+    log "cleaned ${cleaned} stale worktree(s)"
+  fi
 }
 
 # worktree_preserve PATH REASON

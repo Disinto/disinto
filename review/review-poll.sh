@@ -11,11 +11,11 @@ set -euo pipefail
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
+source "$(dirname "$0")/../lib/worktree.sh"
 # shellcheck source=../lib/guard.sh
 source "$(dirname "$0")/../lib/guard.sh"
 check_active reviewer
 
-REPO_ROOT="${PROJECT_REPO_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 API_BASE="${FORGE_API}"
@@ -63,9 +63,9 @@ if [ -n "$REVIEW_SIDS" ]; then
     if [ "$pr_state" != "open" ]; then
       log "cleanup: PR #${pr_num} state=${pr_state} — removing sid/worktree"
       rm -f "$sid_file" "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
-      cd "$REPO_ROOT"
-      git worktree remove "$worktree" --force 2>/dev/null || true
-      rm -rf "$worktree" 2>/dev/null || true
+      # worktree_cleanup also clears a lingering registration, so a PR whose
+      # worktree died in a restart cannot jam a future re-review (#1082).
+      worktree_cleanup "$worktree"
       continue
     fi
 
@@ -75,9 +75,9 @@ if [ -n "$REVIEW_SIDS" ]; then
     if [ "$sid_mtime" -gt 0 ] && [ $(( now - sid_mtime )) -gt "$REVIEW_IDLE_TIMEOUT" ]; then
       log "cleanup: PR #${pr_num} idle > 4h — removing sid/worktree"
       rm -f "$sid_file" "$phase_file" "/tmp/${PROJECT_NAME}-review-output-${pr_num}.json"
-      cd "$REPO_ROOT"
-      git worktree remove "$worktree" --force 2>/dev/null || true
-      rm -rf "$worktree" 2>/dev/null || true
+      # worktree_cleanup also clears a lingering registration, so a PR whose
+      # worktree died in a restart cannot jam a future re-review (#1082).
+      worktree_cleanup "$worktree"
       continue
     fi
   done <<< "$REVIEW_SIDS"

@@ -120,7 +120,10 @@ Action script: `supervisor/actions/memory-crisis.sh` — kills stale claude proc
 Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log truncation.
 
 **P4 Stale worktrees:**
-Action script: `supervisor/actions/cleanup-worktrees.sh` — git worktree prune.
+Action script: `supervisor/actions/cleanup-worktrees.sh` — no-op by design since
+#1082 (a blanket `git worktree prune` on the shared clone destroys other
+containers' live registrations); worktrees are reclaimed at claim time by
+`worktree_cleanup`/`worktree_clear_stale` in lib/worktree.sh.
 
 **P4 Dead lock files:**
 Action script: `supervisor/actions/cleanup-locks.sh` — removes lock files for dead PIDs.
