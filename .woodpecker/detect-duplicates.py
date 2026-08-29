@@ -418,6 +418,8 @@ def main() -> int:
         "2b5a82793a819934b53e6f42e4aa7f4a": "forge_api_all window env.sh:245 + forge-paginate.sh (inlined function)",
         # Acceptance tests share standard header pattern (issue-859 + issue-861)
         "029fec76a4516445bf76b94355360e57": "Acceptance test header (issue-859 + issue-861)",
+        # Acceptance tests share standard header pattern (issue-1089 + issue-1090)
+        "0ae63c57385336eda57b1fe91778cc1a": "Acceptance test header (issue-1089 + issue-1090)",
     }
 
     if not sh_files:
