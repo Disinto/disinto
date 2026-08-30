@@ -86,26 +86,23 @@ _bp_wait_for_branch() {
 }
 
 # -----------------------------------------------------------------------------
-# setup_vault_branch_protection — Set up admin-only branch protection for main
+# _bp_apply_protection — Probe for existing branch protection, then create or
+# update it with the given JSON payload
 #
-# Configures the following protection rules:
-# - Require 1 approval before merge
-# - Restrict merge to admin role (not regular collaborators or bots)
-# - Block direct pushes to main (all changes must go through PR)
+# Probes the protection endpoint and PUTs the payload if protection already
+# exists, otherwise POSTs it.
 #
-# Returns: 0 on success, 1 on failure
+# Args:
+#   $1 - Full API URL for the repo (e.g. https://forge.example/api/v1/repos/owner/repo)
+#   $2 - Branch name
+#   $3 - Branch protection JSON payload
+#
+# Returns: 0 on success, 1 if the API call failed
 # -----------------------------------------------------------------------------
-setup_vault_branch_protection() {
-  local branch="${1:-main}"
-  local api_url
-  api_url="$(_ops_api)"
-
-  _bp_log "Setting up branch protection for ${branch} on ${FORGE_OPS_REPO}"
-
-  # Wait for Forgejo to index the branch (may take 5–15s after push)
-  if ! _bp_wait_for_branch "$api_url" "$branch" "$FORGE_OPS_REPO"; then
-    return 1
-  fi
+_bp_apply_protection() {
+  local api_url="$1"
+  local branch="$2"
+  local protection_json="$3"
 
   # Check if protection already exists
   local protection_exists
@@ -117,26 +114,6 @@ setup_vault_branch_protection() {
     _bp_log "Branch protection already exists for ${branch}"
     _bp_log "Updating existing protection rules"
   fi
-
-  # Create/update branch protection
-  # Note: Forgejo API uses "require_signed_commits" and "required_approvals" for approval requirements
-  # The "admin_enforced" field ensures only admins can merge
-  local protection_json
-  protection_json=$(cat <<EOF
-{
-  "enable_push": false,
-  "enable_force_push": false,
-  "enable_merge_commit": true,
-  "enable_rebase": true,
-  "enable_rebase_merge": true,
-  "required_approvals": 1,
-  "required_signatures": false,
-  "admin_enforced": true,
-  "required_status_checks": false,
-  "required_linear_history": false
-}
-EOF
-)
 
   local http_code
   if [ "$protection_exists" = "200" ]; then
@@ -161,6 +138,53 @@ EOF
     _bp_log "ERROR: Failed to set up branch protection (HTTP ${http_code})"
     return 1
   fi
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# setup_vault_branch_protection — Set up admin-only branch protection for main
+#
+# Configures the following protection rules:
+# - Require 1 approval before merge
+# - Restrict merge to admin role (not regular collaborators or bots)
+# - Block direct pushes to main (all changes must go through PR)
+#
+# Returns: 0 on success, 1 on failure
+# -----------------------------------------------------------------------------
+setup_vault_branch_protection() {
+  local branch="${1:-main}"
+  local api_url
+  api_url="$(_ops_api)"
+
+  _bp_log "Setting up branch protection for ${branch} on ${FORGE_OPS_REPO}"
+
+  # Wait for Forgejo to index the branch (may take 5–15s after push)
+  if ! _bp_wait_for_branch "$api_url" "$branch" "$FORGE_OPS_REPO"; then
+    return 1
+  fi
+
+  # Create/update branch protection
+  # Note: Forgejo API uses "require_signed_commits" and "required_approvals" for approval requirements
+  # The "admin_enforced" field ensures only admins can merge
+  local protection_json
+  protection_json=$(cat <<EOF
+{
+  "enable_push": false,
+  "enable_force_push": false,
+  "enable_merge_commit": true,
+  "enable_rebase": true,
+  "enable_rebase_merge": true,
+  "required_approvals": 1,
+  "required_signatures": false,
+  "admin_enforced": true,
+  "required_status_checks": false,
+  "required_linear_history": false
+}
+EOF
+)
+
+  _bp_apply_protection "$api_url" "$branch" "$protection_json" || return 1
 
   _bp_log "Branch protection configured successfully for ${branch}"
   _bp_log "  - Pushes blocked: true"
@@ -278,17 +302,6 @@ setup_profile_branch_protection() {
     return 1
   fi
 
-  # Check if protection already exists
-  local protection_exists
-  protection_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api_url}/branches/${branch}/protection" 2>/dev/null || echo "0")
-
-  if [ "$protection_exists" = "200" ]; then
-    _bp_log "Branch protection already exists for ${branch}"
-    _bp_log "Updating existing protection rules"
-  fi
-
   # Create/update branch protection
   local protection_json
   protection_json=$(cat <<EOF
@@ -307,29 +320,7 @@ setup_profile_branch_protection() {
 EOF
 )
 
-  local http_code
-  if [ "$protection_exists" = "200" ]; then
-    # Update existing protection
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-      -X PUT \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${api_url}/branches/${branch}/protection" \
-      -d "$protection_json" || echo "0")
-  else
-    # Create new protection
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-      -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${api_url}/branches/${branch}/protection" \
-      -d "$protection_json" || echo "0")
-  fi
-
-  if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
-    _bp_log "ERROR: Failed to set up branch protection (HTTP ${http_code})"
-    return 1
-  fi
+  _bp_apply_protection "$api_url" "$branch" "$protection_json" || return 1
 
   _bp_log "Branch protection configured successfully for ${branch}"
   _bp_log "  - Pushes blocked: true"
@@ -485,17 +476,6 @@ setup_project_branch_protection() {
     return 1
   fi
 
-  # Check if protection already exists
-  local protection_exists
-  protection_exists=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${api_url}/branches/${branch}/protection" 2>/dev/null || echo "0")
-
-  if [ "$protection_exists" = "200" ]; then
-    _bp_log "Branch protection already exists for ${branch}"
-    _bp_log "Updating existing protection rules"
-  fi
-
   # Create/update branch protection. The payload — including the required
   # status check context (ci/woodpecker/pr/ci) — is rendered by
   # project_branch_protection_payload() so the gate lives in this file rather
@@ -503,29 +483,7 @@ setup_project_branch_protection() {
   local protection_json
   protection_json="$(project_branch_protection_payload)"
 
-  local http_code
-  if [ "$protection_exists" = "200" ]; then
-    # Update existing protection
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-      -X PUT \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${api_url}/branches/${branch}/protection" \
-      -d "$protection_json" || echo "0")
-  else
-    # Create new protection
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-      -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${api_url}/branches/${branch}/protection" \
-      -d "$protection_json" || echo "0")
-  fi
-
-  if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
-    _bp_log "ERROR: Failed to set up branch protection (HTTP ${http_code})"
-    return 1
-  fi
+  _bp_apply_protection "$api_url" "$branch" "$protection_json" || return 1
 
   _bp_log "Branch protection configured successfully for ${branch}"
   _bp_log "  - Pushes blocked: true"
