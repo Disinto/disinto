@@ -5,7 +5,11 @@ Two detection passes:
   1. Known anti-patterns (grep-style): flags specific hardcoded patterns
      that should use shared helpers instead.
   2. Sliding-window hash: finds N-line blocks that appear verbatim in
-     multiple files (catches structural copy-paste).
+     multiple files (catches structural copy-paste).  A window is only
+     reportable when it carries at least three non-scaffolding lines
+     (scaffolding = pure shell control-flow tokens such as `;;` / `esac`);
+     a window made up of less is punctuation, not duplicated logic
+     (issue #1134).
 
 When DIFF_BASE is set (e.g. "main"), compares findings against that base
 branch and only fails (exit 1) when new duplicates are introduced by the
@@ -27,6 +31,10 @@ from collections import defaultdict
 
 WINDOW = int(os.environ.get("DUP_WINDOW", "5"))
 MIN_FILES = int(os.environ.get("DUP_MIN_FILES", "2"))
+# A window is reportable only when it carries at least this many
+# non-scaffolding lines; a window made up of less is punctuation, not
+# duplicated logic (issue #1134).
+MIN_REAL_LINES = 3
 
 # ---------------------------------------------------------------------------
 # Known anti-patterns — patterns that should use shared helpers instead
@@ -84,6 +92,18 @@ def meaningful_lines(path):
             continue
         result.append((lineno, line.rstrip()))
     return result
+
+
+# Pure shell scaffolding: control-flow tokens the language leaves no
+# alternative spelling for. Any two files that both close a `case` (or a
+# for/if) agree on these lines, so they must not count toward the real
+# lines that make a window reportable. Unlike blank and comment-only
+# lines, scaffolding lines stay in the meaningful-line list: window spans
+# and hashes are unchanged, so pre-existing findings keep their hashes
+# (issue #1134).
+SHELL_SCAFFOLDING = frozenset(
+    (";;", "esac", "fi", "done", "}", ")", "*)", "else", "do", "then")
+)
 
 
 def sliding_windows(lines, window_size):
@@ -165,6 +185,12 @@ def check_duplicates(sh_files, root):
             continue
         seen_in_file: set[str] = set()
         for start_lineno, h, content in sliding_windows(lines, WINDOW):
+            real_lines = sum(
+                1 for ln in content.split("\n")
+                if ln.strip() not in SHELL_SCAFFOLDING
+            )
+            if real_lines < MIN_REAL_LINES:
+                continue  # punctuation, not duplicated logic (issue #1134)
             if h in seen_in_file:
                 continue  # already recorded this hash for this file
             seen_in_file.add(h)
