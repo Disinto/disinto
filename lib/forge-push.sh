@@ -16,19 +16,6 @@
 # =============================================================================
 set -euo pipefail
 
-# Assert required globals are set before using this module.
-_assert_forge_push_globals() {
-  local missing=()
-  [ -z "${FORGE_URL:-}" ]      && missing+=("FORGE_URL")
-  [ -z "${FORGE_TOKEN:-}" ]    && missing+=("FORGE_TOKEN")
-  [ -z "${FACTORY_ROOT:-}" ]   && missing+=("FACTORY_ROOT")
-  [ -z "${PRIMARY_BRANCH:-}" ] && missing+=("PRIMARY_BRANCH")
-  if [ "${#missing[@]}" -gt 0 ]; then
-    echo "Error: forge-push.sh requires these globals to be set: ${missing[*]}" >&2
-    exit 1
-  fi
-}
-
 # Push local clone to the Forgejo remote.
 push_to_forge() {
   local repo_root="$1" forge_url="$2" repo_slug="$3"

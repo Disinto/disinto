@@ -381,6 +381,3 @@ formula_prepare_profile_context() { profile_prepare_context "$@"; }
 
 # Deprecated: use profile_lessons_block instead
 formula_lessons_block() { profile_lessons_block "$@"; }
-
-# Deprecated: use profile_ensure_repo instead
-ensure_profile_repo() { profile_ensure_repo "$@"; }
