@@ -20,6 +20,9 @@
 # =============================================================================
 set -euo pipefail
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/claude-config.sh"  # _env_set_idempotent
+
 # Assert required globals are set before using this module.
 _load_ci_context() {
   local missing=()
@@ -184,11 +187,7 @@ _create_woodpecker_oauth_impl() {
 
   for var_line in "${wp_vars[@]}"; do
     local var_name="${var_line%%=*}"
-    if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${var_name}=.*|${var_line}|" "$env_file"
-    else
-      printf '%s\n' "$var_line" >> "$env_file"
-    fi
+    _env_set_idempotent "$var_name" "${var_line#*=}" "$env_file"
   done
   echo "Config:  Woodpecker forge vars written to .env"
 }
@@ -217,11 +216,7 @@ _create_chat_oauth_impl() {
 
   for var_line in "${chat_vars[@]}"; do
     local var_name="${var_line%%=*}"
-    if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${var_name}=.*|${var_line}|" "$env_file"
-    else
-      printf '%s\n' "$var_line" >> "$env_file"
-    fi
+    _env_set_idempotent "$var_name" "${var_line#*=}" "$env_file"
   done
   echo "Config:  Chat OAuth vars written to .env"
 }
