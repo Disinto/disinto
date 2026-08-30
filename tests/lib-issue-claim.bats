@@ -32,9 +32,9 @@ setup() {
   echo 0 > "$ISSUE_GET_COUNT_FILE"
 
   # Scenario knobs — overridden per @test.
-  export MOCK_ME="bot"
+  export MOCK_ME="dev-bot"
   export MOCK_INITIAL_ASSIGNEE=""
-  export MOCK_RECHECK_ASSIGNEE="bot"
+  export MOCK_RECHECK_ASSIGNEE="dev-bot"
 
   # Stand-in for lib/env.sh's forge_api (we don't source env.sh — too
   # much unrelated setup). Shape mirrors the real helper closely enough
@@ -117,6 +117,13 @@ setup() {
     return 0
   }
 
+  # forge_whoami lives in forge-helpers.sh; issue_claim calls it, and
+  # issue-lifecycle.sh does not source it. Without this the function is
+  # undefined and issue_claim bails at "could not resolve bot identity"
+  # before any stubbed HTTP call.
+  # shellcheck source=../lib/forge-helpers.sh
+  source "${ROOT}/lib/forge-helpers.sh"
+
   # shellcheck source=../lib/issue-lifecycle.sh
   source "${ROOT}/lib/issue-lifecycle.sh"
 }
@@ -125,16 +132,19 @@ setup() {
 
 # count_calls METHOD URL — count matching lines in $CALLS_LOG.
 count_calls() {
-  local method="$1" url="$2"
-  grep -cF "${method} ${url}" "$CALLS_LOG" 2>/dev/null || echo 0
+  local method="$1" url="$2" n
+  # grep -c prints 0 AND exits 1 when there are no matches, so `|| echo 0`
+  # emitted a second 0 and the caller compared the string "0\n0".
+  n=$(grep -cF "${method} ${url}" "$CALLS_LOG" 2>/dev/null) || n=0
+  printf '%s' "$n"
 }
 
 # ── happy path ───────────────────────────────────────────────────────────────
 
 @test "issue_claim returns 0 when re-read confirms self (no regression, single agent)" {
-  export MOCK_ME="bot"
+  export MOCK_ME="dev-bot"
   export MOCK_INITIAL_ASSIGNEE=""
-  export MOCK_RECHECK_ASSIGNEE="bot"
+  export MOCK_RECHECK_ASSIGNEE="dev-bot"
 
   run issue_claim 42
   [ "$status" -eq 0 ]
@@ -152,7 +162,7 @@ count_calls() {
 # ── lost race ────────────────────────────────────────────────────────────────
 
 @test "issue_claim returns 1 and leaves no stray in-progress when re-read shows another agent" {
-  export MOCK_ME="bot"
+  export MOCK_ME="dev-bot"
   export MOCK_INITIAL_ASSIGNEE=""
   export MOCK_RECHECK_ASSIGNEE="rival"
 
@@ -175,7 +185,7 @@ count_calls() {
 # ── PATCH HTTP error surfacing (#856) ───────────────────────────────────────
 
 @test "issue_claim logs specific HTTP code on PATCH failure (403 = missing collaborator)" {
-  export MOCK_ME="bot"
+  export MOCK_ME="dev-bot"
   export MOCK_INITIAL_ASSIGNEE=""
   export MOCK_RECHECK_ASSIGNEE=""
   export MOCK_PATCH_CODE="403"
@@ -197,7 +207,7 @@ count_calls() {
 # ── pre-check skip ──────────────────────────────────────────────────────────
 
 @test "issue_claim skips early (no PATCH) when pre-check shows another assignee" {
-  export MOCK_ME="bot"
+  export MOCK_ME="dev-bot"
   export MOCK_INITIAL_ASSIGNEE="rival"
   export MOCK_RECHECK_ASSIGNEE="rival"
 

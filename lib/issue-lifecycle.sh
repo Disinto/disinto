@@ -44,7 +44,7 @@ _ilc_log() {
 # ---------------------------------------------------------------------------
 # Label ID caching — lookup once per name, cache in globals.
 # ---------------------------------------------------------------------------
-declare -A _ILC_LABEL_IDS
+declare -gA _ILC_LABEL_IDS
 _ILC_LABEL_IDS["backlog"]=""
 _ILC_LABEL_IDS["in-progress"]=""
 _ILC_LABEL_IDS["blocked"]=""
