@@ -459,30 +459,12 @@ def main() -> int:
         # merge with jq, write atomically, log result. Intentional duplication.
         "f92b93f26ab2adc223b3919b78c8c44f": "Snapshot main() start: closing brace + main() + state.json check (snapshot-forge + snapshot-nomad)",
         "5f81cc4d353bbf9f23f34eaf38b2b60e": "Snapshot main() body: main() + state.json check + skip message (snapshot-forge + snapshot-nomad)",
-        # snapshot-agents.sh shares temp-file tracking pattern with snapshot-forge.sh
-        "a7e19281d631d7bd1252029b661d6b31": "Snapshot temp-file tracking start (snapshot-agents + snapshot-forge)",
-        "7ccce86c6bbc77eb1b4cd13c29b3be81": "Snapshot temp-file tracking (snapshot-agents + snapshot-forge)",
-        "152a7f9ea51a0f80703f58ea2a0a5af1": "Snapshot mktemp_safe (snapshot-agents + snapshot-forge)",
-        "14dc98e549b3263b08a0c63b49846c3b": "Snapshot mktemp_safe body (snapshot-agents + snapshot-forge)",
-        "e0f85b3b2a8abf79e98cd998aeaadfc7": "Snapshot mktemp_safe + TMPFILES (snapshot-agents + snapshot-forge)",
-        "f4ee900d52b701eb7050355c05ba4ecd": "Snapshot TMPFILES + printf (snapshot-agents + snapshot-forge)",
-        "5f62ad0ed0fb0c919db212d1667e1a29": "Snapshot closing brace + cleanup (snapshot-agents + snapshot-forge)",
-        "1f783c0f648d56972c99488c313e45a6": "Snapshot cleanup function (snapshot-agents + snapshot-forge)",
+        # TMPFILES / mktemp_safe / cleanup live in lib/snapshot-tmp.sh since #1096;
+        # the three collectors that resolve FACTORY_ROOT inline (rather than
+        # inheriting it from an earlier source) repeat the resolution lines.
+        "ee2a3d72cece650e1ee0822c7844c9c7": "Snapshot FACTORY_ROOT resolution + source of lib/snapshot-tmp.sh (snapshot-agents + snapshot-forge + snapshot-nomad, #1096)",
         # snapshot-inbox.sh shares standard env-var header with other snapshot collectors
         "816df0fd43ba5676531c08e63ea1c4f8": "Snapshot env-var header (set -euo + FACTORY_FORGE_PAT + FORGE_URL + FORGE_REPO + SNAPSHOT_PATH) (snapshot-forge + snapshot-inbox)",
-        # Snapshot mktemp_safe / TMPFILES / cleanup pattern after #849 fix:
-        # mktemp_safe must assign through a global (_TMPFILE) instead of printing
-        # to stdout — command substitution forks a subshell, so TMPFILES+=()
-        # inside $(…) is lost. The fix made all 5 snapshot collectors
-        # (snapshot-agents, snapshot-daemon, snapshot-forge, snapshot-inbox,
-        # snapshot-nomad) share the identical helper body verbatim. Intentional
-        # duplication: each collector runs as its own process and needs its own
-        # trap-bound TMPFILES array.
-        "22334695968d905d02e8e4d1dbac3cc1": "Snapshot mktemp_safe block start (TMPFILES=() + mktemp_safe + _TMPFILE) (all 5 snapshot collectors, #849)",
-        "27a6b7f735e325d349acced8fc46234b": "Snapshot mktemp_safe body (mktemp_safe + _TMPFILE + TMPFILES+=) (all 5 snapshot collectors, #849)",
-        "254ebe187922c94793cc00589ab7ac6a": "Snapshot mktemp_safe end (_TMPFILE + TMPFILES+= + closing brace) (all 5 snapshot collectors, #849)",
-        "d536875ce1465069a5495b67167d8658": "Snapshot mktemp_safe → cleanup (TMPFILES+= + closing brace + cleanup) (all 5 snapshot collectors, #849)",
-        "c006fde2bfb8b04ad39a0b48eca2edb2": "Snapshot pre-mktemp_safe boundary (closing brace + TMPFILES=() + mktemp_safe) (snapshot-agents + snapshot-forge + snapshot-inbox + snapshot-nomad, #849)",
         # Standard --help heredoc closing + flag-parser tail (cluster-up.sh + sync-nomad-client-config.sh, #789)
         "2882d287343e26a4d8d6499e4bd38c26": "Help heredoc EOF + exit 0 + unknown-flag die + esac (cluster-up + sync-nomad-client-config)",
         "8f6432aafe427171507274ef71c1b612": "Help exit 0 + unknown-flag die + esac + done (cluster-up + sync-nomad-client-config)",

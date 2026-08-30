@@ -29,22 +29,11 @@ log() {
 }
 
 # ── Temp file tracking ───────────────────────────────────────────────────────
+# Shared TMPFILES / mktemp_safe / cleanup (lib/snapshot-tmp.sh).
 
-TMPFILES=()
-
-# Assigns through a global `_TMPFILE` rather than printing to stdout. Reason:
-# command substitution forks a subshell, so any TMPFILES+=() inside it is
-# discarded when the subshell exits — the parent's array stays empty and
-# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
-# keeps the array updates in the parent shell where the trap can see them.
-mktemp_safe() {
-  _TMPFILE="$(mktemp "$@")"
-  TMPFILES+=("$_TMPFILE")
-}
-
-cleanup() {
-  rm -f "${TMPFILES[@]}" 2>/dev/null || true
-}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+source "${FACTORY_ROOT}/lib/snapshot-tmp.sh"
 trap cleanup EXIT
 
 # ── Fetch Nomad data with timeout ─────────────────────────────────────────────
