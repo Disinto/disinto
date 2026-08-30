@@ -66,7 +66,9 @@ forge_api() {
       printf '%s' "$PR_JSON"
       ;;
     *)
-      printf 'null'
+      # Defensive fallback — the extracted code only ever calls the PR list
+      # endpoint; a real curl body would carry a trailing newline.
+      printf 'null\n'
       ;;
   esac
 }
