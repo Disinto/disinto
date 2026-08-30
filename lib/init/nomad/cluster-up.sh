@@ -64,6 +64,7 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/forgejo-data"
   "/srv/disinto/woodpecker-data"
   "/srv/disinto/agent-data"
+  "/srv/disinto/agent-data-gardener"
   "/srv/disinto/project-repos"
   "/srv/disinto/caddy-data"
   "/srv/disinto/docker"
