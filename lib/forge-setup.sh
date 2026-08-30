@@ -16,6 +16,9 @@
 # =============================================================================
 set -euo pipefail
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/claude-config.sh"  # _env_set_idempotent
+
 # Execute a command in the Forgejo container (for admin operations)
 _forgejo_exec() {
   local use_bare="${DISINTO_BARE:-false}"
@@ -467,21 +470,13 @@ setup_forge() {
     fi
 
     # Store token in .env under the per-agent variable name
-    if grep -q "^${token_var}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${token_var}=.*|${token_var}=${token}|" "$env_file"
-    else
-      printf '%s=%s\n' "$token_var" "$token" >> "$env_file"
-    fi
+    _env_set_idempotent "$token_var" "$token" "$env_file"
     export "${token_var}=${token}"
     echo "  ${bot_user} token generated and saved (${token_var})"
 
     # Store password in .env for git HTTP push (#361)
     # Forgejo 11.x API tokens don't work for git push; password auth does.
-    if grep -q "^${pass_var}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${pass_var}=.*|${pass_var}=${bot_pass}|" "$env_file"
-    else
-      printf '%s=%s\n' "$pass_var" "$bot_pass" >> "$env_file"
-    fi
+    _env_set_idempotent "$pass_var" "$bot_pass" "$env_file"
     export "${pass_var}=${bot_pass}"
     echo "  ${bot_user} password saved (${pass_var})"
 

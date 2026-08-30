@@ -19,6 +19,9 @@
 # =============================================================================
 set -euo pipefail
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/claude-config.sh"  # _env_set_idempotent
+
 # Assert required globals are set
 : "${FACTORY_ROOT:?FACTORY_ROOT must be set}"
 # PROJECT_NAME defaults to 'project' if not set (env.sh may have set it from FORGE_REPO)
@@ -780,16 +783,9 @@ COMPOSEEOF
     claude_bin="/usr/local/bin/claude"
   fi
   # Persist CLAUDE_BIN_DIR into .env so docker-compose can resolve it.
+  # `>>` creates a missing .env identically to the old explicit branch.
   local env_file="${FACTORY_ROOT}/.env"
-  if [ -f "$env_file" ]; then
-    if grep -q "^CLAUDE_BIN_DIR=" "$env_file" 2>/dev/null; then
-      sed -i "s|^CLAUDE_BIN_DIR=.*|CLAUDE_BIN_DIR=${claude_bin}|" "$env_file"
-    else
-      printf 'CLAUDE_BIN_DIR=%s\n' "$claude_bin" >> "$env_file"
-    fi
-  else
-    printf 'CLAUDE_BIN_DIR=%s\n' "$claude_bin" > "$env_file"
-  fi
+  _env_set_idempotent "CLAUDE_BIN_DIR" "$claude_bin" "$env_file"
 
   # In build mode, replace image: with build: for locally-built images
   if [ "$use_build" = true ]; then
