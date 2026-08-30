@@ -108,12 +108,17 @@ in_progress_recently_added() {
 # sees OPEN PRs, but a merged PR is state=closed — so it must be looked up
 # explicitly with state=all.
 #
+# Every attempt after the first is named fix/issue-N-<attempt> by
+# dev-agent.sh, so the match must cover the suffixed retry branches too
+# (#1137) — anchored, so fix/issue-113 cannot match issue 1130.
+#
 # Args: issue_number
 merged_pr_for_issue() {
   local issue="$1"
   forge_api GET "/pulls?state=all&limit=50" 2>/dev/null |
-    jq -r --arg branch "fix/issue-${issue}" \
-      '[.[] | select(.head.ref == $branch) | select(.merged == true)] | last | .number // empty' || true
+    jq -r --arg issue "$issue" \
+      '[.[] | select(.head.ref | test("^fix/issue-" + $issue + "(-[0-9]+)?$"))
+        | select(.merged == true)] | last | .number // empty' || true
 }
 
 # Relabel a stale in-progress issue to blocked with diagnostic comment
