@@ -5,7 +5,7 @@
 # Handles admin user creation, bot user creation, token generation,
 # password resets, repo creation, and collaborator setup.
 #
-# Globals expected (asserted by _load_init_context):
+# Globals expected:
 #   FORGE_URL    - Forge instance URL (e.g. http://localhost:3000)
 #   FACTORY_ROOT - Root of the disinto factory
 #   PRIMARY_BRANCH - Primary branch name (e.g. main)
@@ -15,18 +15,6 @@
 #   setup_forge <forge_url> <repo_slug>
 # =============================================================================
 set -euo pipefail
-
-# Assert required globals are set before using this module.
-_load_init_context() {
-  local missing=()
-  [ -z "${FORGE_URL:-}" ]    && missing+=("FORGE_URL")
-  [ -z "${FACTORY_ROOT:-}" ] && missing+=("FACTORY_ROOT")
-  [ -z "${PRIMARY_BRANCH:-}" ] && missing+=("PRIMARY_BRANCH")
-  if [ "${#missing[@]}" -gt 0 ]; then
-    echo "Error: forge-setup.sh requires these globals to be set: ${missing[*]}" >&2
-    exit 1
-  fi
-}
 
 # Execute a command in the Forgejo container (for admin operations)
 _forgejo_exec() {
