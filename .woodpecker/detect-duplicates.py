@@ -95,41 +95,51 @@ def sliding_windows(lines, window_size):
         yield lines[i][0], h, content
 
 
-# The acceptance-test bootstrap header every tests/acceptance/*.sh must carry:
-# set -euo pipefail, SCRIPT_DIR=, REPO_ROOT=, and a source of
-# tests/lib/acceptance-helpers.sh. Because it is mandatory, it is not a
-# copy-paste finding.
+# The mandatory bootstrap header every tests/acceptance/*.sh must carry.
+# It is boilerplate, not copy-paste, so it is masked out of the
+# meaningful-line list *before* windowing: header lines never take part in
+# any sliding window, at any window size. (A whole-window exemption cannot
+# work once WINDOW exceeds the header's line count — issue #1126.)
 ACCEPTANCE_TEST_PREFIX = ("tests", "acceptance")
-ACCEPTANCE_HEADER_MAX_START = 30
+# Safety bound: a header is short; never mask more than this many leading
+# lines even if they all match a bootstrap shape.
+MAX_BOOTSTRAP_LINES = 10
 # Patterns fullmatch the stripped line, so reindentation cannot defeat the
 # check; the trailing .* on assignments allows any right-hand side.
+# Covers both the current header (set -euo pipefail / SCRIPT_DIR / REPO_ROOT
+# / source of acceptance-helpers.sh) and the legacy header that inserts
+# `cd "$REPO_ROOT"` between REPO_ROOT and the source line.
 BOOTSTRAP_LINE_PATTERNS = (
     re.compile(r"set\s+-euo\s+pipefail"),
     re.compile(r"SCRIPT_DIR\s*=.*"),
     re.compile(r"REPO_ROOT\s*=.*"),
+    re.compile(r'cd\s+["\']?\$REPO_ROOT["\']?'),
     re.compile(r"source\s+.*lib/acceptance-helpers\.sh.*"),
 )
 
 
-def is_acceptance_bootstrap_header(locs, window_text):
-    """True if every location in *locs* is the mandatory acceptance-test
-    bootstrap header and every non-blank window line matches a bootstrap
-    shape. Matching is on stripped line text, so reindentation cannot defeat
-    it. Anything beyond the four shapes keeps the group reportable.
+def is_acceptance_test(rel_path):
+    """True for tests/acceptance/*.sh paths relative to the scan root."""
+    parts = Path(rel_path).parts
+    return len(parts) >= 3 and parts[:2] == ACCEPTANCE_TEST_PREFIX
+
+
+def bootstrap_header_length(lines):
+    """Number of leading *lines* forming the mandatory acceptance-test
+    bootstrap header: the longest prefix in which every line matches a
+    bootstrap shape. Only a leading prefix is ever masked, so a later line
+    that happens to look like one (e.g. a REPO_ROOT reassignment in the
+    body) is left alone.
     """
-    for file, start_lineno, _preview in locs:
-        parts = Path(file).parts
-        if len(parts) < 3 or parts[:2] != ACCEPTANCE_TEST_PREFIX:
-            return False
-        if start_lineno > ACCEPTANCE_HEADER_MAX_START:
-            return False
-    for line in window_text.splitlines():
+    n = 0
+    for _lineno, line in lines:
+        if n >= MAX_BOOTSTRAP_LINES:
+            break
         stripped = line.strip()
-        if not stripped:
-            continue
         if not any(p.fullmatch(stripped) for p in BOOTSTRAP_LINE_PATTERNS):
-            return False
-    return True
+            break
+        n += 1
+    return n
 
 
 def check_duplicates(sh_files, root):
@@ -141,7 +151,6 @@ def check_duplicates(sh_files, root):
     root = Path(root)
     # hash -> [(rel_file_str, start_lineno, preview)]
     hash_locs: dict[str, list] = defaultdict(list)
-    hash_content: dict[str, str] = {}
 
     for path in sh_files:
         try:
@@ -149,6 +158,9 @@ def check_duplicates(sh_files, root):
         except ValueError:
             rel_path = str(path)
         lines = meaningful_lines(path)
+        if is_acceptance_test(rel_path):
+            # Mask the mandatory bootstrap header (see issue #1126).
+            lines = lines[bootstrap_header_length(lines):]
         if len(lines) < WINDOW:
             continue
         seen_in_file: set[str] = set()
@@ -158,14 +170,11 @@ def check_duplicates(sh_files, root):
             seen_in_file.add(h)
             preview = "\n".join(content.splitlines()[:3])
             hash_locs[h].append((rel_path, start_lineno, preview))
-            hash_content[h] = content
 
     groups = []
     for h, locs in hash_locs.items():
         files = {loc[0] for loc in locs}
         if len(files) < MIN_FILES:
-            continue
-        if is_acceptance_bootstrap_header(locs, hash_content[h]):
             continue
         groups.append((h, sorted(locs)))
 
@@ -463,9 +472,6 @@ def main() -> int:
         "c2c1df8184b838251b4c0ed39a7a0860": "forge_api_all window env.sh:243 + forge-paginate.sh (inlined function)",
         "9276d71ea72d9dbcd8bb1f91eb87942f": "forge_api_all window env.sh:244 + forge-paginate.sh (inlined function)",
         "2b5a82793a819934b53e6f42e4aa7f4a": "forge_api_all window env.sh:245 + forge-paginate.sh (inlined function)",
-        # Acceptance tests share standard header pattern (issue-1116 + issue-1123)
-        "6b3850ecb5c5bf08ebcc74985aae8496": "Acceptance test header (issue-1116 + issue-1123): set -euo + SCRIPT_DIR + REPO_ROOT + source + ac_require_cmd",
-        "1a8eee3341e5e1ae3b1fdc7fa664e896": "Acceptance test header (issue-1116 + issue-1123): SCRIPT_DIR + REPO_ROOT + source + ac_require_cmd",
     }
 
     if not sh_files:
