@@ -85,8 +85,33 @@ steps:
   # .bats file is covered the moment it lands (no explicit list to drift out
   # of coverage). The step inherits the workflow-level timeout default.
   # Fails the pipeline if any suite fails — no `|| true`, no skip list.
+  #
+  # Tooling: the suites need more than bats.
+  #   python3 — lib-load-project / lib-generators
+  #   jq, curl — forge_whoami and the vault suites' health checks
+  #   age, sops — lib-secrets + the two vault suites (sops -d in vault-import)
+  #   git, unzip, bats, bash — suites and the vault binary below
+  # Vault is NOT packaged for Alpine (absent from main/community/edge), so it
+  # is installed from the official HashiCorp static build — a pure-Go binary
+  # with no glibc/musl runtime deps (unlike Nomad 1.8+, which needs glibc).
+  # Version tracks the VAULT_VERSION pin in lib/init/nomad/install.sh.
+  # alpine:3.20 is required because sops only exists in the community repo
+  # starting at 3.20.
   - name: bats
-    image: alpine:3.19
+    image: alpine:3.20
     commands:
-      - apk add --no-cache bash bats jq age git curl
+      - apk add --no-cache bash bats jq curl git python3 unzip age sops
+      - |
+        set -e
+        VAULT_VERSION=1.18.5
+        arch="$(apk --print-arch)"
+        case "$arch" in
+          x86_64)  varch=amd64 ;;
+          aarch64) varch=arm64 ;;
+          *) echo "unsupported arch for vault: $arch" >&2; exit 1 ;;
+        esac
+        curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${varch}.zip" -o /tmp/vault.zip
+        unzip -o /tmp/vault.zip vault -d /usr/local/bin
+        chmod 0755 /usr/local/bin/vault
+        vault --version
       - bats tests/*.bats
