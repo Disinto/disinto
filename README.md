@@ -29,8 +29,8 @@ entrypoint.sh (while-true polling loop, 5 min base interval)
  ├── every 5 min ──→ dev-poll.sh      ← pulls ready issues, spawns dev-agent
  │                    └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
  │
- ├── every 6h ────→ gardener-run.sh   ← backlog grooming (duplicates, stale, tech-debt)
- │                   └── claude -p: triage → promote/close/escalate
+ ├── every 5 min ──→ gardener-step.sh ← backlog grooming (duplicates, stale, tech-debt)
+ │                    └── classify.sh ← one task per tick → formula (claude -p)
  │
  ├── every 6h ────→ architect-run.sh  ← strategic decomposition of vision into sprints
  │
@@ -125,7 +125,9 @@ disinto/
 │   ├── review-poll.sh    # Poll: find unreviewed PRs
 │   └── review-pr.sh      # Review agent (claude -p)
 ├── gardener/
-│   ├── gardener-run.sh   # Executor: backlog grooming
+│   ├── gardener-run.sh   # Full-formula executor (bare-metal host cron)
+│   ├── gardener-step.sh  # Polling-loop participant: per-tick step executor
+│   ├── classify.sh       # Bash-only task classifier (emits one JSON task)
 │   └── best-practices.md # Gardener knowledge base
 ├── planner/
 │   ├── planner-run.sh    # Executor: vision gap analysis
@@ -154,7 +156,7 @@ disinto/
 | **Supervisor** | Every 20 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
 | **Dev** | Every 5 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
 | **Review** | Every 5 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
-| **Gardener** | Every 6h | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
+| **Gardener** | Every 5 min | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
 | **Planner** | Every 12h | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).

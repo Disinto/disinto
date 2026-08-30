@@ -9,8 +9,8 @@ Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md
 disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-run.sh — polling-loop executor for run-gardener formula
-│                  gardener-step.sh — per-iteration step executor
+├── gardener/      gardener-run.sh — one-shot full-formula executor (bare-metal host cron)
+│                  gardener-step.sh — polling-loop participant: per-iteration step executor
 │                  classify.sh — bash-only task classifier (emits JSON)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
@@ -61,7 +61,7 @@ disinto/                 (code repo)
 ├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher
 │                  + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh, verify-chat-sandbox.sh;
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh;
 │                  reserved-name blocklist, admin-approved allowlist, per-caller attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
