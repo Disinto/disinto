@@ -101,6 +101,21 @@ in_progress_recently_added() {
   return 1
 }
 
+# Print the number of the most recently merged PR targeting the issue's
+# branch, or nothing if there is none.
+#
+# A merged PR is proof of completion, not staleness (#1130). The sweep only
+# sees OPEN PRs, but a merged PR is state=closed — so it must be looked up
+# explicitly with state=all.
+#
+# Args: issue_number
+merged_pr_for_issue() {
+  local issue="$1"
+  forge_api GET "/pulls?state=all&limit=50" 2>/dev/null |
+    jq -r --arg branch "fix/issue-${issue}" \
+      '[.[] | select(.head.ref == $branch) | select(.merged == true)] | last | .number // empty' || true
+}
+
 # Relabel a stale in-progress issue to blocked with diagnostic comment
 # Args: issue_number reason
 # Uses shared helpers from lib/issue-lifecycle.sh
@@ -141,6 +156,40 @@ relabel_stale_issue() {
   _ilc_post_comment "$issue" "$comment_body"
 
   _ilc_log "stale issue #${issue} relabeled to blocked: ${reason}"
+}
+
+# =============================================================================
+# Handle an in-progress issue that has no assignee, no open PR, and no agent
+# lock — the "stale" case of the sweep above.
+#
+# A merged PR is proof of completion, not staleness (#1130): between the
+# moment a PR merges and the moment the issue is closed, the issue sits in
+# exactly this state, which the open-PR-only check cannot distinguish from
+# abandonment — observed on #1094, relabeled "blocked" 24s after its PR
+# merged. When a linked PR is merged, close the issue instead of relabeling
+# it "blocked". Otherwise relabel it blocked, as before.
+#
+# Args: issue_number
+# =============================================================================
+handle_stale_in_progress() {
+  local issue="$1"
+  local merged_pr
+  merged_pr=$(merged_pr_for_issue "$issue")
+  if [ -n "$merged_pr" ]; then
+    log "issue #${issue} has merged PR #${merged_pr} — closing instead of relabeling to blocked (#1130)"
+    issue_close "$issue"
+    # Remove the in-progress label (issue is closed — mirror try_direct_merge)
+    local ip_id
+    ip_id=$(_ilc_in_progress_id)
+    if [ -n "$ip_id" ]; then
+      curl -sf -X DELETE -H "Authorization: token ${FORGE_TOKEN}" \
+        "${API}/issues/${issue}/labels/${ip_id}" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+
+  log "issue #${issue} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
+  relabel_stale_issue "$issue" "no_assignee_no_open_pr_no_lock"
 }
 
 # =============================================================================
@@ -653,8 +702,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         log "issue #${ISSUE_NUM} in-progress label added <60s ago — skipping stale detection (grace period)"
         BLOCKED_BY_INPROGRESS=true
       else
-        log "issue #${ISSUE_NUM} is stale (no assignee, no open PR, no agent lock) — relabeling to blocked"
-        relabel_stale_issue "$ISSUE_NUM" "no_assignee_no_open_pr_no_lock"
+        handle_stale_in_progress "$ISSUE_NUM"
         BLOCKED_BY_INPROGRESS=true
       fi
     fi
