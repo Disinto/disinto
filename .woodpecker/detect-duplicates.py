@@ -420,6 +420,9 @@ def main() -> int:
         "029fec76a4516445bf76b94355360e57": "Acceptance test header (issue-859 + issue-861)",
         # Acceptance tests share standard header pattern (issue-1089 + issue-1090)
         "0ae63c57385336eda57b1fe91778cc1a": "Acceptance test header (issue-1089 + issue-1090)",
+        # Acceptance tests share standard header pattern (issue-1116 + issue-1123)
+        "6b3850ecb5c5bf08ebcc74985aae8496": "Acceptance test header (issue-1116 + issue-1123): set -euo + SCRIPT_DIR + REPO_ROOT + source + ac_require_cmd",
+        "1a8eee3341e5e1ae3b1fdc7fa664e896": "Acceptance test header (issue-1116 + issue-1123): SCRIPT_DIR + REPO_ROOT + source + ac_require_cmd",
     }
 
     if not sh_files:

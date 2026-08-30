@@ -37,6 +37,14 @@ client {
     read_only = false
   }
 
+  # gardener agent runtime data — dedicated per-role source so the
+  # gardener's state cannot collide with the dev/review jobs that share
+  # the base `agent-data` volume (#1123).
+  host_volume "agent-data-gardener" {
+    path      = "/srv/disinto/agent-data-gardener"
+    read_only = false
+  }
+
   # per-project git clones and worktrees.
   host_volume "project-repos" {
     path      = "/srv/disinto/project-repos"
