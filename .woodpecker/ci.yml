@@ -4,6 +4,7 @@
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
+#   3. bats         — run every tests/*.bats suite by glob discovery (#1144)
 #
 # Timeouts:
 #   Workflow-level default (10m) applies to all steps unless overridden.
@@ -79,3 +80,13 @@ steps:
       - python3 .woodpecker/detect-duplicates.py
     environment:
       DIFF_BASE: ${CI_COMMIT_TARGET_BRANCH}
+
+  # #1144 — run every bats suite under tests/ by glob discovery, so a new
+  # .bats file is covered the moment it lands (no explicit list to drift out
+  # of coverage). The step inherits the workflow-level timeout default.
+  # Fails the pipeline if any suite fails — no `|| true`, no skip list.
+  - name: bats
+    image: alpine:3.19
+    commands:
+      - apk add --no-cache bash bats jq age git curl
+      - bats tests/*.bats
