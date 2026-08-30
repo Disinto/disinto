@@ -22,6 +22,12 @@
 #      as before, and the issue is not closed.
 #   4. An issue with an open PR is untouched — the stale-sweep handling is
 #      only reached under the OPEN_PR=false guard (wiring intact).
+#   5. Retry branches (#1137): dev-agent.sh names every attempt after the
+#      first fix/issue-N-<attempt>, so a MERGED PR on such a branch →
+#      closed, NOT relabeled to blocked. The match is anchored both ways:
+#      a merged PR on fix/issue-113 must not match issue 1130 (or a merged
+#      PR on fix/issue-1130 must not match issue 113), and a non-numeric
+#      suffix like fix/issue-N-foo does not match either.
 #
 # Read-only: no live services, no network. dev-poll.sh cannot be sourced
 # (it is a top-level executable that would run the whole poll on source),
@@ -141,10 +147,10 @@ has_call_matching "/issues/${ISSUE}/labels/" \
 
 # ── 3. No merged PR → relabel to blocked exactly as before ─────────────────
 assert_relabel_only() {
-  local what="$1"
-  has_call "relabel_stale_issue ${ISSUE} no_assignee_no_open_pr_no_lock" \
+  local issue="$1" what="$2"
+  has_call "relabel_stale_issue ${issue} no_assignee_no_open_pr_no_lock" \
     || ac_fail "expected a relabel to blocked, none recorded (${what})"
-  if has_call "issue_close ${ISSUE}"; then
+  if has_call "issue_close ${issue}"; then
     ac_fail "the issue must not be closed when no PR has merged (${what})"
   fi
 }
@@ -153,7 +159,7 @@ assert_relabel_only() {
 PR_JSON='[{"number":2001,"state":"open","merged":false,"head":{"ref":"fix/issue-9999"}}]'
 CALLS=()
 handle_stale_in_progress "$ISSUE"
-assert_relabel_only "only unrelated PRs exist"
+assert_relabel_only "$ISSUE" "only unrelated PRs exist"
 
 # 3b. A closed-but-UNMERGED PR on the issue's branch is not completion.
 PR_JSON=$(jq -n --arg b "$BRANCH" '[
@@ -161,13 +167,13 @@ PR_JSON=$(jq -n --arg b "$BRANCH" '[
 ]')
 CALLS=()
 handle_stale_in_progress "$ISSUE"
-assert_relabel_only "the linked PR was closed but never merged"
+assert_relabel_only "$ISSUE" "the linked PR was closed but never merged"
 
 # 3c. No PR at all.
 PR_JSON='[]'
 CALLS=()
 handle_stale_in_progress "$ISSUE"
-assert_relabel_only "no PRs at all"
+assert_relabel_only "$ISSUE" "no PRs at all"
 
 # ── 4. Open PR → untouched (sweep only reached under OPEN_PR=false) ─────────
 guard_line=$(grep -n 'if \[ "$OPEN_PR" = false \] && \[ "$BLOCKED_BY_INPROGRESS" = false \]; then' "$TARGET" | head -n 1 | cut -d: -f1 || true)
@@ -178,5 +184,47 @@ sweep_line=$(grep -n 'handle_stale_in_progress "$ISSUE_NUM"' "$TARGET" | head -n
   || ac_fail "dev/dev-poll.sh no longer routes the stale in-progress case through handle_stale_in_progress"
 [ "$sweep_line" -gt "$guard_line" ] \
   || ac_fail "handle_stale_in_progress is no longer reached under the OPEN_PR=false guard"
+
+# ── 5. Retry branches (#1137): dev-agent.sh names every attempt after the
+#      first fix/issue-N-<attempt> — a merged retry PR is completion too ───
+assert_close_only() {
+  local issue="$1" what="$2"
+  if has_call "relabel_stale_issue ${issue} no_assignee_no_open_pr_no_lock"; then
+    ac_fail "an issue with a merged PR must NOT be relabeled to blocked (${what})"
+  fi
+  has_call "issue_close ${issue}" \
+    || ac_fail "a merged PR must close the issue (${what})"
+}
+
+# 5a. The ONLY merged PR is on the retry branch fix/issue-1130-2 → closed.
+PR_JSON='[{"number":2140,"state":"closed","merged":true,"head":{"ref":"fix/issue-1130-2"}}]'
+CALLS=()
+handle_stale_in_progress "$ISSUE"
+assert_close_only "$ISSUE" "the only merged PR is on the retry branch fix/issue-${ISSUE}-2"
+
+# 5b. A multi-digit attempt suffix is a retry branch too.
+PR_JSON='[{"number":2141,"state":"closed","merged":true,"head":{"ref":"fix/issue-1130-10"}}]'
+CALLS=()
+handle_stale_in_progress "$ISSUE"
+assert_close_only "$ISSUE" "the only merged PR is on the retry branch fix/issue-${ISSUE}-10"
+
+# 5c. A non-numeric suffix is NOT a retry branch.
+PR_JSON='[{"number":2142,"state":"closed","merged":true,"head":{"ref":"fix/issue-1130-foo"}}]'
+CALLS=()
+handle_stale_in_progress "$ISSUE"
+assert_relabel_only "$ISSUE" "a merged PR on fix/issue-${ISSUE}-foo is not a retry branch"
+
+# 5d. The anchors matter in BOTH directions: a merged PR on fix/issue-113
+#     must not match issue 1130...
+PR_JSON='[{"number":2143,"state":"closed","merged":true,"head":{"ref":"fix/issue-113"}}]'
+CALLS=()
+handle_stale_in_progress "$ISSUE"
+assert_relabel_only "$ISSUE" "a merged PR on fix/issue-113 must not match issue ${ISSUE}"
+
+#     ...and a merged PR on fix/issue-1130 must not match issue 113.
+PR_JSON='[{"number":2144,"state":"closed","merged":true,"head":{"ref":"fix/issue-1130"}}]'
+CALLS=()
+handle_stale_in_progress 113
+assert_relabel_only 113 "a merged PR on fix/issue-1130 must not match issue 113"
 
 ac_pass
