@@ -97,21 +97,14 @@ steps:
   # Version tracks the VAULT_VERSION pin in lib/init/nomad/install.sh.
   # alpine:3.20 is required because sops only exists in the community repo
   # starting at 3.20.
+  #
+  # The install lives in .woodpecker/install-vault.sh, not an inline command
+  # block, because Woodpecker pre-expands ${VAR} references in pipeline YAML
+  # against the pipeline environment before the command runs: shell-local
+  # variables expand to empty and the download URL 404s (#1146).
   - name: bats
     image: alpine:3.20
     commands:
       - apk add --no-cache bash bats jq curl git python3 unzip age sops
-      - |
-        set -e
-        VAULT_VERSION=1.18.5
-        arch="$(apk --print-arch)"
-        case "$arch" in
-          x86_64)  varch=amd64 ;;
-          aarch64) varch=arm64 ;;
-          *) echo "unsupported arch for vault: $arch" >&2; exit 1 ;;
-        esac
-        curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${varch}.zip" -o /tmp/vault.zip
-        unzip -o /tmp/vault.zip vault -d /usr/local/bin
-        chmod 0755 /usr/local/bin/vault
-        vault --version
+      - bash .woodpecker/install-vault.sh
       - bats tests/*.bats
