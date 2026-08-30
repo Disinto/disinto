@@ -17,7 +17,7 @@
 # Usage:
 #   gardener-run.sh [projects/disinto.toml]   # project config (default: disinto)
 #
-# Called by: entrypoint.sh polling loop (every 6 hours)
+# Called by: host cron in bare-metal mode (lib/ci-setup.sh)
 # =============================================================================
 set -euo pipefail
 

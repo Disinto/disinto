@@ -7,9 +7,12 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener/gardener-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 6 hours (iteration math at line 182-194). Sources `lib/guard.sh` and calls
+**Trigger**: `gardener/gardener-step.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
+once per loop tick (the gardener call is at `docker/agents/entrypoint.sh:692-699`). Sources
+`lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
+`gardener/gardener-run.sh` (one-shot full-formula executor) runs instead from host cron
+in bare-metal mode (`lib/ci-setup.sh:63`).
 **Early-exit optimization**: if no new commits since last run (compared via
 `LAST_SHA_FILE`) and no backlog or tech-debt issues exist, the model is not
 invoked — the run exits immediately (no tokens consumed). Otherwise, builds a
@@ -19,7 +22,8 @@ script IS the state machine — it walks the PR to merge via `pr_walk_to_merge`
 and executes the pending-actions manifest post-merge.
 
 **Key files**:
-- `gardener/gardener-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
+- `gardener/gardener-run.sh` — One-shot full-formula executor (invoked from host cron in
+  bare-metal mode, `lib/ci-setup.sh:63`): lock, memory guard,
   sources disinto project config, loads formula via `load_formula_or_profile`,
   builds context block via `build_context_block`, invokes `agent_run` from
   `lib/agent-sdk.sh`. Walks PR to merge via `pr_walk_to_merge` from
@@ -95,7 +99,7 @@ carry `## Filed:`, and the formula dedups per-issue by exact title match
 against existing project-repo issues to guard against POST-then-PATCH-failure
 windows.
 
-**Lifecycle**: gardener-run.sh (invoked by polling loop every 6h, `check_active gardener`) →
+**Lifecycle**: gardener-run.sh (invoked from host cron in bare-metal mode, `check_active gardener`) →
 lock + memory guard → load formula + context → `agent_run` (one-shot Claude) →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 updates AGENTS.md, creates PR → `detect_pr_number` + `pr_walk_to_merge` walks
