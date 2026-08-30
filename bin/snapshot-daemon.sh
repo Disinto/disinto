@@ -28,24 +28,11 @@ SNAPSHOT_COLLECTOR_TIMEOUT_SECS="${SNAPSHOT_COLLECTOR_TIMEOUT_SECS:-3}"
 mkdir -p "$SNAPSHOT_DIR"
 
 # ── Temp file tracking ───────────────────────────────────────────────────────
-#
-# Pattern mirrors the snapshot-* collectors (TMPFILES array + cleanup trap on
-# EXIT) but assigns through a global `_TMPFILE` rather than via $(mktemp_safe …).
-# Reason: command substitution forks a subshell, so any TMPFILES+=() inside it
-# is discarded when the subshell exits — the parent's array stays empty and
-# the cleanup trap rm -fs nothing. Calling mktemp_safe directly (no $(…))
-# keeps the array updates in the parent shell where the trap can see them.
+# Shared TMPFILES / mktemp_safe / cleanup (lib/snapshot-tmp.sh).
 
-TMPFILES=()
-
-mktemp_safe() {
-  _TMPFILE="$(mktemp "$@")"
-  TMPFILES+=("$_TMPFILE")
-}
-
-cleanup() {
-  rm -f "${TMPFILES[@]}" 2>/dev/null || true
-}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+source "${FACTORY_ROOT}/lib/snapshot-tmp.sh"
 trap cleanup EXIT
 
 # Read previous snapshot if it exists (for additive collector merges).
