@@ -87,8 +87,10 @@ steps:
   # any suite it runs fails.
   #
   # Tooling the suites need (a bare bats image ships almost nothing):
-  #   bash bats jq curl git python3 unzip age sops, plus vault (installed below).
+  #   bash bats jq curl git python3 py3-yaml unzip age sops, plus vault (installed below).
   #     python3   — lib-load-project / lib-generators
+  #     py3-yaml  — test-lint-ci (`disinto validate lint-ci` parses YAML via PyYAML;
+  #                 same package the lint-ci workflow installs)
   #     jq, curl  — forge_whoami and the vault suites' health checks
   #     age, sops — lib-secrets and the two vault suites
   # Vault is NOT packaged for Alpine (absent from main/community/edge), so it
@@ -99,30 +101,29 @@ steps:
   # lib/init/nomad/install.sh. alpine:3.20 is required because sops only
   # exists in the community repo starting at 3.20.
   #
-  # Six suites are still broken and are excluded BY NAME in the command below —
+  # Five suites are still broken and are excluded BY NAME in the command below —
   # an explicit, greppable list, NOT a failure suppressor (no `|| true`, no
   # `set +e`, and a repaired suite is covered the instant its name is removed).
-  # All six are tracked together in #1148; remove a name when its suite passes:
-  #   test-lint-ci          bats cannot load the file; aborts the whole run
-  #   lib-agent-sdk-redact  13 failing
-  #   vault-import          10 failing
-  #   lib-hvault            5 failing
-  #   lib-generators        4 failing
-  #   lib-stale-base-check  3 failing
+  # Each has its own tracking issue; remove a name when its suite passes:
+  #   lib-agent-sdk-redact  13 failing  (#1151)
+  #   vault-import          10 failing  (#1152)
+  #   lib-hvault            5 failing   (#1153)
+  #   lib-generators        4 failing   (#1154)
+  #   lib-stale-base-check  3 failing   (#1155)
   - name: bats
     image: alpine:3.20
     commands:
-      - apk add --no-cache bash bats jq curl git python3 unzip age sops
+      - apk add --no-cache bash bats jq curl git python3 py3-yaml unzip age sops
       - bash .woodpecker/install-vault.sh
       # POSIX sh (works under both ash and bash), written with plain $VAR
       # references only: Woodpecker pre-expands dollar-brace references in
       # pipeline YAML — comments included — and a reference it cannot parse
       # aborts the whole pipeline before any step runs (the #1146 failure).
-      # Discovers every tests/*.bats by glob, drops the #1148 suites named
+      # Discovers every tests/*.bats by glob, drops the broken suites named
       # in EXCLUDED, and runs the rest. Fails if any selected suite fails
       # or if none match.
       - |
-        EXCLUDED='test-lint-ci lib-agent-sdk-redact vault-import lib-hvault lib-generators lib-stale-base-check'
+        EXCLUDED='lib-agent-sdk-redact vault-import lib-hvault lib-generators lib-stale-base-check'
         files=''
         for f in tests/*.bats; do
           name=$(basename "$f" .bats)
