@@ -424,9 +424,9 @@ status "running implementation"
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 
 if [ -n "$_AGENT_SESSION_ID" ]; then
-  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" "$INITIAL_PROMPT"
+  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT"
 else
-  agent_run --worktree "$WORKTREE" "$INITIAL_PROMPT"
+  agent_run --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT"
 fi
 
 # =============================================================================

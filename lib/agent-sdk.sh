@@ -9,16 +9,22 @@
 #
 # Usage:
 #   source "$(dirname "$0")/../lib/agent-sdk.sh"
-#   agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
+#   agent_run [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
 #
 # After each call, these globals are set:
 #   _AGENT_SESSION_ID  — session ID (also persisted to SID_FILE)
 #   _AGENT_LAST_OUTPUT — raw stream-json output of the last run
 #                        (also written to $DISINTO_LOG_DIR/$LOG_AGENT/agent-run-last.json)
 #
+# Each call also appends one telemetry line to
+# $DISINTO_LOG_DIR/metrics/agent-runs.jsonl (see lib/agent-metrics.sh, #1101).
+#
 # Call agent_recover_session() on startup to restore a previous session.
 
 set -euo pipefail
+
+# Per-session telemetry emitter (#1101) — always available in agent_run.
+source "$(dirname "${BASH_SOURCE[0]}")/agent-metrics.sh"
 
 _AGENT_SESSION_ID=""
 
@@ -241,14 +247,17 @@ claude_run_with_watchdog() {
 }
 
 # agent_run — synchronous Claude invocation (one-shot claude -p)
-# Usage: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
+# Usage: agent_run [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
 # Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
+# --task REF attributes the session (e.g. issue/PR number) in the metrics
+# record appended after the run; omit to leave it empty.
 agent_run() {
-  local resume_id="" worktree_dir=""
+  local resume_id="" worktree_dir="" task_ref=""
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
       --resume) shift; resume_id="${1:-}"; shift ;;
       --worktree) shift; worktree_dir="${1:-}"; shift ;;
+      --task) shift; task_ref="${1:-}"; shift ;;
       *) shift ;;
     esac
   done
@@ -317,6 +326,11 @@ agent_run() {
   mkdir -p "$diag_dir" 2>/dev/null || true
   local diag_file="${diag_dir}/agent-run-last.json"
   printf '%s' "$output" > "$diag_file" 2>/dev/null || true
+
+  # Record one telemetry line for this session (#1101). metrics_record_run is
+  # a total emitter and `|| true` guards it anyway: a metrics write failure
+  # must never fail the run.
+  metrics_record_run "$diag_file" "$rc" "$task_ref" || true
 
   # Nudge: if the model stopped without pushing, resume with encouragement.
   # Some models emit end_turn prematurely when confused. A nudge often unsticks them.
