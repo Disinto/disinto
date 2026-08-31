@@ -6,17 +6,14 @@
 #   3. curl without --max-time triggers a warning
 #   4. curl with --max-time passes cleanly
 
-load bats
-
-DISINTO="${FACTORY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/bin/disinto"
-FIXTURES="$(cd "$(dirname "$0")/fixtures/lint-ci" && pwd)"
+DISINTO="${FACTORY_ROOT:-$(cd "$BATS_TEST_DIRNAME/.." && pwd)}/bin/disinto"
+FIXTURES="$BATS_TEST_DIRNAME/fixtures/lint-ci"
 
 # ── Step-level timeout errors ────────────────────────────────────────────────
 
 @test "missing step timeout triggers error" {
-  local output
-  output=$(bash "$DISINTO" validate lint-ci "$FIXTURES/missing-timeout" 2>&1)
-  local rc=$?
+  local output rc=0
+  output=$(bash "$DISINTO" validate lint-ci "$FIXTURES/missing-timeout" 2>&1) || rc=$?
   echo "$output"
   [ "$rc" -eq 1 ]
   echo "$output" | grep -q "error:.*no-timeout-step.*step has no timeout"
