@@ -114,10 +114,13 @@ steps:
     commands:
       - apk add --no-cache bash bats jq curl git python3 unzip age sops
       - bash .woodpecker/install-vault.sh
-      # POSIX sh (works under both ash and bash; avoids ${...}, which
-      # Woodpecker pre-expands and would delete from the command). Discovers
-      # every tests/*.bats by glob, drops the #1148 suites named in EXCLUDED,
-      # and runs the rest. Fails if any selected suite fails or if none match.
+      # POSIX sh (works under both ash and bash), written with plain $VAR
+      # references only: Woodpecker pre-expands dollar-brace references in
+      # pipeline YAML — comments included — and a reference it cannot parse
+      # aborts the whole pipeline before any step runs (the #1146 failure).
+      # Discovers every tests/*.bats by glob, drops the #1148 suites named
+      # in EXCLUDED, and runs the rest. Fails if any selected suite fails
+      # or if none match.
       - |
         EXCLUDED='test-lint-ci lib-agent-sdk-redact vault-import lib-hvault lib-generators lib-stale-base-check'
         files=''
