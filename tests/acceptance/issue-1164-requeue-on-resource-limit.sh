@@ -64,30 +64,11 @@ issue_block()   { CALLS+=("issue_block $*"); }
 issue_requeue() { CALLS+=("issue_requeue $*"); }
 forge_api()     { :; }  # defensive: the extracted function must not need it
 
-has_call_matching() {
-  local c
-  for c in "${CALLS[@]}"; do
-    case "$c" in
-      *"$1"*) return 0 ;;
-    esac
-  done
-  return 1
-}
-
 # ── Extract no_push_outcome() from dev-agent.sh ─────────────────────────────
 # dev-agent.sh is a top-level executable (sourcing it would run the whole
-# agent), so the function is extracted by header — from `name() {` to the
-# next column-0 closing brace — as issue-1130 does.
-extract_fn() {
-  local fn="$1"
-  awk -v fn="$fn" '
-    $0 ~ "^" fn "\\(\\) " { in_fn = 1; print; next }
-    in_fn && /^\}/ { print; exit }
-    in_fn { print }
-  ' "$TARGET"
-}
-
-fn_body="$(extract_fn no_push_outcome)"
+# agent), so the function is extracted by header — ac_extract_fn() takes
+# `name() {` to the next column-0 closing brace — as issue-1130 does.
+fn_body="$(ac_extract_fn no_push_outcome "$TARGET")"
 [ -n "$fn_body" ] || ac_fail "could not locate no_push_outcome() in dev/dev-agent.sh"
 eval "$fn_body"
 type no_push_outcome >/dev/null 2>&1 \
@@ -126,11 +107,11 @@ assert_requeue() {
   local diag="$1" rc="$2" attempt="$3" reason="$4" what="$5"
   CALLS=()
   no_push_outcome "$ISSUE" "$diag" "$rc" "$attempt" "$NO_PUSH_TEXT"
-  if has_call_matching "issue_block "; then
+  if ac_has_call_matching "issue_block "; then
     ac_fail "resource-limit exit must NOT call issue_block (${what})"
   fi
   # Trailing space: the recorded reason must be exactly `$reason`.
-  has_call_matching "issue_requeue ${ISSUE} ${reason} " \
+  ac_has_call_matching "issue_requeue ${ISSUE} ${reason} " \
     || ac_fail "expected issue_requeue ${ISSUE} ${reason}, got: ${CALLS[*]:-nothing} (${what})"
 }
 
@@ -159,9 +140,9 @@ assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
 # ── 3. rc 124 wins when both signals are present ────────────────────────────
 CALLS=()
 no_push_outcome "$ISSUE" "$DIAG_MAX_TURNS_OBJ" 124 0 "$NO_PUSH_TEXT"
-has_call_matching "issue_requeue ${ISSUE} timeout " \
+ac_has_call_matching "issue_requeue ${ISSUE} timeout " \
   || ac_fail "rc 124 must win over an error_max_turns row (it is the more recent event)"
-if has_call_matching "issue_requeue ${ISSUE} error_max_turns "; then
+if ac_has_call_matching "issue_requeue ${ISSUE} error_max_turns "; then
   ac_fail "rc 124 must be reported as 'timeout', not 'error_max_turns'"
 fi
 
@@ -170,12 +151,12 @@ assert_no_push_block() {
   local diag="$1" rc="$2" what="$3"
   CALLS=()
   no_push_outcome "$ISSUE" "$diag" "$rc" 0 "$NO_PUSH_TEXT"
-  if has_call_matching "issue_requeue "; then
+  if ac_has_call_matching "issue_requeue "; then
     ac_fail "non-resource-limit no_push must NOT requeue (${what})"
   fi
   # Trailing space: must be the plain "no_push" reason, not the
   # no_push_after_3_attempts one.
-  has_call_matching "issue_block ${ISSUE} no_push " \
+  ac_has_call_matching "issue_block ${ISSUE} no_push " \
     || ac_fail "expected issue_block ${ISSUE} no_push, got: ${CALLS[*]:-nothing} (${what})"
 }
 
@@ -190,10 +171,10 @@ assert_block_after_3() {
   local diag="$1" rc="$2" what="$3"
   CALLS=()
   no_push_outcome "$ISSUE" "$diag" "$rc" 2 "$NO_PUSH_TEXT"
-  if has_call_matching "issue_requeue "; then
+  if ac_has_call_matching "issue_requeue "; then
     ac_fail "third resource-limit exit must NOT requeue (${what})"
   fi
-  has_call_matching "issue_block ${ISSUE} no_push_after_3_attempts " \
+  ac_has_call_matching "issue_block ${ISSUE} no_push_after_3_attempts " \
     || ac_fail "expected no_push_after_3_attempts, got: ${CALLS[*]:-nothing} (${what})"
 }
 
@@ -207,9 +188,9 @@ assert_block_after_3 "$DIAG_TRUNCATED" 124 "third attempt, rc 124"
 #     the plain no_push reason — the cap only applies to resource limits.
 CALLS=()
 no_push_outcome "$ISSUE" "$DIAG_SUCCESS" 0 2 "$NO_PUSH_TEXT"
-has_call_matching "issue_block ${ISSUE} no_push " \
+ac_has_call_matching "issue_block ${ISSUE} no_push " \
   || ac_fail "a non-resource-limit no_push on attempt 2 must stay 'no_push', got: ${CALLS[*]:-nothing}"
-if has_call_matching "no_push_after_3_attempts"; then
+if ac_has_call_matching "no_push_after_3_attempts"; then
   ac_fail "no_push_after_3_attempts must only fire for resource-limit exits"
 fi
 

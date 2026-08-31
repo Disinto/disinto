@@ -95,32 +95,13 @@ has_call() {
   return 1
 }
 
-has_call_matching() {
-  local c
-  for c in "${CALLS[@]}"; do
-    case "$c" in
-      *"$1"*) return 0 ;;
-    esac
-  done
-  return 1
-}
-
 # ── Extract the decision functions from dev-poll.sh ─────────────────────────
 # dev-poll.sh is a top-level executable script (sourcing it would run the
-# whole poll), so the functions are extracted by header — from `name() {` to
-# the next column-0 closing brace — as issue-846.sh does for
-# fetch_alloc_logs.
-extract_fn() {
-  local fn="$1"
-  awk -v fn="$fn" '
-    $0 ~ "^" fn "\\(\\) " { in_fn = 1; print; next }
-    in_fn && /^\}/ { print; exit }
-    in_fn { print }
-  ' "$TARGET"
-}
-
+# whole poll), so the functions are extracted by header — ac_extract_fn()
+# takes `name() {` to the next column-0 closing brace — as issue-846.sh does
+# for fetch_alloc_logs.
 for fn in merged_pr_for_issue handle_stale_in_progress; do
-  fn_body="$(extract_fn "$fn")"
+  fn_body="$(ac_extract_fn "$fn" "$TARGET")"
   [ -n "$fn_body" ] || ac_fail "could not locate ${fn}() in dev/dev-poll.sh"
   eval "$fn_body"
 done
@@ -140,9 +121,9 @@ if has_call "relabel_stale_issue ${ISSUE} no_assignee_no_open_pr_no_lock"; then
 fi
 has_call "issue_close ${ISSUE}" \
   || ac_fail "an issue with a merged PR must be closed (issue_close), but it was not"
-has_call_matching "-X DELETE" \
+ac_has_call_matching "-X DELETE" \
   || ac_fail "closing via a merged PR must remove the in-progress label (no DELETE call recorded)"
-has_call_matching "/issues/${ISSUE}/labels/" \
+ac_has_call_matching "/issues/${ISSUE}/labels/" \
   || ac_fail "the in-progress label DELETE must target /issues/${ISSUE}/labels/"
 
 # ── 3. No merged PR → relabel to blocked exactly as before ─────────────────
