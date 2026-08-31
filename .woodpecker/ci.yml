@@ -87,12 +87,13 @@ steps:
   # any suite it runs fails.
   #
   # Tooling the suites need (a bare bats image ships almost nothing):
-  #   bash bats jq curl git python3 py3-yaml unzip age sops, plus vault (installed below).
+  #   bash bats jq curl git python3 py3-yaml unzip age sops zstd, plus vault (installed below).
   #     python3   — lib-load-project / lib-generators
   #     py3-yaml  — test-lint-ci (`disinto validate lint-ci` parses YAML via PyYAML;
   #                 same package the lint-ci workflow installs)
   #     jq, curl  — forge_whoami and the vault suites' health checks
   #     age, sops — lib-secrets and the two vault suites
+  #     zstd      — lib-dsh-session (#1105) decompresses zstd session logs
   # Vault is NOT packaged for Alpine (absent from main/community/edge), so it
   # is installed from the official HashiCorp static build via
   # .woodpecker/install-vault.sh (a script, not an inline block — Woodpecker
@@ -110,7 +111,7 @@ steps:
   - name: bats
     image: alpine:3.20
     commands:
-      - apk add --no-cache bash bats jq curl git python3 py3-yaml unzip age sops
+      - apk add --no-cache bash bats jq curl git python3 py3-yaml unzip age sops zstd
       - bash .woodpecker/install-vault.sh
       # POSIX sh (works under both ash and bash), written with plain $VAR
       # references only: Woodpecker pre-expands dollar-brace references in
