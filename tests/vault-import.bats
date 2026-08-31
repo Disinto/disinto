@@ -41,6 +41,17 @@ setup_file() {
   curl -sf -H "X-Vault-Token: test-root-token" \
     -X POST -d '{"type":"kv","options":{"version":"2"}}' \
     "${VAULT_ADDR}/v1/sys/mounts/kv" >/dev/null
+
+  # Stage the age key fixture at the mode vault-import.sh requires (0400).
+  # Git cannot preserve mode 0400 (it only stores the exec bit), so a
+  # checkout lands the fixture at 0644 — which the script's security check
+  # refuses. Tests therefore reference the 0400 staged copy, not the
+  # fixture path, so the passing tests exercise the key content while
+  # "refuses if age key file permissions are not 0400" still covers the
+  # permission enforcement itself.
+  export AGE_KEY_FILE="${BATS_FILE_TMPDIR}/age-keys.txt"
+  cp "$FIXTURES_DIR/age-keys.txt" "$AGE_KEY_FILE"
+  chmod 400 "$AGE_KEY_FILE"
 }
 
 teardown_file() {
@@ -63,7 +74,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "Security check failed"
 }
@@ -88,7 +99,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt" \
+    --age-key "$AGE_KEY_FILE" \
     --dry-run
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "DRY-RUN"
@@ -107,7 +118,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Check bots/review
@@ -164,14 +175,14 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Second run - should report unchanged
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Check that all keys report unchanged
@@ -194,7 +205,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$modified_env" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Check that dev-qwen token was updated
@@ -231,7 +242,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$piped_env" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Verify each value round-trips intact.
@@ -256,7 +267,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-incomplete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Should have imported what was available
@@ -274,7 +285,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
   # Check that no actual secret values appear in output
@@ -314,32 +325,38 @@ setup() {
 @test "fails with missing --env argument" {
   run "$IMPORT_SCRIPT" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "Missing required argument"
 }
 
 @test "fails with missing --sops argument" {
+  # S2.5 (#883/#912): --sops is optional but paired with --age-key — a
+  # bare --age-key (no --sops) is rejected as a pairing error, not as a
+  # missing-required-argument error.
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "Missing required argument"
+  echo "$output" | grep -q -- "--age-key requires --sops"
 }
 
 @test "fails with missing --age-key argument" {
+  # S2.5 (#883/#912): --age-key is optional but paired with --sops — a
+  # bare --sops (no --age-key) is rejected as a pairing error, not as a
+  # missing-required-argument error.
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "Missing required argument"
+  echo "$output" | grep -q -- "--sops requires --age-key"
 }
 
 @test "fails with non-existent env file" {
   run "$IMPORT_SCRIPT" \
     --env "/nonexistent/.env" \
     --sops "$FIXTURES_DIR/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "not found"
 }
@@ -348,7 +365,7 @@ setup() {
   run "$IMPORT_SCRIPT" \
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "/nonexistent/.env.vault.enc" \
-    --age-key "$FIXTURES_DIR/age-keys.txt"
+    --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "not found"
 }
