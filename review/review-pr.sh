@@ -330,9 +330,9 @@ export CLAUDE_MODEL="sonnet"
 export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"   # 15 min — reviews shouldn't take longer
 
 if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
-  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" "$PROMPT"
+  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT"
 else
-  agent_run --worktree "$WORKTREE" "$PROMPT"
+  agent_run --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT"
 fi
 log "agent_run complete (re-review: ${IS_RE_REVIEW})"
 
