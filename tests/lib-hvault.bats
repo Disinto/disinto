@@ -4,6 +4,9 @@
 # Runs against a dev-mode Vault server (single binary, no LXC needed).
 # CI launches vault server -dev inline before running these tests.
 
+# The `run --separate-stderr` flag requires bats >= 1.5.0.
+bats_require_minimum_version 1.5.0
+
 VAULT_BIN="${VAULT_BIN:-vault}"
 
 setup_file() {
@@ -35,6 +38,14 @@ setup_file() {
       return 1
     fi
   done
+
+  # Enable kv-v2 at path=kv. Dev-mode vault only auto-mounts kv-v2 at
+  # secret/, but the module under test defaults to VAULT_KV_MOUNT=kv
+  # (the production S2 mount) — mirror the real cluster layout so
+  # hvault_kv_* writes land where the reads go.
+  curl -sf -H "X-Vault-Token: test-root-token" \
+    -X POST -d '{"type":"kv","options":{"version":"2"}}' \
+    "${VAULT_ADDR}/v1/sys/mounts/kv" >/dev/null
 }
 
 teardown_file() {
@@ -83,9 +94,11 @@ setup() {
 }
 
 @test "hvault_kv_put fails without KEY=VAL" {
-  run hvault_kv_put "test/bad"
+  # The structured error is emitted on stderr — --separate-stderr
+  # (bats >= 1.5.0) captures it into $stderr.
+  run --separate-stderr hvault_kv_put "test/bad"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q '"error":true' || echo "$stderr" | grep -q '"error":true'
+  echo "$stderr" | jq -e '.error == true'
 }
 
 @test "hvault_kv_put rejects malformed pair (no =)" {
