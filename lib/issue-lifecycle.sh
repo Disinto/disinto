@@ -82,6 +82,39 @@ _ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
 _ilc_awaiting_live_id() { _ilc_ensure_label_id "awaiting-live-verification" "#ff9100"; }
 
 # ---------------------------------------------------------------------------
+# Forge mutation helpers — single-purpose curl wrappers.
+# Callers keep the `if [ -n "$id" ]` guards; the helpers do not test ids.
+# ---------------------------------------------------------------------------
+
+# _ilc_clear_assignee ISSUE — PATCH the issue's assignees to an empty list.
+_ilc_clear_assignee() {
+  local issue="$1"
+  curl -sf -X PATCH \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}" \
+    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+}
+
+# _ilc_add_label ISSUE LABEL_ID — add a label to the issue by id.
+_ilc_add_label() {
+  local issue="$1" label_id="$2"
+  curl -sf -X POST \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${FORGE_API}/issues/${issue}/labels" \
+    -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1 || true
+}
+
+# _ilc_remove_label ISSUE LABEL_ID — remove a label from the issue by id.
+_ilc_remove_label() {
+  local issue="$1" label_id="$2"
+  curl -sf -X DELETE \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # Labels that indicate an issue belongs to a non-dev agent workflow.
 # Any issue carrying one of these should NOT be touched by dev-poll's
 # stale-detection or orphan-recovery logic.  See issue #608.
@@ -178,22 +211,14 @@ issue_claim() {
   bl_id=$(_ilc_backlog_id)
   bk_id=$(_ilc_blocked_id)
   if [ -n "$ip_id" ]; then
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues/${issue}/labels" \
-      -d "{\"labels\":[${ip_id}]}" >/dev/null 2>&1 || true
+    _ilc_add_label "$issue" "$ip_id"
   fi
   if [ -n "$bl_id" ]; then
-    curl -sf -X DELETE \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${issue}/labels/${bl_id}" >/dev/null 2>&1 || true
+    _ilc_remove_label "$issue" "$bl_id"
   fi
   # Clear blocked label on re-claim — starting work is implicit resolution of prior block
   if [ -n "$bk_id" ]; then
-    curl -sf -X DELETE \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${issue}/labels/${bk_id}" >/dev/null 2>&1 || true
+    _ilc_remove_label "$issue" "$bk_id"
   fi
   _ilc_log "claimed issue #${issue}"
   return 0
@@ -207,26 +232,16 @@ issue_release() {
   local issue="$1"
 
   # Clear assignee
-  curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}" \
-    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+  _ilc_clear_assignee "$issue"
 
   local ip_id bl_id
   ip_id=$(_ilc_in_progress_id)
   bl_id=$(_ilc_backlog_id)
   if [ -n "$ip_id" ]; then
-    curl -sf -X DELETE \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${issue}/labels/${ip_id}" >/dev/null 2>&1 || true
+    _ilc_remove_label "$issue" "$ip_id"
   fi
   if [ -n "$bl_id" ]; then
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues/${issue}/labels" \
-      -d "{\"labels\":[${bl_id}]}" >/dev/null 2>&1 || true
+    _ilc_add_label "$issue" "$bl_id"
   fi
   _ilc_log "released issue #${issue}"
 }
@@ -287,16 +302,10 @@ issue_block() {
   ip_id=$(_ilc_in_progress_id)
   bk_id=$(_ilc_blocked_id)
   if [ -n "$ip_id" ]; then
-    curl -sf -X DELETE \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      "${FORGE_API}/issues/${issue}/labels/${ip_id}" >/dev/null 2>&1 || true
+    _ilc_remove_label "$issue" "$ip_id"
   fi
   if [ -n "$bk_id" ]; then
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues/${issue}/labels" \
-      -d "{\"labels\":[${bk_id}]}" >/dev/null 2>&1 || true
+    _ilc_add_label "$issue" "$bk_id"
   fi
 
   _ilc_log "blocked issue #${issue}: ${reason}"
@@ -310,11 +319,7 @@ issue_close() {
   local issue="$1"
 
   # Clear assignee before closing
-  curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}" \
-    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+  _ilc_clear_assignee "$issue"
 
   curl -sf -X PATCH \
     -H "Authorization: token ${FORGE_TOKEN}" \
@@ -334,21 +339,13 @@ issue_close_after_verification() {
   local issue="$1"
 
   # Clear assignee
-  curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}" \
-    -d '{"assignees":[]}' >/dev/null 2>&1 || true
+  _ilc_clear_assignee "$issue"
 
   # Add awaiting-live-verification label (issue stays open)
   local alv_id
   alv_id=$(_ilc_awaiting_live_id)
   if [ -n "$alv_id" ]; then
-    curl -sf -X POST \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}/issues/${issue}/labels" \
-      -d "{\"labels\":[${alv_id}]}" >/dev/null 2>&1 || true
+    _ilc_add_label "$issue" "$alv_id"
   fi
 
   _ilc_log "marked issue #${issue} awaiting-live-verification (merged, not verified)"
