@@ -16,6 +16,7 @@
 #   disinto validate [subcommand]       Validate factory artifacts (lint-ci)
 #   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
 #   disinto wp reseed-secrets           Re-seed Woodpecker repo secrets from .env
+#   disinto stats [options]             Summarise agent-run telemetry
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -46,6 +47,7 @@ source "${FACTORY_ROOT}/lib/release.sh"
 source "${FACTORY_ROOT}/lib/backup.sh"
 source "${FACTORY_ROOT}/lib/claude-config.sh"
 source "${FACTORY_ROOT}/lib/disinto/backup.sh"  # backup create/import
+source "${FACTORY_ROOT}/lib/stats.sh"  # disinto stats
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +81,8 @@ Usage:
   disinto validate <subcommand>        Validate factory artifacts
   disinto vault <subcommand>           Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
   disinto wp reseed-secrets            Re-seed Woodpecker repo secrets from .env
+  disinto stats [--since <N>d|<N>h]    Summarise agent-run telemetry (per-role table + totals)
+             [--role <role>] [--task <ref>] [--json]
 
 Validate subcommands:
   lint-ci                              Lint .woodpecker/*.yml for missing timeouts
@@ -4176,6 +4180,11 @@ EOF
   echo "── Done ─────────────────────────────────────────────────────"
 }
 
+# disinto stats — summarise agent-run telemetry (lib/stats.sh, #1102).
+disinto_stats() {
+  stats_main "$@"
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -4198,6 +4207,7 @@ case "${1:-}" in
   validate)        shift; disinto_validate "$@" ;;
  vault)           shift; disinto_vault "$@" ;;
   wp)              shift; disinto_wp "$@" ;;
+  stats)           shift; disinto_stats "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
