@@ -409,4 +409,8 @@ _agent_run_claude() {
       fi
     fi
   fi
+  # Propagate the run's exit code per the agent_run contract above (a nudge
+  # that succeeds or times out does not change the outcome of the run
+  # itself). Callers can branch on 124 (timeout) — #1164.
+  return "$rc"
 }
