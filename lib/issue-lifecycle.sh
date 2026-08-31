@@ -82,36 +82,28 @@ _ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
 _ilc_awaiting_live_id() { _ilc_ensure_label_id "awaiting-live-verification" "#ff9100"; }
 
 # ---------------------------------------------------------------------------
-# Forge mutation helpers — single-purpose curl wrappers.
+# Forge mutation helpers — single-purpose forge_api wrappers.
 # Callers keep the `if [ -n "$id" ]` guards; the helpers do not test ids.
 # ---------------------------------------------------------------------------
 
 # _ilc_clear_assignee ISSUE — PATCH the issue's assignees to an empty list.
 _ilc_clear_assignee() {
   local issue="$1"
-  curl -sf -X PATCH \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}" \
+  forge_api PATCH "/issues/${issue}" \
     -d '{"assignees":[]}' >/dev/null 2>&1 || true
 }
 
 # _ilc_add_label ISSUE LABEL_ID — add a label to the issue by id.
 _ilc_add_label() {
   local issue="$1" label_id="$2"
-  curl -sf -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API}/issues/${issue}/labels" \
+  forge_api POST "/issues/${issue}/labels" \
     -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1 || true
 }
 
 # _ilc_remove_label ISSUE LABEL_ID — remove a label from the issue by id.
 _ilc_remove_label() {
   local issue="$1" label_id="$2"
-  curl -sf -X DELETE \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API}/issues/${issue}/labels/${label_id}" >/dev/null 2>&1 || true
+  forge_api DELETE "/issues/${issue}/labels/${label_id}" >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
