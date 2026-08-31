@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # agent-sdk.sh — Shared SDK for synchronous Claude agent invocations
 #
-# Provides agent_run(): one-shot `claude -p` with session persistence.
+# Provides agent_run(): harness dispatcher (AGENT_HARNESS, default claude)
+# over one-shot `claude -p` invocations with session persistence.
 # Source this from any agent script after defining:
 #   SID_FILE  — path to persist session ID (e.g. /tmp/dev-session-proj-123.sid)
 #   LOGFILE   — path for log output
@@ -246,12 +247,34 @@ claude_run_with_watchdog() {
   return "$rc"
 }
 
-# agent_run — synchronous Claude invocation (one-shot claude -p)
+# agent_run — harness dispatcher (#1104).
+#
+# Dispatches on AGENT_HARNESS (default: claude). An unknown value logs and
+# returns 2 rather than running anything.
+#
+# Contract that every harness implementation must satisfy (this is already
+# what the Claude path does):
+#   - Signature: agent_run [--resume SESSION_ID] [--worktree DIR] PROMPT
+#   - Sets: _AGENT_SESSION_ID (also persisted to SID_FILE) and
+#     _AGENT_LAST_OUTPUT
+#   - Writes: the diagnostics file ${diag_dir}/agent-run-last.json
+#   - Returns: the run's exit code; 124 means the wall-clock timeout fired
+#
+# Every one of the nine caller scripts depends on exactly this and nothing
+# more, which is why they need no changes.
+agent_run() {
+  case "${AGENT_HARNESS:-claude}" in
+    claude) _agent_run_claude "$@" ;;
+    *) log "agent_run: unknown AGENT_HARNESS='${AGENT_HARNESS}'" ; return 2 ;;
+  esac
+}
+
+# _agent_run_claude — synchronous Claude invocation (one-shot claude -p)
 # Usage: agent_run [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
 # Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
 # --task REF attributes the session (e.g. issue/PR number) in the metrics
 # record appended after the run; omit to leave it empty.
-agent_run() {
+_agent_run_claude() {
   local resume_id="" worktree_dir="" task_ref=""
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
