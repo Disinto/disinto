@@ -56,7 +56,10 @@ redact_log_secrets() {
   # negligible. (Probed here, not at source time: top-level vars are lost
   # when the library is sourced from inside a function, #1143.)
   local opts=(-E)
-  if sed -un 1 /dev/null 2>/dev/null; then
+  # `q` is a no-op script: with no -e argument sed takes the first
+  # positional as the script, so the probe must supply one. GNU sed
+  # accepts -u and exits 0; busybox rejects -u before parsing.
+  if sed -u q /dev/null 2>/dev/null; then
     opts=(-uE)
   fi
   # Note on the regex:
