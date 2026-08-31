@@ -45,9 +45,20 @@ _AGENT_SESSION_ID=""
 # a JSON string. The variable name is preserved so operators can still
 # audit *which* secret was about to leak; only the value is redacted.
 #
-# Reads stdin, writes redacted stdout. Pure sed — no buffering, safe to
-# splice into a `tail -F` pipeline.
+# Reads stdin, writes redacted stdout. Pure sed — unbuffered where sed
+# supports -u, safe to splice into a `tail -F` pipeline.
 redact_log_secrets() {
+  # -u (unbuffered) keeps the `tail -F` pipeline live, but it is a GNU sed
+  # extension: busybox sed (the Alpine images — CI's bats step, #1151)
+  # exits on it without writing a single line, so the filter would drop the
+  # whole stream instead of redacting it. Probe once per call and fall back
+  # to plain -E; the filter is spawned once per run, so the extra sed is
+  # negligible. (Probed here, not at source time: top-level vars are lost
+  # when the library is sourced from inside a function, #1143.)
+  local opts=(-E)
+  if sed -un 1 /dev/null 2>/dev/null; then
+    opts=(-uE)
+  fi
   # Note on the regex:
   #   - Anchored on the well-known prefix list (FORGE/VAULT/GH/GITHUB/
   #     CLAW/CLAUDE/ANTHROPIC) so we don't redact unrelated KEY= pairs.
@@ -57,9 +68,10 @@ redact_log_secrets() {
   #   - Value class `[^[:space:]",}\\]+` stops at JSON quote/brace,
   #     whitespace, or backslash so we don't eat past the value when
   #     the line is JSON-embedded.
-  #   - GNU sed `I` flag = case-insensitive match while preserving the
-  #     original case in the captured group.
-  sed -uE \
+  #   - `I` flag = case-insensitive match while preserving the original
+  #     case in the captured group (supported by both GNU and busybox sed;
+  #     -u above is what busybox lacks).
+  sed "${opts[@]}" \
     's/((FORGE|VAULT|GH|GITHUB|CLAW|CLAUDE|ANTHROPIC)[A-Za-z0-9_]*(TOKEN|PASS|KEY|SECRET))=[^[:space:]",}\\]+/\1=<redacted>/gI'
 }
 
