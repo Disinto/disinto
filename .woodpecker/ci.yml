@@ -4,6 +4,7 @@
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
+#   3. bats         — run every tests/*.bats suite by glob discovery (#1144)
 #
 # Timeouts:
 #   Workflow-level default (10m) applies to all steps unless overridden.
@@ -79,3 +80,56 @@ steps:
       - python3 .woodpecker/detect-duplicates.py
     environment:
       DIFF_BASE: ${CI_COMMIT_TARGET_BRANCH}
+
+  # #1144 — run the bats suites under tests/ by GLOB DISCOVERY, so a newly
+  # landed .bats file is covered the moment it lands (no explicit list of the
+  # passing suites to drift out of coverage). The step fails the pipeline if
+  # any suite it runs fails.
+  #
+  # Tooling the suites need (a bare bats image ships almost nothing):
+  #   bash bats jq curl git python3 unzip age sops, plus vault (installed below).
+  #     python3   — lib-load-project / lib-generators
+  #     jq, curl  — forge_whoami and the vault suites' health checks
+  #     age, sops — lib-secrets and the two vault suites
+  # Vault is NOT packaged for Alpine (absent from main/community/edge), so it
+  # is installed from the official HashiCorp static build via
+  # .woodpecker/install-vault.sh (a script, not an inline block — Woodpecker
+  # pre-expands ${VAR} references in pipeline YAML and would mangle the
+  # download URL; see #1146). Version tracks the VAULT_VERSION pin in
+  # lib/init/nomad/install.sh. alpine:3.20 is required because sops only
+  # exists in the community repo starting at 3.20.
+  #
+  # Six suites are still broken and are excluded BY NAME in the command below —
+  # an explicit, greppable list, NOT a failure suppressor (no `|| true`, no
+  # `set +e`, and a repaired suite is covered the instant its name is removed).
+  # All six are tracked together in #1148; remove a name when its suite passes:
+  #   test-lint-ci          bats cannot load the file; aborts the whole run
+  #   lib-agent-sdk-redact  13 failing
+  #   vault-import          10 failing
+  #   lib-hvault            5 failing
+  #   lib-generators        4 failing
+  #   lib-stale-base-check  3 failing
+  - name: bats
+    image: alpine:3.20
+    commands:
+      - apk add --no-cache bash bats jq curl git python3 unzip age sops
+      - bash .woodpecker/install-vault.sh
+      # POSIX sh (works under both ash and bash), written with plain $VAR
+      # references only: Woodpecker pre-expands dollar-brace references in
+      # pipeline YAML — comments included — and a reference it cannot parse
+      # aborts the whole pipeline before any step runs (the #1146 failure).
+      # Discovers every tests/*.bats by glob, drops the #1148 suites named
+      # in EXCLUDED, and runs the rest. Fails if any selected suite fails
+      # or if none match.
+      - |
+        EXCLUDED='test-lint-ci lib-agent-sdk-redact vault-import lib-hvault lib-generators lib-stale-base-check'
+        files=''
+        for f in tests/*.bats; do
+          name=$(basename "$f" .bats)
+          case " $EXCLUDED " in
+            *" $name "*) continue ;;
+          esac
+          files="$files $f"
+        done
+        [ -n "$files" ] || { echo "no bats suites selected — check tests/*.bats" >&2; exit 1; }
+        bats $files
