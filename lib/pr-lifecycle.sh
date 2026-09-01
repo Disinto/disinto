@@ -822,6 +822,7 @@ Passing workflows (do not modify): ${passing_workflows}
 "
       fi
 
+      rc=0
       agent_run --resume "$session_id" --worktree "$worktree" \
         "CI failed on PR #${pr_num} (attempt ${ci_fix_count}/${max_ci_fixes}).
 
@@ -871,6 +872,7 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
         fi
         # Merge failed (conflict or HTTP 405) — ask agent to rebase
         _prl_log "merge failed — invoking agent to rebase"
+        rc=0
         agent_run --resume "$session_id" --worktree "$worktree" \
           "PR #${pr_num} approved but merge failed: ${_PR_MERGE_ERROR:-unknown}
 
@@ -893,6 +895,7 @@ Rebase onto ${PRIMARY_BRANCH} and push:
         ci_fix_count=0  # Reset CI fix budget per review cycle
 
         _prl_log "review changes requested (round ${review_round}/${max_review_rounds})"
+        rc=0
         agent_run --resume "$session_id" --worktree "$worktree" \
           "Review feedback (round ${review_round}/${max_review_rounds}) on PR #${pr_num}:
 
