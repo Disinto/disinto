@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # agent-sdk.sh — Shared SDK for synchronous Claude agent invocations
 #
-# Provides agent_run(): harness dispatcher (AGENT_HARNESS, default claude)
-# over one-shot `claude -p` invocations with session persistence.
+# Provides agent_run(): harness dispatcher (AGENT_HARNESS: claude | dsh,
+# default claude) over one-shot `claude -p` / `dsh --profile headless`
+# invocations with session persistence (the dsh harness is
+# _agent_run_dsh in lib/agent-harness-dsh.sh, #1106).
 # Source this from any agent script after defining:
 #   SID_FILE  — path to persist session ID (e.g. /tmp/dev-session-proj-123.sid)
 #   LOGFILE   — path for log output
@@ -26,6 +28,8 @@ set -euo pipefail
 
 # Per-session telemetry emitter (#1101) — always available in agent_run.
 source "$(dirname "${BASH_SOURCE[0]}")/agent-metrics.sh"
+# dsh harness (#1106) — provides _agent_run_dsh for AGENT_HARNESS=dsh.
+source "$(dirname "${BASH_SOURCE[0]}")/agent-harness-dsh.sh"
 
 _AGENT_SESSION_ID=""
 
@@ -283,8 +287,28 @@ claude_run_with_watchdog() {
 agent_run() {
   case "${AGENT_HARNESS:-claude}" in
     claude) _agent_run_claude "$@" ;;
+    dsh) _agent_run_dsh "$@" ;;
     *) log "agent_run: unknown AGENT_HARNESS='${AGENT_HARNESS}'" ; return 2 ;;
   esac
+}
+
+# _agent_parse_run_args — option parsing shared by the agent_run harnesses.
+# Usage: _agent_parse_run_args [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
+# Sets: _AGENT_RESUME_ID, _AGENT_WORKTREE_DIR, _AGENT_TASK_REF, _AGENT_PROMPT
+_agent_parse_run_args() {
+  _AGENT_RESUME_ID=""
+  _AGENT_WORKTREE_DIR=""
+  _AGENT_TASK_REF=""
+  _AGENT_PROMPT=""
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --resume) shift; _AGENT_RESUME_ID="${1:-}"; shift ;;
+      --worktree) shift; _AGENT_WORKTREE_DIR="${1:-}"; shift ;;
+      --task) shift; _AGENT_TASK_REF="${1:-}"; shift ;;
+      *) shift ;;
+    esac
+  done
+  _AGENT_PROMPT="${1:-}"
 }
 
 # _agent_run_claude — synchronous Claude invocation (one-shot claude -p)
@@ -293,16 +317,8 @@ agent_run() {
 # --task REF attributes the session (e.g. issue/PR number) in the metrics
 # record appended after the run; omit to leave it empty.
 _agent_run_claude() {
-  local resume_id="" worktree_dir="" task_ref=""
-  while [[ "${1:-}" == --* ]]; do
-    case "$1" in
-      --resume) shift; resume_id="${1:-}"; shift ;;
-      --worktree) shift; worktree_dir="${1:-}"; shift ;;
-      --task) shift; task_ref="${1:-}"; shift ;;
-      *) shift ;;
-    esac
-  done
-  local prompt="${1:-}"
+  _agent_parse_run_args "$@"
+  local resume_id="$_AGENT_RESUME_ID" worktree_dir="$_AGENT_WORKTREE_DIR" task_ref="$_AGENT_TASK_REF" prompt="$_AGENT_PROMPT"
 
   _AGENT_LAST_OUTPUT=""
 
