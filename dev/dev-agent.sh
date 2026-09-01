@@ -418,15 +418,74 @@ ${PUSH_INSTRUCTIONS}"
 fi
 
 # =============================================================================
+# NO-PUSH DECISION (#1164)
+# =============================================================================
+# no_push_outcome — decide what to do when agent_run finished without pushing.
+#
+# A run stopped by a resource limit (max turns, or the wall-clock timeout)
+# is a TRANSIENT failure: the issue goes back to the claimable backlog
+# (issue_requeue) instead of "blocked", so a fresh run can retry it. On the
+# third consecutive resource-limit exit (attempt >= 2, 0-indexed count of
+# existing fix/issue-N* branches) the repeated limit means a human decision
+# is needed, so the issue is blocked with a distinct reason. Any other
+# no-push reason keeps the historical issue_block "no_push" behavior.
+#
+# Args: issue diag_file agent_run_rc attempt result_text
+no_push_outcome() {
+  local issue="$1" diag_file="$2" agent_run_rc="$3" attempt="${4:-0}" result_text="${5:-}"
+  local subtype requeue_reason=""
+
+  # The terminal stream-json row carries the run's subtype ("success" or
+  # "error_max_turns"). The diag file may be a multi-line stream, a single
+  # nudge object, or a line truncated by a watchdog kill — parse line by
+  # line and keep the last result row's subtype.
+  subtype=$(jq -R -s -r '
+    split("\n")
+    | map(select(. != "") | (try fromjson))
+    | map(select(type == "object"))
+    | [ .[] | select(.type == "result") | .subtype ]
+    | last // ""
+  ' "$diag_file" 2>/dev/null) || subtype=""
+
+  case "$agent_run_rc" in '' | *[!0-9]*) agent_run_rc=0 ;; esac
+  case "$attempt" in '' | *[!0-9]*) attempt=0 ;; esac
+
+  if [ "$subtype" = "error_max_turns" ]; then
+    requeue_reason="error_max_turns"
+  fi
+  # rc 124 is the wall-clock timeout ceiling (agent_run contract) and is the
+  # more recent event, so it wins when both signals are present.
+  if [ "$agent_run_rc" -eq 124 ]; then
+    requeue_reason="timeout"
+  fi
+
+  if [ -n "$requeue_reason" ]; then
+    if [ "$attempt" -ge 2 ]; then
+      issue_block "$issue" "no_push_after_3_attempts" \
+        "Resource limit (${requeue_reason}) on attempt $((attempt + 1)) — Claude did not push branch ${BRANCH}"
+    else
+      issue_requeue "$issue" "$requeue_reason" \
+        "Resource limit (${requeue_reason}) — Claude did not push branch ${BRANCH}"
+    fi
+  else
+    issue_block "$issue" "no_push" "$result_text"
+  fi
+}
+
+# =============================================================================
 # IMPLEMENT
 # =============================================================================
 status "running implementation"
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 
+# Capture agent_run's exit code (its contract: 124 = wall-clock timeout,
+# #1164). Unguarded, a non-zero return would abort this set -e script before
+# the no-push decision below ever runs.
+AGENT_RUN_RC=0
 if [ -n "$_AGENT_SESSION_ID" ]; then
-  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT"
+  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT" || AGENT_RUN_RC=$?
 else
-  agent_run --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT"
+  agent_run --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT" || AGENT_RUN_RC=$?
 fi
 
 # =============================================================================
@@ -538,7 +597,8 @@ Closing as already implemented."
     log "no_push session summary: turns=${_total_turns} reads=${_read_calls} edits=${_edit_calls} bash=${_bash_calls} text=${_text_calls} failed=${_failed_calls}"
   fi
 
-  issue_block "$ISSUE" "no_push" "Claude did not push branch ${BRANCH}"
+  no_push_outcome "$ISSUE" "$diag_file" "$AGENT_RUN_RC" "${ATTEMPT:-0}" \
+    "Claude did not push branch ${BRANCH}"
   CLAIMED=false
   worktree_cleanup "$WORKTREE"
   rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"

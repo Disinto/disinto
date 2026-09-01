@@ -10,6 +10,7 @@
 #   issue_claim           ISSUE_NUMBER
 #   issue_release         ISSUE_NUMBER
 #   issue_block           ISSUE_NUMBER REASON [RESULT_TEXT]
+#   issue_requeue         ISSUE_NUMBER REASON [RESULT_TEXT]
 #   issue_close           ISSUE_NUMBER
 #   issue_check_deps      ISSUE_NUMBER
 #   issue_suggest_next
@@ -301,6 +302,53 @@ issue_block() {
   fi
 
   _ilc_log "blocked issue #${issue}: ${reason}"
+}
+
+# ---------------------------------------------------------------------------
+# issue_requeue — remove "in-progress", add "backlog", post diagnostic comment.
+# For TRANSIENT failures (e.g. a run stopped by a resource limit, #1164): the
+# issue goes back to the claimable backlog instead of "blocked", so a fresh run
+# can retry it. Like issue_block, the assignee is left as-is and the
+# result_text (e.g. tmux pane capture) is redacted for secrets before posting.
+# Args: issue_number reason [result_text]
+# ---------------------------------------------------------------------------
+issue_requeue() {
+  local issue="$1" reason="$2" result_text="${3:-}"
+
+  # Redact secrets from result text before posting to a public issue
+  if [ -n "$result_text" ]; then
+    result_text=$(redact_secrets "$result_text")
+  fi
+
+  # Build diagnostic comment via temp file (avoids large inline strings)
+  local tmpfile
+  tmpfile=$(mktemp /tmp/ilc-requeue-XXXXXX.md)
+  {
+    printf '### Re-queued — issue #%s\n\n' "$issue"
+    printf '| Field | Value |\n|---|---|\n'
+    printf '| Exit reason | `%s` |\n' "$reason"
+    printf '| Timestamp | `%s` |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -n "$result_text" ]; then
+      printf '\n<details><summary>Diagnostic output</summary>\n\n```\n%s\n```\n</details>\n' "$result_text"
+    fi
+  } > "$tmpfile"
+
+  # Post comment using shared helper
+  _ilc_post_comment "$issue" "$(cat "$tmpfile")"
+  rm -f "$tmpfile"
+
+  # Remove in-progress, add backlog
+  local ip_id bl_id
+  ip_id=$(_ilc_in_progress_id)
+  bl_id=$(_ilc_backlog_id)
+  if [ -n "$ip_id" ]; then
+    _ilc_remove_label "$issue" "$ip_id"
+  fi
+  if [ -n "$bl_id" ]; then
+    _ilc_add_label "$issue" "$bl_id"
+  fi
+
+  _ilc_log "re-queued issue #${issue}: ${reason}"
 }
 
 # ---------------------------------------------------------------------------

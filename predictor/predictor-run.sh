@@ -118,7 +118,11 @@ ${PROMPT_FOOTER}"
 formula_worktree_setup "$WORKTREE"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
-agent_run --worktree "$WORKTREE" "$PROMPT"
+# Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
+# the script under set -e — record the rc and continue (#1164).
+PREDICTOR_RUN_RC=0
+agent_run --worktree "$WORKTREE" "$PROMPT" || PREDICTOR_RUN_RC=$?
+[ "$PREDICTOR_RUN_RC" -eq 0 ] || log "predictor agent_run exited ${PREDICTOR_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
 
 # Write journal entry post-session

@@ -291,7 +291,11 @@ ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
-agent_run --worktree "$WORKTREE" "$PROMPT"
+# Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
+# the script under set -e — record the rc and continue (#1164).
+SUPERVISOR_RUN_RC=0
+agent_run --worktree "$WORKTREE" "$PROMPT" || SUPERVISOR_RUN_RC=$?
+[ "$SUPERVISOR_RUN_RC" -eq 0 ] || log "supervisor agent_run exited ${SUPERVISOR_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
 
 # Write journal entry post-session

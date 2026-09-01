@@ -3,7 +3,9 @@
 # tests/lib/acceptance-helpers.sh — shared utilities for acceptance tests
 #
 # Sourced by tests/acceptance/issue-<N>.sh. Provides curl wrappers for forge +
-# nomad HTTP APIs, jq assertion helpers, and log-format helpers.
+# nomad HTTP APIs, jq assertion helpers, log-format helpers, and in-process
+# stub helpers (ac_extract_fn / ac_has_call_matching) for tests that extract
+# decision functions from top-level executables.
 #
 # Conventions:
 #   - All helpers are read-only. They never POST, PUT, DELETE, or otherwise
@@ -122,4 +124,34 @@ ac_assert_file() {
   local path="$1"
   local reason="${2:-expected file not found or not readable: $path}"
   [ -r "$path" ] || ac_fail "$reason"
+}
+
+# ── In-process stub helpers ─────────────────────────────────────────────────
+# For acceptance tests that extract decision functions from top-level
+# executables (which cannot be sourced without running the whole script) and
+# stub the mutating calls into a global CALLS array to assert which fired.
+
+# ac_extract_fn <name> <file> — print the source of `name()` from the script
+# in <file>: from the column-0 `name() {` header to the next column-0
+# closing brace.
+ac_extract_fn() {
+  local fn="$1" file="$2"
+  awk -v fn="$fn" '
+    $0 ~ "^" fn "\\(\\) " { in_fn = 1; print; next }
+    in_fn && /^\}/ { print; exit }
+    in_fn { print }
+  ' "$file"
+}
+
+# ac_has_call_matching <pattern> — return 0 if any element of the test's
+# global CALLS array contains <pattern> as a substring.
+# shellcheck disable=SC2154  # CALLS is defined by the sourcing test
+ac_has_call_matching() {
+  local c
+  for c in "${CALLS[@]}"; do
+    case "$c" in
+      *"$1"*) return 0 ;;
+    esac
+  done
+  return 1
 }

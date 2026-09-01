@@ -212,7 +212,7 @@ EOF
   [ -s "$DISINTO_LOG_DIR/dev/agent-run-last.json" ]
 }
 
-@test "agent_run still returns 0 when the metrics write fails (set -e active)" {
+@test "agent_run propagates the run's exit code when the metrics write fails (set -e active)" {
   local stream="$TMP_DIR/killed.jsonl"
   write_killed_stream "$stream"
   STREAM_FILE="$stream"
@@ -225,10 +225,11 @@ EOF
   mkdir -p "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl"
 
   # Command substitution inherits set -e, so an unguarded metrics failure
-  # would abort agent_run and printf would never run.
+  # would abort agent_run and printf would never run. The stubbed run exits
+  # 3 and agent_run propagates that per the documented contract.
   local out
   out=$(agent_run --worktree "$TMP_DIR/wt" "do the thing"; printf ' status=%s' "$?")
-  [ "$out" = " status=0" ]
+  [ "$out" = " status=3" ]
   # The run itself completed: diag output written, metrics path untouched.
   [ -s "$DISINTO_LOG_DIR/dev/agent-run-last.json" ]
   [ -d "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl" ]

@@ -322,39 +322,61 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
 PROMPT=$(cat "${REVIEW_TMPDIR}/prompt.md")
 
 # =============================================================================
-# RUN REVIEW AGENT
+# RUN REVIEW AGENT + PARSE OUTPUT
 # =============================================================================
-status "running review"
-rm -f "$OUTPUT_FILE"
-export CLAUDE_MODEL="sonnet"
-export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"   # 15 min — reviews shouldn't take longer
-
-if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
-  agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT"
-else
-  agent_run --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT"
-fi
-log "agent_run complete (re-review: ${IS_RE_REVIEW})"
-
-# =============================================================================
-# PARSE REVIEW OUTPUT
-# =============================================================================
-REVIEW_JSON=""
-if [ -f "$OUTPUT_FILE" ]; then
-  RAW=$(cat "$OUTPUT_FILE")
-  if printf '%s' "$RAW" | jq -e '.verdict' >/dev/null 2>&1; then REVIEW_JSON="$RAW"
+# review_run_and_parse() — run the review agent and parse its verdict.
+# The agent_run calls are guarded (`|| REVIEW_RUN_RC=$?`): a session that
+# hits its resource limit (rc 124 = wall-clock timeout) must NOT abort this
+# script under set -e — the run's rc is recorded instead, and the no-output
+# path below posts the "Review failed" comment with the reason so a timed-out
+# review is visible on the PR rather than a silent hang (#1164).
+# Returns 0 on valid output (REVIEW_JSON set), 1 after posting the error
+# comment.
+review_run_and_parse() {
+  local raw="" ext="" rc_note=""
+  REVIEW_RUN_RC=0
+  status "running review"
+  rm -f "$OUTPUT_FILE"
+  export CLAUDE_MODEL="sonnet"
+  export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"   # 15 min — reviews shouldn't take longer
+  if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
+    agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT" || REVIEW_RUN_RC=$?
   else
-    EXT=$(printf '%s' "$RAW" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
-    [ -z "$EXT" ] && EXT=$(printf '%s' "$RAW" | sed -n '/^{/,/^}/p')
-    [ -n "${EXT:-}" ] && printf '%s' "$EXT" | jq -e '.verdict' >/dev/null 2>&1 && REVIEW_JSON="$EXT"
+    agent_run --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT" || REVIEW_RUN_RC=$?
   fi
-fi
+  if [ "$REVIEW_RUN_RC" -ne 0 ]; then
+    log "agent_run exited ${REVIEW_RUN_RC} (re-review: ${IS_RE_REVIEW})"
+  else
+    log "agent_run complete (re-review: ${IS_RE_REVIEW})"
+  fi
 
-if [ -z "$REVIEW_JSON" ]; then
-  log "ERROR: no valid review output"
-  jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed.\n---\n*${PR_SHA:0:7}*" \
-    '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
+  REVIEW_JSON=""
+  if [ -f "$OUTPUT_FILE" ]; then
+    raw=$(cat "$OUTPUT_FILE")
+    if printf '%s' "$raw" | jq -e '.verdict' >/dev/null 2>&1; then REVIEW_JSON="$raw"
+    else
+      ext=$(printf '%s' "$raw" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
+      [ -z "$ext" ] && ext=$(printf '%s' "$raw" | sed -n '/^{/,/^}/p')
+      [ -n "${ext:-}" ] && printf '%s' "$ext" | jq -e '.verdict' >/dev/null 2>&1 && REVIEW_JSON="$ext"
+    fi
+  fi
+
+  if [ -z "$REVIEW_JSON" ]; then
+    case "$REVIEW_RUN_RC" in
+      124) rc_note=" (review timed out after ${CLAUDE_TIMEOUT}s — agent_run rc 124)" ;;
+      0) rc_note="" ;;
+      *) rc_note=" (agent_run rc ${REVIEW_RUN_RC})" ;;
+    esac
+    log "ERROR: no valid review output${rc_note}"
+    jq -n --arg b "## AI Review — Error\n<!-- review-error: ${PR_SHA} -->\nReview failed${rc_note}.\n---\n*${PR_SHA:0:7}*" \
+      '{body: $b}' | curl -sf -o /dev/null -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" "${API}/issues/${PR_NUMBER}/comments" -d @- || true
+    return 1
+  fi
+  return 0
+}
+
+if ! review_run_and_parse; then
   exit 1
 fi
 

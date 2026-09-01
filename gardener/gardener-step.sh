@@ -215,7 +215,11 @@ git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev
 
 # ── Run agent (single claude session — no orchestration here) ─────────────
 export CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
-agent_run --worktree "$WORKTREE" "$PROMPT"
+# Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
+# the script under set -e — record the rc and let the PR walk decide (#1164).
+GARDENER_STEP_RUN_RC=0
+agent_run --worktree "$WORKTREE" "$PROMPT" || GARDENER_STEP_RUN_RC=$?
+[ "$GARDENER_STEP_RUN_RC" -eq 0 ] || log "gardener-step agent_run exited ${GARDENER_STEP_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
 
 # ── Detect PR opened by the formula ───────────────────────────────────────

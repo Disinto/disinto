@@ -822,6 +822,7 @@ Passing workflows (do not modify): ${passing_workflows}
 "
       fi
 
+      rc=0
       agent_run --resume "$session_id" --worktree "$worktree" \
         "CI failed on PR #${pr_num} (attempt ${ci_fix_count}/${max_ci_fixes}).
 
@@ -834,7 +835,10 @@ ${ci_prompt_body}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+      # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+      # is logged, not swallowed — the walk continues either way.
+      [ "$rc" -eq 0 ] || _prl_log "ci-fix agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
       continue
     fi
 
@@ -868,12 +872,16 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
         fi
         # Merge failed (conflict or HTTP 405) — ask agent to rebase
         _prl_log "merge failed — invoking agent to rebase"
+        rc=0
         agent_run --resume "$session_id" --worktree "$worktree" \
           "PR #${pr_num} approved but merge failed: ${_PR_MERGE_ERROR:-unknown}
 
 Rebase onto ${PRIMARY_BRANCH} and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+        # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+        # is logged, not swallowed — the walk continues either way.
+        [ "$rc" -eq 0 ] || _prl_log "rebase agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
         continue
         ;;
 
@@ -887,6 +895,7 @@ Rebase onto ${PRIMARY_BRANCH} and push:
         ci_fix_count=0  # Reset CI fix budget per review cycle
 
         _prl_log "review changes requested (round ${review_round}/${max_review_rounds})"
+        rc=0
         agent_run --resume "$session_id" --worktree "$worktree" \
           "Review feedback (round ${review_round}/${max_review_rounds}) on PR #${pr_num}:
 
@@ -895,7 +904,10 @@ ${_PR_REVIEW_TEXT:-No review text available.}
 Address each piece of feedback. Run lint and tests.
 Commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+        # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+        # is logged, not swallowed — the walk continues either way.
+        [ "$rc" -eq 0 ] || _prl_log "review-feedback agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
         continue
         ;;
 
