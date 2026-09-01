@@ -78,6 +78,14 @@ ac_assert_eq "$BUILT_TAG" "$JOBSPEC_TAGS" "ci.yml builds '$BUILT_TAG' but the ag
 printf '%s\n' "$STEP_BLOCK" | grep -q 'docker/agents/Dockerfile' \
   || ac_fail "rebuild-and-deploy-agents does not build from docker/agents/Dockerfile"
 
+# ── The redeploy loop discovers jobspecs by glob, not a hardcoded list ──────
+# A hardcoded jobspec list would silently stop redeploying a future
+# nomad/jobs/agents-<x>.hcl (the same "merged but never ships" class #1173
+# fixes), so the loop must derive its list from the agents* glob.
+ac_log "checking the redeploy loop derives the jobspec list from the agents* glob"
+printf '%s\n' "$STEP_BLOCK" | grep -q 'nomad/jobs/agents\*\.hcl' \
+  || ac_fail "rebuild-and-deploy-agents does not discover jobspecs via the nomad/jobs/agents*.hcl glob (a hardcoded list would go stale)"
+
 # ── It takes the shared deploy lock before deploying ────────────────────────
 ac_log "checking the step takes the shared deploy lock"
 printf '%s\n' "$STEP_BLOCK" | grep -q 'acceptance-deploy.lock' \

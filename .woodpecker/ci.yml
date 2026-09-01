@@ -168,7 +168,8 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
     commands:
-      - apk add --no-cache docker-cli jq
+      # util-linux: non-busybox flock, same as the acceptance deploy step.
+      - apk add --no-cache docker-cli jq util-linux
       # POSIX sh, plain $VAR references only (Woodpecker pre-expands
       # dollar-brace references in pipeline YAML — comments included — and
       # aborts the pipeline on one it cannot parse; see #1146).
@@ -192,31 +193,48 @@ steps:
         # Rebuild the agents image the jobspecs reference (tag unchanged).
         docker build -t disinto/agents:local -f docker/agents/Dockerfile .
 
-        # The agent jobspecs that run disinto/agents:local. vault-runner and
-        # edge are deliberately excluded: they are not agent jobs, and
-        # restarting them takes down the dispatcher and the vault runner.
-        for spec in nomad/jobs/agents.hcl nomad/jobs/agents-dev-qwen.hcl nomad/jobs/agents-gardener-qwen.hcl nomad/jobs/agents-review-qwen.hcl nomad/jobs/agents-supervisor-opus.hcl; do
+        # The agent jobspecs that run disinto/agents:local, discovered by
+        # glob so a new nomad/jobs/agents-<x>.hcl is covered without editing
+        # this step (a hardcoded list would silently stop redeploying new
+        # jobs — the bug class #1173 targets). vault-runner and edge do not
+        # match the agents* glob: restarting them takes down the dispatcher
+        # and the vault runner.
+        specs=''
+        for spec in nomad/jobs/agents*.hcl; do
+          [ -e "$spec" ] || continue
+          specs="$specs $spec"
+        done
+        [ -n "$specs" ] || { echo "no nomad/jobs/agents*.hcl jobspecs found" >&2; exit 1; }
+
+        for spec in $specs; do
           job=$(basename "$spec" .hcl)
-          nomad_api job validate "$spec"
-          nomad_api job run "$spec"
+          # Paths are relative to the /jobspecs mount inside the helper
+          # container (see nomad_api), not the workspace.
+          nomad_api job validate "/jobspecs/$job"
+          nomad_api job run "/jobspecs/$job"
           # Tag unchanged, so job run alone would keep the old image;
           # restart brings each allocation back on the rebuilt image.
           # This kills in-flight sessions (acceptable — see note above).
           nomad_api job restart "$job"
 
           # Health poll, same 120s/5s two-pass shape as acceptance-tests.yml:
-          # every allocation at the newest job version must be running.
+          # every allocation at the newest job version must be running. A
+          # failed or empty status is treated as NOT healthy — a transient
+          # failure right after the restart must not read as "no unhealthy
+          # allocations".
           deadline=$(( $(date +%s) + 120 ))
           healthy=no
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            status_json=$(nomad_api job status -json "$job" 2>/dev/null || echo '{}')
-            unhealthy=$(echo "$status_json" | jq -r '(.Allocations // []) as $a
-                 | (($a | map(.JobVersion // 0) | max) // 0) as $v
-                 | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length')
-            if [ "$unhealthy" = "0" ]; then
-              echo "$job: healthy after rebuild"
-              healthy=yes
-              break
+            status_json=$(nomad_api job status -json "$job" 2>/dev/null || echo '')
+            if [ -n "$status_json" ] && [ "$status_json" != "{}" ]; then
+              unhealthy=$(echo "$status_json" | jq -r '(.Allocations // []) as $a
+                   | (($a | map(.JobVersion // 0) | max) // 0) as $v
+                   | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length')
+              if [ "$unhealthy" = "0" ]; then
+                echo "$job: healthy after rebuild"
+                healthy=yes
+                break
+              fi
             fi
             sleep 5
           done
