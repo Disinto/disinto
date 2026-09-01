@@ -176,6 +176,52 @@ EOF
   [ "$(jq -r '.task_ref' <<<"$line")" = "" ]
 }
 
+# ── delivered (#1167) ───────────────────────────────────────────────────────
+
+@test "killed session with pushed work records outcome timeout and delivered true" {
+  local stream="$TMP_DIR/killed.jsonl"
+  write_killed_stream "$stream"
+  metrics_record_run "$stream" 124 "" true
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "timeout" ]
+  [ "$(jq -r '.exit_code' <<<"$line")" = "124" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "true" ]
+}
+
+@test "killed session that pushed nothing records delivered false" {
+  local stream="$TMP_DIR/killed.jsonl"
+  write_killed_stream "$stream"
+  metrics_record_run "$stream" 124 "" false
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "timeout" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "false" ]
+}
+
+@test "error_max_turns with pushed work records delivered true" {
+  local stream="$TMP_DIR/mt.jsonl"
+  cat > "$stream" <<'EOF'
+{"type":"result","subtype":"error_max_turns","session_id":"bb22-33cc-44dd-55ee-66ff778899aa","num_turns":30,"duration_ms":600000,"duration_api_ms":500000,"total_cost_usd":1.5,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+EOF
+  metrics_record_run "$stream" 1 "" true
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "error_max_turns" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "true" ]
+}
+
+@test "no fourth argument: the record carries no delivered field (absence is null)" {
+  local stream="$TMP_DIR/ok.jsonl"
+  write_ok_stream "$stream"
+  metrics_record_run "$stream" 0
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.delivered' <<<"$line")" = "null" ]
+  [ "$(jq -r 'has("delivered")' <<<"$line")" = "false" ]
+  [ "$(jq -r '.outcome' <<<"$line")" = "success" ]
+}
+
 # ── Total-emitter guarantee ─────────────────────────────────────────────────
 
 @test "unwritable metrics target: metrics_record_run returns 0 and writes nothing" {
@@ -233,6 +279,79 @@ EOF
   # The run itself completed: diag output written, metrics path untouched.
   [ -s "$DISINTO_LOG_DIR/dev/agent-run-last.json" ]
   [ -d "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl" ]
+}
+
+# mk_wt_with_push <dir> — bare "origin" + a worktree whose HEAD carries one
+# commit beyond origin/main, so `git log origin/main..HEAD` is non-empty.
+mk_wt_with_push() {
+  local dir="$1"
+  git init -q --bare "$dir/origin.git"
+  git init -q "$dir"
+  git -C "$dir" symbolic-ref HEAD refs/heads/main
+  git -C "$dir" config user.email test@example.com
+  git -C "$dir" config user.name test
+  git -C "$dir" remote add origin "$dir/origin.git"
+  git -C "$dir" commit -q --allow-empty -m base
+  git -C "$dir" push -q origin main
+  git -C "$dir" commit -q --allow-empty -m ahead
+}
+
+@test "agent_run records delivered: false when the session pushed nothing" {
+  local stream="$TMP_DIR/ok.jsonl"
+  write_ok_stream "$stream"
+  STREAM_FILE="$stream"
+  claude_run_with_watchdog() { cat "$STREAM_FILE"; return 0; }
+  log() { :; }
+  export LOGFILE="$TMP_DIR/agent.log"
+  export SID_FILE="$TMP_DIR/session.sid"
+  mkdir -p "$TMP_DIR/wt"  # not a git repo — nothing can be ahead of origin/main
+
+  agent_run --worktree "$TMP_DIR/wt" "do the thing"
+
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "success" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "false" ]
+}
+
+@test "agent_run: a timed-out session that pushed commits records delivered: true" {
+  local stream="$TMP_DIR/killed.jsonl"
+  write_killed_stream "$stream"
+  mk_wt_with_push "$TMP_DIR/wt"
+  STREAM_FILE="$stream"
+  claude_run_with_watchdog() { cat "$STREAM_FILE"; return 124; }
+  log() { :; }
+  export LOGFILE="$TMP_DIR/agent.log"
+  export SID_FILE="$TMP_DIR/session.sid"
+
+  local rc=0
+  agent_run --worktree "$TMP_DIR/wt" "do the thing" || rc=$?
+  [ "$rc" -eq 124 ]
+
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "timeout" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "true" ]
+}
+
+@test "agent_run: a timed-out session that pushed nothing records delivered: false" {
+  local stream="$TMP_DIR/killed.jsonl"
+  write_killed_stream "$stream"
+  STREAM_FILE="$stream"
+  claude_run_with_watchdog() { cat "$STREAM_FILE"; return 124; }
+  log() { :; }
+  export LOGFILE="$TMP_DIR/agent.log"
+  export SID_FILE="$TMP_DIR/session.sid"
+  mkdir -p "$TMP_DIR/wt"
+
+  local rc=0
+  agent_run --worktree "$TMP_DIR/wt" "do the thing" || rc=$?
+  [ "$rc" -eq 124 ]
+
+  local line
+  line=$(cat "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl")
+  [ "$(jq -r '.outcome' <<<"$line")" = "timeout" ]
+  [ "$(jq -r '.delivered' <<<"$line")" = "false" ]
 }
 
 # ── Call-site attribution ───────────────────────────────────────────────────

@@ -368,18 +368,25 @@ _agent_run_claude() {
   local diag_file="${diag_dir}/agent-run-last.json"
   printf '%s' "$output" > "$diag_file" 2>/dev/null || true
 
+  # Has the session pushed anything beyond the primary branch? Computed once,
+  # before the record is written, so the delivered field reflects the
+  # worktree at the moment the line is recorded (#1167) — and the nudge
+  # decision below reuses the same check.
+  local has_pushed
+  has_pushed=$(cd "$run_dir" && git log --oneline "${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH:-main}..HEAD" 2>/dev/null | head -1) || true
+  local delivered
+  if [ -n "$has_pushed" ]; then delivered="true"; else delivered="false"; fi
+
   # Record one telemetry line for this session (#1101). metrics_record_run is
   # a total emitter and `|| true` guards it anyway: a metrics write failure
   # must never fail the run.
-  metrics_record_run "$diag_file" "$rc" "$task_ref" || true
+  metrics_record_run "$diag_file" "$rc" "$task_ref" "$delivered" || true
 
   # Nudge: if the model stopped without pushing, resume with encouragement.
   # Some models emit end_turn prematurely when confused. A nudge often unsticks them.
   if [ -n "$_AGENT_SESSION_ID" ] && [ -n "$output" ]; then
     local has_changes
     has_changes=$(cd "$run_dir" && git status --porcelain 2>/dev/null | head -1) || true
-    local has_pushed
-    has_pushed=$(cd "$run_dir" && git log --oneline "${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH:-main}..HEAD" 2>/dev/null | head -1) || true
     if [ -z "$has_pushed" ]; then
       if [ -n "$has_changes" ]; then
         # Nudge: there are uncommitted changes
