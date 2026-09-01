@@ -47,69 +47,21 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../../tests/lib/review-harness.sh
+source "$REPO_ROOT/tests/lib/review-harness.sh"
 
 ac_require_cmd awk
 ac_require_cmd jq
 
 TARGET="$REPO_ROOT/review/review-pr.sh"
 ac_assert_file "$TARGET" "review/review-pr.sh must exist"
-
-review_fn_body="$(ac_extract_fn review_run_and_parse "$TARGET")"
-[ -n "$review_fn_body" ] \
-  || ac_fail "could not locate review_run_and_parse() in review/review-pr.sh"
-eval "$review_fn_body"
-type review_run_and_parse >/dev/null 2>&1 \
-  || ac_fail "review_run_and_parse() did not evaluate to a function"
-
-# Globals review-pr.sh would normally have set before calling the function.
-# SC2034: PR_NUMBER is consumed by the eval'd review_run_and_parse, which is
-# not visible through `eval`.
-# shellcheck disable=SC2034
-PR_NUMBER=1171
-# shellcheck disable=SC2034
-PR_SHA="abcdef1234567890"
-# shellcheck disable=SC2034
-FORGE_TOKEN="test-token"
-# shellcheck disable=SC2034
-API="https://forge.example/api/repos/test/repo"
+# The shared harness (tests/lib/review-harness.sh) loads review_run_and_parse()
+# in-process and stubs its external calls (agent_run, curl, log, status).
+ac_load_review_fn "$TARGET"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-# shellcheck disable=SC2034
-WORKTREE="$TMP_DIR/review-wt"
-# shellcheck disable=SC2034
-PROMPT="review prompt"
-# shellcheck disable=SC2034
-IS_RE_REVIEW=false
-_AGENT_SESSION_ID=""
-OUTPUT_FILE="$TMP_DIR/review-output.json"
-
-CURL_BODY="$TMP_DIR/curl-body.log"
-# agent_run stub: record nothing, emulate the real agent by writing the
-# pre-decided output before returning the configured rc.
-agent_run() {
-  [ -n "${AGENT_STUB_OUTPUT:-}" ] && printf '%s' "$AGENT_STUB_OUTPUT" > "$OUTPUT_FILE"
-  return "${AGENT_RUN_RC_STUB:-0}"
-}
-curl() {
-  local body
-  body="$(cat)"
-  printf '%s\n' "$body" >> "$CURL_BODY"
-  return 0
-}
-log()    { :; }
-status() { :; }
-
-# run_review <agent-run-rc> <output-file|-> — run the extracted function and
-# return its rc via REVIEW_RC (guarded: a non-zero rc is the thing under test).
-run_review() {
-  local stub_rc="$1" out="$2"
-  AGENT_RUN_RC_STUB="$stub_rc"
-  if [ "$out" = "-" ]; then AGENT_STUB_OUTPUT=""; else AGENT_STUB_OUTPUT="$(cat "$out")"; fi
-  : > "$CURL_BODY"
-  REVIEW_RC=0
-  review_run_and_parse || REVIEW_RC=$?
-}
+ac_setup_review_env 1171
 
 VALID_VERDICT="$TMP_DIR/verdict.json"
 printf '{"verdict":"approve","verdict_reason":"ok","review_markdown":"LGTM"}' > "$VALID_VERDICT"
@@ -118,7 +70,7 @@ printf '{"verdict":"approve","verdict_reason":"ok","review_markdown":"LGTM"}' > 
 unset REVIEW_CLAUDE_TIMEOUT REVIEW_CLAUDE_MODEL 2>/dev/null || true
 export CLAUDE_TIMEOUT=7200
 export CLAUDE_MODEL="unsloth/Qwen3.8-27B"
-run_review 0 "$VALID_VERDICT"
+ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
 ac_assert_eq "$CLAUDE_TIMEOUT" "2400" \
   "review timeout must be the 2400s cap, not the inherited 7200 jobspec value"
@@ -127,14 +79,14 @@ ac_assert_eq "$CLAUDE_MODEL" "unsloth/Qwen3.8-27B" \
 
 # ── 2. Unset CLAUDE_TIMEOUT → still the 2400 cap ───────────────────────────
 unset CLAUDE_TIMEOUT
-run_review 0 "$VALID_VERDICT"
+ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
 ac_assert_eq "$CLAUDE_TIMEOUT" "2400" "unset CLAUDE_TIMEOUT must default to the 2400s cap"
 
 # ── 3. REVIEW_* overrides win when set ─────────────────────────────────────
 export REVIEW_CLAUDE_TIMEOUT=1800
 export REVIEW_CLAUDE_MODEL="test/review-model"
-run_review 0 "$VALID_VERDICT"
+ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
 ac_assert_eq "$CLAUDE_TIMEOUT" "1800" "REVIEW_CLAUDE_TIMEOUT must override the 2400 default"
 ac_assert_eq "$CLAUDE_MODEL" "test/review-model" "REVIEW_CLAUDE_MODEL must override the container's value"
@@ -161,7 +113,7 @@ fi
 
 # ── 5. rc-124 with no output reports the timeout actually used ─────────────
 unset CLAUDE_TIMEOUT
-run_review 124 -
+ac_run_review 124 -
 [ "$REVIEW_RC" -eq 1 ] \
   || ac_fail "timeout with no output must return 1, got ${REVIEW_RC}"
 BODY_TEXT="$(cat "$CURL_BODY" 2>/dev/null || true)"
