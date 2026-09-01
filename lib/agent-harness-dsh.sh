@@ -11,10 +11,13 @@
 #     at the agent's config dir (dsh's own default is $HOME/.dsh) and
 #     DSH_PERMISSION_MODE=danger-full-access — the dsh analogue of the
 #     Claude path's --dangerously-skip-permissions
-#   - wraps the run in `timeout "${CLAUDE_TIMEOUT:-7200}"`; 124 = the
-#     wall-clock ceiling fired. No PTY: dsh headless writes to stdout
-#     directly and mounts no TUI, so the Claude path's `script -qfc`
-#     apparatus is not needed
+#   - wraps the run in `timeout -k 10 "${CLAUDE_TIMEOUT:-7200}"` — TERM at
+#     the limit, KILL 10s later as a hard backstop; 124 = the wall-clock
+#     ceiling fired. busybox `timeout` (alpine CI) reports the child's
+#     signal-death status (143/137) instead of GNU's 124, so a signal death
+#     at/after the limit is normalised to 124. No PTY: dsh headless writes
+#     to stdout directly and mounts no TUI, so the Claude path's
+#     `script -qfc` apparatus is not needed
 #   - locates the session directory dsh just wrote under
 #     $DSH_HOME/sessions/<cwd-slug>/ and takes the most recently modified
 #     one created AFTER a start timestamp recorded before the invocation —
@@ -50,16 +53,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/dsh-session.sh"
 # ${diag_dir}/agent-run-last.json, appends one metrics record (#1101),
 # and returns the run's exit code — 124 = wall-clock timeout.
 _agent_run_dsh() {
-  local resume_id="" worktree_dir="" task_ref=""
-  while [[ "${1:-}" == --* ]]; do
-    case "$1" in
-      --resume) shift; resume_id="${1:-}"; shift ;;
-      --worktree) shift; worktree_dir="${1:-}"; shift ;;
-      --task) shift; task_ref="${1:-}"; shift ;;
-      *) shift ;;
-    esac
-  done
-  local prompt="${1:-}"
+  _agent_parse_run_args "$@"
+  local resume_id="$_AGENT_RESUME_ID" worktree_dir="$_AGENT_WORKTREE_DIR" task_ref="$_AGENT_TASK_REF" prompt="$_AGENT_PROMPT"
 
   _AGENT_LAST_OUTPUT=""
   local run_dir="${worktree_dir:-$(pwd)}"
@@ -86,7 +81,15 @@ _agent_run_dsh() {
   # dsh headless writes to stdout directly and mounts no TUI.
   output=$(cd "$run_dir" && \
     DSH_HOME="$dsh_home" DSH_PERMISSION_MODE=danger-full-access \
-    timeout "$limit" dsh --profile headless "$prompt" 2>>"$LOGFILE") && rc=0 || rc=$?
+    timeout -k 10 "$limit" dsh --profile headless "$prompt" 2>>"$LOGFILE") && rc=0 || rc=$?
+
+  # busybox `timeout` (alpine CI) reports the child's signal-death status
+  # (143=TERM, 137=KILL via -k) where GNU coreutils reports 124; a signal
+  # death at/after the limit is a wall-clock timeout either way. A 143/137
+  # before the limit (e.g. an OOM kill) is left as-is.
+  if { [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; } && [ "$(( $(date +%s) - start_ts ))" -ge "$limit" ]; then
+    rc=124
+  fi
 
   if [ "$rc" -eq 124 ]; then
     log "agent_run(dsh): timeout after ${limit}s (exit code $rc)"

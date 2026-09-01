@@ -292,22 +292,33 @@ agent_run() {
   esac
 }
 
+# _agent_parse_run_args — option parsing shared by the agent_run harnesses.
+# Usage: _agent_parse_run_args [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
+# Sets: _AGENT_RESUME_ID, _AGENT_WORKTREE_DIR, _AGENT_TASK_REF, _AGENT_PROMPT
+_agent_parse_run_args() {
+  _AGENT_RESUME_ID=""
+  _AGENT_WORKTREE_DIR=""
+  _AGENT_TASK_REF=""
+  _AGENT_PROMPT=""
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --resume) shift; _AGENT_RESUME_ID="${1:-}"; shift ;;
+      --worktree) shift; _AGENT_WORKTREE_DIR="${1:-}"; shift ;;
+      --task) shift; _AGENT_TASK_REF="${1:-}"; shift ;;
+      *) shift ;;
+    esac
+  done
+  _AGENT_PROMPT="${1:-}"
+}
+
 # _agent_run_claude — synchronous Claude invocation (one-shot claude -p)
 # Usage: agent_run [--resume SESSION_ID] [--worktree DIR] [--task REF] PROMPT
 # Sets: _AGENT_SESSION_ID (updated each call, persisted to SID_FILE)
 # --task REF attributes the session (e.g. issue/PR number) in the metrics
 # record appended after the run; omit to leave it empty.
 _agent_run_claude() {
-  local resume_id="" worktree_dir="" task_ref=""
-  while [[ "${1:-}" == --* ]]; do
-    case "$1" in
-      --resume) shift; resume_id="${1:-}"; shift ;;
-      --worktree) shift; worktree_dir="${1:-}"; shift ;;
-      --task) shift; task_ref="${1:-}"; shift ;;
-      *) shift ;;
-    esac
-  done
-  local prompt="${1:-}"
+  _agent_parse_run_args "$@"
+  local resume_id="$_AGENT_RESUME_ID" worktree_dir="$_AGENT_WORKTREE_DIR" task_ref="$_AGENT_TASK_REF" prompt="$_AGENT_PROMPT"
 
   _AGENT_LAST_OUTPUT=""
 
