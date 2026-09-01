@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # agent-sdk.sh — Shared SDK for synchronous Claude agent invocations
 #
-# Provides agent_run(): harness dispatcher (AGENT_HARNESS, default claude)
-# over one-shot `claude -p` invocations with session persistence.
+# Provides agent_run(): harness dispatcher (AGENT_HARNESS: claude | dsh,
+# default claude) over one-shot `claude -p` / `dsh --profile headless`
+# invocations with session persistence (the dsh harness is
+# _agent_run_dsh in lib/agent-harness-dsh.sh, #1106).
 # Source this from any agent script after defining:
 #   SID_FILE  — path to persist session ID (e.g. /tmp/dev-session-proj-123.sid)
 #   LOGFILE   — path for log output
@@ -26,6 +28,8 @@ set -euo pipefail
 
 # Per-session telemetry emitter (#1101) — always available in agent_run.
 source "$(dirname "${BASH_SOURCE[0]}")/agent-metrics.sh"
+# dsh harness (#1106) — provides _agent_run_dsh for AGENT_HARNESS=dsh.
+source "$(dirname "${BASH_SOURCE[0]}")/agent-harness-dsh.sh"
 
 _AGENT_SESSION_ID=""
 
@@ -283,6 +287,7 @@ claude_run_with_watchdog() {
 agent_run() {
   case "${AGENT_HARNESS:-claude}" in
     claude) _agent_run_claude "$@" ;;
+    dsh) _agent_run_dsh "$@" ;;
     *) log "agent_run: unknown AGENT_HARNESS='${AGENT_HARNESS}'" ; return 2 ;;
   esac
 }
