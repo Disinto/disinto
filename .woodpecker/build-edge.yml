@@ -9,7 +9,7 @@
 #
 # Builds and pushes:
 #   - ghcr.io/disinto/edge:main       (floating tag)
-#   - ghcr.io/disinto/edge:<short-sha> (commit SHA tag)
+#   - ghcr.io/disinto/edge:<full-sha>   (commit SHA tag)
 #
 # Timeouts:
 #   Workflow-level default (20m) applies to all steps unless overridden.
@@ -67,7 +67,7 @@ steps:
       context: .
       tags:
         - main
-        - ${CI_COMMIT_SHA_SHORT}
+        - ${CI_COMMIT_SHA}
       username: disinto
       password:
         from_secret: GHCR_TOKEN
