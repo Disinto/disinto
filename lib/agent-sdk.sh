@@ -275,8 +275,11 @@ claude_run_with_watchdog() {
 #   - Writes: the diagnostics file ${diag_dir}/agent-run-last.json
 #   - Returns: the run's exit code; 124 means the wall-clock timeout fired
 #
-# Every one of the nine caller scripts depends on exactly this and nothing
-# more, which is why they need no changes.
+# Caller contract (#1164): under set -e an unguarded call would abort the
+# caller on a resource-limit exit (rc 124) — a TRANSIENT failure the caller
+# should decide on. Every call site must therefore guard the invocation
+# (`agent_run ... || RUN_RC=$?`) and inspect the rc (124 = wall-clock timeout).
+# `|| true` is not acceptable: it discards the signal.
 agent_run() {
   case "${AGENT_HARNESS:-claude}" in
     claude) _agent_run_claude "$@" ;;

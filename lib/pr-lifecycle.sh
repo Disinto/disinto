@@ -834,7 +834,10 @@ ${ci_prompt_body}
 
 Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+      # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+      # is logged, not swallowed — the walk continues either way.
+      [ "$rc" -eq 0 ] || _prl_log "ci-fix agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
       continue
     fi
 
@@ -873,7 +876,10 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
 
 Rebase onto ${PRIMARY_BRANCH} and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+        # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+        # is logged, not swallowed — the walk continues either way.
+        [ "$rc" -eq 0 ] || _prl_log "rebase agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
         continue
         ;;
 
@@ -895,7 +901,10 @@ ${_PR_REVIEW_TEXT:-No review text available.}
 Address each piece of feedback. Run lint and tests.
 Commit, rebase on ${PRIMARY_BRANCH}, and push:
   git fetch ${remote} ${PRIMARY_BRANCH} && git rebase ${remote}/${PRIMARY_BRANCH}
-  git push --force-with-lease ${remote} HEAD" || true
+  git push --force-with-lease ${remote} HEAD" || rc=$?
+        # Guarded (#1164): a resource-limit exit (rc 124 = wall-clock timeout)
+        # is logged, not swallowed — the walk continues either way.
+        [ "$rc" -eq 0 ] || _prl_log "review-feedback agent_run exited ${rc} (124 = wall-clock timeout) — continuing walk"
         continue
         ;;
 

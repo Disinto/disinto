@@ -107,10 +107,10 @@ Issues flow: `backlog` → `in-progress` → PR → CI → review → merge → 
 
 | Label | Meaning | Set by |
 |---|---|---|
-| `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. | Planner, gardener, humans |
+| `backlog` | Issue is queued for implementation. Dev-poll picks the first ready one. Also the landing spot when dev-agent re-queues an issue after a transient resource-limit exit (#1164). | Planner, gardener, humans, dev-agent (requeue) |
 | `priority` | Queue tier above plain backlog. Issues with both `priority` and `backlog` are picked before plain `backlog` issues. FIFO within each tier. | Planner, humans |
 | `in-progress` | Dev-agent is actively working on this issue. Only one issue per project is in-progress at a time. Also set on vision issues by filer-bot when sub-issues are filed (#764). | dev-agent.sh (claims issue), filer-bot (vision issues) |
-| `blocked` | Issue is stuck — agent session failed, crashed, timed out, or CI exhausted. Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, dev-poll.sh (on failure) |
+| `blocked` | Issue is stuck — agent session failed or crashed without pushing, CI fix attempts exhausted, or the issue burned its retry budget (third consecutive resource-limit exit → reason `no_push_after_3_attempts`, a human decision is needed). A SINGLE resource-limit exit (max turns, wall-clock timeout) is transient: the issue is re-queued to `backlog` instead (#1164). Diagnostic comment on the issue has details. Also used for unmet dependencies. | dev-agent.sh, dev-poll.sh (on failure) |
 | `waiting-on-compute` | Readiness flag: work is dispatched and waiting on an external run (e.g. a long compute job). Dev-poll skips the issue and moves on; it is not a priority. A person or formula removes the label when the run lands, making the issue claimable again. | Humans, formulas |
 | `tech-debt` | Pre-existing issue flagged by AI reviewer, not introduced by a PR. | review-pr.sh (auto-created follow-ups) |
 | `underspecified` | Dev-agent refused the issue as too large or vague. | dev-poll.sh (on preflight `too_large`), dev-agent.sh (on mid-run `too_large` refusal) |

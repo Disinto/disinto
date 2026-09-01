@@ -168,7 +168,11 @@ log "ops branch: ${PLANNER_OPS_BRANCH}"
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="opus"
 
-agent_run --worktree "$WORKTREE" "$PROMPT"
+# Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
+# the script under set -e — record the rc and let the PR walk decide (#1164).
+PLANNER_RUN_RC=0
+agent_run --worktree "$WORKTREE" "$PROMPT" || PLANNER_RUN_RC=$?
+[ "$PLANNER_RUN_RC" -eq 0 ] || log "planner agent_run exited ${PLANNER_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
 
 # ── PR lifecycle: create PR on ops repo and walk to merge (#765) ─────────
