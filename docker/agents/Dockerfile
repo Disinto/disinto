@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux nodejs npm python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats \
+    bash curl git jq tmux nodejs npm python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats zstd \
     && pip3 install --break-system-packages networkx tomlkit \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,6 +26,9 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}
 # Install Claude Code CLI — agent runtime for all LLM backends (llama, Claude API).
 # The CLI is the execution environment; ANTHROPIC_BASE_URL selects the model provider.
 RUN npm install -g @anthropic-ai/claude-code@2.1.84
+
+# Install dsh — dsh agent harness (run via _agent_run_dsh, #1106)
+RUN npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
