@@ -35,21 +35,25 @@ teardown() {
   rm -rf "$TMP_DIR"
 }
 
-# mkrec <offset_s> <role> <outcome> <task> <dur|-> <in|-> <out|-> <tps|-> <cost|-> <comps>
+# mkrec <offset_s> <role> <outcome> <task> <dur|-> <in|-> <out|-> <tps|-> <cost|-> <comps> [delivered]
+# delivered (11th, optional): "true" | "false" | omitted — omitted leaves the
+# field out of the record entirely, like pre-#1167 records.
 mkrec() {
-  local off="$1" role="$2" outcome="$3" task="$4" dur="$5" in_="$6" out_="$7" tps="$8" cost="$9" comps="${10}"
-  local ts durj inj outj tpsj costj
+  local off="$1" role="$2" outcome="$3" task="$4" dur="$5" in_="$6" out_="$7" tps="$8" cost="$9" comps="${10}" del="${11:-}"
+  local ts durj inj outj tpsj costj delj
   ts="$(stats_epoch_to_iso $(( $(date -u +%s) - off )))"
   durj=$([ "$dur" = "-" ] && echo null || echo "$dur")
   inj=$([ "$in_" = "-" ] && echo null || echo "$in_")
   outj=$([ "$out_" = "-" ] && echo null || echo "$out_")
   tpsj=$([ "$tps" = "-" ] && echo null || echo "$tps")
   costj=$([ "$cost" = "-" ] && echo null || echo "$cost")
+  delj=$([ -n "$del" ] && echo "$del" || echo null)
   jq -cn \
     --arg ts "$ts" --arg role "$role" --arg outcome "$outcome" --arg task "$task" \
     --argjson dur "$durj" --argjson in "$inj" --argjson out "$outj" \
     --argjson tps "$tpsj" --argjson cost "$costj" --argjson comps "$comps" \
-    '{ts:$ts,session_id:("s-"+$task+"-"+$role),task_ref:$task,role:$role,project:"disinto",model:"m",outcome:$outcome,exit_code:0,num_turns:5,duration_ms:$dur,duration_api_ms:$dur,input_tokens:$in,output_tokens:$out,cache_read_input_tokens:0,cache_creation_input_tokens:0,output_tps:$tps,cost_usd:$cost,context_window:200000,compactions:$comps,compaction_pre_tokens:[]}' \
+    --argjson del "$delj" \
+    '{ts:$ts,session_id:("s-"+$task+"-"+$role),task_ref:$task,role:$role,project:"disinto",model:"m",outcome:$outcome,exit_code:0,num_turns:5,duration_ms:$dur,duration_api_ms:$dur,input_tokens:$in,output_tokens:$out,cache_read_input_tokens:0,cache_creation_input_tokens:0,output_tps:$tps,cost_usd:$cost,context_window:200000,compactions:$comps,compaction_pre_tokens:[]} + (if $del == null then {} else {delivered: $del} end)' \
     >> "$METRICS"
 }
 
@@ -164,6 +168,58 @@ write_fixture() {
   [ "$(jq -r '.output_tokens' <<<"$tot")" = "370000" ]
   [ "$(jq -r '.cost_usd' <<<"$tot")" = "38" ]
   [ "$(jq -r '.compactions_per_run' <<<"$tot")" = "1.2" ]
+}
+
+# ── delivered / partial (#1167) ─────────────────────────────────────────────
+
+@test "timeout with delivered: true counts as partial, not timeout" {
+  mkrec 3600 dev timeout 1201 - - - - - 0 true
+  mkrec 3600 dev timeout 1202 - - - - - 0 false
+  local out
+  out="$(stats_main)"
+
+  # partial column present, other column absent.
+  grep -qF 'partial' <<<"$out"
+  ! grep -qF ' maxturns other' <<<"$out"
+  # dev row: 2 runs, 0 ok, 1 timeout (the undelivered one), 0 maxturns, 1 partial.
+  grep -qE '^dev +2 +0 +1 +0 +1 ' <<<"$out"
+  grep -qE '^totals +2 +0 +1 +0 +1 ' <<<"$out"
+  # Footnote explains the partial column; both runs lack a duration.
+  grep -qF '* 1 run(s) exited non-success but had work pushed (delivered: true) — in partial, not in the outcome columns' <<<"$out"
+  grep -qF '* 2 session(s) with no duration (killed mid-run) excluded from duration and tps stats' <<<"$out"
+}
+
+@test "error_max_turns with delivered: true counts as partial" {
+  mkrec 3600 dev error_max_turns 1203 7200000 2000000 200000 20 20 3 true
+  local out
+  out="$(stats_main)"
+  # dev row: 1 run, 0 ok, 0 timeout, 0 maxturns, 1 partial.
+  grep -qE '^dev +1 +0 +0 +0 +1 ' <<<"$out"
+  grep -qE '^totals +1 +0 +0 +0 +1 ' <<<"$out"
+}
+
+@test "--json: partial is reported in roles and totals" {
+  mkrec 3600 dev timeout 1204 - - - - - 0 true
+  mkrec 3600 dev timeout 1205 - - - - - 0
+  local out
+  out="$(stats_main --json)"
+
+  local dev
+  dev="$(jq -c '.roles[] | select(.role=="dev")' <<<"$out")"
+  [ "$(jq -r '.partial' <<<"$dev")" = "1" ]
+  [ "$(jq -r '.timeout' <<<"$dev")" = "1" ]
+  [ "$(jq -r '.totals.partial' <<<"$out")" = "1" ]
+  [ "$(jq -r '.totals.timeout' <<<"$out")" = "1" ]
+}
+
+@test "records without a delivered field stay in the outcome columns, unchanged" {
+  mkrec 3600 dev timeout 1206 - - - - - 0
+  local out
+  out="$(stats_main)"
+  # No partial column: rendering is identical to pre-#1167 output.
+  ! grep -qF 'partial' <<<"$out"
+  grep -qE '^dev +1 +0 +1 ' <<<"$out"
+  grep -qE '^totals +1 +0 +1 ' <<<"$out"
 }
 
 # ── --since filtering ────────────────────────────────────────────────────────

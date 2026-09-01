@@ -9,7 +9,7 @@
 # agent_run() — the one choke point every agent role passes through —
 # immediately after agent-run-last.json is written.
 #
-#   metrics_record_run <stream_json_file> <exit_code> [task_ref]
+#   metrics_record_run <stream_json_file> <exit_code> [task_ref] [delivered]
 #
 # The emitter is total: a missing/truncated stream, an empty file, a bad
 # exit code, or an unwritable target all yield a clean return 0 — a metrics
@@ -45,8 +45,15 @@ set -euo pipefail
 #                              result-derived field is null, but session_id
 #                              and compaction counts are still recovered from
 #                              the partial stream.
+#   delivered                — the fourth argument: "true" when the session
+#                              left commits pushed on its branch at the point
+#                              the record is written (the caller computes it),
+#                              "false" otherwise. Absent when the argument is
+#                              omitted; readers must treat absence as null
+#                              (pre-#1167 records). Independent of outcome:
+#                              a timeout can still be delivered.
 metrics_record_run() {
-  local stream_file="${1:-}" rc="${2:-0}" task_ref="${3:-}"
+  local stream_file="${1:-}" rc="${2:-0}" task_ref="${3:-}" delivered="${4:-}"
   local out_dir="${DISINTO_LOG_DIR:-/tmp}/metrics"
   local metrics_file="${out_dir}/agent-runs.jsonl"
   local ts line
@@ -65,6 +72,7 @@ metrics_record_run() {
     --arg project "${PROJECT_NAME:-}" \
     --arg task_ref "$task_ref" \
     --argjson rc "$rc" \
+    --arg delivered "$delivered" \
     'split("\n")
      | map(select(. != "") | (try fromjson))
      | map(select(type == "object"))
@@ -101,7 +109,9 @@ metrics_record_run() {
                            then null
                            else $res.modelUsage[$init.model].contextWindow end),
          compactions: ($pre | length),
-         compaction_pre_tokens: $pre }' \
+         compaction_pre_tokens: $pre }
+     | if $delivered == "" then .
+       else . + { delivered: ($delivered == "true") } end' \
     "$stream_file" 2>/dev/null) || return 0
 
   [ -n "$line" ] || return 0

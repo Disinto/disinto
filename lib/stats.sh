@@ -11,6 +11,12 @@
 # never fatal. A missing or empty metrics file prints a short message and
 # returns 0.
 #
+# Delivery vs termination (#1167): a run with a non-success outcome that
+# still pushed work (delivered: true) is counted in a separate `partial`
+# column, not in the outcome columns, so a delivered timeout is not read as
+# a bare failure. delivered absent (pre-#1167 records) is treated as null
+# and the run stays in its outcome column, unchanged.
+#
 # Tests: tests/lib-stats.bats
 
 set -euo pipefail
@@ -192,10 +198,15 @@ stats_main() {
     def agg:
       { runs: length,
         ok: (map(select(.outcome == "success")) | length),
-        timeout: (map(select(.outcome == "timeout")) | length),
-        maxturns: (map(select(.outcome == "error_max_turns")) | length),
+        # .delivered is null on pre-#1167 records; null != true keeps those
+        # runs in the outcome columns (never guessed retrospectively).
+        timeout: (map(select(.outcome == "timeout" and .delivered != true)) | length),
+        maxturns: (map(select(.outcome == "error_max_turns" and .delivered != true)) | length),
         other: (map(select(.outcome != "success" and .outcome != "timeout"
-                           and .outcome != "error_max_turns")) | length),
+                           and .outcome != "error_max_turns"
+                           and .delivered != true)) | length),
+        # Non-success runs that pushed work — delivered despite the exit.
+        partial: (map(select(.outcome != "success" and .delivered == true)) | length),
         excluded_no_duration: (map(select(.duration_ms == null)) | length),
         median_ms: (map(select(.duration_ms != null) | .duration_ms) | median),
         p90_ms: (map(select(.duration_ms != null) | .duration_ms) | p90),
@@ -241,65 +252,64 @@ stats_main() {
   fi
   echo "${title} ($(jq -r '.records' <<<"$agg") sessions)"
 
-  local tot_other
+  # other/partial appear only when non-zero, like before #1167: data without
+  # a delivered field renders exactly as it did before.
+  local tot_other tot_partial show_other=0 show_partial=0
   tot_other="$(jq -r '.totals.other' <<<"$agg")"
+  tot_partial="$(jq -r '.totals.partial' <<<"$agg")"
+  [ "$tot_other" != "0" ] && show_other=1
+  [ "$tot_partial" != "0" ] && show_partial=1
 
-  local fmt
-  if [ "$tot_other" != "0" ]; then
-    fmt='%-10s %6s %5s %7s %8s %5s %8s %8s %15s %8s %6s %15s\n'
-    printf "$fmt" role runs ok timeout maxturns other \
-      median p90 "tokens in/out" '$' tps "compactions/run"
-  else
-    fmt='%-10s %6s %5s %7s %8s %8s %8s %15s %8s %6s %15s\n'
-    printf "$fmt" role runs ok timeout maxturns \
-      median p90 "tokens in/out" '$' tps "compactions/run"
-  fi
+  local fmt header
+  fmt='%-10s %6s %5s %7s %8s'
+  header=(role runs ok timeout maxturns)
+  if [ "$show_other" -eq 1 ]; then fmt+=' %5s'; header+=(other); fi
+  if [ "$show_partial" -eq 1 ]; then fmt+=' %8s'; header+=(partial); fi
+  fmt+=' %8s %8s %15s %8s %6s %15s\n'
+  header+=(median p90 'tokens in/out' '$' tps 'compactions/run')
+  printf "$fmt" "${header[@]}"
 
-  local r runs ok timeout_ maxturns other med p90 tin tout cost tps comp
-  while IFS=$'\t' read -r r runs ok timeout_ maxturns other \
+  local r runs ok timeout_ maxturns other partial med p90 tin tout cost tps comp
+  local medf p90f iof cf tf cpf row
+  while IFS=$'\t' read -r r runs ok timeout_ maxturns other partial \
       med p90 tin tout cost tps comp; do
-    if [ "$tot_other" != "0" ]; then
-      printf "$fmt" "$r" "$runs" "$ok" "$timeout_" "$maxturns" "$other" \
-        "$(_stats_fmt_duration "$med")" "$(_stats_fmt_duration "$p90")" \
-        "$(_stats_fmt_tokens "$tin") / $(_stats_fmt_tokens "$tout")" \
-        "$(awk -v c="$cost" 'BEGIN { printf "%.2f", c }')" \
-        "$(awk -v t="$tps" 'BEGIN { printf "%.1f", t }')" \
-        "$(awk -v c="$comp" 'BEGIN { printf "%.1f", c }')"
-    else
-      printf "$fmt" "$r" "$runs" "$ok" "$timeout_" "$maxturns" \
-        "$(_stats_fmt_duration "$med")" "$(_stats_fmt_duration "$p90")" \
-        "$(_stats_fmt_tokens "$tin") / $(_stats_fmt_tokens "$tout")" \
-        "$(awk -v c="$cost" 'BEGIN { printf "%.2f", c }')" \
-        "$(awk -v t="$tps" 'BEGIN { printf "%.1f", t }')" \
-        "$(awk -v c="$comp" 'BEGIN { printf "%.1f", c }')"
-    fi
+    medf="$(_stats_fmt_duration "$med")"
+    p90f="$(_stats_fmt_duration "$p90")"
+    iof="$(_stats_fmt_tokens "$tin") / $(_stats_fmt_tokens "$tout")"
+    cf="$(awk -v c="$cost" 'BEGIN { printf "%.2f", c }')"
+    tf="$(awk -v t="$tps" 'BEGIN { printf "%.1f", t }')"
+    cpf="$(awk -v c="$comp" 'BEGIN { printf "%.1f", c }')"
+    row=("$r" "$runs" "$ok" "$timeout_" "$maxturns")
+    if [ "$show_other" -eq 1 ]; then row+=("$other"); fi
+    if [ "$show_partial" -eq 1 ]; then row+=("$partial"); fi
+    row+=("$medf" "$p90f" "$iof" "$cf" "$tf" "$cpf")
+    printf "$fmt" "${row[@]}"
   done < <(jq -r '.roles[] |
-      [.role, .runs, .ok, .timeout, .maxturns, .other,
+      [.role, .runs, .ok, .timeout, .maxturns, .other, .partial,
        .median_ms, .p90_ms, .input_tokens, .output_tokens,
        .cost_usd, .tps, .compactions_per_run] | @tsv' <<<"$agg")
 
   # Totals row: no median/p90/tps (they are not meaningful across roles).
-  local t_runs t_ok t_timeout t_maxturns t_other t_excl t_tin t_tout t_cost t_comp
-  IFS=$'\t' read -r t_runs t_ok t_timeout t_maxturns t_other \
+  local t_runs t_ok t_timeout t_maxturns t_other t_partial t_excl t_tin t_tout t_cost t_comp
+  IFS=$'\t' read -r t_runs t_ok t_timeout t_maxturns t_other t_partial \
       t_excl t_tin t_tout t_cost t_comp \
     < <(jq -r '.totals |
-      [.runs, .ok, .timeout, .maxturns, .other, .excluded_no_duration,
+      [.runs, .ok, .timeout, .maxturns, .other, .partial, .excluded_no_duration,
        .input_tokens, .output_tokens, .cost_usd, .compactions_per_run] | @tsv' \
       <<<"$agg")
-  if [ "$tot_other" != "0" ]; then
-    printf '%-10s %6s %5s %7s %8s %5s %8s %8s %15s %8s %6s %15s\n' \
-      totals "$t_runs" "$t_ok" "$t_timeout" "$t_maxturns" "$t_other" \
-      "" "" "$(_stats_fmt_tokens "$t_tin") / $(_stats_fmt_tokens "$t_tout")" \
-      "$(awk -v c="$t_cost" 'BEGIN { printf "%.2f", c }')" \
-      "" "$(awk -v c="$t_comp" 'BEGIN { printf "%.1f", c }')"
-  else
-    printf '%-10s %6s %5s %7s %8s %8s %8s %15s %8s %6s %15s\n' \
-      totals "$t_runs" "$t_ok" "$t_timeout" "$t_maxturns" \
-      "" "" "$(_stats_fmt_tokens "$t_tin") / $(_stats_fmt_tokens "$t_tout")" \
-      "$(awk -v c="$t_cost" 'BEGIN { printf "%.2f", c }')" \
-      "" "$(awk -v c="$t_comp" 'BEGIN { printf "%.1f", c }')"
-  fi
+  local t_iot t_costf t_compf
+  t_iot="$(_stats_fmt_tokens "$t_tin") / $(_stats_fmt_tokens "$t_tout")"
+  t_costf="$(awk -v c="$t_cost" 'BEGIN { printf "%.2f", c }')"
+  t_compf="$(awk -v c="$t_comp" 'BEGIN { printf "%.1f", c }')"
+  row=(totals "$t_runs" "$t_ok" "$t_timeout" "$t_maxturns")
+  if [ "$show_other" -eq 1 ]; then row+=("$t_other"); fi
+  if [ "$show_partial" -eq 1 ]; then row+=("$t_partial"); fi
+  row+=("" "" "$t_iot" "$t_costf" "" "$t_compf")
+  printf "$fmt" "${row[@]}"
 
+  if [ "$t_partial" -gt 0 ]; then
+    echo "* ${t_partial} run(s) exited non-success but had work pushed (delivered: true) — in partial, not in the outcome columns"
+  fi
   if [ "$t_excl" -gt 0 ]; then
     echo "* ${t_excl} session(s) with no duration (killed mid-run) excluded from duration and tps stats"
   fi
