@@ -104,6 +104,15 @@ job "edge" {
       read_only = false
     }
 
+    # factory-projects: overlays /srv/disinto/projects/ (with live disinto.toml
+    # symlink) into the dispatcher's cloned _factory repo so the bootstrap
+    # finds a real project TOML instead of just *.toml.example templates.
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable; dispatcher may restart on errors.
     restart {
@@ -530,7 +539,7 @@ EOT
       # Minimal resources — pure bash loop, negligible footprint.
       resources {
         cpu    = 50
-        memory = 32
+        memory = 96
       }
     }
 
@@ -565,6 +574,14 @@ EOT
         volume      = "ops-repo"
         destination = "/home/agent/repos/disinto-ops"
         read_only   = false
+      }
+
+      # Mount factory-projects on top of the cloned repo's projects/ directory
+      # so the live disinto.toml is visible to the dispatcher's bootstrap.
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
+        read_only   = true
       }
 
       # ── Forge URL via Nomad service discovery (issue #1034) ──────────
@@ -604,6 +621,7 @@ EOT
         DISPATCHER_BACKEND   = "nomad"
         FORGE_REPO           = "disinto-admin/disinto"
         FORGE_OPS_REPO       = "disinto-admin/disinto-ops"
+        FACTORY_REPO         = "disinto-admin/disinto"
         PRIMARY_BRANCH       = "main"
         DISINTO_CONTAINER    = "1"
         OPS_REPO_ROOT        = "/home/agent/repos/disinto-ops"
