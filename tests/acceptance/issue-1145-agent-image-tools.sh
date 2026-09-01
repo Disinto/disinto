@@ -11,6 +11,9 @@
 # shell linter). Distro packages are version-pinned by the debian:bookworm
 # base image, so nothing is curled from GitHub at build time.
 #
+# Extended by #1172: zstd (apt) and the dsh npm global (@deepseek-ai/dsh)
+# must also be present, so sessions stop bootstrapping them at runtime.
+#
 # This test is read-only: it greps the agents Dockerfile for the tool
 # installs the agent is assumed to have and fails if any is missing.
 # It builds nothing.
@@ -49,11 +52,19 @@ if [ -z "$APT_PACKAGES" ]; then
 fi
 
 # ── Every tool the agent is assumed to have is a distro package ────────────
-for tool in jq curl shellcheck bats; do
+for tool in jq curl shellcheck bats zstd; do
   ac_log "checking the agents image installs $tool from the distro package"
   if ! printf '%s\n' "$APT_PACKAGES" | grep -qw "$tool"; then
     ac_fail "agent Dockerfile does not install $tool via apt-get"
   fi
 done
+
+# ── dsh is installed at build time as a pinned npm global ──────────────────
+# Like the claude-code install above it, the version is pinned exactly so the
+# image contents are reproducible; nothing is fetched at session start.
+ac_log "checking the agents image installs the dsh npm global with a pinned version"
+if ! grep -Eq '^RUN npm install -g @deepseek-ai/dsh@[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$' "$DOCKERFILE"; then
+  ac_fail "agent Dockerfile does not install @deepseek-ai/dsh as a pinned npm global"
+fi
 
 ac_pass
