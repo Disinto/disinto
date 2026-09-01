@@ -162,11 +162,10 @@ export HOME=/home/agent
 # shellcheck source=lib/env.sh
 source "${DISINTO_BAKED}/lib/env.sh"
 
-# Claude CLI auth gate (#733). Roles like the edge dispatcher reuse this image
-# but never invoke claude — they only poll the ops repo. The auth check would
-# spuriously trip them. Set AGENT_REQUIRES_CLAUDE=0 in those task blocks to
-# skip the gate; default (unset / non-zero) preserves the legacy behavior
-# expected by review/architect/dev/etc.
+# Claude CLI auth gate (#733). Tasks that reuse this image but never invoke
+# claude (e.g. ops-repo pollers) would trip the check spuriously. Set
+# AGENT_REQUIRES_CLAUDE=0 in those task blocks to skip the gate; default
+# (unset / non-zero) preserves the behavior expected by review/architect/dev/etc.
 if [ "${AGENT_REQUIRES_CLAUDE:-1}" != "0" ]; then
   # Verify Claude CLI is available (expected via volume mount from host).
   if ! command -v claude &>/dev/null; then

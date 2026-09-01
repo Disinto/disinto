@@ -120,7 +120,10 @@ roles:
     namespace: default
     job_id:    bot-vault
 
-  # ── Edge dispatcher ────────────────────────────────────────────────────────
+  # ── Edge dispatcher (retained, unused) ─────────────────────────────────────
+  # Bound to the edge job's removed `dispatcher` task (removed in #1184 — the
+  # task ran the agents entrypoint, never dispatcher.sh). Kept for potential
+  # future ops-repo tooling; no task references it today.
   - name:      service-dispatcher
     policy:    service-dispatcher
     namespace: default
@@ -129,8 +132,8 @@ roles:
   # ── Edge chat-Claude control surface (#650) ────────────────────────────────
   # Caddy task in nomad/jobs/edge.hcl binds this role so the chat subprocess
   # can read the operator Forge PAT + scoped Nomad ACL token from Vault KV.
-  # Same job_id as service-dispatcher (both tasks live in the edge job); per-
-  # task vault { role = ... } stanzas pick which role each task gets.
+  # Both remaining tasks in the edge job (caddy, snapshot) bind this role
+  # via per-task vault { role = ... } stanzas.
   - name:      service-edge-chat
     policy:    service-edge-chat
     namespace: default

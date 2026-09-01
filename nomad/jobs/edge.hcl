@@ -1,10 +1,11 @@
 # =============================================================================
-# nomad/jobs/edge.hcl — Edge proxy (Caddy + dispatcher sidecar) (Nomad service job)
+# nomad/jobs/edge.hcl — Edge proxy (Caddy) (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S5.1, issue #988). Caddy reverse proxy
 # routes traffic to Forgejo, Woodpecker, staging, and chat services. The
-# dispatcher sidecar polls disinto-ops for vault actions and dispatches them
-# via Nomad batch jobs.
+# vault-action dispatcher runs as a background process inside the caddy
+# container (entrypoint-edge.sh -> docker/edge/dispatcher.sh), polling
+# disinto-ops for vault actions and dispatching them via Nomad batch jobs.
 #
 # All upstreams discovered via Nomad service discovery (issue #1156, S5-fix-7).
 # Caddy uses network_mode = "host" but upstreams run in separate alloc netns,
@@ -36,8 +37,7 @@ job "edge" {
     count = 1
 
     # Vault workload identity is scoped per-task below: the caddy task uses
-    # service-edge-chat (operator Forge PAT + Nomad ACL token, #650); the
-    # dispatcher task uses service-dispatcher (ops-repo + runner secrets).
+    # service-edge-chat (operator Forge PAT + Nomad ACL token, #650).
 
     # ── Network ports (S5.1, issue #988) ──────────────────────────────────
     # Caddy listens on :80 and :443. Expose both on the host.
@@ -61,12 +61,6 @@ job "edge" {
       read_only = false
     }
 
-    # ops-repo: disinto-ops clone for vault actions polling.
-    volume "ops-repo" {
-      type      = "host"
-      source    = "ops-repo"
-      read_only = false
-    }
 
     # claude-shared: OAuth credentials for Anthropic Claude CLI used by
     # the chat subprocess (#648). Same volume used by every opus agent
@@ -104,17 +98,9 @@ job "edge" {
       read_only = false
     }
 
-    # factory-projects: overlays /srv/disinto/projects/ (with live disinto.toml
-    # symlink) into the dispatcher's cloned _factory repo so the bootstrap
-    # finds a real project TOML instead of just *.toml.example templates.
-    volume "factory-projects" {
-      type      = "host"
-      source    = "factory-projects"
-      read_only = true
-    }
 
     # ── Conservative restart policy ───────────────────────────────────────
-    # Caddy should be stable; dispatcher may restart on errors.
+    # Caddy should be stable.
     restart {
       attempts = 3
       interval = "5m"
@@ -161,7 +147,6 @@ job "edge" {
         # Mount docker.sock rw for the chat-Claude factory control surface
         # (#650). The chat subprocess needs rw to run `docker restart`,
         # `docker stop`, etc. via the Bash allow-list in chat-settings.json.
-        # The dispatcher task keeps its own ro mount below.
         volumes = ["/var/run/docker.sock:/var/run/docker.sock:rw"]
       }
 
@@ -543,102 +528,5 @@ EOT
       }
     }
 
-    # ── Dispatcher task (S5.1, issue #988) ────────────────────────────────
-    task "dispatcher" {
-      driver = "docker"
-
-      # Vault role for ops-repo + runner secret enumeration. Previously
-      # inherited from a group-level stanza; moved to task scope when the
-      # caddy task got its own role (#650).
-      vault {
-        role = "service-dispatcher"
-      }
-
-      config {
-        # Use same disinto/agents:local image as other agents.
-        image        = "disinto/agents:local"
-        force_pull   = false
-        network_mode = "host"
-
-        # apparmor=unconfined matches docker-compose.
-        security_opt = ["apparmor=unconfined"]
-
-        # Mount docker.sock via bind-volume (not host volume) for legacy
-        # docker backend compat. Nomad host volumes require named volumes
-        # from client.hcl; socket files cannot be host volumes.
-        volumes = ["/var/run/docker.sock:/var/run/docker.sock:ro"]
-      }
-
-      # Mount ops-repo for vault actions polling.
-      volume_mount {
-        volume      = "ops-repo"
-        destination = "/home/agent/repos/disinto-ops"
-        read_only   = false
-      }
-
-      # Mount factory-projects on top of the cloned repo's projects/ directory
-      # so the live disinto.toml is visible to the dispatcher's bootstrap.
-      volume_mount {
-        volume      = "factory-projects"
-        destination = "/srv/disinto/project-repos/_factory/projects"
-        read_only   = true
-      }
-
-      # ── Forge URL via Nomad service discovery (issue #1034) ──────────
-      # Resolves forgejo service address/port dynamically for bridge network
-      # compatibility. Template-scoped to dispatcher task (Nomad doesn't
-      # propagate templates across tasks).
-      template {
-        destination = "local/forge.env"
-        env         = true
-        change_mode = "restart"
-        data        = <<EOT
-{{ range nomadService "forgejo" -}}
-FORGE_URL=http://{{ .Address }}:{{ .Port }}
-{{- end }}
-EOT
-      }
-
-      # ── Vault-templated secrets (S5.1, issue #988) ──────────────────────
-      # Renders FORGE_TOKEN from Vault KV v2 for ops repo access.
-      template {
-        destination          = "secrets/dispatcher.env"
-        env                  = true
-        change_mode          = "restart"
-        error_on_missing_key = false
-        data                 = <<EOT
-{{- with secret "kv/data/disinto/shared/ops-repo" -}}
-FORGE_TOKEN={{ .Data.data.token }}
-{{- else -}}
-# WARNING: kv/disinto/shared/ops-repo is empty — run tools/vault-seed-ops-repo.sh
-FORGE_TOKEN=seed-me
-{{- end }}
-EOT
-      }
-
-      # ── Non-secret env ───────────────────────────────────────────────────
-      env {
-        DISPATCHER_BACKEND   = "nomad"
-        FORGE_REPO           = "disinto-admin/disinto"
-        FORGE_OPS_REPO       = "disinto-admin/disinto-ops"
-        FACTORY_REPO         = "disinto-admin/disinto"
-        PRIMARY_BRANCH       = "main"
-        DISINTO_CONTAINER    = "1"
-        OPS_REPO_ROOT        = "/home/agent/repos/disinto-ops"
-        FORGE_ADMIN_USERS    = "vault-bot,admin"
-
-        # Skip the Claude CLI auth gate in the agent entrypoint (#733).
-        # Dispatcher only polls the ops repo (docker/edge/dispatcher.sh) and
-        # never invokes claude — the auth check would otherwise crash this
-        # task with exit 3 under set -euo pipefail.
-        AGENT_REQUIRES_CLAUDE = "0"
-      }
-
-      # Dispatcher is lightweight — minimal CPU + memory.
-      resources {
-        cpu    = 100
-        memory = 256
-      }
-    }
   }
 }

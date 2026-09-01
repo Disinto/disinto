@@ -31,7 +31,7 @@ KV v2). Vault addresses KV v2 data at `kv/data/<path>` and metadata at
 | `service-forgejo` | `kv/data/disinto/shared/forgejo/*` |
 | `service-woodpecker` | `kv/data/disinto/shared/woodpecker/*` |
 | `service-agents` | All 7 `kv/data/disinto/bots/<role>/*` namespaces + `kv/data/disinto/shared/forge/*`; composite policy for the `agents` Nomad job (S4.1) |
-| `service-dispatcher` | `kv/data/disinto/runner/*` (list+read) + `kv/data/disinto/shared/ops-repo/*` (read); used by edge dispatcher sidecar (S5.1, #988) |
+| `service-dispatcher` | `kv/data/disinto/runner/*` (list+read) + `kv/data/disinto/shared/ops-repo/*` (read); was used by the edge job's `dispatcher` task (S5.1, #988) — task removed in #1184, role/policy retained but currently unused |
 | `bot-<role>` (dev, review, gardener, architect, planner, predictor, supervisor, vault, dev-qwen) | `kv/data/disinto/bots/<role>/*` + `kv/data/disinto/shared/forge/*` |
 | `runner-<TOKEN>` (GITHUB\_TOKEN, CODEBERG\_TOKEN, CLAWHUB\_TOKEN, DEPLOY\_KEY, NPM\_TOKEN, DOCKER\_HUB\_TOKEN) | `kv/data/disinto/runner/<TOKEN>` (exactly one) |
 | `dispatcher` | `kv/data/disinto/runner/*` + `kv/data/disinto/shared/ops-repo/*` |
