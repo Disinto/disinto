@@ -54,6 +54,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/tests/lib/review-harness.sh"
 
 ac_require_cmd awk
 ac_require_cmd jq
@@ -205,75 +207,18 @@ if ac_has_call_matching "no_push_after_3_attempts"; then
 fi
 
 # ── 6-7. review-pr.sh: timeout must reach the error-comment path ───────────
-# review-pr.sh is a top-level executable too, so review_run_and_parse() is
-# extracted the same way. Its mutating/external calls are stubbed:
+# review-pr.sh is a top-level executable too, so the shared harness
+# (tests/lib/review-harness.sh) loads review_run_and_parse() in-process:
 # agent_run returns a per-case rc, curl records each call + body.
 REVIEW_TARGET="$REPO_ROOT/review/review-pr.sh"
-ac_assert_file "$REVIEW_TARGET" "review/review-pr.sh must exist"
-review_fn_body="$(ac_extract_fn review_run_and_parse "$REVIEW_TARGET")"
-[ -n "$review_fn_body" ] \
-  || ac_fail "could not locate review_run_and_parse() in review/review-pr.sh"
-eval "$review_fn_body"
-type review_run_and_parse >/dev/null 2>&1 \
-  || ac_fail "review_run_and_parse() did not evaluate to a function"
-
-# Globals review-pr.sh would normally have set before calling the function.
-# SC2034 on the ones below: they are consumed by the eval'd
-# review_run_and_parse, which shellcheck cannot see through `eval`.
-PR_NUMBER="$ISSUE"
-# shellcheck disable=SC2034
-PR_SHA="abcdef1234567890"
-# shellcheck disable=SC2034
-FORGE_TOKEN="test-token"
-# shellcheck disable=SC2034
-API="https://forge.example/api/repos/test/repo"
-# shellcheck disable=SC2034
-WORKTREE="$TMP_DIR/review-wt"
-# shellcheck disable=SC2034
-PROMPT="review prompt"
-# shellcheck disable=SC2034
-IS_RE_REVIEW=false
-_AGENT_SESSION_ID=""
-OUTPUT_FILE="$TMP_DIR/review-output.json"
+ac_load_review_fn "$REVIEW_TARGET"
+ac_setup_review_env "$ISSUE"
+# Simulated inherited jobspec value: the cap in review-pr.sh must override it.
 CLAUDE_TIMEOUT=900
-
-CURL_ARGS="$TMP_DIR/curl-args.log"
-CURL_BODY="$TMP_DIR/curl-body.log"
-# The agent_run stub emulates the real agent: before returning the configured
-# rc it writes the (pre-decided) output file, so the function's opening
-# `rm -f "$OUTPUT_FILE"` + "agent writes it during the run" sequence holds.
-agent_run() {
-  [ -n "${AGENT_STUB_OUTPUT:-}" ] && printf '%s' "$AGENT_STUB_OUTPUT" > "$OUTPUT_FILE"
-  return "${AGENT_RUN_RC_STUB:-0}"
-}
-# curl runs in a pipeline subshell, so the stub records to files instead of a
-# shell array. The body goes to its own file because jq -n emits
-# pretty-printed, multi-line JSON.
-curl() {
-  local body
-  body="$(cat)"
-  printf '%s\n' "$*" >> "$CURL_ARGS"
-  printf '%s\n' "$body" >> "$CURL_BODY"
-  return 0
-}
-log()    { :; }
-status() { :; }
-
-# run_review <agent-run-rc> <output-file|-> — run the function, returning its
-# rc via REVIEW_RC (guarded: a non-zero rc is the thing under test).
-run_review() {
-  local stub_rc="$1" out="$2"
-  AGENT_RUN_RC_STUB="$stub_rc"
-  if [ "$out" = "-" ]; then AGENT_STUB_OUTPUT=""; else AGENT_STUB_OUTPUT="$(cat "$out")"; fi
-  : > "$CURL_ARGS"
-  : > "$CURL_BODY"
-  REVIEW_RC=0
-  review_run_and_parse || REVIEW_RC=$?
-}
 
 # 6a. rc 124 + no output → return 1, error comment posted to the PR comments
 #     endpoint, body names the timeout.
-run_review 124 -
+ac_run_review 124 -
 [ "$REVIEW_RC" -eq 1 ] \
   || ac_fail "timeout with no output must return 1, got ${REVIEW_RC}"
 [ -s "$CURL_ARGS" ] \
@@ -295,7 +240,7 @@ esac
 
 # 6b. rc 3 (non-timeout crash) + no output → return 1, comment reports the rc
 #     but must NOT call it a timeout.
-run_review 3 -
+ac_run_review 3 -
 [ "$REVIEW_RC" -eq 1 ] || ac_fail "crash with no output must return 1, got ${REVIEW_RC}"
 BODY_TEXT="$(cat "$CURL_BODY" 2>/dev/null || true)"
 case "$BODY_TEXT" in
@@ -309,14 +254,14 @@ esac
 # 7a. rc 0 + a valid verdict → return 0, no error comment.
 printf '{"verdict":"approve","verdict_reason":"ok","review_markdown":"LGTM"}' \
   > "$TMP_DIR/verdict-ok.json"
-run_review 0 "$TMP_DIR/verdict-ok.json"
+ac_run_review 0 "$TMP_DIR/verdict-ok.json"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
 [ ! -s "$CURL_ARGS" ] && [ ! -s "$CURL_BODY" ] \
   || ac_fail "happy path must not post the error comment, saw: $(cat "$CURL_BODY" 2>/dev/null)"
 [ -n "$REVIEW_JSON" ] || ac_fail "valid verdict must be captured in REVIEW_JSON"
 
 # 7b. rc 124 but a valid verdict was already written → still honoured.
-run_review 124 "$TMP_DIR/verdict-ok.json"
+ac_run_review 124 "$TMP_DIR/verdict-ok.json"
 [ "$REVIEW_RC" -eq 0 ] \
   || ac_fail "a valid verdict written before the timeout must still be honoured, got ${REVIEW_RC}"
 [ ! -s "$CURL_ARGS" ] && [ ! -s "$CURL_BODY" ] \

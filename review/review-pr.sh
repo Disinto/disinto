@@ -337,8 +337,12 @@ review_run_and_parse() {
   REVIEW_RUN_RC=0
   status "running review"
   rm -f "$OUTPUT_FILE"
-  export CLAUDE_MODEL="sonnet"
-  export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"   # 15 min — reviews shouldn't take longer
+  # Review-specific overrides, distinct from the container's values: the jobspec
+  # sets CLAUDE_MODEL deliberately (Claude Code sizes its context window from
+  # the name, so it must match the served model) and CLAUDE_TIMEOUT carries the
+  # dev budget (7200) — a fallback that inherited it would never apply the cap.
+  export CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}"
+  export CLAUDE_TIMEOUT="${REVIEW_CLAUDE_TIMEOUT:-2400}"   # 40 min — deliberate cap: a review still running at 40 min is stuck, not thorough
   if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
     agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT" || REVIEW_RUN_RC=$?
   else
