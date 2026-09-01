@@ -5,6 +5,8 @@
 #   1. shellcheck   — lint all .sh files (warnings+errors)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
 #   3. bats         — run every tests/*.bats suite by glob discovery (#1144)
+#   4. rebuild-and-deploy-agents — rebuild + redeploy disinto/agents:local when
+#      docker/agents/** changes on main (#1173)
 #
 # Timeouts:
 #   Workflow-level default (10m) applies to all steps unless overridden.
@@ -132,3 +134,113 @@ steps:
         done
         [ -n "$files" ] || { echo "no bats suites selected — check tests/*.bats" >&2; exit 1; }
         bats $files
+
+  # #1173 — rebuild disinto/agents:local when docker/agents/ changes and
+  # redeploy the agent jobspecs, so Dockerfile fixes actually ship. Nothing
+  # else rebuilds the :local tag (the box only built it at install time), so
+  # before this every Dockerfile fix merged and never shipped.
+  #
+  # Path-filtered to docker/agents/** on push to main ONLY — do not widen
+  # this. The step restarts the agent jobs, which kills in-flight sessions
+  # on the box; that is acceptable because docker/agents/ changes are rare
+  # and #1164 re-queues interrupted issues, so no work is lost.
+  #
+  # Reuses the deploy idiom from .woodpecker/acceptance-tests.yml: the same
+  # /var/lib/disinto/ci-locks/acceptance-deploy.lock flock and the same 120s
+  # per-job health poll over `nomad job status -json`. The box's Nomad API
+  # is loopback-only (bind_addr 127.0.0.1 in nomad/server.hcl), so every
+  # `nomad` call runs in a helper container on the host network namespace,
+  # spawned through the mounted docker socket.
+  #
+  # The image TAG does not change, so `nomad job run` alone is a no-op for
+  # running allocations (Nomad compares job specs, not image contents).
+  # `nomad job restart` forces each allocation to come back up on the
+  # freshly built image.
+  - name: rebuild-and-deploy-agents
+    image: alpine:3.20
+    when:
+      - event: push
+        branch: main
+        path:
+          - docker/agents/**
+    timeout: 30m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
+    commands:
+      # util-linux: non-busybox flock, same as the acceptance deploy step.
+      - apk add --no-cache docker-cli jq util-linux
+      # POSIX sh, plain $VAR references only (Woodpecker pre-expands
+      # dollar-brace references in pipeline YAML — comments included — and
+      # aborts the pipeline on one it cannot parse; see #1146).
+      - |
+        set -e
+        NOMAD_IMAGE=hashicorp/nomad:1.9.5
+        # Nomad on the box listens on loopback only; run the CLI in a
+        # host-network container so localhost:4646 is the box's Nomad.
+        nomad_api() {
+          docker run --rm --network host \
+            -e NOMAD_ADDR=http://127.0.0.1:4646 \
+            -v "$PWD/nomad/jobs":/jobspecs:ro \
+            "$NOMAD_IMAGE" nomad "$@"
+        }
+
+        # Same deploy lock as the acceptance deploy step — one deployer at a time.
+        mkdir -p /var/lib/disinto/ci-locks
+        exec 9>/var/lib/disinto/ci-locks/acceptance-deploy.lock
+        flock -w 600 9 || { echo "could not acquire deploy lock" >&2; exit 1; }
+
+        # Rebuild the agents image the jobspecs reference (tag unchanged).
+        docker build -t disinto/agents:local -f docker/agents/Dockerfile .
+
+        # The agent jobspecs that run disinto/agents:local, discovered by
+        # glob so a new nomad/jobs/agents-<x>.hcl is covered without editing
+        # this step (a hardcoded list would silently stop redeploying new
+        # jobs — the bug class #1173 targets). vault-runner and edge do not
+        # match the agents* glob: restarting them takes down the dispatcher
+        # and the vault runner.
+        specs=''
+        for spec in nomad/jobs/agents*.hcl; do
+          [ -e "$spec" ] || continue
+          specs="$specs $spec"
+        done
+        [ -n "$specs" ] || { echo "no nomad/jobs/agents*.hcl jobspecs found" >&2; exit 1; }
+
+        for spec in $specs; do
+          job=$(basename "$spec" .hcl)
+          # Paths are relative to the /jobspecs mount inside the helper
+          # container (see nomad_api), not the workspace.
+          nomad_api job validate "/jobspecs/$job"
+          nomad_api job run "/jobspecs/$job"
+          # Tag unchanged, so job run alone would keep the old image;
+          # restart brings each allocation back on the rebuilt image.
+          # This kills in-flight sessions (acceptable — see note above).
+          nomad_api job restart "$job"
+
+          # Health poll, same 120s/5s two-pass shape as acceptance-tests.yml:
+          # every allocation at the newest job version must be running. A
+          # failed or empty status is treated as NOT healthy — a transient
+          # failure right after the restart must not read as "no unhealthy
+          # allocations".
+          deadline=$(( $(date +%s) + 120 ))
+          healthy=no
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            status_json=$(nomad_api job status -json "$job" 2>/dev/null || echo '')
+            if [ -n "$status_json" ] && [ "$status_json" != "{}" ]; then
+              unhealthy=$(echo "$status_json" | jq -r '(.Allocations // []) as $a
+                   | (($a | map(.JobVersion // 0) | max) // 0) as $v
+                   | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length')
+              if [ "$unhealthy" = "0" ]; then
+                echo "$job: healthy after rebuild"
+                healthy=yes
+                break
+              fi
+            fi
+            sleep 5
+          done
+          if [ "$healthy" != "yes" ]; then
+            echo "$job: not healthy after 120s" >&2
+            nomad_api job status "$job" >&2 || true
+            exit 1
+          fi
+        done
