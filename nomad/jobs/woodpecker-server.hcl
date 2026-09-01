@@ -118,6 +118,14 @@ job "woodpecker-server" {
       # (agent secret, OAuth client/secret) lives in the template stanza
       # below and is merged into task env.
       env {
+        # Forge request timeout. Woodpecker's default is short and
+        # Forgejo here runs on SQLite, which serialises: 8 concurrent
+        # /contents requests each took ~16s under host load average 14
+        # on 4 CPUs. Woodpecker fans out ~13 config fetches per push,
+        # so the deadline expired and NO pipeline was created at all --
+        # commits got zero status contexts and pr_poll_ci then blocked
+        # issues with a false ci_timeout (see #1082, #1084).
+        WOODPECKER_FORGE_TIMEOUT        = "60s"
         WOODPECKER_FORGEJO              = "true"
         # OAuth browser redirects still hit the public URL; this is separate
         # from WOODPECKER_FORGEJO_URL which is resolved via nomadService below
