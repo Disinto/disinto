@@ -209,8 +209,8 @@ steps:
           job=$(basename "$spec" .hcl)
           # Paths are relative to the /jobspecs mount inside the helper
           # container (see nomad_api), not the workspace.
-          nomad_api job validate "/jobspecs/$job"
-          nomad_api job run "/jobspecs/$job"
+          nomad_api job validate "/jobspecs/$job.hcl"
+          nomad_api job run "/jobspecs/$job.hcl"
           # Tag unchanged, so job run alone would keep the old image;
           # restart brings each allocation back on the rebuilt image.
           # This kills in-flight sessions (acceptable — see note above).
