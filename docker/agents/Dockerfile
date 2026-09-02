@@ -23,10 +23,10 @@ ARG YQ_VERSION=4.45.1
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
 
-# Node 22 LTS — Debian bookworm ships Node 18, but @deepseek-ai/dsh needs
+# Node 24 LTS — Debian bookworm ships Node 18, but @deepseek-ai/dsh needs
 # util.parseEnv (Node >= 20.12). Official tarball into /usr/local so it
 # wins PATH over any distro nodejs. Pinned version for reproducibility.
-RUN curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.gz -o /tmp/node.tar.xz \
+RUN curl -fsSL https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-x64.tar.gz -o /tmp/node.tar.xz \
     && tar -xzf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
     && node --version && npm --version
