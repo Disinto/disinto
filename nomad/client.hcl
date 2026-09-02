@@ -37,6 +37,14 @@ client {
     read_only = false
   }
 
+  # qwen review agent runtime data (added 2026-08-27 on the box, committed
+  # with #1192). One role per job keeps logs and locks apart, the same way
+  # the opus agents already do.
+  host_volume "agent-data-qwen-review" {
+    path      = "/srv/disinto/agent-data-qwen/review"
+    read_only = false
+  }
+
   # gardener agent runtime data — dedicated per-role source so the
   # gardener's state cannot collide with the dev/review jobs that share
   # the base `agent-data` volume (#1123).
