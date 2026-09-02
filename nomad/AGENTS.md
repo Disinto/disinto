@@ -24,6 +24,7 @@ see issues #821–#992 for the step breakdown.
 | `nomad/acl-policies/chat-ops.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault ACL policy for chat operations; grants read access to chat-related KV paths. |
 | `nomad/jobs/agents-supervisor-opus.hcl` | submitted via `lib/init/nomad/deploy.sh` | Supervisor agent job using Opus model; separate from the general `nomad/jobs/agents.hcl` to isolate supervisor workloads. |
 | `nomad/jobs/edge-threads-gc.hcl` | submitted via `lib/init/nomad/deploy.sh` | Edge threads garbage collection job; periodically cleans stale thread state. |
+| `nomad/jobs/agent-logs-rotate.hcl` | submitted via `lib/init/nomad/deploy.sh` | Periodic log-rotation job; daily 03:30 UTC copytruncate rotation of `*.log` under `/srv/disinto/agent-data*/` (>50MB, 5 gzip generations, safe for O_APPEND writers) via `bin/agent-log-rotate.sh` on raw_exec (#1195). |
 | `nomad/jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault runner job; executes Vault operations with scoped credentials. |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
