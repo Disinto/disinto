@@ -37,7 +37,14 @@ job "agents" {
     # in vault/roles.yaml, policy in vault/policies/service-agents.hcl.
     # Bound claim pins nomad_job_id = "agents".
     vault {
-      role = "service-agents"
+      role        = "service-agents"
+      # A Vault token renewal must not restart the task (#1091, #1110). The
+      # default change_mode is "restart", which SIGKILLs the container every
+      # 24h (token_max_ttl) and destroys whatever claude session is
+      # mid-flight (exit 137, no checkpoint). Verified on the qwen jobs in
+      # #1091. The agent task does not use Vault at runtime — the rendered
+      # secrets/bots.env is static between re-seeds — so "noop" is safe.
+      change_mode = "noop"
     }
 
     # No network port — agents are outbound-only (poll forgejo, call llama).
