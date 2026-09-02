@@ -26,8 +26,8 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}
 # Node 22 LTS — Debian bookworm ships Node 18, but @deepseek-ai/dsh needs
 # util.parseEnv (Node >= 20.12). Official tarball into /usr/local so it
 # wins PATH over any distro nodejs. Pinned version for reproducibility.
-RUN curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o /tmp/node.tar.xz \
-    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+RUN curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.gz -o /tmp/node.tar.xz \
+    && tar -xzf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
     && node --version && npm --version
 
