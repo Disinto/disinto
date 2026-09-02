@@ -120,6 +120,8 @@ _generate_local_model_services() {
         FORGE_USER) forge_user="$value" ;;
         COMPACT_PCT) compact_pct="$value" ;;
         POLL_INTERVAL) poll_interval_val="$value" ;;
+        HARNESS) harness="$value" ;;
+        CONTEXT_WINDOW) context_window="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
             # Record service for duplicate detection using the full service name
@@ -146,6 +148,30 @@ _generate_local_model_services() {
             # remove it via --remove-orphans.
             local user_upper
             user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
+            # The model/harness env block is the only part of the service that
+            # depends on the harness (#1107). Claude (the default, and the only
+            # harness a pre-#1107 TOML can have) must render exactly the
+            # historical block; dsh emits its own settings-form variables and
+            # no CLAUDE_* tuning variables.
+            local model_env
+            if [ "${harness:-claude}" = "dsh" ]; then
+              model_env="      AGENT_HARNESS: \"dsh\"
+      DSH_HOME: /home/agent/data/dsh
+      DSH_PERMISSION_MODE: \"danger-full-access\"
+      DSH_MODEL: \"${model}\"
+      DSH_BASE_URL: \"${base_url}\"
+      DSH_CONTEXT_WINDOW: \"${context_window:-163840}\""
+            else
+              model_env="      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
+      ANTHROPIC_BASE_URL: \"${base_url}\"
+      ANTHROPIC_API_KEY: \"${api_key}\"
+      CLAUDE_MODEL: \"${model}\"
+      CLAUDE_CONFIG_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      CLAUDE_CREDENTIALS_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: \"${compact_pct}\"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: \"0\"
+      CLAUDE_CODE_ENABLE_TELEMETRY: \"0\""
+            fi
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
@@ -173,15 +199,7 @@ _generate_local_model_services() {
       FORGE_REVIEW_TOKEN: \${FORGE_REVIEW_TOKEN:-}
       FORGE_BOT_USERNAMES: \${FORGE_BOT_USERNAMES:-}
       AGENT_ROLES: "${roles}"
-      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
-      ANTHROPIC_BASE_URL: "${base_url}"
-      ANTHROPIC_API_KEY: "${api_key}"
-      CLAUDE_MODEL: "${model}"
-      CLAUDE_CONFIG_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
-      CLAUDE_CREDENTIALS_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
-      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "${compact_pct}"
-      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
-      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+${model_env}
       DISINTO_CONTAINER: "1"
       PROJECT_NAME: ${PROJECT_NAME:-project}
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
@@ -218,7 +236,7 @@ ${vol_repos}"
             all_vols="${vol_data}
 ${vol_repos}"
           fi
-          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val=""
+          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val="" harness="" context_window=""
           ;;
       esac
     done < <(python3 -c '
@@ -243,6 +261,8 @@ for name, config in agents.items():
     forge_user = config.get("forge_user", f"{name}-bot")
     compact_pct = config.get("compact_pct", 60)
     poll_interval = config.get("poll_interval", 60)
+    harness = config.get("harness", "claude")
+    context_window = config.get("context_window", "")
 
     safe_name = name.lower()
     safe_name = re.sub(r"[^a-z0-9]", "-", safe_name)
@@ -256,33 +276,90 @@ for name, config in agents.items():
     print(f"FORGE_USER={forge_user}")
     print(f"COMPACT_PCT={compact_pct}")
     print(f"POLL_INTERVAL={poll_interval}")
+    print(f"HARNESS={harness}")
+    print(f"CONTEXT_WINDOW={context_window}")
     print("---")
 ' "$toml" 2>/dev/null)
   done
 
   if [ "$has_services" = true ]; then
-    # Insert the services before the volumes section
+    # Splice the rendered services in before the top-level `volumes:` section
+    # and add the per-agent local-model volumes to that section.
+    #
+    # Faithful re-implementation of the historical GNU-sed splice in python3
+    # (already required for the TOML parsing above): same line-by-line
+    # semantics, byte-identical output. The sed version used GNU-only
+    # constructs — \n inside s/// patterns and replacements, N/label loops —
+    # that busybox sed (alpine CI) rejects with a parse error, aborting
+    # generation outright.
     local temp_compose
     temp_compose=$(mktemp)
-    # Get everything before volumes:
-    sed -n '1,/^volumes:/p' "$compose_file" | sed '$d' > "$temp_compose"
-    # Add the services
-    cat "$temp_file" >> "$temp_compose"
-    # Add the volumes section and everything after
-    sed -n '/^volumes:/,$p' "$compose_file" >> "$temp_compose"
+    python3 - "$compose_file" "$temp_file" "$all_vols" > "$temp_compose" <<'PYEOF'
+import re
+import sys
 
-    # Add local-model volumes to the volumes section
-    if [ -n "$all_vols" ]; then
-      # Escape embedded newlines as literal \n so sed's s///  replacement
-      # tolerates multi-line $all_vols (needed once >1 local-model agent is
-      # configured — without this, the second agent's volume entry would
-      # unterminate the sed expression).
-      local all_vols_escaped
-      all_vols_escaped=$(printf '%s' "$all_vols" | sed ':a;N;$!ba;s/\n/\\n/g')
-      # Find the volumes section and add the new volumes
-      sed -i "/^volumes:/{n;:a;n;/^[a-z]/!{s/$/\n$all_vols_escaped/;b};ba}" "$temp_compose"
-    fi
+compose_path, temp_path = sys.argv[1], sys.argv[2]
+all_vols = sys.argv[3].encode()
 
+with open(compose_path, "rb") as f:
+    lines = f.read().splitlines(keepends=True)
+with open(temp_path, "rb") as f:
+    temp = f.read()
+
+# Everything before the first top-level `volumes:` line, then the rendered
+# services, then that line and everything after it.
+idx = next((i for i, line in enumerate(lines) if line.startswith(b"volumes:")), None)
+if idx is None:
+    out = temp
+else:
+    out = b"".join(lines[:idx]) + temp + b"".join(lines[idx:])
+
+# Mirror the old sed loop on each `volumes:` line: print it plus the next
+# line, then keep consuming lines that start with [a-z] (top-level keys);
+# append all_vols to the first line that does NOT start with [a-z]. If the
+# input runs out at any `n`, print what was read and stop (no append).
+# Byte note: sed's s/// acts on the pattern space WITHOUT the trailing
+# newline and sed re-appends it on print; all_vols carries no trailing
+# newline. So for a line stored with its newline (keepends), the emitted
+# bytes are cur + all_vols + b"\n" — NOT cur + b"\n" + all_vols (which
+# would insert a blank line and merge the last volume onto the next line).
+if all_vols:
+    lines = out.splitlines(keepends=True)
+    n = len(lines)
+    out_lines = []
+    i = 0
+    top_level = re.compile(rb"^[a-z]")
+    while i < n:
+        line = lines[i]
+        if not line.startswith(b"volumes:"):
+            out_lines.append(line)
+            i += 1
+            continue
+        out_lines.append(line)
+        if i + 1 >= n:
+            i = n
+            break
+        out_lines.append(lines[i + 1])
+        k = i + 2
+        if k >= n:
+            i = n
+            break
+        while True:
+            cur = lines[k]
+            if top_level.match(cur):
+                out_lines.append(cur)
+                k += 1
+                if k >= n:
+                    i = n
+                    break
+                continue
+            out_lines.append(cur + all_vols + b"\n")
+            i = k + 1
+            break
+    out = b"".join(out_lines)
+
+sys.stdout.buffer.write(out)
+PYEOF
     mv "$temp_compose" "$compose_file"
   fi
 

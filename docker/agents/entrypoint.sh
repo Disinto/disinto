@@ -70,6 +70,19 @@ chmod 700 /home/agent/data/logs 2>/dev/null || true
 find /home/agent/data/logs -mindepth 1 -type d -exec chmod 700 {} + 2>/dev/null || true
 find /home/agent/data/logs -type f -exec chmod 600 {} + 2>/dev/null || true
 
+# dsh headless profile (#1107): hired dsh agents run `dsh --profile headless`
+# with DSH_HOME=/home/agent/data/dsh (set by the compose/nomad env block).
+# The profile is baked into the image at /opt/dsh/profiles/headless.json.
+# Copy it into the persistent DSH_HOME when missing — compose named volumes
+# inherit image contents on first init, but Nomad host volumes do not, so
+# this entrypoint copy is the seeding point for both backends. `cp -n`
+# never overwrites an operator-customised profile.
+if [ -f /opt/dsh/profiles/headless.json ]; then
+  mkdir -p /home/agent/data/dsh/profiles
+  cp -n /opt/dsh/profiles/headless.json /home/agent/data/dsh/profiles/headless.json 2>/dev/null || true
+  chown -R agent:agent /home/agent/data/dsh 2>/dev/null || true
+fi
+
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }
