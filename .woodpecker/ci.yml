@@ -181,7 +181,7 @@ steps:
           docker run --rm --network host \
             -e NOMAD_ADDR=http://127.0.0.1:4646 \
             -v "$PWD/nomad/jobs":/jobspecs:ro \
-            "$NOMAD_IMAGE" nomad "$@"
+            "$NOMAD_IMAGE" "$@"
         }
 
         # Same deploy lock as the acceptance deploy step — one deployer at a time.
