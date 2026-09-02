@@ -5,8 +5,8 @@
 # Per-iteration script: does exactly one task per invocation. Same loop shape
 # as dev/dev-poll.sh — invoked once per polling iteration.
 #
-# Replaces the monolithic gardener/gardener-run.sh (one-shot batch every
-# GARDENER_INTERVAL) with a focused step driver:
+# Replaces the monolithic gardener/gardener-run.sh (one-shot batch, now run
+# from host cron in bare-metal mode) with a focused step driver:
 #   1. gardener/classify.sh → emits one JSON task on stdout (or empty for CLEAN)
 #   2. CLEAN → exit 0 immediately (~1s, no slot used)
 #   3. Otherwise dispatch to formulas/<task>.toml in a single claude session
