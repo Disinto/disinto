@@ -70,6 +70,33 @@ roles:
     namespace: default
     job_id:    agents
 
+  # ── Per-role agent jobs (S4.1 split — #1083) ────────────────────────────
+  # The per-role split (one role per job, one llama slot each) gives every
+  # job its own name, and the jwt-nomad bound claim pins nomad_job_id to a
+  # single value — so the service-agents role above (job_id: agents) cannot
+  # serve a jobspec named agents-dev-qwen. Each split job gets its own role
+  # bound to its own job_id, all reusing the composite service-agents
+  # policy (identical token capabilities, only the bound job differs).
+  - name:      agents-supervisor-opus
+    policy:    service-agents
+    namespace: default
+    job_id:    agents-supervisor-opus
+
+  - name:      agents-dev-qwen
+    policy:    service-agents
+    namespace: default
+    job_id:    agents-dev-qwen
+
+  - name:      agents-review-qwen
+    policy:    service-agents
+    namespace: default
+    job_id:    agents-review-qwen
+
+  - name:      agents-gardener-qwen
+    policy:    service-agents
+    namespace: default
+    job_id:    agents-gardener-qwen
+
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the

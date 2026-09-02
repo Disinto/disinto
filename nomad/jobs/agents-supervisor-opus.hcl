@@ -37,11 +37,12 @@ job "agents-supervisor-opus" {
     count = 1
 
     # ── Vault workload identity (S4.1, issue #955) ─────────────────────────
-    # Service role for supervisor bot identity. Role defined in
-    # vault/roles.yaml, policy in vault/policies/service-agents.hcl.
-    # Bound claim pins nomad_job_id = "agents-supervisor-opus".
+    # Per-role identity (its own role since the split, #1083). Role defined
+    # in vault/roles.yaml — its bound claim pins nomad_job_id =
+    # "agents-supervisor-opus"; the policy is the composite service-agents
+    # policy (vault/policies/service-agents.hcl).
     vault {
-      role = "service-agents"
+      role = "agents-supervisor-opus"
     }
 
     # No network ports — supervisor is outbound-only (polls forgejo, calls

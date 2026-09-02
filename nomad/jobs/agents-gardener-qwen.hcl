@@ -49,12 +49,14 @@ job "agents-gardener-qwen" {
     count = 1
 
     # ── Vault workload identity ─────────────────────────────────────────────
-    # Composite role covering all bot identities (vault/policies/
-    # service-agents.hcl) — same role as nomad/jobs/agents.hcl. The template
-    # below renders the full bot token set; this job authenticates as the
-    # gardener bot (kv/disinto/bots/gardener).
+    # Per-role identity (its own role since the split, #1083). Role defined
+    # in vault/roles.yaml — its bound claim pins nomad_job_id =
+    # "agents-gardener-qwen"; the policy is the composite service-agents
+    # policy (vault/policies/service-agents.hcl) covering all bot
+    # identities. The template below renders the full bot token set; this
+    # job authenticates as the gardener bot (kv/disinto/bots/gardener).
     vault {
-      role        = "service-agents"
+      role        = "agents-gardener-qwen"
       change_mode = "noop"
     }
 

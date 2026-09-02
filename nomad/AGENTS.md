@@ -162,6 +162,8 @@ accept (or vice versa).
   modes.
 - `vault/roles.yaml` — JWT-auth role → policy bindings (S2.3); the
   `vault-roles-validate` CI step above keeps it in lockstep with the
-  policies directory.
+  policies directory AND with the jobspecs — every `job "<name>"` that
+  authenticates via `vault { role = "..." }` must match that role's
+  bound `job_id` (issue #1083).
 - Top-of-file headers in `nomad/server.hcl` / `nomad/client.hcl` / `nomad/vault.hcl`
   document the per-file ownership contract.
