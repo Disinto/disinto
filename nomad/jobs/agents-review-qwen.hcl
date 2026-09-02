@@ -203,6 +203,9 @@ job "agents-review-qwen" {
         DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
         DSH_MODEL           = "unsloth/Qwen3.8-27B"
         DSH_CONTEXT_WINDOW  = "163840"
+        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
+        # the key but dsh requires the env to be set.
+        LLAMACPP_API_KEY    = "sk-no-key-required"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
