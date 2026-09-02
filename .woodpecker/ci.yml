@@ -166,6 +166,12 @@ steps:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
+      # Host checkout for the jobspecs. The CI workspace lives inside this
+      # step container, so `-v "$PWD/..."` would resolve on the docker HOST
+      # (where the path does not exist) and docker would create an empty
+      # dir — the sibling helper container then saw an empty /jobspecs
+      # (pipeline 2237). Same host-mount pattern as acceptance-tests.yml.
+      - /opt/disinto/nomad/jobs:/opt/disinto/nomad/jobs:ro
     commands:
       # util-linux: non-busybox flock, same as the acceptance deploy step.
       - apk add --no-cache docker-cli jq util-linux
@@ -180,7 +186,7 @@ steps:
         nomad_api() {
           docker run --rm --network host \
             -e NOMAD_ADDR=http://127.0.0.1:4646 \
-            -v "$PWD/nomad/jobs":/jobspecs:ro \
+            -v /opt/disinto/nomad/jobs:/jobspecs:ro \
             "$NOMAD_IMAGE" "$@"
         }
 
