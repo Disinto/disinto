@@ -103,6 +103,14 @@ job "woodpecker-agent" {
         WOODPECKER_MAX_WORKFLOWS            = "1"
         WOODPECKER_HEALTHCHECK_ADDR         = ":3333"
         WOODPECKER_AGENT_LABELS             = "host=disinto-nomad-box"
+
+        # Hard per-step memory cap (bytes — suffixes not supported). A
+        # runaway step (2026-09-01: npm install grabbed ~19GB anon in <2min
+        # and swap-thrashed the host for 4h19m) now hits a memcg OOM at 1GiB
+        # instead of taking the box down. Steps are alpine + shell + cli
+        # tools; heavy work (docker build children) is spawned via
+        # docker.sock and bounded by the LXC memory limit, not this.
+        WOODPECKER_LIMIT_MEM                = "1073741824"
       }
 
       # ── Vault-templated agent secret ──────────────────────────────────
