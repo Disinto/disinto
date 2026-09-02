@@ -104,11 +104,11 @@ steps:
   # lib/init/nomad/install.sh. alpine:3.20 is required because sops only
   # exists in the community repo starting at 3.20.
   #
-  # One suite is still broken and is excluded BY NAME in the command below —
-  # an explicit, greppable list, NOT a failure suppressor (no `|| true`, no
-  # `set +e`, and a repaired suite is covered the instant its name is removed).
-  # It has its own tracking issue; remove its name when its suite passes:
-  #   lib-stale-base-check  3 failing   (#1155)
+  # Broken suites are excluded BY NAME in the command below — an explicit,
+  # greppable list, NOT a failure suppressor (no `|| true`, no `set +e`, and a
+  # repaired suite is covered the instant its name is removed). Each has its
+  # own tracking issue; remove its name when its suite passes. (None excluded
+  # at present: lib-stale-base-check repaired in #1155.)
   - name: bats
     image: alpine:3.20
     commands:
@@ -122,7 +122,7 @@ steps:
       # in EXCLUDED, and runs the rest. Fails if any selected suite fails
       # or if none match.
       - |
-        EXCLUDED='lib-stale-base-check'
+        EXCLUDED=''
         files=''
         for f in tests/*.bats; do
           name=$(basename "$f" .bats)
