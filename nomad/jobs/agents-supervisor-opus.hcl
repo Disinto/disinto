@@ -42,7 +42,15 @@ job "agents-supervisor-opus" {
     # "agents-supervisor-opus"; the policy is the composite service-agents
     # policy (vault/policies/service-agents.hcl).
     vault {
-      role = "agents-supervisor-opus"
+      role        = "agents-supervisor-opus"
+      # A Vault token renewal must not restart the task (#1091, #1110). The
+      # default change_mode is "restart", which SIGKILLs the container every
+      # 24h (token_max_ttl) and destroys whatever claude session is
+      # mid-flight (exit 137, no checkpoint). Verified on the qwen jobs in
+      # #1091. The supervisor task does not use Vault at runtime — the
+      # rendered secrets/bots.env is static between re-seeds (FORGE_VAULT_TOKEN
+      # is a Forgejo token, not a Vault credential) — so "noop" is safe.
+      change_mode = "noop"
     }
 
     # No network ports — supervisor is outbound-only (polls forgejo, calls
