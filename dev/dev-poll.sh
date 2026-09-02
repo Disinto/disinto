@@ -621,11 +621,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
 
   # Staleness check: if no assignee, no open PR, and no agent lock, the issue is stale
+  # Match retry branches too (fix/issue-N-<attempt>) — same anchored pattern as
+  # merged_pr_for_issue (#1137/#1139), so an open retry PR blocks the stale sweep.
   OPEN_PR=false
   if curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=20" | \
-    jq -e --arg branch "fix/issue-${ISSUE_NUM}" \
-    '.[] | select(.head.ref == $branch)' >/dev/null 2>&1; then
+    jq -e --arg issue "${ISSUE_NUM}" \
+    '.[] | select(.head.ref | test("^fix/issue-" + $issue + "(-[0-9]+)?$"))' >/dev/null 2>&1; then
     OPEN_PR=true
   fi
 
@@ -643,11 +645,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   assignee=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" "${API}/issues/${ISSUE_NUM}" | jq -r '.assignee.login // ""')
   if [ -n "$assignee" ]; then
     if [ "$assignee" = "$BOT_USER" ]; then
-      # Check if my PR has review feedback to address before exiting
+      # Check if my PR has review feedback to address before exiting.
+      # Matches retry branches too (fix/issue-N-<attempt>) — #1139.
       HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls?state=open&limit=20" | \
-        jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
-        '.[] | select(.head.ref == $branch) | .number' | head -1) || true
+        jq -r --arg issue "${ISSUE_NUM}" \
+        '.[] | select(.head.ref | test("^fix/issue-" + $issue + "(-[0-9]+)?$")) | .number' | head -1) || true
 
       if [ -n "$HAS_PR" ]; then
         # Check for REQUEST_CHANGES review feedback (head-aware — #1089)
@@ -716,8 +719,8 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     if [ "$BLOCKED_BY_INPROGRESS" = false ]; then
       HAS_PR=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
         "${API}/pulls?state=open&limit=20" | \
-        jq -r --arg branch "fix/issue-${ISSUE_NUM}" \
-        '.[] | select(.head.ref == $branch) | .number' | head -1) || true
+        jq -r --arg issue "${ISSUE_NUM}" \
+        '.[] | select(.head.ref | test("^fix/issue-" + $issue + "(-[0-9]+)?$")) | .number' | head -1) || true
 
       if [ -n "$HAS_PR" ]; then
         # Check if branch is stale (behind primary branch)
