@@ -73,11 +73,15 @@ stale_base_check() {
     pr_content=$(git show "${pr_head}:${f}" 2>/dev/null || printf '')
 
     # Lines added upstream (present in main, absent in merge-base).
-    # Use process substitution + diff with `>` markers (lines unique to
-    # the second file). This is line-granular and stable.
+    # Use `comm -23` on sorted inputs, NOT `diff`: GNU diff prints normal
+    # format (`>` markers) while BusyBox diff (Alpine) supports unified diffs
+    # only (`+` markers), so parsing `diff` output is not portable across the
+    # two. `comm` output is identical on both. LC_ALL=C keeps the two sort
+    # passes byte-ordered identically so comm pairs them correctly.
     local upstream_added
-    upstream_added=$(diff <(printf '%s\n' "$base_content") <(printf '%s\n' "$main_content") \
-      | sed -n 's/^> //p')
+    upstream_added=$(comm -23 \
+      <(printf '%s\n' "$main_content" | LC_ALL=C sort) \
+      <(printf '%s\n' "$base_content" | LC_ALL=C sort))
     [ -z "$upstream_added" ] && continue
 
     # Count meaningful (non-blank) upstream-added lines missing from PR head.
