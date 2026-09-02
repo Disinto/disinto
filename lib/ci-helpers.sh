@@ -316,11 +316,11 @@ classify_pipeline_failure() {
       return 0
     fi
 
-    # Fetch step logs and check log patterns
+    # Fetch step logs and check log patterns.
+    # ci_get_step_logs decodes Woodpecker's base64-encoded .data payloads;
+    # grepping raw base64 for log patterns would never match (#1118).
     if [ -n "$_spid" ] && [ "$_spid" != "null" ]; then
-      _log_data=$(woodpecker_api "/repos/${repo_id}/logs/${pip_num}/${_spid}" \
-        --max-time 15 2>/dev/null \
-        | jq -r '.[].data // empty' 2>/dev/null | tail -200 || true)
+      _log_data=$(WOODPECKER_REPO_ID="$repo_id" ci_get_step_logs "$pip_num" "$_spid" 2>/dev/null | tail -200 || true)
       if [ -n "$_log_data" ]; then
         if _reason=$(is_infra_step "$_sname" "$_ecode" "$_log_data"); then
           echo "infra ${_reason}"
