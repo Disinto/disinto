@@ -318,6 +318,11 @@ else:
 # line, then keep consuming lines that start with [a-z] (top-level keys);
 # append all_vols to the first line that does NOT start with [a-z]. If the
 # input runs out at any `n`, print what was read and stop (no append).
+# Byte note: sed's s/// acts on the pattern space WITHOUT the trailing
+# newline and sed re-appends it on print; all_vols carries no trailing
+# newline. So for a line stored with its newline (keepends), the emitted
+# bytes are cur + all_vols + b"\n" — NOT cur + b"\n" + all_vols (which
+# would insert a blank line and merge the last volume onto the next line).
 if all_vols:
     lines = out.splitlines(keepends=True)
     n = len(lines)
@@ -348,7 +353,7 @@ if all_vols:
                     i = n
                     break
                 continue
-            out_lines.append(cur + b"\n" + all_vols)
+            out_lines.append(cur + all_vols + b"\n")
             i = k + 1
             break
     out = b"".join(out_lines)

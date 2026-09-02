@@ -58,4 +58,10 @@ services:
       - disinto-net
 
 volumes:
+  forgejo-data:
+  woodpecker-data:
+  agents-llama-data:
+  project-repos-llama:
   agent-data:
+  project-repos:
+  caddy_data:

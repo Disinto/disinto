@@ -42,15 +42,22 @@ setup() {
   export FACTORY_ROOT="$TMP/factory"
   mkdir -p "$FACTORY_ROOT/lib" "$FACTORY_ROOT/projects" "$TMP/bin"
 
-  # Minimal compose skeleton `_generate_local_model_services` can splice into
-  # (must match the fixture capture exactly).
+  # Compose skeleton `_generate_local_model_services` splices into (must
+  # match the fixture capture exactly). The volumes section is the real
+  # 5-entry block the init generator emits — with a single-entry block the
+  # per-agent volume append path is never exercised (the sed/python loop
+  # hits EOF before appending), so the fixture would not pin it.
   cat > "$FACTORY_ROOT/docker-compose.yml" <<'EOF'
 services:
   agents:
     image: placeholder
 
 volumes:
+  forgejo-data:
+  woodpecker-data:
   agent-data:
+  project-repos:
+  caddy_data:
 EOF
 
   # `nomad` stub: record the calls and capture the jobspec handed to
