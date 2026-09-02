@@ -120,6 +120,8 @@ _generate_local_model_services() {
         FORGE_USER) forge_user="$value" ;;
         COMPACT_PCT) compact_pct="$value" ;;
         POLL_INTERVAL) poll_interval_val="$value" ;;
+        HARNESS) harness="$value" ;;
+        CONTEXT_WINDOW) context_window="$value" ;;
         ---)
           if [ -n "$service_name" ] && [ -n "$base_url" ]; then
             # Record service for duplicate detection using the full service name
@@ -146,6 +148,30 @@ _generate_local_model_services() {
             # remove it via --remove-orphans.
             local user_upper
             user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
+            # The model/harness env block is the only part of the service that
+            # depends on the harness (#1107). Claude (the default, and the only
+            # harness a pre-#1107 TOML can have) must render exactly the
+            # historical block; dsh emits its own settings-form variables and
+            # no CLAUDE_* tuning variables.
+            local model_env
+            if [ "${harness:-claude}" = "dsh" ]; then
+              model_env="      AGENT_HARNESS: \"dsh\"
+      DSH_HOME: /home/agent/data/dsh
+      DSH_PERMISSION_MODE: \"danger-full-access\"
+      DSH_MODEL: \"${model}\"
+      DSH_BASE_URL: \"${base_url}\"
+      DSH_CONTEXT_WINDOW: \"${context_window:-163840}\""
+            else
+              model_env="      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
+      ANTHROPIC_BASE_URL: \"${base_url}\"
+      ANTHROPIC_API_KEY: \"${api_key}\"
+      CLAUDE_MODEL: \"${model}\"
+      CLAUDE_CONFIG_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      CLAUDE_CREDENTIALS_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: \"${compact_pct}\"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: \"0\"
+      CLAUDE_CODE_ENABLE_TELEMETRY: \"0\""
+            fi
             cat >> "$temp_file" <<EOF
 
   agents-${service_name}:
@@ -173,15 +199,7 @@ _generate_local_model_services() {
       FORGE_REVIEW_TOKEN: \${FORGE_REVIEW_TOKEN:-}
       FORGE_BOT_USERNAMES: \${FORGE_BOT_USERNAMES:-}
       AGENT_ROLES: "${roles}"
-      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
-      ANTHROPIC_BASE_URL: "${base_url}"
-      ANTHROPIC_API_KEY: "${api_key}"
-      CLAUDE_MODEL: "${model}"
-      CLAUDE_CONFIG_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
-      CLAUDE_CREDENTIALS_DIR: \${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
-      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "${compact_pct}"
-      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
-      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+${model_env}
       DISINTO_CONTAINER: "1"
       PROJECT_NAME: ${PROJECT_NAME:-project}
       PROJECT_REPO_ROOT: /home/agent/repos/${PROJECT_NAME:-project}
@@ -218,7 +236,7 @@ ${vol_repos}"
             all_vols="${vol_data}
 ${vol_repos}"
           fi
-          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val=""
+          service_name="" base_url="" model="" roles="" api_key="" forge_user="" compact_pct="" poll_interval_val="" harness="" context_window=""
           ;;
       esac
     done < <(python3 -c '
@@ -243,6 +261,8 @@ for name, config in agents.items():
     forge_user = config.get("forge_user", f"{name}-bot")
     compact_pct = config.get("compact_pct", 60)
     poll_interval = config.get("poll_interval", 60)
+    harness = config.get("harness", "claude")
+    context_window = config.get("context_window", "")
 
     safe_name = name.lower()
     safe_name = re.sub(r"[^a-z0-9]", "-", safe_name)
@@ -256,6 +276,8 @@ for name, config in agents.items():
     print(f"FORGE_USER={forge_user}")
     print(f"COMPACT_PCT={compact_pct}")
     print(f"POLL_INTERVAL={poll_interval}")
+    print(f"HARNESS={harness}")
+    print(f"CONTEXT_WINDOW={context_window}")
     print("---")
 ' "$toml" 2>/dev/null)
   done

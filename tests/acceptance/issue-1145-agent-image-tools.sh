@@ -13,6 +13,7 @@
 #
 # Extended by #1172: zstd (apt) and the dsh npm global (@deepseek-ai/dsh)
 # must also be present, so sessions stop bootstrapping them at runtime.
+# Extended by #1107: the dsh headless profile must be seeded into the image.
 #
 # This test is read-only: it greps the agents Dockerfile for the tool
 # installs the agent is assumed to have and fails if any is missing.
@@ -65,6 +66,14 @@ done
 ac_log "checking the agents image installs the dsh npm global with a pinned version"
 if ! grep -Eq '^RUN npm install -g @deepseek-ai/dsh@[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$' "$DOCKERFILE"; then
   ac_fail "agent Dockerfile does not install @deepseek-ai/dsh as a pinned npm global"
+fi
+
+# ── the dsh headless profile is seeded at build time (#1107) ───────────────
+# Hired dsh agents (--harness dsh) run `dsh --profile headless`; the profile
+# must exist in the image so sessions never bootstrap it at runtime.
+ac_log "checking the agents image seeds the dsh headless profile"
+if ! grep -q '/opt/dsh/profiles/headless.json' "$DOCKERFILE"; then
+  ac_fail "agent Dockerfile does not seed the dsh headless profile"
 fi
 
 ac_pass

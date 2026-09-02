@@ -48,6 +48,7 @@ The command performs these steps:
    - `forge_user = "dev-qwen"`
    - `compact_pct = 60`
    - `poll_interval = 60`
+   - `harness` and `context_window` (written only with `--harness dsh`)
 5. **Brings the agent up per backend**:
    - **Compose boxes** (no `nomad` CLI, or no live projects dir): the TOML is
      written to `${FACTORY_ROOT}/projects/` and `docker-compose.yml` is
@@ -74,6 +75,41 @@ disinto hire-an-agent dev-claude dev
 ```
 
 This writes `ANTHROPIC_API_KEY` to `.env` instead of `ANTHROPIC_BASE_URL`.
+
+### Choosing a harness (Claude or dsh)
+
+The hired agent runs under one of two agent harnesses, selected with
+`--harness` (default `claude`):
+
+```bash
+# dsh-harness agent
+disinto hire-an-agent dev-dsh dev \
+  --local-model http://10.10.10.1:8081 \
+  --model unsloth/Qwen3.5-35B-A3B \
+  --harness dsh \
+  --context-window 163840
+```
+
+- **`claude`** (default): the agent runs the Claude Code CLI. The service
+  gets the `CLAUDE_*` tuning variables (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`,
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...). Omitting `--harness` produces
+  exactly the configuration `hire-an-agent` wrote before this flag existed.
+- **`dsh`**: the agent runs the dsh harness (`dsh --profile headless`, with
+  `AGENT_HARNESS=dsh`). The service gets dsh's own settings-form variables —
+  `DSH_HOME` (the agent's persistent config dir),
+  `DSH_PERMISSION_MODE=danger-full-access`, `DSH_MODEL`, `DSH_BASE_URL`, and
+  `DSH_CONTEXT_WINDOW` — and **no** `CLAUDE_*` tuning variables.
+
+`--context-window <tokens>` (default `163840`) sets the context window a dsh
+agent is given (`DSH_CONTEXT_WINDOW`); it is ignored by `claude`-harness
+agents, which size their window from the model name (see
+[Autocompact window](#autocompact-window-1069)).
+
+The agents image ships dsh as a pinned npm global and seeds the `headless`
+profile into `DSH_HOME` on first start, so a hired dsh agent boots without
+bootstrapping anything at session time. Claude Code stays installed as well —
+existing agents and the supervisor keep running under it; `--harness` only
+affects the agent being hired.
 
 ### Hiring on a Nomad box
 
@@ -213,6 +249,8 @@ poll_interval = 60
 | `forge_user` | Forgejo bot username |
 | `compact_pct` | Context compaction threshold (lower = more aggressive) |
 | `poll_interval` | Seconds between polling cycles |
+| `harness` | Agent harness: `claude` (default) or `dsh`. Written only when the agent is hired with `--harness dsh` |
+| `context_window` | Context window in tokens for a dsh agent (default `163840`). Written only alongside `harness = "dsh"` |
 
 ## Behaviour
 
@@ -223,6 +261,12 @@ poll_interval = 60
   the **sum of all concurrent sessions** against one pool sized by `--ctx-size`
   (not a per-slot cap); size each agent's autocompact lane so the sum leaves
   headroom (AD-002, #1069).
+- With `--kv-unified` the pool is genuinely shared, so a concrete budget
+  works out like this: two dsh agents running the default 163,840-token
+  window with a 0.8 compaction threshold each hold up to 131,072 KV tokens,
+  so the pair consumes ~262k of a 327,680-token pool. A third agent at the
+  same window would not fit — hire it with a smaller `--context-window` so
+  the sum of the three lanes leaves headroom in the pool.
 
 ## Autocompact window (#1069)
 

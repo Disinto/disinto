@@ -1,0 +1,61 @@
+services:
+  agents:
+    image: placeholder
+
+
+  agents-llama:
+    image: ghcr.io/disinto/agents:${DISINTO_IMAGE_TAG:-latest}
+    container_name: disinto-agents-llama
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - agents-llama-data:/home/agent/data
+      - project-repos-llama:/home/agent/repos
+      - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
+      - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
+      - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
+      - ./projects:/home/agent/disinto/projects:ro
+      - ./.env:/home/agent/disinto/.env:ro
+      - ./state:/home/agent/disinto/state
+    environment:
+      FORGE_URL: http://forgejo:3000
+      FORGE_REPO: disinto-admin/disinto
+      FACTORY_REPO: disinto-admin/disinto
+      # Per-agent credentials keyed by forge_user (#834 Gap 3).
+      FORGE_TOKEN: ${FORGE_TOKEN_DEV_QWEN:-}
+      FORGE_PASS: ${FORGE_PASS_DEV_QWEN:-}
+      FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
+      FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
+      AGENT_ROLES: "dev"
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      ANTHROPIC_BASE_URL: "http://10.10.10.1:8081"
+      ANTHROPIC_API_KEY: "sk-no-key-required"
+      CLAUDE_MODEL: "qwen"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      CLAUDE_CREDENTIALS_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "60"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+      DISINTO_CONTAINER: "1"
+      PROJECT_NAME: project
+      PROJECT_REPO_ROOT: /home/agent/repos/project
+      WOODPECKER_DATA_DIR: /woodpecker-data
+      WOODPECKER_REPO_ID: "0"
+      FORGE_BOT_USER_DEV_QWEN: "dev-qwen"
+      POLL_INTERVAL: "60"
+      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
+      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
+      ARCHITECT_INTERVAL: "900"
+      PLANNER_INTERVAL: "43200"
+      SUPERVISOR_INTERVAL: "1200"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      woodpecker:
+        condition: service_started
+    networks:
+      - disinto-net
+
+volumes:
+  agent-data:

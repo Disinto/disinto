@@ -30,6 +30,17 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.84
 # Install dsh — dsh agent harness (run via _agent_run_dsh, #1106)
 RUN npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 
+# Seed the dsh headless profile for hired dsh agents (--harness dsh, #1107).
+# dsh headless runs as `dsh --profile headless` with DSH_HOME pointing at the
+# agent's persistent config dir ($DSH_HOME/profiles/headless.json). The seed
+# lives at a stable non-volume path; entrypoint.sh copies it into $DSH_HOME
+# on first start (compose named volumes inherit image contents on init, but
+# Nomad host volumes do not, so the entrypoint copy is the single seeding
+# point for both backends).
+RUN mkdir -p /opt/dsh/profiles \
+    && printf '{\n  "name": "headless",\n  "permissionMode": "danger-full-access",\n  "contextWindow": 163840\n}\n' \
+    > /opt/dsh/profiles/headless.json
+
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
 

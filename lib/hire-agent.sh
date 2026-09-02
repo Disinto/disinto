@@ -15,6 +15,7 @@
 #   source "${FACTORY_ROOT}/lib/hire-agent.sh"
 #   disinto_hire_an_agent <agent-name> <role> [--formula <path>] [--local-model <url>]
 #     [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>]
+#     [--harness <claude|dsh>] [--context-window <tokens>]
 #
 # Authentication precedence:
 #   1. --admin-token <pat>  (explicit flag)
@@ -55,6 +56,9 @@ set -euo pipefail
 #   $6 project_name - project TOML basename
 #   $7 agent_token - Forge PAT for the agent user (may be empty)
 #   $8 user_pass   - generated password for the agent user
+#   $9 harness     - agent harness: "claude" (default) or "dsh" (#1107)
+#   $10 context_window - dsh context window in tokens (default 163840;
+#       dsh harness only)
 disinto_hire_an_agent_nomad() {
   local agent_name="$1"
   local role="$2"
@@ -64,6 +68,8 @@ disinto_hire_an_agent_nomad() {
   local project_name="$6"
   local agent_token="$7"
   local user_pass="$8"
+  local harness="${9:-claude}"
+  local context_window="${10:-163840}"
 
   local vault_name="bot-${agent_name}"
   local kv_mount="${VAULT_KV_MOUNT:-kv}"
@@ -184,6 +190,48 @@ POLICY
   claude_max_turns="${CLAUDE_MAX_TURNS:-60}"
   compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
 
+  # The env block is the only part of the jobspec that depends on the
+  # harness (#1107). Claude is the default and must render exactly the
+  # historical block; dsh emits its own settings-form variables and no
+  # CLAUDE_* tuning variables.
+  local env_block_file
+  env_block_file="$(mktemp)"
+  if [ "$harness" = "dsh" ]; then
+    cat > "$env_block_file" <<ENV
+        FORGE_REPO          = "${forge_repo}"
+        FACTORY_REPO        = "${factory_repo}"
+        AGENT_HARNESS       = "dsh"
+        DSH_HOME            = "/home/agent/data/dsh"
+        DSH_PERMISSION_MODE = "danger-full-access"
+        DSH_MODEL           = "${model}"
+        DSH_BASE_URL        = "${local_model}"
+        DSH_CONTEXT_WINDOW  = "${context_window}"
+        AGENT_ROLES         = "${role}"
+        POLL_INTERVAL       = "${interval}"
+        DISINTO_CONTAINER   = "1"
+        PROJECT_NAME        = "${project_name}"
+        PROJECT_REPO_ROOT   = "/home/agent/repos/${project_name}"
+ENV
+  else
+    cat > "$env_block_file" <<ENV
+        FORGE_REPO         = "${forge_repo}"
+        FACTORY_REPO       = "${factory_repo}"
+        ANTHROPIC_BASE_URL = "${local_model}"
+        ANTHROPIC_API_KEY  = "sk-no-key-required"
+        CLAUDE_MODEL       = "${model}"
+        AGENT_ROLES        = "${role}"
+        POLL_INTERVAL      = "${interval}"
+        DISINTO_CONTAINER  = "1"
+        PROJECT_NAME       = "${project_name}"
+        PROJECT_REPO_ROOT  = "/home/agent/repos/${project_name}"
+        CLAUDE_TIMEOUT     = "${claude_timeout}"
+        CLAUDE_MAX_TURNS   = "${claude_max_turns}"
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "${compact_pct}"
+ENV
+  fi
+
   local jobspec_file
   jobspec_file="$(mktemp)"
   cat > "$jobspec_file" <<JOB
@@ -268,21 +316,7 @@ job "bot-${agent_name}" {
       }
 
       env {
-        FORGE_REPO         = "${forge_repo}"
-        FACTORY_REPO       = "${factory_repo}"
-        ANTHROPIC_BASE_URL = "${local_model}"
-        ANTHROPIC_API_KEY  = "sk-no-key-required"
-        CLAUDE_MODEL       = "${model}"
-        AGENT_ROLES        = "${role}"
-        POLL_INTERVAL      = "${interval}"
-        DISINTO_CONTAINER  = "1"
-        PROJECT_NAME       = "${project_name}"
-        PROJECT_REPO_ROOT  = "/home/agent/repos/${project_name}"
-        CLAUDE_TIMEOUT     = "${claude_timeout}"
-        CLAUDE_MAX_TURNS   = "${claude_max_turns}"
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
-        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
-        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "${compact_pct}"
+$(cat "$env_block_file")
       }
 
       template {
@@ -326,17 +360,17 @@ JOB
   if ! validate_out="$(nomad job validate "$jobspec_file" 2>&1)"; then
     echo "  Error: nomad job validate failed for ${vault_name}:" >&2
     printf '%s\n' "$validate_out" | sed 's/^/    /' >&2
-    rm -f "$jobspec_file"
+    rm -f "$jobspec_file" "$env_block_file"
     exit 1
   fi
 
   echo "  Deploying Nomad job: ${vault_name}"
   if ! nomad job run -detach "$jobspec_file"; then
     echo "  Error: nomad job run failed for ${vault_name}" >&2
-    rm -f "$jobspec_file"
+    rm -f "$jobspec_file" "$env_block_file"
     exit 1
   fi
-  rm -f "$jobspec_file"
+  rm -f "$jobspec_file" "$env_block_file"
 
   echo ""
   echo "  Nomad job:  ${vault_name} (submitted)"
@@ -356,10 +390,12 @@ disinto_hire_an_agent() {
   local model_name=""
   local poll_interval=""
   local admin_pat=""
+  local harness="claude"
+  local context_window="163840"
 
   if [ -z "$agent_name" ] || [ -z "$role" ]; then
     echo "Error: agent-name and role required" >&2
-    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>]" >&2
+    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>] [--harness <claude|dsh>] [--context-window <tokens>]" >&2
     exit 1
   fi
 
@@ -410,6 +446,14 @@ disinto_hire_an_agent() {
         admin_pat="$2"
         shift 2
         ;;
+      --harness)
+        harness="$2"
+        shift 2
+        ;;
+      --context-window)
+        context_window="$2"
+        shift 2
+        ;;
       *)
         echo "Unknown option: $1" >&2
         exit 1
@@ -417,7 +461,19 @@ disinto_hire_an_agent() {
     esac
   done
 
-  # Default formula path — try both naming conventions
+  # Validate --harness and --context-window before any side effects (#1107).
+  case "$harness" in
+    claude|dsh) ;;
+    *)
+      echo "Error: invalid --harness value '$harness'" >&2
+      echo "  The harness must be 'claude' (default) or 'dsh'." >&2
+      exit 1
+      ;;
+  esac
+  if ! [[ "$context_window" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: --context-window must be a positive integer of tokens (got '$context_window')" >&2
+    exit 1
+  fi
   if [ -z "$formula_path" ]; then
     formula_path="${FACTORY_ROOT}/formulas/${role}.toml"
     if [ ! -f "$formula_path" ]; then
@@ -437,6 +493,10 @@ disinto_hire_an_agent() {
     echo "Local model: ${local_model}"
     echo "Model name:  ${model_name:-local-model}"
     echo "Poll interval: ${poll_interval:-60}s"
+    echo "Harness:     ${harness}"
+    if [ "$harness" = "dsh" ]; then
+      echo "Context window: ${context_window} tokens"
+    fi
   fi
 
   # Ensure FORGE_TOKEN is set
@@ -949,6 +1009,8 @@ model = sys.argv[4]
 agent_name = sys.argv[5]
 role = sys.argv[6]
 poll_interval = sys.argv[7]
+harness = sys.argv[8]
+context_window = sys.argv[9]
 
 p = pathlib.Path(toml_path)
 text = p.read_text()
@@ -970,8 +1032,10 @@ except Exception as e:
 if "agents" not in doc:
     doc.add("agents", tomlkit.table())
 
-# Step 4: Update the specific agent section
-doc["agents"][section_name] = {
+# Step 4: Update the specific agent section. The harness and context_window
+# keys are only written for non-default (dsh) harnesses, so a default hire
+# leaves the TOML byte-identical to the pre-#1107 shape.
+agent_section = {
     "base_url": base_url,
     "model": model,
     "api_key": "sk-no-key-required",
@@ -980,13 +1044,17 @@ doc["agents"][section_name] = {
     "compact_pct": 60,
     "poll_interval": int(poll_interval),
 }
+if harness != "claude":
+    agent_section["harness"] = harness
+    agent_section["context_window"] = int(context_window)
+doc["agents"][section_name] = agent_section
 
 # Step 5: Serialize back to TOML (preserves comments)
 output = tomlkit.dumps(doc)
 
 # Step 6: Write back
 p.write_text(output)
-' "$toml_file" "$section_name" "$local_model" "$model" "$agent_name" "$role" "$interval"
+' "$toml_file" "$section_name" "$local_model" "$model" "$agent_name" "$role" "$interval" "$harness" "$context_window"
 
     echo "  Agent config written to TOML"
 
@@ -1020,7 +1088,8 @@ p.write_text(output)
     else
       disinto_hire_an_agent_nomad \
         "$agent_name" "$role" "$local_model" "$model" \
-        "$interval" "$project_name" "$agent_token" "$user_pass"
+        "$interval" "$project_name" "$agent_token" "$user_pass" \
+        "$harness" "$context_window"
     fi
   fi
 
