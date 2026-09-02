@@ -83,6 +83,20 @@ if [ -f /opt/dsh/profiles/headless.json ]; then
   chown -R agent:agent /home/agent/data/dsh 2>/dev/null || true
 fi
 
+# dsh provider settings (same #1107 thread): dsh resolves its model provider
+# from $DSH_HOME/settings.yaml; the DSH_BASE_URL env alone leaves it on the
+# deepseek-official default route, which fails with MISSING_CREDENTIAL.
+# Seed the baked llama.cpp template with DSH_BASE_URL substituted; never
+# overwrite an operator-customised file.
+dsh_home="${DSH_HOME:-/home/agent/data/dsh}"
+if [ "${AGENT_HARNESS:-claude}" = "dsh" ] \
+  && [ -f /opt/dsh/settings-llamacpp.yaml ] \
+  && [ ! -f "$dsh_home/settings.yaml" ]; then
+  sed "s|__DSH_BASE_URL__|${DSH_BASE_URL:-http://10.10.10.1:8081/v1}|" \
+    /opt/dsh/settings-llamacpp.yaml > "$dsh_home/settings.yaml"
+  chown agent:agent "$dsh_home/settings.yaml" 2>/dev/null || true
+fi
+
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }

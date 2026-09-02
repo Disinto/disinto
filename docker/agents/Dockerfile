@@ -49,6 +49,11 @@ RUN mkdir -p /opt/dsh/profiles \
     && printf '{\n  "name": "headless",\n  "permissionMode": "danger-full-access",\n  "contextWindow": 163840\n}\n' \
     > /opt/dsh/profiles/headless.json
 
+# Provider settings template for the dsh harness — dsh reads its provider
+# from $DSH_HOME/settings.yaml, NOT from DSH_BASE_URL env. entrypoint.sh
+# seeds it (with the env's DSH_BASE_URL substituted) on first start.
+COPY docker/agents/dsh-settings-llamacpp.yaml /opt/dsh/settings-llamacpp.yaml
+
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
 

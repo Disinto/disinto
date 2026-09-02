@@ -1,0 +1,34 @@
+# DeepSeek Harness settings — local llama.cpp provider, container variant.
+# Baked into the agents image; entrypoint.sh seeds it into $DSH_HOME with
+# __DSH_BASE_URL__ replaced by the DSH_BASE_URL env value (#1107 follow-up:
+# dsh reads providers from settings.yaml, not from DSH_BASE_URL directly).
+llm-pi-ai:
+  providers:
+    llamacpp:
+      displayName: llama.cpp local
+      apiKeyEnv: LLAMACPP_API_KEY
+      api: openai-completions
+      baseURL: __DSH_BASE_URL__
+      # llama-server speaks plain chat-completions: no `developer` role,
+      # and the output cap is `max_tokens`, not `max_completion_tokens`.
+      compat:
+        supportsDeveloperRole: false
+        maxTokensField: max_tokens
+      streamIdleTimeoutMs: 600000
+      models:
+        - id: unsloth/Qwen3.8-27B
+          name: Qwen3.8 27B IQ4_XS (local)
+          contextWindow: 163840
+          maxTokens: 32768
+          input: [text, image]
+          # llama-server maps OpenAI `reasoning_effort` onto the qwen38
+          # template kwarg; key = level the harness offers, value = wire spelling.
+          reasoningEfforts:
+            low: low
+            medium: medium
+            high: high
+
+agent-default-model:
+  provider: llamacpp
+  model: unsloth/Qwen3.8-27B
+  reasoningEffort: low
