@@ -27,7 +27,12 @@ set -euo pipefail
 #
 #   $1  stream_json_file — path to the session's stream-json output
 #   $2  exit_code        — exit code of the run (124 = CLAUDE_TIMEOUT watchdog kill)
-#   $3  task_ref         — optional issue/PR reference for attribution
+#   $3  task_ref         — optional issue/PR reference for attribution.
+#                          Bare number, no prefix: issue refs (dev-agent) and
+#                          PR refs (review-pr, pr-walk) share one namespace,
+#                          so a reader cannot tell which is which from the
+#                          value alone. A prefix scheme would rewrite existing
+#                          rows and belongs in its own change (#1169).
 #
 # Fields and where they come from in the stream:
 #   session_id, model        — the init row (subtype "init")

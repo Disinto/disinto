@@ -11,7 +11,7 @@
 #
 # For pr_walk_to_merge(): caller must define agent_run() — a synchronous Claude
 # invocation (one-shot claude -p). Expected signature:
-#   agent_run [--resume SESSION] [--worktree DIR] PROMPT
+#   agent_run [--resume SESSION] [--worktree DIR] [--task REF] PROMPT
 #
 # Functions:
 #   pr_create              BRANCH TITLE BODY [BASE_BRANCH]
@@ -823,7 +823,7 @@ Passing workflows (do not modify): ${passing_workflows}
       fi
 
       rc=0
-      agent_run --resume "$session_id" --worktree "$worktree" \
+      agent_run --resume "$session_id" --worktree "$worktree" --task "$pr_num" \
         "CI failed on PR #${pr_num} (attempt ${ci_fix_count}/${max_ci_fixes}).
 
 Pipeline: #${_PR_CI_PIPELINE:-?}
@@ -873,7 +873,7 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
         # Merge failed (conflict or HTTP 405) — ask agent to rebase
         _prl_log "merge failed — invoking agent to rebase"
         rc=0
-        agent_run --resume "$session_id" --worktree "$worktree" \
+        agent_run --resume "$session_id" --worktree "$worktree" --task "$pr_num" \
           "PR #${pr_num} approved but merge failed: ${_PR_MERGE_ERROR:-unknown}
 
 Rebase onto ${PRIMARY_BRANCH} and push:
@@ -896,7 +896,7 @@ Rebase onto ${PRIMARY_BRANCH} and push:
 
         _prl_log "review changes requested (round ${review_round}/${max_review_rounds})"
         rc=0
-        agent_run --resume "$session_id" --worktree "$worktree" \
+        agent_run --resume "$session_id" --worktree "$worktree" --task "$pr_num" \
           "Review feedback (round ${review_round}/${max_review_rounds}) on PR #${pr_num}:
 
 ${_PR_REVIEW_TEXT:-No review text available.}
