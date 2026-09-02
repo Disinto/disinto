@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux nodejs npm python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats zstd \
+    bash curl git jq tmux python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats zstd \
     && pip3 install --break-system-packages networkx tomlkit \
     && rm -rf /var/lib/apt/lists/*
 
@@ -22,6 +22,14 @@ RUN curl -fsSL "https://dl.gitea.com/tea/${TEA_VERSION}/tea-${TEA_VERSION}-linux
 ARG YQ_VERSION=4.45.1
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+# Node 22 LTS — Debian bookworm ships Node 18, but @deepseek-ai/dsh needs
+# util.parseEnv (Node >= 20.12). Official tarball into /usr/local so it
+# wins PATH over any distro nodejs. Pinned version for reproducibility.
+RUN curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o /tmp/node.tar.xz \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && node --version && npm --version
 
 # Install Claude Code CLI — agent runtime for all LLM backends (llama, Claude API).
 # The CLI is the execution environment; ANTHROPIC_BASE_URL selects the model provider.
