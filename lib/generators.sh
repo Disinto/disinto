@@ -283,28 +283,78 @@ for name, config in agents.items():
   done
 
   if [ "$has_services" = true ]; then
-    # Insert the services before the volumes section
+    # Splice the rendered services in before the top-level `volumes:` section
+    # and add the per-agent local-model volumes to that section.
+    #
+    # Faithful re-implementation of the historical GNU-sed splice in python3
+    # (already required for the TOML parsing above): same line-by-line
+    # semantics, byte-identical output. The sed version used GNU-only
+    # constructs — \n inside s/// patterns and replacements, N/label loops —
+    # that busybox sed (alpine CI) rejects with a parse error, aborting
+    # generation outright.
     local temp_compose
     temp_compose=$(mktemp)
-    # Get everything before volumes:
-    sed -n '1,/^volumes:/p' "$compose_file" | sed '$d' > "$temp_compose"
-    # Add the services
-    cat "$temp_file" >> "$temp_compose"
-    # Add the volumes section and everything after
-    sed -n '/^volumes:/,$p' "$compose_file" >> "$temp_compose"
+    python3 - "$compose_file" "$temp_file" "$all_vols" > "$temp_compose" <<'PYEOF'
+import re
+import sys
 
-    # Add local-model volumes to the volumes section
-    if [ -n "$all_vols" ]; then
-      # Escape embedded newlines as literal \n so sed's s///  replacement
-      # tolerates multi-line $all_vols (needed once >1 local-model agent is
-      # configured — without this, the second agent's volume entry would
-      # unterminate the sed expression).
-      local all_vols_escaped
-      all_vols_escaped=$(printf '%s' "$all_vols" | sed ':a;N;$!ba;s/\n/\\n/g')
-      # Find the volumes section and add the new volumes
-      sed -i "/^volumes:/{n;:a;n;/^[a-z]/!{s/$/\n$all_vols_escaped/;b};ba}" "$temp_compose"
-    fi
+compose_path, temp_path = sys.argv[1], sys.argv[2]
+all_vols = sys.argv[3].encode()
 
+with open(compose_path, "rb") as f:
+    lines = f.read().splitlines(keepends=True)
+with open(temp_path, "rb") as f:
+    temp = f.read()
+
+# Everything before the first top-level `volumes:` line, then the rendered
+# services, then that line and everything after it.
+idx = next((i for i, line in enumerate(lines) if line.startswith(b"volumes:")), None)
+if idx is None:
+    out = temp
+else:
+    out = b"".join(lines[:idx]) + temp + b"".join(lines[idx:])
+
+# Mirror the old sed loop on each `volumes:` line: print it plus the next
+# line, then keep consuming lines that start with [a-z] (top-level keys);
+# append all_vols to the first line that does NOT start with [a-z]. If the
+# input runs out at any `n`, print what was read and stop (no append).
+if all_vols:
+    lines = out.splitlines(keepends=True)
+    n = len(lines)
+    out_lines = []
+    i = 0
+    top_level = re.compile(rb"^[a-z]")
+    while i < n:
+        line = lines[i]
+        if not line.startswith(b"volumes:"):
+            out_lines.append(line)
+            i += 1
+            continue
+        out_lines.append(line)
+        if i + 1 >= n:
+            i = n
+            break
+        out_lines.append(lines[i + 1])
+        k = i + 2
+        if k >= n:
+            i = n
+            break
+        while True:
+            cur = lines[k]
+            if top_level.match(cur):
+                out_lines.append(cur)
+                k += 1
+                if k >= n:
+                    i = n
+                    break
+                continue
+            out_lines.append(cur + b"\n" + all_vols)
+            i = k + 1
+            break
+    out = b"".join(out_lines)
+
+sys.stdout.buffer.write(out)
+PYEOF
     mv "$temp_compose" "$compose_file"
   fi
 
