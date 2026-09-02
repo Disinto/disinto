@@ -307,6 +307,7 @@ nomad job restart agents
 nomad job restart agents-supervisor-opus
 nomad job restart agents-dev-qwen
 nomad job restart agents-review-qwen
+nomad job restart agents-gardener-qwen
 ```
 
 If you are coming from a pre-#794 box that kept TOMLs at
