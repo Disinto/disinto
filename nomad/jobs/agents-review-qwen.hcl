@@ -190,6 +190,19 @@ job "agents-review-qwen" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "review"
+
+        # dsh harness canary (#1104-#1107): this job runs the dsh harness
+        # while agents-dev-qwen stays on claude — one harness per job, so a
+        # dsh regression idles reviews but never stops dev. Revert = remove
+        # this block. Known dsh gaps: headless has no --resume (fresh
+        # session per run) and wall-clock timeouts write no metrics record
+        # (#1186). Env names mirror lib/hire-agent.sh's dsh branch.
+        AGENT_HARNESS       = "dsh"
+        DSH_HOME            = "/home/agent/data/dsh"
+        DSH_PERMISSION_MODE = "danger-full-access"
+        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
+        DSH_MODEL           = "unsloth/Qwen3.8-27B"
+        DSH_CONTEXT_WINDOW  = "163840"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
