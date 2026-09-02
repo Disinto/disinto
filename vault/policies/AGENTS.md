@@ -107,6 +107,10 @@ runner's jobspec lands.
    (policies → roles → nomad SIGHUP), or granularly via
    `tools/vault-apply-policies.sh` + `tools/vault-apply-roles.sh`.
 4. Reference the role in the consuming jobspec's `vault { role = "<name>" }`.
+   The role's `job_id` must match the jobspec's `job "<name>"` — the
+   jwt-nomad bound claim pins `nomad_job_id` to a single value, and a
+   mismatch pends the task on Vault auth at token exchange. CI step 6
+   cross-checks the pairing (issue #1083).
 
 ### Token shape
 
@@ -157,7 +161,7 @@ place):
 |---|---|---|
 | 4. `vault-policy-fmt` | `vault policy fmt` + `diff` | formatting drift — trailing whitespace, wrong indentation, missing newlines |
 | 5. `vault-policy-validate` | `vault policy write` against inline dev Vault | HCL syntax errors, unknown stanzas, invalid capability names (e.g. `"frobnicate"`), malformed `path "..." {}` blocks |
-| 6. `vault-roles-validate` | yamllint + PyYAML | roles.yaml syntax drift, missing required fields, role→policy references with no matching `.hcl` |
+| 6. `vault-roles-validate` | yamllint + PyYAML | roles.yaml syntax drift, missing required fields, role→policy references with no matching `.hcl`, jobspec `job "<name>"` ↔ role `job_id` pairing (#1083) |
 | P11 | `lib/secret-scan.sh` via `.woodpecker/secret-scan.yml` | literal secret leaked into a policy HCL (rare copy-paste mistake) — already covers `vault/**/*`, no duplicate step here |
 
 All four steps are fail-closed — any error blocks merge. The pipeline
@@ -173,6 +177,7 @@ drift.
 | `vault-policy-validate: … failed validation` plus a `policy` error from Vault | Unknown capability (e.g. `"frobnicate"`), unknown stanza, malformed `path` block | Fix the HCL; valid capabilities are `read`, `list`, `create`, `update`, `delete`, `patch`, `sudo`, `deny` |
 | `vault-roles-validate: ERROR: role 'X' references policy 'Y' but vault/policies/Y.hcl does not exist` | A role's `policy:` field does not match any file basename in `vault/policies/` | Either add the missing policy HCL or fix the typo in `roles.yaml` |
 | `vault-roles-validate: ERROR: role entry missing required field 'Z'` | A role in `roles.yaml` is missing one of `name`, `policy`, `namespace`, `job_id` | Add the field; all four are required |
+| `vault-roles-validate: ERROR: nomad/jobs/<file>.hcl: job 'X' references vault role 'Y' whose bound job_id is 'Z', not 'X'` | A jobspec authenticates with a role whose `nomad_job_id` bound claim pins a different job name — the workload-identity JWT fails at token exchange and the task pends on Vault auth | Give the jobspec its own role entry in `roles.yaml` with `job_id` matching the jobspec's `job "<name>"` (see #1083), or fix the typo |
 | P11 `secret-scan: detected potential secret …` on a `.hcl` file | A literal token/password was pasted into a policy | Policies must name KV paths, not carry secret values — move the literal into KV (S2.2) and have the policy grant `read` on the path |
 
 ## What this directory does NOT own

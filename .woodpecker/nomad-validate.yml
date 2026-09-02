@@ -33,6 +33,9 @@
 #   6. vault-roles-validate    — yamllint + role→policy reference check on
 #                                 vault/roles.yaml (every referenced policy
 #                                 must exist as vault/policies/<name>.hcl)
+#                                 + jobspec cross-check: a jobspec's
+#                                 `job "<name>"` with a vault { role } stanza
+#                                 must match that role's job_id (#1083)
 #   7. shellcheck-nomad        — shellcheck the cluster-up + install scripts + disinto
 #   8. bats-init-nomad         — `disinto init --backend=nomad --dry-run` smoke tests
 #
@@ -263,6 +266,15 @@ steps:
   #      Also verifies each role entry has the four required fields
   #      (name, policy, namespace, job_id) per the file's documented
   #      format.
+  #   c. jobspec cross-check (issue #1083) — for every nomad/jobs/*.hcl,
+  #      the jobspec's `job "<name>"` must equal the `job_id` of the role
+  #      it authenticates with via `vault { role = "..." }`. The jwt-nomad
+  #      bound claim pins nomad_job_id to that single value, so a jobspec
+  #      named "agents-dev-qwen" asking for a role bound to job_id "agents"
+  #      fails token exchange and the task pends on Vault auth. Previously
+  #      this drift only surfaced on a fresh cluster build; now it blocks
+  #      at review time. A `vault {}` stanza with no `role` (e.g. the
+  #      per-dispatch vault-runner batch job) is skipped.
   #
   # Parsing is done with PyYAML (the roles.yaml format is a strict
   # subset that awk-level parsing in tools/vault-apply-roles.sh handles
@@ -282,7 +294,9 @@ steps:
         yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' vault/roles.yaml
         echo "vault-roles-validate: yamllint OK"
         python3 - <<'PY'
+        import glob
         import os
+        import re
         import sys
         import yaml
 
@@ -316,9 +330,46 @@ steps:
                     file=sys.stderr,
                 )
                 failed = 1
+        # (c) jobspec cross-check (#1083): a jobspec that authenticates with
+        # vault { role = "..." } must name a role whose bound job_id equals
+        # the jobspec's `job "<name>"` — otherwise the workload-identity JWT
+        # fails the bound-claim check at token exchange.
+        by_name = {
+            r.get('name'): r
+            for r in roles
+            if isinstance(r, dict)
+        }
+        for path in sorted(glob.glob('nomad/jobs/*.hcl')):
+            with open(path) as f:
+                text = f.read()
+            m = re.search(r'^job\s+"([^"]+)"', text, re.MULTILINE)
+            if not m:
+                continue
+            job = m.group(1)
+            for vault_block in re.findall(r'vault\s*{([^{}]*)}', text):
+                rm = re.search(r'\brole\s*=\s*"([^"]+)"', vault_block)
+                if not rm:
+                    continue  # empty vault {} (e.g. vault-runner) — no role to bind
+                role = rm.group(1)
+                entry = by_name.get(role)
+                if entry is None:
+                    print(
+                        f"ERROR: {path}: job '{job}' references vault role "
+                        f"'{role}' but vault/roles.yaml has no such role",
+                        file=sys.stderr,
+                    )
+                    failed = 1
+                elif entry.get('job_id') != job:
+                    print(
+                        f"ERROR: {path}: job '{job}' references vault role "
+                        f"'{role}' whose bound job_id is "
+                        f"'{entry.get('job_id')}', not '{job}'",
+                        file=sys.stderr,
+                    )
+                    failed = 1
         sys.exit(failed)
         PY
-        echo "vault-roles-validate: all role→policy references valid"
+        echo "vault-roles-validate: role→policy references + jobspec job_id pairing valid"
 
   # ── 7. Shellcheck ────────────────────────────────────────────────────────
   # Covers the new lib/init/nomad/*.sh scripts plus bin/disinto (which owns

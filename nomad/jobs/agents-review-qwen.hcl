@@ -35,7 +35,7 @@
 #   lib/init/nomad/cluster-up.sh before any job references them.
 #
 # Vault integration (S4.1):
-#   - vault { role = "service-agents" } at group scope — workload-identity
+#   - vault { role = "agents-review-qwen" } at group scope — workload-identity
 #     JWT exchanged for a Vault token carrying the composite service-agents
 #     policy (vault/policies/service-agents.hcl), which grants read access
 #     to the 6 bot KV namespaces (supervisor is separate) + vault bot + shared forge config.
@@ -56,11 +56,13 @@ job "agents-review-qwen" {
     count = 1
 
     # ── Vault workload identity (S4.1, issue #955) ───────────────────────────
-    # Composite role covering all 7 bot identities + vault bot. Role defined
-    # in vault/roles.yaml, policy in vault/policies/service-agents.hcl.
-    # Bound claim pins nomad_job_id = "agents".
+    # Per-role identity (its own role since the split, #1083). Role defined
+    # in vault/roles.yaml — its bound claim pins nomad_job_id =
+    # "agents-review-qwen"; the policy is the composite service-agents policy
+    # (vault/policies/service-agents.hcl) covering all 7 bot identities +
+    # vault bot.
     vault {
-      role        = "service-agents"
+      role        = "agents-review-qwen"
       # A Vault token renewal must not restart the task (#1091). The default
       # change_mode is "restart", which SIGKILLed the container every 24h and
       # destroyed whatever dev session was mid-flight. Verified on
