@@ -317,7 +317,7 @@ FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
     "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
   printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'
-  printf '\n## Completion\nAfter writing the JSON file to REVIEW_OUTPUT_FILE, stop.\nDo NOT write to any phase file — completion is automatic.\n'
+  printf '\n## Completion\nAfter writing the JSON file to REVIEW_OUTPUT_FILE (%s), stop.\nDo NOT write to any phase file — completion is automatic.\n' "$OUTPUT_FILE"
 } > "${REVIEW_TMPDIR}/prompt.md"
 PROMPT=$(cat "${REVIEW_TMPDIR}/prompt.md")
 
@@ -343,6 +343,11 @@ review_run_and_parse() {
   # dev budget (7200) — a fallback that inherited it would never apply the cap.
   export CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}"
   export CLAUDE_TIMEOUT="${REVIEW_CLAUDE_TIMEOUT:-2400}"   # 40 min — deliberate cap: a review still running at 40 min is stuck, not thorough
+  # dsh agents need output paths in-process: formulas/review-pr.toml section 9
+  # uses shell expansion ("> $REVIEW_OUTPUT_FILE"), and without the export the
+  # agent guesses a path and the verdict is lost (#1230 wrote
+  # /tmp/disinto-review-1230.json instead of the file below).
+  export REVIEW_OUTPUT_FILE="$OUTPUT_FILE"
   if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
     agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT" || REVIEW_RUN_RC=$?
   else

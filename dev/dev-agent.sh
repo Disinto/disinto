@@ -477,6 +477,10 @@ no_push_outcome() {
 # =============================================================================
 status "running implementation"
 echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
+# Refusal protocol (see INITIAL_PROMPT) uses shell expansion
+# ("> $IMPL_SUMMARY_FILE"); export it so dsh agents resolve the real path
+# instead of guessing (same class as review-pr.sh REVIEW_OUTPUT_FILE).
+export IMPL_SUMMARY_FILE
 
 # Capture agent_run's exit code (its contract: 124 = wall-clock timeout,
 # #1164). Unguarded, a non-zero return would abort this set -e script before
