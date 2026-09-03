@@ -723,8 +723,12 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         '.[] | select(.head.ref | test("^fix/issue-" + $issue + "(-[0-9]+)?$")) | .number' | head -1) || true
 
       if [ -n "$HAS_PR" ]; then
-        # Check if branch is stale (behind primary branch)
-        BRANCH="fix/issue-${ISSUE_NUM}"
+        # Check if branch is stale (behind primary branch). Use the PR's actual
+        # branch — the lookup above matches retry branches too (fix/issue-N-<attempt>,
+        # #1139), so the first-attempt branch name would test/delete the wrong ref.
+        BRANCH=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+          "${API}/pulls/${HAS_PR}" | jq -r '.head.ref // empty') || true
+        BRANCH="${BRANCH:-fix/issue-${ISSUE_NUM}}"
         AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
         if [ "$AHEAD" -gt 0 ]; then
           log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
