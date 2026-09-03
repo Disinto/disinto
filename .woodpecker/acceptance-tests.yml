@@ -106,22 +106,30 @@ steps:
         fi
 
   # ── 2. Rebuild the edge image and re-launch the nomad job ─────────────────
-  # Runs on the host's docker + nomad CLIs (mounted from the runner). The
-  # flock guarantees that two simultaneous merges to main do not stomp on
-  # each other's deploy: the second pipeline blocks here until the first
+  # The step image (docker:24-cli) ships the docker CLI but NO nomad binary,
+  # so every `nomad` call runs in a helper container on the host network
+  # namespace, spawned through the mounted docker socket (same idiom as
+  # ci.yml's rebuild-and-deploy-agents, #1173). The box's Nomad API is
+  # loopback-only (bind_addr 127.0.0.1 in nomad/server.hcl), hence
+  # --network host. The helper mounts the jobspecs from the host checkout
+  # (/opt/disinto), resolved by the host's docker daemon.
+  #
+  # The flock guarantees that two simultaneous merges to main do not stomp
+  # on each other's deploy: the second pipeline blocks here until the first
   # releases the lock. -w 600 caps wait at 10 minutes so a stuck pipeline
   # does not block the queue indefinitely.
   #
   # Health-poll loop: `nomad job status edge` reports per-allocation health.
   # We loop ≤24 times at 5s intervals (=120s) waiting for the latest version's
-  # allocs to be `running`. This is intentionally simple — the script is
-  # short enough to read; a more sophisticated check belongs in the
-  # nomad-cli wrapper (see #786 plan).
+  # allocs to be `running`. A failed or empty status response is treated as
+  # NOT healthy — the old `|| echo '{}'` fallback let a transient CLI/API
+  # failure read as "zero unhealthy allocations" and pass the gate.
+  # This is intentionally simple — the script is short enough to read; a
+  # more sophisticated check belongs in the nomad-cli wrapper (see #786 plan).
   - name: rebuild-and-deploy
     image: docker:24-cli
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/disinto:/opt/disinto:ro
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
     commands:
       - |
@@ -131,6 +139,18 @@ steps:
           exit 0
         fi
         apk add --no-cache util-linux jq curl bash
+        NOMAD_IMAGE=hashicorp/nomad:1.9.5
+        # No nomad binary in this image — run the CLI in a helper container
+        # on the host network (Nomad listens on loopback only). The jobspec
+        # is mounted from the host checkout into the helper; paths passed to
+        # nomad_api are relative to /jobspecs, not the CI workspace.
+        nomad_api() {
+          docker run --rm --network host \
+            -e NOMAD_ADDR=http://127.0.0.1:4646 \
+            -v /opt/disinto/nomad/jobs:/jobspecs:ro \
+            "$NOMAD_IMAGE" "$@"
+        }
+
         # Serialize across concurrent pipelines. -w 600 = 10-minute cap.
         # mkdir MUST come before the `exec 9>` redirection — if the directory
         # is missing, opening the fd fails and `set -e` aborts the step.
@@ -141,33 +161,38 @@ steps:
         echo "rebuild-and-deploy: docker build disinto/edge:local"
         docker build -t disinto/edge:local -f docker/edge/Dockerfile .
 
-        echo "rebuild-and-deploy: nomad job run /opt/disinto/nomad/jobs/edge.hcl"
-        nomad job run /opt/disinto/nomad/jobs/edge.hcl
+        echo "rebuild-and-deploy: nomad job run /jobspecs/edge.hcl"
+        nomad_api job run /jobspecs/edge.hcl
 
         # Poll until the new alloc is healthy, ≤120s.
         deadline=$(( $(date +%s) + 120 ))
         while [ "$(date +%s)" -lt "$deadline" ]; do
-          status_json="$(nomad job status -json edge 2>/dev/null || echo '{}')"
-          # All the latest-version allocs must have ClientStatus=running.
-          # Two-pass: first compute the max JobVersion across all allocs, then
-          # filter for unhealthy allocs at that version. Doing it in one pass
-          # via `.[0].JobVersion` would compare against the first array element,
-          # not the latest deployment, and silently mis-report health.
-          unhealthy="$(echo "$status_json" \
-            | jq -r '(.Allocations // []) as $a
-                     | (($a | map(.JobVersion // 0) | max) // 0) as $v
-                     | $a
-                     | map(select((.JobVersion // 0) == $v
-                                  and .ClientStatus != "running"))
-                     | length')"
-          if [ "${unhealthy:-1}" = "0" ]; then
-            echo "rebuild-and-deploy: edge job healthy"
-            exit 0
+          status_json="$(nomad_api job status -json edge 2>/dev/null || echo '')"
+          # A failed or empty status is NOT healthy — only a parsed response
+          # with zero unhealthy allocs passes the gate.
+          if [ -n "$status_json" ] && [ "$status_json" != "{}" ]; then
+            # All the latest-version allocs must have ClientStatus=running.
+            # Two-pass: first compute the max JobVersion across all allocs,
+            # then filter for unhealthy allocs at that version. Doing it in
+            # one pass via `.[0].JobVersion` would compare against the first
+            # array element, not the latest deployment, and silently
+            # mis-report health.
+            unhealthy="$(echo "$status_json" \
+              | jq -r '(.Allocations // []) as $a
+                       | (($a | map(.JobVersion // 0) | max) // 0) as $v
+                       | $a
+                       | map(select((.JobVersion // 0) == $v
+                                    and .ClientStatus != "running"))
+                       | length')"
+            if [ "${unhealthy:-1}" = "0" ]; then
+              echo "rebuild-and-deploy: edge job healthy"
+              exit 0
+            fi
           fi
           sleep 5
         done
         echo "rebuild-and-deploy: edge job not healthy after 120s" >&2
-        nomad job status edge >&2 || true
+        nomad_api job status edge >&2 || true
         exit 1
 
   # ── 3. Identify which issues this merge closed ────────────────────────────
