@@ -112,6 +112,31 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+# --- Summary counters (issue #1163) ──────────────────────────────────────────
+# NOTE: this test must run before "imports all keys from complete fixture" —
+# it asserts fresh-import behavior against an empty KV mount.
+
+@test "fresh import reports every key as created with correct summary counters" {
+  run "$IMPORT_SCRIPT" \
+    --env "$FIXTURES_DIR/dot-env-complete" \
+    --sops "$FIXTURES_DIR/.env.vault.enc" \
+    --age-key "$AGE_KEY_FILE"
+  [ "$status" -eq 0 ]
+
+  # Every per-key line reports (created); none report updated/unchanged
+  echo "$output" | grep -q "(created)"
+  ! echo "$output" | grep -q "(updated)"
+  ! echo "$output" | grep -q "(unchanged)"
+
+  # Summary counters match the per-key lines and are non-zero
+  local created_count
+  created_count="$(echo "$output" | grep -c '(created)')"
+  [ "$created_count" -gt 10 ]
+  echo "$output" | grep -q "Created: ${created_count}"
+  echo "$output" | grep -q "Updated: 0"
+  echo "$output" | grep -q "Unchanged: 0"
+}
+
 # --- Complete fixture import ─────────────────────────────────────────────────
 
 @test "imports all keys from complete fixture" {
@@ -191,6 +216,11 @@ setup() {
   local unchanged_count
   unchanged_count=$(echo "$output" | grep -c "unchanged" || true)
   [ "$unchanged_count" -gt 10 ]
+
+  # Summary counters: nothing created or updated, unchanged matches per-key lines
+  echo "$output" | grep -q "Created: 0"
+  echo "$output" | grep -q "Updated: 0"
+  echo "$output" | grep -q "Unchanged: ${unchanged_count}"
 }
 
 @test "re-run with modified value reports only that key as updated" {
@@ -208,8 +238,12 @@ setup() {
     --age-key "$AGE_KEY_FILE"
   [ "$status" -eq 0 ]
 
-  # Check that dev-qwen token was updated
+  # Check that dev-qwen token was updated (and the sibling pass key on the
+  # same path is still reported unchanged — per-key, not per-path status)
   echo "$output" | grep -q "dev-qwen.*updated"
+  echo "$output" | grep -q "dev-qwen.*unchanged"
+  # Summary: exactly one key updated
+  echo "$output" | grep -q "Updated: 1"
 
   # Verify the new value was written (path is disinto/bots/dev-qwen, key is token)
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
