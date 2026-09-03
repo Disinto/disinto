@@ -1,7 +1,92 @@
 # Updating the Disinto Factory
 
-How to update the disinto factory code on a deployment box (e.g. harb-dev-box)
-after a new version lands on the upstream Forgejo.
+How to update the disinto factory code on a deployment box after a new version
+lands on the upstream Forgejo.
+
+The production factory (disinto-nomad-box) runs the **Nomad+Vault backend**
+(`bin/disinto init --backend=nomad`, see `docs/nomad-migration.md`). Use the
+Nomad update path below; the rest of this document is the **legacy
+docker-compose path**.
+
+## Nomad update path (recommended)
+
+The factory checkout on the Nomad box lives in `/opt/disinto`; jobs are
+deployed from its `nomad/jobs/*.hcl`.
+
+### Step 1: Pull the latest code
+
+```bash
+cd /opt/disinto
+git pull origin main
+git log --oneline -5   # review what changed
+```
+
+### Step 2: Redeploy changed jobspecs
+
+`nomad job run` is declarative — running an unchanged jobspec is a no-op, so
+rerun every jobspec (or just the ones that changed):
+
+```bash
+nomad job run /opt/disinto/nomad/jobs/<job>.hcl
+# e.g.
+nomad job run /opt/disinto/nomad/jobs/agents.hcl
+nomad job run /opt/disinto/nomad/jobs/edge.hcl
+```
+
+If `vault/policies/*.hcl` changed, re-apply them too (idempotent):
+
+```bash
+tools/vault-apply-policies.sh
+```
+
+### Step 3: Rebuild the agents image (only if `docker/agents/` changed)
+
+The agent jobspecs reference `disinto/agents:local`, which is built locally
+— `nomad job run` alone will NOT pick up image changes (the tag is
+unchanged, so Nomad sees no spec change). When anything under `docker/agents/`
+changed, rebuild and restart:
+
+```bash
+cd /opt/disinto
+docker build -t disinto/agents:local -f docker/agents/Dockerfile .
+for spec in nomad/jobs/agents*.hcl; do
+  nomad job run "/opt/disinto/$spec"
+  nomad job restart "$(basename "$spec" .hcl)"   # force allocs onto the new image
+done
+```
+
+Note: on push to `main`, the `rebuild-and-deploy-agents` step in
+`.woodpecker/ci.yml` (#1173) already does this on the box when
+`docker/agents/**` changed — the manual rebuild is only needed when CI did
+not run (offline boxes, manual pulls).
+
+### Step 4: Verify
+
+```bash
+# All jobs running?
+# Expected: agents, edge, edge-threads-gc, forgejo, staging,
+#           vault-runner, woodpecker-agent, woodpecker-server
+nomad job status
+
+# Factory status summary?
+./bin/disinto status
+
+# Forgejo responding?
+curl -sf -o /dev/null -w 'HTTP %{http_code}' http://localhost:3000/
+
+# Agent logs healthy?
+tail -20 /srv/disinto/agent-data/logs/dev/dev-agent.log
+```
+
+If a job did not come up, read its allocation log:
+`nomad alloc logs <allocation-id>`.
+
+---
+
+## Legacy: docker-compose update path
+
+How to update a factory that still runs the generated `docker-compose.yml`
+stack (e.g. harb-dev-box) after a new version lands on the upstream Forgejo.
 
 ## Prerequisites
 
