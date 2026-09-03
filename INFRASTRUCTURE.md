@@ -97,7 +97,6 @@ of the bootstrap sequence.
 | `project-repos`               | `/srv/disinto/project-repos`           | `nomad/jobs/agents.hcl`            |
 | `caddy-data`                  | `/srv/disinto/caddy-data`              | `nomad/jobs/edge.hcl` (caddy)      |
 | `site-content`                | `/srv/disinto/docker` (ro)             | `nomad/jobs/staging.hcl`           |
-| `chat-history`                | `/srv/disinto/chat-history`            | `nomad/jobs/edge.hcl` (chat)       |
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
 | `claude-creds`                | `/srv/disinto/claude-creds` (ro)       | `nomad/jobs/agents-supervisor-opus.hcl` |
