@@ -66,12 +66,15 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/agent-data"
   "/srv/disinto/agent-data-qwen/review"
   "/srv/disinto/agent-data-gardener"
+  "/srv/disinto/agent-data-opus-supervisor"
+  "/srv/disinto/claude-creds"
   "/srv/disinto/project-repos"
   "/srv/disinto/caddy-data"
   "/srv/disinto/docker"
   "/srv/disinto/ops-repo"
   "/srv/disinto/snapshot-state"
   "/srv/disinto/threads-state"
+  "/srv/disinto/inbox-state"
   "/srv/disinto/projects"
 )
 
