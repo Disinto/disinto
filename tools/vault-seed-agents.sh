@@ -4,7 +4,9 @@
 #
 # Part of the Nomad+Vault migration (S4.1, issue #955). Populates
 # kv/disinto/bots/<role> with token + pass for each of the 7 agent roles
-# plus the vault bot. Handles the "fresh factory, no .env import" case.
+# plus the vault bot, and kv/disinto/shared/ci with a woodpecker_token
+# placeholder (#1114 — the qwen jobspecs read WOODPECKER_TOKEN from there).
+# Handles the "fresh factory, no .env import" case.
 #
 # Companion to tools/vault-import.sh — when that runs against a box with
 # an existing stack, it overwrites seeded values with real ones.
@@ -13,6 +15,10 @@
 #   - Both token and pass present → skip, log "<role> unchanged".
 #   - Either missing → generate random values for missing keys, preserve
 #     existing keys, write back atomically.
+#
+# Idempotency contract (shared/ci):
+#   - woodpecker_token present → skip, log "shared/ci unchanged".
+#   - Missing → seed "seed-me" placeholder, preserve other keys.
 #
 # Preconditions:
 #   - Vault reachable + unsealed at $VAULT_ADDR.
@@ -56,7 +62,9 @@ while [ $# -gt 0 ]; do
     -h|--help)
       printf 'Usage: %s [--dry-run]\n\n' "$(basename "$0")"
       printf 'Seed kv/disinto/bots/<role> with token + pass for all agent\n'
-      printf 'roles. Idempotent: existing non-empty values are preserved.\n\n'
+      printf 'roles, and kv/disinto/shared/ci with a woodpecker_token\n'
+      printf 'placeholder. Idempotent: existing non-empty values are\n'
+      printf 'preserved.\n\n'
       printf '  --dry-run   Print planned actions without writing.\n'
       exit 0
       ;;
@@ -169,8 +177,40 @@ for role in "${BOT_ROLES[@]}"; do
   total_generated=$(( total_generated + ${#generated[@]} ))
 done
 
+# ── Step 3: seed shared/ci (Woodpecker token — #1114) ───────────────────────
+ci_kv_api="${KV_MOUNT}/data/disinto/shared/ci"
+
+log "── seed disinto/shared/ci ──"
+
+ci_existing_raw="$(hvault_get_or_empty "${ci_kv_api}")" \
+  || die "failed to read ${ci_kv_api}"
+
+ci_existing_data="{}"
+ci_existing_token=""
+if [ -n "$ci_existing_raw" ]; then
+  ci_existing_data="$(printf '%s' "$ci_existing_raw" | jq '.data.data // {}')"
+  ci_existing_token="$(printf '%s' "$ci_existing_raw" | jq -r '.data.data.woodpecker_token // ""')"
+fi
+
+if [ -n "$ci_existing_token" ]; then
+  log "shared/ci: unchanged"
+else
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] shared/ci: would seed woodpecker_token placeholder"
+  else
+    # Placeholder on fresh boxes — real token lands via ops tooling or
+    # tools/vault-import.sh once a Woodpecker instance exists.
+    ci_payload="$(printf '%s' "$ci_existing_data" \
+      | jq --arg t "seed-me" '{data: (. + {woodpecker_token: $t})}')"
+    _hvault_request POST "${ci_kv_api}" "$ci_payload" >/dev/null \
+      || die "failed to write ${ci_kv_api}"
+  fi
+  log "shared/ci: seeded woodpecker_token placeholder"
+  total_generated=$(( total_generated + 1 ))
+fi
+
 if [ "$total_generated" -eq 0 ]; then
   log "all bot paths already seeded — no-op"
 else
-  log "done — ${total_generated} key(s) seeded across ${#BOT_ROLES[@]} bot paths"
+  log "done — ${total_generated} key(s) seeded (bot + shared paths)"
 fi
