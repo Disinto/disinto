@@ -20,8 +20,8 @@
 #
 # docker.sock mount:
 #   Inline bind-mount (not a host_volume) — socket files cannot be host
-#   volumes. Mirrors the edge.hcl dispatcher pattern but with rw instead
-#   of ro (supervisor must restart containers).
+#   volumes. Mirrors the edge.hcl caddy task pattern (edge.hcl:147-151) —
+#   both rw, since the supervisor must restart containers.
 #
 # Not the runtime yet: docker-compose.yml is still the factory's live stack
 # until cutover. This file exists so CI can validate it and S4.2 can wire
