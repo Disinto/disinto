@@ -550,43 +550,46 @@ EOF
   # KV v2 POST replaces the entire document, so we must include unchanged keys
   # to avoid dropping them. The idempotency guarantee comes from KV v2 versioning.
   for vault_path in "${!path_seen[@]}"; do
-    # Collect this path's "vault_key=source_value" pairs into a bash
-    # indexed array. Each element is one kv pair; '=' inside the value is
-    # preserved because _kv_put_secret splits on the *first* '=' only.
-    local pairs_array=()
-    local path_has_changes=0
-
+    # Collect this path's composite keys into a bash indexed array so the
+    # per-key statuses stay attached to their values.
+    local cks=()
+    local ck
     for ck in "${!ops_value[@]}"; do
       [ "${ck%:*}" = "$vault_path" ] || continue
-      local vault_key="${ck#*:}"
-      pairs_array+=("${vault_key}=${ops_value[$ck]}")
-      if [ "${ops_status[$ck]}" != "unchanged" ]; then
-        path_has_changes=1
-      fi
+      cks+=("$ck")
     done
 
-    # Determine effective status for this path (updated if any key changed)
-    local effective_status="unchanged"
-    if [ "$path_has_changes" = 1 ]; then
-      effective_status="updated"
-    fi
+    # Build this path's "vault_key=source_value" pairs. Each element is one
+    # kv pair; '=' inside the value is preserved because _kv_put_secret
+    # splits on the *first* '=' only.
+    local pairs_array=()
+    for ck in "${cks[@]}"; do
+      pairs_array+=("${ck#*:}=${ops_value[$ck]}")
+    done
 
     if ! _kv_put_secret "$vault_path" "${pairs_array[@]}"; then
       _err "Failed to write to $vault_path"
       exit 1
     fi
 
-    # Output status for each key in this path
-    for kv in "${pairs_array[@]}"; do
-      local kv_key="${kv%%=*}"
-      _format_status "$effective_status" "$vault_path" "$kv_key"
+    # Output and count status for each key in this path. Each key reports
+    # its own status (created/updated/unchanged) for audit purposes.
+    for ck in "${cks[@]}"; do
+      local key_status="${ops_status[$ck]}"
+      _format_status "$key_status" "$vault_path" "${ck#*:}"
       printf '\n'
+      case "$key_status" in
+        created)
+          ((created++)) || true
+          ;;
+        updated)
+          ((updated++)) || true
+          ;;
+        unchanged)
+          ((unchanged++)) || true
+          ;;
+      esac
     done
-
-    # Count only if path has changes
-    if [ "$effective_status" = "updated" ]; then
-      ((updated++)) || true
-    fi
   done
 
   _log ""
