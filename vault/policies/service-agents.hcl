@@ -1,9 +1,11 @@
 # vault/policies/service-agents.hcl
 #
 # Composite policy for the `agents` Nomad job (S4.1, issue #955).
-# Grants read access to all 7 bot KV namespaces + shared forge config,
-# so a single job running all agent roles can pull per-bot tokens from
-# Vault via workload identity.
+# Grants read access to all 7 bot KV namespaces + shared forge + shared CI
+# config, so a single job running all agent roles can pull per-bot tokens
+# from Vault via workload identity. The qwen jobspecs
+# (agents-{dev,review,gardener}-qwen) additionally read the Woodpecker
+# token from shared/ci (#1114).
 
 # ── Per-bot KV paths (token + pass per role) ─────────────────────────────────
 path "kv/data/disinto/bots/dev" {
@@ -80,5 +82,10 @@ path "kv/metadata/disinto/bots/filer" {
 
 # ── Shared forge config (URL, bot usernames) ─────────────────────────────────
 path "kv/data/disinto/shared/forge" {
+  capabilities = ["read"]
+}
+
+# ── Shared CI config (Woodpecker token — #1114) ──────────────────────────────
+path "kv/data/disinto/shared/ci" {
   capabilities = ["read"]
 }
