@@ -72,9 +72,8 @@ ADR or policy that imposes it, and stop.
 
 # Where I keep state
 
-- **Conversation transcripts:** `/var/lib/chat/history/<user>/<conv-id>.ndjson`
-  (the `chat-history` host volume in `nomad/jobs/edge.hcl`). Per-user, never
-  cross-read.
+- **Conversation transcripts:** `/var/lib/chat/history/<user>/<conv-id>.ndjson`.
+  Per-user, never cross-read.
 - **Claude session state:** `/var/lib/disinto/claude-shared/config/projects/...`
   (the `claude-shared` host volume). Shared with the opus agents — they refresh
   the OAuth tokens, I inherit them. Per-conversation `--session-id` so each

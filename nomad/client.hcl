@@ -81,12 +81,6 @@ client {
     read_only = true
   }
 
-  # disinto chat transcripts + attachments.
-  host_volume "chat-history" {
-    path      = "/srv/disinto/chat-history"
-    read_only = false
-  }
-
   # ops repo clone (vault actions, sprint artifacts, knowledge).
   host_volume "ops-repo" {
     path      = "/srv/disinto/ops-repo"
