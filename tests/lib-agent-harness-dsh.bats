@@ -28,6 +28,7 @@ setup() {
 {
   echo "args: $*"
   echo "DSH_PERMISSION_MODE=${DSH_PERMISSION_MODE:-}"
+  echo "DSH_RESUME_SESSION=${DSH_RESUME_SESSION:-}"
   echo "DSH_HOME=${DSH_HOME:-}"
   echo "cwd: $PWD"
 } > "${DSH_STUB_LOG:-/dev/null}"
@@ -148,17 +149,41 @@ teardown() {
   [ "$rc" -eq 3 ]
 }
 
-# ── Resume ──────────────────────────────────────────────────────────────────
+# ── Resume (#1224) ────────────────────────────────────────────────────────────
 
-@test "--resume logs that it is unsupported and starts a fresh session" {
+@test "--resume with an existing session dir passes DSH_RESUME_SESSION and keeps the session id" {
   export AGENT_HARNESS=dsh
   local rc=0
-  agent_run --resume "old-session-id-1234" "go" || rc=$?
+  # The resume target: an existing session dir with a valid log, whose mtime
+  # predates the run (a resumed dir's mtime does not change — only the log
+  # file inside is appended — so the mtime scan must not be relied on).
+  local target="$DSH_HOME/sessions/some-slug/session-old-1234"
+  mkdir -p "$target"
+  printf '%s\n' \
+    '{"type":"session","seq":0,"time":"2026-09-01T10:00:00.000Z","data":{"id":"stub","cwd":"/tmp"}}' \
+    '{"type":"step/start","seq":1,"time":"2026-09-01T10:00:01.000Z","data":{"turn":1,"step":1}}' \
+    '{"type":"turn/end","seq":2,"time":"2026-09-01T10:00:02.000Z","data":{"turn":1,"reason":{"kind":"completed"}}}' \
+    | zstd -q > "$target/session.jsonl.zstd"
+  touch -t 202608010000 "$target"
+  agent_run --resume "session-old-1234" "go" || rc=$?
   [ "$rc" -eq 0 ]
-  [ "$_AGENT_SESSION_ID" != "old-session-id-1234" ]
+  [ "$_AGENT_SESSION_ID" = "session-old-1234" ]
+  [ "$(cat "$SID_FILE")" = "session-old-1234" ]
+  grep -q "DSH_RESUME_SESSION=session-old-1234" "$DSH_STUB_LOG"
+  # The resumed session's log was normalised into diagnostics
+  [ -f "$DISINTO_LOG_DIR/test/agent-run-last.json" ]
+}
+
+@test "--resume with a missing session dir logs and starts a fresh session" {
+  export AGENT_HARNESS=dsh
+  local rc=0
+  agent_run --resume "session-missing-9999" "go" || rc=$?
+  [ "$rc" -eq 0 ]
+  [ "$_AGENT_SESSION_ID" != "session-missing-9999" ]
   [ -n "$_AGENT_SESSION_ID" ]
-  grep -q "not supported under the dsh harness" "$LOGFILE"
-  # No --resume-style flag was passed to dsh
+  grep -q "not found under" "$LOGFILE"
+  # No resume env reached dsh: a fresh session was requested
+  grep -q "^DSH_RESUME_SESSION=$" "$DSH_STUB_LOG"
   grep -q "args: --profile headless go" "$DSH_STUB_LOG"
 }
 
