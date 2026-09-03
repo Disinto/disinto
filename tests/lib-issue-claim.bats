@@ -25,6 +25,11 @@ setup() {
   export FORGE_TOKEN="dummy-token"
   export FORGE_URL="https://forge.example.test"
   export FORGE_API="${FORGE_URL}/api/v1"
+  # forge_whoami resolves its base as ${FORGE_API_BASE:-${FORGE_URL}/api/v1},
+  # so an ambient FORGE_API_BASE would bypass the curl stub below and hit the
+  # real Forgejo, making issue_claim abort at "could not resolve bot identity"
+  # (#1156).
+  unset FORGE_API_BASE
 
   export CALLS_LOG="${BATS_TEST_TMPDIR}/curl-calls.log"
   : > "$CALLS_LOG"
