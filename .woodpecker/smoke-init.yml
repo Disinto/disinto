@@ -5,6 +5,7 @@ when:
       - "lib/load-project.sh"
       - "lib/env.sh"
       - "lib/generators.sh"
+      - "lib/init/nomad/**"
       - "tests/**"
       - ".woodpecker/smoke-init.yml"
 
@@ -22,3 +23,12 @@ steps:
       - kill $(cat /tmp/mock-forgejo.pid) 2>/dev/null || true
       - bash tests/smoke-nomad-bootstrap.sh
       - bash tests/role-cli-nomad-layout.sh
+
+  # Nomad backend release smoke — Stage A (plan validation) only; Stage B
+  # stays SKIP-gated in CI (no LXD on the runner). Validates the checkout
+  # in place via SRC_DIR.
+  - name: release-smoke-nomad
+    image: python:3-alpine
+    commands:
+      - apk add --no-cache bash curl jq git coreutils
+      - SRC_DIR="$PWD" bash tests/release-smoke-nomad.sh

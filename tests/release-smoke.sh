@@ -204,11 +204,31 @@ if lxc info >/dev/null 2>&1; then
   fi
 fi
 
+# ── Nomad backend stage (tests/release-smoke-nomad.sh) ──────────────────────
+# The compose stages above only prove the docker-compose backend. The nomad
+# backend gets its own script so it can also run standalone and in CI.
+COMPOSE_EXIT=0
+if [ "$FAILED" -ne 0 ]; then
+  COMPOSE_EXIT=1
+fi
+
+NOMAD_SCRIPT="$(cd "$(dirname "$0")" && pwd)/release-smoke-nomad.sh"
+NOMAD_EXIT=0
+echo ""
+echo "============================================"
+echo "=== Nomad backend (tests/release-smoke-nomad.sh) ==="
+echo "============================================"
+if [ -f "$NOMAD_SCRIPT" ]; then
+  VERSION="$VERSION" bash "$NOMAD_SCRIPT" || NOMAD_EXIT=$?
+else
+  warn "release-smoke-nomad.sh not found — skipping Nomad backend"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "============================================"
-if [ "$FAILED" -ne 0 ]; then
-  echo "=== RELEASE SMOKE: FAILED (${WARNINGS} warnings) ==="
+if [ "$COMPOSE_EXIT" -ne 0 ] || [ "$NOMAD_EXIT" -ne 0 ]; then
+  echo "=== RELEASE SMOKE: FAILED (compose_exit=$COMPOSE_EXIT nomad_exit=$NOMAD_EXIT, ${WARNINGS} warnings) ==="
   exit 1
 fi
 if [ "$WARNINGS" -gt 0 ]; then
