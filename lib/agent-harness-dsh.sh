@@ -23,20 +23,28 @@
 #     one created AFTER a start timestamp recorded before the invocation —
 #     a stale directory from an earlier run can never be selected (the
 #     wrong directory yields a plausible but wrong diagnostics file, which
-#     then produces wrong metrics and wrong no-push decisions)
+#     then produces wrong metrics and wrong no-push decisions). A resumed
+#     session is instead resolved by name BEFORE the run: a resumed
+#     directory keeps its old mtime (only the log file inside is
+#     appended), so the mtime scan would miss it
 #   - calls dsh_session_normalise (#1105) and writes its output to the
 #     same diagnostics path the Claude path uses, ${diag_dir}/agent-run-last.json
 #   - sets _AGENT_SESSION_ID (the session directory name, persisted to
 #     SID_FILE) and _AGENT_LAST_OUTPUT (the normalised output)
 #   - returns the run's exit code
 #
-# Resume: dsh headless has no --resume. If one is passed, it is logged and
-# a fresh session is started — callers treat resume as an optimisation,
-# not a requirement. Recorded limitation; see lib/AGENTS.md.
+# Resume (#1224): dsh headless has no --resume flag; the agents image
+# patches the headless runner (docker/agents/dsh-headless-resume.mjs) to
+# honour the DSH_RESUME_SESSION env var via the core agents.resume() API.
+# If --resume is passed and the session directory exists under
+# $DSH_HOME/sessions/, the run continues that session; a missing target
+# is logged and a fresh session is started — callers treat resume as an
+# optimisation, not a requirement.
 #
-# Depends on the documented dsh CLI surface only: `--profile headless`,
-# DSH_HOME, DSH_PERMISSION_MODE. Everything structural about the on-disk
-# session record comes from lib/dsh-session.sh.
+# Depends on the documented dsh CLI surface (`--profile headless`,
+# DSH_HOME, DSH_PERMISSION_MODE) plus the image-patched DSH_RESUME_SESSION
+# env var. Everything structural about the on-disk session record comes
+# from lib/dsh-session.sh.
 #
 # Sourced by lib/agent-sdk.sh. Tests: tests/lib-agent-harness-dsh.bats
 # (the `dsh` binary is stubbed — no dsh, model, or network required).
@@ -62,12 +70,28 @@ _agent_run_dsh() {
   local limit="${CLAUDE_TIMEOUT:-7200}"
   local diag_dir="${DISINTO_LOG_DIR:-/tmp}/${LOG_AGENT:-dev}"
   local diag_file="${diag_dir}/agent-run-last.json"
-  local start_ts output rc session_dir="" best_mtime=0 mtime dir slug_dir normalised
+  local start_ts output rc session_dir="" resume_dir="" best_mtime=0 mtime dir slug_dir normalised
   local has_pushed delivered
 
   log "agent_run(dsh): starting (resume=${resume_id:-(new)}, dir=${run_dir})"
+
+  # Resume (#1224): resolve the target session directory by name BEFORE
+  # the run. A resumed directory keeps its old mtime (only the log file
+  # inside is appended), so the mtime-after-start scan below would miss
+  # it. A missing target degrades to a fresh session: callers treat
+  # resume as an optimisation, not a requirement.
   if [ -n "$resume_id" ]; then
-    log "agent_run(dsh): --resume ${resume_id:0:12}... not supported under the dsh harness — starting a fresh session"
+    for slug_dir in "$dsh_home/sessions"/*/; do
+      [ -d "$slug_dir" ] || continue
+      if [ -d "$slug_dir$resume_id" ]; then
+        resume_dir="${slug_dir%/}/$resume_id"
+        break
+      fi
+    done
+    if [ -z "$resume_dir" ]; then
+      log "agent_run(dsh): --resume ${resume_id:0:12}... not found under ${dsh_home}/sessions — starting a fresh session"
+      resume_id=""
+    fi
   fi
 
   # Record the start BEFORE invoking dsh: the session directory is selected
@@ -79,8 +103,11 @@ _agent_run_dsh() {
   # dsh headless writes the last assistant text to stdout; the full record
   # lands on disk under $DSH_HOME/sessions/ (lib/dsh-session.sh). No PTY:
   # dsh headless writes to stdout directly and mounts no TUI.
+  # DSH_RESUME_SESSION is honoured by the image-patched headless runner
+  # (docker/agents/dsh-headless-resume.mjs); empty means a fresh session.
   output=$(cd "$run_dir" && \
     DSH_HOME="$dsh_home" DSH_PERMISSION_MODE=danger-full-access \
+    DSH_RESUME_SESSION="$resume_id" \
     timeout -k 10 "$limit" dsh --profile headless "$prompt" 2>>"$LOGFILE") && rc=0 || rc=$?
 
   # busybox `timeout` (alpine CI) reports the child's signal-death status
@@ -104,19 +131,25 @@ _agent_run_dsh() {
   # subdirectory of any $DSH_HOME/sessions/<cwd-slug>/ dir whose mtime is
   # not older than the recorded start. Session dirs sit one level below
   # the <cwd-slug> dir and dsh's slug scheme is internal, so scan every
-  # slug dir rather than deriving the name.
-  for slug_dir in "$dsh_home/sessions"/*/; do
-    [ -d "$slug_dir" ] || continue
-    for dir in "$slug_dir"*/; do
-      [ -d "$dir" ] || continue
-      mtime=$(stat -c %Y "$dir" 2>/dev/null) || continue
-      case "$mtime" in '' | *[!0-9]*) continue ;; esac
-      if [ "$mtime" -ge "$start_ts" ] && [ "$mtime" -gt "$best_mtime" ]; then
-        best_mtime=$mtime
-        session_dir="${dir%/}"
-      fi
+  # slug dir rather than deriving the name. A resumed run skips the scan:
+  # its directory was resolved by name before the run (its mtime predates
+  # the start, so the scan would miss it).
+  if [ -n "$resume_dir" ]; then
+    [ -d "$resume_dir" ] && session_dir="$resume_dir"
+  else
+    for slug_dir in "$dsh_home/sessions"/*/; do
+      [ -d "$slug_dir" ] || continue
+      for dir in "$slug_dir"*/; do
+        [ -d "$dir" ] || continue
+        mtime=$(stat -c %Y "$dir" 2>/dev/null) || continue
+        case "$mtime" in '' | *[!0-9]*) continue ;; esac
+        if [ "$mtime" -ge "$start_ts" ] && [ "$mtime" -gt "$best_mtime" ]; then
+          best_mtime=$mtime
+          session_dir="${dir%/}"
+        fi
+      done
     done
-  done
+  fi
 
   if [ -n "$session_dir" ]; then
     _AGENT_SESSION_ID=$(basename "$session_dir")

@@ -38,6 +38,16 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.84
 # Install dsh — dsh agent harness (run via _agent_run_dsh, #1106)
 RUN npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 
+# Patch the dsh headless runner for session resume (#1224): stock
+# dsh-headless always creates a fresh session; the patch makes it honour
+# DSH_RESUME_SESSION via the core agents.resume() API. Applied against the
+# pinned dsh version above — the script fails the build if the target
+# block is not found (e.g. after a dsh upgrade).
+COPY docker/agents/dsh-headless-resume.mjs /tmp/dsh-headless-resume.mjs
+RUN node /tmp/dsh-headless-resume.mjs \
+    /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-headless/lib/index.js \
+    && rm /tmp/dsh-headless-resume.mjs
+
 # Seed the dsh headless profile for hired dsh agents (--harness dsh, #1107).
 # dsh headless runs as `dsh --profile headless` with DSH_HOME pointing at the
 # agent's persistent config dir ($DSH_HOME/profiles/headless.json). The seed

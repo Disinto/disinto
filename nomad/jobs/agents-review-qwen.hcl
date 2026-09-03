@@ -194,9 +194,8 @@ job "agents-review-qwen" {
         # dsh harness canary (#1104-#1107): this job runs the dsh harness
         # while agents-dev-qwen stays on claude — one harness per job, so a
         # dsh regression idles reviews but never stops dev. Revert = remove
-        # this block. Known dsh gaps: headless has no --resume (fresh
-        # session per run) and wall-clock timeouts write no metrics record
-        # (#1186). Env names mirror lib/hire-agent.sh's dsh branch.
+        # this block. Known dsh gap: wall-clock timeouts write no metrics
+        # record (#1186). Env names mirror lib/hire-agent.sh's dsh branch.
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"
