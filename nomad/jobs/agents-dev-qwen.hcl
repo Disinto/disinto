@@ -188,6 +188,21 @@ job "agents-dev-qwen" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "dev"
+
+        # dsh harness migration: dev joins review on the dsh harness
+        # (llama.cpp Qwen3.8-27B via DSH_BASE_URL). Revert = remove this
+        # block (dispatcher default is claude). Known dsh gap: wall-clock
+        # timeouts write no metrics record (#1186). Env names mirror
+        # lib/hire-agent.sh dsh branch and agents-review-qwen.hcl.
+        AGENT_HARNESS       = "dsh"
+        DSH_HOME            = "/home/agent/data/dsh"
+        DSH_PERMISSION_MODE = "danger-full-access"
+        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
+        DSH_MODEL           = "unsloth/Qwen3.8-27B"
+        DSH_CONTEXT_WINDOW  = "163840"
+        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
+        # the key but dsh requires the env to be set.
+        LLAMACPP_API_KEY    = "sk-no-key-required"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
