@@ -60,8 +60,33 @@ configure_git_creds() {
     done
   fi
 
+  if [ -z "$bot_user" ] && [ -n "${FORGE_TOKEN:-}" ]; then
+    # Forgejo may simply be booting (exhausting ~15s of retries is
+    # normal after a box restart). Distinguish a dead server from a bad
+    # token: 401/403 means retrying is pointless — fail fast. Anything
+    # else means wait with backoff (up to 30 min) instead of exiting and
+    # crash-looping the container (#1238). The FORGE_TOKEN guard keeps
+    # misconfigured (tokenless) deploys failing fast instead of waiting.
+    local http_code api_base
+    api_base="${FORGE_API_BASE:-${FORGE_URL}/api/v1}"
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+      -H "Authorization: token ${FORGE_TOKEN}" "${api_base}/user" 2>/dev/null) || http_code="000"
+    [ -z "$http_code" ] && http_code="000"
+    if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+      $log_fn "ERROR: FORGE_TOKEN rejected (HTTP ${http_code}) — fix the token; retrying will not help"
+      return 1
+    fi
+    $log_fn "WARNING: Forgejo not reachable (HTTP ${http_code}) — waiting up to 30m for it to come up"
+    local waited=0
+    while [ -z "$bot_user" ] && [ "$waited" -lt 1800 ]; do
+      sleep 30
+      waited=$((waited + 30))
+      bot_user=$(forge_whoami)
+    done
+  fi
+
   if [ -z "$bot_user" ]; then
-    $log_fn "ERROR: Could not determine bot username from FORGE_TOKEN after 5 attempts — credential helper NOT configured"
+    $log_fn "ERROR: Could not determine bot username from FORGE_TOKEN (after retries plus up to 30m of waiting) — credential helper NOT configured"
     $log_fn "ERROR: git push will fail until this is resolved. Restart the container after Forgejo is healthy."
     return 1
   fi

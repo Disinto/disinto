@@ -191,11 +191,12 @@ job "agents-review-qwen" {
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "review"
 
-        # dsh harness canary (#1104-#1107): this job runs the dsh harness
-        # while agents-dev-qwen stays on claude — one harness per job, so a
-        # dsh regression idles reviews but never stops dev. Revert = remove
-        # this block. Known dsh gap: wall-clock timeouts write no metrics
-        # record (#1186). Env names mirror lib/hire-agent.sh's dsh branch.
+        # dsh harness (#1104-#1107, rolled out to dev in #1231): this job
+        # and agents-dev-qwen both run the dsh harness — a dsh regression
+        # now idles reviews AND dev. Revert = remove this block (dispatcher
+        # default is claude). Known dsh gap: wall-clock timeouts write no
+        # metrics record (#1186). Env names mirror lib/hire-agent.sh's
+        # dsh branch.
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"

@@ -160,7 +160,8 @@ _generate_local_model_services() {
       DSH_PERMISSION_MODE: \"danger-full-access\"
       DSH_MODEL: \"${model}\"
       DSH_BASE_URL: \"${base_url}\"
-      DSH_CONTEXT_WINDOW: \"${context_window:-163840}\""
+      DSH_CONTEXT_WINDOW: \"${context_window:-163840}\"
+      LLAMACPP_API_KEY: \"sk-no-key-required\""
             else
               model_env="      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
       ANTHROPIC_BASE_URL: \"${base_url}\"

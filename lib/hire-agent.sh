@@ -206,6 +206,9 @@ POLICY
         DSH_MODEL           = "${model}"
         DSH_BASE_URL        = "${local_model}"
         DSH_CONTEXT_WINDOW  = "${context_window}"
+        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
+        # the key but dsh requires the env to be set (#1234).
+        LLAMACPP_API_KEY    = "sk-no-key-required"
         AGENT_ROLES         = "${role}"
         POLL_INTERVAL       = "${interval}"
         DISINTO_CONTAINER   = "1"
@@ -334,7 +337,7 @@ EOT
         destination          = "secrets/bots.env"
         env                  = true
         # noop per #1091 stabilization: renewals must not restart the task.
-        # Rotation = vault kv put + manual `nomad job restart`/`alloc restart`.
+        # Rotation = vault kv put + manual nomad job restart or alloc restart.
         change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
