@@ -38,6 +38,10 @@ job "woodpecker-agent" {
     # error.
     vault {
       role = "service-woodpecker-agent"
+      # Stable under Vault token renewal (#1091 pattern): a renewal must
+      # not restart this task. Secret rotation = vault kv put + manual
+      # nomad alloc restart.
+      change_mode = "noop"
     }
 
     # Health check port: static 3333 for Nomad service discovery. The agent
@@ -139,7 +143,9 @@ job "woodpecker-agent" {
       template {
         destination          = "secrets/agent.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart the task
+        # (#1091 stabilization). Rotation = vault kv put + manual restart.
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/shared/woodpecker" -}}

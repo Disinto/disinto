@@ -49,8 +49,13 @@ The command:
 1. Reads `GEMINI_API_KEY` from `./.env`.
 2. Writes it to Vault at `kv/disinto/voice.gemini_api_key`.
 3. The Nomad template stanza in `nomad/jobs/edge.hcl` detects the
-   Vault change and restarts the caddy task so
-   `/secrets/gemini-api-key` reflects the new value.
+   Vault change and re-renders `/secrets/gemini-api-key`. The template
+   is `change_mode = "noop"` (#1091 stabilization), so finish with a
+   manual restart for the new key to take effect:
+
+```sh
+nomad alloc restart <edge-alloc-id>   # picks up the re-rendered secret
+```
 
 The script is idempotent: same-value writes are cheap no-ops, and a
 missing `GEMINI_API_KEY` in `.env` leaves Vault untouched rather than
@@ -65,10 +70,11 @@ value into Vault:
 # 1. Update .env with the new key (do not commit — .env is gitignored).
 sed -i 's|^GEMINI_API_KEY=.*|GEMINI_API_KEY=AIza...NEW...|' .env
 
-# 2. Re-seed Vault. Template change_mode=restart triggers a caddy task
-#    restart, which re-renders /secrets/gemini-api-key and restarts the
-#    voice bridge subprocess with the new key.
+# 2. Re-seed Vault, then restart the edge alloc so the re-rendered
+#    /secrets/gemini-api-key is picked up (template is noop — no
+#    auto-restart) and the voice bridge relaunches with the new key.
 disinto vault reseed-voice
+nomad alloc restart <edge-alloc-id>
 ```
 
 For out-of-band rotation (without touching `.env`), write directly to
@@ -78,7 +84,9 @@ Vault:
 vault kv put kv/disinto/voice gemini_api_key='AIza...NEW...'
 ```
 
-Either path triggers the same restart. The chat subprocess is not
+Either path re-renders the secret file; both need the same manual
+`nomad alloc restart <edge-alloc-id>` to take effect (no auto-restart
+under #1091 stabilization). The chat subprocess is not
 affected by a voice-only rotation — the restart is task-scoped, and
 chat reads its secrets from `kv/disinto/chat`, which is untouched.
 

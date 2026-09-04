@@ -214,7 +214,9 @@ EOT
       template {
         destination          = "secrets/bots.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart the task
+        # (#1091 stabilization). Rotation = vault kv put + manual restart.
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/bots/gardener" -}}

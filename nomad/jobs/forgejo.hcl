@@ -47,6 +47,10 @@ job "forgejo" {
     # exchange fail at placement with a "claim mismatch" error.
     vault {
       role = "service-forgejo"
+      # Stable under Vault token renewal (#1091 pattern): a renewal must
+      # not restart this task. Secret rotation = vault kv put + manual
+      # nomad alloc restart.
+      change_mode = "noop"
     }
 
     # Static :3000 matches docker-compose's published port so the rest of
@@ -126,11 +130,10 @@ job "forgejo" {
       # Renders `<task-dir>/secrets/forgejo.env` (per-alloc secrets dir,
       # never on disk on the host root filesystem, never in `nomad job
       # inspect` output). `env = true` merges every KEY=VAL line into the
-      # task environment. `change_mode = "restart"` re-runs the task
-      # whenever a watched secret's value in Vault changes — so `vault kv
-      # put …` alone is enough to roll new secrets; no manual
-      # `nomad alloc restart` required (though that also works — it
-      # forces a re-render).
+      # task environment. Static secrets use `change_mode = "noop"` (#1091
+      # stabilization: renewals must not restart the task) — so rolling
+      # secrets is `vault kv put …` + manual `nomad alloc restart`
+      # (which forces a re-render).
       #
       # Vault path: `kv/data/disinto/shared/forgejo`. The literal `/data/`
       # segment is required by consul-template for KV v2 mounts — without
@@ -164,7 +167,9 @@ job "forgejo" {
       template {
         destination          = "secrets/forgejo.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart the task
+        # (#1091 stabilization). Rotation = vault kv put + manual restart.
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/shared/forgejo" -}}

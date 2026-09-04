@@ -130,6 +130,9 @@ job "edge" {
       # Vault role for the chat-Claude control surface secrets (#650).
       vault {
         role = "service-edge-chat"
+        # Stable under Vault token renewal (#1091 pattern).
+        # Rotation = vault kv put + manual nomad alloc restart.
+        change_mode = "noop"
       }
 
       config {
@@ -346,11 +349,13 @@ EOT
       # Forge admin PAT — read by the forge-api MCP server via the
       # FACTORY_FORGE_PAT env var (entrypoint-edge.sh loads it from the file
       # mount at container start). File mount preferred over direct env so
-      # rotation = `vault kv put kv/disinto/chat forge_pat=<new>` + template
-      # change_mode triggers a restart without shell-history leakage.
+      # rotation = `vault kv put kv/disinto/chat forge_pat=<new>` + manual
+      # `nomad alloc restart <edge-alloc>` (template is noop under #1091
+      # stabilization, so no auto-restart) without shell-history leakage.
       template {
         destination          = "secrets/forge-pat"
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
         error_on_missing_key = false
         perms                = "0400"
         data                 = <<EOT
@@ -368,7 +373,8 @@ EOT
       # as a file so NOMAD_TOKEN never appears in `docker inspect`.
       template {
         destination          = "secrets/nomad-token"
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
         error_on_missing_key = false
         perms                = "0400"
         data                 = <<EOT
@@ -392,7 +398,8 @@ EOT
       # `disinto vault reseed-voice` (see tools/vault-seed-voice.sh).
       template {
         destination          = "secrets/gemini-api-key"
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
         error_on_missing_key = false
         perms                = "0400"
         data                 = <<EOT
@@ -409,7 +416,8 @@ EOT
       template {
         destination          = "secrets/chat-oauth.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
         error_on_missing_key = false
         perms                = "0400"
         data                 = <<EOT
@@ -483,6 +491,9 @@ EOT
       # kv/data/disinto/voice (gemini_api_key).
       vault {
         role = "service-edge-chat"
+        # Stable under Vault token renewal (#1091 pattern).
+        # Rotation = vault kv put + manual nomad alloc restart.
+        change_mode = "noop"
       }
 
       config {
@@ -508,7 +519,8 @@ EOT
       template {
         destination          = "secrets/snapshot.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/chat" -}}

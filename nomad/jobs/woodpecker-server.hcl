@@ -49,6 +49,10 @@ job "woodpecker-server" {
     # enforces an exact match at placement.
     vault {
       role = "service-woodpecker"
+      # Stable under Vault token renewal (#1091 pattern): a renewal must
+      # not restart this task. Secret rotation = vault kv put + manual
+      # nomad alloc restart.
+      change_mode = "noop"
     }
 
     # HTTP UI (:8000) + gRPC agent endpoint (:9000). Static ports match
@@ -164,8 +168,9 @@ EOT
       # ── Vault-templated secrets env (S2.4 pattern) ─────────────────────────
       # Renders `<task-dir>/secrets/wp.env` (per-alloc secrets dir, never on
       # disk on the host root filesystem). `env = true` merges every KEY=VAL
-      # line into the task environment. `change_mode = "restart"` re-runs the
-      # task whenever a watched secret's value in Vault changes.
+      # line into the task environment. Static secrets use
+      # `change_mode = "noop"` (#1091 stabilization) — rotation is
+      # `vault kv put …` + manual `nomad alloc restart`.
       #
       # Vault path: `kv/data/disinto/shared/woodpecker`. The literal `/data/`
       # segment is required by consul-template for KV v2 mounts.
@@ -183,7 +188,9 @@ EOT
       template {
         destination          = "secrets/wp.env"
         env                  = true
-        change_mode          = "restart"
+        # noop: static Vault secrets - renewal must not restart the task
+        # (#1091 stabilization). Rotation = vault kv put + manual restart.
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/shared/woodpecker" -}}
