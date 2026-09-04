@@ -749,15 +749,18 @@ pr_walk_to_merge() {
               if [ "$wf_state" = "failure" ] || [ "$wf_state" = "error" ] || [ "$wf_state" = "killed" ]; then
                 # Collect failed children for this workflow
                 local failed_children
+                # The logs endpoint keys on the step's `id` (DB primary key),
+                # not the `pid` pipeline JSON carries — emit the id so the
+                # per-step log fetch below resolves correctly (#1117).
                 failed_children=$(printf '%s' "$pip_json" | jq -r "
                   .workflows[$wf_idx].children[]? |
                   select(.state == \"failure\" or .state == \"error\" or .state == \"killed\") |
-                  \"\(.name)\t\(.exit_code)\t\(.pid)\"" 2>/dev/null) || failed_children=""
+                  \"\(.name)\t\(.exit_code)\t\(.id)\"" 2>/dev/null) || failed_children=""
 
                 ci_prompt_body="${ci_prompt_body}
 --- Failed workflow: ${wf_name} ---"
                 if [ -n "$failed_children" ]; then
-                  while IFS=$'\t' read -r step_name step_exit step_pid; do
+                  while IFS=$'\t' read -r step_name step_exit step_id; do
                     [ -z "$step_name" ] && continue
                     local exit_annotation=""
                     case "$step_exit" in
@@ -769,10 +772,10 @@ pr_walk_to_merge() {
   Step: ${step_name}
   Exit code: ${step_exit}${exit_annotation}"
 
-                    # Fetch per-step logs
-                    if [ -n "$step_pid" ] && [ "$step_pid" != "null" ]; then
+                    # Fetch per-step logs (keyed on step id, not pid — #1117)
+                    if [ -n "$step_id" ] && [ "$step_id" != "null" ]; then
                       local step_logs
-                      step_logs=$(ci_get_step_logs "$_PR_CI_PIPELINE" "$step_pid" 2>/dev/null | tail -50) || step_logs=""
+                      step_logs=$(ci_get_step_logs "$_PR_CI_PIPELINE" "$step_id" 2>/dev/null | tail -50) || step_logs=""
                       if [ -n "$step_logs" ]; then
                         ci_prompt_body="${ci_prompt_body}
   Log tail (last 50 lines):
