@@ -348,6 +348,11 @@ review_run_and_parse() {
   # agent guesses a path and the verdict is lost (#1230 wrote
   # /tmp/disinto-review-1230.json instead of the file below).
   export REVIEW_OUTPUT_FILE="$OUTPUT_FILE"
+  # Tech-debt filing contract (formula section 7) shells out with
+  # $FORGE_TOKEN/$FORGE_API. dsh inherits parent env, but pin these
+  # explicitly: without them the agent cannot file follow-up issues and
+  # the auto-file loop silently degrades to pasted suggestions (#1239).
+  export FORGE_TOKEN FORGE_API
   if [ "$IS_RE_REVIEW" = true ] && [ -n "$_AGENT_SESSION_ID" ]; then
     agent_run --resume "$_AGENT_SESSION_ID" --worktree "$WORKTREE" --task "$PR_NUMBER" "$PROMPT" || REVIEW_RUN_RC=$?
   else
