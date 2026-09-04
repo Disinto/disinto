@@ -97,8 +97,10 @@ disinto hire-an-agent dev-dsh dev \
 - **`dsh`**: the agent runs the dsh harness (`dsh --profile headless`, with
   `AGENT_HARNESS=dsh`). The service gets dsh's own settings-form variables —
   `DSH_HOME` (the agent's persistent config dir),
-  `DSH_PERMISSION_MODE=danger-full-access`, `DSH_MODEL`, `DSH_BASE_URL`, and
-  `DSH_CONTEXT_WINDOW` — and **no** `CLAUDE_*` tuning variables.
+  `DSH_PERMISSION_MODE=danger-full-access`, `DSH_MODEL`, `DSH_BASE_URL`,
+  `DSH_CONTEXT_WINDOW`, and `LLAMACPP_API_KEY` (settings.yaml uses
+  apiKeyEnv indirection; llama-server ignores the value but dsh requires
+  the env to be set) — and **no** `CLAUDE_*` tuning variables.
 
 `--context-window <tokens>` (default `163840`) sets the context window a dsh
 agent is given (`DSH_CONTEXT_WINDOW`); it is ignored by `claude`-harness
