@@ -110,7 +110,9 @@ EOT
       template {
         destination          = "secrets/bots.env"
         env                  = true
-        change_mode          = "restart"
+        # noop per #1091 stabilization: renewals must not restart the task.
+        # Rotation = vault kv put + manual nomad job restart or alloc restart.
+        change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
 {{- with secret "kv/data/disinto/bots/labbot" -}}
