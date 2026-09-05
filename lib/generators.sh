@@ -817,6 +817,7 @@ volumes:
   agent-data:
   project-repos:
   caddy_data:
+  chat-config:
 
 networks:
   disinto-net:
