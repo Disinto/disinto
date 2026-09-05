@@ -342,7 +342,7 @@ review_run_and_parse() {
   # the name, so it must match the served model) and CLAUDE_TIMEOUT carries the
   # dev budget (7200) — a fallback that inherited it would never apply the cap.
   export CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}"
-  export CLAUDE_TIMEOUT="${REVIEW_CLAUDE_TIMEOUT:-2400}"   # 40 min — deliberate cap: a review still running at 40 min is stuck, not thorough
+  export CLAUDE_TIMEOUT="${REVIEW_CLAUDE_TIMEOUT:-3600}"   # 60 min — dsh reviews on the shared llama box need headroom under contention (25KB+ fixed prompt overhead prefills slowly); a review still running at 60 min is stuck, not thorough
   # dsh agents need output paths in-process: formulas/review-pr.toml section 9
   # uses shell expansion ("> $REVIEW_OUTPUT_FILE"), and without the export the
   # agent guesses a path and the verdict is lost (#1230 wrote
