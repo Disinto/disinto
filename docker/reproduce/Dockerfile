@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
       bash git jq docker-ce-cli docker-compose-plugin \
       nodejs npm chromium \
-    && npm install -g @anthropic-ai/mcp-playwright \
+    && npm install -g @playwright/mcp@0.0.80 \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -u 1000 -s /bin/bash agent
 COPY docker/reproduce/entrypoint-reproduce.sh /entrypoint-reproduce.sh
