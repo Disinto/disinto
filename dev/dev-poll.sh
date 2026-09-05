@@ -674,9 +674,38 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         LOCK_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE_NUM}.txt"
         REMOTE_BRANCH_EXISTS=$(git ls-remote --exit-code origin "fix/issue-${ISSUE_NUM}" >/dev/null 2>&1 && echo yes || echo no)
 
-        if [ -f "$LOCK_FILE" ] || [ "$REMOTE_BRANCH_EXISTS" = "yes" ]; then
-          log "issue #${ISSUE_NUM} assigned to me — my thread is busy (lock=$([ -f "$LOCK_FILE" ] && echo y || echo n) remote_branch=$REMOTE_BRANCH_EXISTS)"
+        if [ -f "$LOCK_FILE" ]; then
+          log "issue #${ISSUE_NUM} assigned to me — my thread is busy (lock=y)"
           BLOCKED_BY_INPROGRESS=true
+        elif [ "$REMOTE_BRANCH_EXISTS" = "yes" ]; then
+          # A remote branch with no open PR may be a live thread between
+          # steps — or a corpse (session died, e.g. container restart,
+          # while the branch survived). Tell them apart: a live dev-agent
+          # process, or a branch pushed within the last 6h, means busy.
+          # Anything older with no agent and no PR is orphaned: relaunch
+          # dev-agent.sh, which adopts the branch via RECOVERY_MODE (#1227
+          # sat busy-but-dead for 2 days on a stale branch this way).
+          if _dev_agent_running "$ISSUE_NUM"; then
+            log "issue #${ISSUE_NUM} assigned to me — agent live (remote branch, no PR yet)"
+            BLOCKED_BY_INPROGRESS=true
+          else
+            BRANCH_AGE_H=9999
+            BRANCH_TS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+              "${API}/branches/fix/issue-${ISSUE_NUM}" 2>/dev/null | \
+              jq -r '.commit.timestamp // empty' 2>/dev/null) || true
+            if [ -n "$BRANCH_TS" ]; then
+              BRANCH_AGE_H=$(( ($(date +%s) - $(date -d "$BRANCH_TS" +%s 2>/dev/null || echo 0)) / 3600 ))
+            fi
+            if [ "$BRANCH_AGE_H" -gt 6 ]; then
+              log "issue #${ISSUE_NUM} orphaned (branch ${BRANCH_AGE_H}h old, no agent, no PR) — recovering"
+              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              log "started dev-agent PID $! for issue #${ISSUE_NUM} (stale-branch recovery)"
+              BLOCKED_BY_INPROGRESS=true
+            else
+              log "issue #${ISSUE_NUM} assigned to me — my thread is busy (remote branch ${BRANCH_AGE_H}h old)"
+              BLOCKED_BY_INPROGRESS=true
+            fi
+          fi
         else
           if _dev_agent_running "$ISSUE_NUM"; then
             log "issue #${ISSUE_NUM} already has a live dev-agent — not starting a second (#1070)"
