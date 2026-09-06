@@ -18,7 +18,11 @@ llm-pi-ai:
       models:
         - id: unsloth/Qwen3.8-27B
           name: Qwen3.8 27B IQ4_XS (local)
-          contextWindow: 163840
+          # Routed capacity for compaction math: compaction-basic auto-compacts
+          # at thresholdRatio (default 0.8) x capacity = 80k, keeping a 16%
+          # recent tail verbatim. Sessions are therefore capped ~80k, then
+          # compacted (summarized) instead of growing to the wall-clock.
+          contextWindow: 100000
           maxTokens: 32768
           input: [text, image]
           # llama-server maps OpenAI `reasoning_effort` onto the qwen38

@@ -57,7 +57,7 @@ set -euo pipefail
 #   $7 agent_token - Forge PAT for the agent user (may be empty)
 #   $8 user_pass   - generated password for the agent user
 #   $9 harness     - agent harness: "claude" (default) or "dsh" (#1107)
-#   $10 context_window - dsh context window in tokens (default 163840;
+#   $10 context_window - dsh context window in tokens (default 100000;
 #       dsh harness only)
 disinto_hire_an_agent_nomad() {
   local agent_name="$1"
@@ -69,7 +69,7 @@ disinto_hire_an_agent_nomad() {
   local agent_token="$7"
   local user_pass="$8"
   local harness="${9:-claude}"
-  local context_window="${10:-163840}"
+  local context_window="${10:-100000}"
 
   local vault_name="bot-${agent_name}"
   local kv_mount="${VAULT_KV_MOUNT:-kv}"
@@ -396,7 +396,7 @@ disinto_hire_an_agent() {
   local poll_interval=""
   local admin_pat=""
   local harness="claude"
-  local context_window="163840"
+  local context_window="100000"
 
   if [ -z "$agent_name" ] || [ -z "$role" ]; then
     echo "Error: agent-name and role required" >&2

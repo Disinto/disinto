@@ -56,7 +56,7 @@ RUN node /tmp/dsh-headless-resume.mjs \
 # Nomad host volumes do not, so the entrypoint copy is the single seeding
 # point for both backends).
 RUN mkdir -p /opt/dsh/profiles \
-    && printf '{\n  "name": "headless",\n  "permissionMode": "danger-full-access",\n  "contextWindow": 163840\n}\n' \
+    && printf '{\n  "name": "headless",\n  "permissionMode": "danger-full-access",\n  "contextWindow": 100000\n}\n' \
     > /opt/dsh/profiles/headless.json
 
 # Provider settings template for the dsh harness — dsh reads its provider

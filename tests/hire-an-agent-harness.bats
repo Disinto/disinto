@@ -11,7 +11,7 @@
 #      DSH_HOME, DSH_PERMISSION_MODE, DSH_MODEL, DSH_BASE_URL,
 #      DSH_CONTEXT_WINDOW) and no CLAUDE_* / ANTHROPIC_* tuning variables —
 #      on both the Nomad and the compose backend.
-#   3. --context-window defaults to 163840, is overridable, and is validated
+#   3. --context-window defaults to 100000, is overridable, and is validated
 #      as a positive integer.
 #   4. An invalid --harness is rejected with a clear message and a non-zero
 #      exit, before any side effect (no TOML written).
@@ -187,7 +187,7 @@ EOF
   grep -Eq 'DSH_PERMISSION_MODE[[:space:]]*=[[:space:]]*"danger-full-access"' "$JOBSPEC_OUT"
   grep -Eq 'DSH_MODEL[[:space:]]*=[[:space:]]*"qwen"' "$JOBSPEC_OUT"
   grep -Eq 'DSH_BASE_URL[[:space:]]*=[[:space:]]*"http://10\.0\.0\.1:8081"' "$JOBSPEC_OUT"
-  grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"163840"' "$JOBSPEC_OUT"
+  grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"100000"' "$JOBSPEC_OUT"
 }
 
 @test "dsh nomad hire emits no CLAUDE_* or ANTHROPIC_* tuning variables" {
@@ -239,7 +239,7 @@ EOF
   ! grep -Eq 'CLAUDE_|ANTHROPIC_' <<<"$env_block"
 }
 
-@test "dsh compose service without context_window defaults to 163840" {
+@test "dsh compose service without context_window defaults to 100000" {
   cat > "$FACTORY_ROOT/projects/test.toml" <<'EOF'
 [agents.dshbot]
 base_url      = "http://10.10.10.1:8081"
@@ -252,7 +252,7 @@ poll_interval = 60
 harness       = "dsh"
 EOF
   _generate_compose
-  grep -q 'DSH_CONTEXT_WINDOW: "163840"' "$FACTORY_ROOT/docker-compose.yml"
+  grep -q 'DSH_CONTEXT_WINDOW: "100000"' "$FACTORY_ROOT/docker-compose.yml"
 }
 
 # ── flag validation ──────────────────────────────────────────────────────────

@@ -97,6 +97,20 @@ if [ "${AGENT_HARNESS:-claude}" = "dsh" ] \
   chown agent:agent "$dsh_home/settings.yaml" 2>/dev/null || true
 fi
 
+# Context-cap migration (80k compact): DSH_HOMEs seeded before this change
+# carry contextWindow 163840 (catalog + headless profile), which disables
+# effective auto-compaction (0.8 x 163840 = 131k — runs die by wall-clock
+# first). Migrate ONLY the known-old default value in place; any operator-
+# customised value is left untouched. New seeds already carry 100000.
+if [ "${AGENT_HARNESS:-claude}" = "dsh" ]; then
+  if [ -f "$dsh_home/settings.yaml" ] && grep -q "contextWindow: 163840" "$dsh_home/settings.yaml" 2>/dev/null; then
+    sed -i "s/contextWindow: 163840/contextWindow: 100000/" "$dsh_home/settings.yaml" 2>/dev/null || true
+  fi
+  if [ -f "$dsh_home/profiles/headless.json" ] && grep -q '"contextWindow": 163840' "$dsh_home/profiles/headless.json" 2>/dev/null; then
+    sed -i 's/"contextWindow": 163840/"contextWindow": 100000/' "$dsh_home/profiles/headless.json" 2>/dev/null || true
+  fi
+fi
+
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$*" | tee -a "$LOGFILE"
 }

@@ -87,7 +87,7 @@ disinto hire-an-agent dev-dsh dev \
   --local-model http://10.10.10.1:8081 \
   --model unsloth/Qwen3.5-35B-A3B \
   --harness dsh \
-  --context-window 163840
+  --context-window 100000
 ```
 
 - **`claude`** (default): the agent runs the Claude Code CLI. The service
@@ -102,7 +102,7 @@ disinto hire-an-agent dev-dsh dev \
   apiKeyEnv indirection; llama-server ignores the value but dsh requires
   the env to be set) — and **no** `CLAUDE_*` tuning variables.
 
-`--context-window <tokens>` (default `163840`) sets the context window a dsh
+`--context-window <tokens>` (default `100000`) sets the context window a dsh
 agent is given (`DSH_CONTEXT_WINDOW`); it is ignored by `claude`-harness
 agents, which size their window from the model name (see
 [Autocompact window](#autocompact-window-1069)).
@@ -252,7 +252,7 @@ poll_interval = 60
 | `compact_pct` | Context compaction threshold (lower = more aggressive) |
 | `poll_interval` | Seconds between polling cycles |
 | `harness` | Agent harness: `claude` (default) or `dsh`. Written only when the agent is hired with `--harness dsh` |
-| `context_window` | Context window in tokens for a dsh agent (default `163840`). Written only alongside `harness = "dsh"` |
+| `context_window` | Context window in tokens for a dsh agent (default `100000`). Written only alongside `harness = "dsh"` |
 
 ## Behaviour
 
@@ -264,11 +264,11 @@ poll_interval = 60
   (not a per-slot cap); size each agent's autocompact lane so the sum leaves
   headroom (AD-002, #1069).
 - With `--kv-unified` the pool is genuinely shared, so a concrete budget
-  works out like this: two dsh agents running the default 163,840-token
-  window with a 0.8 compaction threshold each hold up to 131,072 KV tokens,
-  so the pair consumes ~262k of a 327,680-token pool. A third agent at the
-  same window would not fit — hire it with a smaller `--context-window` so
-  the sum of the three lanes leaves headroom in the pool.
+  works out like this: two dsh agents running the default 100,000-token
+  window with a 0.8 compaction threshold each hold up to 80,000 KV tokens,
+  so the pair consumes ~160k of a 327,680-token pool. A third agent at the
+  same window fits (≈ 240k < 327,680) — the default is sized for three
+  concurrent dsh agents.
 
 ## Autocompact window (#1069)
 

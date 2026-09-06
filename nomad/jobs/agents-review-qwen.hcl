@@ -202,7 +202,7 @@ job "agents-review-qwen" {
         DSH_PERMISSION_MODE = "danger-full-access"
         DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
         DSH_MODEL           = "unsloth/Qwen3.8-27B"
-        DSH_CONTEXT_WINDOW  = "163840"
+        DSH_CONTEXT_WINDOW  = "100000"
         # settings.yaml uses apiKeyEnv indirection; llama-server ignores
         # the key but dsh requires the env to be set.
         LLAMACPP_API_KEY    = "sk-no-key-required"
