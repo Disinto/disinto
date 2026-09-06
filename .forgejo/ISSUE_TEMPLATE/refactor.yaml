@@ -1,8 +1,11 @@
 name: Refactor / Tech Debt
-about: Code improvement without changing behavior
+about: Code improvement without changing behavior (one dev-sized task per issue — see docs/contributing/issues-for-bots.md)
 labels:
   - backlog
 body:
+  - type: markdown
+    attributes:
+      value: "dev-bot implements each issue whole in one session: keep it specific (affected files + acceptance), never an epic or an investigation. Update the body instead of commenting."
   - type: textarea
     id: what
     attributes:
