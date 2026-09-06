@@ -7,6 +7,14 @@ are public, the generator emits images, and the dispatcher remains unblocked.
 **Target**: Fresh LXD container / VM with minimal host deps.
 **Time budget**: <5 min end-to-end (automated by `tests/release-smoke.sh`).
 
+> **Backend under test: docker-compose only.** This runbook (and
+> `tests/release-smoke.sh`) exercises the legacy compose stack
+> (`bin/disinto init` without `--backend=nomad`, `disinto up --wait`,
+> `docker compose ps`). A fresh-install smoke stage for the **Nomad+Vault**
+> backend (`bin/disinto init --backend=nomad`, `nomad job status` assertions)
+> is tracked in #1227 — until it lands, a green release-smoke does not
+> validate the Nomad path.
+
 ---
 
 ## Prerequisites (on the fresh host)
