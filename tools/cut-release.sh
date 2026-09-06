@@ -21,6 +21,11 @@
 #   - stage 2 (bump + commit) runs without --yes
 #   - stages 3-6 are gated behind --yes; without it the run stops and prints
 #     the remaining plan
+#   - the two-step flow resumes: stage 2 leaves you on release/v<version>
+#     (or on main with --main), and re-running the same command with --yes
+#     picks up where it left off — stage 1 accepts the release branch (with
+#     an already-bumped VERSION as the expected state), stage 2 is a no-op
+#     pass, and stages 3-6 proceed
 #   - stage markers [N/6] PASS|FAIL|SKIP, same style as tests/release-smoke.sh
 #
 # Env overrides (used by tests):
@@ -72,15 +77,20 @@ Options:
   --dry-run            Print the full plan and pre-flight report; mutate nothing
   --yes                Execute stages 3-6: tag, push, wait for CI images,
                        check GHCR visibility. Without it, the bump commit is
-                       made locally and the run stops before tagging.
+                       made locally (on release/v<version>, or on main with
+                       --main) and the run stops before tagging. Re-running
+                       the same command with --yes resumes: stage 1 accepts
+                       the release branch and stage 2 becomes a no-op.
   --main               Commit the VERSION bump on ${PRIMARY_BRANCH} instead of
                        a short-lived release/v<version> branch
   --skip-wait          Skip the GHCR manifest wait (stage 4). Visibility
                        still runs.
 
 Stages ([N/6] PASS|FAIL|SKIP markers, like tests/release-smoke.sh):
-  1. pre-flight   clean tree, on ${PRIMARY_BRANCH}, VERSION < target, tag free
+  1. pre-flight   clean tree, on ${PRIMARY_BRANCH} (or on release/v<version>
+                  when resuming a previous stage-2 run), VERSION < target, tag free
   2. bump         VERSION=<version>, commit 'release: v<version>'
+                  (no-op when resuming — the bump is already committed)
   3. tag + push   git tag v<version>; git push ${CUT_RELEASE_REMOTE} v<version> <branch>
   4. wait CI      poll ${GHCR_REGISTRY%/}/v2/${GHCR_OWNER}/<img>/manifests/v<version>
                   for ${CUT_RELEASE_IMAGES} (timeout ${WAIT_TIMEOUT_SECS}s, backoff ${POLL_INTERVAL_SECS}s)
@@ -116,14 +126,20 @@ cr_vercmp() {
     }'
 }
 
-# cr_preflight_collect <version> — sets CR_ISSUES / CR_WARNS (newline-separated),
-# CR_CURRENT_VERSION. Read-only.
+# cr_preflight_collect <version> <on_main> — sets CR_ISSUES / CR_WARNS
+# (newline-separated), CR_CURRENT_VERSION, CR_CURRENT_BRANCH. Read-only.
+#
+# A run may resume where a previous stage-2 run left off: on
+# release/v<version> (default flow) or, with --main, on ${PRIMARY_BRANCH}
+# itself. In that state an already-bumped VERSION is the expected pre-state,
+# not an issue.
 cr_preflight_collect() {
-  local version="$1"
+  local version="$1" on_main="$2"
   CR_ISSUES=""
   CR_WARNS=""
   CR_CURRENT_VERSION=""
-  local dirty cur curv rref ahead behind cmp line
+  CR_CURRENT_BRANCH=""
+  local dirty cur curv rref ahead behind cmp line unpushed_msgs
 
   if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
     CR_ISSUES+="version '$version' is not semver (expected e.g. 0.5.0 or 0.5.0-rc.1)"$'\n'
@@ -138,12 +154,24 @@ cr_preflight_collect() {
   fi
 
   cur="$(git symbolic-ref --quiet --short HEAD || echo "")"
-  if [ "$cur" != "$PRIMARY_BRANCH" ]; then
-    if [ -n "$cur" ]; then
-      CR_ISSUES+="not on '$PRIMARY_BRANCH' (current branch: $cur)"$'\n'
+  CR_CURRENT_BRANCH="$cur"
+  local resume_branch=""
+  if [ "$on_main" != "1" ]; then
+    resume_branch="release/v${version}"
+  fi
+  if [ "$cur" != "$PRIMARY_BRANCH" ] && [ "$cur" != "$resume_branch" ]; then
+    if [ -n "$resume_branch" ]; then
+      CR_ISSUES+="not on '$PRIMARY_BRANCH' or '$resume_branch' (current branch: ${cur:-detached HEAD})"$'\n'
     else
-      CR_ISSUES+="not on '$PRIMARY_BRANCH' (HEAD is detached)"$'\n'
+      CR_ISSUES+="not on '$PRIMARY_BRANCH' (current branch: ${cur:-detached HEAD})"$'\n'
     fi
+  fi
+
+  local resuming=0
+  if [ "$on_main" = "1" ] && [ "$cur" = "$PRIMARY_BRANCH" ]; then
+    resuming=1
+  elif [ "$on_main" != "1" ] && [ "$cur" = "release/v${version}" ]; then
+    resuming=1
   fi
 
   if [ -f "$VERSION_FILE" ]; then
@@ -151,10 +179,10 @@ cr_preflight_collect() {
     CR_CURRENT_VERSION="$curv"
     if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [ -n "$curv" ]; then
       cmp="$(cr_vercmp "$curv" "$version")"
-      if [ "$cmp" = "0" ]; then
-        CR_ISSUES+="$VERSION_FILE is already $version — nothing to release"$'\n'
-      elif [ "$cmp" = "1" ]; then
+      if [ "$cmp" = "1" ]; then
         CR_ISSUES+="$VERSION_FILE ($curv) is newer than target $version — refusing to release an older version"$'\n'
+      elif [ "$cmp" = "0" ] && [ "$resuming" -ne 1 ]; then
+        CR_ISSUES+="$VERSION_FILE is already $version — nothing to release"$'\n'
       fi
     fi
   else
@@ -165,29 +193,74 @@ cr_preflight_collect() {
     CR_ISSUES+="tag v${version} already exists locally"$'\n'
   fi
 
-  rref="refs/remotes/${CUT_RELEASE_REMOTE}/${PRIMARY_BRANCH}"
-  if git rev-parse -q --verify "$rref" >/dev/null 2>&1; then
-    ahead="$(git rev-list --count "${rref}..HEAD")"
-    if [ "$ahead" -gt 0 ]; then
-      CR_ISSUES+="$PRIMARY_BRANCH has $ahead unpushed commit(s) — they would be included in the tag; push or drop them first"$'\n'
-    fi
-    behind="$(git rev-list --count "HEAD..${rref}")"
-    if [ "$behind" -gt 0 ]; then
-      CR_WARNS+="$PRIMARY_BRANCH is $behind commit(s) behind ${CUT_RELEASE_REMOTE}/${PRIMARY_BRANCH} — consider git pull first"$'\n'
+  if [ "$cur" = "$PRIMARY_BRANCH" ]; then
+    rref="refs/remotes/${CUT_RELEASE_REMOTE}/${PRIMARY_BRANCH}"
+    if git rev-parse -q --verify "$rref" >/dev/null 2>&1; then
+      ahead="$(git rev-list --count "${rref}..HEAD")"
+      if [ "$ahead" -gt 0 ]; then
+        # A --main resume carries exactly one unpushed commit — the bump
+        # itself, which stage 3 pushes with the tag.
+        unpushed_msgs="$(git log --format=%s "${rref}..HEAD")"
+        if [ "$ahead" -eq 1 ] && [ "$unpushed_msgs" = "release: v${version}" ]; then
+          :
+        else
+          CR_ISSUES+="$PRIMARY_BRANCH has $ahead unpushed commit(s) — they would be included in the tag; push or drop them first"$'\n'
+        fi
+      fi
+      behind="$(git rev-list --count "HEAD..${rref}")"
+      if [ "$behind" -gt 0 ]; then
+        CR_WARNS+="$PRIMARY_BRANCH is $behind commit(s) behind ${CUT_RELEASE_REMOTE}/${PRIMARY_BRANCH} — consider git pull first"$'\n'
+      fi
     fi
   fi
 }
 
-# cr_print_plan <version> <on_main> — the full release plan (stages 2-6).
-cr_print_plan() {
+# cr_resume_state <version> <on_main> → true when stage 2 would be a no-op:
+# VERSION already at <version> from an earlier run, on the branch that run
+# left (release/v<version>, or ${PRIMARY_BRANCH} with --main).
+cr_resume_state() {
   local version="$1" on_main="$2"
+  if [ "$on_main" = "1" ]; then
+    [ "$CR_CURRENT_BRANCH" = "$PRIMARY_BRANCH" ] && [ "$CR_CURRENT_VERSION" = "$version" ]
+  else
+    [ "$CR_CURRENT_BRANCH" = "release/v${version}" ] && [ "$CR_CURRENT_VERSION" = "$version" ]
+  fi
+}
+
+# cr_preflight_pass <version> — the stage-1 PASS line, resume-aware.
+cr_preflight_pass() {
+  local version="$1"
+  local resume_on=""
+  if [ "$CR_CURRENT_BRANCH" = "release/v${version}" ]; then
+    resume_on="release/v${version}"
+  elif [ "$CR_CURRENT_BRANCH" = "$PRIMARY_BRANCH" ] && [ "$CR_CURRENT_VERSION" = "$version" ]; then
+    resume_on="$PRIMARY_BRANCH"
+  fi
+  if [ -n "$resume_on" ]; then
+    cr_pass "pre-flight (resuming on ${resume_on}, clean tree, VERSION already ${version}, no tag v${version})"
+  else
+    cr_pass "pre-flight (on ${PRIMARY_BRANCH}, clean tree, VERSION ${CR_CURRENT_VERSION:-?} < ${version}, no tag v${version})"
+  fi
+}
+
+# cr_print_plan <version> <on_main> [resume] — the full release plan
+# (stages 2-6). With resume=1, stage 2 is shown as a no-op (the bump is
+# already committed from a previous run).
+cr_print_plan() {
+  local version="$1" on_main="$2" resume="${3:-0}"
   local branch="$PRIMARY_BRANCH"
   if [ "$on_main" != "1" ]; then
     branch="release/v${version}"
   fi
+  local header="Release plan: v${CR_CURRENT_VERSION:-?} -> v${version}"
+  local bump_line="write VERSION=${version}, commit 'release: v${version}' on branch ${branch}"
+  if [ "$resume" = "1" ]; then
+    header="Release plan: v${version} (VERSION already at target on ${branch} — resuming)"
+    bump_line="no-op — bump already committed on ${branch}"
+  fi
   cat <<EOF
-Release plan: v${CR_CURRENT_VERSION:-?} -> v${version}
-  Stage 2  bump         write VERSION=${version}, commit 'release: v${version}' on branch ${branch}
+${header}
+  Stage 2  bump         ${bump_line}
   Stage 3  tag + push   git tag -a v${version}; git push ${CUT_RELEASE_REMOTE} v${version} ${branch}
   Stage 4  wait CI      poll ${GHCR_REGISTRY%/}/v2/${GHCR_OWNER}/<img>/manifests/v${version} for: ${CUT_RELEASE_IMAGES}
                         (timeout ${WAIT_TIMEOUT_SECS}s, backoff ${POLL_INTERVAL_SECS}s; triggers .woodpecker/publish-images.yml)
@@ -196,18 +269,39 @@ Release plan: v${CR_CURRENT_VERSION:-?} -> v${version}
 EOF
 }
 
-# cr_bump <version> <on_main> → prints the branch the bump was committed on.
+# cr_bump <version> <on_main> — makes the VERSION bump commit and records it
+# in CR_BUMP_BRANCH (the branch it landed on). Sets CR_RESUME=1 when no new
+# commit was needed — VERSION already at <version> from an earlier stage-2
+# run — so stage 2 is a no-op pass. (Not run in a subshell: the globals
+# must survive into main.)
 cr_bump() {
   local version="$1" on_main="$2"
-  local branch="$PRIMARY_BRANCH"
+  local branch="$PRIMARY_BRANCH" cur curv
+  CR_RESUME=0
+  CR_BUMP_BRANCH="$branch"
   if [ "$on_main" != "1" ]; then
     branch="release/v${version}"
-    git checkout -q -b "$branch"
+    cur="$(git symbolic-ref --quiet --short HEAD || echo "")"
+    if [ "$cur" != "$branch" ]; then
+      if git show-ref --verify --quiet "refs/heads/${branch}"; then
+        # A previous stage-2 run left the branch (and usually the bump
+        # commit) — resume on it instead of failing on `checkout -b`.
+        git checkout -q "$branch"
+      else
+        git checkout -q -b "$branch"
+      fi
+    fi
+  fi
+  curv="$(tr -d '[:space:]' <"$VERSION_FILE")"
+  if [ "$curv" = "$version" ]; then
+    CR_RESUME=1
+    CR_BUMP_BRANCH="$branch"
+    return 0
   fi
   printf '%s\n' "$version" >"$VERSION_FILE"
   git add "$VERSION_FILE"
   git commit -q -m "release: v${version}"
-  printf '%s' "$branch"
+  CR_BUMP_BRANCH="$branch"
 }
 
 cr_tag_push() {
@@ -320,6 +414,8 @@ cr_check_visibility() {
     status="$(cr_probe_anonymous_pull "$img")" || rc=$?
     if [ "$rc" -eq 0 ]; then
       cr_pass "${GHCR_OWNER}/${img}: anonymously pullable"
+    elif [ "$rc" -eq 2 ]; then
+      cr_fail "${GHCR_OWNER}/${img}: ${GHCR_REGISTRY} unreachable (${status}) — network failure, not a visibility verdict. Check connectivity to ${GHCR_REGISTRY} and re-run; the package may be fine. Probed: GET ${GHCR_REGISTRY%/}/token?scope=repository:${GHCR_OWNER}/${img}:pull (no auth)"
     else
       cr_fail "${GHCR_OWNER}/${img}: anonymous pull ${status} — the package is private. Fix: GitHub → Packages → ${GHCR_OWNER}/${img} → Settings → Visibility → Public (see #606). Probed: GET ${GHCR_REGISTRY%/}/token?scope=repository:${GHCR_OWNER}/${img}:pull (no auth)"
     fi
@@ -377,7 +473,7 @@ main() {
 
   # ── Stage 1: pre-flight (read-only) ────────────────────────────────────
   CR_STAGE=1
-  cr_preflight_collect "$version"
+  cr_preflight_collect "$version" "$on_main"
   if [ "$dry_run" -eq 1 ]; then
     if [ -n "$CR_ISSUES" ]; then
       while IFS= read -r line; do
@@ -386,7 +482,7 @@ main() {
         fi
       done <<<"$CR_ISSUES"
     else
-      cr_pass "pre-flight (on ${PRIMARY_BRANCH}, clean tree, VERSION ${CR_CURRENT_VERSION:-?} < ${version}, no tag v${version})"
+      cr_preflight_pass "$version"
     fi
     while IFS= read -r line; do
       if [ -n "$line" ]; then
@@ -394,7 +490,11 @@ main() {
       fi
     done <<<"$CR_WARNS"
     echo ""
-    cr_print_plan "$version" "$on_main"
+    local plan_resume=0
+    if cr_resume_state "$version" "$on_main"; then
+      plan_resume=1
+    fi
+    cr_print_plan "$version" "$on_main" "$plan_resume"
     echo ""
     echo "DRY RUN — no changes made (no branch, no commit, no tag, no push)."
     return 0
@@ -411,22 +511,28 @@ main() {
       echo "  note: ${line}"
     fi
   done <<<"$CR_WARNS"
-  cr_pass "pre-flight (on ${PRIMARY_BRANCH}, clean tree, VERSION ${CR_CURRENT_VERSION:-?} < ${version}, no tag v${version})"
+  cr_preflight_pass "$version"
 
   # ── Stage 2: bump + commit (local, no push) ────────────────────────────
   CR_STAGE=2
+  cr_bump "$version" "$on_main"
   local branch
-  branch="$(cr_bump "$version" "$on_main")"
-  cr_pass "bumped VERSION ${CR_CURRENT_VERSION:-?} -> ${version} on ${branch} (commit: release: v${version})"
+  branch="$CR_BUMP_BRANCH"
+  if [ "$CR_RESUME" -eq 1 ]; then
+    cr_pass "VERSION already ${version} on ${branch} (resuming — stage 2 no-op, no new commit)"
+  else
+    cr_pass "bumped VERSION ${CR_CURRENT_VERSION:-?} -> ${version} on ${branch} (commit: release: v${version})"
+  fi
 
   if [ "$yes" -ne 1 ]; then
     echo ""
-    cr_print_plan "$version" "$on_main"
+    cr_print_plan "$version" "$on_main" 1
     echo ""
     echo "STOP: stages 3-6 (tag, push, wait, visibility) are gated behind --yes."
     if [ "$on_main" -eq 1 ]; then
       echo "Re-run: tools/cut-release.sh ${version} --yes --main"
     else
+      echo "You are now on ${branch} — the re-run resumes from there."
       echo "Re-run: tools/cut-release.sh ${version} --yes"
     fi
     return 0

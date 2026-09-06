@@ -27,20 +27,27 @@ visibility → next steps (#1228).
 # 1. Preview — prints the full plan, mutates nothing
 tools/cut-release.sh 0.5.0 --dry-run
 
-# 2. Bump + commit locally (no tag, no push)
+# 2. Bump + commit locally (no tag, no push). Leaves you on release/v0.5.0.
 tools/cut-release.sh 0.5.0
 
-# 3. Tag, push, wait for CI, verify visibility
+# 3. Tag, push, wait for CI, verify visibility — the exact re-run step 2
+#    prints. Run it from release/v0.5.0 (where step 2 left you): stage 1
+#    accepts the release branch, stage 2 is a no-op (VERSION already
+#    bumped), and stages 3-6 proceed. (--main works the same two-step way.)
 tools/cut-release.sh 0.5.0 --yes
 ```
 
 Stages (with `[N/6] PASS|FAIL|SKIP` markers, same convention as
 `tests/release-smoke.sh`; the run exits non-zero on the first `FAIL`):
 
-1. **Pre-flight** — clean tree, on `main`, `VERSION` < target, no local tag
-   `v0.5.0`, no unpushed commits on `main`. Read-only and fail-fast.
+1. **Pre-flight** — clean tree; on `main`, or on `release/v0.5.0` when
+   resuming a previous stage-2 run (where an already-bumped `VERSION` is
+   the expected state, not an error); `VERSION` < target; no local tag
+   `v0.5.0`; no unpushed commits on `main` (except the bump commit itself
+   on a `--main` resume). Read-only and fail-fast.
 2. **Bump** — write `VERSION=0.5.0`, commit `release: v0.5.0` on
-   `release/v0.5.0` (or on `main` with `--main`).
+   `release/v0.5.0` (or on `main` with `--main`). On a resume the bump is
+   already committed and this stage is a no-op pass.
 3. **Tag + push** — annotated tag `v0.5.0`, push the tag and the branch.
    The tag push triggers `.woodpecker/publish-images.yml`, which publishes
    `agents`, `reproduce`, `edge` as `v0.5.0` and `latest`.
@@ -50,16 +57,23 @@ Stages (with `[N/6] PASS|FAIL|SKIP` markers, same convention as
    pipeline hint (set `WOODPECKER_SERVER` for the exact URL).
 5. **Visibility** — the anonymous token exchange
    (`GET https://ghcr.io/token?scope=repository:disinto/<img>:pull`, no
-   auth) must succeed for every image. A denial fails the run with the exact
-   remediation: GitHub → Packages → `disinto/<img>` → Settings → Visibility
-   → Public (#606).
+   auth) must succeed for every image. A denial (HTTP 401) fails the run
+   with the exact remediation: GitHub → Packages → `disinto/<img>` →
+   Settings → Visibility → Public (#606). An unreachable registry (curl
+   code 000 — ghcr.io down or no network) fails with a network diagnostic
+   instead, so a connectivity outage is not misread as a visibility
+   problem.
 6. **Next steps** — run `tests/release-smoke.sh` (the compose + Nomad
    stages below) and record the result.
 
-Without `--yes`, the run stops after stage 2 (bump committed locally,
-nothing tagged or pushed) and prints the remaining plan. `--dry-run` stops
-before stage 2 and prints the full plan. `--skip-wait` skips stage 4 only
-(visibility still runs).
+Without `--yes`, the run stops after stage 2 (bump committed locally on
+`release/v0.5.0`, nothing tagged or pushed) and prints the remaining plan
+plus the exact re-run. The re-run **resumes** from the branch stage 2
+left — stage 1 accepts `release/v0.5.0` and stage 2 becomes a no-op, so
+the two-step flow above always works (the same holds for `--main`, which
+resumes on `main` itself). `--dry-run` stops before stage 2 and prints the
+full plan (a resume plan when the bump is already committed). `--skip-wait`
+skips stage 4 only (visibility still runs).
 
 Env overrides (used by `tests/cut-release.bats`): `GHCR_REGISTRY`,
 `GHCR_OWNER`, `CUT_RELEASE_IMAGES`, `WAIT_TIMEOUT_SECS`,

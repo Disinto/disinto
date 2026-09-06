@@ -222,6 +222,84 @@ PYEOF
   [[ "$output" == *"gated behind --yes"* ]]
 }
 
+# ── Resume: the two-step flow (stage 2 → re-run with --yes) ─────────────────
+
+@test "resume: the --yes re-run from release/v<version> completes the cut" {
+  _start_stub
+  run bash "$TOOL" 0.5.0
+  [ "$status" -eq 0 ]
+  [ "$(git branch --show-current)" = "release/v0.5.0" ]
+  # the exact re-run the STOP message prescribes
+  run bash "$TOOL" 0.5.0 --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming"* ]]
+  [[ "$output" == *"[2/6] PASS"* ]]
+  [[ "$output" == *"[3/6] PASS"* ]]
+  [[ "$output" == *"[4/6] PASS"* ]]
+  [[ "$output" == *"[5/6] PASS"* ]]
+  [[ "$output" == *"DONE"* ]]
+  [ -n "$(git tag -l v0.5.0)" ]
+  [ "$(git --git-dir="$ORIGIN" tag -l v0.5.0)" = "v0.5.0" ]
+  [ "$(git --git-dir="$ORIGIN" show release/v0.5.0:VERSION)" = "0.5.0" ]
+  # no second bump commit: still exactly one commit ahead of origin/main
+  [ "$(git rev-list --count origin/main..release/v0.5.0)" = "1" ]
+}
+
+@test "resume: --yes re-run from main picks up the existing release branch" {
+  _start_stub
+  run bash "$TOOL" 0.5.0
+  [ "$status" -eq 0 ]
+  git checkout -q main
+  run bash "$TOOL" 0.5.0 --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming"* ]]
+  [[ "$output" == *"[3/6] PASS"* ]]
+  [[ "$output" == *"DONE"* ]]
+  [ "$(git branch --show-current)" = "release/v0.5.0" ]
+  [ -n "$(git tag -l v0.5.0)" ]
+}
+
+@test "resume: a different version on release/v<version> refuses" {
+  run bash "$TOOL" 0.5.0
+  [ "$status" -eq 0 ]
+  run bash "$TOOL" 0.5.1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not on 'main' or 'release/v0.5.1'"* ]]
+  [ "$(git branch --show-current)" = "release/v0.5.0" ]
+  [ -z "$(git branch --list release/v0.5.1)" ]
+  [ "$(cat VERSION)" = "0.5.0" ]
+}
+
+@test "resume: --main two-step flow completes from the bump on main" {
+  _start_stub
+  run bash "$TOOL" 0.6.0 --main
+  [ "$status" -eq 0 ]
+  [ "$(git branch --show-current)" = "main" ]
+  [ "$(cat VERSION)" = "0.6.0" ]
+  # the unpushed bump commit is the expected resume state, not an issue
+  run bash "$TOOL" 0.6.0 --yes --main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming"* ]]
+  [[ "$output" == *"[3/6] PASS"* ]]
+  [[ "$output" == *"DONE"* ]]
+  [ "$(git --git-dir="$ORIGIN" tag -l v0.6.0)" = "v0.6.0" ]
+  [ "$(git --git-dir="$ORIGIN" show main:VERSION)" = "0.6.0" ]
+}
+
+@test "dry-run on release/v<version> shows the resume plan and mutates nothing" {
+  run bash "$TOOL" 0.5.0
+  [ "$status" -eq 0 ]
+  local head
+  head="$(git rev-parse HEAD)"
+  run bash "$TOOL" 0.5.0 --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming"* ]]
+  [[ "$output" == *"no-op"* ]]
+  [[ "$output" == *"DRY RUN"* ]]
+  [ "$(git rev-parse HEAD)" = "$head" ]
+  [ -z "$(git status --porcelain)" ]
+}
+
 # ── Full runs against the stub registry ──────────────────────────────────────
 
 @test "--yes: bump, tag, push, images publish, visibility passes" {
@@ -280,4 +358,15 @@ PYEOF
   run bash "$TOOL" 0.5.0 --yes --skip-wait
   [ "$status" -ne 0 ]
   [[ "$output" == *"edge"* ]]
+}
+
+@test "visibility: unreachable registry fails as a network error, not a visibility verdict" {
+  # port 1 on loopback is closed: curl reports code 000 → rc=2 path
+  run env GHCR_REGISTRY="http://127.0.0.1:1" bash "$TOOL" 0.5.0 --yes --skip-wait
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[5/6] FAIL"* ]]
+  [[ "$output" == *"unreachable"* ]]
+  [[ "$output" == *"network"* ]]
+  # the operator must not be sent to fix package visibility for an outage
+  [[ "$output" != *"Visibility"* ]]
 }
