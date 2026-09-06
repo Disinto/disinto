@@ -64,7 +64,7 @@ not run (offline boxes, manual pulls).
 
 ```bash
 # All jobs running?
-# Expected: agents, edge, edge-threads-gc, forgejo, staging,
+# Expected: agents, edge, forgejo, staging,
 #           vault-runner, woodpecker-agent, woodpecker-server
 nomad job status
 

@@ -79,8 +79,11 @@ for the full runbook):
 5. Deploys the requested services as Nomad jobs — with `--with
    forgejo,woodpecker,agents,staging,edge` you end up with the same job set
    as the production box: `forgejo`, `woodpecker-server`, `woodpecker-agent`,
-   `agents`, `staging`, `edge`, plus `vault-runner` and `edge-threads-gc`
-   (deployed unconditionally)
+   `agents`, `staging`, `edge`, plus `vault-runner` (deployed
+   unconditionally). `edge-threads-gc`, `agent-logs-rotate`, and the
+   per-role qwen agent jobs (`agents-{dev,gardener,review}-qwen`,
+   `agents-supervisor-opus`) are deployed later by the CI
+   `rebuild-and-deploy-agents` step or manually via `nomad job run`.
 
 Nomad init also writes a default factory project TOML to
 `/srv/disinto/projects/` (the `factory-projects` host volume mounted into the
@@ -109,7 +112,7 @@ Run this checklist — fix any failures before proceeding:
 
 ```bash
 # All jobs running?
-# Expected: agents, edge, edge-threads-gc, forgejo, staging,
+# Expected: agents, edge, forgejo, staging,
 #           vault-runner, woodpecker-agent, woodpecker-server
 nomad job status
 
