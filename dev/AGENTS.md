@@ -40,9 +40,13 @@ for an issue that already has a live one (#1070) — a started session that has 
 neither lock nor branch yet is invisible to both of those checks, but not to the process
 table. **Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents'
-PRs do not block this agent's pipeline (#358, #369). **Pre-lock merge scan own-PRs only**:
-the direct-merge scan only merges PRs whose linked issue is assigned to this agent — skips
-PRs owned by other bot users (#374).
+PRs do not block this agent's pipeline (#358, #369). **Merge-ready sweep** (dev/merge-ready.sh):
+called before the lock check each poll tick; auto-merges ANY open PR with review-bot
+APPROVED on current HEAD + green CI + no `blocked`/`do-not-merge` labels + a
+30-minute cooldown, regardless of issue assignee. This lands ops/gardener PRs (no linked
+issue) and clears orphaned APPROVED PRs that the author's own-PR scan would skip.
+Post-merge housekeeping (mirror_push, linked-issue close, in-progress cleanup) is
+performed automatically.
 - `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval. **Launched as a subshell** (`("${SCRIPT_DIR}/dev-agent.sh" ...) &`) — not via `nohup` — to avoid deadlocking the polling loop and review-poll when running in the same container (#693).
 - `dev/phase-test.sh` — Integration test for the phase protocol
 

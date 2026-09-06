@@ -58,6 +58,12 @@ log "context: PROJECT_TOML=${PROJECT_TOML:-(unset)} PROJECT_NAME=${PROJECT_NAME:
 BOT_USER=$(forge_whoami)
 log "running as agent: ${BOT_USER}"
 
+# Merge sweeper first: landing approved PRs may unblock everything below
+# (issues waiting on merged PRs, orphaned branches). Runs as dev-bot;
+# review-bot never merges what it approves.
+# shellcheck source=merge-ready.sh
+source "${SCRIPT_DIR}/merge-ready.sh"
+
 # Check whether an issue already has the "blocked" label
 is_blocked() {
   local issue="$1"
@@ -577,6 +583,10 @@ if [ "$PL_MERGED_ANY" = true ]; then
   exit 0
 fi
 log "pre-lock: no PRs merged, checking agent lock"
+
+# Merge-ready sweep: land approved non-own/ops PRs even while a dev-agent
+# session is active — this is the point of the sweep (see dev/merge-ready.sh).
+merge_ready_sweep
 
 # --- Check if dev-agent already running (PID lockfile) ---
 if [ -f "$LOCKFILE" ]; then

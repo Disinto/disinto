@@ -217,7 +217,7 @@ check_script lib/sprint-filer.sh
 
 # Agent scripts — list cross-sourced files where function scope flows across files.
 check_script dev/dev-agent.sh
-check_script dev/dev-poll.sh
+check_script dev/dev-poll.sh         dev/merge-ready.sh
 check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh    lib/formula-session.sh
 check_script review/review-pr.sh         lib/agent-sdk.sh
