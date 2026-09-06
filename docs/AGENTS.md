@@ -64,6 +64,8 @@ disinto/                 (code repo)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh;
 │                  reserved-name blocklist, admin-approved allowlist, per-caller attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
+│                  cut-release.sh — cut a release: bump, tag, push, wait for CI
+│                  images, check GHCR visibility (#1228)
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
 │                  provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by

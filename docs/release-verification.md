@@ -17,6 +17,63 @@ are public, the generator emits images, and the dispatcher remains unblocked.
 
 ---
 
+## Cutting a release
+
+`tools/cut-release.sh` (also `disinto cut-release`) cuts a release in one
+verifiable command: bump → tag → push → wait for the CI images → verify GHCR
+visibility → next steps (#1228).
+
+```bash
+# 1. Preview — prints the full plan, mutates nothing
+tools/cut-release.sh 0.5.0 --dry-run
+
+# 2. Bump + commit locally (no tag, no push)
+tools/cut-release.sh 0.5.0
+
+# 3. Tag, push, wait for CI, verify visibility
+tools/cut-release.sh 0.5.0 --yes
+```
+
+Stages (with `[N/6] PASS|FAIL|SKIP` markers, same convention as
+`tests/release-smoke.sh`; the run exits non-zero on the first `FAIL`):
+
+1. **Pre-flight** — clean tree, on `main`, `VERSION` < target, no local tag
+   `v0.5.0`, no unpushed commits on `main`. Read-only and fail-fast.
+2. **Bump** — write `VERSION=0.5.0`, commit `release: v0.5.0` on
+   `release/v0.5.0` (or on `main` with `--main`).
+3. **Tag + push** — annotated tag `v0.5.0`, push the tag and the branch.
+   The tag push triggers `.woodpecker/publish-images.yml`, which publishes
+   `agents`, `reproduce`, `edge` as `v0.5.0` and `latest`.
+4. **Wait CI** — poll `https://ghcr.io/v2/disinto/<img>/manifests/v0.5.0`
+   (scoped anonymous token per image) until it returns 200 for all three
+   images; 20 min timeout, 30 s backoff. On timeout: `FAIL` with a Woodpecker
+   pipeline hint (set `WOODPECKER_SERVER` for the exact URL).
+5. **Visibility** — the anonymous token exchange
+   (`GET https://ghcr.io/token?scope=repository:disinto/<img>:pull`, no
+   auth) must succeed for every image. A denial fails the run with the exact
+   remediation: GitHub → Packages → `disinto/<img>` → Settings → Visibility
+   → Public (#606).
+6. **Next steps** — run `tests/release-smoke.sh` (the compose + Nomad
+   stages below) and record the result.
+
+Without `--yes`, the run stops after stage 2 (bump committed locally,
+nothing tagged or pushed) and prints the remaining plan. `--dry-run` stops
+before stage 2 and prints the full plan. `--skip-wait` skips stage 4 only
+(visibility still runs).
+
+Env overrides (used by `tests/cut-release.bats`): `GHCR_REGISTRY`,
+`GHCR_OWNER`, `CUT_RELEASE_IMAGES`, `WAIT_TIMEOUT_SECS`,
+`POLL_INTERVAL_SECS`, `PRIMARY_BRANCH`, `CUT_RELEASE_REMOTE`,
+`WOODPECKER_SERVER`, `VERSION_FILE`.
+
+After a successful cut, continue with this runbook:
+
+```bash
+VERSION=v0.5.0 bash tests/release-smoke.sh
+```
+
+---
+
 ## Prerequisites (on the fresh host)
 
 Install the following before proceeding:

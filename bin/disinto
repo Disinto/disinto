@@ -71,6 +71,9 @@ Usage:
   disinto ci-logs <pipeline> [--step <name>]
                                      Read CI logs from Woodpecker SQLite
   disinto release <version>            Create vault PR for release (e.g., v1.2.0)
+  disinto cut-release <version> [opts] Bump VERSION, tag, push, wait for CI
+                                        images, check GHCR visibility (#1228);
+                                        opts: --dry-run --yes --main --skip-wait
   disinto version                      Print the tree's VERSION file contents
   disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--harness <claude|dsh>] [--context-window <tokens>] [--admin-token <pat>]
                                      Hire a new agent (create user + .profile repo; re-run to rotate credentials)
@@ -4185,6 +4188,13 @@ disinto_stats() {
   stats_main "$@"
 }
 
+# disinto cut-release — cut a release (tools/cut-release.sh, #1228).
+# Thin wrapper: bump VERSION + tag + push + wait for the CI images + verify
+# GHCR package visibility. Distinct from `disinto release` (vault PR flow).
+disinto_cut_release() {
+  exec bash "${FACTORY_ROOT}/tools/cut-release.sh" "$@"
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -4198,6 +4208,7 @@ case "${1:-}" in
   run)             shift; disinto_run "$@" ;;
   ci-logs)         shift; disinto_ci_logs "$@" ;;
   release)         shift; disinto_release "$@" ;;
+  cut-release)     shift; disinto_cut_release "$@" ;;
   version)         shift; cmd_version "$@" ;;
   hire-an-agent)   shift; disinto_hire_an_agent "$@" ;;
   role)            shift; disinto_role "$@" ;;
