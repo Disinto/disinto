@@ -4,12 +4,17 @@
 # Validates that a freshly-cloned tagged release can be consumed on a
 # host with no pre-existing disinto state (pull-only path).
 #
+# Runs the docker-compose stages below, then hands off to
+# tests/release-smoke-nomad.sh for the Nomad+Vault backend (Stage A
+# always; Stage B only when SCRATCH_LXC_NAME is set), and prints a
+# combined RELEASE SMOKE: PASSED/FAILED summary.
+#
 # This automates the runbook in docs/release-verification.md.
 #
 # Usage:
 #   VERSION=v0.3.0 bash tests/release-smoke.sh
 #
-# Exit 0 = all stages passed; exit 1 = one or more stages failed.
+# Exit 0 = all stages passed (or SKIPped); exit 1 = one or more failed.
 
 set -euo pipefail
 
@@ -204,11 +209,28 @@ if lxc info >/dev/null 2>&1; then
   fi
 fi
 
+# ── Nomad backend stage (tests/release-smoke-nomad.sh) ──────────────────────
+# The compose stages above only prove the docker-compose backend. The nomad
+# backend gets its own script so it can also run standalone and in CI; invoke
+# it here so one entry point covers both backends.
+COMPOSE_EXIT=$FAILED
+NOMAD_SCRIPT="$(cd "$(dirname "$0")" && pwd)/release-smoke-nomad.sh"
+NOMAD_EXIT=0
+echo ""
+echo "============================================"
+echo "=== Nomad backend (tests/release-smoke-nomad.sh) ==="
+echo "============================================"
+if [ -f "$NOMAD_SCRIPT" ]; then
+  VERSION="$VERSION" bash "$NOMAD_SCRIPT" || NOMAD_EXIT=$?
+else
+  warn "release-smoke-nomad.sh not found — skipping Nomad backend"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "============================================"
-if [ "$FAILED" -ne 0 ]; then
-  echo "=== RELEASE SMOKE: FAILED (${WARNINGS} warnings) ==="
+if [ "$COMPOSE_EXIT" -ne 0 ] || [ "$NOMAD_EXIT" -ne 0 ]; then
+  echo "=== RELEASE SMOKE: FAILED (compose=${COMPOSE_EXIT} nomad=${NOMAD_EXIT}, ${WARNINGS} warnings) ==="
   exit 1
 fi
 if [ "$WARNINGS" -gt 0 ]; then
