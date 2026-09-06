@@ -4,7 +4,8 @@
 #
 # Covers: pre-flight fail-fast, dry-run (plan, no mutation), bump without
 # --yes (local commit only), full --yes runs against a local stub GHCR
-# registry (manifest 200 / 404-then-200 / timeout / visibility denial).
+# registry (manifest 200 / 404-then-200 / timeout / visibility denial),
+# and cr_vercmp prerelease suffix ordering.
 #
 # CI image (alpine) has python3 for the stub; no other dependencies.
 # =============================================================================
@@ -176,6 +177,42 @@ PYEOF
   run bash "$TOOL" not-a-version
   [ "$status" -ne 0 ]
   [[ "$output" == *"not semver"* ]]
+}
+
+# ── Prerelease ordering (cr_vercmp) ──────────────────────────────────────────
+
+test_cr_vercmp() {
+  source "$TOOL"
+  run cr_vercmp "$1" "$2"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$3" ]
+}
+
+@test "vercmp: prerelease suffixes are ordered, not equal" {
+  test_cr_vercmp 0.5.0-rc.1 0.5.0-rc.2 -1
+  test_cr_vercmp 0.5.0-rc.2 0.5.0-rc.1 1
+  test_cr_vercmp 0.5.0-rc.1 0.5.0-rc.1 0
+  test_cr_vercmp 0.5.0-rc.9 0.5.0-rc.10 -1
+}
+
+@test "vercmp: prerelease field rules (alphanumeric, prefix, numeric < alpha)" {
+  test_cr_vercmp 0.5.0-alpha 0.5.0-beta -1
+  test_cr_vercmp 0.5.0-alpha 0.5.0-alpha.1 -1
+  test_cr_vercmp 0.5.0-alpha.1 0.5.0-alpha 1
+  test_cr_vercmp 0.5.0-1 0.5.0-alpha -1
+  test_cr_vercmp 0.5.0-rc.1 0.5.0 -1
+  test_cr_vercmp 0.5.0 0.5.0-rc.1 1
+}
+
+@test "pre-flight: cutting 0.5.0-rc.2 from VERSION 0.5.0-rc.1 is allowed" {
+  printf '0.5.0-rc.1\n' > VERSION
+  git commit -qam "release: v0.5.0-rc.1"
+  git push -q origin main
+  run bash "$TOOL" 0.5.0-rc.2
+  [ "$status" -eq 0 ]
+  [ "$(git branch --show-current)" = "release/v0.5.0-rc.2" ]
+  [ "$(cat VERSION)" = "0.5.0-rc.2" ]
+  [ -z "$(git tag -l v0.5.0-rc.2)" ]
 }
 
 # ── Dry-run: plan, no mutation ───────────────────────────────────────────────

@@ -103,10 +103,17 @@ Env overrides: GHCR_REGISTRY, GHCR_OWNER, CUT_RELEASE_IMAGES, WAIT_TIMEOUT_SECS,
 EOF
 }
 
-# cr_vercmp A B → prints -1 / 0 / 1 (A < B / == / >). Numeric components are
-# compared numerically; a release (no -suffix) sorts after its prerelease.
+# cr_vercmp A B → prints -1 / 0 / 1 (A < B / == / >). Numeric core components
+# are compared numerically; a release (no -suffix) sorts after its prerelease,
+# and two prereleases are ordered by their -suffix per SemVer: dotted fields
+# left to right, numeric fields compared numerically, numeric < alphanumeric,
+# and a shorter (prefix) suffix sorts lower.
 cr_vercmp() {
   awk -v a="$1" -v b="$2" '
+    function suffix(v,   p) {
+      p = index(v, "-")
+      return (p > 0) ? substr(v, p + 1) : ""
+    }
     BEGIN {
       n = split(a, A, /[.+-]/)
       m = split(b, B, /[.+-]/)
@@ -116,12 +123,30 @@ cr_vercmp() {
         if (x < y) { print -1; exit }
         if (x > y) { print 1; exit }
       }
-      # A prerelease is the optional -suffix (validation only allows that
-      # form); the release core X.Y.Z always contains dots, so match "-".
-      ap = (index(a, "-") > 0) ? 1 : 0
-      bp = (index(b, "-") > 0) ? 1 : 0
-      if (ap > bp) { print -1; exit }
-      if (ap < bp) { print 1; exit }
+      # The prerelease is the optional -suffix (validation only allows that
+      # form); the release core X.Y.Z never contains "-", so the first "-"
+      # marks it. A bare release sorts after any prerelease of the same core.
+      sa = suffix(a)
+      sb = suffix(b)
+      if (sa == sb) { print 0; exit }
+      if (sa == "") { print 1; exit }
+      if (sb == "") { print -1; exit }
+      na = split(sa, FA, ".")
+      nb = split(sb, FB, ".")
+      lim = (na < nb) ? na : nb
+      for (i = 1; i <= lim; i++) {
+        an = (FA[i] ~ /^[0-9]+$/)
+        bn = (FB[i] ~ /^[0-9]+$/)
+        if (an && bn) {
+          if (FA[i] + 0 < FB[i] + 0) { print -1; exit }
+          if (FA[i] + 0 > FB[i] + 0) { print 1; exit }
+        } else if (an != bn) {
+          print (an ? -1 : 1)
+          exit
+        } else if (FA[i] < FB[i]) { print -1; exit }
+        else if (FA[i] > FB[i]) { print 1; exit }
+      }
+      if (na != nb) { print (na < nb ? -1 : 1); exit }
       print 0
     }'
 }
