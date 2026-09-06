@@ -18,7 +18,7 @@
 # that may already be set":
 #   - CLAUDE_MODEL reaches the review agent as the container's value unless
 #     REVIEW_CLAUDE_MODEL is set (no hardcoded model name)
-#   - CLAUDE_TIMEOUT for the review is 2400s by default, overridable via
+#   - CLAUDE_TIMEOUT for the review is 3600s by default, overridable via
 #     REVIEW_CLAUDE_TIMEOUT, and not silenced by an inherited CLAUDE_TIMEOUT
 #   - the rc-124 error comment at review-pr.sh:~371 reports the timeout the
 #     review actually ran under
@@ -28,14 +28,14 @@
 # agent_run/curl/log/status, and asserting the environment the function
 # leaves for the agent; the same approach as issue-1164):
 #   1. with CLAUDE_TIMEOUT=7200 / CLAUDE_MODEL=<sentinel> pre-set (as the
-#      jobspec does), a completed review leaves CLAUDE_TIMEOUT=2400 and the
+#      jobspec does), a completed review leaves CLAUDE_TIMEOUT=3600 and the
 #      container's CLAUDE_MODEL intact — the 7200 is NOT inherited and no
 #      model name is hardcoded over it
-#   2. CLAUDE_TIMEOUT unset → still 2400
+#   2. CLAUDE_TIMEOUT unset → still 3600
 #   3. REVIEW_CLAUDE_TIMEOUT / REVIEW_CLAUDE_MODEL win when set
 #   4. the review-pr.sh source contains no hardcoded model export and the
-#      timeout line's comment states the actual effective value (2400)
-#   5. an rc-124 timeout with no output reports "timed out after 2400s" —
+#      timeout line's comment states the actual effective value (3600)
+#   5. an rc-124 timeout with no output reports "timed out after 3600s" —
 #      the timeout actually used, not the inherited container value
 #
 # No agent started, no live services.
@@ -72,8 +72,8 @@ export CLAUDE_TIMEOUT=7200
 export CLAUDE_MODEL="unsloth/Qwen3.8-27B"
 ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
-ac_assert_eq "$CLAUDE_TIMEOUT" "2400" \
-  "review timeout must be the 2400s cap, not the inherited 7200 jobspec value"
+ac_assert_eq "$CLAUDE_TIMEOUT" "3600" \
+  "review timeout must be the 3600s cap, not the inherited 7200 jobspec value"
 ac_assert_eq "$CLAUDE_MODEL" "unsloth/Qwen3.8-27B" \
   "CLAUDE_MODEL reaching the review agent must be the container's value, not a hardcoded name"
 
@@ -81,14 +81,14 @@ ac_assert_eq "$CLAUDE_MODEL" "unsloth/Qwen3.8-27B" \
 unset CLAUDE_TIMEOUT
 ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
-ac_assert_eq "$CLAUDE_TIMEOUT" "2400" "unset CLAUDE_TIMEOUT must default to the 2400s cap"
+ac_assert_eq "$CLAUDE_TIMEOUT" "3600" "unset CLAUDE_TIMEOUT must default to the 3600s cap"
 
 # ── 3. REVIEW_* overrides win when set ─────────────────────────────────────
 export REVIEW_CLAUDE_TIMEOUT=1800
 export REVIEW_CLAUDE_MODEL="test/review-model"
 ac_run_review 0 "$VALID_VERDICT"
 [ "$REVIEW_RC" -eq 0 ] || ac_fail "valid verdict must return 0, got ${REVIEW_RC}"
-ac_assert_eq "$CLAUDE_TIMEOUT" "1800" "REVIEW_CLAUDE_TIMEOUT must override the 2400 default"
+ac_assert_eq "$CLAUDE_TIMEOUT" "1800" "REVIEW_CLAUDE_TIMEOUT must override the 3600 default"
 ac_assert_eq "$CLAUDE_MODEL" "test/review-model" "REVIEW_CLAUDE_MODEL must override the container's value"
 unset REVIEW_CLAUDE_TIMEOUT REVIEW_CLAUDE_MODEL
 
@@ -99,8 +99,8 @@ fi
 timeout_line="$(grep -n 'export CLAUDE_TIMEOUT=' "$TARGET" || true)"
 [ -n "$timeout_line" ] || ac_fail "review-pr.sh must export CLAUDE_TIMEOUT for the review"
 case "$timeout_line" in
-  *2400*) ;;
-  *) ac_fail "the CLAUDE_TIMEOUT line must state the actual effective value (2400), got: $timeout_line" ;;
+  *3600*) ;;
+  *) ac_fail "the CLAUDE_TIMEOUT line must state the actual effective value (3600), got: $timeout_line" ;;
 esac
 case "$timeout_line" in
   *REVIEW_CLAUDE_TIMEOUT*) ;;
@@ -118,8 +118,8 @@ ac_run_review 124 -
   || ac_fail "timeout with no output must return 1, got ${REVIEW_RC}"
 BODY_TEXT="$(cat "$CURL_BODY" 2>/dev/null || true)"
 case "$BODY_TEXT" in
-  *"timed out after 2400s"*) ;;
-  *) ac_fail "timeout comment must name the timeout actually used (2400s), got: $BODY_TEXT" ;;
+  *"timed out after 3600s"*) ;;
+  *) ac_fail "timeout comment must name the timeout actually used (3600s), got: $BODY_TEXT" ;;
 esac
 case "$BODY_TEXT" in
   *7200*) ac_fail "timeout comment must not name the inherited container value, got: $BODY_TEXT" ;;
