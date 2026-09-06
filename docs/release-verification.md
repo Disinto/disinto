@@ -7,13 +7,13 @@ are public, the generator emits images, and the dispatcher remains unblocked.
 **Target**: Fresh LXD container / VM with minimal host deps.
 **Time budget**: <5 min end-to-end (automated by `tests/release-smoke.sh`).
 
-> **Backend under test: docker-compose only.** This runbook (and
-> `tests/release-smoke.sh`) exercises the legacy compose stack
-> (`bin/disinto init` without `--backend=nomad`, `disinto up --wait`,
-> `docker compose ps`). A fresh-install smoke stage for the **Nomad+Vault**
-> backend (`bin/disinto init --backend=nomad`, `nomad job status` assertions)
-> is tracked in #1227 — until it lands, a green release-smoke does not
-> validate the Nomad path.
+> **Backends under test:** Steps 1–5 below exercise the docker-compose
+> backend. The **Nomad+Vault** backend — the one the production factory and
+> the planned second instance use — is covered in the "Nomad backend"
+> section below (`tests/release-smoke-nomad.sh`): Stage A (plan validation)
+> always runs, Stage B (fresh-LXC init) is operator-gated.
+> `tests/release-smoke.sh` runs both and prints a combined summary, so a
+> green release-smoke validates the Nomad path's init contract too.
 
 ---
 
@@ -104,6 +104,81 @@ rm -rf /tmp/disinto-verify
 
 ---
 
+## Nomad backend (`tests/release-smoke-nomad.sh`)
+
+The steps above only exercise the docker-compose backend. The Nomad+Vault
+backend (cluster-up + Vault + `nomad job run`) gets the same fresh-host
+treatment via `tests/release-smoke-nomad.sh`, which `tests/release-smoke.sh`
+appends to its run with a combined summary.
+
+```bash
+VERSION=v0.3.0 bash tests/release-smoke-nomad.sh      # tag
+SRC_DIR="$PWD" bash tests/release-smoke-nomad.sh      # validate a checkout in place (CI)
+```
+
+### Stage A — plan validation (always runs, no host mutation)
+
+Clones the tag into a scratch dir (or, with `SRC_DIR`, validates the
+checkout in place), then runs:
+
+```bash
+./bin/disinto init placeholder/repo --backend=nomad --with forgejo \
+  --import-env <scratch-env> --dry-run
+```
+
+and asserts:
+
+- exit 0;
+- the plan contains all five sections: **Cluster-up dry-run**,
+  **Vault policies dry-run**, **Vault auth dry-run**, **Vault import
+  dry-run**, **Deploy services dry-run**;
+- every `.sh`/`.hcl` path under the tree that the plan references exists in
+  the tree (e.g. `lib/init/nomad/*.sh`, `nomad/jobs/*.hcl`);
+- `tools/vault-apply-policies.sh` and `tools/vault-import.sh` are present
+  and executable, and `vault/policies/` holds policy `.hcl` files.
+
+No Nomad, Vault, or LXD state is touched — the plan is computed, never
+executed. This is the stage CI runs (`.woodpecker/smoke-init.yml`, step
+`release-smoke-nomad`, with `SRC_DIR` on the PR checkout).
+
+### Stage B — fresh-LXC init (operator-gated)
+
+Gated on `SCRATCH_LXC_NAME`; without it (and without LXD on the CI runner)
+the stage prints `SKIP` and the script still exits 0. One-time operator
+procedure on an LXD host:
+
+1. Pick a free container name (the script refuses to run if it already
+   exists) and an image (default `images:ubuntu/24.04`), e.g.
+   `disinto-smoke-nomad`.
+2. Run:
+
+   ```bash
+   SCRATCH_LXC_NAME=disinto-smoke-nomad VERSION=v0.3.0 \
+     bash tests/release-smoke-nomad.sh
+   ```
+
+   The script `lxc launch`es the container, installs git/curl/sudo, clones
+   the tag into `/root/disinto`, and runs
+   `sudo ./bin/disinto init placeholder/repo --backend=nomad --with
+   forgejo` inside it (log:
+   `/tmp/disinto-smoke-nomad-init-<ref>.log`). For a full deploy, pass the
+   import flags via
+   `NOMAD_INIT_EXTRA_ARGS="--import-env /root/.env --age-key /root/keys.txt"`
+   after copying the secret files into the container — without the
+   `kv/disinto/*` data, Forgejo's template stanza cannot render and the job
+   never reaches `running` (see the flag table in
+   `docs/nomad-migration.md`).
+3. It then polls `nomad job status -json forgejo` for up to 10 minutes
+   (job `running`, no latest-version allocation off `running`) and curls
+   `http://127.0.0.1:3000/api/v1/version`.
+4. Teardown is automatic: `lxc delete <name> --force`, plus the scratch
+   clone under `/tmp`.
+
+Record the Stage B result in the acceptance commit / release notes —
+Stage A alone does not prove a tagged release actually boots Nomad+Vault.
+
+---
+
 ## Failure modes and what they mean
 
 | Symptom | Likely cause | Fix |
@@ -118,12 +193,18 @@ rm -rf /tmp/disinto-verify
 
 ## Automation
 
-The script `tests/release-smoke.sh` automates this runbook and prints
-`PASS`/`FAIL` with stage markers (`[1/5]`, `[2/5]`, …). Run it manually
-post-release:
+The script `tests/release-smoke.sh` automates the compose runbook above,
+then hands off to `tests/release-smoke-nomad.sh` for the Nomad backend
+(Stage A always; Stage B only if `SCRATCH_LXC_NAME` is set), and prints a
+combined `RELEASE SMOKE: PASSED/FAILED` summary. Both use `PASS`/`FAIL`/
+`SKIP` stage markers (`[1/5]`, `[2/5]`, …). Run it manually post-release:
 
 ```bash
 VERSION=v0.3.0 bash tests/release-smoke.sh
 ```
 
-CI integration is planned for a later iteration.
+CI coverage: `.woodpecker/smoke-init.yml` triggers on changes to
+`bin/disinto`, `lib/init/nomad/**`, and `tests/**`, and runs
+`tests/release-smoke-nomad.sh` with `SRC_DIR` against the PR checkout —
+i.e. Nomad Stage A is tested on every relevant PR. Stage B (the real
+fresh-LXC deploy) stays operator-gated; record its result when run.
