@@ -69,7 +69,7 @@ disinto/                 (code repo)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by
 │                  `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md);
-│                  voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md)
+│                  voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md, issues-for-bots.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
 │                  vault-import.bats, disinto-init-nomad.bats)

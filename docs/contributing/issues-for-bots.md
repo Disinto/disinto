@@ -1,12 +1,13 @@
 # Filing issues the bots can actually work
 
-Two rules, learned the hard way. They apply to humans, walk-agents, and the
+Two rules, learned the hard way. They apply to humans, operator sessions, and the
 gardener alike.
 
 ## 1. dev-bot implements — it does not investigate
 
-dev-bot's loop is claim → implement → PR → CI → merge. It picks up issues
-labeled `backlog` (plus `tech-debt`) and implements each one **whole**, in a
+dev-bot's loop is claim → implement → PR → CI → merge. It claims issues
+labeled `backlog` (tech-debt issues enter the queue only after promotion to
+`backlog`) and implements each one **whole**, in a
 single session with a bounded context. Consequences:
 
 - **File dev-sized tasks, not epics.** One issue = one implementable change
@@ -27,8 +28,7 @@ single session with a bounded context. Consequences:
 ## 2. Bodies are the record — comments are noise
 
 The bots read issue **bodies** when claiming work; they do not reliably read
-comment threads (long threads also burn context on every poll that lists
-them). Therefore:
+comment threads. Therefore:
 
 - **Fold updates into the body.** Status changes, refined scope, new
   findings, corrected measurements — edit the body via the API, don't
