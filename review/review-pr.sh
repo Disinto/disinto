@@ -8,10 +8,13 @@
 #   Synchronous bash loop using claude -p (one-shot invocations).
 #   Session continuity via --resume and .sid file.
 #   Re-review resumes the original session — Claude remembers its prior review.
+#   Re-review context is budgeted (#1257): prior rounds are injected as
+#   compact digests (verdict + findings per round, capped), not full bodies.
 #
 # Flow:
 #   1. Fetch PR metadata (title, body, head, base, SHA, CI state)
-#   2. Detect re-review (previous review at different SHA, incremental diff)
+#   2. Detect re-review (prior rounds at other SHAs → compact digests +
+#      incremental diff — both bounded, #1257)
 #   3. Create review worktree, checkout PR head
 #   4. Build structural analysis graph
 #   5. Load review formula
@@ -57,6 +60,10 @@ MAX_DIFF=25000
 # A pasted 25KB diff can be auto-compacted away mid-review and lose file
 # coverage (#1256, #1260); a worktree read survives compaction.
 DIFF_THRESHOLD=12000
+# Prior review rounds are injected as compact digests (verdict + findings
+# list per round) instead of full review bodies; each digest's findings list
+# is capped at this many bytes (#1257).
+DIGEST_CAP=2048
 REVIEW_TMPDIR=$(mktemp -d)
 
 log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"; }
@@ -204,29 +211,106 @@ diff_block() {
 # =============================================================================
 # RE-REVIEW DETECTION
 # =============================================================================
-PREV_CONTEXT="" IS_RE_REVIEW=false PREV_SHA=""
-PREV_REV=$(printf '%s' "$ALL_COMMENTS" | jq -r --arg s "$PR_SHA" \
-  '[.[]|select(.body|contains("<!-- reviewed:"))|select(.body|contains($s)|not)]|last // empty')
-if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
-  PREV_BODY=$(printf '%s' "$PREV_REV" | jq -r '.body')
-  PREV_SHA=$(printf '%s' "$PREV_BODY" | grep -oP '<!-- reviewed: \K[a-f0-9]+' | head -1)
-  cd "${PROJECT_REPO_ROOT}"
-  FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>&1 >/dev/null) || \
-    log "WARN: git fetch ${FORGE_REMOTE} ${PR_HEAD} failed: ${FETCH_ERR} — incremental diff may be incomplete"
-  INCR_FILE="${REVIEW_TMPDIR}/incr.diff"
-  git diff "${PREV_SHA}..${PR_SHA}" > "$INCR_FILE" 2>/dev/null || true
-  if [ -s "$INCR_FILE" ]; then
-    IS_RE_REVIEW=true; log "re-review: previous at ${PREV_SHA:0:7}"
-    DEV_R=$(printf '%s' "$ALL_COMMENTS" | jq -r \
-      '[.[]|select(.body|contains("<!-- dev-response:"))]|last // empty')
-    DEV_SEC=""; [ -n "$DEV_R" ] && [ "$DEV_R" != "null" ] && \
-      DEV_SEC=$(printf '\n### Developer Response\n%s' "$(printf '%s' "$DEV_R" | jq -r '.body')") || true
-    PREV_CONTEXT=$(printf '\n## This is a RE-REVIEW\nPrevious review at %s requested changes.\n### Previous Review\n%s%s\n%s' \
-      "${PREV_SHA:0:7}" "$PREV_BODY" "$DEV_SEC" \
-      "$(diff_block "Incremental Diff (${PREV_SHA:0:7}..${PR_SHA:0:7})" "$INCR_FILE" \
-        "git -C ${WORKTREE} diff ${PREV_SHA}..${PR_SHA}" "${PREV_SHA}")")
+# Re-review context budget (#1257): prior review rounds are injected as
+# compact digests — verdict + findings list per round, findings capped at
+# DIGEST_CAP bytes — instead of full review bodies (the worst prompts in the
+# system), and the incremental diff is bounded by diff_block at
+# DIFF_THRESHOLD (12KB — the same number #1257 proposed for full diffs; #1256
+# landed it first, so this reuses it). Findings in the posted review are list
+# items (formula section 9), so each digest keeps every list line of its
+# round: a 3rd-round re-review still sees every finding from every prior
+# round (no dropped threads) while the prompt stays bounded.
+# review_digest — compact digest of one prior review comment: its verdict
+# line plus the findings list (list items + section headings of the review
+# markdown), the list capped at DIGEST_CAP bytes with a truncation note.
+# Arg: $1=review comment body
+review_digest() {
+  local body="$1" md verdict line selected kept="" n=0 lsz
+  # Review markdown = the region between the "<!-- reviewed: -->" marker line
+  # and the final "### Verdict" heading — the shape the orchestrator posts.
+  md=$(printf '%s\n' "$body" | awk '
+    /^<!-- reviewed: /{f=1; next}
+    f && /^### Verdict[[:space:]]*$/{exit}
+    f{print}')
+  [ -n "$md" ] || md="$body"
+  # Verdict = the line after the LAST "### Verdict" heading (ours, not one
+  # the agent may have written inside its own markdown).
+  verdict=$(printf '%s\n' "$body" | awk '
+    /^### Verdict[[:space:]]*$/{ if ((getline) > 0) v=$0 }
+    END{ print v }')
+  [ -n "$verdict" ] || verdict="**VERDICT NOT CAPTURED**"
+  # Findings = list items and section headings of the review markdown;
+  # prose (summaries, explanations) is what the cap buys.
+  selected=$(printf '%s\n' "$md" | grep -E \
+    '^[[:space:]]*([-*][[:space:]]+|[0-9]+[.)][[:space:]]+|#{1,6}[[:space:]]+)' || true)
+  kept="$verdict"$'\n'
+  n=$(printf '%s\n' "$verdict" | wc -c | tr -d '[:space:]')
+  if [ -n "$selected" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -z "$line" ] && continue
+      lsz=$(printf '%s\n' "$line" | wc -c | tr -d '[:space:]')
+      if [ "$(( n + lsz ))" -gt "$DIGEST_CAP" ]; then
+        kept="${kept}… (findings truncated at ${DIGEST_CAP} bytes — full review body is on the PR)"$'\n'
+        break
+      fi
+      kept="${kept}${line}"$'\n'
+      n=$(( n + lsz ))
+    done <<< "$selected"
   fi
-fi
+  printf '%s' "$kept"
+}
+
+# build_re_review_context — detect prior review rounds and assemble the
+# bounded re-review prompt section. Sets IS_RE_REVIEW, PREV_SHA, PREV_CONTEXT.
+# Requires: ALL_COMMENTS PR_SHA PR_HEAD FORGE_REMOTE PROJECT_REPO_ROOT
+#           REVIEW_TMPDIR WORKTREE (run from anywhere; cd's to the repo root
+#   for the git fetch/diff, like the startup already does).
+build_re_review_context() {
+  local body rs_sha i prior_count last_idx prior_reviews fetch_err incr_file rounds dev_r dev_sec
+  IS_RE_REVIEW=false
+  PREV_SHA=""
+  # Prior review rounds: every review comment not pinned to the current head
+  # SHA, oldest first (API order). The most recent one anchors the
+  # incremental diff; EVERY round gets a digest, so no round's findings are
+  # dropped from the re-review prompt.
+  prior_reviews=$(printf '%s' "$ALL_COMMENTS" | jq -c --arg s "$PR_SHA" \
+    '[.[]|select(.body|contains("<!-- reviewed:"))|select(.body|contains($s)|not)]')
+  prior_count=$(printf '%s' "$prior_reviews" | jq 'length' 2>/dev/null || echo 0)
+  [ "${prior_count:-0}" -gt 0 ] || return 0
+  last_idx=$(( prior_count - 1 ))
+  PREV_SHA=$(printf '%s' "$prior_reviews" | jq -r ".[${last_idx}].body" \
+    | grep -oP '<!-- reviewed: \K[a-f0-9]+' | head -1) || PREV_SHA=""
+  cd "${PROJECT_REPO_ROOT}"
+  fetch_err=$(git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>&1 >/dev/null) || \
+    log "WARN: git fetch ${FORGE_REMOTE} ${PR_HEAD} failed: ${fetch_err} — incremental diff may be incomplete"
+  incr_file="${REVIEW_TMPDIR}/incr.diff"
+  git diff "${PREV_SHA}..${PR_SHA}" > "$incr_file" 2>/dev/null || true
+  [ -s "$incr_file" ] || return 0
+  IS_RE_REVIEW=true
+  log "re-review: previous at ${PREV_SHA:0:7} (${prior_count} prior round(s))"
+  rounds=""
+  i=0
+  while [ "$i" -lt "$prior_count" ]; do
+    body=$(printf '%s' "$prior_reviews" | jq -r ".[${i}].body")
+    rs_sha=$(printf '%s' "$body" | grep -oP '<!-- reviewed: \K[a-f0-9]+' | head -1) || rs_sha=""
+    rounds="${rounds}### Round $(( i + 1 )) — reviewed \`${rs_sha:0:7}\`
+$(review_digest "$body")
+
+"
+    i=$(( i + 1 ))
+  done
+  dev_r=$(printf '%s' "$ALL_COMMENTS" | jq -r \
+    '[.[]|select(.body|contains("<!-- dev-response:"))]|last // empty')
+  dev_sec=""
+  [ -n "$dev_r" ] && [ "$dev_r" != "null" ] && \
+    dev_sec=$(printf '\n### Developer Response\n%s' "$(printf '%s' "$dev_r" | jq -r '.body')") || true
+  PREV_CONTEXT=$(printf '\n## This is a RE-REVIEW\n%s prior review round(s), compacted below — verdict + findings list per round (findings capped at %s bytes; the full review bodies are on the PR — fetch them via the PR comments API if a digest is truncated).\n%s%s%s' \
+    "$prior_count" "$DIGEST_CAP" "$rounds" "$dev_sec" \
+    "$(diff_block "Incremental Diff (${PREV_SHA:0:7}..${PR_SHA:0:7})" "$incr_file" \
+      "git -C ${WORKTREE} diff ${PREV_SHA}..${PR_SHA}" "${PREV_SHA}")")
+}
+PREV_CONTEXT=""
+build_re_review_context
 
 # Recover session_id from .sid file (re-review continuity)
 agent_recover_session

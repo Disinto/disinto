@@ -36,6 +36,17 @@ re-review incremental diffs) so the agent reads the diff/files locally. This kee
 coverage intact under auto-compaction, which can compact away a pasted 25KB diff mid-review
 (#1260). The old truncated paste (capped at `MAX_DIFF`) remains only as a fallback when
 the PR's base ref cannot be fetched (merge-base unavailable).
+**Re-review context budget (#1257)**: prior review rounds are injected as compact
+digests instead of full review bodies — `review_digest` in `review-pr.sh` keeps each
+round's verdict line + findings list (list items and section headings of the review
+markdown), capped at `DIGEST_CAP` (2KB) per round, with a truncation note pointing at
+the PR comments. Findings in the posted review are list items (formula section 9), so
+every finding line of a round survives the digest: a 3rd-round re-review still sees
+every finding from every prior round (no dropped threads) while the prompt stays
+bounded. `build_re_review_context` digests EVERY prior round (not just the last) and
+bounds the incremental diff (most recently reviewed SHA → head) through `diff_block`
+at `DIFF_THRESHOLD` (12KB — the number #1257 proposed for full diffs; #1256 landed
+it first, so it is reused).
 **Stale-base regression check (#896)**: before assembling the prompt, calls `stale_base_check`
 from `lib/stale-base-check.sh` to detect PRs whose merged result would silently revert upstream
 changes that landed on `$PRIMARY_BRANCH` since the PR's merge-base. When triggered, the
