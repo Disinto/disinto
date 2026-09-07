@@ -42,6 +42,7 @@ Adapt based on scope. Check for:
 - **Dead code**: unused variables, unreachable branches, leftover debug prints
 - **Claim verification**: if docs/README/AGENTS.md changed, verify claims against actual code
 - **Acceptance test**: if the issue has an `## Acceptance test` section, check it has explicit shell commands with expected output, references correct file paths/schema (not stubs), and expected output matches what the code produces; a command that cannot run on the live box (e.g. needs a deploy) → flag `needs-deploy-verification`, do NOT approve. See docs/contributing/acceptance-tests.md.
+- **File coverage**: the review must reflect EVERY file in "Changed Files". When the "large — not pasted" section replaced the pasted diff, run the diff command it gives and read each changed file from the worktree before judging; a verdict that skips files is incomplete.
 
 Do NOT flag: style preferences with no correctness impact; missing tests unless clearly untested and risky; things that look wrong but actually work (verify first); files truncated from the diff (orchestrator notes truncation).
 
