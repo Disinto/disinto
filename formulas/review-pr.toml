@@ -113,14 +113,24 @@ If ANY appear WITHOUT routing through vault dispatch (file a vault PR on the ops
 
 **Exceptions** (do NOT flag): code inside `vault/` (vault handles secrets itself); comments/docs explaining the architecture; `bin/disinto` setup commands managing `secrets/*.enc` and the `run` subcommand; local operations (git push to forge, forge API calls with `FORGE_TOKEN`).
 
-## 6. Re-review (if previous review is provided)
+## 6. Re-review (if prior review rounds are provided)
 
-If a previous review and incremental diff were injected:
-1. For each previous finding, check if it was addressed; report status: fixed / not_fixed / partial with explanation
+If the "This is a RE-REVIEW" section lists prior review rounds (compact
+digests: verdict + findings list per round) and an incremental diff:
+1. For each finding in EVERY prior round's digest, check if it is now
+   addressed; report status: fixed / not_fixed / partial with explanation.
+   A finding absent from a later round's digest was probably fixed — verify
+   against the code either way and say so (a dropped thread must not stay
+   dropped).
 2. Check for new issues introduced by the fix commits
 3. Be fair — acknowledge well-addressed feedback
 
-Use the incremental diff per finding, the full diff for overall correctness.
+Use the incremental diff per finding (it covers only the changes since the
+most recently reviewed SHA), the full diff for overall correctness. If a
+digest is marked truncated, fetch the full prior review body from the PR
+comments (GET $FORGE_API/issues/$PR_NUMBER/comments — the body carrying
+`<!-- reviewed: <sha> -->` for that round) before judging that round's
+findings.
 
 ## 7. Follow-up issues (pre-existing tech debt)
 
