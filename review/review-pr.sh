@@ -16,11 +16,10 @@
 #   2. Detect re-review (prior rounds at other SHAs → compact digests +
 #      incremental diff — both bounded, #1257)
 #   3. Create review worktree, checkout PR head
-#   4. Build structural analysis graph
-#   5. Load review formula
-#   6. agent_run(worktree, prompt) → Claude reviews, writes verdict JSON
-#   7. Parse verdict, post as Forge review (APPROVE / REQUEST_CHANGES / COMMENT)
-#   8. Save session ID to .sid file for re-review continuity
+#   4. Load review formula
+#   5. agent_run(worktree, prompt) → Claude reviews, writes verdict JSON
+#   6. Parse verdict, post as Forge review (APPROVE / REQUEST_CHANGES / COMMENT)
+#   7. Save session ID to .sid file for re-review continuity
 #
 # Session file: /tmp/review-session-{project}-{pr}.sid
 set -euo pipefail
@@ -71,7 +70,7 @@ status() { printf '[%s] PR #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR
 
 # cleanup — remove temp files (NOT lockfile — cleanup_on_exit handles that)
 cleanup() {
-  rm -rf "$REVIEW_TMPDIR" "$STATUSFILE" "/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"
+  rm -rf "$REVIEW_TMPDIR" "$STATUSFILE"
 }
 
 # cleanup_on_exit — defensive cleanup: remove lockfile if we own it, kill residual children
@@ -409,22 +408,13 @@ else
 fi
 
 # =============================================================================
-# BUILD STRUCTURAL ANALYSIS GRAPH
+# PREPARE REVIEW
 # =============================================================================
+# (The per-PR structural-graph step was removed in #1258: the project root
+# holds no objective/prerequisite sources — they live in the ops repo — so
+# the report carried no PR-relevant content, and the review formula never
+# referenced the section; in-container it was a ~527B stub of boilerplate.)
 status "preparing review"
-GRAPH_REPORT="/tmp/${PROJECT_NAME}-review-graph-${PR_NUMBER}.json"
-GRAPH_SECTION=""
-# shellcheck disable=SC2086
-if python3 "$FACTORY_ROOT/lib/build-graph.py" \
-     --project-root "$PROJECT_REPO_ROOT" \
-     --changed-files $FILES \
-     --output "$GRAPH_REPORT" 2>>"$LOGFILE"; then
-  GRAPH_SECTION=$(printf '\n## Structural analysis (affected objectives)\n```json\n%s\n```\n' \
-    "$(cat "$GRAPH_REPORT")")
-  log "graph report generated for PR #${PR_NUMBER}"
-else
-  log "WARN: build-graph.py failed — continuing without structural analysis"
-fi
 
 # =============================================================================
 # LOAD LESSONS FROM .PROFILE REPO (PRE-SESSION)
@@ -456,7 +446,6 @@ fi
     "$PR_BODY" "$FILES" "$DIFF_SECTION"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
   [ -n "$STALE_BASE_SECTION" ] && printf '%s\n' "$STALE_BASE_SECTION"
-  [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
   formula_lessons_block
   printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\nREVIEW_WORKTREE=%s\n' \
     "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT" "$WORKTREE"
