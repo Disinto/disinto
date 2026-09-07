@@ -59,6 +59,18 @@ git ls-files '*.sh' | xargs shellcheck
 bash dev/phase-test.sh
 ```
 
+### Moving a default value
+
+Known default constants (`DSH_CONTEXT_WINDOW`, `CLAUDE_TIMEOUT`, `MAX_DIFF`,
+`DIFF_THRESHOLD`, `DIGEST_CAP`) are pinned by golden tests under `tests/`
+(e.g. `DSH_CONTEXT_WINDOW` by `tests/hire-an-agent-harness.bats`, the review
+`CLAUDE_TIMEOUT` cap by `tests/acceptance/issue-1171-review-env-overrides.sh`).
+A PR that moves one must update the goldens **in the same commit** — before
+pushing, grep `tests/` for the old value. CI enforces this via
+`.woodpecker/check-defaults-golden.sh` (the `defaults-golden` step in
+`.woodpecker/ci.yml`), which fails the PR and names the golden files (#1261:
+#1252 and #1260 each broke CI post-push on exactly this).
+
 ## Agents
 
 Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/AGENTS.md) (PR review), [gardener/](gardener/AGENTS.md) (grooming, #872), [supervisor/](supervisor/AGENTS.md) (health), [planner/](planner/AGENTS.md) (planning), [predictor/](predictor/AGENTS.md) (infrastructure patterns), [architect/](architect/AGENTS.md) (sprints). Filer: `lib/sprint-filer.sh` (#779, deferred). Reproduce/Triage: `docker/reproduce/` (Playwright MCP). Edge dispatcher: `docker/edge/`. Local-model: `docker/agents/` (llama). Nomad: [nomad/AGENTS.md](nomad/AGENTS.md).

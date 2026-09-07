@@ -7,6 +7,8 @@
 #   3. bats         — run every tests/*.bats suite by glob discovery (#1144)
 #   4. rebuild-and-deploy-agents — rebuild + redeploy disinto/agents:local when
 #      docker/agents/** changes on main (#1173)
+#   5. defaults-golden — PRs that move a known default must update its golden
+#      tests in the same commit (#1261)
 #
 # Timeouts:
 #   Workflow-level default (10m) applies to all steps unless overridden.
@@ -74,6 +76,19 @@ steps:
     commands:
       - apk add --no-cache bash git diffutils grep
       - bash .woodpecker/check-stale-rebase.sh
+
+  # #1261 — a PR that moves a known default (DSH_CONTEXT_WINDOW,
+  # CLAUDE_TIMEOUT, MAX_DIFF, DIFF_THRESHOLD, DIGEST_CAP) must update its
+  # golden tests in the same commit: the goldens pin the old value, so the
+  # move only breaks CI after the push (#1252, #1260 — each cost a full
+  # CI+review cycle). Fails the PR, naming the golden files to update.
+  - name: defaults-golden
+    image: alpine:3
+    when:
+      event: pull_request
+    commands:
+      - apk add --no-cache bash git grep
+      - bash .woodpecker/check-defaults-golden.sh
 
   - name: duplicate-detection
     image: python:3-alpine
