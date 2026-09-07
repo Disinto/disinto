@@ -1860,11 +1860,24 @@ p.write_text(text)
 
   # Set up branch protection on project repo (#10)
   # This enforces PR flow: no direct pushes, 1 approval required, dev-bot can merge after CI
-  if setup_project_branch_protection "$forge_repo" "$branch"; then
-    echo "Branch protection: project protection configured on ${forge_repo}"
-  else
-    echo "ERROR: failed to set up project branch protection — security rules not applied" >&2
-  fi
+  # rc 2 = repo is empty (no commits yet): protection is explicitly DEFERRED,
+  # not failed — a fresh repo has no branch to protect until the first push
+  # (#1249). Surface the deferral with a re-run notice; never report it as an
+  # error or skip it silently.
+  local bp_rc=0
+  setup_project_branch_protection "$forge_repo" "$branch" || bp_rc=$?
+  case "$bp_rc" in
+    0)
+      echo "Branch protection: project protection configured on ${forge_repo}"
+      ;;
+    2)
+      echo "Branch protection: DEFERRED — ${forge_repo} is empty (no commits yet), no branch to protect"
+      echo "  Re-run 'disinto init <repo>' after the first push to apply project branch protection."
+      ;;
+    *)
+      echo "ERROR: failed to set up project branch protection — security rules not applied" >&2
+      ;;
+  esac
 
   # Generate VISION.md template
   generate_vision "$repo_root" "$project_name"
