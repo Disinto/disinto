@@ -143,6 +143,37 @@ _bp_apply_protection() {
 }
 
 # -----------------------------------------------------------------------------
+# _bp_repo_empty — Check whether a Forgejo repo has any commits yet
+#
+# Reads the `empty` field from GET /repos/{owner}/{repo} — the same field
+# push_to_forge() checks after a push. An empty repo has no refs, so there is
+# no branch for branch protection to attach to (#1249).
+#
+# Args:
+#   $1 - Repo path in 'owner/repo' format
+#
+# Prints: "true" (repo confirmed empty) | "false" (repo has commits) |
+#         "unknown" (check could not be made — API unreachable or bad
+#         response; callers must fall through to the normal wait path, not
+#         skip protection)
+# -----------------------------------------------------------------------------
+_bp_repo_empty() {
+  local repo="$1"
+  local repo_info=""
+  local empty
+  repo_info=$(curl -sf --max-time 10 \
+    -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_URL}/api/v1/repos/${repo}" 2>/dev/null) || repo_info=""
+  if [ -z "$repo_info" ]; then
+    echo "unknown"
+    return 0
+  fi
+  empty=$(printf '%s' "$repo_info" | jq -r 'if has("empty") then (.empty | tostring) else "unknown" end' 2>/dev/null) || empty="unknown"
+  echo "${empty:-unknown}"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # setup_vault_branch_protection — Set up admin-only branch protection for main
 #
 # Configures the following protection rules:
@@ -455,7 +486,11 @@ EOF
 #   $1 - Repo path in format 'owner/repo' (e.g., 'disinto-admin/disinto')
 #   $2 - Branch to protect (default: main)
 #
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success, 1 on failure, 2 if the repo is empty (no commits
+#         yet) and protection was explicitly DEFERRED with a re-run notice —
+#         there is no branch to protect until the first push lands (#1249).
+#         Callers must distinguish 2 from 1 and surface the deferral; never
+#         treat 2 as a silent skip.
 # -----------------------------------------------------------------------------
 setup_project_branch_protection() {
   local repo="${1:-}"
@@ -467,6 +502,20 @@ setup_project_branch_protection() {
   fi
 
   _bp_log "Setting up branch protection for ${branch} on ${repo}"
+
+  # A fresh empty repo has no refs, so there is no branch to protect.
+  # Deferring explicitly (return 2) beats burning ~70s in _bp_wait_for_branch
+  # and hard-failing on 'Branch <b> does not exist' during init of a brand-new
+  # project (v0.4.0 release smoke; #1249). Only a CONFIRMED-empty repo
+  # defers — 'unknown' (API unreachable) falls through to the wait path so
+  # protection is never silently skipped.
+  local repo_empty
+  repo_empty="$(_bp_repo_empty "$repo")"
+  if [ "$repo_empty" = "true" ]; then
+    _bp_log "Repo ${repo} is empty (no commits yet) — no branch to protect"
+    _bp_log "DEFERRED: re-run 'disinto init <repo>' after the first push to apply branch protection on ${repo}"
+    return 2
+  fi
 
   local api_url
   api_url="${FORGE_URL}/api/v1/repos/${repo}"
@@ -548,6 +597,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       echo "  setup [branch]              Set up branch protection on ops repo (default: main)"
       echo "  setup-profile <repo> [branch] Set up branch protection on .profile repo"
       echo "  setup-project <repo> [branch] Set up branch protection on project repo"
+      echo "                                (exit 2: repo empty, protection deferred — re-run after first push, #1249)"
       echo "  verify [branch]             Verify branch protection is configured correctly"
       echo "  remove [branch]             Remove branch protection (for cleanup/testing)"
       echo ""
