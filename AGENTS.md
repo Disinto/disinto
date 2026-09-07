@@ -6,15 +6,13 @@
 Disinto is an autonomous code factory: a polling loop (`docker/agents/entrypoint.sh`)
 drives ten agents (dev, review, gardener, supervisor, planner, predictor, architect,
 reproduce, triage, edge dispatcher) that implement forge issues, review
-PRs, plan from the vision, and keep the system healthy — via `claude -p` or tmux
-sessions; the edge dispatcher executes formula-based operational tasks.
+PRs, plan from the vision, and keep the system healthy — via the agent harnesses;
+the edge dispatcher executes formula-based operational tasks.
 
 Each agent has a separate `.profile` repo on Forgejo: lessons-learned.md (injected
 into every session prompt) + `journal/` reflections, digested into lessons past
 `PROFILE_DIGEST_THRESHOLD`. `lib/profile.sh`: `profile_prepare_context()` (pre-session)
 / `profile_write_journal` (post-session).
-
-Vault: PR-based approval redesign on the ops repo in progress (#73-#77); see `docs/VAULT.md`.
 
 See `README.md` for architecture, `disinto-factory/SKILL.md` for setup.
 
@@ -30,15 +28,12 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **tools/** — operational tools (vault provisioning, edge-control)
 - **bin/** — `disinto` CLI + snapshot-*.sh collectors (Nomad: HTTP API, not CLI)
 - **action-vault/** — vault item validation + examples
-- **docs/** — protocol docs
+- **docs/** — protocol docs (full tree: `docs/AGENTS.md`)
 - **vault/policies/** — vault HCL policies
-- **site/** — frontend assets
-- **tests/acceptance/** — post-merge acceptance scripts
-- **.woodpecker/** — CI pipelines
 
 ## Tech stack
 
-bash (all agents) · `claude -p`/`claude` · Woodpecker CI (REST + Postgres) · Forgejo (Gitea API) · Forge activity + OpenClaw heartbeats.
+bash (all agents) · agent harnesses (dsh/Claude) · Woodpecker CI (REST + Postgres) · Forgejo (Gitea API) · Forge activity.
 
 ## Coding conventions
 
@@ -66,14 +61,11 @@ Known default constants (`DSH_CONTEXT_WINDOW`, `CLAUDE_TIMEOUT`, `MAX_DIFF`,
 (e.g. `DSH_CONTEXT_WINDOW` by `tests/hire-an-agent-harness.bats`, the review
 `CLAUDE_TIMEOUT` cap by `tests/acceptance/issue-1171-review-env-overrides.sh`).
 A PR that moves one must update the goldens **in the same commit** — before
-pushing, grep `tests/` for the old value. CI enforces this via
-`.woodpecker/check-defaults-golden.sh` (the `defaults-golden` step in
-`.woodpecker/ci.yml`), which fails the PR and names the golden files (#1261:
-#1252 and #1260 each broke CI post-push on exactly this).
+pushing, grep `tests/` for the old value. CI enforces this (`.woodpecker/check-defaults-golden.sh`, #1261).
 
 ## Agents
 
-Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/AGENTS.md) (PR review), [gardener/](gardener/AGENTS.md) (grooming, #872), [supervisor/](supervisor/AGENTS.md) (health), [planner/](planner/AGENTS.md) (planning), [predictor/](predictor/AGENTS.md) (infrastructure patterns), [architect/](architect/AGENTS.md) (sprints). Filer: `lib/sprint-filer.sh` (#779, deferred). Reproduce/Triage: `docker/reproduce/` (Playwright MCP). Edge dispatcher: `docker/edge/`. Local-model: `docker/agents/` (llama). Nomad: [nomad/AGENTS.md](nomad/AGENTS.md).
+Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/AGENTS.md) (PR review), [gardener/](gardener/AGENTS.md) (grooming, #872), [supervisor/](supervisor/AGENTS.md) (health), [planner/](planner/AGENTS.md) (planning), [predictor/](predictor/AGENTS.md) (infrastructure patterns), [architect/](architect/AGENTS.md) (sprints). Reproduce/Triage: `docker/reproduce/` (Playwright MCP). Edge dispatcher: `docker/edge/`. Local-model: `docker/agents/` (llama). Nomad: [nomad/AGENTS.md](nomad/AGENTS.md).
 
 ## Issue lifecycle and labels
 
@@ -101,10 +93,6 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiti
 ### Dependency conventions
 
 Issues declare deps via `## Dependencies` / `## Depends on` sections (`#N` refs); `lib/parse-deps.sh` extracts them; dev-poll only claims issues whose deps are all closed. Concurrency bounds: AD-002.
-
-## Addressables and Observables
-
-Artifacts the factory has built or is building; the gardener promotes an addressable once its evidence process is wired: disinto.ai (partial) · codeberg.org/johba/disinto (partial) · ClawHub skill (in progress) · github.com/Disinto.
 
 ## Architecture Decisions
 
