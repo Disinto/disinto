@@ -20,10 +20,12 @@ posts markdown review + formal forge review, auto-creates follow-up issues for p
 tech debt. **cd at startup**: changes to `$PROJECT_REPO_ROOT` early in the script — before
 any git commands — because the factory root is not a git repo after image rebuild (#408).
 Calls `resolve_forge_remote()` at startup to determine the correct git remote name (avoids
-hardcoded 'origin'). Before starting the session, runs `lib/build-graph.py --changed-files
-<PR files>` and appends the JSON structural analysis (affected objectives, orphaned
-prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal — review
-proceeds without it. **Acceptance test checking**: if the issue has an `## Acceptance test`
+hardcoded 'origin'). (The former per-PR structural-graph step — running
+`lib/build-graph.py --changed-files` and appending a JSON structural analysis to the
+prompt — was removed in #1258: the project root holds no objective/prerequisite
+sources (they live in the ops repo), so the report carried no PR-relevant content,
+the formula never referenced the section, and in-container it was a ~527B stub.)
+**Acceptance test checking**: if the issue has an `## Acceptance test`
 section, the reviewer verifies commands reference correct file paths/schema, expected output
 matches actual behavior, and flags `needs-deploy-verification` for live-box-only commands.
 **Diff threshold (#1256)**: the fetch-diff step saves the PR diff to a temp file and
