@@ -52,6 +52,11 @@ OUTPUT_FILE="/tmp/${PROJECT_NAME}-review-output-${PR_NUMBER}.json"
 LOCKFILE="/tmp/${PROJECT_NAME}-review.lock"
 STATUSFILE="/tmp/${PROJECT_NAME}-review-status"
 MAX_DIFF=25000
+# Diffs larger than this are NOT pasted into the prompt: the agent gets the
+# worktree path + git commands and reads the files locally (it has read/bash).
+# A pasted 25KB diff can be auto-compacted away mid-review and lose file
+# coverage (#1256, #1260); a worktree read survives compaction.
+DIFF_THRESHOLD=12000
 REVIEW_TMPDIR=$(mktemp -d)
 
 log() { printf '[%s] PR#%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$PR_NUMBER" "$*" >> "$LOGFILE"; }
@@ -166,6 +171,37 @@ HAS_FML=$(forge_api_all "/pulls/${PR_NUMBER}/reviews" | jq --arg s "$PR_SHA" \
 [ "${HAS_FML:-0}" -gt 0 ] && [ "$FORCE" != "--force" ] && { log "SKIP: formal review"; rm -f "$LOCKFILE"; exit 0; }
 
 # =============================================================================
+# DIFF BLOCK ASSEMBLY (#1256)
+# =============================================================================
+# diff_block — assemble a "### <label>" prompt section for a diff file.
+# At or under DIFF_THRESHOLD bytes the full diff is pasted (the common case —
+# no extra round-trips). Above it, nothing is pasted: the agent already has
+# read/bash and the worktree is checked out at the PR head, so it gets the
+# worktree path + the exact git commands instead. A pasted 25KB diff can be
+# auto-compacted away mid-review and lose file coverage (#1260); a worktree
+# read survives compaction (#1256).
+# Args: $1=label  $2=diff file  $3=git command that reproduces the diff
+#       $4=ref of the pre-change content, to recover deleted files (may be "")
+diff_block() {
+  local label="$1" file="$2" local_cmd="$3" old_ref="${4:-}" size
+  size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+  if [ "$size" -le "$DIFF_THRESHOLD" ]; then
+    printf '### %s\n```diff\n' "$label"
+    cat "$file"
+    printf '\n```'
+    return 0
+  fi
+  printf '### %s (large: %s bytes — not pasted, read it locally)\n' "$label" "$size"
+  printf 'The diff is larger than %s bytes, so it is NOT pasted here. The worktree at `%s` (your working directory) is checked out at the PR head (`%s`).\n' \
+    "$DIFF_THRESHOLD" "$WORKTREE" "${PR_SHA:0:7}"
+  printf '1. Full diff: `%s`\n' "$local_cmd"
+  printf '2. Per file: `%s -- <path>`\n' "$local_cmd"
+  [ -n "$old_ref" ] && printf '3. Old version of a file the PR deletes: `git -C %s show %s:<path>`\n' "$WORKTREE" "$old_ref"
+  printf 'Read EVERY changed file listed under "Changed Files" above before judging — your verdict must cover all of them, not just the first ones you read.\n'
+  return 0
+}
+
+# =============================================================================
 # RE-REVIEW DETECTION
 # =============================================================================
 PREV_CONTEXT="" IS_RE_REVIEW=false PREV_SHA=""
@@ -177,15 +213,18 @@ if [ -n "$PREV_REV" ] && [ "$PREV_REV" != "null" ]; then
   cd "${PROJECT_REPO_ROOT}"
   FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "$PR_HEAD" 2>&1 >/dev/null) || \
     log "WARN: git fetch ${FORGE_REMOTE} ${PR_HEAD} failed: ${FETCH_ERR} — incremental diff may be incomplete"
-  INCR=$(git diff "${PREV_SHA}..${PR_SHA}" 2>/dev/null | head -c "$MAX_DIFF") || true
-  if [ -n "$INCR" ]; then
+  INCR_FILE="${REVIEW_TMPDIR}/incr.diff"
+  git diff "${PREV_SHA}..${PR_SHA}" > "$INCR_FILE" 2>/dev/null || true
+  if [ -s "$INCR_FILE" ]; then
     IS_RE_REVIEW=true; log "re-review: previous at ${PREV_SHA:0:7}"
     DEV_R=$(printf '%s' "$ALL_COMMENTS" | jq -r \
       '[.[]|select(.body|contains("<!-- dev-response:"))]|last // empty')
     DEV_SEC=""; [ -n "$DEV_R" ] && [ "$DEV_R" != "null" ] && \
       DEV_SEC=$(printf '\n### Developer Response\n%s' "$(printf '%s' "$DEV_R" | jq -r '.body')") || true
-    PREV_CONTEXT=$(printf '\n## This is a RE-REVIEW\nPrevious review at %s requested changes.\n### Previous Review\n%s%s\n### Incremental Diff (%s..%s)\n```diff\n%s\n```' \
-      "${PREV_SHA:0:7}" "$PREV_BODY" "$DEV_SEC" "${PREV_SHA:0:7}" "${PR_SHA:0:7}" "$INCR")
+    PREV_CONTEXT=$(printf '\n## This is a RE-REVIEW\nPrevious review at %s requested changes.\n### Previous Review\n%s%s\n%s' \
+      "${PREV_SHA:0:7}" "$PREV_BODY" "$DEV_SEC" \
+      "$(diff_block "Incremental Diff (${PREV_SHA:0:7}..${PR_SHA:0:7})" "$INCR_FILE" \
+        "git -C ${WORKTREE} diff ${PREV_SHA}..${PR_SHA}" "${PREV_SHA}")")
   fi
 fi
 
@@ -199,9 +238,9 @@ status "fetching diff"
 curl -s -H "Authorization: token ${FORGE_TOKEN}" \
   "${API}/pulls/${PR_NUMBER}.diff" > "${REVIEW_TMPDIR}/full.diff"
 FSIZE=$(stat -c%s "${REVIEW_TMPDIR}/full.diff" 2>/dev/null || echo 0)
-DIFF=$(head -c "$MAX_DIFF" "${REVIEW_TMPDIR}/full.diff")
 FILES=$(grep -E '^\+\+\+ b/' "${REVIEW_TMPDIR}/full.diff" | sed 's|^+++ b/||' | grep -v '/dev/null' | sort -u || true)
-DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes)"
+# DIFF/DNOTE are assembled later (diff_block, #1256) once the worktree and
+# merge-base are available.
 
 # =============================================================================
 # WORKTREE SETUP
@@ -257,6 +296,15 @@ if [ ! -d "$WORKTREE" ]; then
   }
 fi
 
+# Fetch the PR's base ref and compute the merge-base: the anchor for the
+# local `git diff` that reproduces the forge PR diff when the diff is too
+# large to paste (#1256). Unavailable base (deleted branch) is tolerated —
+# the prompt falls back to the old truncated paste.
+BASE_FETCH_ERR=$(git fetch "${FORGE_REMOTE}" "${PR_BASE}" 2>&1 >/dev/null) || \
+  log "WARN: git fetch ${FORGE_REMOTE} ${PR_BASE} failed: ${BASE_FETCH_ERR}"
+PR_MERGE_BASE=$(git merge-base "${FORGE_REMOTE}/${PR_BASE}" "$PR_SHA" 2>/dev/null || true)
+[ -n "$PR_MERGE_BASE" ] || log "WARN: merge-base for ${PR_BASE} unavailable — falling back to pasted diff"
+
 # =============================================================================
 # STALE-BASE REGRESSION CHECK (#896)
 # =============================================================================
@@ -303,19 +351,31 @@ formula_prepare_profile_context
 # BUILD PROMPT
 # =============================================================================
 FORMULA=$(cat "${FACTORY_ROOT}/formulas/review-pr.toml")
+# Diff section (#1256): small diffs are pasted in full (the common case, no
+# extra round-trips); large diffs are referenced from the worktree instead,
+# so the file list + local-read instructions survive auto-compaction. The
+# old truncated paste remains only when the merge-base is unavailable.
+if [ -n "$PR_MERGE_BASE" ]; then
+  DIFF_SECTION=$(diff_block "Diff" "${REVIEW_TMPDIR}/full.diff" \
+    "git -C ${WORKTREE} diff ${PR_MERGE_BASE}..HEAD" "$PR_MERGE_BASE")
+else
+  DIFF=$(head -c "$MAX_DIFF" "${REVIEW_TMPDIR}/full.diff")
+  DNOTE=""; [ "$FSIZE" -gt "$MAX_DIFF" ] && DNOTE=" (truncated from ${FSIZE} bytes)"
+  DIFF_SECTION=$(printf '### Diff%s\n```diff\n%s\n```' "$DNOTE" "$DIFF")
+fi
 {
   printf 'You are the review agent for %s. Follow the formula to review PR #%s.\n\n' \
     "${FORGE_REPO}" "${PR_NUMBER}"
   printf '## PR Context\n**%s** (%s → %s) | SHA: %s | CI: %s%s\nRe-review: %s\n\n' \
     "$PR_TITLE" "$PR_HEAD" "$PR_BASE" "$PR_SHA" "$CI_STATE" "$CI_NOTE" "$IS_RE_REVIEW"
-  printf '### Description\n%s\n\n### Changed Files\n%s\n\n### Diff%s\n```diff\n%s\n```\n' \
-    "$PR_BODY" "$FILES" "$DNOTE" "$DIFF"
+  printf '### Description\n%s\n\n### Changed Files\n%s\n\n%s\n\n' \
+    "$PR_BODY" "$FILES" "$DIFF_SECTION"
   [ -n "$PREV_CONTEXT" ] && printf '%s\n' "$PREV_CONTEXT"
   [ -n "$STALE_BASE_SECTION" ] && printf '%s\n' "$STALE_BASE_SECTION"
   [ -n "$GRAPH_SECTION" ] && printf '%s\n' "$GRAPH_SECTION"
   formula_lessons_block
-  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\n' \
-    "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT"
+  printf '\n## Formula\n%s\n\n## Environment\nREVIEW_OUTPUT_FILE=%s\nFORGE_API=%s\nPR_NUMBER=%s\nFACTORY_ROOT=%s\nREVIEW_WORKTREE=%s\n' \
+    "$FORMULA" "$OUTPUT_FILE" "$API" "$PR_NUMBER" "$FACTORY_ROOT" "$WORKTREE"
   printf 'NEVER echo the actual token — always reference ${FORGE_TOKEN} or ${FORGE_REVIEW_TOKEN}.\n'
   printf '\n## Completion\nAfter writing the JSON file to REVIEW_OUTPUT_FILE (%s), stop.\nDo NOT write to any phase file — completion is automatic.\n' "$OUTPUT_FILE"
 } > "${REVIEW_TMPDIR}/prompt.md"

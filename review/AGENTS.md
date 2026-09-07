@@ -26,6 +26,16 @@ prerequisites, thin evidence) to the review prompt. Graph failures are non-fatal
 proceeds without it. **Acceptance test checking**: if the issue has an `## Acceptance test`
 section, the reviewer verifies commands reference correct file paths/schema, expected output
 matches actual behavior, and flags `needs-deploy-verification` for live-box-only commands.
+**Diff threshold (#1256)**: the fetch-diff step saves the PR diff to a temp file and
+records its size. At prompt assembly (`diff_block`), diffs ≤ `DIFF_THRESHOLD` (12KB) are
+pasted in full — the common case, no extra round-trips. Larger diffs are NOT pasted:
+the prompt keeps the "Changed Files" list (always pasted) and adds the worktree path
+(`REVIEW_WORKTREE`, checked out at the PR head) plus the exact git command
+(`git diff <merge-base>..HEAD` for full diffs, `git diff <prev-sha>..<pr-sha>` for
+re-review incremental diffs) so the agent reads the diff/files locally. This keeps file
+coverage intact under auto-compaction, which can compact away a pasted 25KB diff mid-review
+(#1260). The old truncated paste (capped at `MAX_DIFF`) remains only as a fallback when
+the PR's base ref cannot be fetched (merge-base unavailable).
 **Stale-base regression check (#896)**: before assembling the prompt, calls `stale_base_check`
 from `lib/stale-base-check.sh` to detect PRs whose merged result would silently revert upstream
 changes that landed on `$PRIMARY_BRANCH` since the PR's merge-base. When triggered, the
