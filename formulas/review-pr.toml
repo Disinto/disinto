@@ -1,16 +1,10 @@
 # formulas/review-pr.toml — PR review formula
-#
-# Defines the review agent's judgment: understand the change, assess quality,
-# decide verdict, write structured output. The bash orchestrator
-# (review/review-pr.sh) handles session lifecycle, metadata fetching,
-# API posting, and cleanup.
-#
-# The orchestrator injects PR context (diff, metadata, previous review)
-# alongside this formula. Claude follows the steps in a single session.
+# The orchestrator (review/review-pr.sh) injects PR context alongside this
+# and handles session lifecycle, metadata, API posting, and cleanup.
 
 name        = "review-pr"
 description = "AI-powered PR review: understand change, assess quality, decide verdict"
-version     = 1
+version     = 2
 model       = "sonnet"
 
 [context]
@@ -20,273 +14,121 @@ files = ["AGENTS.md"]
 id    = "review"
 title = "Review the PR and write structured output"
 description = """
-You have full repo access — you are in a checkout of the PR branch.
-Use this to verify claims, check existing code, and understand context
-before flagging issues. Read files rather than guessing.
+You are in a checkout of the PR branch with full repo access — read files to
+verify claims before flagging issues.
 
 ## 1. Understand the change
 
-Read the diff and PR description injected by the orchestrator.
-What is this PR doing and why? Identify the scope:
-- Contracts, frontend, backend, docs, infra, formulas, mixed?
-- New feature, bug fix, refactor, config change?
+What is this PR doing and why?
+Identify scope: contracts/frontend/backend/docs/infra/formulas/mixed?
+Feature, bug fix, refactor, or config change?
 
 ## 2. CI relevance
 
-If CI has not passed, decide whether CI matters for this PR.
-Non-code changes (docs, formulas, TOML config, markdown-only) do NOT
-need CI — note this in your review rather than blocking. The orchestrator
-already skips the CI gate for non-code PRs, but you should also mention
-CI relevance in the review body when it applies.
+If CI has not passed, decide whether CI matters. Non-code changes (docs,
+formulas, TOML, markdown) do NOT need CI — note this in the review body rather
+than blocking (the orchestrator skips the CI gate for non-code PRs;
+still mention CI relevance when it applies).
 
 ## 3. Review checklist
 
 Adapt based on scope. Check for:
 
-- **Bugs & logic errors**: off-by-one, nil/null dereference, missing edge cases,
-  wrong return type, incorrect conditionals
-- **Security**: command injection, unquoted bash variables, path traversal, XSS,
-  secret leakage in logs or comments
+- **Bugs & logic errors**: off-by-one, nil/null dereference, missing edge cases, wrong return type, incorrect conditionals
+- **Security**: command injection, unquoted bash variables, path traversal, XSS, secret leakage in logs or comments
 - **Imports & dependencies**: broken imports, undefined variables, missing deps
-- **Architecture**: verify patterns match AGENTS.md and project conventions
-- **Bash specifics** (for .sh files): ShellCheck compliance, set -euo pipefail,
-  proper quoting, error handling with || true where appropriate, no echo of secrets
+- **Architecture**: patterns match AGENTS.md and project conventions
+- **Bash** (.sh files): ShellCheck compliance, set -euo pipefail, proper quoting, error handling with || true where appropriate, no echo of secrets
 - **Dead code**: unused variables, unreachable branches, leftover debug prints
-- **Claim verification**: if docs/README/AGENTS.md changed, verify claims
-  against actual code — read the files to confirm
+- **Claim verification**: if docs/README/AGENTS.md changed, verify claims against actual code
+- **Acceptance test**: if the issue has an `## Acceptance test` section, check it has explicit shell commands with expected output, references correct file paths/schema (not stubs), and expected output matches what the code produces; a command that cannot run on the live box (e.g. needs a deploy) → flag `needs-deploy-verification`, do NOT approve. See docs/contributing/acceptance-tests.md.
 
-- **Acceptance test (if the issue has an `## Acceptance test` section)**
-  Read the `## Acceptance test` section from the PR description (it references
-  the issue body). Check that:
-  - The section exists and contains explicit shell commands with expected output.
-  - Commands reference the correct file paths and schema (not stubs).
-  - The expected output matches what the code actually produces.
-  - If a command cannot be run on the live box (e.g., requires a deploy),
-    flag as `needs-deploy-verification` — do NOT approve.
-  - See docs/contributing/acceptance-tests.md for the full convention.
-
-Do NOT flag:
-- Style preferences with no correctness impact
-- Missing tests unless the change is clearly untested and risky
-- Things that look wrong but actually work — verify by reading the code first
-- Files that were truncated from the diff (the orchestrator notes truncation)
+Do NOT flag: style preferences with no correctness impact; missing tests unless clearly untested and risky; things that look wrong but actually work (verify first); files truncated from the diff (orchestrator notes truncation).
 
 ## 3b. Architecture and documentation consistency
 
 For each BEHAVIORAL change in the diff (not pure bug fixes or formatting):
+1. Identify what behavior changed (scheduling, auth flow, container lifecycle, secret handling, ...).
+2. Search AGENTS.md for claims about it (`grep -n '<keyword>' AGENTS.md`), plus docs/ and per-directory AGENTS.md files.
+3. Check Architecture Decisions for contradictions (`grep -n 'AD-0' AGENTS.md`).
+4. If the PR changes behavior described in AGENTS.md or contradicts an AD but does NOT update the docs in the same PR: REQUEST_CHANGES — require the doc update in the same PR.
 
-1. Identify what behavior changed (e.g., scheduling mechanism, auth flow,
-   container lifecycle, secret handling)
-2. Search AGENTS.md for claims about that behavior:
-     grep -n '<keyword>' AGENTS.md
-   Also check docs/ and any per-directory AGENTS.md files.
-3. Search for Architecture Decision references (AD-001 through AD-006):
-     grep -n 'AD-0' AGENTS.md
-   Read each AD and check if the PR's changes contradict it.
-4. If the PR changes behavior described in AGENTS.md or contradicts an AD
-   but does NOT update the documentation in the same PR:
-   REQUEST_CHANGES — require the documentation update in the same PR.
-
-This check is SKIPPED for pure bug fixes where the intended behavior is
-unchanged (the code was wrong, not the documentation).
+SKIPPED for pure bug fixes where the intended behavior is unchanged (the code was wrong, not the docs).
 
 ## 3c. Infrastructure file review (conditional)
 
-If the diff touches ANY of these files, apply this additional checklist:
-- `docker-compose.yml` or `docker-compose.*.yml`
-- `Dockerfile` or `docker/*`
-- `.woodpecker/` CI configs
-- `docker/agents/entrypoint.sh`
-
-Infrastructure files have a different failure mode from application code:
-a single dropped line (a volume mount, an env var, a restart policy) can
-break a running deployment with no syntax error. Treat dropped
-infrastructure configuration as a **blocking defect**, not a style choice.
+If the diff touches `docker-compose.yml`/`docker-compose.*.yml`, `Dockerfile`/`docker/*`, `.woodpecker/` CI configs, or `docker/agents/entrypoint.sh`, apply this checklist: a single dropped line (volume mount, env var, restart policy) can break a running deployment with no syntax error. Treat dropped infrastructure configuration as a **blocking defect**, not a style choice.
 
 ### For docker-compose.yml changes:
-
-1. **Read the full file** in the PR branch — do not rely only on the diff.
-2. Run `git diff <base>..HEAD -- docker-compose.yml` to see the complete
-   change, not just the truncated diff.
-3. Check that NONE of the following were dropped without explicit
-   justification in the PR description:
-   - Named volumes (e.g. `agent-data`, `project-repos`)
-   - Bind mounts (especially for config, secrets, SSH keys, shared dirs)
-   - Environment variables (compare the full `environment:` block against
-     the base branch)
-   - `restart:` policy (should be `unless-stopped` for production services)
-   - `security_opt:` settings
-   - Network configuration
-   - Resource limits / deploy constraints
-4. If ANY production configuration was dropped and the PR description does
-   not explain why, **REQUEST_CHANGES**. List each dropped item explicitly.
+1. **Read the full file** in the PR branch and run `git diff <base>..HEAD -- docker-compose.yml` — not just the truncated diff.
+2. Check that NONE of these was dropped without explicit justification in the PR description: named volumes (e.g. `agent-data`), bind mounts (config, secrets, SSH keys, shared dirs), env vars (compare the full `environment:` block against base), `restart:` (`unless-stopped` for production), `security_opt:`, networks, resource limits / deploy constraints.
+3. If ANY production configuration was dropped unexplained: REQUEST_CHANGES — list each dropped item explicitly.
 
 ### For Dockerfile / entrypoint changes:
-
-1. Check that base image, installed packages, and runtime deps are preserved.
-2. Verify that entrypoint/CMD changes don't break the container startup.
+1. Base image, installed packages, and runtime deps are preserved.
+2. Entrypoint/CMD changes don't break container startup.
 
 ### For CI config changes:
-
-1. Check that pipeline steps aren't silently removed.
-2. Verify that secret references still match available secrets.
+1. Pipeline steps aren't silently removed.
+2. Secret references still match available secrets.
 
 ## 3d. Scope discipline
 
-Compare the actual diff footprint against the stated issue scope:
+Compare the diff footprint against the stated issue scope:
+1. Read the PR title/description to identify what the issue asked for.
+2. Estimate expected diff size (e.g. "add 3 env vars" ≈ 5-10 lines compose + ~5 lines scripts).
+3. If ANY single file exceeds 3x the expected scope, flag: "this file changed N lines but the issue scope suggests ~M."
 
-1. Read the PR title and description to identify what the issue asked for.
-2. Estimate the expected diff size (e.g., "add 3 env vars" = ~5-10 lines
-   in compose + ~5 lines in scripts).
-3. If the actual diff in ANY single file exceeds 3x the expected scope,
-   flag it: "this file changed N lines but the issue scope suggests ~M."
-
-For infrastructure files (compose, Dockerfiles, CI), scope violations are
-**blocking**: REQUEST_CHANGES and ask the author to split out-of-scope
-changes into a separate PR or justify them in the description.
-
-For non-infrastructure files, scope violations are advisory: leave a
-non-blocking COMMENT noting the scope creep.
+Scope violations in infrastructure files (compose, Dockerfiles, CI) are **blocking**: REQUEST_CHANGES — ask the author to split out-of-scope changes into a separate PR or justify them. For other files, advisory only: a non-blocking COMMENT.
 
 ## 3e. Stale-base regression (conditional, #896)
 
-If the orchestrator injected a `## Stale-base regression check (BLOCKER)` section,
-it has already detected that the PR's merged result will silently overwrite
-upstream changes that landed on main since the PR's base. These regressions
-cannot be seen in the forward (head vs base) diff alone.
-
-Set verdict=REQUEST_CHANGES. Quote the file list verbatim in your review and
-instruct the author to rebase on main and re-resolve any conflicts so the
-upstream changes are preserved. The only exception is if the PR description
-explicitly states the reverts are intentional with a clear rationale —
-otherwise treat this as a blocker.
+If the orchestrator injected a `## Stale-base regression check (BLOCKER)` section, the merge would overwrite upstream changes that landed on main since the PR's base. Set verdict=REQUEST_CHANGES, quote the file list verbatim, and instruct the author to rebase on main and re-resolve conflicts so upstream changes are preserved. Exception only if the PR description explicitly states the reverts are intentional with a clear rationale.
 
 ## 4. Vault item quality (conditional)
 
-If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these
-additional checks. These criteria apply ON TOP of the normal review —
-a vault PR must also pass the standard checklist above.
+If the PR adds or modifies vault item files (`vault/pending/*.md` in the ops repo), apply these checks on top of the standard checklist — a vault PR must also pass it.
 
 ### Required sections
-
-Every vault item must contain all five of these sections with non-empty
-content:
-- **What** — what is needed
-- **Why** — what this unblocks and why it matters now
-- **Unblocks** — specific issue numbers (e.g. #123)
-- **Human Action** — specific steps the human should take
-- **Factory Will Then** — what happens after approval
-
-If any section is missing or empty, REQUEST_CHANGES. Quote the missing
-section names in your review.
+Every vault item must contain all five sections with non-empty content: **What** (what is needed), **Why** (what it unblocks and why now), **Unblocks** (specific issue numbers, e.g. #123), **Human Action** (specific steps for the human), **Factory Will Then** (what happens after approval). If any is missing or empty: REQUEST_CHANGES — quote the missing section names.
 
 ### Human Action must be specific
-
-The Human Action section must contain concrete, actionable steps — not
-open-ended decisions or vague asks. The filing agent must have done
-the research before escalating to the human.
-
-PASS examples:
-- "Go to github.com/organizations/new, create org named disinto"
-- "Add SMTP_HOST=mail.example.com to .env.enc via sops"
-- "Run: ssh root@prod apt install redis-server"
-
-FAIL examples:
-- "Decide the approach for #466"
-- "Make a decision about branding"
-- "Figure out which provider to use"
-
-If the human action is vague or pushes decision-making to the human,
-REQUEST_CHANGES. Explain that the filing agent must research and
-propose a specific action.
+Must contain concrete, actionable steps — the filing agent must have researched before escalating. PASS: "Go to github.com/organizations/new, create org named disinto"; "Add SMTP_HOST=mail.example.com to .env.enc via sops". FAIL: "Decide the approach for #466"; "Figure out which provider to use". If vague or pushes decision-making to the human: REQUEST_CHANGES.
 
 ### Dedup check
-
-Check whether `$OPS_REPO_ROOT/vault/pending/`, `$OPS_REPO_ROOT/vault/approved/`, or `$OPS_REPO_ROOT/vault/fired/`
-already contains a similar item (same resource, same ask). List the
-vault directories in the ops repo to inspect existing items. If a duplicate or
-near-duplicate exists, REQUEST_CHANGES and reference the existing item.
+Check `$OPS_REPO_ROOT/vault/pending/`, `vault/approved/`, `vault/fired/` for a similar item (same resource, same ask). If a duplicate or near-duplicate exists, REQUEST_CHANGES and reference the existing item.
 
 ## 5. External action detection (token separation)
 
-Agents must NEVER execute external actions directly. Any action that touches
-an external system (publish, deploy, post, push to external registry, API
-calls to third-party services) MUST go through vault dispatch — i.e., the
-agent files a vault item (`$OPS_REPO_ROOT/vault/pending/*.json`) and the runner
-container executes it with injected secrets.
+Agents must NEVER execute external actions directly (publish, deploy, post, push to external registries, third-party API calls) — per AD-006 they MUST go through vault dispatch: the agent files a vault item (`$OPS_REPO_ROOT/vault/pending/*.json`), the runner executes it with injected secrets.
 
-Scan the diff for these patterns:
+Scan the diff for these patterns in agent code (`dev/`, `action/`, `planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`, `lib/`):
+- Direct publish: `clawhub publish`, `npm publish`, `cargo publish`, `docker push`, `gh release create`, or similar
+- Direct deploy: `ssh ... deploy`, `rsync` to external hosts, `kubectl apply`, `helm install`, cloud CLI deploys
+- Direct external API calls: `curl`/`wget` to external services with auth tokens, social media APIs, sending emails
+- Token usage: direct references to `GITHUB_TOKEN`, `CLAWHUB_TOKEN`, or other vault-only secrets (outside `vault/`)
 
-- **Direct publish commands**: `clawhub publish`, `npm publish`,
-  `cargo publish`, `docker push`, `gh release create`, or similar
-- **Direct deploy commands**: `ssh ... deploy`, `rsync` to external hosts,
-  `kubectl apply`, `helm install`, cloud CLI deploy commands
-- **Direct external API calls**: `curl`/`wget` to external services with
-  auth tokens, posting to social media APIs, sending emails
-- **Token usage**: Direct references to `GITHUB_TOKEN`, `CLAWHUB_TOKEN`,
-  or other vault-only secrets in agent code (outside of vault/ directory)
+If ANY appear WITHOUT routing through vault dispatch (file a vault PR on the ops repo — see #73-#77): REQUEST_CHANGES, explaining that external actions must go through vault dispatch per AD-006 (file a vault item instead of executing).
 
-If ANY of these patterns appear in agent code (scripts in `dev/`, `action/`,
-`planner/`, `gardener/`, `supervisor/`, `predictor/`, `review/`, `formulas/`,
-`lib/`) WITHOUT routing through vault dispatch (file a vault PR on ops repo — see #73-#77), **REQUEST_CHANGES**.
-
-Explain that external actions must use vault dispatch per AD-006. The agent
-should file a vault item instead of executing directly.
-
-**Exceptions** (do NOT flag these):
-- Code inside `vault/` — the vault system itself is allowed to handle secrets
-- References in comments or documentation explaining the architecture
-- `bin/disinto` setup commands that manage `secrets/*.enc` and the `run` subcommand
-- Local operations (git push to forge, forge API calls with `FORGE_TOKEN`)
+**Exceptions** (do NOT flag): code inside `vault/` (vault handles secrets itself); comments/docs explaining the architecture; `bin/disinto` setup commands managing `secrets/*.enc` and the `run` subcommand; local operations (git push to forge, forge API calls with `FORGE_TOKEN`).
 
 ## 6. Re-review (if previous review is provided)
 
-If the orchestrator injected a previous review and incremental diff:
-1. For each finding in the previous review, check if it was addressed
-2. Report status: fixed / not_fixed / partial with explanation
-3. Check for new issues introduced by the fix commits
-4. Be fair — if feedback was addressed well, acknowledge it
+If a previous review and incremental diff were injected:
+1. For each previous finding, check if it was addressed; report status: fixed / not_fixed / partial with explanation
+2. Check for new issues introduced by the fix commits
+3. Be fair — acknowledge well-addressed feedback
 
-Focus on the incremental diff for finding-by-finding status, but use the
-full diff to check overall correctness.
+Use the incremental diff per finding, the full diff for overall correctness.
 
 ## 7. Follow-up issues (pre-existing tech debt)
 
-If you discover pre-existing issues (NOT introduced by this PR), create
-tech-debt issues via API so they are tracked separately:
+If you discover pre-existing issues (NOT introduced by this PR), file tech-debt issues via the forge API (all calls use `Authorization: token $FORGE_TOKEN`):
+1. Look up the `tech-debt` label id via `GET $FORGE_API/labels` (create via `POST $FORGE_API/labels` if missing).
+2. Duplicate check: `GET "$FORGE_API/issues?state=open&labels=tech-debt&limit=50"` — skip if an open issue has the same title.
+3. Only if no duplicate: `POST $FORGE_API/issues` with body `"Flagged by AI reviewer in PR #NNN.\n\n## Problem\n...\n\n---\n*Auto-created from AI review*"`, labels `[<TECH_DEBT_ID>]`.
 
-  # Look up tech-debt label ID (create if missing):
-  TECH_DEBT_ID=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "$FORGE_API/labels" | jq -r '.[] | select(.name=="tech-debt") | .id')
-
-  if [ -z "$TECH_DEBT_ID" ]; then
-    TECH_DEBT_ID=$(curl -sf -X POST \
-      -H "Authorization: token $FORGE_TOKEN" \
-      -H "Content-Type: application/json" \
-      "$FORGE_API/labels" \
-      -d '{"name":"tech-debt","color":"#6B7280","description":"Pre-existing tech debt flagged by AI review"}' | jq -r '.id')
-  fi
-
-  # Check for duplicate before creating:
-  EXISTING=$(curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "$FORGE_API/issues?state=open&labels=tech-debt&limit=50" | \
-    jq --arg t "TITLE" '[.[] | select(.title == $t)] | length')
-
-  # Create only if no duplicate:
-  curl -sf -X POST -H "Authorization: token $FORGE_TOKEN" \
-    -H "Content-Type: application/json" "$FORGE_API/issues" \
-    -d '{"title":"...","body":"Flagged by AI reviewer in PR #NNN.\n\n## Problem\n...\n\n---\n*Auto-created from AI review*","labels":[TECH_DEBT_ID]}'
-
-File a tech-debt issue for every finding rated **medium** or higher that
-is pre-existing (not introduced by this PR). Also file for **low** findings
-that represent correctness risks (dead code that masks bugs, misleading
-documentation, unguarded variables under set -u).
-
-Do NOT file for: style preferences, naming opinions, missing comments,
-or speculative improvements with no concrete failure mode.
-
-When in doubt, file. A closed-as-wontfix tech-debt issue costs nothing;
-an unfiled bug costs a future debugging session.
+File for every finding rated **medium** or higher that is pre-existing, plus **low** findings that are correctness risks (dead code masking bugs, misleading docs, unguarded variables under set -u). Do NOT file for style preferences, naming opinions, missing comments, or speculative improvements with no concrete failure mode. When in doubt, file.
 
 ## 8. Verdict
 
@@ -295,41 +137,25 @@ Choose one:
 - **REQUEST_CHANGES**: Has real issues that must be fixed before merge
 - **DISCUSS**: Unclear intent, design question, or needs human conversation
 
-Bias toward APPROVE for small, correct changes. Use REQUEST_CHANGES only
-for actual problems (bugs, security issues, broken functionality, missing
-required behavior). Use DISCUSS sparingly.
-
-Note: The bias toward APPROVE applies to code correctness and style decisions.
-It does NOT apply to documentation consistency (step 3b), infrastructure file
-findings (step 3c), or tech-debt filing (step 7) — those are separate concerns
-that should be handled regardless of the change's correctness. In particular,
-dropped production configuration (volumes, bind mounts, env vars, restart
-policy) is a blocking defect, not a style preference.
+Bias toward APPROVE for small, correct changes; REQUEST_CHANGES only for actual problems (bugs, security, broken functionality, missing required behavior); DISCUSS sparingly. The APPROVE bias does NOT apply to documentation consistency (3b), infrastructure findings (3c), or tech-debt filing (7) — handle those regardless of the change's correctness; dropped production configuration is a blocking defect, not a style preference.
 
 ## 9. Output
 
-Write a single JSON object to the file path from REVIEW_OUTPUT_FILE.
-Use jq to ensure proper JSON escaping of the markdown content:
+Write a single JSON object to $REVIEW_OUTPUT_FILE using jq (proper JSON escaping):
 
-  jq -n \
-    --arg verdict "APPROVE" \
-    --arg verdict_reason "one-line explanation" \
-    --arg review_markdown "### Section\\n- **severity** \\`location\\`: description" \
+  jq -n --arg verdict "APPROVE" --arg verdict_reason "one-line explanation" \
+    --arg review_markdown "### Section\\n- **severity** \\`file:line\\`: description" \
     '{verdict: $verdict, verdict_reason: $verdict_reason, review_markdown: $review_markdown}' \
     > "$REVIEW_OUTPUT_FILE"
 
-The review_markdown field must contain the complete, formatted review in
-markdown. Use ### headings for sections. Use this format for findings:
+review_markdown is the complete formatted review: ### headings for sections; findings as
   - **severity** `file:line`: description
 
-For a re-review, structure the markdown as:
+For a re-review, structure it as:
   ### Previous Findings
   - finding summary → FIXED / NOT FIXED / PARTIAL: explanation
   ### New Issues (if any)
   - **severity** `location`: description
 
-After writing the JSON file, signal completion:
-  echo "PHASE:done" > "$PHASE_FILE"
-
-Then STOP and wait. The orchestrator will post your review to the forge.
+Then STOP and wait — the orchestrator posts the review to the forge.
 """
