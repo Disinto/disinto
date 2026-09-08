@@ -1784,11 +1784,24 @@ p.write_text(text)
   # Source env.sh to ensure FORGE_TOKEN is available
   source "${FACTORY_ROOT}/lib/env.sh"
   source "${FACTORY_ROOT}/lib/branch-protection.sh"
-  if setup_vault_branch_protection "$branch"; then
-    echo "Branch protection: vault protection configured on ${ops_slug}"
-  else
-    echo "ERROR: failed to set up vault branch protection — security rules not applied" >&2
-  fi
+  # rc 2 = ops repo is empty (no commits yet): protection is explicitly
+  # DEFERRED, not failed — a freshly auto-created ops repo has no branch to
+  # protect until the first push lands (#1273). Surface the deferral with a
+  # re-run notice; never report it as an error or skip it silently.
+  local vault_bp_rc=0
+  setup_vault_branch_protection "$branch" || vault_bp_rc=$?
+  case "$vault_bp_rc" in
+    0)
+      echo "Branch protection: vault protection configured on ${ops_slug}"
+      ;;
+    2)
+      echo "Branch protection: DEFERRED — ${ops_slug} is empty (no commits yet), no branch to protect"
+      echo "  Re-run 'disinto init <repo>' after the first push to apply vault branch protection."
+      ;;
+    *)
+      echo "ERROR: failed to set up vault branch protection — security rules not applied" >&2
+      ;;
+  esac
   unset FORGE_OPS_REPO
 
   # Generate project TOML (skip if already exists)

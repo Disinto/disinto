@@ -125,6 +125,60 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
+# setup_vault_branch_protection() — ops-repo deferral (#1273)
+# ---------------------------------------------------------------------------
+
+@test "setup_vault_branch_protection: CONFIRMED-empty ops repo defers (rc 2), never waits" {
+  local marker; marker="$(mktemp)"
+  _bp_wait_for_branch() { echo waited >> "$marker"; return 1; }
+  FORGE_OPS_REPO="acme/empty-repo"
+  run setup_vault_branch_protection master
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"DEFERRED"* ]]
+  [[ "$output" == *"re-run"* ]]
+  [[ "$output" == *"acme/empty-repo"* ]]
+  [ ! -s "$marker" ]   # the ~70s wait was never attempted
+  rm -f "$marker"
+}
+
+@test "setup_vault_branch_protection: UNKNOWN emptiness falls through to the wait path (no silent skip)" {
+  local marker; marker="$(mktemp)"
+  _bp_wait_for_branch() { echo waited >> "$marker"; return 1; }
+  FORGE_OPS_REPO="acme/no-field-repo"
+  run setup_vault_branch_protection master
+  [ "$status" -eq 1 ]
+  [ -s "$marker" ]              # the wait WAS attempted
+  [[ "$output" != *"DEFERRED"* ]]   # and it was not misreported as a deferral
+  rm -f "$marker"
+}
+
+@test "setup_vault_branch_protection: non-empty ops repo applies the vault payload (rc 0)" {
+  local marker payload_file
+  marker="$(mktemp)"; payload_file="$(mktemp)"
+  _bp_wait_for_branch() { echo waited >> "$marker"; return 0; }
+  _bp_apply_protection() { printf '%s' "$3" > "$payload_file"; return 0; }
+  FORGE_OPS_REPO="acme/full-repo"
+  run setup_vault_branch_protection master
+  [ "$status" -eq 0 ]
+  [ -s "$marker" ]
+  [ "$(jq -r '.admin_enforced' "$payload_file")" = "true" ]
+  [ "$(jq -r '.required_approvals' "$payload_file")" = "1" ]
+  [ "$(jq -r '.enable_push' "$payload_file")" = "false" ]
+  rm -f "$marker" "$payload_file"
+}
+
+@test "setup_vault_branch_protection: branch never appearing fails (rc 1), not deferred" {
+  local marker; marker="$(mktemp)"
+  _bp_wait_for_branch() { echo waited >> "$marker"; return 1; }
+  FORGE_OPS_REPO="acme/full-repo"
+  run setup_vault_branch_protection master
+  [ "$status" -eq 1 ]
+  [ "$(cat "$marker")" = "waited" ]
+  [[ "$output" != *"DEFERRED"* ]]
+  rm -f "$marker"
+}
+
+# ---------------------------------------------------------------------------
 # Integration: a genuinely empty repo over real HTTP (mock-forgejo)
 # ---------------------------------------------------------------------------
 
