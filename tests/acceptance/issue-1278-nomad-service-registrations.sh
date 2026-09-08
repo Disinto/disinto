@@ -131,11 +131,11 @@ run_walk() {
 
 # queue_count — number of walk-queue item files so far.
 queue_count() {
+  local n=0
   if [ -d "$TMP/queue" ]; then
-    find "$TMP/queue" -maxdepth 1 -type f | wc -l | tr -d '[:space:]'
-  else
-    printf '0'
+    n="$(find "$TMP/queue" -maxdepth 1 -type f | wc -l)"
   fi
+  printf '%s' "$n" | tr -d '[:space:]'
 }
 
 # ── 1. All services registered: nothing paged ───────────────────────────────
