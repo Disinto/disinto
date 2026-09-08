@@ -82,8 +82,9 @@ disinto/                 (code repo)
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-voice, reseed-chat-oauth)
-│                  inbox-ack.sh, snapshot-agents.sh, snapshot-daemon.sh, snapshot-forge.sh,
-│                  snapshot-inbox.sh, snapshot-nomad.sh, threads.sh, uninstall.sh
+│                  inbox-ack.sh, factory-walk.sh, snapshot-agents.sh, snapshot-daemon.sh,
+│                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, threads.sh,
+│                  uninstall.sh
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
