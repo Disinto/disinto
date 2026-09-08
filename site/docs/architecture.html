@@ -380,17 +380,17 @@
         <div class="agent-card">
           <div class="name">planner</div>
           <div class="role">Reads VISION.md and repo state. <strong>Creates issues</strong> for gaps between where the project is and where it should be.</div>
-          <div class="trigger">Polling loop: weekly</div>
+          <div class="trigger">Polling loop: every 12 hours</div>
         </div>
         <div class="agent-card">
           <div class="name">gardener</div>
           <div class="role"><strong>Grooms the backlog.</strong> Closes duplicates, promotes tech-debt issues, ensures issues are well-structured.</div>
-          <div class="trigger">Polling loop: every 6 hours</div>
+          <div class="trigger">Polling loop: every 5 min</div>
         </div>
         <div class="agent-card">
           <div class="name">supervisor</div>
           <div class="role"><strong>Monitors factory health.</strong> Kills stale sessions, manages disk/memory, escalates persistent failures.</div>
-          <div class="trigger">Polling loop: every 10 min</div>
+          <div class="trigger">Polling loop: every 20 min</div>
         </div>
         <div class="agent-card">
           <div class="name">predictor</div>
@@ -459,7 +459,7 @@
       <h2>Planner + predictor feedback cycle</h2>
       <div class="concept">
         <div class="label">Closing the loop</div>
-        <p>The <strong>planner</strong> runs weekly. It compares the current state of the codebase against VISION.md and creates issues for anything missing. It also triages predictions filed by the predictor.</p>
+        <p>The <strong>planner</strong> runs every 12 hours. It compares the current state of the codebase against VISION.md and creates issues for anything missing. It also triages predictions filed by the predictor.</p>
         <p>The <strong>predictor</strong> runs daily. It analyzes CI logs, git history, and resource metrics to detect patterns &mdash; recurring test failures, disk usage trends, code churn hotspots. Predictions are filed as issues for the planner to triage.</p>
         <p>Together, they create a feedback cycle: <strong>the predictor observes, the planner directs, and the dev-agent executes.</strong></p>
       </div>
@@ -516,7 +516,7 @@ disinto/
 ├── <span class="agent-name">review/</span>        review-poll.sh, review-pr.sh
 ├── <span class="agent-name">gardener/</span>      gardener-run.sh (polling-loop executor)
 ├── <span class="agent-name">predictor/</span>     predictor-run.sh (daily polling-loop executor)
-├── <span class="agent-name">planner/</span>       planner-run.sh (weekly polling-loop executor)
+├── <span class="agent-name">planner/</span>       planner-run.sh (12-hour polling-loop executor)
 ├── <span class="agent-name">supervisor/</span>    supervisor-run.sh (health monitoring)
 ├── <span class="agent-name">vault/</span>         vault-env.sh (vault redesign in progress, see #73-#77)
 ├── <span class="agent-name">lib/</span>           env.sh, agent-session.sh, ci-helpers.sh

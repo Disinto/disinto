@@ -32,7 +32,7 @@ entrypoint.sh (while-true polling loop, 5 min base interval)
  ├── every 5 min ──→ gardener-step.sh ← backlog grooming (duplicates, stale, tech-debt)
  │                    └── classify.sh ← one task per tick → formula (claude -p)
  │
- ├── every 6h ────→ architect-run.sh  ← strategic decomposition of vision into sprints
+ ├── every 15m ──→ architect-run.sh  ← strategic decomposition of vision into sprints
  │
  ├── every 12h ───→ planner-run.sh    ← gap-analyse VISION.md, create backlog issues
  │                   └── claude -p: update AGENTS.md → create issues
