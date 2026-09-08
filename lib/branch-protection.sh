@@ -9,6 +9,7 @@
 #
 # Functions:
 #   setup_vault_branch_protection — Set up admin-only branch protection for main
+#                                    (rc 2: ops repo empty, deferred — #1273)
 #   verify_branch_protection — Verify protection is configured correctly
 #   setup_profile_branch_protection — Set up admin-only branch protection for .profile repos
 #   setup_project_branch_protection — Set up CI-gated branch protection for project repos
@@ -181,7 +182,13 @@ _bp_repo_empty() {
 # - Restrict merge to admin role (not regular collaborators or bots)
 # - Block direct pushes to main (all changes must go through PR)
 #
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success, 1 on failure, 2 if the ops repo ($FORGE_OPS_REPO) is
+#         empty (no commits yet) and protection was explicitly DEFERRED with a
+#         re-run notice — there is no branch to protect until the first push
+#         lands. A fresh init auto-creates the ops repo, so on a brand-new
+#         factory it has no branch to protect (#1273, same class as #1249).
+#         Callers must distinguish 2 from 1 and surface the deferral; never
+#         treat 2 as a silent skip.
 # -----------------------------------------------------------------------------
 setup_vault_branch_protection() {
   local branch="${1:-main}"
@@ -189,6 +196,20 @@ setup_vault_branch_protection() {
   api_url="$(_ops_api)"
 
   _bp_log "Setting up branch protection for ${branch} on ${FORGE_OPS_REPO}"
+
+  # A fresh auto-created ops repo has no refs, so there is no branch to
+  # protect. Deferring explicitly (return 2) beats burning ~70s in
+  # _bp_wait_for_branch and hard-failing on 'Branch <b> does not exist'
+  # during init of a brand-new factory (v0.5.0 release smoke; #1273). Only a
+  # CONFIRMED-empty repo defers — 'unknown' (API unreachable) falls through
+  # to the wait path so protection is never silently skipped.
+  local repo_empty
+  repo_empty="$(_bp_repo_empty "$FORGE_OPS_REPO")"
+  if [ "$repo_empty" = "true" ]; then
+    _bp_log "Repo ${FORGE_OPS_REPO} is empty (no commits yet) — no branch to protect"
+    _bp_log "DEFERRED: re-run 'disinto init <repo>' after the first push to apply branch protection on ${FORGE_OPS_REPO}"
+    return 2
+  fi
 
   # Wait for Forgejo to index the branch (may take 5–15s after push)
   if ! _bp_wait_for_branch "$api_url" "$branch" "$FORGE_OPS_REPO"; then
@@ -595,6 +616,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       echo ""
       echo "Commands:"
       echo "  setup [branch]              Set up branch protection on ops repo (default: main)"
+      echo "                                (exit 2: ops repo empty, protection deferred — re-run after first push, #1273)"
       echo "  setup-profile <repo> [branch] Set up branch protection on .profile repo"
       echo "  setup-project <repo> [branch] Set up branch protection on project repo"
       echo "                                (exit 2: repo empty, protection deferred — re-run after first push, #1249)"
