@@ -4,7 +4,9 @@
 #
 # Part of the Nomad+Vault migration (S0.3, issue #823). Lands three things:
 #   1. /etc/vault.d/               (0755 root:root)
-#   2. /etc/vault.d/vault.hcl      (copy of nomad/vault.hcl, 0644 root:root)
+#   2. /etc/vault.d/vault.hcl      (nomad/vault.hcl, 0644 root:root — with
+#                                   disable_mlock flipped to true when this
+#                                   host's bounding set lacks CAP_IPC_LOCK, #1285)
 #   3. /var/lib/vault/data/        (0700 root:root, Vault file-storage backend)
 #   4. /etc/systemd/system/vault.service  (0644 root:root)
 #
@@ -27,7 +29,9 @@
 #
 # Idempotency contract:
 #   - Unit file NOT rewritten when on-disk content already matches desired.
-#   - vault.hcl NOT rewritten when on-disk content matches the repo copy.
+#   - vault.hcl NOT rewritten when on-disk content matches the desired
+#     content (repo copy — or the disable_mlock=true variant on hosts
+#     whose bounding set lacks CAP_IPC_LOCK, #1285).
 #   - `systemctl enable` on an already-enabled unit is a no-op.
 #   - Safe to run unconditionally before every factory boot.
 #
@@ -59,6 +63,8 @@ die() { printf '[systemd-vault] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # shellcheck source=lib-systemd.sh
 . "${SCRIPT_DIR}/lib-systemd.sh"
+# shellcheck source=lib-vault-mlock.sh
+. "${SCRIPT_DIR}/lib-vault-mlock.sh"
 
 # ── Preconditions ────────────────────────────────────────────────────────────
 systemd_require_preconditions "$UNIT_PATH"
@@ -77,7 +83,10 @@ VAULT_BIN="$(command -v vault 2>/dev/null || true)"
 #   - User=root keeps the seal-key read path simple (unseal.key is 0400 root).
 #   - CAP_IPC_LOCK lets mlock() succeed so disable_mlock=false is honoured.
 #     Harmless when running as root; required if this is ever flipped to a
-#     dedicated `vault` user.
+#     dedicated `vault` user. (On hosts whose bounding set lacks CAP_IPC_LOCK
+#     — unprivileged containers — the grant cannot apply; the persisted
+#     config is written with disable_mlock=true instead. See the config-
+#     install section below, #1285. The unit file itself is unchanged.)
 #   - ExecStartPost auto-unseals on every boot using the persisted key.
 #     This is the dev-persisted-seal tradeoff — seal-key theft == vault
 #     theft, but no second Vault to babysit.
@@ -137,10 +146,29 @@ if [ ! -d "$VAULT_DATA_DIR" ]; then
 fi
 
 # ── Install vault.hcl only if content differs ────────────────────────────────
+# The desired on-disk content is normally the repo copy. BEFORE writing it,
+# probe the bounding set (#1285): in an unprivileged container CAP_IPC_LOCK
+# is not in CapBnd, so the unit's AmbientCapabilities grant can never apply
+# and mlock() would fail — with the repo copy's disable_mlock=false the real
+# server exits at startup and cluster-up aborts at step 7/9 ("vault.service
+# never starts"). On such hosts persist the mlock-disabled variant instead
+# (explicit WARN below — same class as the dev-persisted-seal tradeoff).
+# A host that regains the capability heals back to disable_mlock=false on
+# the next install (desired content reverts to the repo copy, which then
+# differs from the persisted variant → rewrite).
+VAULT_HCL_DESIRED="$VAULT_HCL_SRC"
+if vault_ipc_lock_in_bounding_set; then
+  log "CAP_IPC_LOCK in bounding set — persisted config keeps disable_mlock=false"
+else
+  log "WARN: CAP_IPC_LOCK is not in the bounding set — mlock() can never succeed in this container, so the persisted config is written with disable_mlock=true (tradeoff: Vault's in-memory secrets may be swapped to disk — same class as the dev-persisted-seal tradeoff; the unit file is unchanged, its CAP_IPC_LOCK grant simply cannot apply here, and vault-init.sh's temporary server already runs mlock-disabled per #1274)"
+  VAULT_HCL_DESIRED="$(mktemp)"
+  trap 'rm -f "$VAULT_HCL_DESIRED"' EXIT
+  vault_hcl_with_mlock_disabled "$VAULT_HCL_SRC" "$VAULT_HCL_DESIRED"
+fi
 if [ ! -f "$VAULT_CONFIG_FILE" ] \
-   || ! cmp -s "$VAULT_HCL_SRC" "$VAULT_CONFIG_FILE"; then
+   || ! cmp -s "$VAULT_HCL_DESIRED" "$VAULT_CONFIG_FILE"; then
   log "writing config → ${VAULT_CONFIG_FILE}"
-  install -m 0644 -o root -g root "$VAULT_HCL_SRC" "$VAULT_CONFIG_FILE"
+  install -m 0644 -o root -g root "$VAULT_HCL_DESIRED" "$VAULT_CONFIG_FILE"
 else
   log "config already up to date"
 fi

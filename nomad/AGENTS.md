@@ -14,7 +14,7 @@ see issues #821–#992 for the step breakdown.
 |---|---|---|
 | `nomad/server.hcl` | /etc/nomad.d/server.hcl | agent role, bind, ports, `data_dir` (S0.2) |
 | `nomad/client.hcl` | /etc/nomad.d/client.hcl | Docker driver cfg + `host_volume` declarations (S0.2); `allow_privileged = true` for woodpecker-agent Docker-in-Docker (S3-fix-5, #961) |
-| `nomad/vault.hcl`  | /etc/vault.d/vault.hcl  | Vault storage, listener, UI, `disable_mlock` (S0.3) |
+| `nomad/vault.hcl`  | /etc/vault.d/vault.hcl  | Vault storage, listener, UI, `disable_mlock` (S0.3; install-time capability check flips it to `true` when the host's bounding set lacks CAP_IPC_LOCK, #1285) |
 | `nomad/jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
 | `nomad/jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `nomad/jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
