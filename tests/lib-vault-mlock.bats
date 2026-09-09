@@ -136,8 +136,12 @@ EOF
   vault_hcl_with_mlock_disabled "$src" "$out"
   [ "$(grep -c '^disable_mlock' "$out")" -eq 1 ]
   grep -q '^disable_mlock = true$' "$out"
-  # Exactly one line differs from the source.
-  [ "$(diff "$src" "$out" | grep -c '^[<>]')" -eq 2 ]
+  # Exactly one line differs from the source: same line count, and
+  # byte-identical once the disable_mlock line is stripped from both.
+  # (Not "count normal-diff < / > marker lines": alpine CI's busybox diff
+  # emits unified output only, where changed lines carry - / + prefixes.)
+  [ "$(wc -l < "$src")" -eq "$(wc -l < "$out")" ]
+  diff <(grep -v '^disable_mlock' "$src") <(grep -v '^disable_mlock' "$out")
 }
 
 @test "render: appends a disable_mlock line when the file has none" {
@@ -180,7 +184,9 @@ _persist_config() {
   grep -q '^disable_mlock = true$' "$out"
   [ "$(grep -c '^disable_mlock' "$out")" -eq 1 ]
   # Exactly one line flipped vs the repo source; storage/listener/ui intact.
-  [ "$(diff "$SRC_HCL" "$out" | grep -c '^[<>]')" -eq 2 ]
+  # (Same portability rationale as the render test above.)
+  [ "$(wc -l < "$SRC_HCL")" -eq "$(wc -l < "$out")" ]
+  diff <(grep -v '^disable_mlock' "$SRC_HCL") <(grep -v '^disable_mlock' "$out")
   grep -q 'path = "/var/lib/vault/data"' "$out"
   grep -q 'tls_disable = true' "$out"
 }
