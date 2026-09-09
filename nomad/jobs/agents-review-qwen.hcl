@@ -357,7 +357,7 @@ EOT
       # Agents run Claude/llama sessions — need CPU + memory headroom.
       resources {
         cpu    = 500
-        memory = 1024
+        memory = 2048
       }
     }
   }
