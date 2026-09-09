@@ -55,6 +55,7 @@ export VAULT_ADDR
 # Track whether we spawned a temporary vault (for cleanup).
 spawned_pid=""
 spawned_log=""
+spawned_cfg=""
 
 log() { printf '[vault-init] %s\n' "$*"; }
 die() { printf '[vault-init] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -70,6 +71,9 @@ cleanup() {
   fi
   if [ -n "$spawned_log" ] && [ -f "$spawned_log" ]; then
     rm -f "$spawned_log"
+  fi
+  if [ -n "$spawned_cfg" ] && [ -f "$spawned_cfg" ]; then
+    rm -f "$spawned_cfg"
   fi
 }
 trap cleanup EXIT
@@ -135,8 +139,20 @@ write_secret_file() {
 # ── Ensure vault is reachable ────────────────────────────────────────────────
 if ! vault_reachable; then
   log "vault not reachable at ${VAULT_ADDR} — starting temporary server"
+  # mlock() is denied in unprivileged containers (LXC, docker), but the
+  # persisted config demands it (disable_mlock=false, honoured via
+  # CAP_IPC_LOCK in the systemd unit). The temporary bootstrap server holds
+  # throwaway keys for seconds, so spawn it from an ephemeral config copy
+  # with mlock disabled. The persisted file is never touched.
+  spawned_cfg="$(mktemp)"
+  if grep -q '^disable_mlock' "$VAULT_CONFIG_FILE" 2>/dev/null; then
+    sed 's/^disable_mlock.*/disable_mlock = true/' "$VAULT_CONFIG_FILE" > "$spawned_cfg"
+  else
+    cat "$VAULT_CONFIG_FILE" > "$spawned_cfg"
+    printf '\ndisable_mlock = true\n' >> "$spawned_cfg"
+  fi
   spawned_log="$(mktemp)"
-  vault server -config="$VAULT_CONFIG_FILE" >"$spawned_log" 2>&1 &
+  vault server -config="$spawned_cfg" >"$spawned_log" 2>&1 &
   spawned_pid=$!
 
   # Poll for readiness. Vault's API listener comes up before notify-ready
