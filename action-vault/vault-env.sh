@@ -29,7 +29,7 @@ fi
 # =============================================================================
 
 # Allowed secret names - must match files in secrets/<NAME>.enc
-VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN CODEBERG_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN"
+VAULT_ALLOWED_SECRETS="CLAWHUB_TOKEN GITHUB_TOKEN CODEBERG_TOKEN DEPLOY_KEY NPM_TOKEN DOCKER_HUB_TOKEN SSH_KEY SSH_KNOWN_HOSTS"
 
 # Allowed mount aliases — well-known file-based credential directories
 VAULT_ALLOWED_MOUNTS="ssh gpg sops"

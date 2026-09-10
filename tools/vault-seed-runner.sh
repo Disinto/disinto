@@ -12,6 +12,8 @@
 # Runner tokens (written to kv/disinto/runner/<NAME>/value):
 #   GITHUB_TOKEN, CODEBERG_TOKEN, CLAWHUB_TOKEN, NPM_TOKEN, DOCKER_HUB_TOKEN,
 #   DEPLOY_KEY
+# File-backed (PEM / known_hosts — never from a .env value, newlines):
+#   SSH_KEY from SSH_KEY_PATH, SSH_KNOWN_HOSTS from SSH_KNOWN_HOSTS_PATH
 #
 # Ops-repo (written to kv/disinto/shared/ops-repo):
 #   remote   — "${FORGE_URL}/${FORGE_OPS_REPO}.git" (if both vars set)
@@ -142,6 +144,38 @@ else
       continue
     fi
     log "${kv_path}: written"
+    ((seeds_written++)) || true
+  done
+
+  # File-backed secrets: path in .env, contents from the file (PEM has newlines).
+  # (Not `local` — this script body is not inside a function.)
+  for pair in "SSH_KEY:SSH_KEY_PATH" "SSH_KNOWN_HOSTS:SSH_KNOWN_HOSTS_PATH"; do
+    name="${pair%%:*}"
+    path_var="${pair##*:}"
+    src_path="${env_vals[$path_var]:-}"
+    if [ -z "$src_path" ]; then
+      log "skip ${name} (${path_var} not in .env)"
+      ((seeds_skipped++)) || true
+      continue
+    fi
+    if [ ! -f "$src_path" ]; then
+      log "warning: ${path_var} set but file not found: ${src_path}"
+      ((seeds_skipped++)) || true
+      continue
+    fi
+    kv_path="${RUNNER_PATH_PREFIX}/${name}"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log "[dry-run] ${kv_path}: would write from ${src_path}"
+      ((seeds_written++)) || true
+      continue
+    fi
+    val="$(cat "$src_path")"
+    payload="$(jq -n --arg v "$val" '{data: {value: $v}}')"
+    if ! _hvault_request POST "kv/data/${kv_path}" "$payload" >/dev/null; then
+      log "error: failed to write ${kv_path}"
+      continue
+    fi
+    log "${kv_path}: written from ${src_path}"
     ((seeds_written++)) || true
   done
 fi

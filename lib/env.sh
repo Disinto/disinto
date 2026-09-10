@@ -152,6 +152,8 @@ export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-7200}"
 # even an accidental .env inclusion cannot leak them into agent sessions.
 unset GITHUB_TOKEN 2>/dev/null || true
 unset CLAWHUB_TOKEN 2>/dev/null || true
+unset SSH_KEY 2>/dev/null || true
+unset SSH_KNOWN_HOSTS 2>/dev/null || true
 
 # Shared Claude config directory for cross-container OAuth lock coherence (#641).
 # All containers and the host resolve to the same CLAUDE_CONFIG_DIR on a shared

@@ -201,3 +201,13 @@ roles:
     policy:    runner-DOCKER_HUB_TOKEN
     namespace: default
     job_id:    runner-DOCKER_HUB_TOKEN
+
+  - name:      runner-SSH_KEY
+    policy:    runner-SSH_KEY
+    namespace: default
+    job_id:    runner-SSH_KEY
+
+  - name:      runner-SSH_KNOWN_HOSTS
+    policy:    runner-SSH_KNOWN_HOSTS
+    namespace: default
+    job_id:    runner-SSH_KNOWN_HOSTS

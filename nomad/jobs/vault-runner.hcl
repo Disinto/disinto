@@ -77,13 +77,11 @@ job "vault-runner" {
       }
 
       # ── Vault-templated runner secrets (approach A) ────────────────────────
-      # Pre-defined templates for all 6 known runner secrets. Each renders
-      # from kv/data/disinto/runner/<NAME>. Secrets not granted by the
-      # dispatch's Vault policies produce empty env vars (harmless).
-      # error_on_missing_key = false prevents template-pending hangs when
-      # a secret path is absent or the policy doesn't grant access.
-      #
-      # Placeholder values kept < 16 chars to avoid secret-scan CI failures.
+      # Token secrets (6) render into env via secrets/runner.env. File secrets
+      # (SSH_KEY, SSH_KNOWN_HOSTS) render as 0400 files under secrets/ssh/ —
+      # PEM keys must not become environment variables. Missing paths render
+      # empty (error_on_missing_key = false) so an action that didn't declare
+      # them still starts; entrypoint-runner.sh no-ops on an empty key file.
       template {
         destination          = "secrets/runner.env"
         env                  = true
@@ -123,6 +121,30 @@ NPM_TOKEN=
 DOCKER_HUB_TOKEN={{ .Data.data.value }}
 {{- else -}}
 DOCKER_HUB_TOKEN=
+{{- end }}
+EOT
+      }
+
+      # SSH private key — file, not env. Empty when the action didn't declare
+      # SSH_KEY / the policy doesn't grant it. entrypoint installs into ~/.ssh.
+      template {
+        destination          = "secrets/ssh/id_ed25519"
+        perms                = "0400"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/runner/SSH_KEY" -}}
+{{ .Data.data.value }}
+{{- end }}
+EOT
+      }
+
+      template {
+        destination          = "secrets/ssh/known_hosts"
+        perms                = "0444"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/runner/SSH_KNOWN_HOSTS" -}}
+{{ .Data.data.value }}
 {{- end }}
 EOT
       }

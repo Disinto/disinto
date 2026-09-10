@@ -21,6 +21,8 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Source shared environment (provides load_secret, log helpers, etc.)
 source "${SCRIPT_ROOT}/../lib/env.sh"
+# shellcheck source=lib/vault-ssh.sh
+source "${SCRIPT_ROOT}/../lib/vault-ssh.sh"
 
 # Project TOML location: prefer mounted path, fall back to cloned path
 # Edge container mounts ./projects to /opt/disinto-projects;
@@ -483,7 +485,11 @@ _launch_runner_docker() {
     cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
   fi
 
-  # Add environment variables for secrets (resolved via load_secret)
+  # Secrets: tokens become -e NAME=value. SSH_KEY / SSH_KNOWN_HOSTS are PEM
+  # (newlines) — write a temp file and bind-mount under /secrets/ssh/ so the
+  # runner entrypoint can install them into ~/.ssh. Never pass SSH_KEY as env.
+  local ssh_tmp=""
+  local have_vault_ssh=0
   if [ -n "$secrets_csv" ]; then
     local secret
     for secret in $(echo "$secrets_csv" | tr ',' ' '); do
@@ -496,9 +502,23 @@ _launch_runner_docker() {
         write_result "$action_id" 1 "Secret not found: ${secret}"
         return 1
       fi
-      cmd+=(-e "${secret}=${secret_val}")
+      if vault_ssh_is_file_secret "$secret"; then
+        if [ -z "$ssh_tmp" ]; then
+          ssh_tmp=$(mktemp -d /tmp/dispatcher-ssh-XXXXXX)
+          mkdir -p "${ssh_tmp}/ssh"
+        fi
+        local rel
+        rel=$(vault_ssh_relpath "$secret")
+        printf '%s\n' "$secret_val" > "${ssh_tmp}/${rel}"
+        chmod 400 "${ssh_tmp}/${rel}"
+        cmd+=(-v "${ssh_tmp}/${rel}:/secrets/${rel}:ro")
+        have_vault_ssh=1
+      else
+        cmd+=(-e "${secret}=${secret_val}")
+      fi
     done
   fi
+
 
   # Add volume mounts for file-based credentials
   if [ -n "$mounts_csv" ]; then
@@ -508,7 +528,11 @@ _launch_runner_docker() {
       [ -n "$mount_alias" ] || continue
       case "$mount_alias" in
         ssh)
-          cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+          if [ "$have_vault_ssh" -eq 1 ]; then
+            log "WARN: mounts=ssh ignored; SSH_KEY from vault is mounted as a file"
+          else
+            cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+          fi
           ;;
         gpg)
           cmd+=(-v "${runtime_home}/.gnupg:/home/agent/.gnupg:ro")
@@ -536,7 +560,7 @@ _launch_runner_docker() {
   # Create temp file for logs
   local log_file
   log_file=$(mktemp /tmp/dispatcher-logs-XXXXXX)
-  trap 'rm -f "$log_file"' RETURN
+  trap 'rm -f "$log_file"; rm -rf "${ssh_tmp:-}"' RETURN
 
   # Execute with array expansion (safe from shell injection)
   "${cmd[@]}" > "$log_file" 2>&1

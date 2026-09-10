@@ -55,7 +55,11 @@ Secret names must have a corresponding `secrets/<NAME>.enc` file (age-encrypted)
 Common secret names:
 - `CLAWHUB_TOKEN` - Token for ClawHub skill publishing
 - `GITHUB_TOKEN` - GitHub API token for repository operations
-- `DEPLOY_KEY` - Infrastructure deployment key
+- `DEPLOY_KEY` - Infrastructure deployment key (env var; git remotes)
+- `SSH_KEY` - SSH private key, injected as a 0400 file (`/secrets/ssh/id_ed25519` → `~/.ssh/id_ed25519`). Never an env var.
+- `SSH_KNOWN_HOSTS` - known_hosts bundle paired with `SSH_KEY` (`/secrets/ssh/known_hosts`)
+
+`SSH_KEY` / `SSH_KNOWN_HOSTS` are the vault-held replacement for bind-mounting the host's `~/.ssh`. Prefer `secrets = ["SSH_KEY", "SSH_KNOWN_HOSTS"]` over `mounts = ["ssh"]`. If both are set, the vault files win and the host bind is skipped.
 
 ## Mount Aliases
 
@@ -63,7 +67,7 @@ Mount aliases map to read-only volume flags passed to the runner container:
 
 | Alias | Maps to |
 |-------|---------|
-| `ssh` | `-v ${HOME}/.ssh:/home/agent/.ssh:ro` |
+| `ssh` | Docker-legacy: host `~/.ssh` bind. Ignored when the action also declares `SSH_KEY` (vault file wins). Prefer `secrets = ["SSH_KEY"]`. |
 | `gpg` | `-v ${HOME}/.gnupg:/home/agent/.gnupg:ro` |
 | `sops` | `-v ${HOME}/.config/sops/age:/home/agent/.config/sops/age:ro` |
 

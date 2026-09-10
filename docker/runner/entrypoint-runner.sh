@@ -19,6 +19,14 @@ set -euo pipefail
 FACTORY_ROOT="${FACTORY_ROOT:-/home/agent/disinto}"
 OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/ops}"
 
+# Vault-held SSH keys (file secrets under /secrets/ssh/) — before any formula
+# that might ssh. No-op when SSH_KEY was not declared for this action.
+if [ -f "${FACTORY_ROOT}/lib/vault-ssh.sh" ]; then
+  # shellcheck source=lib/vault-ssh.sh
+  source "${FACTORY_ROOT}/lib/vault-ssh.sh"
+  vault_ssh_install "${NOMAD_SECRETS_DIR:-/secrets}" "${HOME:-/home/agent}"
+fi
+
 log() {
   printf '[%s] runner: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
