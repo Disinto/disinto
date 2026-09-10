@@ -5,8 +5,9 @@
 # Part of the Nomad+Vault migration (S0.3, issue #823). Lands three things:
 #   1. /etc/vault.d/               (0755 root:root)
 #   2. /etc/vault.d/vault.hcl      (nomad/vault.hcl, 0644 root:root — with
-#                                   disable_mlock flipped to true when this
-#                                   host's bounding set lacks CAP_IPC_LOCK, #1285)
+#                                   disable_mlock flipped to true when a
+#                                   functional mlock probe shows mlock() is
+#                                   denied on this host, #1285/#1287)
 #   3. /var/lib/vault/data/        (0700 root:root, Vault file-storage backend)
 #   4. /etc/systemd/system/vault.service  (0644 root:root)
 #
@@ -31,7 +32,7 @@
 #   - Unit file NOT rewritten when on-disk content already matches desired.
 #   - vault.hcl NOT rewritten when on-disk content matches the desired
 #     content (repo copy — or the disable_mlock=true variant on hosts
-#     whose bounding set lacks CAP_IPC_LOCK, #1285).
+#     where the functional mlock probe shows mlock() is denied, #1287).
 #   - `systemctl enable` on an already-enabled unit is a no-op.
 #   - Safe to run unconditionally before every factory boot.
 #
@@ -83,10 +84,12 @@ VAULT_BIN="$(command -v vault 2>/dev/null || true)"
 #   - User=root keeps the seal-key read path simple (unseal.key is 0400 root).
 #   - CAP_IPC_LOCK lets mlock() succeed so disable_mlock=false is honoured.
 #     Harmless when running as root; required if this is ever flipped to a
-#     dedicated `vault` user. (On hosts whose bounding set lacks CAP_IPC_LOCK
-#     — unprivileged containers — the grant cannot apply; the persisted
-#     config is written with disable_mlock=true instead. See the config-
-#     install section below, #1285. The unit file itself is unchanged.)
+#     dedicated `vault` user. (On hosts where mlock() is denied anyway —
+#     e.g. an unprivileged LXC whose apparmor/seccomp/LXC policy below the
+#     capability layer blocks it, even with CAP_IPC_LOCK in the bounding
+#     set — the persisted config is written with disable_mlock=true
+#     instead. See the config-install section below, #1285/#1287. The
+#     unit file itself is unchanged.)
 #   - ExecStartPost auto-unseals on every boot using the persisted key.
 #     This is the dev-persisted-seal tradeoff — seal-key theft == vault
 #     theft, but no second Vault to babysit.
@@ -147,20 +150,23 @@ fi
 
 # ── Install vault.hcl only if content differs ────────────────────────────────
 # The desired on-disk content is normally the repo copy. BEFORE writing it,
-# probe the bounding set (#1285): in an unprivileged container CAP_IPC_LOCK
-# is not in CapBnd, so the unit's AmbientCapabilities grant can never apply
-# and mlock() would fail — with the repo copy's disable_mlock=false the real
-# server exits at startup and cluster-up aborts at step 7/9 ("vault.service
-# never starts"). On such hosts persist the mlock-disabled variant instead
-# (explicit WARN below — same class as the dev-persisted-seal tradeoff).
-# A host that regains the capability heals back to disable_mlock=false on
-# the next install (desired content reverts to the repo copy, which then
-# differs from the persisted variant → rewrite).
+# run the FUNCTIONAL mlock probe (#1285, #1287): attempt to actually lock
+# one page. In the v0.5.0 Stage B unprivileged LXC mlock() is denied even
+# though CAP_IPC_LOCK sits in the bounding set — apparmor/seccomp or LXC
+# policy below the capability layer still blocks it, and bounding-set
+# presence does not imply mlock works. With the repo copy's
+# disable_mlock=false the real server would exit at startup and cluster-up
+# aborts at step 7/9 ("vault.service never starts"). On such hosts persist
+# the mlock-disabled variant instead (explicit WARN below — same class as
+# the dev-persisted-seal tradeoff). A host where mlock starts working
+# again heals back to disable_mlock=false on the next install (desired
+# content reverts to the repo copy, which then differs from the persisted
+# variant → rewrite).
 VAULT_HCL_DESIRED="$VAULT_HCL_SRC"
-if vault_ipc_lock_in_bounding_set; then
-  log "CAP_IPC_LOCK in bounding set — persisted config keeps disable_mlock=false"
+if vault_mlock_probe; then
+  log "mlock probe succeeded (one page locked) — persisted config keeps disable_mlock=false"
 else
-  log "WARN: CAP_IPC_LOCK is not in the bounding set — mlock() can never succeed in this container, so the persisted config is written with disable_mlock=true (tradeoff: Vault's in-memory secrets may be swapped to disk — same class as the dev-persisted-seal tradeoff; the unit file is unchanged, its CAP_IPC_LOCK grant simply cannot apply here, and vault-init.sh's temporary server already runs mlock-disabled per #1274)"
+  log "WARN: mlock() is unavailable on this host (functional probe: the one-page lock attempt was denied, or no perl/python3 interpreter could attempt it — bounding-set presence does not imply mlock works, #1287), so the persisted config is written with disable_mlock=true (tradeoff: Vault's in-memory secrets may be swapped to disk — same class as the dev-persisted-seal tradeoff; the unit file is unchanged, its CAP_IPC_LOCK grant simply cannot help here, and vault-init.sh's temporary server already runs mlock-disabled per #1274)"
   VAULT_HCL_DESIRED="$(mktemp)"
   trap 'rm -f "$VAULT_HCL_DESIRED"' EXIT
   vault_hcl_with_mlock_disabled "$VAULT_HCL_SRC" "$VAULT_HCL_DESIRED"

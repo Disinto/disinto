@@ -2,18 +2,22 @@
 # =============================================================================
 # tests/lib-vault-mlock.bats — Tests for lib/init/nomad/lib-vault-mlock.sh
 #
-# Issue #1285: in an unprivileged container (the fresh ubuntu:24.04 LXC of
-# v0.5.0 Stage B) CAP_IPC_LOCK is not in the bounding set, so the
-# vault.service unit's AmbientCapabilities grant cannot apply and the
-# persisted config's disable_mlock=false makes the real server exit at
-# startup — init aborts at cluster-up step 7/9 ("vault.service never
-# starts"). systemd-vault.sh must probe CapBnd (bit 14) BEFORE writing the
-# persisted vault.hcl and persist disable_mlock=true when the capability is
-# absent, while keeping disable_mlock=false on capable hosts.
+# Issue #1285 + #1287: in the fresh ubuntu:24.04 LXC of v0.5.0 Stage B
+# mlock() is denied even though CAP_IPC_LOCK sits in the bounding set
+# (apparmor/seccomp or LXC policy below the capability layer) — with the
+# repo config's disable_mlock=false the real server exits at startup and
+# cluster-up aborts at step 7/9 ("vault.service never starts"). systemd-
+# vault.sh must probe mlock FUNCTIONALLY (attempt to actually lock one
+# page) BEFORE writing the persisted vault.hcl and persist
+# disable_mlock=true when the attempt does not succeed, while keeping
+# disable_mlock=false on hosts where mlock actually works. Bounding-set
+# presence does not imply mlock works — the original CapBnd-bit fixture
+# tests are gone.
 #
-# The probe takes the /proc/self/status analogue as an argument, so both
-# directions (capability present / absent) are pinned hermetically against
-# the real repo source file — no container privileges, no vault, no systemd.
+# The lock attempt is isolated in vault_mlock_probe_attempt, so both
+# directions (lock succeeds / lock denied / nothing can attempt the lock)
+# are pinned hermetically against the real repo source file — no container
+# privileges, no vault, no systemd.
 # =============================================================================
 
 load '../lib/init/nomad/lib-vault-mlock.sh'
@@ -26,9 +30,8 @@ setup() {
 }
 
 # _write_status CAPBND [CAPEFF] — write a /proc/self/status-shaped file with
-# the given CapBnd. CapPrm/CapEff default to 00000000a80425fb (bit 14 CLEARED)
-# on purpose: the decoy differs from the CapBnd under test, so a probe that
-# reads the wrong field (e.g. CapEff) fails the "available" tests below.
+# the given CapBnd. The probe no longer reads it; these fixtures only prove
+# the probe ignores the bounding set (the #1285/#1287 regression itself).
 _write_status() {
   local capbnd="$1"
   local capprm="${2:-00000000a80425fb}"
@@ -46,80 +49,116 @@ CapAmb: 0000000000000000
 EOF
 }
 
-# ── vault_ipc_lock_in_bounding_set — the probe ───────────────────────────────
+# _sandbox_path DIR — restrict PATH to a fresh dir containing only the
+# minimal utilities (printf/mkdir/chmod/rm, symlinked from the real PATH)
+# the test body AND bats's own tmpdir cleanup need. The probe's
+# interpreter selection then resolves against exactly the fake interpreters
+# the test installs in DIR.
+_sandbox_path() {
+  local dir="$1"
+  rm -rf "$dir"; mkdir -p "$dir"
+  local tool
+  for tool in printf mkdir chmod rm; do
+    ln -s "$(command -v "$tool")" "${dir}/$tool" 2>/dev/null || true
+  done
+  PATH="$dir"
+}
 
-@test "probe: CapBnd with bit 14 set → available (even when CapEff lacks it)" {
-  _write_status 0000000000004000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
+# _fake_bin DIR NAME EXIT_CODE [STDERR_TEXT] — write a fake interpreter
+# script that (optionally) emits noise on stderr and exits with EXIT_CODE.
+_fake_bin() {
+  local dir="$1" name="$2" rc="$3" noise="${4:-}"
+  {
+    printf '#!/bin/sh\n'
+    [ -n "$noise" ] && printf 'echo %s >&2\n' "$noise"
+    printf 'exit %s\n' "$rc"
+  } > "${dir}/${name}"
+  chmod +x "${dir}/${name}"
+}
+
+# ── vault_mlock_probe — the functional probe ────────────────────────────────
+
+@test "probe: lock attempt succeeds → mlock available (stub rc 0)" {
+  vault_mlock_probe_attempt() { return 0; }
+  run vault_mlock_probe
   [ "$status" -eq 0 ]
 }
 
-@test "probe: unprivileged-container mask (bit 14 cleared) → not available" {
-  _write_status 00000000a80425fb
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
+@test "probe: lock attempt denied → mlock unavailable (stub rc 1)" {
+  vault_mlock_probe_attempt() { return 1; }
+  run vault_mlock_probe
   [ "$status" -ne 0 ]
 }
 
-@test "probe: full 64-bit mask (high bit set, signed-arithmetic path) → available" {
-  _write_status ffffffffffffffff
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
+@test "probe: nothing can attempt the lock → mlock unavailable (stub rc 2, safe direction)" {
+  vault_mlock_probe_attempt() { return 2; }
+  run vault_mlock_probe
+  [ "$status" -ne 0 ]
+}
+
+@test "probe: crashed attempt (unexpected rc > 2) → mlock unavailable (safe direction)" {
+  vault_mlock_probe_attempt() { return 3; }
+  run vault_mlock_probe
+  [ "$status" -ne 0 ]
+}
+
+@test "probe: CapBnd bit 14 present but the lock attempt denied → unavailable (the #1287 Stage B regression)" {
+  _write_status 0000000000004000     # CAP_IPC_LOCK in the bounding set…
+  vault_mlock_probe_attempt() { return 1; }   # …yet mlock() is still denied
+  run vault_mlock_probe
+  [ "$status" -ne 0 ]
+}
+
+@test "probe: CapBnd bit 14 absent but the lock attempt succeeded → available (probe ignores the bounding set)" {
+  _write_status 00000000a80425fb     # unprivileged-container-style mask…
+  vault_mlock_probe_attempt() { return 0; }   # …but the real lock succeeds
+  run vault_mlock_probe
   [ "$status" -eq 0 ]
 }
 
-@test "probe: all bits except bit 14 → not available" {
-  _write_status ffffffffffffbfff
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
+@test "probe: real (unstubbed) probe answers 0, 1, or 2 — never a crash" {
+  run vault_mlock_probe
+  [ "$status" -le 2 ]
 }
 
-@test "probe: only adjacent bit 13 → not available" {
-  _write_status 0000000000002000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
+@test "probe: real (unstubbed) probe is stable across two runs" {
+  run vault_mlock_probe
+  local first="$status"
+  run vault_mlock_probe
+  [ "$status" -eq "$first" ]
 }
 
-@test "probe: only adjacent bit 15 → not available" {
-  _write_status 0000000000008000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
+@test "probe: perl is preferred when both interpreters exist (PATH sandbox)" {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  _sandbox_path "$bin"
+  _fake_bin "$bin" perl 0
+  _fake_bin "$bin" python3 1
+  run vault_mlock_probe
+  [ "$status" -eq 0 ]
 }
 
-@test "probe: zero mask → not available" {
-  _write_status 0000000000000000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
+@test "probe: python3 is used when perl is absent (PATH sandbox)" {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  _sandbox_path "$bin"
+  _fake_bin "$bin" python3 1
+  run vault_mlock_probe
+  [ "$status" -eq 1 ]
 }
 
-@test "probe: status file without a CapBnd line → not available (safe direction)" {
-  printf 'Name:   probe-test\nCapEff: 0000000000004000\n' > "$STATUS_FILE"
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
+@test "probe: neither perl nor python3 exists → rc 2 (PATH sandbox)" {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  _sandbox_path "$bin"
+  run vault_mlock_probe
+  [ "$status" -eq 2 ]
 }
 
-@test "probe: missing status file → not available (safe direction)" {
-  run vault_ipc_lock_in_bounding_set "${BATS_TEST_TMPDIR}/no-such-file"
-  [ "$status" -ne 0 ]
-}
-
-@test "probe: malformed CapBnd (too short) → not available" {
-  _write_status 00000000004000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
-}
-
-@test "probe: malformed CapBnd (non-hex) → not available" {
-  _write_status 00000000zzzz4000
-  run vault_ipc_lock_in_bounding_set "$STATUS_FILE"
-  [ "$status" -ne 0 ]
-}
-
-@test "probe: default argument reads /proc/self/status consistently" {
-  run vault_ipc_lock_in_bounding_set
-  local default_rc="$status"
-  # Either answer is valid on any host; a crash (rc > 1) is not.
-  [ "$default_rc" -le 1 ]
-  run vault_ipc_lock_in_bounding_set /proc/self/status
-  [ "$status" -eq "$default_rc" ]
+@test "probe: interpreter diagnostics are suppressed (silent probe)" {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  _sandbox_path "$bin"
+  _fake_bin "$bin" perl 0 "perl diagnostic noise"
+  run vault_mlock_probe
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 # ── vault_hcl_with_mlock_disabled — the renderer ─────────────────────────────
@@ -162,25 +201,26 @@ EOF
 # ── Persisted-config decision flow (what systemd-vault.sh installs) ──────────
 #
 # Replicates systemd-vault.sh's config-install decision against the real repo
-# source: probe → (repo copy | mlock-disabled variant) → persist. The "absent"
-# case is the Stage B unprivileged-LXC path; the "present" case is the
-# capable-host path that must keep disable_mlock=false byte-for-byte.
+# source: functional probe → (repo copy | mlock-disabled variant) → persist.
+# The "unavailable" case is the Stage B unprivileged-LXC path; the
+# "available" case is the capable-host path that must keep
+# disable_mlock=false byte-for-byte.
 
 _persist_config() {
-  # $1 = status file (probe input), $2 = output path
-  local status_file="$1" out="$2"
+  # $1 = output path
+  local out="$1"
   local desired="$SRC_HCL"
-  if ! vault_ipc_lock_in_bounding_set "$status_file"; then
+  if ! vault_mlock_probe; then
     desired="${BATS_TEST_TMPDIR}/desired.hcl"
     vault_hcl_with_mlock_disabled "$SRC_HCL" "$desired"
   fi
   install -m 0644 "$desired" "$out"
 }
 
-@test "decision: capability absent → persisted config has disable_mlock=true, all else identical" {
-  _write_status 00000000a80425fb   # Stage B unprivileged-LXC-style mask
+@test "decision: mlock unavailable → persisted config has disable_mlock=true, all else identical" {
+  vault_mlock_probe_attempt() { return 1; }   # Stage B: bit present, mlock denied
   local out="${BATS_TEST_TMPDIR}/vault.hcl"
-  _persist_config "$STATUS_FILE" "$out"
+  _persist_config "$out"
   grep -q '^disable_mlock = true$' "$out"
   [ "$(grep -c '^disable_mlock' "$out")" -eq 1 ]
   # Exactly one line flipped vs the repo source; storage/listener/ui intact.
@@ -191,32 +231,35 @@ _persist_config() {
   grep -q 'tls_disable = true' "$out"
 }
 
-@test "decision: capability present → persisted config is the repo copy, byte-for-byte" {
-  _write_status 0000000000004000
+@test "decision: mlock available → persisted config is the repo copy, byte-for-byte" {
+  vault_mlock_probe_attempt() { return 0; }
   local out="${BATS_TEST_TMPDIR}/vault.hcl"
-  _persist_config "$STATUS_FILE" "$out"
+  _persist_config "$out"
   cmp -s "$SRC_HCL" "$out"
   grep -q '^disable_mlock = false$' "$out"
 }
 
 # ── Regression guards on the scripts themselves ──────────────────────────────
 #
-# The fix's point is ORDER: probe CapBnd, then write vault.hcl. If a refactor
+# The fix's point is ORDER: probe mlock, then write vault.hcl. If a refactor
 # reorders (or reverts to copying the repo copy unconditionally) the Stage B
 # container breaks again. Line-order guards, same style as the `sudo -n --
 # env` guard in tests/disinto-init-nomad.bats.
 
-@test "systemd-vault.sh probes CAP_IPC_LOCK before installing the persisted config" {
+@test "systemd-vault.sh probes mlock functionally before installing the persisted config" {
   local script="${REPO_ROOT}/lib/init/nomad/systemd-vault.sh"
   local probe_line install_line
-  probe_line="$(grep -nF 'vault_ipc_lock_in_bounding_set' "$script" | head -1 | cut -d: -f1)"
+  probe_line="$(grep -nF 'vault_mlock_probe' "$script" | head -1 | cut -d: -f1)"
   install_line="$(grep -nF 'install -m 0644 -o root -g root "$VAULT_HCL_DESIRED"' "$script" | head -1 | cut -d: -f1)"
   [ -n "$probe_line" ]
   [ -n "$install_line" ]
   [ "$probe_line" -lt "$install_line" ]
+  # The CapBnd-bit probe (#1285) must be gone — bounding-set presence does
+  # not imply mlock works (#1287).
+  [ -z "$(grep -nF 'vault_ipc_lock_in_bounding_set' "$script")" ]
 }
 
-@test "systemd-vault.sh logs an explicit WARN naming the tradeoff when the capability is absent" {
+@test "systemd-vault.sh logs an explicit WARN naming the tradeoff when mlock is unavailable" {
   local script="${REPO_ROOT}/lib/init/nomad/systemd-vault.sh"
   local warn
   warn="$(grep -F 'log "WARN' "$script" | grep -F 'disable_mlock=true')"
