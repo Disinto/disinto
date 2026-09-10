@@ -7,8 +7,8 @@
 # (apparmor/seccomp or LXC policy below the capability layer) — with the
 # repo config's disable_mlock=false the real server exits at startup and
 # cluster-up aborts at step 7/9 ("vault.service never starts"). systemd-
-# vault.sh must probe mlock FUNCTIONALLY (attempt to actually lock one
-# page) BEFORE writing the persisted vault.hcl and persist
+# vault.sh must probe mlock FUNCTIONALLY (mlockall, not one page) BEFORE
+# writing the persisted vault.hcl and persist
 # disable_mlock=true when the attempt does not succeed, while keeping
 # disable_mlock=false on hosts where mlock actually works. Bounding-set
 # presence does not imply mlock works — the original CapBnd-bit fixture
@@ -272,4 +272,13 @@ _persist_config() {
   local script="${REPO_ROOT}/lib/init/nomad/systemd-vault.sh"
   grep -q 'CapabilityBoundingSet=CAP_IPC_LOCK' "$script"
   grep -q 'AmbientCapabilities=CAP_IPC_LOCK' "$script"
+}
+
+@test "probe attempt is mlockall, not a one-page mlock" {
+  local lib="${REPO_ROOT}/lib/init/nomad/lib-vault-mlock.sh"
+  grep -q 'mlockall' "$lib"
+  ! grep -q '4096' "$lib"
+  local script="${REPO_ROOT}/lib/init/nomad/systemd-vault.sh"
+  grep -q 'mlockall' "$script"
+  ! grep -q 'one page locked' "$script"
 }

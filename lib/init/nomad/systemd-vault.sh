@@ -150,11 +150,11 @@ fi
 
 # ── Install vault.hcl only if content differs ────────────────────────────────
 # The desired on-disk content is normally the repo copy. BEFORE writing it,
-# run the FUNCTIONAL mlock probe (#1285, #1287): attempt to actually lock
-# one page. In the v0.5.0 Stage B unprivileged LXC mlock() is denied even
-# though CAP_IPC_LOCK sits in the bounding set — apparmor/seccomp or LXC
-# policy below the capability layer still blocks it, and bounding-set
-# presence does not imply mlock works. With the repo copy's
+# run the FUNCTIONAL mlockall probe: Vault locks the whole process
+# (mlockall), not one page. Stage B unprivileged LXC: CapBnd has the bit
+# and mlock(4k) succeeds, but mlockall returns ENOMEM (ulimit -l 8192;
+# LimitMEMLOCK=infinity cannot raise it). One-page success does not imply
+# vault.service can start. With the repo copy's
 # disable_mlock=false the real server would exit at startup and cluster-up
 # aborts at step 7/9 ("vault.service never starts"). On such hosts persist
 # the mlock-disabled variant instead (explicit WARN below — same class as
@@ -164,9 +164,9 @@ fi
 # variant → rewrite).
 VAULT_HCL_DESIRED="$VAULT_HCL_SRC"
 if vault_mlock_probe; then
-  log "mlock probe succeeded (one page locked) — persisted config keeps disable_mlock=false"
+  log "mlockall() succeeded — persisted config keeps disable_mlock=false"
 else
-  log "WARN: mlock() is unavailable on this host (functional probe: the one-page lock attempt was denied, or no perl/python3 interpreter could attempt it — bounding-set presence does not imply mlock works, #1287), so the persisted config is written with disable_mlock=true (tradeoff: Vault's in-memory secrets may be swapped to disk — same class as the dev-persisted-seal tradeoff; the unit file is unchanged, its CAP_IPC_LOCK grant simply cannot help here, and vault-init.sh's temporary server already runs mlock-disabled per #1274)"
+  log "WARN: mlockall() is unavailable on this host (functional probe: the process-wide lock was denied — a one-page mlock can still succeed in unprivileged LXC while Vault cannot — or no perl/python3 interpreter could attempt it; bounding-set presence does not imply mlock works), so the persisted config is written with disable_mlock=true (tradeoff: Vault's in-memory secrets may be swapped to disk — same class as the dev-persisted-seal tradeoff; the unit file is unchanged, its CAP_IPC_LOCK grant simply cannot help here, and vault-init.sh's temporary server already runs mlock-disabled per #1274)"
   VAULT_HCL_DESIRED="$(mktemp)"
   trap 'rm -f "$VAULT_HCL_DESIRED"' EXIT
   vault_hcl_with_mlock_disabled "$VAULT_HCL_SRC" "$VAULT_HCL_DESIRED"
