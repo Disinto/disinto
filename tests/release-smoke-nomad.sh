@@ -37,6 +37,13 @@
 #   SRC_DIR             validate this existing checkout in place (no clone)
 #   SCRATCH_LXC_NAME    LXD container name for Stage B (empty = SKIP)
 #   SCRATCH_LXC_IMAGE   LXD image for Stage B (default: images:ubuntu/24.04)
+#   SCRATCH_LXC_MEMORY  RAM cap (default: 4GiB). Swap is always off.
+#   SCRATCH_LXC_CPU     CPU cap (default: 2).
+#   SCRATCH_LXC_DISK    Dedicated btrfs loop size (default: 15GiB). The dir
+#                       storage driver does NOT enforce quotas — without this
+#                       a scratch box can fill the host pool. Empty = refuse
+#                       to launch (fail closed). Set to "none" to opt out
+#                       (RAM/CPU still capped).
 #   NOMAD_INIT_EXTRA_ARGS  extra flags for the Stage B init (word-split),
 #                         e.g. "--import-env /root/.env --age-key /root/keys.txt"
 #
@@ -50,11 +57,16 @@ REPO_URL="${REPO_URL:-https://codeberg.org/johba/disinto}"
 SRC_DIR="${SRC_DIR:-}"
 SCRATCH_LXC_NAME="${SCRATCH_LXC_NAME:-}"
 SCRATCH_LXC_IMAGE="${SCRATCH_LXC_IMAGE:-images:ubuntu/24.04}"
+SCRATCH_LXC_MEMORY="${SCRATCH_LXC_MEMORY:-4GiB}"
+SCRATCH_LXC_CPU="${SCRATCH_LXC_CPU:-2}"
+SCRATCH_LXC_DISK="${SCRATCH_LXC_DISK:-15GiB}"
+SCRATCH_LXC_STORAGE_SOURCE="${SCRATCH_LXC_STORAGE_SOURCE:-}"
 NOMAD_INIT_EXTRA_ARGS="${NOMAD_INIT_EXTRA_ARGS:-}"
 CLONE_DIR=""
 SCRATCH_ENV_FILE=""
 PLAN_FILE=""
 LXC_CREATED=false
+LXC_POOL_CREATED=""
 FAILED=0
 SKIPPED=0
 STAGE=0
@@ -75,9 +87,12 @@ cleanup() {
   if [ -n "$PLAN_FILE" ] && [ -f "$PLAN_FILE" ]; then
     rm -f "$PLAN_FILE"
   fi
-  # Only delete the container WE created.
+  # Only delete the container WE created, then the scratch pool if we made it.
   if [ "$LXC_CREATED" = true ] && [ -n "$SCRATCH_LXC_NAME" ]; then
     lxc delete "$SCRATCH_LXC_NAME" --force 2>/dev/null || true
+  fi
+  if [ -n "$LXC_POOL_CREATED" ]; then
+    lxc storage delete "$LXC_POOL_CREATED" 2>/dev/null || true
   fi
   # Only remove the clone WE created; SRC_DIR is the caller's tree.
   if [ -n "$CLONE_DIR" ] && [ -d "$CLONE_DIR" ]; then
@@ -211,11 +226,35 @@ else
   if [ "$FAILED" -eq 0 ]; then
     if lxc info "$SCRATCH_LXC_NAME" > /dev/null 2>&1; then
       fail "Stage B: container ${SCRATCH_LXC_NAME} already exists — refusing to clobber it"
-    elif lxc launch "$SCRATCH_LXC_IMAGE" "$SCRATCH_LXC_NAME" 2>/dev/null; then
-      LXC_CREATED=true
-      pass "LXD container ${SCRATCH_LXC_NAME} launched from ${SCRATCH_LXC_IMAGE}"
     else
-      fail "Stage B: lxc launch ${SCRATCH_LXC_IMAGE} ${SCRATCH_LXC_NAME} failed"
+      launch_args=("$SCRATCH_LXC_IMAGE" "$SCRATCH_LXC_NAME"
+        -c "limits.memory=${SCRATCH_LXC_MEMORY}"
+        -c limits.memory.swap=false
+        -c "limits.cpu=${SCRATCH_LXC_CPU}")
+      if [ "$SCRATCH_LXC_DISK" = "none" ]; then
+        warn "Stage B: SCRATCH_LXC_DISK=none — no disk quota (dir pool can fill the host)"
+      else
+        pool_name="${SCRATCH_LXC_NAME}-pool"
+        pool_create=(lxc storage create "$pool_name" btrfs "size=${SCRATCH_LXC_DISK}")
+        if [ -n "$SCRATCH_LXC_STORAGE_SOURCE" ]; then
+          pool_create+=("source=${SCRATCH_LXC_STORAGE_SOURCE}/${pool_name}")
+        elif [ -d /opt/ai/lxd ]; then
+          # Prefer the data LV over the root LV on this host.
+          pool_create+=("source=/opt/ai/lxd/${pool_name}")
+        fi
+        if "${pool_create[@]}" 2>/dev/null; then
+          LXC_POOL_CREATED="$pool_name"
+          launch_args+=(-s "$pool_name")
+        else
+          fail "Stage B: failed to create btrfs pool ${pool_name} size=${SCRATCH_LXC_DISK} (dir pools have no quota — refusing to launch uncapped). Set SCRATCH_LXC_DISK=none to override."
+        fi
+      fi
+      if [ "$FAILED" -eq 0 ] && lxc launch "${launch_args[@]}" 2>/dev/null; then
+        LXC_CREATED=true
+        pass "LXD container ${SCRATCH_LXC_NAME} launched from ${SCRATCH_LXC_IMAGE} (memory=${SCRATCH_LXC_MEMORY} cpu=${SCRATCH_LXC_CPU} disk=${SCRATCH_LXC_DISK})"
+      elif [ "$FAILED" -eq 0 ]; then
+        fail "Stage B: lxc launch ${SCRATCH_LXC_IMAGE} ${SCRATCH_LXC_NAME} failed"
+      fi
     fi
   fi
 
