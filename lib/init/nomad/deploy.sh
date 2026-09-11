@@ -259,6 +259,13 @@ for job_name in "${JOBS[@]}"; do
     die "failed to run job: ${job_name}"
   fi
 
+  # Parameterized batch jobs (vault-runner) have no deployment. Registering
+  # them is the whole init step — dispatch happens later per action.
+  if grep -qE '^[[:space:]]*parameterized[[:space:]]*\{' "$jobspec_path"; then
+    log "${job_name} is a parameterized batch job — registered, no deployment to wait for"
+    continue
+  fi
+
   # 4. Wait for healthy state
   if ! _wait_job_running "$job_name" "$job_timeout"; then
     log "WARNING: deployment for job '${job_name}' did not reach successful state — continuing with remaining jobs"

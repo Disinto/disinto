@@ -37,7 +37,7 @@
 #   SRC_DIR             validate this existing checkout in place (no clone)
 #   SCRATCH_LXC_NAME    LXD container name for Stage B (empty = SKIP)
 #   SCRATCH_LXC_IMAGE   LXD image for Stage B (default: images:ubuntu/24.04)
-#   SCRATCH_LXC_MEMORY  RAM cap (default: 4GiB). Swap is always off.
+#   SCRATCH_LXC_MEMORY  RAM cap (default: 6GiB). Swap is always off.
 #   SCRATCH_LXC_CPU     CPU cap (default: 2).
 #   SCRATCH_LXC_DISK    Dedicated btrfs loop size (default: 15GiB). The dir
 #                       storage driver does NOT enforce quotas — without this
@@ -57,7 +57,7 @@ REPO_URL="${REPO_URL:-https://codeberg.org/johba/disinto}"
 SRC_DIR="${SRC_DIR:-}"
 SCRATCH_LXC_NAME="${SCRATCH_LXC_NAME:-}"
 SCRATCH_LXC_IMAGE="${SCRATCH_LXC_IMAGE:-images:ubuntu/24.04}"
-SCRATCH_LXC_MEMORY="${SCRATCH_LXC_MEMORY:-4GiB}"
+SCRATCH_LXC_MEMORY="${SCRATCH_LXC_MEMORY:-6GiB}"
 SCRATCH_LXC_CPU="${SCRATCH_LXC_CPU:-2}"
 SCRATCH_LXC_DISK="${SCRATCH_LXC_DISK:-15GiB}"
 SCRATCH_LXC_STORAGE_SOURCE="${SCRATCH_LXC_STORAGE_SOURCE:-}"
@@ -230,23 +230,23 @@ else
       launch_args=("$SCRATCH_LXC_IMAGE" "$SCRATCH_LXC_NAME"
         -c "limits.memory=${SCRATCH_LXC_MEMORY}"
         -c limits.memory.swap=false
-        -c "limits.cpu=${SCRATCH_LXC_CPU}")
+        -c "limits.cpu=${SCRATCH_LXC_CPU}"
+        -c security.nesting=true)
       if [ "$SCRATCH_LXC_DISK" = "none" ]; then
         warn "Stage B: SCRATCH_LXC_DISK=none — no disk quota (dir pool can fill the host)"
       else
         pool_name="${SCRATCH_LXC_NAME}-pool"
-        pool_create=(lxc storage create "$pool_name" btrfs "size=${SCRATCH_LXC_DISK}")
-        if [ -n "$SCRATCH_LXC_STORAGE_SOURCE" ]; then
-          pool_create+=("source=${SCRATCH_LXC_STORAGE_SOURCE}/${pool_name}")
-        elif [ -d /opt/ai/lxd ]; then
-          # Prefer the data LV over the root LV on this host.
-          pool_create+=("source=/opt/ai/lxd/${pool_name}")
-        fi
-        if "${pool_create[@]}" 2>/dev/null; then
+        # `source=` on btrfs must be an existing btrfs filesystem, not a
+        # directory to place a loop file. Pre-created pools (this host:
+        # loop+mount on /opt/ai/lxd) are used as-is. Otherwise create a
+        # sized loop in LXD's default disks dir — never pass source=dir.
+        if lxc storage show "$pool_name" >/dev/null 2>&1; then
+          launch_args+=(-s "$pool_name")
+        elif lxc storage create "$pool_name" btrfs "size=${SCRATCH_LXC_DISK}" 2>/dev/null; then
           LXC_POOL_CREATED="$pool_name"
           launch_args+=(-s "$pool_name")
         else
-          fail "Stage B: failed to create btrfs pool ${pool_name} size=${SCRATCH_LXC_DISK} (dir pools have no quota — refusing to launch uncapped). Set SCRATCH_LXC_DISK=none to override."
+          fail "Stage B: failed to create btrfs pool ${pool_name} size=${SCRATCH_LXC_DISK} (dir pools have no quota — refusing to launch uncapped). Pre-create the pool on the data LV or set SCRATCH_LXC_DISK=none."
         fi
       fi
       if [ "$FAILED" -eq 0 ] && lxc launch "${launch_args[@]}" 2>/dev/null; then
@@ -278,10 +278,26 @@ else
   if [ "$FAILED" -eq 0 ]; then
     INIT_LOG="/tmp/disinto-smoke-nomad-init-${SAFE_REF}.log"
     echo "Stage B: running disinto init --backend=nomad --with forgejo (log: ${INIT_LOG})"
-    # shellcheck disable=SC2086  # NOMAD_INIT_EXTRA_ARGS is intentionally word-split
-    if lxc exec "$SCRATCH_LXC_NAME" -- bash -c \
-      "cd /root/disinto && sudo ./bin/disinto init placeholder/repo --backend=nomad --with forgejo ${NOMAD_INIT_EXTRA_ARGS}" \
-      > "$INIT_LOG" 2>&1; then
+    # Random admin pass generated INSIDE the scratch box so forgejo-bootstrap
+    # can run unattended. Never printed; dies with the container at EXIT.
+    INIT_REMOTE="$(mktemp)"
+    {
+      cat <<'EOS'
+#!/bin/bash
+set -euo pipefail
+cd /root/disinto
+set +o pipefail
+pass=$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | base64 | tr -d '\n/=+' | cut -c1-24)
+set -o pipefail
+[ "${#pass}" -ge 8 ]
+printf 'FORGE_ADMIN_PASS=%s\n' "$pass" >> /root/disinto/.env
+export FORGE_ADMIN_PASS="$pass"
+EOS
+      printf 'sudo -n --preserve-env=FORGE_ADMIN_PASS ./bin/disinto init placeholder/repo --backend=nomad --with forgejo %s\n' "${NOMAD_INIT_EXTRA_ARGS}"
+    } > "$INIT_REMOTE"
+    lxc file push "$INIT_REMOTE" "${SCRATCH_LXC_NAME}/root/stageb-init.sh" >/dev/null
+    rm -f "$INIT_REMOTE"
+    if lxc exec "$SCRATCH_LXC_NAME" -- bash /root/stageb-init.sh > "$INIT_LOG" 2>&1; then
       pass "disinto init --backend=nomad --with forgejo completed"
     else
       fail "Stage B: disinto init failed — see ${INIT_LOG}"
@@ -290,37 +306,58 @@ else
   fi
 
   if [ "$FAILED" -eq 0 ]; then
-    # Poll `nomad job status -json forgejo` for up to 10 minutes: the job
-    # must be running with no latest-version allocation off "running"
-    # (same idiom as the CI health poll in .woodpecker/ci.yml).
+    # Host :3000 is not bound (Nomad check is in-alloc). Probe Forgejo
+    # the same way bootstrap does. nomad job status -json has no Allocations
+    # and may need an ACL token this smoke does not have.
     healthy=false
-    for _i in $(seq 1 40); do
-      sleep 15
-      job_status="$(lxc exec "$SCRATCH_LXC_NAME" -- nomad job status -json forgejo 2> /dev/null || true)"
-      if [ -n "$job_status" ] && [ "$job_status" != "{}" ]; then
-        job_state="$(printf '%s' "$job_status" | jq -r '.Status // "unknown"' 2> /dev/null || echo unknown)"
-        latest_unhealthy="$(printf '%s' "$job_status" | jq -r '
-          (.Allocations // []) as $a
-          | (($a | map(.JobVersion // 0) | max) // 0) as $v
-          | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length' 2> /dev/null || echo 1)"
-        if [ "$job_state" = "running" ] && [ "$latest_unhealthy" = "0" ]; then
-          healthy=true
-          break
-        fi
+    for _i in $(seq 1 12); do
+      if lxc exec "$SCRATCH_LXC_NAME" -- bash -lc \
+        'nomad alloc exec -i=false -job -task forgejo forgejo wget -qO- http://127.0.0.1:3000/api/v1/version' \
+        2>/dev/null | grep -q .; then
+        healthy=true
+        break
       fi
+      sleep 5
     done
     if [ "$healthy" = true ]; then
-      pass "nomad job status forgejo reports running (latest-version allocations all running)"
+      pass "Forgejo answers /api/v1/version (in-alloc)"
     else
-      fail "Stage B: forgejo job not running/healthy after 10 min"
+      fail "Stage B: Forgejo not answering /api/v1/version in-alloc"
     fi
   fi
 
+  # Extra probes: the mlockall fix + resource caps. Fail closed if any lie.
   if [ "$FAILED" -eq 0 ]; then
-    if lxc exec "$SCRATCH_LXC_NAME" -- curl -fsS http://127.0.0.1:3000/api/v1/version > /dev/null 2>&1; then
-      pass "Forgejo answers on http://127.0.0.1:3000/api/v1/version"
+    mlock_line="$(lxc exec "$SCRATCH_LXC_NAME" -- grep -E '^disable_mlock' /etc/vault.d/vault.hcl 2>/dev/null || true)"
+    if [ "$mlock_line" = "disable_mlock = true" ]; then
+      pass "persisted vault.hcl has disable_mlock=true (mlockall probe denied)"
     else
-      fail "Stage B: Forgejo not answering on 127.0.0.1:3000"
+      fail "Stage B: expected disable_mlock=true in /etc/vault.d/vault.hcl, got: ${mlock_line:-<missing>}"
+    fi
+  fi
+  if [ "$FAILED" -eq 0 ]; then
+    if lxc exec "$SCRATCH_LXC_NAME" -- env VAULT_ADDR=http://127.0.0.1:8200 \
+         vault status 2>/dev/null | grep -qE 'Sealed[[:space:]]+false'; then
+      pass "vault status: unsealed"
+    else
+      fail "Stage B: vault is not unsealed"
+    fi
+  fi
+  if [ "$FAILED" -eq 0 ]; then
+    mem="$(lxc config get "$SCRATCH_LXC_NAME" limits.memory)"
+    if [ "$mem" = "$SCRATCH_LXC_MEMORY" ]; then
+      pass "LXC limits.memory=${mem}"
+    else
+      fail "Stage B: limits.memory is '${mem}', expected ${SCRATCH_LXC_MEMORY}"
+    fi
+  fi
+  if [ "$FAILED" -eq 0 ]; then
+    root_g="$(lxc exec "$SCRATCH_LXC_NAME" -- df -BG / | awk 'NR==2 { gsub(/G/,"",$2); print $2 }')"
+    # Dir pool would show the whole data LV (~300G+). Capped btrfs is ~15.
+    if [ -n "$root_g" ] && [ "$root_g" -le 20 ]; then
+      pass "container root is ${root_g}G (disk cap held)"
+    else
+      fail "Stage B: container root is ${root_g:-?}G — disk quota missing?"
     fi
   fi
 fi

@@ -6,7 +6,7 @@ setup() {
 }
 
 @test "Stage B defaults cap memory, cpu, and disk" {
-  grep -q 'SCRATCH_LXC_MEMORY:-4GiB' "$SCRIPT"
+  grep -q 'SCRATCH_LXC_MEMORY:-6GiB' "$SCRIPT"
   grep -q 'SCRATCH_LXC_CPU:-2' "$SCRIPT"
   grep -q 'SCRATCH_LXC_DISK:-15GiB' "$SCRIPT"
 }

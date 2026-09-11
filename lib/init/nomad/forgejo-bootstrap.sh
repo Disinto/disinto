@@ -91,7 +91,11 @@ if [ -z "$FORGE_ADMIN_PASS" ]; then
   die "FORGE_ADMIN_PASS is not set (required for admin user creation)"
 fi
 
-# Resolve FORGE_TOKEN from Vault if not set in env
+# Resolve FORGE_TOKEN from Vault if not set in env. On a fresh box there
+# is no token yet (chicken-egg: the API needs an admin to mint one).
+# Empty-box path: create the first admin via `forgejo admin user create`
+# inside the running alloc, then verify with basic auth (step 3).
+CREATE_VIA_CLI=0
 if [ -z "$FORGE_TOKEN" ]; then
   log "reading FORGE_TOKEN from Vault at kv/disinto/shared/forge/token"
   _hvault_default_env
@@ -100,9 +104,11 @@ if [ -z "$FORGE_TOKEN" ]; then
     FORGE_TOKEN="$(printf '%s' "$token_raw" | jq -r '.data.data.token // empty' 2>/dev/null)" || true
   fi
   if [ -z "$FORGE_TOKEN" ]; then
-    die "FORGE_TOKEN not set and not found in Vault"
+    log "no FORGE_TOKEN in env or Vault — will create admin via forgejo CLI (empty-box path)"
+    CREATE_VIA_CLI=1
+  else
+    log "forge token loaded from Vault"
   fi
-  log "forge token loaded from Vault"
 fi
 
 # ── Step 1/3: Check if admin user already exists ─────────────────────────────
@@ -132,11 +138,89 @@ if [ -n "$user_lookup_raw" ]; then
   fi
 fi
 
+# Create the first admin inside the running Forgejo alloc. Used when no
+# API token exists yet (Stage B empty box). Treat "already exists" as ok.
+_cli_create_admin() {
+  local bin out rc prefix
+  command -v nomad >/dev/null 2>&1 || return 1
+  # Image refuses to run as root; drop to git via su-exec/gosu.
+  for prefix in "su-exec git" "gosu git"; do
+    for bin in forgejo gitea; do
+      rc=0
+      # -job is a boolean; next positional is the job id, then the command.
+      # Do not insert -- : nomad 1.9 passes it into the container as argv0.
+      # shellcheck disable=SC2086  # prefix is "su-exec git" / "gosu git"
+      out=$(nomad alloc exec -i=false -job -task forgejo forgejo \
+        $prefix "$bin" admin user create \
+        --admin \
+        --username "$FORGE_ADMIN_USER" \
+        --password "$FORGE_ADMIN_PASS" \
+        --email "$FORGE_ADMIN_EMAIL" \
+        --must-change-password=false 2>&1) || rc=$?
+      safe="${out//"${FORGE_ADMIN_PASS}"/<redacted>}"
+      log "cli ${prefix} ${bin}: rc=${rc} ${safe}"
+      if [ "$rc" -eq 0 ]; then
+        CLI_USER_WAS_NEW=1
+        return 0
+      fi
+      if printf '%s' "$out" | grep -qiE 'already exist|user.*exist'; then
+        CLI_USER_WAS_NEW=0
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# Mint a PAT as git (basic auth is often off). Sets FORGE_TOKEN. Output is
+# redacted; we only keep the last line as the token.
+_cli_mint_token() {
+  local bin out rc prefix token
+  for prefix in "su-exec git" "gosu git"; do
+    for bin in forgejo gitea; do
+      rc=0
+      # shellcheck disable=SC2086
+      out=$(nomad alloc exec -i=false -job -task forgejo forgejo \
+        $prefix "$bin" admin user generate-access-token \
+        --username "$FORGE_ADMIN_USER" \
+        --token-name "disinto-bootstrap-$$" \
+        --scopes all \
+        --raw 2>&1) || rc=$?
+      log "cli token ${prefix} ${bin}: rc=${rc}"
+      if [ "$rc" -ne 0 ]; then
+        continue
+      fi
+      token=$(printf '%s' "$out" | awk 'NF { line=$0 } END { print line }')
+      if [ -n "$token" ] && [ "${#token}" -ge 16 ]; then
+        FORGE_TOKEN="$token"
+        export FORGE_TOKEN
+        log "cli token minted (len=${#token})"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
 # ── Step 2/3: Create admin user if needed ────────────────────────────────────
 if [ "$admin_user_exists" = false ]; then
   log "creating admin user '${FORGE_ADMIN_USER}'"
 
-  if [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$CREATE_VIA_CLI" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+    if _cli_create_admin; then
+      admin_user_exists=true
+      if [ "${CLI_USER_WAS_NEW:-1}" -eq 0 ]; then
+        log "admin user '${FORGE_ADMIN_USER}' already exists — skipping mint/verify"
+      else
+        log "admin user '${FORGE_ADMIN_USER}' created via forgejo CLI"
+        if ! _cli_mint_token; then
+          die "admin created but failed to mint an access token via CLI"
+        fi
+      fi
+    else
+      die "failed to create admin user via forgejo CLI (no FORGE_TOKEN on empty box)"
+    fi
+  elif [ "$DRY_RUN" -eq 1 ]; then
     log "[dry-run] would create admin user with:"
     log "[dry-run]   username: ${FORGE_ADMIN_USER}"
     log "[dry-run]   email:    ${FORGE_ADMIN_EMAIL}"
@@ -184,18 +268,43 @@ else
 fi
 
 # ── Step 3/3: Verify user was created and is admin ───────────────────────────
+if [ "${CREATE_VIA_CLI:-0}" -eq 1 ] && [ "${CLI_USER_WAS_NEW:-1}" -eq 0 ]; then
+  log "done — admin already present (empty-box path, skipping re-verify)"
+  exit 0
+fi
+
 log "── Step 3/3: verify admin user is properly configured ──"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log "[dry-run] would verify admin user configuration"
   log "done — [dry-run] complete"
 else
-  # Verify the user exists and is admin
-  verify_response=$(curl -sf --max-time 10 \
-    -u "${FORGE_ADMIN_USER}:${FORGE_ADMIN_PASS}" \
-    "${FORGE_URL}/api/v1/user" 2>/dev/null) || {
-    die "failed to verify admin user credentials"
-  }
+  # Prefer token (CLI empty-box path). Fall back to basic auth.
+  if [ -n "${FORGE_TOKEN:-}" ]; then
+    # Nomad's docker health check hits the task netns, not LXC 127.0.0.1:3000
+    # (connection refused from the host). Verify from inside the alloc.
+    log "verify token via nomad alloc exec wget localhost:3000"
+    rc=0
+    verify_response=$(nomad alloc exec -i=false -job -task forgejo forgejo \
+      wget -qO- --header="Authorization: token ${FORGE_TOKEN}" \
+      http://127.0.0.1:3000/api/v1/user 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      rc=0
+      verify_response=$(nomad alloc exec -i=false -job -task forgejo forgejo \
+        curl -sf --max-time 10 -H "Authorization: token ${FORGE_TOKEN}" \
+        http://127.0.0.1:3000/api/v1/user 2>&1) || rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+      log "verify in-alloc failed rc=${rc}"
+      die "failed to verify admin user via token (in-alloc)"
+    fi
+  else
+    verify_response=$(curl -sf --max-time 10 \
+      -u "${FORGE_ADMIN_USER}:${FORGE_ADMIN_PASS}" \
+      "${FORGE_URL}/api/v1/user" 2>/dev/null) || {
+      die "failed to verify admin user credentials (basic auth)"
+    }
+  fi
 
   is_admin=$(printf '%s' "$verify_response" | jq -r '.is_admin // false' 2>/dev/null) || true
   login=$(printf '%s' "$verify_response" | jq -r '.login // empty' 2>/dev/null) || true
