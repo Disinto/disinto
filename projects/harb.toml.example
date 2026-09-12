@@ -4,6 +4,8 @@
 # or run: disinto init johba/harb
 
 name            = "harb"
+# Project kind: "software" (default) or "research" (#1294).
+kind            = "software"
 repo            = "johba/harb"
 forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/harb"

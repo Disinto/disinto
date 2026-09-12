@@ -336,6 +336,8 @@ if ! compgen -G "${FACTORY_PROJECTS_DIR}/*.toml" >/dev/null 2>&1; then
 # Replace with your real per-env config. Edits here take effect on next
 # agent restart — no image rebuild required.
 name            = "disinto"
+# Project kind: "software" (default) or "research" (#1294).
+kind            = "software"
 repo            = "disinto-admin/disinto"
 ops_repo        = "disinto-admin/disinto-ops"
 forge_url       = "http://localhost:3000"
