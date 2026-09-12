@@ -1,0 +1,62 @@
+name: Experiment
+about: A physics/ML run or artifact to track (v0.6 research kind) — not a coding ticket
+labels:
+  - experiment
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a research run, **not a coding ticket**. The `experiment`
+        label is never `backlog`, so the dev-bot coding loop must not claim
+        it. Dispatch/triage may claim it later. Park the issue on
+        `waiting-on-compute` while an external run is in flight; track its
+        outputs with `run` / `artifact`, and record verdicts under `judgment`.
+  - type: textarea
+    id: image
+    attributes:
+      label: Image
+      description: Docker image (or image reference) the run executes in.
+      placeholder: "disinto/meep:local"
+    validations:
+      required: true
+  - type: textarea
+    id: argv
+    attributes:
+      label: Argv / tool
+      description: The exact argv (or tool invocation) the run executes, in order.
+      placeholder: "mpb --resolution 256 --frames 32"
+    validations:
+      required: true
+  - type: textarea
+    id: host-class
+    attributes:
+      label: Host class
+      description: Nomad class / host tier the run dispatches to (e.g. gpu-a100, cpu-large, meep-box).
+      placeholder: "meep-box"
+    validations:
+      required: true
+  - type: textarea
+    id: artifact-glob
+    attributes:
+      label: Artifact glob
+      description: Glob matching the artifacts this run produces, relative to the run output dir.
+      placeholder: "results/*.h5"
+    validations:
+      required: true
+  - type: dropdown
+    id: resource-class
+    attributes:
+      label: Resource class
+      description: Compute resource class the run consumes.
+      options:
+        - cpu
+        - gpu
+        - meep
+        - voxel
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Campaign / run-dir links, prior runs, related issues.

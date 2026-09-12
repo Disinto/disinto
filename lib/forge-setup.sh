@@ -613,5 +613,75 @@ setup_forge() {
     echo "Repo:    ${repo_slug} (already exists on Forgejo)"
   fi
 
+  # Seed the v0.6 research-kind labels (#1295). Idempotent — re-running init
+  # is a no-op. Warn-only: a label failure must not abort factory setup;
+  # re-run tools/seed-research-labels.sh <repo_slug> afterwards.
+  echo ""
+  echo "── Research-kind labels ─────────────────────────────────"
+  if ! seed_research_labels "${repo_slug}"; then
+    echo "  Warning: research-label seeding failed — run tools/seed-research-labels.sh ${repo_slug}" >&2
+  fi
+
   echo "Forge:   ${forge_url} (ready)"
+}
+
+# ---------------------------------------------------------------------------
+# v0.6 research-kind labels (#1295)
+# ---------------------------------------------------------------------------
+# Single source of truth for the research-kind label set: "name:color" pairs.
+# Consumed by tools/seed-research-labels.sh (--list) and asserted by
+# tests/acceptance/issue-1295.sh. Colours are distinct from backlog
+# (#0075ca / #fef2c0), in-progress (#1d76db), blocked (#e11d48),
+# awaiting-live-verification (#ff9100), and priority (#f59e0b).
+RESEARCH_LABELS=(
+  "experiment:#97ca00"
+  "run:#58c3b0"
+  "artifact:#b083f0"
+  "judgment:#f7c8c2"
+  "waiting-on-compute:#6e7f80"
+)
+
+# seed_research_labels [repo_slug]
+# Idempotently create the research-kind labels (RESEARCH_LABELS) on the
+# project repo. Pre-existing labels are never modified (name or color);
+# missing ones are created. Safe to call on every init; on an existing
+# forge use tools/seed-research-labels.sh.
+#
+# Requires: FORGE_URL + FORGE_TOKEN (or FACTORY_FORGE_PAT) + a repo slug
+# (argument, default $FORGE_REPO). Returns 1 on failure.
+seed_research_labels() {
+  local repo_slug="${1:-${FORGE_REPO:-}}"
+  if [ -z "$repo_slug" ]; then
+    echo "Error: seed_research_labels needs a repo slug (arg 1 or FORGE_REPO)" >&2
+    return 1
+  fi
+  local token="${FORGE_TOKEN:-${FACTORY_FORGE_PAT:-}}"
+  if [ -z "$token" ]; then
+    echo "Error: no FORGE_TOKEN or FACTORY_FORGE_PAT available for label seeding" >&2
+    return 1
+  fi
+  # shellcheck disable=SC2153 # FORGE_URL is env-sourced (setup_forge's local is forge_url)
+  local api_base="${FORGE_URL%/}/api/v1/repos/${repo_slug}"
+  local existing entry name color
+  existing=$(curl -sf --max-time 10 -H "Authorization: token ${token}" \
+    "${api_base}/labels" 2>/dev/null) || existing="[]"
+  for entry in "${RESEARCH_LABELS[@]}"; do
+    name="${entry%%:*}"
+    color="${entry##*:}"
+    if [ -n "$(printf '%s' "$existing" | jq -r --arg n "$name" \
+        '.[] | select(.name == $n) | .name' 2>/dev/null | head -n1)" ]; then
+      echo "  label '${name}': already exists"
+      continue
+    fi
+    if ! curl -sf -X POST --max-time 10 \
+      -H "Authorization: token ${token}" \
+      -H "Content-Type: application/json" \
+      "${api_base}/labels" \
+      -d "$(jq -nc --arg n "$name" --arg c "$color" '{name:$n,color:$c}')" >/dev/null; then
+      echo "Error: failed to create label '${name}' on ${repo_slug}" >&2
+      return 1
+    fi
+    echo "  label '${name}': created (${color})"
+  done
+  return 0
 }
