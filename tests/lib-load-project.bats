@@ -376,3 +376,93 @@ EOF
   # The invalid agent's identifier triggers a warning and is skipped.
   [[ "$output" == *"skipping invalid shell identifier"* ]]
 }
+# -------------------------------------------------------------------------
+# #1294: top-level `kind` — software (default) or research. A missing key
+# keeps existing TOMLs software-shaped; any other value must fail the load
+# (a typo must not silently run software-mode on a research box).
+# -------------------------------------------------------------------------
+
+@test "kind absent: PROJECT_KIND defaults to software" {
+  cat > "$TOML" <<EOF
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    unset PROJECT_KIND
+    source '${ROOT}/lib/load-project.sh' '$TOML'
+    echo \"KIND=\${PROJECT_KIND:-MISSING}\"
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"KIND=software"* ]]
+}
+
+@test "kind research: PROJECT_KIND=research" {
+  cat > "$TOML" <<EOF
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+kind      = "research"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    unset PROJECT_KIND
+    source '${ROOT}/lib/load-project.sh' '$TOML'
+    echo \"KIND=\${PROJECT_KIND:-MISSING}\"
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"KIND=research"* ]]
+}
+
+@test "unknown kind: load fails with a visible error" {
+  cat > "$TOML" <<EOF
+name      = "test"
+repo      = "test-owner/test-repo"
+forge_url = "http://localhost:3000"
+kind      = "resarch"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    unset PROJECT_KIND
+    source '${ROOT}/lib/load-project.sh' '$TOML' 2>&1
+    echo \"KIND=\${PROJECT_KIND:-UNSET}\"
+  "
+
+  # Non-zero exit…
+  [ "$status" -ne 0 ]
+  # …with a visible diagnostic…
+  [[ "$output" == *"invalid kind"* ]]
+  [[ "$output" == *"failed to parse project TOML"* ]]
+  # …and no silently applied default.
+  [[ "$output" != *"KIND=software"* ]]
+}
+
+@test "container: TOML kind overrides the jobspec-wide PROJECT_KIND" {
+  # Same #1085 identity-exception logic as FORGE_REPO: in a multi-project
+  # factory each TOML's own kind must win in the agents container.
+  cat > "$TOML" <<EOF
+name      = "selenocyte"
+repo      = "selenocyte-org/selenocyte"
+forge_url = "http://localhost:3000"
+kind      = "research"
+EOF
+
+  run bash -c "
+    set -euo pipefail
+    export DISINTO_CONTAINER=1
+    export FORGE_REPO=disinto-admin/disinto
+    export FORGE_URL=http://forgejo:3000
+    export PROJECT_KIND=software
+    source '${ROOT}/lib/load-project.sh' '$TOML'
+    echo \"KIND=\${PROJECT_KIND}\"
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"KIND=research"* ]]
+}

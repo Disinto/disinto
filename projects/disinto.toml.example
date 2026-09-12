@@ -4,6 +4,10 @@
 # or run: disinto init johba/disinto
 
 name            = "disinto"
+# Project kind: "software" (default) or "research". Research projects
+# steer experiments (runs, hosts, artifacts) instead of shipping sprints
+# (#1294). An unknown value is a load error.
+kind            = "software"
 repo            = "johba/disinto"
 ops_repo        = "disinto-admin/disinto-ops"
 forge_url       = "http://localhost:3000"

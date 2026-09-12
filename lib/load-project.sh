@@ -5,7 +5,7 @@
 #   source lib/load-project.sh projects/harb.toml
 #
 # Exports:
-#   PROJECT_NAME, FORGE_REPO, FORGE_API, FORGE_WEB, FORGE_URL,
+#   PROJECT_NAME, PROJECT_KIND, FORGE_REPO, FORGE_API, FORGE_WEB, FORGE_URL,
 #   PROJECT_REPO_ROOT, PRIMARY_BRANCH, WOODPECKER_REPO_ID,
 #   PROJECT_CONTAINERS, CHECK_PRS, CHECK_DEV_AGENT,
 #   CHECK_PIPELINE_STALL, CI_STALE_MINUTES,
@@ -27,6 +27,18 @@ import sys, tomllib
 with open(sys.argv[1], 'rb') as f:
     cfg = tomllib.load(f)
 
+# #1294: top-level kind selects the project shape: software (default,
+# startup-shaped formulas) or research (experiment-driven: runs, hosts,
+# artifacts). A missing key keeps existing TOMLs behaving as software.
+# Any other value is a load error — a typo must not silently run
+# software-mode formulas on a research box.
+kind = cfg.get('kind', 'software')
+if kind not in ('software', 'research'):
+    sys.stderr.write(
+        f'load-project: invalid kind {kind!r} in {sys.argv[1]}'
+        ' (must be \"software\" or \"research\")\n')
+    sys.exit(1)
+
 def emit(key, val):
     if isinstance(val, bool):
         print(f'{key}={str(val).lower()}')
@@ -37,6 +49,7 @@ def emit(key, val):
 
 # Top-level
 emit('PROJECT_NAME', cfg.get('name', ''))
+emit('PROJECT_KIND', kind)
 emit('FORGE_REPO', cfg.get('repo', ''))
 emit('FORGE_URL', cfg.get('forge_url', ''))
 
@@ -74,7 +87,10 @@ for name, url in mirrors.items():
 if mirrors:
     emit('MIRROR_NAMES', list(mirrors.keys()))
     emit('MIRROR_URLS', list(mirrors.values()))
-" "$_PROJECT_TOML" 2>/dev/null) || {
+" "$_PROJECT_TOML") || {
+  # Python's stderr (TOML syntax errors, #1294 invalid-kind rejection) is
+  # already on the caller's stderr; name the file too so the operator can
+  # find the offending config.
   echo "WARNING: failed to parse project TOML: $_PROJECT_TOML" >&2
   return 1 2>/dev/null || exit 1
 }
@@ -87,7 +103,8 @@ if mirrors:
 # any env var that is already set when running inside the container.
 #
 # #1085 exception: the repo-identity vars (FORGE_REPO, FORGE_OPS_REPO,
-# PRIMARY_BRANCH, WOODPECKER_REPO_ID) are identical from the host and the
+# PRIMARY_BRANCH, WOODPECKER_REPO_ID) plus #1294's PROJECT_KIND (project
+# identity, not host perspective) are identical from the host and the
 # container perspective.  The jobspec sets one FORGE_REPO for the whole
 # container, but in a multi-project factory each TOML's own `repo` must win —
 # otherwise every project's poll queries the jobspec's forge repo.  A non-empty
@@ -114,7 +131,7 @@ while IFS='=' read -r _key _val; do
   fi
   if [ "${DISINTO_CONTAINER:-}" = "1" ] && [ -n "${!_key:-}" ]; then
     case "$_key" in
-      FORGE_REPO|FORGE_OPS_REPO|PRIMARY_BRANCH|WOODPECKER_REPO_ID)
+      FORGE_REPO|FORGE_OPS_REPO|PRIMARY_BRANCH|WOODPECKER_REPO_ID|PROJECT_KIND)
         # #1085: repo-identity is the same from inside the container — let a
         # non-empty TOML value override the jobspec value (see note above).
         [ -n "$_val" ] && export "$_key=$_val"
