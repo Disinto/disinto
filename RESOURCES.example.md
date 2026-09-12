@@ -4,7 +4,18 @@
 
 ## Compute
 
+Structured host blocks are what `lib/resources.sh` parses: a `### <alias>`
+heading with `- class:` (meep | cpu | gpu | control), `- ssh:`, `- cap:`
+(max concurrent jobs), and an optional `- image:` (default image). Wave 2's
+`run-experiment.sh` picks the first matching-class host whose in-flight count
+is below `cap` — no other placement policy. Prose bullets (Specs / Location /
+Access / …) stay for humans and are ignored by the parser.
+
 ### <host-alias>
+- class: cpu
+- ssh: user@example.com
+- cap: 2
+- image: ghcr.io/myorg/edge:local
 - **Specs**: e.g. 8 GB RAM, 4 vCPU, 80 GB disk
 - **Location**: e.g. region / datacenter
 - **Access**: e.g. `ssh user@host-alias` (key in ~/.ssh/id_ed25519)
