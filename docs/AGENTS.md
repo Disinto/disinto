@@ -99,6 +99,9 @@ disinto-ops/             (ops repo — {project}-ops)
 │   ├── fired/     executed vault items
 │   └── rejected/  rejected vault items
 ├── sprints/       sprint planning artifacts
+├── runs/          append-only JSON run records (records in git)
+├── artifacts/     run payloads by action-id (gitignored; see runs/README.md)
+├── campaigns/     planner/architect campaign notes
 ├── knowledge/     shared agent knowledge + best practices
 ├── evidence/      engagement data, experiment results
 ├── portfolio.md   addressables + observables
