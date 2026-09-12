@@ -1053,8 +1053,10 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
   # formula/dismissed/unreviewed: handled by other tracks, not dev-agent.
   # waiting-on-compute: readiness flag — work is dispatched and waiting on an
   # external run; a person or formula removes the label when the run lands (#1072).
+  # experiment/run/judgment: research-template issues (#1295) — Meep scenes,
+  # not coding work; skipped even when queued with backlog (#1306).
   ISSUE_LABELS=$(echo "$BACKLOG_JSON" | jq -r ".[$i].labels[].name" 2>/dev/null) || true
-  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed|waiting-on-compute)$' | head -1) || true
+  SKIP_LABEL=$(echo "$ISSUE_LABELS" | grep -oE '^(formula|prediction/dismissed|prediction/unreviewed|waiting-on-compute|experiment|run|judgment)$' | head -1) || true
   if [ -n "$SKIP_LABEL" ]; then
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — skipping in backlog scan"
     continue
