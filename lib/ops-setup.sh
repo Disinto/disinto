@@ -13,15 +13,76 @@
 #     - Configure bot collaborators with appropriate permissions
 #     - Clone or initialize ops repo locally
 #     - Seed directory structure (vault, knowledge, evidence)
+#     - Seed the run-ledger layout: runs/, artifacts/, campaigns/ (#1297)
 #     - Export _ACTUAL_OPS_SLUG for caller to use
 #   migrate_ops_repo <ops_root> [primary_branch]
 #     - Seed missing directories/files on existing ops repos (idempotent)
 #     - Creates .gitkeep files and template content for canonical structure
+#     - Seeds the run-ledger layout: runs/, artifacts/, campaigns/ (#1297)
 #
 # Globals modified:
 #   _ACTUAL_OPS_SLUG - resolved ops repo slug after setup_ops_repo completes
 
 set -euo pipefail
+
+# _ops_ledger_layout_current <ops_root> — seed the append-only run-ledger
+# layout (#1297): runs/ (JSON records in git), artifacts/ (payload dirs by
+# action-id, gitignored except .gitkeep), campaigns/ (planner/architect
+# notes). Idempotent — never overwrites existing files. Returns 0 if the
+# layout was already complete, 1 if anything was created (caller flags the
+# migration/seed).
+_ops_ledger_layout_current() {
+  local ops_root="$1"
+  local changed=false
+
+  mkdir -p "${ops_root}/runs" "${ops_root}/artifacts" "${ops_root}/campaigns"
+  local keep
+  for keep in "runs/.gitkeep" "artifacts/.gitkeep" "campaigns/.gitkeep"; do
+    if [ ! -f "${ops_root}/${keep}" ]; then
+      touch "${ops_root}/${keep}"
+      changed=true
+    fi
+  done
+
+  # Payloads do not belong in git; the records do. Keep only .gitkeep and
+  # this file under artifacts/.
+  if [ ! -f "${ops_root}/artifacts/.gitignore" ]; then
+    {
+      echo "# Payloads do not belong in git; the records do (#1297)."
+      echo "*"
+      echo "!.gitkeep"
+      echo "!.gitignore"
+    } > "${ops_root}/artifacts/.gitignore"
+    changed=true
+  fi
+
+  if [ ! -f "${ops_root}/runs/README.md" ]; then
+    cat > "${ops_root}/runs/README.md" <<'RUNSEOF'
+# runs/ — append-only run ledger
+
+One JSON record per file, named `<id>.json`, written by `run_ledger_append`
+(lib/run-ledger.sh). The ledger is append-only: a record whose `id` already
+exists is refused, and records are never rewritten or deleted.
+
+- **Records belong in git.** Every row in this directory is committed and
+  versioned here.
+- **Payloads do not.** Large files pulled by a run are dropped under
+  `artifacts/<action-id>/` at the ops repo root and are gitignored (only
+  `.gitkeep` stays in git). Records reference payloads by relative path in
+  their `artifacts` key.
+
+Required record keys: `id`, `action_id`, `git_tree`, `image`, `host`,
+`argv`, `started`, `ended`, `exit`, `artifacts`. Extra keys are allowed;
+missing required keys fail.
+RUNSEOF
+    changed=true
+  fi
+
+  if [ "$changed" = true ]; then
+    return 1
+  fi
+  return 0
+}
 
 setup_ops_repo() {
 
@@ -193,6 +254,12 @@ setup_ops_repo() {
   mkdir -p "${ops_root}/evidence/evolution"
   mkdir -p "${ops_root}/evidence/user-test"
   mkdir -p "${ops_root}/sprints"
+  # Append-only run ledger layout (#1297): runs/, artifacts/, campaigns/
+  if _ops_ledger_layout_current "${ops_root}"; then
+    :
+  else
+    seeded=true
+  fi
   [ -f "${ops_root}/sprints/.gitkeep" ] || { touch "${ops_root}/sprints/.gitkeep"; seeded=true; }
   [ -f "${ops_root}/evidence/red-team/.gitkeep" ] || { touch "${ops_root}/evidence/red-team/.gitkeep"; seeded=true; }
   [ -f "${ops_root}/evidence/holdout/.gitkeep" ] || { touch "${ops_root}/evidence/holdout/.gitkeep"; seeded=true; }
@@ -216,6 +283,9 @@ ${ops_name}/
 │   ├── fired/            # executed vault items
 │   └── rejected/         # rejected vault items
 ├── sprints/              # sprint specs written by architect agent
+├── runs/                 # append-only JSON run records (records in git)
+├── artifacts/            # run payloads by action-id (gitignored; see runs/README.md)
+├── campaigns/            # planner/architect campaign notes
 ├── knowledge/            # shared agent knowledge and best practices
 ├── evidence/             # engagement data, experiment results
 ├── portfolio.md          # addressables + observables
@@ -351,6 +421,15 @@ migrate_ops_repo() {
       migrated=true
     fi
   done
+
+  # Append-only run ledger layout (#1297): runs/, artifacts/, campaigns/
+  # (artifacts/.gitignore + runs/README.md included; never overwrites)
+  if _ops_ledger_layout_current .; then
+    :
+  else
+    echo "  + Created: runs/ artifacts/ campaigns/ (run-ledger layout)"
+    migrated=true
+  fi
 
   # Template files to create if missing (starter content)
   local -a template_files=(
