@@ -3,7 +3,7 @@
 # tools/cut-release.sh — cut a disinto release in one verifiable command (#1228)
 #
 # A release is: bump VERSION → commit → tag → push → wait for the tag-triggered
-# Woodpecker pipeline (.woodpecker/publish-images.yml) to publish all three GHCR
+# Woodpecker pipeline (.woodpecker/publish-images.yml) to publish all four GHCR
 # images → verify the packages are anonymously pullable → print the next steps
 # (release smoke + runbook).
 #
@@ -31,7 +31,7 @@
 # Env overrides (used by tests):
 #   GHCR_REGISTRY      (https://ghcr.io)
 #   GHCR_OWNER         (disinto)
-#   CUT_RELEASE_IMAGES (agents reproduce edge)
+#   CUT_RELEASE_IMAGES (agents reproduce edge research)
 #   WAIT_TIMEOUT_SECS  (1200)
 #   POLL_INTERVAL_SECS (30)
 #   PRIMARY_BRANCH     (main)
@@ -45,7 +45,7 @@ set -euo pipefail
 
 GHCR_REGISTRY="${GHCR_REGISTRY:-https://ghcr.io}"
 GHCR_OWNER="${GHCR_OWNER:-disinto}"
-CUT_RELEASE_IMAGES="${CUT_RELEASE_IMAGES:-agents reproduce edge}"
+CUT_RELEASE_IMAGES="${CUT_RELEASE_IMAGES:-agents reproduce edge research}"
 WAIT_TIMEOUT_SECS="${WAIT_TIMEOUT_SECS:-1200}"
 POLL_INTERVAL_SECS="${POLL_INTERVAL_SECS:-30}"
 PRIMARY_BRANCH="${PRIMARY_BRANCH:-main}"
