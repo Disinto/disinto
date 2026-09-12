@@ -38,6 +38,9 @@ VAULT_ALLOWED_MOUNTS="ssh gpg sops"
 # Usage: validate_vault_action <path-to-toml>
 # Returns: 0 if valid, 1 if invalid
 # Sets: VAULT_ACTION_ID, VAULT_ACTION_FORMULA, VAULT_ACTION_CONTEXT on success
+# Also sets (empty when the optional field is absent):
+# VAULT_ACTION_IMAGE, VAULT_ACTION_HOST, VAULT_ACTION_ARTIFACTS,
+# VAULT_ACTION_RESOURCE_CLASS (#1296)
 validate_vault_action() {
   local toml_file="$1"
 
@@ -77,11 +80,19 @@ validate_vault_action() {
   mounts_line=$(echo "$toml_content" | grep -E '^mounts\s*=' | tr -d '\r') || true
   mounts_array=$(echo "$mounts_line" | sed -E 's/^mounts\s*=\s*\[(.*)\]/\1/' | tr -d '[]"' | tr ',' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || true
 
+  # Extract research-run fields (optional, #1296)
+  local image_value host_value artifacts_value resource_class_value
+  image_value=$(echo "$toml_content" | grep -E '^image\s*=' | sed -E 's/^image\s*=\s*"(.*)"/\1/' | tr -d '\r') || true
+  host_value=$(echo "$toml_content" | grep -E '^host\s*=' | sed -E 's/^host\s*=\s*"(.*)"/\1/' | tr -d '\r') || true
+  # artifacts is a string or an array of strings; normalize to comma-joined list
+  artifacts_value=$(echo "$toml_content" | grep -E '^artifacts\s*=' | sed -E 's/^artifacts\s*=\s*//; s/^\[//; s/\]//; s/^[[:space:]]+//; s/[[:space:]]+$//' | tr -d '"' | tr -d '\r' | tr ',' ' ' | sed 's/  */ /g') || true
+  resource_class_value=$(echo "$toml_content" | grep -E '^resource_class\s*=' | sed -E 's/^resource_class\s*=\s*"(.*)"/\1/' | tr -d '\r') || true
+
   # Check for unknown fields (any top-level key not in allowed list)
   local unknown_fields
   unknown_fields=$(echo "$toml_content" | grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\s*=' | sed -E 's/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=.*/\1/' | sort -u | while read -r field; do
     case "$field" in
-      id|formula|context|secrets|mounts|model|tools|timeout_minutes|dispatch_mode|blast_radius) ;;
+      id|formula|context|secrets|mounts|model|tools|timeout_minutes|dispatch_mode|blast_radius|image|host|artifacts|resource_class) ;;
       *) echo "$field" ;;
     esac
   done)
@@ -174,17 +185,67 @@ validate_vault_action() {
     fi
   fi
 
+  # Validate optional research-run fields (#1296)
+
+  # image — container image for the run; default remains disinto/agents
+  if echo "$toml_content" | grep -qE '^image\s*='; then
+    if [ -z "$image_value" ]; then
+      echo "ERROR: 'image' must be a non-empty string" >&2
+      return 1
+    fi
+  fi
+
+  # host — alias from RESOURCES.md (resolver is a later wave)
+  if echo "$toml_content" | grep -qE '^host\s*='; then
+    if [ -z "$host_value" ]; then
+      echo "ERROR: 'host' must be a non-empty string" >&2
+      return 1
+    fi
+  fi
+
+  # artifacts — string or array of strings; runner rsyncs them into
+  # ops/artifacts/<action-id>/ (later wave)
+  if echo "$toml_content" | grep -qE '^artifacts\s*='; then
+    if [ -z "$artifacts_value" ]; then
+      echo "ERROR: 'artifacts' must be a non-empty string or array of strings" >&2
+      return 1
+    fi
+  fi
+
+  # resource_class — cpu | gpu | meep | voxel
+  if echo "$toml_content" | grep -qE '^resource_class\s*='; then
+    if [ -z "$resource_class_value" ]; then
+      echo "ERROR: 'resource_class' must be a non-empty string" >&2
+      return 1
+    fi
+    case "$resource_class_value" in
+      cpu|gpu|meep|voxel) ;;
+      *)
+        echo "ERROR: Invalid resource_class: $resource_class_value (must be cpu, gpu, meep or voxel)" >&2
+        return 1
+        ;;
+    esac
+  fi
+
   # Export validated values (for use by caller script)
   export VAULT_ACTION_ID="$id"
   export VAULT_ACTION_FORMULA="$formula"
   export VAULT_ACTION_CONTEXT="$context"
   export VAULT_ACTION_SECRETS="$secrets_array"
   export VAULT_ACTION_MOUNTS="${mounts_array:-}"
+  export VAULT_ACTION_IMAGE="${image_value:-}"
+  export VAULT_ACTION_HOST="${host_value:-}"
+  export VAULT_ACTION_ARTIFACTS="${artifacts_value:-}"
+  export VAULT_ACTION_RESOURCE_CLASS="${resource_class_value:-}"
 
   log "VAULT_ACTION_ID=$VAULT_ACTION_ID"
   log "VAULT_ACTION_FORMULA=$VAULT_ACTION_FORMULA"
   log "VAULT_ACTION_SECRETS=$VAULT_ACTION_SECRETS"
   log "VAULT_ACTION_MOUNTS=${VAULT_ACTION_MOUNTS:-none}"
+  log "VAULT_ACTION_IMAGE=${VAULT_ACTION_IMAGE:-none}"
+  log "VAULT_ACTION_HOST=${VAULT_ACTION_HOST:-none}"
+  log "VAULT_ACTION_ARTIFACTS=${VAULT_ACTION_ARTIFACTS:-none}"
+  log "VAULT_ACTION_RESOURCE_CLASS=${VAULT_ACTION_RESOURCE_CLASS:-none}"
 
   return 0
 }

@@ -40,6 +40,10 @@ if validate_vault_action "$TOML_FILE"; then
   echo "  Context: $VAULT_ACTION_CONTEXT"
   echo "  Secrets: $VAULT_ACTION_SECRETS"
   echo "  Mounts: ${VAULT_ACTION_MOUNTS:-none}"
+  echo "  Image: ${VAULT_ACTION_IMAGE:-none}"
+  echo "  Host: ${VAULT_ACTION_HOST:-none}"
+  echo "  Artifacts: ${VAULT_ACTION_ARTIFACTS:-none}"
+  echo "  Resource class: ${VAULT_ACTION_RESOURCE_CLASS:-none}"
   exit 0
 else
   echo "INVALID: $TOML_FILE" >&2
