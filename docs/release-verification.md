@@ -50,9 +50,9 @@ Stages (with `[N/6] PASS|FAIL|SKIP` markers, same convention as
    already committed and this stage is a no-op pass.
 3. **Tag + push** — annotated tag `v0.5.0`, push the tag and the branch.
    The tag push triggers `.woodpecker/publish-images.yml`, which publishes
-   `agents`, `reproduce`, `edge` as `v0.5.0` and `latest`.
+   `agents`, `reproduce`, `edge`, `research` as `v0.5.0` and `latest`.
 4. **Wait CI** — poll `https://ghcr.io/v2/disinto/<img>/manifests/v0.5.0`
-   (scoped anonymous token per image) until it returns 200 for all three
+   (scoped anonymous token per image) until it returns 200 for all four
    images; 20 min timeout, 30 s backoff. On timeout: `FAIL` with a Woodpecker
    pipeline hint (set `WOODPECKER_SERVER` for the exact URL).
 5. **Visibility** — the anonymous token exchange

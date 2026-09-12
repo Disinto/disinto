@@ -3,6 +3,7 @@
 #   - ghcr.io/disinto/agents:<tag>
 #   - ghcr.io/disinto/reproduce:<tag>
 #   - ghcr.io/disinto/edge:<tag>
+#   - ghcr.io/disinto/research:<tag>
 #
 # Timeouts:
 #   Workflow-level default (20m) applies to all steps unless overridden.
@@ -62,6 +63,20 @@ steps:
       repo: ghcr.io/disinto/edge
       registry: ghcr.io
       dockerfile: docker/edge/Dockerfile
+      context: .
+      tags:
+        - ${CI_COMMIT_TAG}
+        - latest
+      username: disinto
+      password:
+        from_secret: GHCR_TOKEN
+
+  - name: build-and-push-research
+    image: plugins/docker
+    settings:
+      repo: ghcr.io/disinto/research
+      registry: ghcr.io
+      dockerfile: docker/research/Dockerfile
       context: .
       tags:
         - ${CI_COMMIT_TAG}
