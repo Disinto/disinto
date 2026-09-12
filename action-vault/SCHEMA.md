@@ -25,6 +25,12 @@ model = "sonnet"
 tools = ["clawhub"]
 timeout_minutes = 30
 blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium"|"high")
+
+# Optional research-run fields (#1296)
+image = "disinto/agents"            # container image for the run (default when absent: disinto/agents)
+host = "nomad-box-1"                # alias from RESOURCES.md (resolver is a later wave)
+artifacts = ["results/*.csv"]       # string or array of strings; rsynced into ops/artifacts/<action-id>/
+resource_class = "gpu"              # cpu | gpu | meep | voxel
 ```
 
 ## Field Specifications
@@ -47,6 +53,10 @@ blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium
 | `tools` | array of strings | `[]` | MCP tools to enable during execution |
 | `timeout_minutes` | integer | `60` | Maximum execution time in minutes |
 | `blast_radius` | string | _(from policy.toml)_ | Override blast-radius tier for this invocation. Valid values: `"low"`, `"medium"`, `"high"`. See [docs/BLAST-RADIUS.md](../docs/BLAST-RADIUS.md) |
+| `image` | string | `disinto/agents` | Container image for the run. When absent the runner uses `disinto/agents` (#1296) |
+| `host` | string | _(unset)_ | Host alias from `RESOURCES.md` in the ops repo. The resolver is a later wave; the field is validated and recorded only (#1296) |
+| `artifacts` | string or array of strings | _(unset)_ | Glob(s) the runner rsyncs into `ops/artifacts/<action-id>/` after the run. Accepts `artifacts = "*.csv"` or `artifacts = ["a/*.csv", "b.md"]` (#1296) |
+| `resource_class` | string | _(unset)_ | Resource class for the run. Valid values: `"cpu"`, `"gpu"`, `"meep"`, `"voxel"` — any other value fails validation (#1296) |
 
 ## Secret Names
 
@@ -78,20 +88,22 @@ Mount aliases map to read-only volume flags passed to the runner container:
 3. **Secret validation**: All secrets in the `secrets` array must be in the allowlist
 4. **No unknown fields**: The TOML must not contain fields outside the schema
 5. **ID uniqueness**: The `id` must be unique across all vault actions
+6. **resource_class validation**: When present, `resource_class` must be one of `cpu`, `gpu`, `meep`, `voxel` (#1296)
 
 ## Example Files
 
-See `vault/examples/` for complete examples:
+See `action-vault/examples/` for complete examples:
 - `webhook-call.toml` - Example of calling an external webhook
 - `promote.toml` - Example of promoting a build/artifact
 - `publish.toml` - Example of publishing a skill to ClawHub
+- `run-experiment.toml` - Example of a research-run action using the optional `image`, `host`, `artifacts`, and `resource_class` fields (#1296)
 
 ## Usage
 
 Validate a vault action file:
 
 ```bash
-./vault/validate.sh vault/actions/<action-id>.toml
+./action-vault/validate.sh vault/actions/<action-id>.toml
 ```
 
 The validator will check:
@@ -99,3 +111,4 @@ The validator will check:
 - Secret names are in the allowlist
 - No unknown fields are present
 - Formula exists in the formulas directory
+- `resource_class` (when present) is one of `cpu`, `gpu`, `meep`, `voxel`

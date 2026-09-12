@@ -1,0 +1,33 @@
+# action-vault/examples/run-experiment.toml
+# Example: research-run vault action (#1296)
+#
+# Demonstrates the optional research-run fields added in #1296:
+# image, host, artifacts, resource_class. All four are optional —
+# a vault action without them still validates (see the other examples).
+#
+# The formula here is incidental (a mechanical, busybox-style task is
+# enough for a valid example); the research-kind dispatch of a real
+# experiment arrives in a later wave.
+
+id = "run-experiment-20260401"
+formula = "release"
+context = "Run the v0.6 research-kind experiment dry-run"
+
+# Secrets to inject (only these get passed to the container)
+secrets = ["DOCKER_HUB_TOKEN"]
+
+# Optional: container image for the run (default remains disinto/agents)
+image = "disinto/agents"
+
+# Optional: host alias from RESOURCES.md (resolver is a later wave)
+host = "nomad-box-1"
+
+# Optional: glob(s) the runner rsyncs into ops/artifacts/<action-id>/
+# (string or array of strings)
+artifacts = ["results/*.csv", "evidence/summary.md"]
+
+# Optional: resource class — cpu | gpu | meep | voxel
+resource_class = "gpu"
+
+# Optional: 60 minute timeout
+timeout_minutes = 60
