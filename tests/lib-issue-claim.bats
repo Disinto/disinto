@@ -133,6 +133,44 @@ setup() {
   source "${ROOT}/lib/issue-lifecycle.sh"
 }
 
+# ── issue_is_dev_claimable label gates (#608, #1306) ─────────────────────────
+
+# issue_is_dev_claimable is a pure label check (no HTTP), so no curl stub is
+# needed beyond what setup already installs.
+
+@test "issue_is_dev_claimable returns 1 for research labels (experiment/run/judgment)" {
+  # An experiment issue queued with backlog must stay unclaimable (#1306).
+  run issue_is_dev_claimable "backlog,experiment"
+  [ "$status" -eq 1 ]
+
+  run issue_is_dev_claimable "experiment"
+  [ "$status" -eq 1 ]
+
+  run issue_is_dev_claimable "run"
+  [ "$status" -eq 1 ]
+
+  run issue_is_dev_claimable "judgment,backlog"
+  [ "$status" -eq 1 ]
+}
+
+@test "issue_is_dev_claimable still skips bug-report/vision and accepts plain backlog" {
+  run issue_is_dev_claimable "bug-report"
+  [ "$status" -eq 1 ]
+
+  run issue_is_dev_claimable "vision"
+  [ "$status" -eq 1 ]
+
+  run issue_is_dev_claimable "backlog"
+  [ "$status" -eq 0 ]
+
+  run issue_is_dev_claimable "priority,backlog"
+  [ "$status" -eq 0 ]
+
+  # Exact-label match only — no substring false positives.
+  run issue_is_dev_claimable "artifacts-run,backlog"
+  [ "$status" -eq 0 ]
+}
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 # count_calls METHOD URL — count matching lines in $CALLS_LOG.

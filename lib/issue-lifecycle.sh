@@ -111,8 +111,10 @@ _ilc_remove_label() {
 # Labels that indicate an issue belongs to a non-dev agent workflow.
 # Any issue carrying one of these should NOT be touched by dev-poll's
 # stale-detection or orphan-recovery logic.  See issue #608.
+# Research-template labels (experiment/run/judgment) are not dev work even if
+# a gardener or human also queues them with backlog (#1306).
 # ---------------------------------------------------------------------------
-_ILC_NON_DEV_LABELS="bug-report vision in-triage prediction/unreviewed prediction/dismissed action formula awaiting-live-verification"
+_ILC_NON_DEV_LABELS="bug-report vision in-triage prediction/unreviewed prediction/dismissed action formula awaiting-live-verification experiment run judgment"
 
 # issue_is_dev_claimable COMMA_SEPARATED_LABELS
 # Returns 0 if the issue's labels are compatible with dev-agent ownership,
