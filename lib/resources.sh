@@ -29,8 +29,32 @@
 #     default to 0). First fit only — no placement policy. No SSH, no
 #     network, no LLM, no file writes.
 #
-# Return codes: 0 = ok; 1 = file missing, alias unknown, or no host picked;
-# 2 = usage error.
+# Llama slot lease (#1320, AD-002): an optional `## llama` section is the
+# machine-readable lease of the llama-server slots — under --kv-unified the
+# KV pool is shared, so the slots are a budget, not per-box capacity:
+#
+#   ## llama
+#   - slots: 4
+#   - holder: nomad-box 2
+#   - holder: selenocyte-box 1
+#
+#   resources_llama_slots <file>
+#     The integer `slots:` count; exit 1 when the file lacks a `## llama`
+#     section.
+#   resources_llama_held <file>
+#     Sum of the trailing holder counts (0 when there are no holder lines —
+#     a missing section is 0, not an error).
+#   resources_llama_free <file>
+#     slots minus held; exit 1 when the file lacks a `## llama` section.
+#
+#   A holder/slots value whose count is not a non-negative integer is a hard
+#   error: message on stderr, exit 2, no stdout. Files without `## llama`
+#   are valid and must not affect resources_hosts / resources_pick. No SSH,
+#   no HTTP, no file writes (hire/supervisor wiring is a follow-up).
+#
+# Return codes: 0 = ok; 1 = file missing, alias unknown, no `## llama`
+# section, or no host picked; 2 = usage error (or, for the llama
+# functions, a non-integer lease count).
 
 set -euo pipefail
 
@@ -172,4 +196,122 @@ resources_pick() {
 
   echo "resources_pick: no host of class '$class' with in-flight count below cap (file: $file)" >&2
   return 1
+}
+
+# _resources_llama_parsed <file> — emit the `## llama` section (#1320) as
+# TSV: one `slots<TAB><n>` line and one `holder<TAB><n>` line per holder
+# line (n = the trailing integer; the holder name is the rest of the value
+# and is discarded). Only lines inside the `## llama` section (up to the
+# next heading of any level, fenced code blocks skipped) are read. Returns
+# 1 when the file is missing; a non-integer count is a hard error: message
+# on stderr, return 2, no partial stdout.
+_resources_llama_parsed() {
+  local file="${1:-}"
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    return 1
+  fi
+  awk '
+    function trim(s) {
+      gsub(/^[ \t\r]+/, "", s)
+      gsub(/[ \t\r]+$/, "", s)
+      return s
+    }
+    { sub(/\r$/, "") }
+    /^```/ { incode = !incode; next }
+    incode { next }
+    /^#/ {
+      # `## llama` starts the lease section; any other heading (including
+      # `### ` host blocks) ends it.
+      inllama = ($0 ~ /^##[ \t]+llama[ \t]*$/) ? 1 : 0
+      next
+    }
+    inllama && /^[ \t]*-[ \t]+[A-Za-z0-9_]+:/ {
+      line = $0
+      field = line
+      sub(/^[ \t]*-[ \t]+/, "", field)
+      sub(/:.*$/, "", field)
+      value = line
+      sub(/^[ \t]*-[ \t]+[^:]*:[ \t]*/, "", value)
+      value = trim(value)
+      if (field == "slots") {
+        if (value !~ /^[0-9]+$/) {
+          printf "_resources_llama_parsed: non-integer slots count: %s (line %d)\n", value, FNR > "/dev/stderr"
+          exit 2
+        }
+        print "slots\t" value
+      } else if (field == "holder") {
+        n = split(value, parts, /[ \t]+/)
+        count = parts[n]
+        if (count !~ /^[0-9]+$/) {
+          printf "_resources_llama_parsed: non-integer holder count: %s (line %d)\n", value, FNR > "/dev/stderr"
+          exit 2
+        }
+        print "holder\t" count
+      }
+    }
+  ' "$file"
+}
+
+# resources_llama_slots <file> — print the integer slots count from the
+# `## llama` section. 0 = ok; 1 = file missing or no `## llama` section;
+# 2 = usage error or non-integer count.
+resources_llama_slots() {
+  local file="${1:-}" rows v
+  if [ -z "$file" ]; then
+    echo "usage: resources_llama_slots <file>" >&2
+    return 2
+  fi
+  if [ ! -f "$file" ]; then
+    echo "resources_llama_slots: file not found: $file" >&2
+    return 1
+  fi
+  rows="$(_resources_llama_parsed "$file")" || return 2
+  v="$(awk -F'\t' '$1 == "slots" { s = $2 } END { if (s != "") print s }' <<< "$rows")"
+  if [ -z "$v" ]; then
+    echo "resources_llama_slots: no '## llama' section (or no slots line) in $file" >&2
+    return 1
+  fi
+  printf '%s\n' "$v"
+}
+
+# resources_llama_held <file> — print the sum of the trailing holder
+# counts. 0 = ok (0 when there are no holder lines, including when the
+# section is missing); 1 = file missing; 2 = usage error or non-integer
+# count.
+resources_llama_held() {
+  local file="${1:-}" rows sum
+  if [ -z "$file" ]; then
+    echo "usage: resources_llama_held <file>" >&2
+    return 2
+  fi
+  if [ ! -f "$file" ]; then
+    echo "resources_llama_held: file not found: $file" >&2
+    return 1
+  fi
+  rows="$(_resources_llama_parsed "$file")" || return 2
+  sum="$(awk -F'\t' '$1 == "holder" { s += $2 } END { print s + 0 }' <<< "$rows")"
+  printf '%s\n' "$sum"
+}
+
+# resources_llama_free <file> — print slots minus held. 0 = ok;
+# 1 = file missing or no `## llama` section; 2 = usage error or
+# non-integer count.
+resources_llama_free() {
+  local file="${1:-}" rows slots held
+  if [ -z "$file" ]; then
+    echo "usage: resources_llama_free <file>" >&2
+    return 2
+  fi
+  if [ ! -f "$file" ]; then
+    echo "resources_llama_free: file not found: $file" >&2
+    return 1
+  fi
+  rows="$(_resources_llama_parsed "$file")" || return 2
+  slots="$(awk -F'\t' '$1 == "slots" { s = $2 } END { if (s != "") print s }' <<< "$rows")"
+  if [ -z "$slots" ]; then
+    echo "resources_llama_free: no '## llama' section (or no slots line) in $file" >&2
+    return 1
+  fi
+  held="$(awk -F'\t' '$1 == "holder" { s += $2 } END { print s + 0 }' <<< "$rows")"
+  printf '%s\n' $((slots - held))
 }

@@ -8,7 +8,11 @@
 
 load '../lib/resources.sh'
 
+REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+
 setup() {
+  # F — host inventory with NO `## llama` section (files without the
+  # section are valid; see #1320).
   F="${BATS_TEST_TMPDIR}/RESOURCES.md"
   cat > "$F" <<'EOF'
 # RESOURCES.md — test inventory
@@ -40,6 +44,25 @@ setup() {
 | Domain | Status |
 |--------|--------|
 | example.com | active |
+EOF
+
+  # L — same inventory plus a `## llama` lease section (#1320): 4 slots,
+  # nomad-box holds 2, selenocyte-box holds 1 → 1 free.
+  L="${BATS_TEST_TMPDIR}/RESOURCES-llama.md"
+  cat > "$L" <<'EOF'
+# RESOURCES.md — test inventory with a llama lease
+
+## Compute
+
+### alpha
+- class: cpu
+- ssh: dev@alpha.example.com
+- cap: 2
+
+## llama
+- slots: 4
+- holder: nomad-box 2
+- holder: selenocyte-box 1
 EOF
 }
 
@@ -148,4 +171,130 @@ EOF
   local rc=0
   resources_field "$F" zeta class || rc=$?
   [ "$rc" -eq 1 ]
+}
+
+# ── llama slot lease (#1320) ─────────────────────────────────────────────────
+
+@test "llama: slots/held/free on a leased section" {
+  [ "$(resources_llama_slots "$L")" = "4" ]
+  [ "$(resources_llama_held "$L")" = "3" ]
+  [ "$(resources_llama_free "$L")" = "1" ]
+}
+
+@test "llama: example file — free equals slots minus held" {
+  local slots held free
+  slots="$(resources_llama_slots "$REPO_ROOT/RESOURCES.example.md")"
+  held="$(resources_llama_held "$REPO_ROOT/RESOURCES.example.md")"
+  free="$(resources_llama_free "$REPO_ROOT/RESOURCES.example.md")"
+  [ "$slots" -ge 0 ] && [ "$held" -ge 0 ]
+  [ "$free" -eq $((slots - held)) ]
+}
+
+@test "llama: no section — slots/free exit 1, held is 0, pick still works" {
+  local rc=0
+  resources_llama_slots "$F" || rc=$?
+  [ "$rc" -eq 1 ]
+  rc=0
+  resources_llama_free "$F" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$(resources_llama_held "$F")" = "0" ]
+  # the host functions are unaffected by the absence of the section
+  [ "$(resources_hosts "$F")" = $'alpha\nbeta\ngamma' ]
+  [ "$(resources_pick "$F" cpu)" = "alpha" ]
+}
+
+@test "llama: a '## llama' section does not break host parsing" {
+  [ "$(resources_hosts "$L")" = "alpha" ]
+  [ "$(resources_pick "$L" cpu)" = "alpha" ]
+  [ "$(resources_field "$L" alpha class)" = "cpu" ]
+}
+
+@test "llama: no holder lines — held 0, free equals slots" {
+  local l2="${BATS_TEST_TMPDIR}/noholders.md"
+  cat > "$l2" <<'EOF'
+## llama
+- slots: 2
+EOF
+  [ "$(resources_llama_slots "$l2")" = "2" ]
+  [ "$(resources_llama_held "$l2")" = "0" ]
+  [ "$(resources_llama_free "$l2")" = "2" ]
+}
+
+@test "llama: a non-integer holder count is a hard error for all three functions" {
+  local l2="${BATS_TEST_TMPDIR}/badholder.md" rc=0 out
+  cat > "$l2" <<'EOF'
+## llama
+- slots: 4
+- holder: nomad-box two
+EOF
+  out="$(resources_llama_slots "$l2" 2>/dev/null)" || rc=$?
+  [ "$rc" -ne 0 ]
+  [ -z "$out" ]
+  rc=0
+  out="$(resources_llama_held "$l2" 2>/dev/null)" || rc=$?
+  [ "$rc" -ne 0 ]
+  [ -z "$out" ]
+  rc=0
+  out="$(resources_llama_free "$l2" 2>/dev/null)" || rc=$?
+  [ "$rc" -ne 0 ]
+  [ -z "$out" ]
+  # the error goes to stderr
+  [ -n "$(resources_llama_held "$l2" 2>&1 >/dev/null || true)" ]
+}
+
+@test "llama: a non-integer slots count is a hard error" {
+  local l2="${BATS_TEST_TMPDIR}/badslots.md" rc=0
+  cat > "$l2" <<'EOF'
+## llama
+- slots: 4 concurrent
+EOF
+  rc=0
+  resources_llama_slots "$l2" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+@test "llama: section inside a fenced code block is not the lease" {
+  local l2="${BATS_TEST_TMPDIR}/fenced.md" rc=0
+  cat > "$l2" <<'EOF'
+## Compute
+
+### alpha
+- class: cpu
+- ssh: dev@alpha.example.com
+- cap: 1
+
+## Notes
+
+```
+## llama
+- slots: 9
+```
+EOF
+  resources_llama_slots "$l2" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$(resources_pick "$l2" cpu)" = "alpha" ]
+}
+
+@test "llama: missing file is a non-zero exit for all three functions" {
+  local missing="${BATS_TEST_TMPDIR}/nope.md" rc=0
+  resources_llama_slots "$missing" || rc=$?
+  [ "$rc" -eq 1 ]
+  rc=0
+  resources_llama_held "$missing" || rc=$?
+  [ "$rc" -eq 1 ]
+  rc=0
+  resources_llama_free "$missing" || rc=$?
+  [ "$rc" -eq 1 ]
+}
+
+@test "llama: missing args are usage errors (rc 2)" {
+  local rc=0
+  resources_llama_slots || rc=$?
+  [ "$rc" -eq 2 ]
+  rc=0
+  resources_llama_held || rc=$?
+  [ "$rc" -eq 2 ]
+  rc=0
+  resources_llama_free || rc=$?
+  [ "$rc" -eq 2 ]
 }
