@@ -18,6 +18,14 @@
 #   ops repo: PATCH PR body, POST comments, close PR, merge PR
 #   project repo: NONE (only reads — issues, acceptance scripts, vision)
 #
+# Formula + green-gate selection (#1315): PROJECT_KIND (project TOML `kind`,
+# #1294) picks the architect formula — formulas/run-architect-research.toml
+# for research campaigns, formulas/run-architect.toml for everything else —
+# and the tracking green gate (check_subissue_green): research green = the
+# issue's action has a run-ledger row with exit 0 and artifacts present
+# (no closed/deployed/acceptance requirement); software green = closed +
+# deployed label + acceptance test rc=0.
+#
 # Usage:
 #   architect-run.sh [projects/disinto.toml]
 #
@@ -74,6 +82,52 @@ git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev
 if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(forge_whoami)
 fi
+
+# ── Formula + green-gate selection (#1315) ──────────────────────────────
+# PROJECT_KIND (project TOML `kind`, #1294) selects the architect formula:
+# research boxes decompose campaigns into experiment issues; every other
+# kind keeps the sprint-shaped formula. It also selects the tracking
+# green gate (check_subissue_green below): research green = run record
+# exit 0 + artifacts present, software green = closed + deployed +
+# acceptance rc=0. The state machine itself (round-robin,
+# q_and_a/tracking/mergeable dispatch) is identical for both.
+architect_formula_file() {
+  if [ "${PROJECT_KIND:-software}" = "research" ]; then
+    echo "$FACTORY_ROOT/formulas/run-architect-research.toml"
+  else
+    echo "$FACTORY_ROOT/formulas/run-architect.toml"
+  fi
+}
+ARCHITECT_FORMULA="$(architect_formula_file)"
+
+# Kind-aware "green" definition for the tracking text (the tracking
+# digest prompt). Research has no deploys — the deployed label is a
+# software-only gate (#1315).
+if [ "${PROJECT_KIND:-software}" = "research" ]; then
+  TRACKING_GREEN_DEF="a run record exists at ops/runs/<id>.json for the issue's action with exit 0, and the run's artifact paths are present under ops/artifacts/<action-id>/ (NOT the deployed label — research runs are never deployed, #1315)"
+else
+  TRACKING_GREEN_DEF="closed AND has deployed label AND acceptance test rc=0"
+fi
+
+# Kind-aware role text for the opus prompts (#1315): a research box has no
+# product to ship, so the decomposition target is research campaigns, not
+# development sprints, and the filed sub-issues are experiment issues.
+if [ "${PROJECT_KIND:-software}" = "research" ]; then
+  PITCH_NOUN="campaign"
+  SUBISSUE_TERM="experiment issues"
+  QA_ROLE_TEXT="Your role: strategic decomposition of the vision into research campaigns (a research box has no product to ship — no development sprints).
+Propose campaigns via PRs on the ops repo, converse with humans through PR comments.
+You are READ-ONLY on the project repo — experiment issues are filed by filer-bot after campaign PR merge (#764, #1315).
+Any sub-issue specification must go only into the filer:begin/filer:end block of the campaign pitch, as experiment entries (labels: [experiment] — never backlog features, #1295)."
+else
+  PITCH_NOUN="sprint"
+  SUBISSUE_TERM="sub-issues"
+  QA_ROLE_TEXT="Your role: strategic decomposition of vision issues into development sprints.
+Propose sprints via PRs on the ops repo, converse with humans through PR comments.
+You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
+Any sub-issue specification must go only into the filer:begin/filer:end block of the sprint pitch."
+fi
+log "architect formula: ${ARCHITECT_FORMULA##*/} (kind=${PROJECT_KIND:-software})"
 
 # ── Forgejo API helpers ─────────────────────────────────────────────────
 # All writes target ${FORGE_OPS_REPO} only.
@@ -224,9 +278,22 @@ extract_last_digest() {
 
 # ── Project repo read helpers ───────────────────────────────────────────
 
-# check_subissue_green <issue_number> — run acceptance test, check labels
-# Returns 0 if issue is green (closed + deployed label + acceptance rc=0)
+# check_subissue_green <issue> — kind-aware green gate (#1315).
+# Returns 0 if the issue is green. Research kind: the issue's action has a
+# run-ledger row with exit 0 and artifacts present (no closed/deployed/
+# acceptance requirement — research runs are never deployed). Software
+# kind (default): closed + deployed label + acceptance test rc=0.
 check_subissue_green() {
+  if [ "${PROJECT_KIND:-software}" = "research" ]; then
+    check_research_subissue_green "$1"
+  else
+    check_software_subissue_green "$1"
+  fi
+}
+
+# check_software_subissue_green <issue> — software green gate: closed +
+# deployed label + acceptance test rc=0.
+check_software_subissue_green() {
   local issue="$1"
   local issue_num="${issue#\#}"
 
@@ -256,6 +323,44 @@ check_subissue_green() {
 
   # No acceptance test or it failed — not green
   return 1
+}
+
+# check_research_subissue_green <issue> — research green gate (#1315).
+# Green = the filed experiment issue's action (carried by the
+# `<!-- action-id: <id> -->` marker in the issue body — the filer posts
+# the filer-block body verbatim, and the research formula's filer entries
+# carry the marker) has a run-ledger row with `exit: 0` and a non-empty
+# `artifacts` array. Run records are committed to the ops repo under
+# $OPS_REPO_ROOT/runs/ (artifact payloads are gitignored — the record's
+# artifacts array is the durable presence signal), so this reads the local
+# clone that ensure_ops_repo refreshes once per run (research kind only).
+# Fails closed: any API/jq/clone error is "not green", never an exception.
+check_research_subissue_green() {
+  local issue="$1"
+  local issue_num="${issue#\#}"
+
+  # Action id from the issue body marker
+  local body_json
+  body_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API_BASE}/repos/${FORGE_REPO}/issues/${issue_num}" 2>/dev/null) || return 1
+  local action_id
+  action_id=$(printf '%s' "$body_json" | jq -r '.body // ""' 2>/dev/null \
+    | grep -oP '<!--\s*action-id:\s*\K[a-z0-9][a-z0-9-]*' | head -n 1) || true
+  if [ -z "$action_id" ]; then
+    log "issue #${issue_num}: no action-id marker in body — not green"
+    return 1
+  fi
+
+  # Run records live in git under $OPS_REPO_ROOT/runs/
+  local runs_dir="${OPS_REPO_ROOT:-}/runs"
+  [ -n "$runs_dir" ] && [ -d "$runs_dir" ] || return 1
+  local rows
+  rows=$(find "$runs_dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null) || return 1
+  [ -n "$rows" ] || return 1
+  printf '%s\n' "$rows" | xargs -r jq -s \
+    --arg a "$action_id" \
+    '[ .[] | select(.action_id == $a and .exit == 0 and ((.artifacts // []) | length) > 0) ] | length > 0' \
+    2>/dev/null | grep -q '^true$'
 }
 
 # get_last_digest_state <pr_body> — extract issue states from last digest marker
@@ -314,7 +419,7 @@ _dispatch_opus_qa() {
   local pr="$1" body="$2"
 
   # Load formula + context for the opus session
-  load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || return 1
+  load_formula_or_profile "architect" "$ARCHITECT_FORMULA" || return 1
   build_context_block VISION.md AGENTS.md ops:prerequisites.md
   formula_prepare_profile_context
   build_graph_section
@@ -327,14 +432,11 @@ _dispatch_opus_qa() {
   prompt=$(cat <<_PROMPT_EOF_
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
 
-Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments.
-You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
-DO NOT create issues, PRs, or any other resource on the project repo. Any sub-issue
-specification must go only into the filer:begin/filer:end block of the sprint pitch.
-If you think sub-issues should be filed, write them into the sprint file's filer:begin
-block only. You do not have permission to POST to the project repo and any such call
-will return 403 and fail this run.
+${QA_ROLE_TEXT}
+DO NOT create issues, PRs, or any other resource on the project repo.
+If you think ${SUBISSUE_TERM} should be filed, write them into the ${PITCH_NOUN} file's
+filer:begin block only. You do not have permission to POST to the project repo and
+any such call will return 403 and fail this run.
 
 ## CURRENT STATE: Design Q&A in progress
 
@@ -445,7 +547,7 @@ dispatch_tracking() {
 _dispatch_opus_tracking_digest() {
   local pr="$1" states="$2"
 
-  load_formula_or_profile "architect" "$FACTORY_ROOT/formulas/run-architect.toml" || return 1
+  load_formula_or_profile "architect" "$ARCHITECT_FORMULA" || return 1
   build_context_block VISION.md AGENTS.md ops:prerequisites.md
   formula_prepare_profile_context
   build_graph_section
@@ -457,12 +559,12 @@ You are the architect agent for ${FORGE_REPO}.
 
 ## CURRENT STATE: Tracking filed sub-issues
 
-A sprint PR has been approved and sub-issues have been filed. You are tracking
-their progress. The current state of each filed issue:
+A ${PITCH_NOUN} PR has been approved and ${SUBISSUE_TERM} have been filed. You are
+tracking their progress. The current state of each filed issue:
 
 ${states}
 
-"green" = closed AND has deployed label AND acceptance test rc=0
+"green" = ${TRACKING_GREEN_DEF}
 "pending" = not yet green
 
 Your task:
@@ -554,6 +656,14 @@ if [ -z "$LAST_SEEN" ]; then
 fi
 
 NOW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# 4a. Research kind: refresh the local ops repo clone so the green gate
+#     (check_research_subissue_green) reads the latest committed run records
+#     (runs/ is in git; artifact payloads are gitignored — the record's
+#     artifacts array is the presence signal, #1315).
+if [ "${PROJECT_KIND:-software}" = "research" ]; then
+  ensure_ops_repo || log "WARNING: ensure_ops_repo failed — research green gate may read stale run records"
+fi
 
 # 4. Detect state and dispatch
 # Reject takes priority at any point in the lifecycle

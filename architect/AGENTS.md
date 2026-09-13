@@ -15,7 +15,7 @@ architect no longer generates pitches.
 
 - **Input**: Existing open architect sprint PRs on the ops repo, plus VISION.md and prerequisite-tree context
 - **Output**: PR-comment Q&A on existing architect PRs; finalized `## Sub-issues` block in the sprint spec once design forks are resolved
-- **Mechanism**: Bash-driven state machine in `architect/architect-run.sh`, response/Q&A formula via `formulas/run-architect.toml`
+- **Mechanism**: Bash-driven state machine in `architect/architect-run.sh`, response/Q&A formula via the kind-selected formula — `formulas/run-architect.toml` (software), or `formulas/run-architect-research.toml` when `PROJECT_KIND=research` (#1315)
 - **Identity**: `architect-bot` on Forgejo (READ-ONLY on project repo, write on ops repo only — #764)
 
 ## Lifecycle states
@@ -61,6 +61,15 @@ sub-issues are green.
 - For each sub-issue: read state (open/closed), check for `deployed` label,
   run `tests/acceptance/issue-<n>.sh` and capture rc.
 - "Green" = closed AND has `deployed` label AND acceptance test rc=0.
+- Research kind (#1315): "Green" = the issue's action (the
+  `<!-- action-id: <id> -->` marker in the issue body) has a run-ledger row
+  in `ops/runs/*.json` with `exit: 0` AND a non-empty `artifacts` array
+  (artifact payloads are gitignored — the row's array is the presence
+  signal; run records are pulled into the local ops clone via
+  `ensure_ops_repo` once per run). NOT the `deployed` label, NOT closed,
+  NOT an acceptance test — research runs are never deployed. The filed
+  sub-issues are experiment issues (`experiment` label, #1295), not
+  `backlog` features.
 - If state changed since last digest comment → opus session writes one digest
   comment.
 - If no state change → skip opus call.
@@ -96,8 +105,9 @@ state.
 | Operator comment starting `Reject:` | ops PR comment thread | close PR, no opus |
 | Forgejo APPROVED review state | ops PR review | enters approved_idle |
 | `## Filed: #N1 #N2 ...` marker in PR body | filer-bot writes (companion issue) | enters tracking |
-| `deployed` label on sub-issue | external deploy script | tracking gate |
-| `tests/acceptance/issue-<n>.sh` rc=0 | acceptance test | tracking gate |
+| `deployed` label on sub-issue (software kind only) | external deploy script | tracking gate |
+| `tests/acceptance/issue-<n>.sh` rc=0 (software kind only) | acceptance test | tracking gate |
+| `ops/runs/<id>.json` row `exit: 0` + artifacts present (research kind, #1315) | run ledger (run-experiment dispatch, #1308) | tracking gate |
 
 ## Write-permission contract
 
@@ -111,14 +121,37 @@ any POST to the project repo's `/issues` endpoint and fails loudly on detection.
 
 ## Formula
 
-Architect response/Q&A is driven by `formulas/run-architect.toml`. This formula
-defines the steps for:
+**Formula + green-gate selection (#1315)**: `architect-run.sh` selects the
+formula from `PROJECT_KIND` (project TOML `kind`, #1294) before any
+dispatch: `research` → `formulas/run-architect-research.toml`; every other
+kind → `formulas/run-architect.toml` (unchanged). `PROJECT_KIND` also
+selects the tracking green gate: `check_subissue_green` dispatches to
+`check_research_subissue_green` (the issue's `<!-- action-id: <id> -->`
+marker has a run-ledger row with `exit: 0` and a non-empty `artifacts`
+array — no closed/deployed/acceptance requirement) or
+`check_software_subissue_green` (closed + `deployed` + acceptance rc=0).
+The state machine itself (round-robin, q_and_a / approved_idle / tracking /
+mergeable dispatch) is identical for both.
+
+Software (`formulas/run-architect.toml`) defines the steps for:
 - Design Q&A: refining the sprint via PR comments after human engagement
 - Sub-issue finalization: writing the `## Sub-issues` block once forks are resolved
 - Tracking digests: summarizing sub-issue progress
 
+Research (`formulas/run-architect-research.toml`, #1315) is the same
+lifecycle shaped for a research box:
+- Campaigns, not product sprints — spec notes under `$OPS_REPO_ROOT/campaigns/`
+- Filer block entries are **experiment issues**: `labels: [experiment]`
+  (#1295 template — image, argv/tool, host class, artifact glob, resource
+  class), never `backlog` features; filer-bot posts them with the
+  `experiment` label (`formulas/file-subissues.toml` is kind-aware — #1315)
+- Tracking green = the issue's `<!-- action-id: <id> -->` marker has a
+  run-ledger row in `ops/runs/*.json` with `exit: 0` and a non-empty
+  `artifacts` array — NOT the `deployed` label, NOT closed, NOT an
+  acceptance test (research runs are never deployed)
+
 Vision pitching is owned by the gardener (`formulas/pitch-vision.toml` —
-#871, #877, #897), not by this formula.
+#871, #877, #897), not by either formula.
 
 ## Bash-driven orchestration
 
@@ -187,3 +220,6 @@ empty file not created, just document it).
 - #764: Permission scoping — architect read-only on project repo, filer-bot files sub-issues
 - #897: Vision pitching moved to gardener
 - #901: Forgejo-state-driven lifecycle rewrite (Q&A + tracking + auto-merge)
+- #1294: project TOML `kind` (`PROJECT_KIND`) — research vs software boxes
+- #1295: experiment issue template + research labels (`experiment` label)
+- #1315: research-mode architect — kind-selected formula, experiment filer entries, run-ledger tracking green
