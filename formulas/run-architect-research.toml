@@ -1,0 +1,183 @@
+# formulas/run-architect-research.toml — Research-mode architect formula (v1)
+#
+# Executed by architect-run.sh via polling loop when PROJECT_KIND=research
+# (project TOML `kind`, #1294) — #1315. Software projects (the default)
+# keep formulas/run-architect.toml unchanged.
+#
+# Same lifecycle as the software formula (q_and_a → approved_idle →
+# tracking → mergeable on ops-repo `architect:` PRs), but the shape of the
+# work is different:
+#   - Campaigns, not product sprints. A research box has no product to ship
+#     — VISION.md here is an experiment program. Spec files live under
+#     $OPS_REPO_ROOT/campaigns/ (the research prerequisite tree, #1314).
+#   - Filer block entries are EXPERIMENT ISSUES (template + `experiment`
+#     label, #1295) — not `backlog` feature issues. dev-bot never claims
+#     the `experiment` label (#1306); the dispatch/run-experiment pipeline
+#     does.
+#   - Tracking green = run record `ops/runs/<id>.json` with `exit: 0` AND
+#     the run's artifact paths present under `ops/artifacts/<action-id>/`.
+#     NOT the `deployed` label — research runs are never deployed (#1315).
+#
+# Permission model (#764) — unchanged from the software formula:
+#   architect-bot: READ-ONLY on the project repo (GET issues/PRs/labels for
+#     context only). Cannot POST/PUT/PATCH/DELETE any project-repo resource.
+#     Write access ONLY on the ops repo (branches, PRs, comments).
+#     DO NOT create issues on the project repo. The filer block is the only
+#     channel for sub-issues: filer-bot files the experiment issues after
+#     the campaign PR merges (with the `experiment` label when
+#     PROJECT_KIND=research — #1315).
+#   Any attempt to POST to the project repo returns 403 and fails the run;
+#     the `check_architect_issue_filing` guard in architect-run.sh fails
+#     loudly if it happens anyway.
+#
+# Architecture: bash-driven state machine in architect-run.sh; stateless
+# model calls with no Forgejo writes on the project repo.
+#
+# AGENTS.md maintenance is handled by the gardener (#246).
+
+name        = "run-architect-research"
+description = "Architect (research): campaign decomposition into experiment issues"
+version     = 1
+model       = "opus"
+
+[context]
+files = ["VISION.md", "AGENTS.md"]
+# Campaign notes loaded from ops repo (ops: prefix) — the research
+# prerequisite tree, $OPS_REPO_ROOT/campaigns/*.md (#1314)
+
+[[steps]]
+id    = "preflight"
+title = "Preflight: bash-driven state management for campaign PRs"
+description = """
+This step is handled by bash (architect-run.sh), NOT the model — same
+round-robin state machine as the software formula:
+
+- Bash lists open `architect:`-prefixed PRs on the ops repo, sorts by the
+  `<!-- architect-last-seen: -->` marker, and processes the head of the
+  queue per tick.
+- States: q_and_a (new operator comment), approved_idle (APPROVED review,
+  no `## Filed:` marker), tracking (`## Filed:` marker present, not all
+  green), mergeable (all green).
+- Campaign spec files live under $OPS_REPO_ROOT/campaigns/ (NOT sprints/ —
+  a research box has no product sprints, #1314/#1315). The campaign note
+  states the hypothesis, the runs it expects (action ids, hosts, images),
+  and the artifacts it expects.
+
+Output: bash dispatches the matching state handler. No action here.
+"""
+
+[[steps]]
+id    = "campaign_pitch"
+title = "Design Q&A: refine the campaign spec; filer entries are experiment issues"
+description = """
+You are conversing with the operator on an open campaign PR (or writing
+the campaign spec). The pitch is a research campaign, not a product
+sprint: what to learn, which runs produce the evidence, which artifacts
+must land.
+
+## Campaign spec shape
+
+  # Campaign: <campaign-name>
+
+  ## Hypothesis
+  <what this campaign tests>
+
+  ## What this campaign produces
+  <the evidence/artifacts the project will hold when the campaign is done>
+
+  ## Runs
+  <one line per expected run: action id, host class, image, artifacts>
+
+  ## Risks
+  <what could go wrong, what the run budget looks like>
+
+  ## Sub-issues
+
+  <!-- filer:begin -->
+  - id: <kebab-case-action-id>
+    title: "experiment(#N): <concise experiment title>"
+    labels: [experiment]
+    depends_on: []
+    body: |
+      <!-- action-id: <kebab-case-action-id> -->
+      ## Goal
+      <what this experiment establishes>
+      ## Image
+      <docker image the run executes in, e.g. disinto/meep:local>
+      ## Argv / tool
+      <the exact argv the run executes, e.g. mpb --resolution 256>
+      ## Host class
+      <Nomad class / host tier, e.g. meep-box>
+      ## Artifact glob
+      <glob matching the run outputs, e.g. results/*.h5>
+      ## Resource class
+      <cpu | gpu | meep | voxel>
+      ## Acceptance criteria
+      - [ ] Run record appears in ops/runs/ with exit 0
+      - [ ] Artifacts land under ops/artifacts/<action-id>/
+<!-- filer:end -->
+
+CRITICAL rules for the filer block:
+- Every entry is an EXPERIMENT ISSUE: `labels: [experiment]`. The
+  experiment template (#1295) requires image, argv/tool, host class,
+  artifact glob, and resource class — include all five sections in the
+  entry body. NEVER use `labels: [backlog]` — a research campaign files
+  experiments, not coding tickets; the dev-bot coding loop must never
+  claim these issues (#1295, #1306).
+- One filer entry per expected run (action id). The action id is the
+  kebab-case id — the run ledger and artifact dirs key off it.
+- Every entry body MUST start with the `<!-- action-id: <kebab-case-action-id> -->`
+  marker (the same id as the entry's `id:` field). The filer posts the body
+  verbatim, and the architect's bash green gate reads this marker from the
+  filed issue to find the run-ledger row for the experiment (#1315).
+- The `## Filed:` marker is appended by filer-bot, not you.
+- You have NO write access to the project repo. Sub-issues are filed by
+  filer-bot after the campaign PR merges — with the `experiment` label,
+  because PROJECT_KIND=research (#1315). Do NOT attempt to create issues
+  via API calls — the token will 403 and the run will fail.
+
+Refine the `<!-- filer:begin -->` ... `<!-- filer:end -->` block inline in
+the PR body during Q&A, and post a reply comment answering the operator's
+question. Do NOT close the PR — the operator drives the lifecycle.
+"""
+
+[[steps]]
+id    = "tracking_green"
+title = "Tracking: green = run record exit 0 + artifact present, not deployed"
+description = """
+Tracking a filed campaign: the `## Filed: #N1 #N2 ...` marker lists the
+experiment issues filer-bot created. For each, green means:
+
+1. A run record for the experiment's action id exists in the run ledger
+   ($OPS_REPO_ROOT/runs/*.json — append-only rows with id, action_id,
+   image, host, argv, started, ended, exit, artifacts; see
+   lib/run-ledger.sh) with `exit: 0`, AND
+2. the run's artifact paths are present under
+   $OPS_REPO_ROOT/artifacts/<action-id>/ (the row's `artifacts` field is
+   non-empty and the files exist).
+
+The action id is the `<!-- action-id: <id> -->` marker in the filed
+issue's body (the bash green gate reads the same marker — the filer
+posts the body verbatim).
+
+NOT the `deployed` label and NOT an acceptance test: research runs are
+never deployed, so the software green definition does not apply here
+(#1315). An experiment with no ledger row is pending. A row with
+`exit != 0` is pending (failed runs need a re-run or a judgment issue,
+not a merge).
+
+Digest (only when a filed issue's state changed since the last
+`<!-- architect-digest: -->` marker):
+1. Read the run ledger and the filed experiment issues (GET the issue
+   body for the action id / artifact expectations).
+2. Write one digest comment: for each issue, green (run id + artifact
+   count) or pending (missing run / failed run / artifacts missing).
+3. Update the PR body with a `<!-- architect-digest: TIMESTAMP #N:state
+   ... -->` marker (TIMESTAMP is ISO-8601 UTC; state is green/pending).
+4. When every filed experiment is green, bash transitions the PR to
+   mergeable and merges it — no action needed from you.
+
+If an experiment keeps failing, propose a `judgment`-labeled decision in
+the digest comment (the operator or planner closes it out) instead of
+re-filing the same run.
+"""
