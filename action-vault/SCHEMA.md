@@ -58,6 +58,29 @@ resource_class = "gpu"              # cpu | gpu | meep | voxel
 | `artifacts` | string or array of strings | _(unset)_ | Glob(s) the runner rsyncs into `ops/artifacts/<action-id>/` after the run. Accepts `artifacts = "*.csv"` or `artifacts = ["a/*.csv", "b.md"]` (#1296) |
 | `resource_class` | string | _(unset)_ | Resource class for the run. Valid values: `"cpu"`, `"gpu"`, `"meep"`, `"voxel"` — any other value fails validation (#1296) |
 
+## Dispatch behaviour (`image` and `artifacts`, #1307)
+
+How the dispatcher consumes the optional research-run fields:
+
+- **`image`** is passed through to the runner as-is. When the action
+  omits it, the dispatcher applies the per-backend agents-image default:
+  `disinto/agents:local` (Nomad backend — dispatch meta `image`, which
+  the `vault-runner` jobspec interpolates into the task `image`) or
+  `disinto/agents:latest` (Docker backend). The dispatcher never picks a
+  host; `host`/`resource_class` remain validated-only until a later wave.
+- **`artifacts`** globs are exposed to the runner as
+  `ARTIFACTS_GLOB` (comma-joined; empty when the action declares none),
+  alongside `ARTIFACTS_DIR=/artifacts`. The runner task gets a
+  **writeable** artifacts volume mounted at `/artifacts` — a Nomad host
+  volume (`vault-artifacts`, `/srv/disinto/vault-artifacts`) or a
+  per-action Docker bind under
+  `${VAULT_ARTIFACTS_DIR:-/var/lib/disinto/vault-artifacts}/<action-id>/`.
+  Runs write their outputs there.
+- **Collection is not the dispatcher's job**: copying the globbed files
+  into `ops/artifacts/<action-id>/` is run-experiment.sh's job
+  (#1308). The dispatcher only provides the writeable mount and passes
+  the globs through.
+
 ## Secret Names
 
 Secret names must have a corresponding `secrets/<NAME>.enc` file (age-encrypted). The vault validates that requested secrets exist in the allowlist before execution.

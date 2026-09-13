@@ -440,16 +440,23 @@ write_result() {
 # Pluggable launcher backends
 # -----------------------------------------------------------------------------
 
-# _launch_runner_docker ACTION_ID SECRETS_CSV MOUNTS_CSV
+# _launch_runner_docker ACTION_ID SECRETS_CSV MOUNTS_CSV IMAGE ARTIFACTS_CSV
 #
 # Builds and executes a `docker run` command for the vault runner.
 # Secrets are resolved via load_secret (lib/env.sh).
+# IMAGE may be empty — the disinto/agents:latest default applies then
+# (the action TOML's optional image field, #1307). ARTIFACTS_CSV is the
+# comma-joined action artifact globs (may be empty).
 # Returns: exit code of the docker run.  Stdout/stderr are captured to a temp
 #          log file whose path is printed to stdout (caller reads it).
 _launch_runner_docker() {
   local action_id="$1"
   local secrets_csv="$2"
   local mounts_csv="$3"
+  local image="$4"
+  local artifacts_csv="$5"
+
+  local image_name="${image:-disinto/agents:latest}"
 
   local -a cmd=(docker run --rm
     --name "vault-runner-${action_id}"
@@ -552,10 +559,21 @@ _launch_runner_docker() {
   # Mount the ops repo so the runner entrypoint can read the action TOML
   cmd+=(-v "${OPS_REPO_ROOT}:/home/agent/ops:ro")
 
-  # Image and entrypoint arguments: runner entrypoint + action-id
-  cmd+=(disinto/agents:latest /home/agent/disinto/docker/runner/entrypoint-runner.sh "$action_id")
+  # Writeable per-action artifacts drop (#1307). Collection into the ops
+  # repo is run-experiment.sh's job (#1308), not the dispatcher's.
+  local artifacts_root="${VAULT_ARTIFACTS_DIR:-/var/lib/disinto/vault-artifacts}"
+  local artifacts_dir="${artifacts_root}/${action_id}"
+  if mkdir -p "$artifacts_dir" 2>/dev/null; then
+    cmd+=(-v "${artifacts_dir}:/artifacts")
+    cmd+=(-e ARTIFACTS_DIR=/artifacts -e "ARTIFACTS_GLOB=${artifacts_csv}")
+  else
+    log "WARN: could not create artifacts dir ${artifacts_dir}; /artifacts not mounted for ${action_id}"
+  fi
 
-  log "Running: docker run --rm vault-runner-${action_id} (secrets: ${secrets_csv:-none}, mounts: ${mounts_csv:-none})"
+  # Image and entrypoint arguments: runner entrypoint + action-id
+  cmd+=("$image_name" /home/agent/disinto/docker/runner/entrypoint-runner.sh "$action_id")
+
+  log "Running: docker run --rm vault-runner-${action_id} (image: ${image_name}, secrets: ${secrets_csv:-none}, mounts: ${mounts_csv:-none}, artifacts: ${artifacts_csv:-none})"
 
   # Create temp file for logs
   local log_file
@@ -582,29 +600,41 @@ _launch_runner_docker() {
   return $exit_code
 }
 
-# _launch_runner_nomad ACTION_ID SECRETS_CSV MOUNTS_CSV
+# _launch_runner_nomad ACTION_ID SECRETS_CSV MOUNTS_CSV IMAGE ARTIFACTS_CSV
 #
 # Dispatches a vault-runner batch job via `nomad job dispatch`.
 # Polls `nomad job status` until terminal state (completed/failed).
 # Reads exit code from allocation and writes <action-id>.result.json.
 #
-# Usage: _launch_runner_nomad <action_id> <secrets_csv> <mounts_csv>
+# Usage: _launch_runner_nomad <action_id> <secrets_csv> <mounts_csv> <image> <artifacts_csv>
+# IMAGE may be empty — the disinto/agents:local default applies then
+# (the action TOML's optional image field, #1307). ARTIFACTS_CSV is the
+# comma-joined action artifact globs (may be empty).
 # Returns: exit code of the nomad job (0=success, non-zero=failure)
 _launch_runner_nomad() {
   local action_id="$1"
   local secrets_csv="$2"
   local mounts_csv="$3"
+  local image="$4"
+  local artifacts_csv="$5"
+
+  # The action TOML's optional image field; empty means "agents image" —
+  # the default the vault-runner job has historically run with (#1307).
+  image="${image:-disinto/agents:local}"
 
   log "Dispatching vault-runner batch job via Nomad for action: ${action_id}"
 
   # Dispatch the parameterized batch job
-  # The vault-runner job expects meta: action_id, secrets_csv
+  # The vault-runner job expects meta: action_id, secrets_csv, image,
+  # artifacts_csv (meta_required in vault-runner.hcl).
   # Note: mounts_csv is not passed as meta (not declared in vault-runner.hcl)
   local dispatch_output
   dispatch_output=$(nomad job dispatch \
     -detach \
     -meta action_id="$action_id" \
     -meta secrets_csv="$secrets_csv" \
+    -meta image="$image" \
+    -meta artifacts_csv="$artifacts_csv" \
     vault-runner 2>&1) || {
     log "ERROR: Failed to dispatch vault-runner job for ${action_id}"
     log "Dispatch output: ${dispatch_output}"
@@ -793,8 +823,16 @@ launch_runner() {
     mounts_csv=$(echo "${VAULT_ACTION_MOUNTS}" | xargs | tr ' ' ',')
   fi
 
+  # Optional image + artifacts fields (#1307). Empty image means "use the
+  # backend default" — the launcher applies it. artifacts_csv may be empty.
+  local image="${VAULT_ACTION_IMAGE:-}"
+  local artifacts_csv=""
+  if [ -n "${VAULT_ACTION_ARTIFACTS:-}" ]; then
+    artifacts_csv=$(echo "${VAULT_ACTION_ARTIFACTS}" | xargs | tr ' ' ',')
+  fi
+
   # Delegate to the selected backend
-  "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv"
+  "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv" "$image" "$artifacts_csv"
 }
 
 # -----------------------------------------------------------------------------

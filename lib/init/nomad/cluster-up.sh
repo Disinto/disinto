@@ -72,6 +72,7 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/caddy-data"
   "/srv/disinto/docker"
   "/srv/disinto/ops-repo"
+  "/srv/disinto/vault-artifacts"
   "/srv/disinto/snapshot-state"
   "/srv/disinto/threads-state"
   "/srv/disinto/inbox-state"
