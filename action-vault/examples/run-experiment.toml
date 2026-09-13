@@ -1,33 +1,37 @@
 # action-vault/examples/run-experiment.toml
-# Example: research-run vault action (#1296)
+# Example: research-run vault action (#1296, mechanical dispatch in #1308)
 #
 # Demonstrates the optional research-run fields added in #1296:
-# image, host, artifacts, resource_class. All four are optional —
-# a vault action without them still validates (see the other examples).
+# image, host, artifacts, resource_class.
 #
-# The formula here is incidental (a mechanical, busybox-style task is
-# enough for a valid example); the research-kind dispatch of a real
-# experiment arrives in a later wave.
+# For the run-experiment formula these drive a mechanical dispatch:
+#   - image is the container the command runs in (required by the formula)
+#   - context is the argv line, e.g. context = "echo ok"
+#   - host is an alias from RESOURCES.md; without it, resource_class picks
+#     the first fit; without either, the run dispatches locally
+#   - artifacts are copied into ops/artifacts/<action-id>/ after the run
 
 id = "run-experiment-20260401"
-formula = "release"
-context = "Run the v0.6 research-kind experiment dry-run"
+formula = "run-experiment"
+context = "echo ok"
 
-# Secrets to inject (only these get passed to the container)
-secrets = ["DOCKER_HUB_TOKEN"]
+# Secrets to inject (only these get passed to the container). The runner
+# installs SSH_KEY/SSH_KNOWN_HOSTS into ~/.ssh when present (AD-006).
+secrets = ["SSH_KEY", "SSH_KNOWN_HOSTS"]
 
-# Optional: container image for the run (default remains disinto/agents)
-image = "disinto/agents"
+# Container image for the run (required by the run-experiment formula)
+image = "busybox"
 
-# Optional: host alias from RESOURCES.md (resolver is a later wave)
+# Host alias from RESOURCES.md (omit to let resource_class pick, or both to
+# dispatch locally)
 host = "nomad-box-1"
 
-# Optional: glob(s) the runner rsyncs into ops/artifacts/<action-id>/
+# Glob(s) the runner collects into ops/artifacts/<action-id>/ after the run
 # (string or array of strings)
 artifacts = ["results/*.csv", "evidence/summary.md"]
 
-# Optional: resource class — cpu | gpu | meep | voxel
+# Resource class — cpu | gpu | meep | voxel
 resource_class = "gpu"
 
-# Optional: 60 minute timeout
+# 60 minute timeout
 timeout_minutes = 60

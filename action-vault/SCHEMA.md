@@ -28,8 +28,8 @@ blast_radius = "low"       # optional: overrides policy.toml tier ("low"|"medium
 
 # Optional research-run fields (#1296)
 image = "disinto/agents"            # container image for the run (default when absent: disinto/agents)
-host = "nomad-box-1"                # alias from RESOURCES.md (resolver is a later wave)
-artifacts = ["results/*.csv"]       # string or array of strings; rsynced into ops/artifacts/<action-id>/
+host = "nomad-box-1"                # alias from RESOURCES.md — resolved by run-experiment.sh (#1308)
+artifacts = ["results/*.csv"]       # string or array of strings; copied into ops/artifacts/<action-id>/ after the run (#1308)
 resource_class = "gpu"              # cpu | gpu | meep | voxel
 ```
 
@@ -41,7 +41,7 @@ resource_class = "gpu"              # cpu | gpu | meep | voxel
 |-------|------|-------------|
 | `id` | string | Unique identifier for the vault action. Format: `<action-type>-<date>` (e.g., `publish-skill-20260331`) |
 | `formula` | string | Formula name from `formulas/` directory that defines the operational task to execute |
-| `context` | string | Human-readable explanation of why this action is needed. Used in PR description |
+| `context` | string | Human-readable explanation of why this action is needed. Used in PR description. For the `run-experiment` formula it doubles as the argv line executed inside the container, e.g. `context = "echo ok"` (#1308) |
 | `secrets` | array of strings | List of secret names to inject into the execution environment. Only these secrets are passed to the container |
 
 ### Optional Fields
@@ -54,8 +54,8 @@ resource_class = "gpu"              # cpu | gpu | meep | voxel
 | `timeout_minutes` | integer | `60` | Maximum execution time in minutes |
 | `blast_radius` | string | _(from policy.toml)_ | Override blast-radius tier for this invocation. Valid values: `"low"`, `"medium"`, `"high"`. See [docs/BLAST-RADIUS.md](../docs/BLAST-RADIUS.md) |
 | `image` | string | `disinto/agents` | Container image for the run. When absent the runner uses `disinto/agents` (#1296) |
-| `host` | string | _(unset)_ | Host alias from `RESOURCES.md` in the ops repo. The resolver is a later wave; the field is validated and recorded only (#1296) |
-| `artifacts` | string or array of strings | _(unset)_ | Glob(s) the runner rsyncs into `ops/artifacts/<action-id>/` after the run. Accepts `artifacts = "*.csv"` or `artifacts = ["a/*.csv", "b.md"]` (#1296) |
+| `host` | string | _(unset)_ | Host alias from `RESOURCES.md` (ops repo, then factory). For the `run-experiment` formula, resolved by `formulas/run-experiment.sh` (#1308): `host` when set, else the first `resource_class` fit, else local dispatch. A missing `RESOURCES.md` or an unresolvable alias is a **failed run** (ledger row with non-zero exit) — never a hang |
+| `artifacts` | string or array of strings | _(unset)_ | Glob(s) `run-experiment.sh` copies into `ops/artifacts/<action-id>/` after the run (#1308). Accepts `artifacts = "*.csv"` or `artifacts = ["a/*.csv", "b.md"]` (#1296) |
 | `resource_class` | string | _(unset)_ | Resource class for the run. Valid values: `"cpu"`, `"gpu"`, `"meep"`, `"voxel"` — any other value fails validation (#1296) |
 
 ## Dispatch behaviour (`image` and `artifacts`, #1307)
@@ -67,7 +67,10 @@ How the dispatcher consumes the optional research-run fields:
   `disinto/agents:local` (Nomad backend — dispatch meta `image`, which
   the `vault-runner` jobspec interpolates into the task `image`) or
   `disinto/agents:latest` (Docker backend). The dispatcher never picks a
-  host; `host`/`resource_class` remain validated-only until a later wave.
+  host — for the `run-experiment` formula, host resolution happens inside
+  the formula (`formulas/run-experiment.sh`, #1308: `host` alias via
+  `RESOURCES.md`, else first `resource_class` fit, else local); for other
+  formulas `host`/`resource_class` remain validated-only.
 - **`artifacts`** globs are exposed to the runner as
   `ARTIFACTS_GLOB` (comma-joined; empty when the action declares none),
   alongside `ARTIFACTS_DIR=/artifacts`. The runner task gets a
@@ -119,7 +122,7 @@ See `action-vault/examples/` for complete examples:
 - `webhook-call.toml` - Example of calling an external webhook
 - `promote.toml` - Example of promoting a build/artifact
 - `publish.toml` - Example of publishing a skill to ClawHub
-- `run-experiment.toml` - Example of a research-run action using the optional `image`, `host`, `artifacts`, and `resource_class` fields (#1296)
+- `run-experiment.toml` - Example of a research-run action using the optional `image`, `host`, `artifacts`, and `resource_class` fields (#1296; mechanical SSH/image dispatch in #1308)
 
 ## Usage
 
