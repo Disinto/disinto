@@ -22,6 +22,8 @@ run-predictor       = "medium"
 run-supervisor      = "medium"
 run-architect       = "medium"
 upgrade-dependency  = "medium"
+# Mechanical SSH/image dispatch for research runs (#1308)
+run-experiment      = "medium"
 
 # External-facing or irreversible operations
 run-publish-site    = "high"
