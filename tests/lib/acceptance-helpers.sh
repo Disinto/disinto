@@ -143,6 +143,23 @@ ac_extract_fn() {
   ' "$file"
 }
 
+# ac_pick_in_subshell <kind> <fn-source> <fn-name> — run the function
+# given by <fn-source> (usually from ac_extract_fn) in a throwaway
+# subshell with a fixed fake FACTORY_ROOT and the given PROJECT_KIND
+# ("" = unset), then invoke <fn-name>. Prints the function's stdout
+# (e.g. the selected formula path) or the subshell's error text.
+# Shared by the kind-selection tests (issue-1314.sh, issue-1316.sh).
+ac_pick_in_subshell() {
+  local kind="${1:-}" fn_src="$2" fn_name="$3"
+  PICK_KIND="${kind:-}" PICK_FN="$fn_src" PICK_CALL="$fn_name" bash -c '
+    set -u
+    FACTORY_ROOT=/srv/disinto
+    [ -n "$PICK_KIND" ] && export PROJECT_KIND="$PICK_KIND"
+    eval "$PICK_FN"
+    "$PICK_CALL"
+  ' 2>&1
+}
+
 # ac_has_call_matching <pattern> — return 0 if any element of the test's
 # global CALLS array contains <pattern> as a substring.
 # shellcheck disable=SC2154  # CALLS is defined by the sourcing test
