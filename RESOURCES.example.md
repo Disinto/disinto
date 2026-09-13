@@ -52,3 +52,17 @@ Access / …) stay for humans and are ignored by the parser.
 - **Domains**: e.g. €30/yr — next renewal: 2025-11-01
 - **APIs**: e.g. $50/mo Anthropic — alert at $40
 - **Other**: any other constraints
+
+## llama
+
+Machine-readable lease of the llama-server slots (AD-002: with `--kv-unified`
+the KV pool is shared, so the slots are a budget, not per-box capacity).
+Parsed by `lib/resources.sh`: `resources_llama_slots` / `resources_llama_held`
+/ `resources_llama_free` (free = slots − the holder counts below). One
+`- holder:` line per in-flight lease; the integer after the holder name is
+how many slots it holds. Omit this whole section when there is no llama
+backend — a file without `## llama` is valid.
+
+- slots: 4
+- holder: nomad-box 2
+- holder: selenocyte-box 1
