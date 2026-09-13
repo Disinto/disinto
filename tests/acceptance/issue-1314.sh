@@ -44,36 +44,26 @@ ac_assert_file "$SOFTWARE_FORMULA" "formulas/run-planner.toml is missing"
 ac_assert_file "$RESEARCH_FORMULA" "formulas/run-planner-research.toml is missing"
 
 # ── 1+2. Behaviour: planner_formula_file() picks by PROJECT_KIND ───────────
+# <kind> empty = PROJECT_KIND unset. ac_pick_in_subshell runs the extracted
+# function in a throwaway subshell with a fixed fake FACTORY_ROOT (shared
+# helper — tests/lib/acceptance-helpers.sh).
 FN="$(ac_extract_fn planner_formula_file "$PLANNER_RUN")"
 [ -n "$FN" ] || ac_fail "planner_formula_file() not found in planner/planner-run.sh"
-
-# run_formula_pick <kind> — run the extracted function in a throwaway
-# subshell with a fixed fake FACTORY_ROOT; <kind> empty = PROJECT_KIND unset.
-# Prints the selected formula path (or the subshell's error text).
-run_formula_pick() {
-  PICK_KIND="${1:-}" PICK_FN="$FN" bash -c '
-    set -u
-    FACTORY_ROOT=/srv/disinto
-    [ -n "$PICK_KIND" ] && export PROJECT_KIND="$PICK_KIND"
-    eval "$PICK_FN"
-    planner_formula_file
-  ' 2>&1
-}
 
 SOFTWARE_PATH="/srv/disinto/formulas/run-planner.toml"
 RESEARCH_PATH="/srv/disinto/formulas/run-planner-research.toml"
 
-OUT="$(run_formula_pick "")"
+OUT="$(ac_pick_in_subshell "" "$FN" planner_formula_file)"
 ac_assert_eq "$OUT" "$SOFTWARE_PATH" \
   "absent PROJECT_KIND: expected $SOFTWARE_PATH, got $OUT"
 ac_log "selection: absent PROJECT_KIND -> run-planner.toml"
 
-OUT="$(run_formula_pick "software")"
+OUT="$(ac_pick_in_subshell "software" "$FN" planner_formula_file)"
 ac_assert_eq "$OUT" "$SOFTWARE_PATH" \
   "PROJECT_KIND=software: expected $SOFTWARE_PATH, got $OUT"
 ac_log "selection: PROJECT_KIND=software -> run-planner.toml"
 
-OUT="$(run_formula_pick "research")"
+OUT="$(ac_pick_in_subshell "research" "$FN" planner_formula_file)"
 ac_assert_eq "$OUT" "$RESEARCH_PATH" \
   "PROJECT_KIND=research: expected $RESEARCH_PATH, got $OUT"
 ac_log "selection: PROJECT_KIND=research -> run-planner-research.toml"

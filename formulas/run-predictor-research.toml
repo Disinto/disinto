@@ -1,0 +1,241 @@
+# formulas/run-predictor-research.toml — Research-mode predictor (v1)
+#
+# Executed by predictor/predictor-run.sh via polling loop when
+# PROJECT_KIND=research (project TOML `kind`, #1294) — #1316. Software
+# projects (the default) keep formulas/run-predictor.toml unchanged.
+#
+# A research box has no product to ship, so the software weakness list
+# (evidence dirs, prerequisite tree, addressables, deploy health) does not
+# apply. The weaknesses here are operational, read from the run ledger:
+#   1. host down           — a RESOURCES.md host with in-flight ledger rows
+#                            that never end, or no recent ledger rows at all
+#   2. cap starved         — in-flight below `cap` while runs are pending
+#                            (the box is leaving capacity on the table)
+#   3. artifact missing    — a ledger row with an empty `artifacts` array,
+#                            or payloads absent under
+#                            $OPS_REPO_ROOT/artifacts/<action-id>/
+#   4. llama lease exceeded — a run on the local inference host that outlived
+#                            the time/budget the host was leased for
+#   5. judgment sitting    — open `judgment` issues the ledger evidence
+#                            already answers (or that nobody is driving to a
+#                            decision)
+#
+# Predictions are filed `prediction/unreviewed` exactly like the software
+# formula — the planner triages them. No new polling loop: this formula
+# runs on the existing predictor cadence (predictor-run.sh, 24h).
+#
+# Steps: preflight → find-weakness-and-act
+
+name        = "run-predictor-research"
+description = "Research adversary: read the run ledger, hunt host/cap/artifact/lease/judgment weaknesses"
+version     = 1
+model       = "sonnet"
+
+[context]
+files = ["AGENTS.md", "VISION.md"]
+# RESOURCES.md loaded from ops repo (ops: prefix) — structured host blocks
+# (lib/resources.sh: class / ssh / cap / image). The run ledger
+# ($OPS_REPO_ROOT/runs/*.json) and artifact payloads
+# ($OPS_REPO_ROOT/artifacts/<action-id>/) are read in the preflight step.
+
+[[steps]]
+id    = "preflight"
+title = "Pull latest, gather history, load the run ledger"
+description = """
+Set up the working environment and load your prediction history plus the
+research operational state.
+
+1. Pull latest code:
+     cd "$PROJECT_REPO_ROOT"
+     git fetch origin "$PRIMARY_BRANCH" --quiet
+     git checkout "$PRIMARY_BRANCH" --quiet
+     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+
+2. Fetch ALL your previous predictions (open + recently closed):
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=closed&type=issues&labels=prediction%2Fdismissed&limit=50&sort=updated&direction=desc"
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=closed&type=issues&labels=prediction%2Factioned&limit=50&sort=updated&direction=desc"
+
+   For each prediction, note: what you predicted, what the planner decided
+   (comments — look for triage reasoning), and the outcome (actioned,
+   dismissed, unreviewed).
+
+3. Read the run ledger: $OPS_REPO_ROOT/runs/*.json (append-only run records;
+   fields include id, action_id, git_tree, image, host, argv, started,
+   ended, exit, artifacts — see lib/run-ledger.sh). A run is IN-FLIGHT when
+   it has `started` but no `ended`. Per host: in-flight = rows whose `host`
+   equals the alias with no `ended`; last-activity = most recent `started`.
+   Payloads live under $OPS_REPO_ROOT/artifacts/<action-id>/ (gitignored) —
+   the row's `artifacts` array is the presence signal, the files the proof.
+
+4. Read the host blocks in RESOURCES.md: structured `### <alias>` blocks
+   with `class:` (meep | cpu | gpu | control), `ssh:`, `cap:` (max
+   concurrent jobs), optional `image:`. Prose bullets are for humans —
+   lib/resources.sh ignores them, and so do you.
+
+5. Read the open judgment issues:
+     curl -sf -H "Authorization: token $FORGE_TOKEN" \
+       "$FORGE_API/issues?state=open&type=issues&labels=judgment&limit=20"
+   A judgment issue asks for a decision that research evidence must resolve.
+
+6. Check current system state (lightweight — don't over-collect):
+     free -m | head -2
+     df -h / | tail -1
+     tmux list-sessions 2>/dev/null || echo "no sessions"
+"""
+
+[[steps]]
+id    = "find-weakness-and-act"
+title = "Find the biggest operational weakness and act on it"
+description = """
+You are an adversary. A research box has no product to ship — the weakness
+you are hunting is in how the runs get done: the hosts, the capacity, the
+ledger, and the open decisions. Challenge, don't help.
+
+## Your track record
+
+Review your prediction history from the preflight step:
+- Which predictions did the planner action? Those are areas where your
+  instincts were right. The planner values those signals.
+- Which were dismissed? You were wrong or the planner disagreed. Don't
+  repeat the same theory without new evidence. If conditions have changed
+  since the dismissal, you may re-file with stronger evidence.
+
+## Finding weaknesses — the five operational classes
+
+For each class below, the evidence is the run ledger, the artifact payloads,
+and the RESOURCES.md host blocks. Don't scan everything every time — use
+your history to focus, and pick the class with the strongest signal.
+
+### Class 1: host down
+For each host block in RESOURCES.md: in-flight rows (has `started`, no
+`ended`) for that alias. An in-flight row older than a reasonable run
+duration is a host that died mid-run. A host with no ledger rows at all —
+or none recent — while campaigns or open `run` issues expect it, is
+unreachable or unconfigured. A dead host with stuck in-flight rows means
+pending work will never run.
+
+### Class 2: cap starved
+For each host: in-flight vs `cap`. If in-flight < cap and pending work
+(open `run`/`experiment` issues, or campaign runs not yet in the ledger)
+could run on the host's `class`, the host is leaving capacity on the table.
+Also challenge the caps themselves: a host pinned at cap with long average
+row durations may be the box's real bottleneck — that is a cap-starved
+theory even when every slot is full.
+
+### Class 3: artifact missing
+For each ledger row with `exit: 0`: is the `artifacts` array non-empty, and
+do the listed paths exist under $OPS_REPO_ROOT/artifacts/<action-id>/ ?
+A success row with no artifacts is an unproven result — the run "passed"
+without evidence. This is the research equivalent of a DONE item with no
+evidence: it is the weakest kind of DONE.
+
+### Class 4: llama lease exceeded
+For runs on the local inference host (rows whose `host` is the llama
+host, or `image`/`argv` indicate local-model inference): compare the row's
+runtime (`ended` - `started`, in-flight rows measured against now) against
+the time/budget the host was leased for (RESOURCES.md host block, lease
+notes in the campaigns, or the host's `cap`-and-duration envelope). A run
+that outlived its lease starves every other agent scheduled on that host —
+file the prediction naming the row id, the lease, and the overrun.
+
+### Class 5: judgment sitting
+For each open `judgment` issue: does the ledger already answer it? If the
+evidence (run ids, artifact paths, row counts) settles the decision, that
+is a prediction — the evidence exists and is sitting unread. If the
+judgment is blocked on a missing run or artifact, point the prediction at
+the missing run instead of re-arguing the decision.
+
+## Acting
+
+You have up to 5 actions per run (predictions + dispatches combined).
+
+For each weakness you identify, choose one:
+
+**EXPLORE** — low confidence, need more information:
+  File a prediction/unreviewed issue. The planner will triage it.
+
+  Body format:
+    <What you observed in the ledger/hosts/judgment issues. Why it's a
+    weakness. What could go wrong.>
+
+    ---
+    **Theory:** <your hypothesis>
+    **Confidence:** <low|medium>
+    **Evidence checked:** <run ids, host aliases, artifact paths, cap math>
+    **Suggested action:** <what the planner should consider>
+
+**EXPLOIT** — high confidence, have a theory you can test:
+  File a prediction/unreviewed issue AND a vault PR that dispatches
+  a formula to generate evidence (AD-006: external actions go through
+  vault).
+
+  The prediction explains the theory. The vault PR triggers the proof
+  after human approval. When the planner runs next, evidence is already
+  there.
+
+  Vault dispatch (requires lib/action-vault.sh):
+    source "$PROJECT_REPO_ROOT/lib/action-vault.sh"
+
+    TOML_CONTENT="id = \"predict-<prediction_number>-<formula>\"
+context = \"Test prediction #<prediction_number>: <theory summary> — focus: <specific test>\"
+formula = \"<formula-name>\"
+secrets = []
+# Unblocks: #<prediction_number>
+# Expected evidence: <ledger row / artifact path / host check>
+"
+    PR_NUM=$(vault_request "predict-<prediction_number>-<formula>" "$TOML_CONTENT")
+    echo "Vault PR #${PR_NUM} filed to test prediction #<prediction_number>"
+
+  Available formulas (check $PROJECT_REPO_ROOT/formulas/*.toml for current list):
+    cat "$PROJECT_REPO_ROOT/formulas/"*.toml | grep '^name' | head -10
+
+**SKIP** — nothing worth acting on:
+  Valid outcome. Not every run needs to produce a prediction.
+  But if you skip, write a brief note to your scratch file about why.
+
+## Filing (use tea CLI — labels by name, no ID lookup needed)
+
+tea is pre-configured with login "$TEA_LOGIN" and repo "$FORGE_REPO".
+
+1. File predictions (labels by name, no ID lookup):
+     tea issues create --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+       --title "<title>" --body "<body>" --labels "prediction/unreviewed"
+
+2. Dispatch formula via vault (if exploiting):
+     source "$PROJECT_REPO_ROOT/lib/action-vault.sh"
+     PR_NUM=$(vault_request "predict-NNN-<formula>" "$TOML_CONTENT")
+     # See EXPLOIT section above for TOML_CONTENT format
+
+3. Close superseded predictions:
+     tea issues close <number> --login "$TEA_LOGIN" --repo "$FORGE_REPO"
+
+4. Add a comment when closing (optional):
+     tea comment create <number> --login "$TEA_LOGIN" --repo "$FORGE_REPO" \
+       --body "Superseded by #NNN"
+
+5. Do NOT duplicate existing open predictions. If your theory matches
+   an open prediction/unreviewed issue, skip it.
+
+## Rules
+
+- Max 5 actions total (predictions + vault dispatches combined)
+- Each exploit counts as 2 (prediction + vault dispatch)
+- So: 5 explores, or 2 exploits + 1 explore, or 1 exploit + 3 explores
+- Never re-file a dismissed prediction without new evidence
+- Vault dispatches must reference existing formulas — don't invent formulas
+- Be specific: name the run id, the host alias, the cap, the artifact path,
+  the lease, the judgment issue number
+- Do NOT file software-shipping weaknesses (deploys, landing pages,
+  evidence dirs, addressables) — a research box has no product to ship;
+  the weakness classes above are the complete list
+- If no weaknesses found, file nothing — that's a strong signal the box
+  is healthy
+
+After filing (or deciding to skip), write PHASE:done to the phase file:
+  echo "PHASE:done" > "$PHASE_FILE"
+"""
+needs = ["preflight"]
