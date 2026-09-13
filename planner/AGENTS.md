@@ -47,18 +47,33 @@ Each project manages its own planner state in a separate ops repo.
 every 12 hours (iteration math at line 210-222). Accepts an optional project TOML argument,
 defaults to `projects/disinto.toml`. Sources `lib/guard.sh` and calls `check_active planner`
 first — skips if `$FACTORY_ROOT/state/.planner-active` is absent. Then creates a tmux session
-with `claude --model opus`, injects `formulas/run-planner.toml` as context, monitors the
+with `claude --model opus`, injects the kind-selected formula as context, monitors the
 phase file, and cleans up on completion or timeout. No action issues — the planner is a
 nervous system component, not work.
+
+**Formula selection (#1314)**: `planner-run.sh` selects the formula from `PROJECT_KIND`
+(project TOML `kind`, #1294) before the session lifecycle begins:
+`research` → `formulas/run-planner-research.toml` (files at most 3 issues per run —
+missing `ops/runs/` records vs `ops/campaigns/` notes, idle hosts below cap in
+RESOURCES.md, and open `judgment` labels — and never Fold-2 shipping issues); every
+other kind → `formulas/run-planner.toml` (unchanged). Only the formula selection
+branches on kind; the worktree, agent_run, and ops PR walk are identical.
 
 **Key files**:
 - `planner/planner-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
   sources disinto project config, builds structural analysis via `lib/formula-session.sh:build_graph_section()`,
   creates tmux session, injects formula prompt, monitors phase file, handles crash recovery, cleans up
-- `formulas/run-planner.toml` — Execution spec: six steps (preflight,
+- `formulas/run-planner.toml` — Execution spec (software kind, the default):
+  six steps (preflight,
   prediction-triage, update-prerequisite-tree, file-at-constraints,
   journal-and-memory, commit-ops-changes) with `needs` dependencies. Claude
   executes all steps in a single interactive session with tool access
+- `formulas/run-planner-research.toml` — Research-kind execution spec (#1314):
+  three steps (preflight, plan-research, commit-ops-changes). Files at most
+  3 issues per run from missing `ops/runs/` records vs `ops/campaigns/`
+  notes, idle hosts below cap in RESOURCES.md, and open `judgment` labels.
+  Does not file Fold-2 shipping issues. Campaign/prerequisite notes live
+  under `$OPS_REPO_ROOT/campaigns/`
 - `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
   grooming. (Note: the planner no longer dispatches breakdown mode — complex
   issues are labeled `vision` instead.)

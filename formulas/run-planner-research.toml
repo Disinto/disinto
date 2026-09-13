@@ -1,0 +1,179 @@
+# formulas/run-planner-research.toml — Research-mode planning formula (v1)
+#
+# Executed directly by planner-run.sh via polling loop when PROJECT_KIND=research
+# (project TOML `kind`, #1294) — no action issues. Software projects (the
+# default) keep formulas/run-planner.toml unchanged (#1314).
+#
+# A research box has no product to ship. This formula files at most 3 issues
+# per run, sourced from exactly three places:
+#   1. missing ops/runs/ records vs campaigns (a campaign note expects a run
+#      that the run ledger does not contain)
+#   2. idle hosts below cap in RESOURCES.md (in-flight < cap, work pending)
+#   3. open `judgment` labels (unresolved research decisions to close out)
+# It does NOT file Fold-2 shipping issues (landing pages, sprints, deploys).
+# Campaign/prerequisite notes live under $OPS_REPO_ROOT/campaigns/.
+#
+# Steps: preflight → plan-research → commit-ops-changes
+#
+# AGENTS.md maintenance is handled by the gardener (#246).
+# All git writes (campaign notes, vault items) happen in one commit at the
+# end. Journal writing is delegated to generic profile_write_journal().
+
+name        = "run-planner-research"
+description = "Research planner: files runs/hosts/artifacts issues, not Fold-2 sprints"
+version     = 1
+model       = "opus"
+
+[context]
+files = ["VISION.md", "AGENTS.md"]
+# RESOURCES.md loaded from ops repo (ops: prefix) — structured host blocks
+# (lib/resources.sh: class / ssh / cap / image). Campaign notes are read
+# from $OPS_REPO_ROOT/campaigns/*.md in the plan step.
+
+[[steps]]
+id    = "preflight"
+title = "Pull latest code, load run ledger, hosts, and campaign notes"
+description = """
+1. Change to the project repository:
+     cd "$PROJECT_REPO_ROOT"
+
+2. Pull the latest code:
+     git fetch origin "$PRIMARY_BRANCH" --quiet
+     git checkout "$PRIMARY_BRANCH" --quiet
+     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+
+3. Read the run ledger: $OPS_REPO_ROOT/runs/*.json (append-only run records;
+   fields include id, action_id, image, host, argv, started, ended, exit,
+   artifacts — see lib/run-ledger.sh). A run is IN-FLIGHT when it has
+   `started` but no `ended`. A host's in-flight count is the number of
+   in-flight records whose `host` equals its alias. Payloads live under
+   $OPS_REPO_ROOT/artifacts/<action-id>/ (gitignored) — never in git.
+
+4. Read the host blocks in RESOURCES.md: structured `### <alias>` blocks with
+   `class:` (meep | cpu | gpu | control), `ssh:`, `cap:` (max concurrent
+   jobs), optional `image:`. Prose bullets are for humans — lib/resources.sh
+   ignores them, and so do you.
+
+5. Read the campaign notes at $OPS_REPO_ROOT/campaigns/*.md — the research
+   equivalent of the prerequisite tree: each note states a hypothesis, the
+   runs it expects (action ids, hosts, images), and the artifacts it
+   expects. Create the directory if it does not exist.
+"""
+
+[[steps]]
+id    = "plan-research"
+title = "File runs/hosts/artifacts issues — not Fold-2 sprints"
+description = """
+The research planner files at most 3 issues per run, sourced from exactly
+three places, in this priority order. Do NOT file Fold-2 shipping issues
+(landing pages, sprints, deploys, site work): a research box has no product
+to ship — VISION.md here is an experiment program, not a product roadmap,
+and shipping-shaped issues are exactly what this formula exists to replace.
+
+### Source 1: missing runs/ records vs campaigns
+
+For each campaign note under $OPS_REPO_ROOT/campaigns/:
+  1. What runs does the campaign expect (action ids, host classes, count)?
+  2. Which of those runs are absent from the ledger ($OPS_REPO_ROOT/runs/*.json)
+     and not already covered by an open `run`- or `experiment`-labeled issue?
+  3. For the most blocking gap, file an issue labeled `run` (or `experiment`
+     when the campaign is exploratory) describing the missing run: action id,
+     expected host class or alias, image, and the artifacts expected under
+     $OPS_REPO_ROOT/artifacts/<action-id>/.
+
+### Source 2: idle hosts below cap in RESOURCES.md
+
+For each host block in RESOURCES.md:
+  1. In-flight = in-flight ledger records (has `started`, no `ended`) for
+     that `host` alias.
+  2. If in-flight < `cap` and at least one pending campaign run (Source 1
+     material, or any open `run` issue) could run on the host's `class`:
+     the host is idle below cap.
+  3. File at most one `run` issue per idle host: which campaign run goes
+     there, on which host alias, with which image.
+
+### Source 3: open judgment labels
+
+Fetch open issues labeled `judgment`:
+    curl -sf -H "Authorization: token $FORGE_TOKEN" \
+      "$FORGE_API/issues?state=open&type=issues&labels=judgment&limit=20"
+
+A judgment issue asks for a decision that research evidence must resolve.
+For each:
+  - If the ledger/campaign evidence answers it: comment the decision with
+    the evidence (run ids from $OPS_REPO_ROOT/runs/, artifact paths, campaign
+    note) and close the issue (tea_comment + tea_close).
+  - If the evidence is missing: it belongs to Source 1 — file the missing
+    run issue instead of re-arguing the judgment.
+Closing or commenting a judgment does not count against the 3-issue cap.
+
+Issue body template (gardener quality gate requires these sections):
+  ## Problem
+  <what is missing: a run record, host capacity, or a closed judgment>
+
+  ## Proposed solution
+  <concrete action: run action-id on host-alias with image, or the decision
+   to make and the evidence supporting it>
+
+  ## Affected files
+  - $OPS_REPO_ROOT/runs/<id>.json (or the campaign note at campaigns/<slug>.md)
+
+  ## Acceptance criteria
+  - [ ] Run record appears in $OPS_REPO_ROOT/runs/
+  - [ ] Artifacts land under $OPS_REPO_ROOT/artifacts/<action-id>/
+  - [ ] Campaign note updated
+  - [ ] CI green
+
+Use tea helpers to file:
+  tea_file_issue "<title>" "<body>" "run"   (or "experiment" / "artifact" / "judgment")
+Research-template labels are seeded by lib/forge-setup.sh RESEARCH_LABELS
+(#1295); dev-bot never claims them (issue_is_dev_claimable skips
+experiment/run/judgment — #1306), so these issues are safe backlog
+material for the dispatcher and run-experiment tooling, not dev-bot.
+
+Campaign notes: after filing, update or create $OPS_REPO_ROOT/campaigns/<slug>.md
+reflecting what was filed — the notes are the prerequisite tree for research
+(hypothesis, expected runs, expected artifacts, status: READY | BLOCKED | DONE).
+
+Rules:
+- At most 3 issues per run, across all three sources combined.
+- Dedup: skip if an open `run`/`experiment`/`artifact` issue already covers
+  the same action id, host alias, or campaign.
+- Do NOT file Fold-2 shipping issues — no landing pages, no sprints, no
+  deploy work. Never.
+- Leave existing software-shaped backlog issues as-is.
+- If a needed resource (new host, image, account) is missing from
+  RESOURCES.md, do not file a host issue: write a note under
+  $OPS_REPO_ROOT/campaigns/ and a vault procurement item at
+  $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md (What/Why/Human action/
+  Factory will then/Unblocks — dedup across pending/, approved/, fired/).
+
+CRITICAL: If any part of this step fails, log the failure and continue.
+"""
+needs = ["preflight"]
+
+[[steps]]
+id    = "commit-ops-changes"
+title = "Write campaign notes; commit and push the ops branch"
+description = """
+### 1. Write campaign notes
+Write the updated campaign notes to: $OPS_REPO_ROOT/campaigns/<slug>.md
+
+### 2. Commit ops repo changes to the planner branch
+Commit the ops repo changes (campaign notes, vault items) and push the
+branch. Do NOT push directly to $PRIMARY_BRANCH — planner-run.sh will create
+a PR and walk it to merge via review-bot.
+  cd "$OPS_REPO_ROOT"
+  git add campaigns/ vault/pending/
+  git add -u
+  if ! git diff --cached --quiet; then
+    git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
+    git push origin HEAD
+  fi
+  cd "$PROJECT_REPO_ROOT"
+
+### 3. Write journal entry (generic)
+The planner-run.sh wrapper will handle journal writing via profile_write_journal()
+after the formula completes. This step is informational only.
+"""
+needs = ["plan-research"]
