@@ -9,7 +9,8 @@
 #   2. systemd-nomad.sh            (nomad.service — unit + enable, not started)
 #   3. systemd-vault.sh            (vault.service — unit + vault.hcl + enable)
 #   4. Host-volume dirs            (/srv/disinto/* matching nomad/client.hcl)
-#   5. /etc/nomad.d/*.hcl          (server.hcl + client.hcl from repo)
+#   5. /etc/nomad.d/*.hcl          (server.hcl + client.hcl from repo; client
+#      gets a cpu_total_compute block appended when absent, #1323)
 #   6. vault-init.sh               (first-run init + unseal + persist keys)
 #   7. systemctl start vault       (auto-unseal via ExecStartPost; poll)
 #   8. systemctl start nomad       (poll until ≥1 ready node)
@@ -144,6 +145,7 @@ EOF
 [dry-run] Step 5/9: install /etc/nomad.d/server.hcl + client.hcl from repo
   → ${NOMAD_SERVER_HCL_SRC} → ${NOMAD_CONFIG_DIR}/server.hcl
   → ${NOMAD_CLIENT_HCL_SRC} → ${NOMAD_CONFIG_DIR}/client.hcl
+  → append client { cpu_total_compute = <nproc*3400> } to client.hcl if absent (#1323)
 
 [dry-run] Step 6/9: first-run vault init + persist unseal.key + root.token
   → sudo ${VAULT_INIT_SH}
@@ -191,6 +193,34 @@ install_file_if_differs() {
   fi
   log "writing: ${dst}"
   install -m "$mode" -o root -g root "$src" "$dst"
+}
+
+# ensure_client_cpu_total_compute FILE
+#   Nomad fingerprints the whole host's CPUs unless cpu_total_compute is set;
+#   in a capped LXC that schedules more work than the container can run
+#   (#1323). If FILE does not already declare the key, append a second
+#   client { } block — all *.hcl under /etc/nomad.d merge, so this augments
+#   (not replaces) the existing client blocks — with
+#   cpu_total_compute = <nproc> * 3400, the existing nomad-box convention
+#   (4 cores → 13600). nproc runs inside the target box, so the cap matches
+#   the box's real core count on every init. Idempotent: a second
+#   cluster-up on the same tree is a no-op.
+ensure_client_cpu_total_compute() {
+  local file="$1"
+  if grep -qE '^[[:space:]]*cpu_total_compute[[:space:]]*=' "$file"; then
+    log "unchanged: ${file} already declares cpu_total_compute"
+    return 0
+  fi
+  local cores total
+  cores="$(nproc)"
+  total=$((cores * 3400))
+  log "appending: cpu_total_compute = ${total} to ${file} (nproc=${cores}, 3400 MHz/core)"
+  {
+    printf '\n# Appended by lib/init/nomad/cluster-up.sh (#1323): a capped\n'
+    printf '# LXC container would otherwise fingerprint the host CPU total,\n'
+    printf '# so nomad would schedule work the container cannot run.\n'
+    printf 'client {\n  cpu_total_compute = %d\n}\n' "$total"
+  } >> "$file"
 }
 
 # vault_status_json — echo `vault status -format=json`, or '' on unreachable.
@@ -373,6 +403,9 @@ log "── Step 5/9: install /etc/nomad.d/{server,client}.hcl ──"
 install -d -m 0755 -o root -g root "$NOMAD_CONFIG_DIR"
 install_file_if_differs "$NOMAD_SERVER_HCL_SRC" "${NOMAD_CONFIG_DIR}/server.hcl" 0644
 install_file_if_differs "$NOMAD_CLIENT_HCL_SRC" "${NOMAD_CONFIG_DIR}/client.hcl" 0644
+# Per-box CPU cap: the repo client.hcl does not carry cpu_total_compute
+# (it must not — the value is the box's nproc, known only at init time).
+ensure_client_cpu_total_compute "${NOMAD_CONFIG_DIR}/client.hcl"
 
 # ── Step 6/9: vault-init (first-run init + unseal + persist keys) ────────────
 log "── Step 6/9: vault-init (no-op after first run) ──"
