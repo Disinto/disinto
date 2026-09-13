@@ -29,14 +29,20 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   gRPC error count in last 20 min, fast-failure pipeline count (<60s, last 15 min),
   and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
   automatic container restart + `blocked:ci_exhausted` issue recovery in
-  `supervisor-run.sh` before the Claude session starts.
+  `supervisor-run.sh` before the Claude session starts. Reports
+  **research runs** (added #1322): in-flight count + per-run ages (heartbeat)
+  from the run ledger at `${OPS_REPO_ROOT}/runs`, artifacts disk %, and oldest
+  open `judgment`-labeled issue age — the "Research Runs" section is omitted
+  when the ledger directory is absent (not a failure).
 - `formulas/run-supervisor.toml` — Execution spec: six steps (preflight review,
   health-assessment, decide-actions, report, incidents, journal) with `needs`
   dependencies. Claude evaluates all metrics and takes actions in a single
   interactive session. Health-assessment now includes P2 **Woodpecker agent
   unhealthy** classification (container not running, ≥3 gRPC errors/20m, or
-  ≥3 fast-failure pipelines/15m); decide-actions documents the pre-session
-  auto-recovery path
+  ≥3 fast-failure pipelines/15m) and research-run findings from the preflight
+  "Research Runs" section (added #1322): P1 artifacts disk > 80%, P2 in-flight
+  run older than 70 min, P3 oldest open judgment issue older than 4 h;
+  decide-actions documents the pre-session auto-recovery path
 - `supervisor/write-incident.sh` — Writes one markdown incident file per fired
   recipe (P0–P2 only) under `${OPS_REPO_ROOT}/incidents/`. Sources
   `lib/secret-scan.sh` for redaction; graceful exit in degraded mode.
