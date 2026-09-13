@@ -66,22 +66,22 @@ ac_assert_eq "$free" "1" "example free is not 1"
 ac_log "no '## llama' section: slots exits 1, pick still works"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-F="$TMP_DIR/RESOURCES.md"
-cat > "$F" <<'EOF'
+NO_LLAMA="$TMP_DIR/no-llama-section.md"
+cat > "$NO_LLAMA" <<'EOF'
 ## Compute
 
-### box-a
+### solo-box
 - class: cpu
-- ssh: dev@a.example.com
-- cap: 1
+- ssh: ops@solo.example.net
+- cap: 2
 EOF
-rc=0; resources_llama_slots "$F" || rc=$?
+rc=0; resources_llama_slots "$NO_LLAMA" || rc=$?
 [ "$rc" -eq 1 ] || ac_fail "resources_llama_slots exited $rc (expected 1) without a '## llama' section"
-rc=0; resources_llama_free "$F" || rc=$?
+rc=0; resources_llama_free "$NO_LLAMA" || rc=$?
 [ "$rc" -eq 1 ] || ac_fail "resources_llama_free exited $rc (expected 1) without a '## llama' section"
-ac_assert_eq "$(resources_llama_held "$F")" "0" \
+ac_assert_eq "$(resources_llama_held "$NO_LLAMA")" "0" \
   "resources_llama_held on a file without '## llama' is not 0"
-ac_assert_eq "$(resources_pick "$F" cpu)" "box-a" \
+ac_assert_eq "$(resources_pick "$NO_LLAMA" cpu)" "solo-box" \
   "resources_pick broke on a file without a '## llama' section"
 
 # ── 4. A non-integer holder count is a hard error ────────────────────────────
