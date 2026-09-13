@@ -224,13 +224,6 @@ ac_log "launch_runner: forwards image + artifacts_csv to the backend launcher"
 VALIDATE="$REPO_ROOT/action-vault/validate.sh"
 ac_assert_file "$VALIDATE" "action-vault/validate.sh is missing"
 
-run_validate() {
-  local f="$1"
-  V_RC=0
-  V_OUT="$(bash "$VALIDATE" "$f" 2>&1)" || V_RC=$?
-  return 0
-}
-
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -241,7 +234,11 @@ context = "Acceptance test for issue #1307"
 secrets = []
 bogus_field = "x"
 EOF
-run_validate "$TMP_DIR/vault-action.toml"
+# Direct invocation (no shared helper — this test validates a single TOML,
+# and the run_validate helper in issue-1296.sh is kept distinct for the
+# duplicate-code gate).
+V_RC=0
+V_OUT="$(bash "$VALIDATE" "$TMP_DIR/vault-action.toml" 2>&1)" || V_RC=$?
 [ "$V_RC" -ne 0 ] || ac_fail "unknown field: validation succeeded (must fail)"
 grep -q "Unknown fields" <<<"$V_OUT" \
   || ac_fail "unknown field: validation failed without an 'Unknown fields' error (got: ${V_OUT:0:300})"
