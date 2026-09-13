@@ -219,6 +219,18 @@ eval_escalate_phase_gt() {
   return 1
 }
 
+eval_judgment_age_h_gt() {
+  local section_text="$1"
+  local threshold="$2"
+  local age_h
+  age_h=$(printf '%s\n' "$section_text" | grep -oP 'Oldest judgment:\s+\K[0-9]+' | head -1)
+  if [ -n "${age_h:-}" ] && [ "$age_h" -gt "$threshold" ] 2>/dev/null; then
+    _EVIDENCE="Oldest judgment issue: ${age_h}h (threshold: >${threshold}h)"
+    return 0
+  fi
+  return 1
+}
+
 # ── Main logic ─────────────────────────────────────────────────────────────
 
 # Read preflight text once (works for regular files, named pipes, and FDs)
@@ -272,6 +284,8 @@ for ((i = 0; i < recipe_count; i++)); do
       eval_stuck_pr_gt "$section_text" "$detect_threshold" && _fired=true ;;
     escalate_phase_gt)
       eval_escalate_phase_gt "$section_text" "$detect_threshold" && _fired=true ;;
+    judgment_age_h_gt)
+      eval_judgment_age_h_gt "$section_text" "$detect_threshold" && _fired=true ;;
     *)
       echo "WARNING: unknown rule '$detect_rule' for recipe '$name'" >&2
       continue ;;

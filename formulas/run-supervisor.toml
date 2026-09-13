@@ -29,7 +29,8 @@ and injected into your prompt above. Review them now.
 
 1. Read the injected metrics data carefully (System Resources, Docker,
    Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
-   CI Pipelines, Open PRs, Issue Status, Stale Worktrees, **Woodpecker Agent Health**).
+   CI Pipelines, **Research Runs** (absent when no run ledger), Open PRs,
+   Issue Status, Stale Worktrees, **Woodpecker Agent Health**).
    Note: preflight.sh auto-removes PHASE:escalate files for closed issues
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
@@ -64,6 +65,7 @@ Categorize every finding from the metrics into priority levels.
 
 ### P1 — Disk pressure
 - Disk usage > 80%
+- Artifacts disk > 80% (Research Runs section — research-run payloads, #1322)
 
 ### P2 — Factory stopped / stalled
 - CI pipelines stuck running > 20min or pending > 30min
@@ -79,12 +81,16 @@ Categorize every finding from the metrics into priority levels.
   - Container not running or in unhealthy state
   - gRPC errors >= 3 in last 20 minutes
   - Fast-failure pipelines (duration < 60s) >= 3 in last 15 minutes
+- In-flight research run older than 70 min (Research Runs section — heartbeat
+  stale, #1322)
 
 ### P3 — Factory degraded
 - PRs stale: CI finished >20min ago AND no git push to the PR branch since CI completed
   (Do NOT flag PRs that are actively being worked on — only truly inactive ones)
 - Circular dependency deadlocks in backlog
 - Stale dependencies (blocked by issues open > 30 days)
+- Oldest open judgment-labeled issue older than 4 h (Research Runs section —
+  research run awaiting human verdict, #1322)
 
 ### P4 — Housekeeping
 - Stale worktrees > 2h old with no active process

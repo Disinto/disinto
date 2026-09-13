@@ -66,6 +66,92 @@ __preflight_cleanup_stale_phases() {
   [ "$_found_stale" = false ] && "$_out_fn" "  None"
 }
 
+# ── Research Runs Section ───────────────────────────────────────────────────
+# Emits the "## Research Runs" section (run-ledger metrics, #1297) when
+# ${OPS_REPO_ROOT}/runs exists; prints NOTHING otherwise — an absent ledger is
+# not a failure. Reports:
+#   - In-flight count: ledger rows with no `ended` or an empty `exit`
+#   - per-run age ("Nmin old") for each in-flight row (heartbeat)
+#   - Artifacts Disk usage % when ${OPS_REPO_ROOT}/artifacts exists
+#   - Oldest open `judgment`-labeled issue age in hours, or `none`
+#
+# Named function so the acceptance test (tests/acceptance/issue-1322.sh) can
+# extract and drive it hermetically (stubbed forge_api/date).
+#
+# Usage: __preflight_research_runs
+__preflight_research_runs() {
+  local _ops_root="${OPS_REPO_ROOT:-}"
+  [ -n "$_ops_root" ] || return 0
+  [ -d "${_ops_root}/runs" ] || return 0
+
+  local _now
+  _now=$(date +%s)
+
+  # In-flight: ledger rows with no `ended` or an empty `exit`
+  local _inflight=0
+  local _inflight_lines=""
+  local _run _rec_open _started_iso _started_epoch _run_age_min
+  for _run in "${_ops_root}"/runs/*.json; do
+    [ -f "$_run" ] || continue
+    _rec_open=$(jq -r '
+      ( ( has("ended") | not ) or (.ended == null) or (.ended == "") )
+      or ( ( has("exit") | not ) or (.exit == null) or (.exit == "") )
+    ' "$_run" 2>/dev/null || echo "false")
+    [ "$_rec_open" = "true" ] || continue
+    _inflight=$(( _inflight + 1 ))
+    _started_iso=$(jq -r '.started // empty' "$_run" 2>/dev/null || echo "")
+    _started_epoch=$(date -d "$_started_iso" +%s 2>/dev/null || echo "$_now")
+    _run_age_min=$(( (_now - _started_epoch) / 60 ))
+    [ "$_run_age_min" -gt 0 ] 2>/dev/null || _run_age_min=0
+    _inflight_lines="${_inflight_lines}  $(basename "$_run" .json): ${_run_age_min}min old"$'\n'
+  done
+
+  echo "## Research Runs"
+  echo "In-flight: ${_inflight}"
+  if [ -n "$_inflight_lines" ]; then
+    printf '%s' "$_inflight_lines"
+  fi
+
+  # Artifacts disk pressure (research-run payloads live under runs/artifacts/)
+  local _artifacts_dir="${_ops_root}/artifacts"
+  if [ -d "$_artifacts_dir" ]; then
+    local _artifacts_pct
+    _artifacts_pct=$(df -P "$_artifacts_dir" 2>/dev/null | awk 'NR==2{print $5}' | tr -d '%')
+    case "${_artifacts_pct:-}" in
+      '' | *[!0-9]*) _artifacts_pct=0 ;;
+    esac
+    echo "Artifacts Disk: ${_artifacts_pct}% used"
+  else
+    echo "Artifacts Disk: n/a"
+  fi
+
+  # Oldest open issue carrying the `judgment` label (a research run awaiting a
+  # human verdict) — age in hours, or `none`
+  local _judgment_json
+  _judgment_json=$(forge_api GET "/issues?state=open&labels=judgment&type=issues&limit=50" 2>/dev/null || echo "[]")
+  local _judg_ages
+  _judg_ages=$(printf '%s' "$_judgment_json" | jq -r '.[] | "\(.number)\t\(.created_at // "")"' 2>/dev/null || echo "")
+  local _judg_oldest_h="" _judg_oldest_num="" _num _created _ep _age_h
+  while IFS=$'\t' read -r _num _created; do
+    [ -n "${_created:-}" ] || continue
+    _ep=$(date -d "$_created" +%s 2>/dev/null || echo 0)
+    [ "${_ep:-0}" -gt 0 ] 2>/dev/null || continue
+    _age_h=$(( (_now - _ep) / 3600 ))
+    [ "$_age_h" -ge 0 ] 2>/dev/null || _age_h=0
+    if [ -z "$_judg_oldest_h" ] || [ "$_age_h" -gt "$_judg_oldest_h" ]; then
+      _judg_oldest_h="$_age_h"
+      _judg_oldest_num="$_num"
+    fi
+  done <<< "$_judg_ages"
+  if [ -n "$_judg_oldest_h" ]; then
+    echo "Oldest judgment: ${_judg_oldest_h}h (#${_judg_oldest_num})"
+  else
+    echo "Oldest judgment: none"
+  fi
+  echo ""
+  return 0
+}
+
 # ── Side-effect: preflight output (only when executed directly) ──────────
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
@@ -264,6 +350,12 @@ _pending=$(echo "$_pipelines" | jq --argjson now "$_now" '
 echo "Stuck (>20min): ${_stuck}"
 echo "Pending (>30min): ${_pending}"
 echo ""
+
+# ── Research Runs (run-ledger, #1297) ─────────────────────────────────────
+# Emitted only when ${OPS_REPO_ROOT}/runs exists (function prints nothing
+# otherwise — absence is not a failure, see __preflight_research_runs).
+
+__preflight_research_runs
 
 # ── Open PRs ──────────────────────────────────────────────────────────────
 
