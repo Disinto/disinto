@@ -7,8 +7,14 @@
 # (S5.4) via `nomad job dispatch`.
 #
 # Parameterized meta:
-#   action_id   — vault action identifier (used by entrypoint-runner.sh)
-#   secrets_csv — comma-separated secret names (e.g. "GITHUB_TOKEN,DEPLOY_KEY")
+#   action_id     — vault action identifier (used by entrypoint-runner.sh)
+#   secrets_csv   — comma-separated secret names (e.g. "GITHUB_TOKEN,DEPLOY_KEY")
+#   image         — container image for the run; the dispatcher applies the
+#                   disinto/agents:local default when the action TOML omits
+#                   the optional image field (#1307)
+#   artifacts_csv — comma-separated artifact globs from the action TOML
+#                   (may be empty); exposed in the task as ARTIFACTS_GLOB
+#                   against the writeable /artifacts volume (#1307)
 #
 # Vault integration (approach A — pre-defined templates):
 #   All 6 known runner secrets are rendered via template stanzas with
@@ -25,7 +31,7 @@ job "vault-runner" {
   datacenters = ["dc1"]
 
   parameterized {
-    meta_required = ["action_id", "secrets_csv"]
+    meta_required = ["action_id", "secrets_csv", "image", "artifacts_csv"]
   }
 
   group "runner" {
@@ -44,6 +50,15 @@ job "vault-runner" {
       read_only = true
     }
 
+    # Writeable artifacts volume (#1307): research runs drop outputs under
+    # /artifacts. Host path via the vault-artifacts host_volume
+    # (nomad/client.hcl). Collection into the ops repo is
+    # run-experiment.sh's job (#1308), not the dispatcher's.
+    volume "artifacts" {
+      type   = "host"
+      source = "vault-artifacts"
+    }
+
     # No restart for batch — fail fast, let the dispatcher handle retries.
     restart {
       attempts = 0
@@ -54,7 +69,10 @@ job "vault-runner" {
       driver = "docker"
 
       config {
-        image      = "disinto/agents:local"
+        # Image comes from the dispatch meta — the dispatcher passes the
+        # action TOML's optional image field, or its disinto/agents:local
+        # default when the action omits it (#1307).
+        image      = "${NOMAD_META_image}"
         force_pull = false
         entrypoint = ["bash"]
         args       = [
@@ -69,11 +87,23 @@ job "vault-runner" {
         read_only   = true
       }
 
+      # Writeable artifacts drop for research runs (#1307). No read_only —
+      # the task must be able to write here.
+      volume_mount {
+        volume      = "artifacts"
+        destination = "/artifacts"
+      }
+
       # ── Non-secret env ───────────────────────────────────────────────────────
       env {
         DISINTO_CONTAINER = "1"
         FACTORY_ROOT      = "/home/agent/disinto"
         OPS_REPO_ROOT     = "/home/agent/ops"
+        # Artifacts location (#1307): the writeable /artifacts volume, plus
+        # the action's artifact glob(s) passed through as-is (empty when the
+        # action declares none).
+        ARTIFACTS_DIR  = "/artifacts"
+        ARTIFACTS_GLOB = "${NOMAD_META_artifacts_csv}"
       }
 
       # ── Vault-templated runner secrets (approach A) ────────────────────────

@@ -87,6 +87,14 @@ client {
     read_only = false
   }
 
+  # Writeable artifact drop for vault-runner research runs (#1307):
+  # mounted at /artifacts inside the runner task. Collection into
+  # ops/artifacts/<action-id>/ is run-experiment.sh's job (#1308).
+  host_volume "vault-artifacts" {
+    path      = "/srv/disinto/vault-artifacts"
+    read_only = false
+  }
+
   # supervisor agent runtime data (logs, state files for Opus supervisor).
   host_volume "agent-data-opus-supervisor" {
     path      = "/srv/disinto/agent-data-opus-supervisor"
