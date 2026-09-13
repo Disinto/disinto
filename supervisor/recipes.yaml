@@ -163,3 +163,34 @@ recipes:
       threshold: 0
     action: direct
     action_script: supervisor/actions/cleanup-phase-files.sh
+
+  # ── Research Runs (run-ledger, #1293/#1297) ────────────────────────────
+  # Experiment-run health, all incident actions (a human or a bash recipe
+  # resolves — the supervisor only files the incident, #1322).
+
+  - name: artifacts-disk
+    severity: P1
+    detect:
+      source: preflight
+      section: "Research Runs"
+      rule: disk_pct_gt
+      threshold: 80
+    action: incident
+
+  - name: run-heartbeat-stale
+    severity: P2
+    detect:
+      source: preflight
+      section: "Research Runs"
+      rule: any_older_than_min
+      threshold: 70
+    action: incident
+
+  - name: judgment-stale
+    severity: P3
+    detect:
+      source: preflight
+      section: "Research Runs"
+      rule: judgment_age_h_gt
+      threshold: 4
+    action: incident
