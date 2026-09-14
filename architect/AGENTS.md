@@ -202,9 +202,11 @@ handled by filer-bot with its narrowly-scoped `FORGE_FILER_TOKEN`.
 
 ## Schedule
 
-The architect runs every 15 minutes as part of the polling loop in
-`docker/agents/entrypoint.sh` (iteration math at line 603-614). Configurable
-via `ARCHITECT_INTERVAL` environment variable (default: 900 = 15 minutes).
+The architect is started by the oak tick: the polling loop in
+`docker/agents/entrypoint.sh` runs one `oak/tick.sh` per project per
+`POLL_INTERVAL` (default 300s), and the tick's learned policy (`oak/`,
+pack at `$OPS_REPO_ROOT/pack.toml`) decides whether this tick starts
+`architect-run.sh` (#1333). The `architect` role in `AGENT_ROLES` gates it.
 
 ## State
 

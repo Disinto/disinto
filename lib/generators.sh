@@ -208,11 +208,8 @@ ${model_env}
       WOODPECKER_REPO_ID: "${wp_repo_id}"
       FORGE_BOT_USER_${user_upper}: "${forge_user}"
       POLL_INTERVAL: "${poll_interval_val}"
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: "${ARCHITECT_INTERVAL:-900}"
-      PLANNER_INTERVAL: "${PLANNER_INTERVAL:-43200}"
-      SUPERVISOR_INTERVAL: "${SUPERVISOR_INTERVAL:-1200}"
+      # Per-organ interval env vars retired (#872, #1333): the loop runs one
+      # oak/tick.sh per POLL_INTERVAL; the tick decides which organ starts.
     depends_on:
       forgejo:
         condition: service_healthy
@@ -531,10 +528,8 @@ services:
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
-      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
+      # Per-organ interval env vars retired (#872, #1333): the loop runs one
+      # oak/tick.sh per POLL_INTERVAL; the tick decides which organ starts.
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # secrets/*.enc and are NEVER injected here — only the runner
@@ -605,10 +600,8 @@ COMPOSEEOF
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: ${ARCHITECT_INTERVAL:-900}
-      PLANNER_INTERVAL: ${PLANNER_INTERVAL:-43200}
+      # Per-organ interval env vars retired (#872, #1333): the loop runs one
+      # oak/tick.sh per POLL_INTERVAL; the tick decides which organ starts.
     healthcheck:
       test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
       interval: 60s

@@ -171,11 +171,6 @@ job "agents-supervisor-opus" {
         CLAUDE_TIMEOUT     = "7200"
         CLAUDE_MAX_TURNS   = "60"
 
-        # Supervisor-specific polling interval (20 min = 1200s).
-        # The entrypoint loop runs every POLL_INTERVAL (300s); the supervisor
-        # checks run every SUPERVISOR_INTERVAL (1200s = 4 iterations).
-        SUPERVISOR_INTERVAL = "1200"
-
         # CLAUDE_CONFIG_DIR points to the mounted claude-creds volume so the
         # claude CLI finds OAuth credentials. Do NOT set ANTHROPIC_BASE_URL
         # or ANTHROPIC_API_KEY — their presence forces API-key mode and

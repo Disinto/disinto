@@ -129,7 +129,7 @@ _run_hire() {
 _generate_compose() {
   run bash -c "
     set -euo pipefail
-    unset FORGE_REPO PROJECT_NAME ARCHITECT_INTERVAL PLANNER_INTERVAL SUPERVISOR_INTERVAL
+    unset FORGE_REPO PROJECT_NAME
     source '${GENERATORS_LIB}'
     _generate_local_model_services '${FACTORY_ROOT}/docker-compose.yml'
   "

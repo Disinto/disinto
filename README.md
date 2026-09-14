@@ -23,21 +23,21 @@ Point it at a git repo with a Woodpecker CI pipeline and it will pick up issues,
 ```
 entrypoint.sh (while-true polling loop, 5 min base interval)
  │
- ├── every 5 min ──→ review-poll.sh   ← finds unreviewed PRs, spawns review
- │                    └── review-pr.sh  ← claude -p: review → approve/request changes
- │
- ├── every 5 min ──→ dev-poll.sh      ← pulls ready issues, spawns dev-agent
- │                    └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
- │
- ├── every 5 min ──→ gardener-step.sh ← backlog grooming (duplicates, stale, tech-debt)
- │                    └── classify.sh ← one task per tick → formula (claude -p)
- │
- ├── every 15m ──→ architect-run.sh  ← strategic decomposition of vision into sprints
- │
- ├── every 12h ───→ planner-run.sh    ← gap-analyse VISION.md, create backlog issues
- │                   └── claude -p: update AGENTS.md → create issues
- │
- └── every 24h ───→ predictor-run.sh  ← infrastructure pattern detection
+ ├── every POLL_INTERVAL ────→ oak/tick.sh (one per project)
+ │    sense → pick → start at most one organ per tick (#1333):
+ │    ├── review-poll.sh   ← finds unreviewed PRs, spawns review
+ │    │     └── review-pr.sh  ← claude -p: review → approve/request changes
+ │    ├── dev-poll.sh      ← pulls ready issues, spawns dev-agent
+ │    │     └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
+ │    ├── gardener-step.sh ← backlog grooming (duplicates, stale, tech-debt)
+ │    │     └── classify.sh ← one task per tick → formula (claude -p)
+ │    ├── architect-run.sh ← strategic decomposition of vision into sprints
+ │    ├── planner-run.sh   ← gap-analyse VISION.md, create backlog issues
+ │    │     └── claude -p: update AGENTS.md → create issues
+ │    ├── predictor-run.sh ← infrastructure pattern detection
+ │    └── supervisor-run.sh ← health checks (fast path: bash checks, zero tokens)
+ │           ├── all clear? → exit 0
+ │           └── problem? → claude -p (diagnose, fix, or escalate)
 
 entrypoint-edge.sh (edge container)
  ├── dispatcher.sh                    ← polls ops repo for vault actions
