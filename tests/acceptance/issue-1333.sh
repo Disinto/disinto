@@ -15,7 +15,8 @@
 #   3. does not contain ARCHITECT_INTERVAL or predictor_interval — the
 #      fixed clocks (and with them the other *_INTERVAL variables) are gone
 #   4. still sleeps POLL_INTERVAL — one clock, the tick cadence
-#   5. still assigns AGENT_ROLES — tick.sh uses it as a house filter
+#   5. still exports AGENT_ROLES — the gosu'd tick receives it as its
+#      house filter
 #   6. still exports the per-TOML vars tick.sh needs (OPS_REPO_ROOT is a
 #      hard precondition in tick.sh; PROJECT_NAME/PROJECT_REPO_ROOT/
 #      PRIMARY_BRANCH satisfy env.sh preconditions)
@@ -71,10 +72,11 @@ ac_log "checking the loop still sleeps POLL_INTERVAL"
 grep -Eq 'sleep[[:space:]]+"\$\{POLL_INTERVAL\}"' "$EP" \
   || ac_fail "entrypoint.sh must still sleep \${POLL_INTERVAL}"
 
-# 5. AGENT_ROLES is still assigned — tick.sh uses it as a house filter.
-ac_log "checking AGENT_ROLES is still assigned"
-grep -q '^[[:space:]]*AGENT_ROLES=' "$EP" \
-  || ac_fail "entrypoint.sh must still assign AGENT_ROLES (tick.sh house filter)"
+# 5. AGENT_ROLES is still exported — the gosu'd tick receives it as its
+#    house filter.
+ac_log "checking AGENT_ROLES is exported"
+grep -Eq '^[[:space:]]*export[[:space:]]+AGENT_ROLES=' "$EP" \
+  || ac_fail "entrypoint.sh must export AGENT_ROLES (tick.sh house filter)"
 
 # 6. The per-TOML exports tick.sh / the organs need are still there.
 ac_log "checking per-TOML env exports survive"

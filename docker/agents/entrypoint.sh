@@ -638,7 +638,8 @@ validate_projects_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
+# Exported so the gosu'd oak tick receives it as its house filter (#1333).
+export AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)
@@ -684,7 +685,11 @@ print(cfg.get('primary_branch', 'main'))
 
     log "Processing project TOML: ${toml}"
 
-    gosu agent bash -c "cd ${DISINTO_DIR} && bash oak/tick.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/oak-tick.log" 2>&1
+    # A tick that exits non-zero (malformed ops-repo pack, corrupt weights)
+    # must not kill the loop — log and continue, like the other per-iteration
+    # steps (a crash-restart would kill in-flight organs).
+    gosu agent bash -c "cd ${DISINTO_DIR} && bash oak/tick.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/oak-tick.log" 2>&1 \
+      || log "WARNING: oak tick failed for ${toml} — continuing (see ${DISINTO_LOG_DIR}/oak-tick.log)"
   done
 
   sleep "${POLL_INTERVAL}"

@@ -158,8 +158,8 @@ job "agents" {
         PROJECT_REPO_ROOT  = "/home/agent/repos/project"
         CLAUDE_TIMEOUT     = "7200"
         CLAUDE_MAX_TURNS   = "60"
-        # GARDENER_INTERVAL dropped (#872): gardener now runs per-iteration
-        # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
+        # Per-organ interval env vars retired (#872, #1333): the loop runs one
+        # oak/tick.sh per POLL_INTERVAL; the tick decides which organ starts.
 
         # llama-specific Claude Code tuning
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"

@@ -8,7 +8,7 @@ issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): every `SUPERVISOR_INTERVAL` seconds (default 1200 = 20 min). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801). Logs to `data/logs/supervisor/supervisor.log` (canonical sink — both `supervisor-run.sh` internal logging and entrypoint stderr redirect write to this single file).
+- **Agents container** (`docker/agents/entrypoint.sh`): started by the oak tick — the loop runs one `oak/tick.sh` per project per `POLL_INTERVAL` (default 300s), and the tick's learned policy decides whether this tick starts `supervisor-run.sh` (#1333). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
 Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
@@ -51,10 +51,11 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 
-**Canonical log sink**: `data/logs/supervisor/supervisor.log` — all supervisor output
-(structured log from `supervisor-run.sh` and stderr from the entrypoint invocation)
-goes to this single file. Do not introduce a second path; see #1150 for the dual-sink
-incident that motivated unification.
+**Log sinks**: `supervisor-run.sh`'s internal structured logging goes to
+`data/logs/supervisor/supervisor.log`; the oak tick's organ redirect (#1333)
+writes the invocation's stdout/stderr to `data/logs/supervisor-run.log`.
+#1150 unified the *internal* logging on the `supervisor/` path after the
+dual-sink incident — do not introduce a second internal path.
 
 **Alert priorities**: P0 (memory crisis), P1 (disk), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
@@ -62,7 +63,6 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
-- `SUPERVISOR_INTERVAL` — polling interval in seconds for agents container (default 1200 = 20 min)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
 **Degraded mode (Issue #544)**: When `OPS_REPO_ROOT` is not set or the directory doesn't exist, the supervisor runs in degraded mode:
@@ -71,7 +71,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Files vault items locally to `$PROJECT_REPO_ROOT/vault/pending/`
 - Logs a WARNING message at startup indicating degraded mode
 
-**Lifecycle**: supervisor-run.sh (invoked by polling loop every 20min, `check_active supervisor`)
+**Lifecycle**: supervisor-run.sh (started when the oak tick picks the `supervisor-run` action, `check_active supervisor`)
 → lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
 (if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`

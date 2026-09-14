@@ -20,7 +20,7 @@ You are helping the user set up and operate a **disinto autonomous code factory*
 - The factory uses a single internal Forgejo as its forge, regardless of where mirrors go
 - Dev-agent uses `claude -p` for one-shot implementation sessions
 - Mirror pushes happen automatically after every merge
-- Polling loop in `docker/agents/entrypoint.sh`: dev-poll/review-poll every 5m, gardener every 5m (per-iteration step driver), architect every `ARCHITECT_INTERVAL` (default 900s = 15m), planner every 12h, predictor every 24h
+- Polling loop in `docker/agents/entrypoint.sh`: one `oak/tick.sh` per project per loop (every `POLL_INTERVAL`, default 5m). The tick senses, picks, and starts at most one organ — it is the scheduling policy (#1333); `AGENT_ROLES` filters which organs it may pick
 
 ## References
 

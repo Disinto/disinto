@@ -44,11 +44,8 @@ services:
       WOODPECKER_REPO_ID: "0"
       FORGE_BOT_USER_DEV_QWEN: "dev-qwen"
       POLL_INTERVAL: "60"
-      # GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-      # via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-      ARCHITECT_INTERVAL: "900"
-      PLANNER_INTERVAL: "43200"
-      SUPERVISOR_INTERVAL: "1200"
+      # Per-organ interval env vars retired (#872, #1333): the loop runs one
+      # oak/tick.sh per POLL_INTERVAL; the tick decides which organ starts.
     depends_on:
       forgejo:
         condition: service_healthy

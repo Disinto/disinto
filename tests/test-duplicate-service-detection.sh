@@ -58,11 +58,6 @@ export FORGE_TOKEN=""
 export FORGE_PASS=""
 export CLAUDE_TIMEOUT="7200"
 export POLL_INTERVAL="300"
-# GARDENER_INTERVAL deprecated (#872): gardener now runs per-iteration
-# via gardener/gardener-step.sh, paced by POLL_INTERVAL.
-export ARCHITECT_INTERVAL="900"
-export PLANNER_INTERVAL="43200"
-export SUPERVISOR_INTERVAL="1200"
 
 # Source the generators module and run the compose generator directly
 source "${DISINTO_ROOT}/lib/generators.sh"
