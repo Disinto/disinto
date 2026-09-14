@@ -1,0 +1,76 @@
+# oak/pack.example.toml — example sensor pack for oak/sense.sh (#1331)
+#
+# The sensor is a program that reads this file every tick: it evaluates
+# [features.*] into the state vector x and the reused state key. Nothing
+# here is executable knowledge — language models never write `x`.
+#
+# Run: oak/sense.sh oak/pack.example.toml
+# → one line: {"x":{"disk_free_gb":N,"inbound_present":0|1,
+#   "vault_in_flight":0|1},"key":"...|...|..."}
+
+[learn]
+alpha = 0.1
+gamma = 0.99
+epsilon = 0.1
+q0 = 1.0
+
+[vault]
+mode = "manual"
+max_in_flight = 1
+
+# ── sensors ─────────────────────────────────────────────────────────────────
+# present: a relative path resolves against $OPS_REPO_ROOT when set (else
+# the cwd). df_gb/free-space and count features need `bins` to be binned
+# into the key; bits (present, cmd_running) never carry bins.
+
+[features.disk_free_gb]
+rule = "df_gb"
+path = "/"
+bins = [5, 20]
+
+[features.inbound_present]
+rule = "present"
+path = "inbound/child_registered"
+
+[features.vault_in_flight]
+rule = "cmd_running"
+pattern = "entrypoint-runner.sh"
+
+# ── GVF cumulants ───────────────────────────────────────────────────────────
+
+[gvf.purpose]
+c = "r"
+
+[gvf.inbound]
+c = "feature:inbound_present"
+
+# ── legal actions ───────────────────────────────────────────────────────────
+# idle is the do-nothing action (empty script). The other eight are the
+# organ actions one tick may start.
+
+[actions.idle]
+script = ""
+
+[actions.review-poll]
+script = "review/review-poll.sh"
+
+[actions.dev-poll]
+script = "dev/dev-poll.sh"
+
+[actions.gardener-step]
+script = "gardener/gardener-step.sh"
+
+[actions.architect-run]
+script = "architect/architect-run.sh"
+
+[actions.planner-run]
+script = "planner/planner-run.sh"
+
+[actions.predictor-run]
+script = "predictor/predictor-run.sh"
+
+[actions.supervisor-run]
+script = "supervisor/supervisor-run.sh"
+
+[actions.dispatch]
+script = "docker/edge/dispatcher.sh"
