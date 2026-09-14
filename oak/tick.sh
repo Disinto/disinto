@@ -46,15 +46,20 @@
 #   * idle is always legal.
 #   * an organ with a non-empty script is dropped when `pgrep -f` already
 #     matches that script's basename (one running instance per organ).
-#   * dispatch is dropped when vault.mode == "manual" or when
-#     x.vault_in_flight >= max_in_flight (pack [vault]; a missing [vault]
-#     means max_in_flight 0 → always dropped).
+#     Note: pgrep -f scans the FULL command line, so any process whose argv
+#     merely quotes the script name (a test/CI wrapper) also drops the
+#     organ for that tick — keep organ script names distinctive.
+#   * dispatch is legal only in an automatic-mode vault under
+#     max_in_flight: it is dropped when vault.mode != "automatic" (a
+#     missing [vault] has no mode → always dropped) or when
+#     x.vault_in_flight >= max_in_flight (a missing max_in_flight means
+#     0 → always dropped). The tick never execs dispatch anyway (AD-006).
 #   * when AGENT_ROLES is set, each organ must map to a role in it
 #     (review-poll→review, dev-poll→dev, gardener-step→gardener,
 #     architect-run→architect, planner-run→planner,
 #     predictor-run→predictor, supervisor-run→supervisor); actions with no
-#     mapping are dropped. dispatch maps to no role and is dropped unless
-#     vault.mode == "automatic" (which this issue never enables).
+#     mapping are dropped. dispatch needs no role — the vault gate above
+#     governs it.
 #
 # Stdout: the chosen action, one line — in every mode. Diagnostics go to
 # stderr. Exit 0 = ticked, 1 = bad state (no pack, sense/pick/td failed),
@@ -199,11 +204,15 @@ ACTIONS_JSON="$(jq -c '.actions' <<<"$PACK_JSON")"
 
 VAULT_JSON="$(jq -c '.vault // null' <<<"$PACK_JSON")"
 VAULT_MODE=""
-VAULT_MAX_IF=""
+VAULT_MAX_IF=0
 if [ "$VAULT_JSON" != "null" ]; then
   VAULT_MODE="$(jq -r '.mode // empty' <<<"$VAULT_JSON")"
   VAULT_MAX_IF="$(jq -r '.max_in_flight // empty' <<<"$VAULT_JSON")"
 fi
+# Missing [vault] (or a missing max_in_flight) means zero capacity: the
+# capacity check below then always drops dispatch (0 >= 0) — the documented
+# default, so dispatch can never be legal-but-never-startable.
+VAULT_MAX_IF="${VAULT_MAX_IF:-0}"
 
 # ── 1. sense ────────────────────────────────────────────────────────────────
 if ! SENSE_OUT="$(bash "$FACTORY_ROOT/oak/sense.sh" "$PACK_FILE")"; then
@@ -264,49 +273,46 @@ for a in "${LEGAL[@]}"; do
         continue
       fi
     fi
-    # Vault capacity: dispatch only in an automatic vault under capacity.
+    # Vault gate: dispatch is legal only in an automatic-mode vault, under
+    # max_in_flight. A missing [vault] (no mode) therefore drops it — it must
+    # never be legal-but-never-startable (the tick never execs dispatch,
+    # AD-006). A missing max_in_flight means 0 → over capacity → dropped.
     if [ "$a" = "dispatch" ]; then
-      FLIGHT="$(jq -r '.vault_in_flight // empty' <<<"$X_JSON")"
-      [ -n "$FLIGHT" ] || FLIGHT=0
-      if [ "$VAULT_MODE" = "manual" ]; then
-        log "dropping dispatch: vault.mode=manual"
+      if [ "$VAULT_MODE" != "automatic" ]; then
+        log "dropping dispatch: vault.mode is not automatic (mode='${VAULT_MODE:-<none>}')"
         continue
       fi
-      if [ -n "$VAULT_MAX_IF" ] \
-        && jq -en --argjson f "$FLIGHT" --argjson m "$VAULT_MAX_IF" '$f >= $m' >/dev/null; then
+      FLIGHT="$(jq -r '.vault_in_flight // empty' <<<"$X_JSON")"
+      [ -n "$FLIGHT" ] || FLIGHT=0
+      if jq -en --argjson f "$FLIGHT" --argjson m "$VAULT_MAX_IF" '$f >= $m' >/dev/null; then
         log "dropping dispatch: vault_in_flight $FLIGHT >= max_in_flight $VAULT_MAX_IF"
         continue
       fi
     fi
-    # AGENT_ROLES: each organ must map to a role that is active.
-    if [ -n "${AGENT_ROLES:-}" ]; then
-      if [ "$a" = "dispatch" ]; then
-        if [ "$VAULT_MODE" != "automatic" ]; then
-          log "dropping dispatch: AGENT_ROLES set but vault.mode is not automatic"
+    # AGENT_ROLES: each organ must map to a role that is active. (dispatch
+    # needs no role: it reaches here only if it already passed the vault
+    # gate above, i.e. an automatic vault under capacity.)
+    if [ -n "${AGENT_ROLES:-}" ] && [ "$a" != "dispatch" ]; then
+      case "$a" in
+        review-poll) ROLE="review" ;;
+        dev-poll) ROLE="dev" ;;
+        gardener-step) ROLE="gardener" ;;
+        architect-run) ROLE="architect" ;;
+        planner-run) ROLE="planner" ;;
+        predictor-run) ROLE="predictor" ;;
+        supervisor-run) ROLE="supervisor" ;;
+        *)
+          log "dropping $a: no role mapping under AGENT_ROLES"
           continue
-        fi
-      else
-        case "$a" in
-          review-poll) ROLE="review" ;;
-          dev-poll) ROLE="dev" ;;
-          gardener-step) ROLE="gardener" ;;
-          architect-run) ROLE="architect" ;;
-          planner-run) ROLE="planner" ;;
-          predictor-run) ROLE="predictor" ;;
-          supervisor-run) ROLE="supervisor" ;;
-          *)
-            log "dropping $a: no role mapping under AGENT_ROLES"
-            continue
-            ;;
-        esac
-        case ",${AGENT_ROLES}," in
-          *",$ROLE,"*) : ;;
-          *)
-            log "dropping $a: role '$ROLE' not in AGENT_ROLES"
-            continue
-            ;;
-        esac
-      fi
+          ;;
+      esac
+      case ",${AGENT_ROLES}," in
+        *",$ROLE,"*) : ;;
+        *)
+          log "dropping $a: role '$ROLE' not in AGENT_ROLES"
+          continue
+          ;;
+      esac
     fi
   fi
   FINAL_LEGAL+=("$a")
@@ -379,6 +385,10 @@ if [ "$HAS_LAST" -eq 1 ]; then
 fi
 
 # last.json: this tick becomes the previous tick (atomic tmp+mv).
+# Assumes ONE sequential tick loop (#1333). A fixed .tmp name is safe under a
+# single writer; two concurrent ticks would race this overwrite and the
+# transition append above — serialize them (or flock $OAK_DIR/.lock) before
+# ever parallelizing ticks.
 jq -cn --arg xk "$KEY" --arg a "$ACTION" --argjson x "$X_JSON" \
   '{x_key:$xk, a:$a, x:$x}' >"$LAST_FILE.tmp"
 mv "$LAST_FILE.tmp" "$LAST_FILE"

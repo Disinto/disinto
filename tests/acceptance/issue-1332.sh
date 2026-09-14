@@ -17,6 +17,9 @@
 #      never appears in the process table)
 #   4. with vault.mode="manual", dispatch is not chosen even when its Q is
 #      the highest in the table (the seeded weights make this a real pick)
+#   5. with NO [vault] table at all, dispatch is still not chosen: a
+#      missing [vault] means max_in_flight 0, so dispatch is always
+#      dropped (never legal-but-never-startable)
 #
 # Last stdout line is PASS or FAIL: <reason>.
 # =============================================================================
@@ -240,8 +243,68 @@ ac_assert_jq '(.gvf.purpose.Q["0|1"]["dispatch"]) == 100.0' \
   "$(cat "$OPS_B/oak/weights.json")" \
   "dispatch Q must be untouched (it was never the taken action)"
 
+# ── Fixture C: dispatch with NO [vault] table at all ───────────────────────
+# Same seeded Q as fixture B (dispatch=100 beats idle's q0=1), but the pack
+# has no [vault] section: that means max_in_flight 0, so dispatch must be
+# dropped and idle picked. Pre-fix, dispatch (100) won this pick.
+OPS_C="$TMPD/ops-c"
+REPO_C="$TMPD/repo-c"
+mkdir -p "$OPS_C/oak" "$REPO_C"
+touch "$OPS_C/here"
+
+cat >"$OPS_C/pack.toml" <<'EOF'
+[learn]
+alpha = 0.1
+gamma = 0.99
+epsilon = 0
+q0 = 1.0
+
+[critic]
+builtin = "present"
+feature = "done"
+
+[features.here]
+rule = "present"
+path = "here"
+
+[features.done]
+rule = "present"
+path = "done"
+
+[actions.idle]
+script = ""
+
+[actions.dispatch]
+script = "docker/edge/dispatcher.sh"
+EOF
+
+cat >"$TMPD/project-c.toml" <<EOF
+name = "tick-c"
+repo_root = "$REPO_C"
+ops_repo_root = "$OPS_C"
+primary_branch = "main"
+EOF
+
+cat >"$OPS_C/oak/weights.json" <<'EOF'
+{"q0":1.0,"gvf":{"purpose":{"Q":{"0|1":{"dispatch":100.0}}},"inbound":{"V":{}}}}
+EOF
+
+ac_log "fixture C, tick 1: dispatch (Q=100) is not chosen with no [vault] table"
+if ! OUT_C1="$(run_tick "$TMPD/project-c.toml")"; then
+  fail_tick "fixture C tick 1 failed"
+fi
+ac_assert_eq "$OUT_C1" "idle" \
+  "pick must be idle: a missing [vault] means max_in_flight 0, so dispatch (Q=100) is dropped"
+ac_assert_jq '.a == "idle" and .x_key == "0|1"' \
+  "$(cat "$OPS_C/oak/last.json")" \
+  "last.json after fixture C tick 1 must record idle, not dispatch"
+[ ! -f "$OPS_C/oak/transitions.jsonl" ] \
+  || ac_fail "fixture C tick 1 is a boot: no transition line expected"
+
 ac_log "stdout contract: every tick printed exactly one line"
-[ "$(printf '%s\n' "$OUT_A1" | wc -l)" -eq 1 ] \
-  || ac_fail "tick stdout must be exactly one line (the chosen action)"
+for out in "$OUT_A1" "$OUT_A2" "$OUT_B1" "$OUT_B2" "$OUT_C1"; do
+  [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] \
+    || ac_fail "tick stdout must be exactly one line (the chosen action), got: $out"
+done
 
 echo PASS

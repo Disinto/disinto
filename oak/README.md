@@ -57,9 +57,15 @@ OAK_DRY_RUN=1 bash oak/tick.sh projects/<name>.toml   # → prints e.g. idle
 
 - **Legal actions:** `idle` is always legal. Each organ action in the pack is
   legal unless its script is already running (`pgrep -f` on the script base
-  name) — one instance per organ. `dispatch` is legal only in an
-  `automatic`-mode vault under `max_in_flight`; when `AGENT_ROLES` is set,
-  each organ must map to a role in it.
+  name) — one instance per organ. Note that `pgrep -f` scans the *full*
+  command line, so a test/CI wrapper whose argv merely quotes the script
+  name also drops that organ for that tick; keep organ script names
+  distinctive. `dispatch` is legal only in an `automatic`-mode vault while
+  `x.vault_in_flight < max_in_flight` — a missing `[vault]` (no mode) or a
+  missing `max_in_flight` (zero capacity) drops it, so `dispatch` is never
+  legal-but-never-startable (the tick never execs it anyway, see below).
+  When `AGENT_ROLES` is set, each organ must map to a role in it
+  (`dispatch` needs no role — the vault gate governs it).
 - **Reward (critic):** pack `[critic]` builtin `present` → `r=1` iff
   `x[feature]` is non-zero, else 0. No `[critic]` → `r=0`.
 - **Start:** the picked organ runs as `bash <script> <project-toml>`
