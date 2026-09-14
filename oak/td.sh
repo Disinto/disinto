@@ -55,16 +55,18 @@ UPDATE_JSON="$(cat "$UPDATE_FILE")"
 
 # Validate the required shape: numeric alpha/gamma/r, string x/a/x2/a2,
 # optional extra.inbound numeric.
-jq -e --argjson u "$UPDATE_JSON" '
-  (.alpha  | type == "number") and
-  (.gamma  | type == "number") and
-  (.r      | type == "number") and
-  (.x_key  | type == "string") and
-  (.a      | type == "string") and
-  (.x2_key | type == "string") and
-  (.a2     | type == "string") and
-  (if .extra == null then true
-   else (.extra.inbound | type == "number")
+# -n: this check uses $u only — no input stream (jq >= 1.7 exits 4 on
+# -e with an empty stream, so the program must not read stdin at all).
+jq -en --argjson u "$UPDATE_JSON" '
+  ($u.alpha  | type == "number") and
+  ($u.gamma  | type == "number") and
+  ($u.r      | type == "number") and
+  ($u.x_key  | type == "string") and
+  ($u.a      | type == "string") and
+  ($u.x2_key | type == "string") and
+  ($u.a2     | type == "string") and
+  (if $u.extra == null then true
+   else ($u.extra.inbound | type == "number")
    end)
 ' >/dev/null 2>&1 \
   || { log "update JSON is missing required keys (alpha,gamma,r,x_key,a,x2_key,a2) or extra.inbound is not a number"; exit 1; }

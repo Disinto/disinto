@@ -70,7 +70,8 @@ run_td() {
   local second="$output"
   [ "$second" != "$first" ]
   # Q must have moved down (negative reward)
-  run jq -e --argjson a "$first" --argjson b "$second" '$b < $a'
+  # -n: $a/$b only — no input stream (jq >= 1.7 exits 4 on empty stdin)
+  run jq -en --argjson a "$first" --argjson b "$second" '$b < $a'
   [ "$status" -eq 0 ]
   # and the file holds the new value
   [ "$(jq -r '.gvf.purpose.Q["2|0"].idle' "$W")" = "$second" ]

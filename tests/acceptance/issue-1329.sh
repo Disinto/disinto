@@ -65,7 +65,8 @@ jq -e '(. < 1) and (. > 0.998)' <<<"$first" >/dev/null \
 sed 's/"r":0/"r":-1/' "$U" >"$U.neg"
 second="$(bash "$TD" "$W" "$U.neg")"
 [ "$second" != "$first" ] || ac_fail "second update must move Q again"
-jq -e --argjson a "$first" --argjson b "$second" '$b < $a' >/dev/null \
+# -n: $a/$b only — no input stream (jq >= 1.7 exits 4 on empty stdin)
+jq -en --argjson a "$first" --argjson b "$second" '$b < $a' >/dev/null \
   || ac_fail "Q must decrease with r=-1 (got $first -> $second)"
 
 # ── 4. extra inbound cumulant writes gvf.inbound.V ────────────────────────────
