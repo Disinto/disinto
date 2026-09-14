@@ -7,8 +7,7 @@
 #
 # Flow:
 #   1. Guards: run lock, memory check
-#   2. Load formula (formulas/run-planner.toml, or
-#      formulas/run-planner-research.toml when PROJECT_KIND=research — #1314)
+#   2. Load formula (formulas/run-planner.toml)
 #   3. Context: VISION.md, AGENTS.md, ops:RESOURCES.md, structural graph,
 #      planner memory, journal entries
 #   4. Create ops branch planner/run-YYYY-MM-DD for changes
@@ -106,20 +105,14 @@ resolve_forge_remote
 resolve_agent_identity || true
 
 # ── Load formula + context ───────────────────────────────────────────────
-# #1314: PROJECT_KIND (project TOML `kind`, #1294) selects the planner
-# formula. Research boxes file runs/hosts/artifacts issues instead of
-# Fold-2 software sprints; every other kind keeps the startup-shaped
-# formula. Only the formula selection branches — the session lifecycle
-# below (worktree, agent_run, ops PR walk) is identical for both kinds.
+# #1334: the planner always uses formulas/run-planner.toml. PROJECT_KIND no
+# longer selects the formula — oak instances differ by ops/pack.toml, not by
+# a project kind — so research boxes run the software planner formula.
 planner_formula_file() {
-  if [ "${PROJECT_KIND:-software}" = "research" ]; then
-    echo "$FACTORY_ROOT/formulas/run-planner-research.toml"
-  else
-    echo "$FACTORY_ROOT/formulas/run-planner.toml"
-  fi
+  echo "$FACTORY_ROOT/formulas/run-planner.toml"
 }
 PLANNER_FORMULA="$(planner_formula_file)"
-log "planner formula: ${PLANNER_FORMULA##*/} (kind=${PROJECT_KIND:-software})"
+log "planner formula: ${PLANNER_FORMULA##*/}"
 load_formula_or_profile "planner" "$PLANNER_FORMULA" || exit 1
 build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:prerequisites.md
 

@@ -1,8 +1,7 @@
 # formulas/run-planner.toml — Strategic planning formula (v4: graph-driven)
 #
-# Software-kind formula (PROJECT_KIND != research). Research-kind projects
-# (project TOML `kind = "research"`, #1294) get run-planner-research.toml
-# instead — planner-run.sh selects it (#1314).
+# The single planner formula: planner-run.sh always loads this file
+# regardless of PROJECT_KIND (the research formula was deleted, #1334).
 #
 # Executed directly by planner-run.sh via polling loop — no action issues.
 # planner-run.sh creates a tmux session with Claude (opus) and injects
