@@ -73,20 +73,14 @@ resolve_forge_remote
 resolve_agent_identity || true
 
 # ── Load formula + context ───────────────────────────────────────────────
-# #1316: PROJECT_KIND (project TOML `kind`, #1294) selects the predictor
-# formula. Research boxes have no product to ship — their weaknesses are
-# operational (run ledger, artifact payloads, host caps, judgment issues);
-# every other kind keeps the software formula. Only the formula selection
-# branches — the session lifecycle below is identical for both kinds.
+# #1336: the formula is always formulas/run-predictor.toml. Oak instances
+# differ by pack, not by kind — the PROJECT_KIND selection from #1316 (and
+# its research formula) is gone.
 predictor_formula_file() {
-  if [ "${PROJECT_KIND:-software}" = "research" ]; then
-    echo "$FACTORY_ROOT/formulas/run-predictor-research.toml"
-  else
-    echo "$FACTORY_ROOT/formulas/run-predictor.toml"
-  fi
+  echo "$FACTORY_ROOT/formulas/run-predictor.toml"
 }
 PREDICTOR_FORMULA="$(predictor_formula_file)"
-log "predictor formula: ${PREDICTOR_FORMULA##*/} (kind=${PROJECT_KIND:-software})"
+log "predictor formula: ${PREDICTOR_FORMULA##*/}"
 load_formula_or_profile "predictor" "$PREDICTOR_FORMULA" || exit 1
 build_context_block AGENTS.md ops:RESOURCES.md VISION.md ops:prerequisites.md
 

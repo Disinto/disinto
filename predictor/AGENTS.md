@@ -17,16 +17,13 @@ to focus next. No hardcoded signal categories; Claude decides where to look
 based on available data: prerequisite tree, evidence directories, VISION.md,
 RESOURCES.md (from ops repo), open issues, agent logs, and external signals (via web search).
 
-**Formula selection (#1316)**: `predictor-run.sh` selects the formula from
-`PROJECT_KIND` (project TOML `kind`, #1294) before the session lifecycle
-begins: `research` → `formulas/run-predictor-research.toml` (a research box
-has no product to ship — its weaknesses are operational, read from the run
-ledger: host down, cap starved, artifact missing, llama lease exceeded, and
-`judgment` issues sitting; predictions are still filed
-`prediction/unreviewed`); every other kind → `formulas/run-predictor.toml`
-(unchanged). Only the formula selection branches on kind; the worktree,
-agent_run, and guards are identical. No new polling loop — both kinds run
-on the existing 24h predictor cadence.
+**Formula**: `formulas/run-predictor.toml` — always. Oak instances differ
+by pack, not by kind, so `predictor-run.sh` no longer selects on
+`PROJECT_KIND` (#1336; the research formula from #1316 is deleted). The
+predictor is an adversary, not a learner: it MUST NOT write `r` or `Q`
+(the oak learner's cumulant and Q table — that is `oak/td.sh`'s job); it
+reads evidence and files `prediction/unreviewed` issues, nothing else.
+No new polling loop — it runs on the existing 24h predictor cadence.
 
 Files up to 5 actions per run (predictions + dispatches combined). Each
 exploit counts as 2 (prediction + action dispatch). The predictor MUST NOT
@@ -47,17 +44,10 @@ drifts on container restart.
   included in prompt as `## Structural analysis`; failures non-fatal), builds
   prompt with formula + forge API reference, creates tmux session (sonnet),
   monitors phase file, handles crash recovery via `run_formula_and_monitor`
-- `formulas/run-predictor.toml` — Execution spec (software kind, the
-  default): two steps (preflight, find-weakness-and-act) with `needs`
-  dependencies. Claude reviews prediction history, explores/exploits
-  weaknesses, and files issues in a single interactive session
-- `formulas/run-predictor-research.toml` — Research-kind execution spec
-  (#1316): two steps (preflight, find-weakness-and-act). Reads the run
-  ledger (`$OPS_REPO_ROOT/runs/*.json`), artifact payloads
-  (`$OPS_REPO_ROOT/artifacts/<action-id>/`), RESOURCES.md host caps, and
-  open `judgment` issues; hunts the five operational weaknesses (host down,
-  cap starved, artifact missing, llama lease exceeded, judgment sitting).
-  Predictions are still filed `prediction/unreviewed`
+- `formulas/run-predictor.toml` — Execution spec (the only formula; #1336):
+  two steps (preflight, find-weakness-and-act) with `needs` dependencies.
+  Claude reviews prediction history, explores/exploits weaknesses, and
+  files issues in a single interactive session
 
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_PREDICTOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
