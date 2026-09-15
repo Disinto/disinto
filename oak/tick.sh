@@ -38,6 +38,16 @@
 #   weights.json      — oak weights table (oak/td.sh schema)
 #   transitions.jsonl — one line per learned transition
 #   last.json         — the previous tick {x_key, a, x}
+#   tick.lock         — exclusive flock, held by one tick at a time (#1354)
+#
+# Locking (#1354): two Nomad jobs (agents-dev-qwen, agents-review-qwen)
+# tick the same $OPS_REPO_ROOT/oak/. The one-writer rule is a single
+# exclusive flock on tick.lock held for the whole critical section
+# (sense → pick → td → transition append → last.json write). td.sh /
+# pick.sh stay lock-free — tick holds the lock while it calls them. If
+# another tick holds the lock, tick waits up to 30s, then runs anyway
+# (a tick is never skipped). The organ start (step 7) happens AFTER the
+# lock is released — the organ must not need the lock.
 # Pack: $OPS_REPO_ROOT/pack.toml if present, else the factory's
 # $FACTORY_ROOT/oak/pack.example.toml (read-only fallback — the tick never
 # copies it over the ops side).
@@ -98,6 +108,19 @@ WEIGHTS_FILE="$OAK_DIR/weights.json"
 TRANSITIONS_FILE="$OAK_DIR/transitions.jsonl"
 LAST_FILE="$OAK_DIR/last.json"
 mkdir -p "$OAK_DIR"
+
+# ── lock: one exclusive flock for the whole tick (#1354) ────────────────────
+# $OPS_REPO_ROOT/oak is shared by more than one tick loop (dev + review
+# jobs), so every writer of weights/transitions/last must go through this
+# lock. fd 9 stays open until the last.json write below is done; the organ
+# start that follows must not need the lock, so the fd closes right after
+# it. If the lock is busy, wait up to 30s — then run anyway, never skip
+# the tick.
+LOCK_FILE="$OAK_DIR/tick.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -w 30 9; then
+  log "lock wait: tick.lock busy after 30s — running anyway"
+fi
 
 # Pack: the ops repo's own pack wins; the factory's example is the
 # read-only fallback.
@@ -385,13 +408,16 @@ if [ "$HAS_LAST" -eq 1 ]; then
 fi
 
 # last.json: this tick becomes the previous tick (atomic tmp+mv).
-# Assumes ONE sequential tick loop (#1333). A fixed .tmp name is safe under a
-# single writer; two concurrent ticks would race this overwrite and the
-# transition append above — serialize them (or flock $OAK_DIR/.lock) before
-# ever parallelizing ticks.
+# The fixed .tmp name is safe: the whole critical section (sense → pick →
+# td → transition append → last.json) runs under the tick.lock exclusive
+# flock held on fd 9 (#1354), so only one tick writes oak state at a time.
 jq -cn --arg xk "$KEY" --arg a "$ACTION" --argjson x "$X_JSON" \
   '{x_key:$xk, a:$a, x:$x}' >"$LAST_FILE.tmp"
 mv "$LAST_FILE.tmp" "$LAST_FILE"
+
+# Release the lock before step 7: the organ runs in the background and
+# outlives the tick — it must not need the lock.
+exec 9>&-
 
 # ── 7. start ────────────────────────────────────────────────────────────────
 if [ "${OAK_DRY_RUN:-}" = "1" ]; then
