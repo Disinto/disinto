@@ -30,6 +30,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/tests/lib/oak-fixture.sh"
 
 ac_require_cmd bash
 ac_require_cmd jq
@@ -56,13 +58,6 @@ run_tick() {
     OAK_DRY_RUN=1 bash "$TICK" "$1" 2>"$TICK_ERR"
 }
 
-fail_tick() {
-  local what="$1"
-  local last=""
-  [ -s "$TICK_ERR" ] && last=" — last stderr: $(tail -n1 "$TICK_ERR")"
-  ac_fail "$what$last"
-}
-
 # ── Fixture A: idle-only learning (no organ is ever picked) ───────────────
 # pack: two `present` features (here=1, done=0 → key "0|1"), critic on
 # "done" (absent → r=0 always). Actions: idle + gardener-step. Only two
@@ -71,49 +66,17 @@ fail_tick() {
 # the ε=0 tie breaks to the first legal entry, idle.
 OPS_A="$TMPD/ops-a"
 REPO_A="$TMPD/repo-a"
-mkdir -p "$OPS_A" "$REPO_A"
-touch "$OPS_A/here"
-
-cat >"$OPS_A/pack.toml" <<'EOF'
-[learn]
-alpha = 0.1
-gamma = 0.99
-epsilon = 0
-q0 = 1.0
-
-[vault]
+mkdir -p "$REPO_A"
+ac_oak_pack "$OPS_A/pack.toml" '[actions.gardener-step]
+script = "gardener/gardener-step.sh"' '[vault]
 mode = "manual"
-max_in_flight = 1
+max_in_flight = 1'
 
-[critic]
-builtin = "present"
-feature = "done"
-
-[features.here]
-rule = "present"
-path = "here"
-
-[features.done]
-rule = "present"
-path = "done"
-
-[actions.idle]
-script = ""
-
-[actions.gardener-step]
-script = "gardener/gardener-step.sh"
-EOF
-
-cat >"$TMPD/project-a.toml" <<EOF
-name = "tick-a"
-repo_root = "$REPO_A"
-ops_repo_root = "$OPS_A"
-primary_branch = "main"
-EOF
+ac_oak_project_toml "$TMPD/project-a.toml" "tick-a" "$REPO_A" "$OPS_A"
 
 ac_log "fixture A, tick 1 (boot): prints idle, writes last.json, no transition"
 if ! OUT_A1="$(run_tick "$TMPD/project-a.toml")"; then
-  fail_tick "fixture A tick 1 failed"
+  ac_oak_tick_fail "fixture A tick 1 failed" "$TICK_ERR"
 fi
 ac_assert_eq "$OUT_A1" "idle" "fixture A tick 1 must pick idle (all Q at q0, tie → first legal)"
 [ -f "$OPS_A/oak/last.json" ] \
@@ -127,7 +90,7 @@ ac_assert_jq '.x == {"done":0,"here":1}' "$(cat "$OPS_A/oak/last.json")" \
 
 ac_log "fixture A, tick 2: prints idle, appends one r=0 transition, idle Q moves off q0"
 if ! OUT_A2="$(run_tick "$TMPD/project-a.toml")"; then
-  fail_tick "fixture A tick 2 failed"
+  ac_oak_tick_fail "fixture A tick 2 failed" "$TICK_ERR"
 fi
 ac_assert_eq "$OUT_A2" "idle" "fixture A tick 2 must print the chosen action (idle)"
 
@@ -161,47 +124,15 @@ ac_assert_jq '.q0 == 1.0' "$(cat "$WEIGHTS_A")" \
 OPS_B="$TMPD/ops-b"
 REPO_B="$TMPD/repo-b"
 mkdir -p "$OPS_B/oak" "$REPO_B"
-touch "$OPS_B/here"
-
-cat >"$OPS_B/pack.toml" <<'EOF'
-[learn]
-alpha = 0.1
-gamma = 0.99
-epsilon = 0
-q0 = 1.0
-
-[vault]
-mode = "manual"
-max_in_flight = 1
-
-[critic]
-builtin = "present"
-feature = "done"
-
-[features.here]
-rule = "present"
-path = "here"
-
-[features.done]
-rule = "present"
-path = "done"
-
-[actions.idle]
-script = ""
-
-[actions.fixture-organ]
+ac_oak_pack "$OPS_B/pack.toml" '[actions.fixture-organ]
 script = "oak/fixture-organ-1332.sh"
 
 [actions.dispatch]
-script = "docker/edge/dispatcher.sh"
-EOF
+script = "docker/edge/dispatcher.sh"' '[vault]
+mode = "manual"
+max_in_flight = 1'
 
-cat >"$TMPD/project-b.toml" <<EOF
-name = "tick-b"
-repo_root = "$REPO_B"
-ops_repo_root = "$OPS_B"
-primary_branch = "main"
-EOF
+ac_oak_project_toml "$TMPD/project-b.toml" "tick-b" "$REPO_B" "$OPS_B"
 
 cat >"$OPS_B/oak/weights.json" <<'EOF'
 {"q0":1.0,"gvf":{"purpose":{"Q":{"0|1":{"fixture-organ":10.0,"dispatch":100.0}}},"inbound":{"V":{}}}}
@@ -209,7 +140,7 @@ EOF
 
 ac_log "fixture B, tick 1: dispatch (Q=100) is not chosen under vault.mode=manual"
 if ! OUT_B1="$(run_tick "$TMPD/project-b.toml")"; then
-  fail_tick "fixture B tick 1 failed"
+  ac_oak_tick_fail "fixture B tick 1 failed" "$TICK_ERR"
 fi
 ac_assert_eq "$OUT_B1" "fixture-organ" \
   "pick must be fixture-organ (Q=10); dispatch (Q=100) is dropped under vault.mode=manual"
@@ -224,7 +155,7 @@ ac_assert_jq '.a == "fixture-organ" and .x_key == "0|1"' \
 
 ac_log "fixture B, tick 2: organ picked again, transition appended, Q updated, still not started"
 if ! OUT_B2="$(run_tick "$TMPD/project-b.toml")"; then
-  fail_tick "fixture B tick 2 failed"
+  ac_oak_tick_fail "fixture B tick 2 failed" "$TICK_ERR"
 fi
 ac_assert_eq "$OUT_B2" "fixture-organ" "fixture B tick 2 must pick the organ again"
 TRANS_B="$OPS_B/oak/transitions.jsonl"
@@ -250,40 +181,10 @@ ac_assert_jq '(.gvf.purpose.Q["0|1"]["dispatch"]) == 100.0' \
 OPS_C="$TMPD/ops-c"
 REPO_C="$TMPD/repo-c"
 mkdir -p "$OPS_C/oak" "$REPO_C"
-touch "$OPS_C/here"
+ac_oak_pack "$OPS_C/pack.toml" '[actions.dispatch]
+script = "docker/edge/dispatcher.sh"'
 
-cat >"$OPS_C/pack.toml" <<'EOF'
-[learn]
-alpha = 0.1
-gamma = 0.99
-epsilon = 0
-q0 = 1.0
-
-[critic]
-builtin = "present"
-feature = "done"
-
-[features.here]
-rule = "present"
-path = "here"
-
-[features.done]
-rule = "present"
-path = "done"
-
-[actions.idle]
-script = ""
-
-[actions.dispatch]
-script = "docker/edge/dispatcher.sh"
-EOF
-
-cat >"$TMPD/project-c.toml" <<EOF
-name = "tick-c"
-repo_root = "$REPO_C"
-ops_repo_root = "$OPS_C"
-primary_branch = "main"
-EOF
+ac_oak_project_toml "$TMPD/project-c.toml" "tick-c" "$REPO_C" "$OPS_C"
 
 cat >"$OPS_C/oak/weights.json" <<'EOF'
 {"q0":1.0,"gvf":{"purpose":{"Q":{"0|1":{"dispatch":100.0}}},"inbound":{"V":{}}}}
@@ -291,7 +192,7 @@ EOF
 
 ac_log "fixture C, tick 1: dispatch (Q=100) is not chosen with no [vault] table"
 if ! OUT_C1="$(run_tick "$TMPD/project-c.toml")"; then
-  fail_tick "fixture C tick 1 failed"
+  ac_oak_tick_fail "fixture C tick 1 failed" "$TICK_ERR"
 fi
 ac_assert_eq "$OUT_C1" "idle" \
   "pick must be idle: a missing [vault] means max_in_flight 0, so dispatch (Q=100) is dropped"
