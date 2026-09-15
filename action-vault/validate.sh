@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# vault/validate.sh — Validate vault action TOML files
+# action-vault/validate.sh — Validate vault action TOML files
 #
-# Usage: ./vault/validate.sh <path-to-toml>
+# Usage: ./action-vault/validate.sh <path-to-toml>
 #
 # Validates a vault action TOML file according to the schema defined in
-# vault/SCHEMA.md. Checks:
+# action-vault/SCHEMA.md. Checks:
 # - Required fields are present
 # - Secret names are in the allowlist
 # - No unknown fields are present
@@ -23,7 +23,7 @@ TOML_FILE="${1:-}"
 
 if [ -z "$TOML_FILE" ]; then
   echo "Usage: $0 <path-to-toml>" >&2
-  echo "Example: $0 vault/examples/publish.toml" >&2
+  echo "Example: $0 action-vault/examples/publish.toml" >&2
   exit 1
 fi
 
