@@ -387,69 +387,6 @@ JOB
   echo "    nomad job status ${vault_name}"
 }
 
-# disinto_count_local_model_jobs — count the local-model Nomad jobs this
-# script has deployed that are currently running (#1321).
-#
-# hire-an-agent deploys one Nomad job per local-model agent under the
-# bot-<name> namespace (the compose-backend equivalent is the agents-<name>
-# docker service, which never appears in Nomad). Stock dogfood jobs in
-# nomad/jobs/ (agents-*-qwen etc.) are NOT created by this script and are
-# excluded: only bot-* jobs count. A job counts as placed when it has at
-# least one running allocation. Prints the count; 0 when the nomad CLI is
-# absent (compose box) or a query fails.
-disinto_count_local_model_jobs() {
-  local count=0 job running
-  local jobs
-  if ! command -v nomad >/dev/null 2>&1; then
-    echo 0
-    return 0
-  fi
-  jobs="$(nomad job list 2>/dev/null | awk '{print $1}')" || jobs=""
-  # shellcheck disable=SC2086  # jobs is intentionally word-split
-  for job in $jobs; do
-    case "$job" in
-      bot-*) ;;
-      *) continue ;;
-    esac
-    running="$(nomad alloc list "$job" -status=running -json 2>/dev/null | jq 'length' 2>/dev/null)" || running=0
-    case "$running" in
-      ''|*[!0-9]*) running=0 ;;
-    esac
-    if [ "$running" -gt 0 ]; then
-      count=$((count + 1))
-    fi
-  done
-  echo "$count"
-}
-
-# disinto_project_kind <toml> — print the project TOML's top-level `kind`
-# value (#1294), defaulting to "software" when the key is absent, the file
-# is unreadable, or python3 is unavailable. Stdlib-only (no TOML library):
-# reads top-level keys only — the first `[section]` header ends the level.
-disinto_project_kind() {
-  python3 - "$1" 2>/dev/null <<'PY'
-import re
-import sys
-
-kind = "software"
-try:
-    with open(sys.argv[1]) as fh:
-        for line in fh:
-            s = line.strip()
-            if s.startswith("["):
-                break
-            if not s or s.startswith("#"):
-                continue
-            m = re.match(r'kind\s*=\s*["\']?([A-Za-z0-9_-]+)', s)
-            if m:
-                kind = m.group(1)
-                break
-except OSError:
-    pass
-print(kind)
-PY
-}
-
 # disinto_resolve_local_model_context — backend + project TOML discovery
 # for a local-model hire. Sets the globals:
 #   _HIRE_BACKEND      — "nomad" (nomad CLI present AND the live projects
@@ -459,8 +396,8 @@ PY
 #                        ("" when no TOML could be located)
 #   _HIRE_PROJECT_NAME — the project TOML's basename ("" when unknown)
 #
-# Shared by the research-kind gate (#1321) and Step 6 so the discovery
-# logic exists in exactly one place.
+# Used by Step 6 (local-model hire) so the discovery logic exists in
+# exactly one place.
 disinto_resolve_local_model_context() {
   local f
   if command -v nomad >/dev/null 2>&1 \
@@ -592,31 +529,6 @@ disinto_hire_an_agent() {
   if [ ! -f "$formula_path" ]; then
     echo "Error: formula not found at ${formula_path}" >&2
     exit 1
-  fi
-
-  # ── research kind: at most one local-model agent (#1321) ─────────────────
-  # An 8 GiB research box fits one local-model agent job alongside
-  # Forgejo/CI; a second placement OOMs the box. When the project TOML's
-  # kind is research (absent kind = software), count the bot-* Nomad jobs
-  # this script deploys that have running allocations and refuse the hire
-  # before any side effect. Software projects are unchanged: multiple
-  # local-model hires remain allowed.
-  if [ -n "$local_model" ]; then
-    local gate_kind="" gate_count=""
-    disinto_resolve_local_model_context
-    if [ -n "$_HIRE_TOML" ]; then
-      gate_kind="$(disinto_project_kind "$_HIRE_TOML")" || gate_kind=""
-    fi
-    if [ "$gate_kind" = "research" ]; then
-      gate_count="$(disinto_count_local_model_jobs)"
-      case "$gate_count" in
-        ''|*[!0-9]*) gate_count=0 ;;
-      esac
-      if [ "$gate_count" -ge 1 ]; then
-        echo "Error: research kind allows one local-model agent — ${gate_count} already running; refusing a second hire (#1321)" >&2
-        exit 1
-      fi
-    fi
   fi
 
   echo "── Hiring agent: ${agent_name} (${role}) ───────────────────────"
@@ -1077,7 +989,7 @@ EOF
     # every agent job (#794) — writing the section into the baked directory
     # there has no effect. A box counts as Nomad when the `nomad` CLI is
     # present AND the live projects directory exists (cluster-up.sh creates
-    # it). Shared with the research-kind gate above (#1321).
+    # it).
     disinto_resolve_local_model_context
     local backend="$_HIRE_BACKEND"
     local projects_dir="$_HIRE_PROJECTS_DIR"

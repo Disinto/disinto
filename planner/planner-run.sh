@@ -105,9 +105,8 @@ resolve_forge_remote
 resolve_agent_identity || true
 
 # ── Load formula + context ───────────────────────────────────────────────
-# #1334: the planner always uses formulas/run-planner.toml. PROJECT_KIND no
-# longer selects the formula — oak instances differ by ops/pack.toml, not by
-# a project kind — so research boxes run the software planner formula.
+# #1334: the planner always uses formulas/run-planner.toml. Oak instances
+# differ by ops/pack.toml, not by a project kind.
 planner_formula_file() {
   echo "$FACTORY_ROOT/formulas/run-planner.toml"
 }

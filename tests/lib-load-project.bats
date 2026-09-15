@@ -377,30 +377,12 @@ EOF
   [[ "$output" == *"skipping invalid shell identifier"* ]]
 }
 # -------------------------------------------------------------------------
-# #1294: top-level `kind` — software (default) or research. A missing key
-# keeps existing TOMLs software-shaped; any other value must fail the load
-# (a typo must not silently run software-mode on a research box).
+# #1338: the top-level `kind` key is gone. load-project.sh no longer reads
+# it and no longer exports PROJECT_KIND — a TOML that still carries the
+# legacy key (pre-#1338 boxes) loads cleanly and the key is ignored.
 # -------------------------------------------------------------------------
 
-@test "kind absent: PROJECT_KIND defaults to software" {
-  cat > "$TOML" <<EOF
-name      = "test"
-repo      = "test-owner/test-repo"
-forge_url = "http://localhost:3000"
-EOF
-
-  run bash -c "
-    set -euo pipefail
-    unset PROJECT_KIND
-    source '${ROOT}/lib/load-project.sh' '$TOML'
-    echo \"KIND=\${PROJECT_KIND:-MISSING}\"
-  "
-
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"KIND=software"* ]]
-}
-
-@test "kind research: PROJECT_KIND=research" {
+@test "legacy kind key is ignored: no kind env var is exported" {
   cat > "$TOML" <<EOF
 name      = "test"
 repo      = "test-owner/test-repo"
@@ -410,59 +392,14 @@ EOF
 
   run bash -c "
     set -euo pipefail
-    unset PROJECT_KIND
+    unset PROJECT_KIND DISINTO_CONTAINER PROJECT_NAME
     source '${ROOT}/lib/load-project.sh' '$TOML'
     echo \"KIND=\${PROJECT_KIND:-MISSING}\"
+    echo \"NAME=\${PROJECT_NAME:-MISSING}\"
   "
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"KIND=research"* ]]
-}
-
-@test "unknown kind: load fails with a visible error" {
-  cat > "$TOML" <<EOF
-name      = "test"
-repo      = "test-owner/test-repo"
-forge_url = "http://localhost:3000"
-kind      = "resarch"
-EOF
-
-  run bash -c "
-    set -euo pipefail
-    unset PROJECT_KIND
-    source '${ROOT}/lib/load-project.sh' '$TOML' 2>&1
-    echo \"KIND=\${PROJECT_KIND:-UNSET}\"
-  "
-
-  # Non-zero exit…
-  [ "$status" -ne 0 ]
-  # …with a visible diagnostic…
-  [[ "$output" == *"invalid kind"* ]]
-  [[ "$output" == *"failed to parse project TOML"* ]]
-  # …and no silently applied default.
-  [[ "$output" != *"KIND=software"* ]]
-}
-
-@test "container: TOML kind overrides the jobspec-wide PROJECT_KIND" {
-  # Same #1085 identity-exception logic as FORGE_REPO: in a multi-project
-  # factory each TOML's own kind must win in the agents container.
-  cat > "$TOML" <<EOF
-name      = "selenocyte"
-repo      = "selenocyte-org/selenocyte"
-forge_url = "http://localhost:3000"
-kind      = "research"
-EOF
-
-  run bash -c "
-    set -euo pipefail
-    export DISINTO_CONTAINER=1
-    export FORGE_REPO=disinto-admin/disinto
-    export FORGE_URL=http://forgejo:3000
-    export PROJECT_KIND=software
-    source '${ROOT}/lib/load-project.sh' '$TOML'
-    echo \"KIND=\${PROJECT_KIND}\"
-  "
-
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"KIND=research"* ]]
+  [[ "$output" == *"KIND=MISSING"* ]]
+  # The rest of the TOML still loads — the kind key is inert, not fatal.
+  [[ "$output" == *"NAME=test"* ]]
 }
