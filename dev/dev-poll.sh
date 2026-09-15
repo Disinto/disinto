@@ -708,6 +708,15 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             fi
             if [ "$BRANCH_AGE_H" -gt 6 ]; then
               log "issue #${ISSUE_NUM} orphaned (branch ${BRANCH_AGE_H}h old, no agent, no PR) — recovering"
+              # Delete the dead branch before relaunch so the relaunch reuses
+              # fix/issue-N instead of accumulating a new attempt branch on top
+              # of the corpse (#1251). Non-fatal — the relaunch proceeds either
+              # way (same pattern as the stale-PR abandonment below).
+              if git push origin --delete "fix/issue-${ISSUE_NUM}" 2>/dev/null; then
+                log "deleted orphaned remote branch fix/issue-${ISSUE_NUM} (stale-branch recovery)"
+              else
+                log "WARNING: failed to delete orphaned remote branch fix/issue-${ISSUE_NUM} — proceeding with relaunch"
+              fi
               nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
               log "started dev-agent PID $! for issue #${ISSUE_NUM} (stale-branch recovery)"
               BLOCKED_BY_INPROGRESS=true
