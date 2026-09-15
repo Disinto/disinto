@@ -11,7 +11,8 @@
 #                 index; x carries the raw value)
 #   df_gb         with the example pack, x.disk_free_gb is a non-negative
 #                 integer (no live df bin assertion)
-# forge_* are omitted in these tests (no token).
+# forge_* are omitted in these tests (no token), so the example pack's
+# n_open/n_backlog are absent from x and from the key.
 # =============================================================================
 
 setup() {
@@ -179,16 +180,46 @@ EOF
   # bin assertion — free space is environment-dependent)
   run jq -e '.x.disk_free_gb | (type == "number") and (. >= 0)' <<<"$out"
   [ "$status" -eq 0 ]
-  # the two bit sensors are always present as 0/1, so the key has three
-  # parts: disk_free_gb | inbound_present | vault_in_flight (sorted by name)
+  # the bit sensors are always present as 0/1 (the http_ok bit does not
+  # require the edge to answer)
+  run jq -e '.x.edge_ok | (. == 0 or . == 1)' <<<"$out"
+  [ "$status" -eq 0 ]
   run jq -e '.x.inbound_present | (. == 0 or . == 1)' <<<"$out"
   [ "$status" -eq 0 ]
   run jq -e '.x.vault_in_flight | (. == 0 or . == 1)' <<<"$out"
   [ "$status" -eq 0 ]
+  # forge_* are omitted without a token, so the key has four parts:
+  # disk_free_gb | edge_ok | inbound_present | vault_in_flight (sorted)
+  run jq -e '(.x | has("n_open") | not) and (.x | has("n_backlog") | not)' \
+    <<<"$out"
+  [ "$status" -eq 0 ]
   local key re
   key="$(jq -r '.key' <<<"$out")"
-  re='^[0-2]\|[01]\|[01]$'
+  re='^[0-2]\|[01]\|[01]\|[01]$'
   [[ "$key" =~ $re ]]
+}
+
+@test "example pack: n_open, n_backlog, edge_ok are declared for #1356" {
+  local feats
+  feats="$(python3 -c '
+import json, sys, tomllib
+cfg = tomllib.load(open(sys.argv[1], "rb"))
+print(json.dumps(cfg.get("features", {})))
+' "$ROOT/oak/pack.example.toml")"
+  run jq -e '.n_open | .rule == "forge_open" and .bins == [1, 10]' <<<"$feats"
+  [ "$status" -eq 0 ]
+  run jq -e '.n_backlog | .rule == "forge_label" and .label == "backlog" and .bins == [1, 10]' <<<"$feats"
+  [ "$status" -eq 0 ]
+  run jq -e '.edge_ok | .rule == "http_ok" and .url == "http://127.0.0.1:80/"' <<<"$feats"
+  [ "$status" -eq 0 ]
+  # no `kind` key anywhere in the pack
+  local top
+  top="$(python3 -c '
+import json, sys, tomllib
+print(json.dumps(tomllib.load(open(sys.argv[1], "rb"))))
+' "$ROOT/oak/pack.example.toml")"
+  run jq -e '([.. | objects | has("kind")] | any) | not' <<<"$top"
+  [ "$status" -eq 0 ]
 }
 
 # --- usage -------------------------------------------------------------------

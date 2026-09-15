@@ -117,8 +117,14 @@ jq -e 'type == "object" and has("x") and has("key")' >/dev/null <<<"$out" \
 jq -e '.x.disk_free_gb | (type == "number") and (. >= 0)' >/dev/null <<<"$out" \
   || ac_fail "x.disk_free_gb must be a non-negative integer, got: $out"
 key="$(jq -r '.key' <<<"$out")"
-re='^[0-2]\|[01]\|[01]$'
+# #1356 added edge_ok (http_ok bit) to the example pack; n_open/n_backlog
+# appear in the key only when the forge API is set (FORGE_API/FORGE_TOKEN).
+if jq -e '.x | has("n_open")' >/dev/null <<<"$out"; then
+  re='^[0-2]\|[01]\|[01]\|[0-2]\|[0-2]\|[01]$'
+else
+  re='^[0-2]\|[01]\|[01]\|[01]$'
+fi
 [[ "$key" =~ $re ]] \
-  || ac_fail "example-pack key must be df_bin|inbound_bit|flight_bit (sorted by name), got: $key"
+  || ac_fail "example-pack key must be df_bin|edge_bit|inbound_bit(|n_backlog_bin|n_open_bin)|flight_bit (sorted by name), got: $key"
 
 echo PASS

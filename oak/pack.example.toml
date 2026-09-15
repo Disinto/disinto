@@ -5,8 +5,9 @@
 # here is executable knowledge — language models never write `x`.
 #
 # Run: oak/sense.sh oak/pack.example.toml
-# → one line: {"x":{"disk_free_gb":N,"inbound_present":0|1,
-#   "vault_in_flight":0|1},"key":"...|...|..."}
+# → one line: {"x":{"disk_free_gb":N,"edge_ok":0|1,
+#   "inbound_present":0|1,"vault_in_flight":0|1},"key":"...|...|..."}
+#   plus n_open/n_backlog when the forge API (FORGE_API/FORGE_TOKEN) is set.
 
 [learn]
 alpha = 0.1
@@ -21,7 +22,9 @@ max_in_flight = 1
 # ── sensors ─────────────────────────────────────────────────────────────────
 # present: a relative path resolves against $OPS_REPO_ROOT when set (else
 # the cwd). df_gb/free-space and count features need `bins` to be binned
-# into the key; bits (present, cmd_running) never carry bins.
+# into the key; bits (present, http_ok, cmd_running) never carry bins.
+# forge_open/forge_label are omitted from x and the key when FORGE_API or
+# FORGE_TOKEN is unset.
 
 [features.disk_free_gb]
 rule = "df_gb"
@@ -35,6 +38,19 @@ path = "inbound/child_registered"
 [features.vault_in_flight]
 rule = "cmd_running"
 pattern = "entrypoint-runner.sh"
+
+[features.n_open]
+rule = "forge_open"
+bins = [1, 10]
+
+[features.n_backlog]
+rule = "forge_label"
+label = "backlog"
+bins = [1, 10]
+
+[features.edge_ok]
+rule = "http_ok"
+url = "http://127.0.0.1:80/"
 
 # ── GVF cumulants ───────────────────────────────────────────────────────────
 
