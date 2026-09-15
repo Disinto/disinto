@@ -13,9 +13,11 @@
 # UPDATE.json is exactly:
 #   {"alpha":0.1,"gamma":0.99,"q0":1.0,"x_key":"2|0","a":"idle","r":0,
 #    "x2_key":"2|0","a2":"idle"}
-# Optional extra key "extra":{"inbound":0} — if present, also updates
-# gvf.inbound.V[x_key] with the same SARSA step: cumulant = that number,
-# next value = V[x2_key] (missing → 0, never q0).
+# Optional key "extra": an object of GVF name → cumulant (a number), e.g.
+# {"inbound":0}. Each name's gvf.<name>.V[x_key] is stepped with the same
+# SARSA rule: cumulant = that number, next value = V[x2_key] (missing → 0,
+# never q0). oak/tick.sh builds the map from the pack's [gvf.<name>] tables
+# (#1355); a missing or empty {} extra is a no-op.
 #
 # SARSA, not Q-learning: the purpose target uses the actually-taken next
 # action a2, not the max over actions.
@@ -54,7 +56,7 @@ jq -e . "$UPDATE_FILE" >/dev/null 2>&1 \
 UPDATE_JSON="$(cat "$UPDATE_FILE")"
 
 # Validate the required shape: numeric alpha/gamma/r, string x/a/x2/a2,
-# optional extra.inbound numeric.
+# optional extra an object of numbers.
 # -n: this check uses $u only — no input stream (jq >= 1.7 exits 4 on
 # -e with an empty stream, so the program must not read stdin at all).
 jq -en --argjson u "$UPDATE_JSON" '
@@ -66,10 +68,11 @@ jq -en --argjson u "$UPDATE_JSON" '
   ($u.x2_key | type == "string") and
   ($u.a2     | type == "string") and
   (if $u.extra == null then true
-   else ($u.extra.inbound | type == "number")
+   elif ($u.extra | type) != "object" then false
+   else ($u.extra | to_entries | all(.value | type == "number"))
    end)
 ' >/dev/null 2>&1 \
-  || { log "update JSON is missing required keys (alpha,gamma,r,x_key,a,x2_key,a2) or extra.inbound is not a number"; exit 1; }
+  || { log "update JSON is missing required keys (alpha,gamma,r,x_key,a,x2_key,a2) or extra is not an object of numbers"; exit 1; }
 
 # Missing weights file → fresh default table (q0 1.0).
 if [ -f "$WEIGHTS_FILE" ]; then
@@ -98,15 +101,19 @@ JQ_UPDATE='
   | ($q + $u.alpha * ($u.r + $u.gamma * $q2 - $q)) as $newq
   | .gvf.purpose.Q =
       ($Q | .[$u.x_key] = ((($Q[$u.x_key]) // {}) | .[$u.a] = $newq))
-  | if $u.extra != null and ($u.extra.inbound != null) then
-      ($w.gvf.inbound.V // {}) as $V
-      | (($V[$u.x_key]) // 0) as $v
-      | (($V[$u.x2_key]) // 0) as $v2
-      | .gvf.inbound.V =
-          ($V | .[$u.x_key] =
-             ($v + $u.alpha * ($u.extra.inbound + $u.gamma * $v2 - $v)))
+  # extra GVFs (#1355): each name in the extra map steps its own
+  # gvf.<name>.V with the same rule (cumulant extra[<name>], next value
+  # V[x2_key], missing → 0, never q0).
+  | if ($u.extra // {}) == {} then .
     else
-      .
+      (def step_gvf($k):
+         ($w.gvf[$k].V // {}) as $V
+         | (($V[$u.x_key]) // 0) as $v
+         | (($V[$u.x2_key]) // 0) as $v2
+         | .gvf[$k].V =
+             ($V | .[$u.x_key] =
+                ($v + $u.alpha * ($u.extra[$k] + $u.gamma * $v2 - $v)));
+       reduce ($u.extra | keys_unsorted[]) as $k (.; step_gvf($k)))
     end
 '
 

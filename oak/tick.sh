@@ -23,7 +23,11 @@
 #   5. td     — when a previous tick exists (last.json): oak/td.sh with the
 #               SARSA step (last.x_key, last.a, r, this key, the action
 #               just picked) — pick FIRST, update second: this is SARSA,
-#               a2 is the action actually taken
+#               a2 is the action actually taken. Plus "extra" GVFs (#1355):
+#               every pack [gvf.<name>] other than purpose — c="r" is
+#               skipped (that IS the purpose update), c="feature:<f>"
+#               sends x2[<f>] (a number, else 0); td.sh steps
+#               gvf.<name>.V for each
 #   6. state  — last.json := {x_key, a, x} (atomic tmp+mv); append one
 #               transition line to transitions.jsonl — only when a
 #               previous tick existed. The first tick is a boot: it writes
@@ -137,7 +141,7 @@ fi
 TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
 
-# ── pack: [learn] / [critic] / [vault] / [actions.*] ────────────────────────
+# ── pack: [learn] / [critic] / [vault] / [actions.*] / [gvf.*] ──────────────────────
 # python3 tomllib dump (same pattern as oak/sense.sh), with type validation:
 # a malformed pack fails the tick, it never learns from a broken config.
 if ! PACK_JSON="$(python3 -c '
@@ -212,7 +216,20 @@ for name, spec in actions.items():
         fail("[actions." + str(name) + "] script must be a string")
     A[name] = s
 
-print(json.dumps({"learn": L, "critic": C, "vault": V, "actions": A}))
+gvf = cfg.get("gvf", {})
+if not isinstance(gvf, dict):
+    fail("[gvf] must be a table")
+G = {}
+for name, spec in gvf.items():
+    if not isinstance(spec, dict):
+        fail("[gvf." + str(name) + "] must be a table")
+    c = spec.get("c")
+    if c is not None and not isinstance(c, str):
+        fail("[gvf." + str(name) + "] c must be a string")
+    G[name] = c
+
+print(json.dumps({"learn": L, "critic": C, "vault": V, "actions": A,
+                  "gvf": G}))
 ' "$PACK_FILE")"; then
   log "failed to parse pack: $PACK_FILE"
   exit 1
@@ -378,6 +395,36 @@ if [ -n "$LAST_JSON" ]; then
 fi
 
 if [ "$HAS_LAST" -eq 1 ]; then
+  # extra GVFs (#1355): every pack [gvf.<name>] other than purpose
+  # contributes a cumulant for this transition's x2:
+  #   c = "r"           — the purpose Q update (the td reward); skipped
+  #   c = "feature:<f>" — x2[<f>] when it is a number, else 0
+  # The name → number map goes into UPDATE.json "extra"; td.sh steps
+  # gvf.<name>.V for each entry (an empty {} is a no-op).
+  EXTRA_JSON="{}"
+  while IFS= read -r gvf_name; do
+    [ "$gvf_name" != "purpose" ] || continue
+    gvf_c="$(jq -r --arg n "$gvf_name" '(.gvf // {})[$n] // empty' <<<"$PACK_JSON")"
+    case "$gvf_c" in
+      r)
+        log "gvf $gvf_name: c=r is the purpose Q update, not an extra GVF — skipping"
+        ;;
+      feature:*)
+        feat="${gvf_c#feature:}"
+        gv="$(jq -r --arg f "$feat" '.[$f] | if type == "number" then . else empty end' <<<"$X_JSON")"
+        [ -n "$gv" ] || gv=0
+        EXTRA_JSON="$(jq -c --arg n "$gvf_name" --argjson v "$gv" '.[$n] = $v' <<<"$EXTRA_JSON")"
+        log "gvf $gvf_name: cumulant x2[\"$feat\"] = $gv"
+        ;;
+      "")
+        log "gvf $gvf_name: no c — skipping"
+        ;;
+      *)
+        log "gvf $gvf_name: unknown c '$gvf_c' — skipping"
+        ;;
+    esac
+  done < <(jq -r '(.gvf // {}) | keys_unsorted[]' <<<"$PACK_JSON")
+
   UPDATE_FILE="$TMPD/update.json"
   jq -cn \
     --argjson alpha "$ALPHA" \
@@ -388,7 +435,8 @@ if [ "$HAS_LAST" -eq 1 ]; then
     --argjson r "$R" \
     --arg x2k "$KEY" \
     --arg a2 "$ACTION" \
-    '{alpha:$alpha, gamma:$gamma, q0:$q0, x_key:$xk, a:$a, r:$r, x2_key:$x2k, a2:$a2}' \
+    --argjson extra "$EXTRA_JSON" \
+    '{alpha:$alpha, gamma:$gamma, q0:$q0, x_key:$xk, a:$a, r:$r, x2_key:$x2k, a2:$a2, extra:$extra}' \
     >"$UPDATE_FILE"
   if ! NEWQ="$(bash "$FACTORY_ROOT/oak/td.sh" "$WEIGHTS_FILE" "$UPDATE_FILE")"; then
     log "td failed"

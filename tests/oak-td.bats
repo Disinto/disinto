@@ -6,8 +6,9 @@
 #   q  = Q[x_key][a]    // q0 if missing
 #   q2 = Q[x2_key][a2]  // q0 if missing
 #   Q[x_key][a] = q + alpha * (r + gamma * q2 - q)
-# Optional "extra":{"inbound":n} also steps gvf.inbound.V[x_key] with the
-# same SARSA rule, cumulant = n, next value = V[x2_key] (missing → 0).
+# Optional "extra":{<name>:n} (a GVF name → cumulant object) steps each
+# gvf.<name>.V[x_key] with the same SARSA rule: cumulant = n, next value
+# V[x2_key] (missing → 0); tick.sh builds the map from pack [gvf.*] (#1355).
 # =============================================================================
 
 setup() {
@@ -109,6 +110,53 @@ run_td() {
   # v = 0 → 0 + 0.1 * (1 + 0.99 * 0 - 0) = 0.1
   run jq -e '.gvf.inbound.V["2|0"] | (. > 0.099 and . < 0.101)' "$W"
   [ "$status" -eq 0 ]
+}
+
+# --- generalised extra GVFs (#1355) -------------------------------------------
+
+@test "extra with a non-inbound name writes gvf.<name>.V, inbound stays empty" {
+  sed 's/}$/,"extra":{"outbound":1}}/' "$U" >"$U.out"
+  run run_td "$W" "$U.out"
+  [ "$status" -eq 0 ]
+  # v = v2 = 0 → 0 + 0.1 * (1 + 0.99 * 0 - 0) = 0.1
+  run jq -e '.gvf.outbound.V["2|0"] | (. > 0.099 and . < 0.101)' "$W"
+  [ "$status" -eq 0 ]
+  run jq -e '.gvf.inbound.V == {}' "$W"
+  [ "$status" -eq 0 ]
+}
+
+@test "extra with several names steps every gvf.<name>.V table" {
+  sed 's/}$/,"extra":{"inbound":0.5,"other":2}}/' "$U" >"$U.multi"
+  run run_td "$W" "$U.multi"
+  [ "$status" -eq 0 ]
+  run jq -e '.gvf.inbound.V["2|0"] | (. > 0.049 and . < 0.051)' "$W"
+  [ "$status" -eq 0 ]
+  run jq -e '.gvf.other.V["2|0"] | (. > 0.199 and . < 0.201)' "$W"
+  [ "$status" -eq 0 ]
+}
+
+@test "extra {} (empty object) is accepted: only the purpose Q updates" {
+  sed 's/}$/,"extra":{}}/' "$U" >"$U.empty"
+  run run_td "$W" "$U.empty"
+  [ "$status" -eq 0 ]
+  run jq -e '.gvf.inbound.V == {}' "$W"
+  [ "$status" -eq 0 ]
+  run jq -e '.gvf.purpose.Q["2|0"].idle < 1.0' "$W"
+  [ "$status" -eq 0 ]
+}
+
+@test "extra with a non-numeric value is rejected" {
+  sed 's/}$/,"extra":{"inbound":"zero"}}/' "$U" >"$U.badx"
+  run run_td "$W" "$U.badx"
+  [ "$status" -ne 0 ]
+  [ ! -f "$W" ]
+}
+
+@test "extra that is not an object is rejected" {
+  sed 's/}$/,"extra":[1]}/' "$U" >"$U.badx2"
+  run run_td "$W" "$U.badx2"
+  [ "$status" -ne 0 ]
+  [ ! -f "$W" ]
 }
 
 # --- error handling ------------------------------------------------------------
