@@ -135,7 +135,7 @@ job "agents-gardener-qwen" {
 
       volume_mount {
         volume      = "ops-repo"
-        destination = "/home/agent/repos/disinto-ops"
+        destination = "/home/agent/repos/_factory/disinto-ops"
         read_only   = true
       }
 
@@ -169,6 +169,8 @@ job "agents-gardener-qwen" {
         PROJECT_NAME       = "disinto"
         PROJECT_REPO_ROOT  = "/home/agent/repos/disinto"
         PROJECT_TOML       = "/srv/disinto/project-repos/_factory/projects/disinto.toml"
+        OPS_REPO_ROOT      = "/home/agent/repos/disinto-ops"
+        PRIMARY_BRANCH     = "main"
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
