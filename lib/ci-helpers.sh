@@ -366,13 +366,62 @@ ci_promote() {
   echo "$new_num"
 }
 
+# _ci_decode_log_records — decode Woodpecker log records (stdin JSON array)
+# into log text on stdout. Woodpecker returns each record's payload
+# base64-encoded in `data`, and some records carry a null `data`; decoding
+# here means every caller gets log text rather than base64 (#1114).
+# Never fails: a malformed record is skipped, a malformed payload exits 0.
+_ci_decode_log_records() {
+  python3 -c '
+import base64, json, sys
+try:
+    records = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(records, list):
+    sys.exit(0)
+for rec in records:
+    if not isinstance(rec, dict):
+        continue
+    blob = rec.get("data")
+    if not blob:
+        continue
+    try:
+        sys.stdout.write(base64.b64decode(blob).decode("utf-8", "replace"))
+    except Exception:
+        pass
+'
+}
+
+# _ci_is_json_body <text> — return 0 if the text starts with a JSON token
+# (`[` or `{`, ignoring leading whitespace). Wrong-path Woodpecker log URLs
+# return 200 with the SPA index.html, which `curl -sfL` happily accepts, so
+# a non-JSON body must never be treated as logs (#1365).
+_ci_is_json_body() {
+  local first
+  first=$(printf '%s' "${1:-}" | head -c 16 | tr -d '[:space:]' | cut -c1)
+  case "$first" in
+    '[' | '{') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ci_get_step_logs <pipeline_num> <step_id>
 # Fetches logs for a single CI step via the Woodpecker API.
 # Requires: WOODPECKER_REPO_ID, woodpecker_api() (from env.sh)
 # Returns: 0 on success, 1 on failure. Outputs log text to stdout.
 #
+# The logs endpoint only resolves the step's database `id` (e.g. 20697); a
+# step `pid` (e.g. 5) 404s, and a wrong path returns 200 with the SPA
+# HTML instead of JSON (#1365). `woodpecker_api` uses `curl -sf`, so a 404
+# arrives as a non-zero exit with an empty body — on that signature the
+# pipeline JSON is loaded once and the fetch retried with the child's
+# `.id`. A non-JSON body is never printed as logs: the helper exits 1 with
+# a stderr message instead.
+#
 # Usage:
-#   ci_get_step_logs 1423 5    # Get logs for step ID 5 in pipeline 1423
+#   ci_get_step_logs 1423 5    # Get logs for step 5 in pipeline 1423
+#                              # (5 accepted as pid or database id)
 ci_get_step_logs() {
   local pipeline_num="$1" step_id="$2"
 
@@ -386,26 +435,79 @@ ci_get_step_logs() {
     return 1
   fi
 
-  # Woodpecker returns each log record with its payload base64-encoded in
-  # `data`, and some records carry a null `data`. Decode here so every caller
-  # gets log text rather than base64 (#1114).
-  woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${pipeline_num}/${step_id}" \
-    --max-time 15 2>/dev/null \
-    | python3 -c '
-import base64, json, sys
-try:
-    records = json.load(sys.stdin)
-except Exception:
-    sys.exit("ERROR: could not parse Woodpecker log response")
-for rec in records:
-    blob = rec.get("data")
-    if not blob:
-        continue
-    try:
-        sys.stdout.write(base64.b64decode(blob).decode("utf-8", "replace"))
-    except Exception:
-        pass
-'
+  local rc=0 body
+  body=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${pipeline_num}/${step_id}" \
+    --max-time 15 2>/dev/null) || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    # curl -sf yields an empty body on 404: the argument may be a pid,
+    # which the logs endpoint does not resolve. Retry once with the
+    # child's database id from the pipeline JSON.
+    local pip_json step_db_id
+    pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${pipeline_num}" 2>/dev/null) || pip_json=""
+    step_db_id=$(printf '%s' "$pip_json" | jq -r --argjson n "$step_id" '
+      [ .workflows[]?.children[]?
+        | select(((.pid // null) == $n) or ((.id // null) == $n))
+        | .id ] | .[0] // empty' 2>/dev/null) || step_db_id=""
+    if [ -n "$step_db_id" ] && [ "$step_db_id" != "$step_id" ]; then
+      local rc_retry=0
+      body=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/logs/${pipeline_num}/${step_db_id}" \
+        --max-time 15 2>/dev/null) || rc_retry=$?
+      rc=$rc_retry
+    fi
+  fi
+
+  if [ "$rc" -ne 0 ] || ! _ci_is_json_body "$body"; then
+    echo "ci_get_step_logs: response is not JSON" >&2
+    return 1
+  fi
+
+  printf '%s' "$body" | _ci_decode_log_records
+}
+
+# ci_failed_logs <pipeline_num>
+# Fetches the logs of every failed step (state failure/error/killed) of a
+# pipeline, keyed on each child's database `id` — the only key the Woodpecker
+# logs endpoint resolves (#1365). Never takes a pid from the caller.
+# Requires: WOODPECKER_REPO_ID, woodpecker_api() (from env.sh)
+# Returns: 0 even when no failed steps (or the API is unreachable) exist —
+# the output is simply empty. Per-step fetch errors are reported on stderr.
+#
+# Usage:
+#   ci_failed_logs 2601   # logs of every failed step in pipeline 2601
+ci_failed_logs() {
+  local pipeline_num="$1"
+
+  if [ -z "$pipeline_num" ]; then
+    echo "Usage: ci_failed_logs <pipeline_num>" >&2
+    return 1
+  fi
+
+  if [ -z "${WOODPECKER_REPO_ID:-}" ] || [ "${WOODPECKER_REPO_ID}" = "0" ]; then
+    echo "ERROR: WOODPECKER_REPO_ID not set or zero" >&2
+    return 1
+  fi
+
+  local pip_json
+  pip_json=$(woodpecker_api "/repos/${WOODPECKER_REPO_ID}/pipelines/${pipeline_num}" 2>/dev/null) || pip_json=""
+
+  local failed
+  failed=$(printf '%s' "$pip_json" | jq -r '
+    .workflows[]?.children[]?
+    | select(.state == "failure" or .state == "error" or .state == "killed")
+    | "\(.name)\t\(.exit_code)\t\(.id)"' 2>/dev/null) || failed=""
+
+  local step_name step_exit step_id
+  while IFS=$'\t' read -r step_name step_exit step_id; do
+    [ -z "$step_name" ] && continue
+    [ -n "$step_id" ] && [ "$step_id" != "null" ] || continue
+
+    local log_text
+    log_text=$(ci_get_step_logs "$pipeline_num" "$step_id" 2>/dev/null) || log_text=""
+    printf '=== FAILED: %s exit %s ===\n' "$step_name" "${step_exit:-?}"
+    printf '%s\n' "$log_text"
+  done <<< "$failed"
+  return 0
 }
 
 # ci_get_logs <pipeline_number> [--step <step_name>]

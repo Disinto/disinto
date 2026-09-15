@@ -740,6 +740,14 @@ pr_walk_to_merge() {
 
           if [ "$wf_count" -gt 0 ]; then
             built_diagnostics=true
+
+            # Step logs come from ci_failed_logs, which fetches every failed
+            # step by the child's database `id` — the only key the Woodpecker
+            # logs endpoint resolves; the `pid` the pipeline JSON carries 404s
+            # and a wrong path returns 200 with SPA HTML (#1365).
+            local failed_logs
+            failed_logs=$(ci_failed_logs "$_PR_CI_PIPELINE" 2>/dev/null) || failed_logs=""
+
             local wf_idx=0
             while [ "$wf_idx" -lt "$wf_count" ]; do
               local wf_name wf_state
@@ -747,43 +755,22 @@ pr_walk_to_merge() {
               wf_state=$(printf '%s' "$pip_json" | jq -r ".workflows[$wf_idx].state // \"unknown\"" 2>/dev/null)
 
               if [ "$wf_state" = "failure" ] || [ "$wf_state" = "error" ] || [ "$wf_state" = "killed" ]; then
-                # Collect failed children for this workflow
+                # List the failed children (name + exit code) so the agent can
+                # name the failing step even when the logs below are empty.
                 local failed_children
-                # The logs endpoint keys on the step's `id` (DB primary key),
-                # not the `pid` pipeline JSON carries — emit the id so the
-                # per-step log fetch below resolves correctly (#1117).
                 failed_children=$(printf '%s' "$pip_json" | jq -r "
                   .workflows[$wf_idx].children[]? |
                   select(.state == \"failure\" or .state == \"error\" or .state == \"killed\") |
-                  \"\(.name)\t\(.exit_code)\t\(.id)\"" 2>/dev/null) || failed_children=""
+                  \"\(.name) / exit \(.exit_code)\"" 2>/dev/null) || failed_children=""
 
                 ci_prompt_body="${ci_prompt_body}
 --- Failed workflow: ${wf_name} ---"
                 if [ -n "$failed_children" ]; then
-                  while IFS=$'\t' read -r step_name step_exit step_id; do
-                    [ -z "$step_name" ] && continue
-                    local exit_annotation=""
-                    case "$step_exit" in
-                      126) exit_annotation=" (permission denied or not executable)" ;;
-                      127) exit_annotation=" (command not found)" ;;
-                      128) exit_annotation=" (invalid exit argument / signal+128)" ;;
-                    esac
+                  local failed_step
+                  while IFS= read -r failed_step; do
+                    [ -z "$failed_step" ] && continue
                     ci_prompt_body="${ci_prompt_body}
-  Step: ${step_name}
-  Exit code: ${step_exit}${exit_annotation}"
-
-                    # Fetch per-step logs (keyed on step id, not pid — #1117)
-                    if [ -n "$step_id" ] && [ "$step_id" != "null" ]; then
-                      local step_logs
-                      step_logs=$(ci_get_step_logs "$_PR_CI_PIPELINE" "$step_id" 2>/dev/null | tail -50) || step_logs=""
-                      if [ -n "$step_logs" ]; then
-                        ci_prompt_body="${ci_prompt_body}
-  Log tail (last 50 lines):
-\`\`\`
-${step_logs}
-\`\`\`"
-                      fi
-                    fi
+  Step: ${failed_step}"
                   done <<< "$failed_children"
                 else
                   ci_prompt_body="${ci_prompt_body}
@@ -799,6 +786,19 @@ ${step_logs}
               fi
               wf_idx=$((wf_idx + 1))
             done
+
+            if [ -n "$failed_logs" ]; then
+              ci_prompt_body="${ci_prompt_body}
+
+Failed step logs (ci_failed_logs):
+\`\`\`
+${failed_logs}
+\`\`\`"
+            else
+              ci_prompt_body="${ci_prompt_body}
+
+logs empty (helper failed), not a green pipeline"
+            fi
           fi
         fi
       fi
