@@ -91,28 +91,29 @@ grep -q "must not claim" "$TPL" \
   || ac_fail "experiment.yaml markdown hint no longer says dev-bot must not claim"
 
 # ── 5. Vault-run paper-trail fields unchanged ───────────────────────────────
-# field_block ID — print the body-item block starting at `id: ID` (the item
-# ends at the next `- type:` line, or EOF for the last item).
-field_block() {
-  sed -n "/^[[:space:]]*id:[[:space:]]*$1[[:space:]]*$/,/^[[:space:]]*- type:/p" "$TPL"
+# The label/hint rewrite must not touch the run-tracking fields: image,
+# argv, host-class and artifact-glob stay present + required, and
+# resource-class stays a required dropdown over the full option set.
+paper_field() {  # paper_field <id> — body-item block for that field id
+  sed -n "/^[[:space:]]*id:[[:space:]]*$1[[:space:]]*\$/,/^[[:space:]]*- type:/p" "$TPL"
 }
 
 for id in image argv host-class artifact-glob; do
-  blk="$(field_block "$id")"
-  [ -n "$blk" ] || ac_fail "experiment.yaml: field '${id}' not found"
+  blk="$(paper_field "$id")"
+  [ -n "$blk" ] || ac_fail "experiment.yaml: paper-trail field '${id}' missing"
   printf '%s\n' "$blk" | grep -qE '^[[:space:]]*validations:' \
-    || ac_fail "experiment.yaml: field '${id}' has no validations block"
+    || ac_fail "experiment.yaml: field '${id}' lost its validations block"
   printf '%s\n' "$blk" | grep -qE '^[[:space:]]*required:[[:space:]]*true' \
-    || ac_fail "experiment.yaml: field '${id}' is not required"
+    || ac_fail "experiment.yaml: field '${id}' no longer required"
 done
 
-RC_BLOCK="$(field_block resource-class)"
-[ -n "$RC_BLOCK" ] || ac_fail "experiment.yaml: field 'resource-class' not found"
+RC_BLOCK="$(paper_field resource-class)"
+[ -n "$RC_BLOCK" ] || ac_fail "experiment.yaml: field 'resource-class' missing"
 grep -B1 -E '^[[:space:]]*id:[[:space:]]*resource-class[[:space:]]*$' "$TPL" \
   | grep -qE '^[[:space:]]*-?[[:space:]]*type:[[:space:]]*(dropdown|select)[[:space:]]*$' \
   || ac_fail "experiment.yaml: 'resource-class' is no longer a dropdown"
 printf '%s\n' "$RC_BLOCK" | grep -qE '^[[:space:]]*required:[[:space:]]*true' \
-  || ac_fail "experiment.yaml: field 'resource-class' is not required"
+  || ac_fail "experiment.yaml: field 'resource-class' no longer required"
 for opt in cpu gpu meep voxel; do
   printf '%s\n' "$RC_BLOCK" | grep -qE "^[[:space:]]*-[[:space:]]*${opt}[[:space:]]*$" \
     || ac_fail "experiment.yaml: resource-class option '${opt}' missing"
