@@ -4,10 +4,11 @@
 ## What this repo is
 
 Disinto is an autonomous code factory: a polling loop (`docker/agents/entrypoint.sh`)
-drives ten agents (dev, review, gardener, supervisor, planner, predictor, architect,
-reproduce, triage, edge dispatcher) that implement forge issues, review
-PRs, plan from the vision, and keep the system healthy — via the agent harnesses;
-the edge dispatcher executes formula-based operational tasks.
+calls `oak/tick.sh` once per project per tick, and the ten agents (dev, review,
+gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
+dispatcher) start only when the tick picks them — implementing forge issues,
+reviewing PRs, planning from the vision, and keeping the system healthy via the
+agent harnesses; the edge dispatcher executes formula-based operational tasks.
 
 Each agent has a separate `.profile` repo on Forgejo: lessons-learned.md (injected
 into every session prompt) + `journal/` reflections, digested into lessons past
@@ -100,7 +101,7 @@ Humans write these; agents read and enforce them (dev-agent refuses work that vi
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`), not PR-based actions. | Planner, predictor, gardener, supervisor run via `*-run.sh`; they create work, don't become work (PR #474 revert). |
+| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`) calling `oak/tick.sh` per project per tick, not PR-based actions. | Planner, predictor, gardener, supervisor are **actions** in `oak/pack.example.toml`, started only when a tick picks them — not a parallel cadence. They create work, don't become work (PR #474 revert). |
 | AD-002 | **Concurrency is bounded per LLM backend, not per project.** | **(a) Anthropic OAuth** — one concurrent Claude session per credential pool; isolate via per-session `CLAUDE_CONFIG_DIR`, native lockfile (rollback: `CLAUDE_EXTERNAL_LOCK=1`). **(b) llama-server** — `--kv-unified` (#1069): shared KV pool, budget = **sum of concurrent sessions' context** vs `--ctx-size`; size each agent's autocompact lane (docs/agents-llama.md). Without `--kv-unified`: one session per instance (parallel inference → cache thrash → OOM). **(c) Disjoint backends parallelize freely.** **(d) Per-project safety** = `issue_claim` + per-issue worktrees. |
 | AD-003 | The runtime creates and destroys; the formula preserves. | Runtime manages worktrees/sessions/temp; formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep; use phase files, webhooks, or poll loops with backoff. |
