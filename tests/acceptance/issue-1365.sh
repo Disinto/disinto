@@ -43,15 +43,18 @@ LOG_BUILD='compiling package
 make: *** [all] Error 1'
 
 # Woodpecker base64-encodes each record's payload; records may be null.
+# The text is split across two records so the decode loop's concatenation
+# is exercised, like the real API.
 STUB_LOGS_BUILD=$(python3 -c '
 import base64, json, sys
-text = sys.argv[1]
-half = len(text) // 2
-print(json.dumps([
-    {"data": base64.b64encode(text[:half].encode()).decode()},
+chunk = sys.argv[1]
+cut = len(chunk) // 2
+rows = [
+    {"data": base64.b64encode(chunk[:cut].encode()).decode()},
     {"data": None},
-    {"data": base64.b64encode(text[half:].encode()).decode()},
-]))' "$LOG_BUILD")
+    {"data": base64.b64encode(chunk[cut:].encode()).decode()},
+]
+print(json.dumps(rows))' "$LOG_BUILD")
 
 PIPELINE_JSON='{"id":2601,"number":2601,"status":"failed","event":"push","commit":"0123456789abcdef0123456789abcdef01234567","workflows":[{"id":1001,"name":"ci","state":"failure","children":[{"id":20697,"pid":5,"name":"build","state":"failure","exit_code":1},{"id":20698,"pid":6,"name":"lint","state":"success","exit_code":0}]}]}'
 
