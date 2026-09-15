@@ -10,8 +10,9 @@
 # Read-only checks against the checkout's AGENTS.md:
 #   1. contains oak/tick.sh
 #   2. the architecture blurb ("What this repo is") says the entrypoint loop
-#      calls oak/tick.sh per project per tick and organs start only when the
-#      tick picks them — not only in AD-001
+#      calls oak/tick.sh per project per tick and scopes the start-only-on-pick
+#      claim to the tick organs (the edge dispatcher runs its own loop and
+#      launches the reproduce/triage sidecars — they are not tick starts)
 #   3. the AD-001 row mentions the tick — planner/predictor/gardener/
 #      supervisor are actions in oak/pack.example.toml, not a parallel cadence
 #   4. does not describe ARCHITECT_INTERVAL / PLANNER_INTERVAL / "every 12h"
@@ -44,6 +45,8 @@ blurb="$(sed -n '/^## What this repo is/,/^## /p' "$MD")"
 [ -n "$blurb" ] || ac_fail "'What this repo is' section not found in AGENTS.md"
 grep -q "oak/tick.sh" <<< "$blurb" \
   || ac_fail "the 'What this repo is' blurb must say the entrypoint loop calls oak/tick.sh per project per tick (organs start only when the tick picks them)"
+grep -qi "tick organs" <<< "$blurb" \
+  || ac_fail "the blurb must scope the start-only-on-pick claim to the tick organs (the edge dispatcher runs its own loop and launches the reproduce/triage sidecars)"
 
 # 3. The AD-001 row mentions the tick.
 ac_log "checking the AD-001 row mentions the tick"

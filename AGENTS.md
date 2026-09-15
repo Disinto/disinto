@@ -4,11 +4,12 @@
 ## What this repo is
 
 Disinto is an autonomous code factory: a polling loop (`docker/agents/entrypoint.sh`)
-calls `oak/tick.sh` once per project per tick, and the ten agents (dev, review,
-gardener, supervisor, planner, predictor, architect, reproduce, triage, edge
-dispatcher) start only when the tick picks them — implementing forge issues,
-reviewing PRs, planning from the vision, and keeping the system healthy via the
-agent harnesses; the edge dispatcher executes formula-based operational tasks.
+calls `oak/tick.sh` once per project per tick, and the seven tick organs (dev,
+review, gardener, supervisor, planner, predictor, architect) start only when the
+tick picks them — implementing forge issues, reviewing PRs, planning from the
+vision, and keeping the system healthy via the agent harnesses; the long-lived
+edge dispatcher runs its own loop, launches the reproduce/triage sidecars per
+issue, and executes formula-based operational tasks.
 
 Each agent has a separate `.profile` repo on Forgejo: lessons-learned.md (injected
 into every session prompt) + `journal/` reflections, digested into lessons past
