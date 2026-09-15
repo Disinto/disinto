@@ -1,16 +1,16 @@
 name: Experiment
-about: A physics/ML run or artifact to track (v0.6 research kind) — not a coding ticket
+about: A physics/ML run or artifact to track — outside work, not a coding ticket
 labels:
-  - experiment
+  - action
 body:
   - type: markdown
     attributes:
       value: |
-        This is a research run, **not a coding ticket**. The `experiment`
-        label is never `backlog`, so the dev-bot coding loop must not claim
-        it. Dispatch/triage may claim it later. Park the issue on
-        `waiting-on-compute` while an external run is in flight; track its
-        outputs with `run` / `artifact`, and record verdicts under `judgment`.
+        This is outside work (an `action`-labelled ticket), **not a
+        coding ticket** — the dev-bot coding loop must not claim
+        `action`. Dispatch runs it. The fields below are the paper
+        trail for the vault run: track its outputs with `run` /
+        `artifact`, and record verdicts under `judgment`.
   - type: textarea
     id: image
     attributes:

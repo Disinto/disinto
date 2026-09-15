@@ -6,10 +6,9 @@
 #
 # Goal: for one APPROVED architect-prefixed ops-repo PR, parse the
 # `<!-- filer:begin -->` ... `<!-- filer:end -->` block, POST each entry
-# as a project-repo issue with the kind-resolved label — `backlog` for
-# software projects, `experiment` when PROJECT_KIND=research (#1315;
-# experiment template #1295) — then PATCH the ops PR body to append
-# `## Filed: #N1 #N2 ...`. The architect's tracking phase (#901) reads
+# as a project-repo issue labelled `backlog`, then PATCH the ops PR body
+# to append `## Filed: #N1 #N2 ...`. The architect's tracking phase
+# (#901) reads
 # the marker on its next iteration and begins polling sub-issue states.
 #
 # Identity: filer-bot — a dedicated forge user with issues:write on the
@@ -106,16 +105,11 @@ consumed from merged sprint files):
     exit 1
   fi
 
-## 4. Resolve the kind-resolved label id once (#1315)
+## 4. Resolve the `backlog` label id once
 
-Software projects (the default) pin filed sub-issues to `backlog`.
-Research campaigns (PROJECT_KIND=research, project TOML `kind`, #1294)
-file experiment issues instead — same pipeline, `experiment` label:
+Filed sub-issues are pinned to the `backlog` label:
 
   LABEL_NAME="backlog"
-  if [ "${PROJECT_KIND:-software}" = "research" ]; then
-    LABEL_NAME="experiment"
-  fi
 
   LABELS_JSON=$(curl -sf \\
     -H "Authorization: token $FORGE_FILER_TOKEN" \\
@@ -133,8 +127,7 @@ file experiment issues instead — same pipeline, `experiment` label:
 For each entry in ENTRIES_JSON, check whether an issue with the exact
 same title already exists on the project repo. If so, reuse the number
 in the `## Filed:` marker. Otherwise POST a new issue with the body
-verbatim from the filer block and the resolved kind label id
-(`$LABEL_ID`).
+verbatim from the filer block and the resolved label id (`$LABEL_ID`).
 
 The dedup pass uses a SINGLE GET of all project issues (any state) and
 greps in jq — saves N round-trips for N entries:
@@ -163,11 +156,10 @@ greps in jq — saves N round-trips for N entries:
       continue
     fi
 
-    # Build the POST payload — title + body verbatim, only the kind
-    # label is forced (per AC). Do NOT pass through the filer entry's
-    # labels list verbatim: the architect can request `priority` etc.,
-    # but the AC pins the filed issues to the kind label (`backlog`
-    # software / `experiment` research — #1315).
+    # Build the POST payload — title + body verbatim, only the
+    # `backlog` label is forced (per AC). Do NOT pass through the
+    # filer entry's labels list verbatim: the architect can request
+    # `priority` etc., but the AC pins the filed issues to `backlog`.
     PAYLOAD=$(jq -n \\
       --arg title "$E_TITLE" \\
       --arg body "$E_BODY" \\
@@ -230,10 +222,9 @@ Done. Stop the session.
 - One ops PR per invocation. Never file for a second.
 - One PATCH on the ops repo (PR body). N POSTs on the project repo (one
   per entry, minus dedup hits). No other writes anywhere.
-- The project-repo POSTs use the kind label only (`backlog` for
-  software, `experiment` when PROJECT_KIND=research — #1315). The
+- The project-repo POSTs use the `backlog` label only. The
   architect's filer block may request other labels, but AC pins the
-  filed issues to that one kind label.
+  filed issues to `backlog`.
 - The filer block parser lives in `lib/sprint-filer.sh` — do not
   re-invent it. Source the lib and call `parse_subissue_entries`.
 - No JSON-schema declarations, no regex backreferences in your reasoning
