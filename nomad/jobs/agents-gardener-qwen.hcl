@@ -4,8 +4,10 @@
 #
 # Per-role variant of nomad/jobs/agents.hcl for the gardener-qwen bot: same
 # image, volumes, and Vault-templated bot tokens, with AGENT_ROLES pinned to
-# "gardener". Runs against the local llama-server (ANTHROPIC_BASE_URL)
-# instead of the Anthropic API.
+# "gardener". Runs against the local llama-server via the dsh harness
+# (AGENT_HARNESS=dsh, DSH_BASE_URL, #1357) — the same local-Qwen path as
+# agents-dev-qwen.hcl and agents-review-qwen.hcl, not the Anthropic API and
+# not the Claude CLI (not what this box runs for qwen roles).
 #
 # The six-role agents.hcl job was split into per-role jobs (one role per
 # job — two claude processes are two llama slots, and the slot count must be
@@ -171,6 +173,22 @@ job "agents-gardener-qwen" {
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "gardener"
+
+        # dsh harness migration (#1357): gardener joins dev + review on the
+        # dsh harness (llama.cpp Qwen3.8-27B via DSH_BASE_URL). Env names
+        # mirror lib/hire-agent.sh dsh branch and agents-dev-qwen.hcl.
+        # Revert = remove this block (dispatcher default is claude).
+        # CLAUDE_MODEL stays — scripts that read it before the harness
+        # dispatch do.
+        AGENT_HARNESS       = "dsh"
+        DSH_HOME            = "/home/agent/data/dsh"
+        DSH_PERMISSION_MODE = "danger-full-access"
+        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
+        DSH_MODEL           = "unsloth/Qwen3.8-27B"
+        DSH_CONTEXT_WINDOW  = "100000"
+        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
+        # the key but dsh requires the env to be set.
+        LLAMACPP_API_KEY    = "sk-no-key-required"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         CLAUDE_TIMEOUT     = "7200"

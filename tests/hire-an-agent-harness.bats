@@ -198,6 +198,20 @@ EOF
   ! grep -Eq 'CLAUDE_|ANTHROPIC_' "$JOBSPEC_OUT"
 }
 
+@test "stock qwen jobspecs pin DSH_CONTEXT_WINDOW to the default 100000" {
+  # The stock per-role qwen jobspecs (agents.hcl was retired for qwen roles)
+  # hard-code the dsh env; pin the context window there too, so a move of
+  # the default in lib/hire-agent.sh breaks here and in CI in the same PR
+  # (defaults-golden contract, #1261).
+  for f in nomad/jobs/agents-dev-qwen.hcl \
+           nomad/jobs/agents-review-qwen.hcl \
+           nomad/jobs/agents-gardener-qwen.hcl; do
+    [ -f "$DISINTO_ROOT/$f" ] || { echo "missing $f" >&2; return 1; }
+    grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"100000"' "$DISINTO_ROOT/$f" \
+      || { echo "$f does not pin DSH_CONTEXT_WINDOW 100000" >&2; return 1; }
+  done
+}
+
 @test "--context-window overrides the dsh window in the nomad jobspec" {
   _stub_vault_ok
   unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
