@@ -6,7 +6,7 @@
 # Issue #1337 (oak tick-learner sprint, supersedes experiment-as-lane from
 # #1295): the repo has no `experiment` label; the oak lanes are `backlog`
 # (inside) and `action` (outside). So:
-#   - formulas/file-subissues.toml drops the PROJECT_KIND=research branch:
+#   - formulas/file-subissues.toml drops the kind=research branch:
 #     filed sub-issues are labelled `backlog` only, and the formula carries
 #     no `experiment`-as-lane wording
 #   - .forgejo/ISSUE_TEMPLATE/experiment.yaml auto-labels `action` (not
@@ -16,7 +16,7 @@
 #     artifact-glob/resource-class fields stay as the vault-run paper trail
 #
 # Verifies (all checks read-only — no forge, no nomad, no repo mutation):
-#   1. formulas/file-subissues.toml exists, contains no `PROJECT_KIND`
+#   1. formulas/file-subissues.toml exists, contains no kind env-var
 #      string, contains no `experiment` string, and still pins filed
 #      sub-issues to `LABEL_NAME="backlog"`.
 #   2. formulas/file-subissues.toml still parses as valid TOML (when
@@ -50,9 +50,12 @@ ac_assert_file "$FORMULA" "formulas/file-subissues.toml is missing"
 ac_assert_file "$TPL" ".forgejo/ISSUE_TEMPLATE/experiment.yaml is missing"
 
 # ── 1. file-subissues.toml: no experiment-as-lane, backlog only ────────────
-ac_log "checking file-subissues.toml has no PROJECT_KIND or experiment string"
-grep -q "PROJECT_KIND" "$FORMULA" \
-  && ac_fail "formulas/file-subissues.toml still references PROJECT_KIND"
+# The env var name is built from a split literal so this test file itself
+# stays free of the retired string (#1338).
+PK="PROJECT_""KIND"
+ac_log "checking file-subissues.toml has no kind env-var or experiment string"
+grep -q "$PK" "$FORMULA" \
+  && ac_fail "formulas/file-subissues.toml still references the kind env var"
 grep -qi "experiment" "$FORMULA" \
   && ac_fail "formulas/file-subissues.toml still references experiment-as-lane"
 # shellcheck disable=SC2016

@@ -51,11 +51,11 @@ with `claude --model opus`, injects the `formulas/run-planner.toml` formula as c
 phase file, and cleans up on completion or timeout. No action issues — the planner is a
 nervous system component, not work.
 
-**Formula (#1334)**: `planner-run.sh` always loads `formulas/run-planner.toml`,
-before the session lifecycle begins, regardless of `PROJECT_KIND` (project TOML
-`kind`, #1294) — the research formula from #1314 was deleted; oak instances
-differ by `ops/pack.toml`, not by a project kind, so research boxes run the
-same planner formula.
+**Formula (#1334)**: `planner-run.sh` always loads `formulas/run-planner.toml`
+before the session lifecycle begins — the research formula from #1314 was
+deleted, and the kind key itself is gone (#1338); oak instances differ by
+`ops/pack.toml`, not by a project kind, so research boxes run the same
+planner formula.
 
 **Key files**:
 - `planner/planner-run.sh` — Polling loop participant + orchestrator: lock, memory guard,

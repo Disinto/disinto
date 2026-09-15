@@ -4,10 +4,8 @@
 #
 # Issue #1336: the predictor always uses formulas/run-predictor.toml; the
 # research formula from #1316 is deleted. Oak instances differ by pack, not
-# by kind, so predictor/predictor-run.sh must no longer switch on
-# PROJECT_KIND:
-#   - the formula helper always echoes formulas/run-predictor.toml, for
-#     absent PROJECT_KIND, software, and research alike
+# by project kind, so predictor/predictor-run.sh must not switch on a kind:
+#   - the formula helper always echoes formulas/run-predictor.toml
 #   - formulas/run-predictor-research.toml is gone
 #   - tests/acceptance/issue-1316.sh is gone
 #   - predictor-run.sh contains no `run-predictor-research` string
@@ -19,8 +17,7 @@
 #   2. formulas/run-predictor-research.toml and tests/acceptance/issue-1316.sh
 #      no longer exist.
 #   3. predictor_formula_file() extracted from predictor/predictor-run.sh
-#      returns the run-predictor.toml path for absent PROJECT_KIND, software,
-#      and research.
+#      returns the run-predictor.toml path (the kind switch is gone, #1338).
 #   4. formulas/run-predictor.toml still exists, is valid TOML, declares
 #      name "run-predictor", and predictor-run.sh still loads it via
 #      load_formula_or_profile and still runs the same session lifecycle
@@ -58,19 +55,17 @@ ac_log "predictor-run.sh: no run-predictor-research string"
 ac_log "research formula and issue-1316.sh: gone"
 
 # ── 3. Behaviour: predictor_formula_file() always returns run-predictor.toml
-# <kind> empty = PROJECT_KIND unset. ac_pick_in_subshell runs the extracted
+# The kind switch is gone (#1338). ac_pick_in_subshell runs the extracted
 # function in a throwaway subshell with a fixed fake FACTORY_ROOT (shared
 # helper — tests/lib/acceptance-helpers.sh).
 FN="$(ac_extract_fn predictor_formula_file "$PREDICTOR_RUN")"
 [ -n "$FN" ] || ac_fail "predictor_formula_file() not found in predictor/predictor-run.sh"
 
 EXPECTED="/srv/disinto/formulas/run-predictor.toml"
-for KIND in "" software research; do
-  OUT="$(ac_pick_in_subshell "$KIND" "$FN" predictor_formula_file)"
-  ac_assert_eq "$OUT" "$EXPECTED" \
-    "PROJECT_KIND=${KIND:-<unset>}: expected $EXPECTED, got $OUT"
-  ac_log "selection: PROJECT_KIND=${KIND:-<unset>} -> run-predictor.toml"
-done
+OUT="$(ac_pick_in_subshell "$FN" predictor_formula_file)"
+ac_assert_eq "$OUT" "$EXPECTED" \
+  "expected $EXPECTED, got $OUT"
+ac_log "selection: predictor_formula_file -> run-predictor.toml"
 
 # ── 4. Software formula intact; session lifecycle unchanged ────────────────
 ac_assert_file "$SOFTWARE_FORMULA" "formulas/run-predictor.toml is missing"

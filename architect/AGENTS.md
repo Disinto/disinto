@@ -194,7 +194,7 @@ empty file not created, just document it).
 - #764: Permission scoping — architect read-only on project repo, filer-bot files sub-issues
 - #897: Vision pitching moved to gardener
 - #901: Forgejo-state-driven lifecycle rewrite (Q&A + tracking + auto-merge)
-- #1294: project TOML `kind` (`PROJECT_KIND`) — research vs software boxes
+- #1294: project TOML `kind` — research vs software boxes (superseded: the kind key and its env var were removed in #1338)
 - #1295: experiment issue template + research labels (`experiment` label)
 - #1315: research-mode architect — kind-selected formula, experiment filer entries, run-ledger tracking green (formula + green-gate kind selection superseded by #1335)
 - #1335: architect always uses run-architect.toml; research formula deleted

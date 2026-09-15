@@ -74,8 +74,7 @@ resolve_agent_identity || true
 
 # ── Load formula + context ───────────────────────────────────────────────
 # #1336: the formula is always formulas/run-predictor.toml. Oak instances
-# differ by pack, not by kind — the PROJECT_KIND selection from #1316 (and
-# its research formula) is gone.
+# differ by pack, not by a project kind (the #1316 selection is gone).
 predictor_formula_file() {
   echo "$FACTORY_ROOT/formulas/run-predictor.toml"
 }

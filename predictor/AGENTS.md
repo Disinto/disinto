@@ -18,8 +18,8 @@ based on available data: prerequisite tree, evidence directories, VISION.md,
 RESOURCES.md (from ops repo), open issues, agent logs, and external signals (via web search).
 
 **Formula**: `formulas/run-predictor.toml` — always. Oak instances differ
-by pack, not by kind, so `predictor-run.sh` no longer selects on
-`PROJECT_KIND` (#1336; the research formula from #1316 is deleted). The
+by pack, not by a project kind (#1336; the research formula from #1316 is
+deleted). The
 predictor is an adversary, not a learner: it MUST NOT write `r` or `Q`
 (the oak learner's cumulant and Q table — that is `oak/td.sh`'s job); it
 reads evidence and files `prediction/unreviewed` issues, nothing else.

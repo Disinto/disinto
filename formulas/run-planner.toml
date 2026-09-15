@@ -1,7 +1,7 @@
 # formulas/run-planner.toml — Strategic planning formula (v4: graph-driven)
 #
 # The single planner formula: planner-run.sh always loads this file
-# regardless of PROJECT_KIND (the research formula was deleted, #1334).
+# (the research formula was deleted, #1334; the kind switch is gone, #1338).
 #
 # Executed directly by planner-run.sh via polling loop — no action issues.
 # planner-run.sh creates a tmux session with Claude (opus) and injects
