@@ -177,9 +177,8 @@ handled by filer-bot with its narrowly-scoped `FORGE_FILER_TOKEN`.
 The architect is poked by the polling loop in `docker/agents/entrypoint.sh`
 on the ARCHITECT_INTERVAL cadence (default 15 min, #1388): the entrypoint
 starts `architect-run.sh` in the background (guarded by `pgrep`), and the
-script's own Forgejo state machine decides what each poke does. The oak tick
-runs alongside per project as a dry-run shadow (OAK_DRY_RUN=1) and never
-execs an organ. The `architect` role in `AGENT_ROLES` gates it.
+script's own Forgejo state machine decides what each poke does. The `architect`
+role in `AGENT_ROLES` gates it.
 
 ## State
 

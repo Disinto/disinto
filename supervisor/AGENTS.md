@@ -8,7 +8,7 @@ issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): started by the polling loop on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388); the oak tick runs alongside per project as a dry-run shadow (OAK_DRY_RUN=1) and never execs organs. Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
+- **Agents container** (`docker/agents/entrypoint.sh`): started by the polling loop on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
 Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.

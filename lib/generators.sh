@@ -213,10 +213,9 @@ ${model_env}
       WOODPECKER_REPO_ID: "${wp_repo_id}"
       FORGE_BOT_USER_${user_upper}: "${forge_user}"
       POLL_INTERVAL: "${poll_interval_val}"
-      # Per-organ cadence scheduler restored (#1388): the loop paces organs on
-      # their own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
-      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL); oak/tick.sh runs alongside per
-      # POLL_INTERVAL as a dry-run shadow (OAK_DRY_RUN=1, retires in #1390).
+      # Per-organ cadence scheduler (#1388): the loop paces organs on their
+      # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
+      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
     depends_on:
       forgejo:
         condition: service_healthy
@@ -535,10 +534,9 @@ services:
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # Per-organ cadence scheduler restored (#1388): the loop paces organs on
-      # their own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
-      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL); oak/tick.sh runs alongside per
-      # POLL_INTERVAL as a dry-run shadow (OAK_DRY_RUN=1, retires in #1390).
+      # Per-organ cadence scheduler (#1388): the loop paces organs on their
+      # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
+      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
     # IMPORTANT: agents get explicit environment variables (forge tokens, CI tokens, config).
     # Vault-only secrets (GITHUB_TOKEN, CLAWHUB_TOKEN, deploy keys) live in
     # secrets/*.enc and are NEVER injected here — only the runner
@@ -609,10 +607,9 @@ COMPOSEEOF
       WOODPECKER_REPO_ID: "PLACEHOLDER_WP_REPO_ID"
       CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
       POLL_INTERVAL: ${POLL_INTERVAL:-300}
-      # Per-organ cadence scheduler restored (#1388): the loop paces organs on
-      # their own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
-      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL); oak/tick.sh runs alongside per
-      # POLL_INTERVAL as a dry-run shadow (OAK_DRY_RUN=1, retires in #1390).
+      # Per-organ cadence scheduler (#1388): the loop paces organs on their
+      # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
+      # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
     healthcheck:
       test: ["CMD", "pgrep", "-f", "entrypoint.sh"]
       interval: 60s

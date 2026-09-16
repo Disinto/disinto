@@ -25,10 +25,11 @@ check_pipeline_stall = false
 
 # Agent scheduling
 #
-# Per-organ interval env vars are retired (#872, #1333): the entrypoint runs
-# one oak/tick.sh per project per POLL_INTERVAL, and the tick decides which
-# organ starts. Tune cadence via POLL_INTERVAL and the tick's learned policy
-# (the ops-repo pack), not per-organ intervals.
+# Per-organ cadence scheduler (#1388): the entrypoint paces each organ on its
+# own interval — dev/review every POLL_INTERVAL (base), supervisor every
+# SUPERVISOR_INTERVAL (default 20 min), architect every ARCHITECT_INTERVAL
+# (15 min), gardener every GARDENER_INTERVAL (6h), planner every
+# PLANNER_INTERVAL (12h), predictor daily. Tune cadence via those env vars.
 
 # Local-model agents (optional) — configure to use llama-server or similar
 # for local LLM inference. Each agent gets its own container with isolated

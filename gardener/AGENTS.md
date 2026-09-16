@@ -12,7 +12,8 @@ polling loop in `docker/agents/entrypoint.sh` on the GARDENER_INTERVAL cadence
 (default 6h, #1388). It sources
 `lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
-`gardener/gardener-step.sh` is the oak tick's per-tick step organ (dry-run shadow, #1388);
+`gardener/gardener-step.sh` is the pull-one-task step driver (one task per
+invocation);
 in bare-metal mode the executor also runs from host cron (`lib/ci-setup.sh:63`).
 **Early-exit optimization**: if no new commits since last run (compared via
 `LAST_SHA_FILE`) and no backlog or tech-debt issues exist, the model is not
@@ -70,7 +71,7 @@ and executes the pending-actions manifest post-merge.
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
 **Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh`
-(oak-tick organ — dry-run shadow under #1388) dispatches one task per tick step;
+(pull-one-task driver) dispatches one task per invocation;
 `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog

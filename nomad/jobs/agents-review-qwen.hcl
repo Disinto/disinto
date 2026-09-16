@@ -219,9 +219,9 @@ job "agents-review-qwen" {
         # constraint was steps, not information. CLAUDE_TIMEOUT still caps the
         # session at 2h.
         CLAUDE_MAX_TURNS   = "100"
-        # Per-organ cadence scheduler restored (#1388): the loop paces organs
-        # on their own intervals; oak/tick.sh runs alongside per POLL_INTERVAL
-        # as a dry-run shadow (OAK_DRY_RUN=1, retires in #1390).
+        # Per-organ cadence scheduler (#1388): the loop paces organs on their
+        # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
+        # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
 
         # llama-specific Claude Code tuning
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"

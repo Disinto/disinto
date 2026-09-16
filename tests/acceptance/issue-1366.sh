@@ -4,7 +4,7 @@
 #
 # Issue #1366: PROJECT_TOML is set, so env.sh requires OPS_REPO_ROOT and
 # PRIMARY_BRANCH. The ops-repo host volume must not cover the writable
-# clone at /home/agent/repos/disinto-ops (oak/tick.sh mkdir). Match
+# clone at /home/agent/repos/disinto-ops. Match
 # agents-dev-qwen.hcl: mount at /home/agent/repos/_factory/disinto-ops.
 #
 # Read-only checks against the checkout.

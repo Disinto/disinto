@@ -9,11 +9,9 @@ supervisor, planner, predictor, architect) on their own intervals —
 dev-poll/review-poll every 5 min, supervisor every 20 min, architect every
 15 min, gardener every 6h, planner every 12h, predictor daily — implementing
 forge issues, reviewing PRs, planning from the vision, and keeping the system
-healthy via the agent harnesses. `oak/tick.sh` runs alongside each project as
-a dry-run shadow (OAK_DRY_RUN=1, #1388): it senses, picks, and logs the organ
-it would start but never execs one; the tick learner retires in #1390. The
-long-lived edge dispatcher runs its own loop, launches the reproduce/triage
-sidecars per issue, and executes formula-based operational tasks.
+healthy via the agent harnesses. The long-lived edge dispatcher runs its
+own loop, launches the reproduce/triage sidecars per issue, and executes
+formula-based operational tasks.
 
 Each agent has a separate `.profile` repo on Forgejo: lessons-learned.md (injected
 into every session prompt) + `journal/` reflections, digested into lessons past
@@ -106,7 +104,7 @@ Humans write these; agents read and enforce them (dev-agent refuses work that vi
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`) pacing organs on their own intervals (dev/review every loop, supervisor 20 min, architect 15 min, gardener 6h, planner 12h, predictor daily), not PR-based actions. | The `oak/tick.sh` tick runs alongside as a dry-run shadow (OAK_DRY_RUN=1, #1388) and retires in #1390. Planner, predictor, gardener, supervisor create work, don't become work (PR #474 revert). |
+| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`) pacing organs on their own intervals (dev/review every loop, supervisor 20 min, architect 15 min, gardener 6h, planner 12h, predictor daily), not PR-based actions. | Planner, predictor, gardener, supervisor create work, don't become work (PR #474 revert). |
 | AD-002 | **Concurrency is bounded per LLM backend, not per project.** | **(a) Anthropic OAuth** — one concurrent Claude session per credential pool; isolate via per-session `CLAUDE_CONFIG_DIR`, native lockfile (rollback: `CLAUDE_EXTERNAL_LOCK=1`). **(b) llama-server** — `--kv-unified` (#1069): shared KV pool, budget = **sum of concurrent sessions' context** vs `--ctx-size`; size each agent's autocompact lane (docs/agents-llama.md). Without `--kv-unified`: one session per instance (parallel inference → cache thrash → OOM). **(c) Disjoint backends parallelize freely.** **(d) Per-project safety** = `issue_claim` + per-issue worktrees. |
 | AD-003 | The runtime creates and destroys; the formula preserves. | Runtime manages worktrees/sessions/temp; formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep; use phase files, webhooks, or poll loops with backoff. |
