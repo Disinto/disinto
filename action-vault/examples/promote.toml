@@ -1,4 +1,4 @@
-# vault/examples/promote.toml
+# action-vault/examples/promote.toml
 # Example: Promote a build/artifact to production
 #
 # This vault action demonstrates promoting a built artifact to a
