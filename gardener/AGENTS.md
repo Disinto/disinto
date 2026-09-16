@@ -7,12 +7,13 @@ the quality gate: strips the `backlog` label from issues that lack acceptance
 criteria checkboxes (`- [ ]`) or an `## Affected files` section. Invokes
 Claude to fix what it can; files vault items for what it cannot.
 
-**Trigger**: `gardener/gardener-step.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-once per loop tick (the gardener call is at `docker/agents/entrypoint.sh:692-699`). Sources
+**Trigger**: `gardener/gardener-run.sh` (one-shot full-formula executor) is invoked by the
+polling loop in `docker/agents/entrypoint.sh` on the GARDENER_INTERVAL cadence
+(default 6h, #1388). It sources
 `lib/guard.sh` and calls
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
-`gardener/gardener-run.sh` (one-shot full-formula executor) runs instead from host cron
-in bare-metal mode (`lib/ci-setup.sh:63`).
+`gardener/gardener-step.sh` is the oak tick's per-tick step organ (dry-run shadow, #1388);
+in bare-metal mode the executor also runs from host cron (`lib/ci-setup.sh:63`).
 **Early-exit optimization**: if no new commits since last run (compared via
 `LAST_SHA_FILE`) and no backlog or tech-debt issues exist, the model is not
 invoked — the run exits immediately (no tokens consumed). Otherwise, builds a
@@ -68,8 +69,9 @@ and executes the pending-actions manifest post-merge.
 - `FORGE_TOKEN`, `FORGE_GARDENER_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`. `FORGE_TOKEN_OVERRIDE` is exported to `$FORGE_GARDENER_TOKEN` before sourcing env.sh so the gardener-bot identity survives re-sourcing (#762).
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by gardener-run.sh)
 
-**Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh` runs each
-polling iteration; `gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
+**Per-task formula dispatch (#871, #902, #906, #912, #916)**: `gardener/gardener-step.sh`
+(oak-tick organ — dry-run shadow under #1388) dispatches one task per tick step;
+`gardener/classify.sh` emits one `{"task":..., ...}` JSON line that
 selects a formula in `formulas/<task>.toml`. Current task types include
 `blocker-starving-the-factory` (#906) — priority 1, surfaces a non-backlog
 issue that a backlog issue depends on; the formula promotes the dep to
@@ -99,7 +101,7 @@ carry `## Filed:`, and the formula dedups per-issue by exact title match
 against existing project-repo issues to guard against POST-then-PATCH-failure
 windows.
 
-**Lifecycle**: gardener-run.sh (invoked from host cron in bare-metal mode, `check_active gardener`) →
+**Lifecycle**: gardener-run.sh (invoked by the polling loop on the GARDENER_INTERVAL cadence — #1388 — or from host cron in bare-metal mode; `check_active gardener`) →
 lock + memory guard → load formula + context → `agent_run` (one-shot Claude) →
 Claude grooms backlog (writes proposed actions to manifest), bundles dust,
 updates AGENTS.md, creates PR → `detect_pr_number` + `pr_walk_to_merge` walks

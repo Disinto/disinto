@@ -5,7 +5,7 @@
 approve/request-changes verdicts to forge.
 
 **Trigger**: `review-poll.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 5 minutes (iteration math at line 163-167). It scans open PRs whose CI has passed and
+every 5 minutes (every loop iteration; the invocation is at `docker/agents/entrypoint.sh:743`). It scans open PRs whose CI has passed and
 that lack a review for the current HEAD SHA, then spawns `review-pr.sh <pr-number>`.
 
 **Key files**:

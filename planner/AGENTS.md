@@ -2,7 +2,7 @@
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
-invoked by the polling loop in `docker/agents/entrypoint.sh` every 12 hours (iteration math at line 210-222) via tmux + Claude.
+invoked by the polling loop in `docker/agents/entrypoint.sh` every 12 hours (iteration math at lines 794-804, #1388) via tmux + Claude.
 Phase 0 (preflight): pull latest code, load persistent memory and prerequisite
 tree from `$OPS_REPO_ROOT/knowledge/planner-memory.md` and `$OPS_REPO_ROOT/prerequisites.md`. Also reads
 all available formulas: factory formulas (`$FACTORY_ROOT/formulas/*.toml`) and
@@ -44,7 +44,7 @@ prerequisite tree, memory, vault state) live under `$OPS_REPO_ROOT/`.
 Each project manages its own planner state in a separate ops repo.
 
 **Trigger**: `planner-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 12 hours (iteration math at line 210-222). Accepts an optional project TOML argument,
+every 12 hours (iteration math at lines 794-804, #1388). Accepts an optional project TOML argument,
 defaults to `projects/disinto.toml`. Sources `lib/guard.sh` and calls `check_active planner`
 first — skips if `$FACTORY_ROOT/state/.planner-active` is absent. Then creates a tmux session
 with `claude --model opus`, injects the `formulas/run-planner.toml` formula as context, monitors the

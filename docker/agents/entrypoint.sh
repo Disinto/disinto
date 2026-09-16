@@ -7,15 +7,26 @@ set -euo pipefail
 # poll scripts.  All Docker Compose env vars are inherited (PATH, FORGE_TOKEN,
 # ANTHROPIC_API_KEY, etc.).
 #
-# One tick.sh per project per loop: for each project TOML the loop runs
-# oak/tick.sh, which senses, picks, and starts at most one organ. tick.sh
-# is the policy — the entrypoint never starts organs itself and never waits
-# on them (#1333).
+# Per-organ cadence scheduler (#1388 restores the pre-#1333 behavior): the
+# loop paces each organ on its own interval —
+#   - review-poll: every main loop (POLL_INTERVAL, default 5 min)
+#   - dev-poll:    every main loop (POLL_INTERVAL, default 5 min)
+#   - gardener:    every GARDENER_INTERVAL (default 6h)
+#   - architect:   every ARCHITECT_INTERVAL (default 15 min) — the script's
+#                  own state machine decides what each poke does
+#   - planner:     every PLANNER_INTERVAL (default 12h)
+#   - predictor:   daily (24h)
+#   - supervisor:  every SUPERVISOR_INTERVAL (default 20 min)
+#
+# The oak tick (#1328, #1333) keeps running alongside as a DRY-RUN SHADOW
+# this release: for each project TOML the loop runs oak/tick.sh with
+# OAK_DRY_RUN=1, which senses, picks, and logs the organ it WOULD start but
+# never execs an organ (#1388). The tick learner retires in #1390.
 #
 # AGENT_ROLES env var (default: all seven roles
-# "review,dev,gardener,architect,planner,predictor,supervisor") is passed
-# through to tick.sh as a house filter: an organ whose role is not in
-# AGENT_ROLES is dropped from that tick's legal actions.
+# "review,dev,gardener,architect,planner,predictor,supervisor") is the house
+# filter: an organ whose role is not in AGENT_ROLES is never started. It is
+# exported so the gosu'd oak tick receives it as its house filter too.
 
 # ── Migration check: reject ENABLE_LLAMA_AGENT ───────────────────────────────
 # #846: The legacy ENABLE_LLAMA_AGENT env flag is no longer supported.
@@ -638,19 +649,46 @@ validate_projects_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-# Exported so the gosu'd oak tick receives it as its house filter (#1333).
+# House filter: an organ whose role is not listed is never started. Exported
+# so the gosu'd oak tick also receives it as its house filter.
 export AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)
 POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
-log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
+# Per-organ intervals (#1388 — per-organ cadence scheduler restored):
+#   GARDENER_INTERVAL   — gardener/gardener-run.sh, default 6h (21600s)
+#   ARCHITECT_INTERVAL  — architect/architect-run.sh, default 15 min (900s);
+#                         the script's own state machine decides what a poke
+#                         does
+#   PLANNER_INTERVAL    — planner/planner-run.sh, default 12h (43200s)
+#   SUPERVISOR_INTERVAL — supervisor/supervisor-run.sh, default 20 min (1200s)
+# The predictor is fixed at 24h (86400s).
+GARDENER_INTERVAL="${GARDENER_INTERVAL:-21600}"
+ARCHITECT_INTERVAL="${ARCHITECT_INTERVAL:-900}"
+PLANNER_INTERVAL="${PLANNER_INTERVAL:-43200}"
+SUPERVISOR_INTERVAL="${SUPERVISOR_INTERVAL:-1200}"
 
-# Main polling loop: one oak tick per project per loop. tick.sh picks and
-# starts at most one organ; the entrypoint never calls organs itself and
-# never waits on them (#1333).
+log "Entering polling loop (interval: ${POLL_INTERVAL}s, roles: ${AGENT_ROLES})"
+log "Organ intervals — gardener: ${GARDENER_INTERVAL}s, architect: ${ARCHITECT_INTERVAL}s, planner: ${PLANNER_INTERVAL}s, supervisor: ${SUPERVISOR_INTERVAL}s, predictor: 24h"
+
+# Main polling loop (#1388): per-organ cadence scheduler. Fast organs
+# (review-poll, dev-poll) run every iteration in the background; slow organs
+# (gardener, architect, planner, predictor, supervisor) run in the background
+# on their own intervals, guarded by pgrep so only one instance runs at a
+# time. The iteration counter paces the slow organs (iteration *
+# POLL_INTERVAL modulo their interval).
+#
+# The oak tick runs alongside each project as a DRY-RUN SHADOW (OAK_DRY_RUN=1,
+# #1388): it senses, picks, and logs the organ it WOULD start, but never execs
+# an organ. It is not the scheduler in this release; the tick learner retires
+# in #1390.
+iteration=0
 while true; do
+  iteration=$((iteration + 1))
+  now=$(date +%s)
+
   # Pull latest factory code so poll scripts stay current (#593)
   pull_factory_repo
 
@@ -658,10 +696,13 @@ while true; do
   # Run this as the agent user
   gosu agent bash -c "rm -f /tmp/dev-session-*.sid /tmp/review-session-*.sid 2>/dev/null || true"
 
-  # Poll each project TOML with one oak tick (#1333). tick.sh is the policy:
-  # it senses, picks, and starts at most one organ — the entrypoint never
-  # calls organs itself. Foreground is OK: tick.sh backgrounds the organ
-  # itself, and the entrypoint never waits on it.
+  # Poll each project TOML
+  # Fast organs (review-poll, dev-poll) run in background so they don't block
+  # each other.  Slow organs (gardener, architect, planner, predictor,
+  # supervisor) also run in background but are guarded by pgrep so only one
+  # instance runs at a time. Per-session CLAUDE_CONFIG_DIR isolation handles
+  # OAuth concurrency natively. Set CLAUDE_EXTERNAL_LOCK=1 to re-enable the
+  # legacy flock serialization.
   for toml in "${DISINTO_DIR}"/projects/*.toml; do
     [ -f "$toml" ] || continue
 
@@ -685,11 +726,109 @@ print(cfg.get('primary_branch', 'main'))
 
     log "Processing project TOML: ${toml}"
 
+    # Oak tick in DRY-RUN shadow mode (#1388): OAK_DRY_RUN=1 makes tick.sh
+    # sense, pick, and log the organ it WOULD start, but never exec an organ.
     # A tick that exits non-zero (malformed ops-repo pack, corrupt weights)
     # must not kill the loop — log and continue, like the other per-iteration
     # steps (a crash-restart would kill in-flight organs).
-    gosu agent bash -c "cd ${DISINTO_DIR} && bash oak/tick.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/oak-tick.log" 2>&1 \
-      || log "WARNING: oak tick failed for ${toml} — continuing (see ${DISINTO_LOG_DIR}/oak-tick.log)"
+    gosu agent bash -c "cd ${DISINTO_DIR} && OAK_DRY_RUN=1 bash oak/tick.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/oak-tick.log" 2>&1 \
+      || log "WARNING: oak tick (dry-run) failed for ${toml} — continuing (see ${DISINTO_LOG_DIR}/oak-tick.log)"
+
+    # --- Fast organs: run in background, wait before slow organs ---
+    FAST_PIDS=()
+
+    # Review poll (every iteration)
+    if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
+      log "Running review-poll (iteration ${iteration}) for ${toml}"
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/review-poll.log" 2>&1 &
+      FAST_PIDS+=($!)
+    fi
+
+    sleep 2  # stagger fast polls
+
+    # Dev poll (every iteration)
+    if [[ ",${AGENT_ROLES}," == *",dev,"* ]]; then
+      log "Running dev-poll (iteration ${iteration}) for ${toml}"
+      gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/dev-poll.log" 2>&1 &
+      FAST_PIDS+=($!)
+    fi
+
+    # Wait only for THIS iteration's fast polls — long-running organs from
+    # prior iterations must not block us.
+    if [ ${#FAST_PIDS[@]} -gt 0 ]; then
+      wait "${FAST_PIDS[@]}"
+    fi
+
+    # --- Slow organs: run in background with pgrep guard, paced by the
+    #     iteration counter (iteration * POLL_INTERVAL modulo the interval) ---
+
+    # Gardener (interval configurable via GARDENER_INTERVAL env var, default 6h)
+    if [[ ",${AGENT_ROLES}," == *",gardener,"* ]]; then
+      gardener_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((gardener_iteration % GARDENER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$gardener_iteration" ]; then
+        if ! pgrep -f "gardener-run.sh" >/dev/null; then
+          log "Running gardener (iteration ${iteration}, ${GARDENER_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash gardener/gardener-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/gardener.log" 2>&1 &
+        else
+          log "Skipping gardener — already running"
+        fi
+      fi
+    fi
+
+    # Architect (interval configurable via ARCHITECT_INTERVAL env var,
+    # default 15 min; the script's Forgejo-state machine decides what each
+    # poke does)
+    if [[ ",${AGENT_ROLES}," == *",architect,"* ]]; then
+      architect_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((architect_iteration % ARCHITECT_INTERVAL)) -eq 0 ] && [ "$now" -ge "$architect_iteration" ]; then
+        if ! pgrep -f "architect-run.sh" >/dev/null; then
+          log "Running architect (iteration ${iteration}, ${ARCHITECT_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash architect/architect-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/architect.log" 2>&1 &
+        else
+          log "Skipping architect — already running"
+        fi
+      fi
+    fi
+
+    # Planner (interval configurable via PLANNER_INTERVAL env var, default 12h)
+    if [[ ",${AGENT_ROLES}," == *",planner,"* ]]; then
+      planner_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((planner_iteration % PLANNER_INTERVAL)) -eq 0 ] && [ "$now" -ge "$planner_iteration" ]; then
+        if ! pgrep -f "planner-run.sh" >/dev/null; then
+          log "Running planner (iteration ${iteration}, ${PLANNER_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash planner/planner-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/planner.log" 2>&1 &
+        else
+          log "Skipping planner — already running"
+        fi
+      fi
+    fi
+
+    # Predictor (every 24 hours = 288 iterations * 5 min = 86400 seconds)
+    if [[ ",${AGENT_ROLES}," == *",predictor,"* ]]; then
+      predictor_iteration=$((iteration * POLL_INTERVAL))
+      predictor_interval=$((24 * 60 * 60))  # 24 hours in seconds
+      if [ $((predictor_iteration % predictor_interval)) -eq 0 ] && [ "$now" -ge "$predictor_iteration" ]; then
+        if ! pgrep -f "predictor-run.sh" >/dev/null; then
+          log "Running predictor (iteration ${iteration}, 24-hour interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash predictor/predictor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/predictor.log" 2>&1 &
+        else
+          log "Skipping predictor — already running"
+        fi
+      fi
+    fi
+
+    # Supervisor (interval configurable via SUPERVISOR_INTERVAL env var, default 20 min)
+    if [[ ",${AGENT_ROLES}," == *",supervisor,"* ]]; then
+      supervisor_iteration=$((iteration * POLL_INTERVAL))
+      if [ $((supervisor_iteration % SUPERVISOR_INTERVAL)) -eq 0 ] && [ "$now" -ge "$supervisor_iteration" ]; then
+        if ! pgrep -f "supervisor-run.sh" >/dev/null; then
+          log "Running supervisor (iteration ${iteration}, ${SUPERVISOR_INTERVAL}s interval) for ${toml}"
+          gosu agent bash -c "cd ${DISINTO_DIR} && bash supervisor/supervisor-run.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/supervisor/supervisor.log" 2>&1 &
+        else
+          log "Skipping supervisor — already running"
+        fi
+      fi
+    fi
   done
 
   sleep "${POLL_INTERVAL}"

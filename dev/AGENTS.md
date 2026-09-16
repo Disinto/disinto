@@ -95,11 +95,12 @@ performed automatically.
 
 **Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
 
-**Polling loop isolation (#1333)**: `docker/agents/entrypoint.sh` runs one `oak/tick.sh`
-per project per loop (`POLL_INTERVAL`, default 300s); tick.sh senses, picks, and starts
-at most one organ per tick and backgrounds the organ itself — the entrypoint never
-starts organs itself and never waits on them. Long-running dev-agent sessions therefore
-never block the loop from launching the next iteration's polls.
+**Polling loop isolation (#1388)**: `docker/agents/entrypoint.sh` backgrounds
+`dev-poll.sh` every loop (`POLL_INTERVAL`, default 300s) and waits only for the
+current iteration's fast polls — long-running dev-agent sessions (spawned by
+dev-poll) therefore never block the loop from launching the next iteration's
+polls. The oak tick runs alongside per project as a dry-run shadow
+(OAK_DRY_RUN=1) and never execs an organ.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
 tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box); or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164).
