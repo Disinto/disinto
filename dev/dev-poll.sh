@@ -717,7 +717,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
               else
                 log "WARNING: failed to delete orphaned remote branch fix/issue-${ISSUE_NUM} — proceeding with relaunch"
               fi
-              nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+              ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
               log "started dev-agent PID $! for issue #${ISSUE_NUM} (stale-branch recovery)"
               BLOCKED_BY_INPROGRESS=true
             else
@@ -730,7 +730,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             log "issue #${ISSUE_NUM} already has a live dev-agent — not starting a second (#1070)"
           else
             log "issue #${ISSUE_NUM} self-assigned but orphaned (no lock, no branch, no PR) — recovering"
-            nohup "${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1 &
+            ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
             log "started dev-agent PID $! for issue #${ISSUE_NUM} (post-crash recovery)"
           fi
           BLOCKED_BY_INPROGRESS=true
