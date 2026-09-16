@@ -5,6 +5,11 @@
 # Generates docker-compose.yml, Dockerfile, Caddyfile, staging index, and
 # deployment pipeline configs.
 #
+# Chat (#1237): the chat spec is generated here at init (the `chat` service
+# in generate_compose's output); the repo holds NO in-repo snapshot of the
+# chat jobspec — see nomad/AGENTS.md ("The `chat` job is init-generated").
+# Drift check on live boxes: `disinto doctor`.
+#
 # Globals expected (must be set before sourcing):
 #   FACTORY_ROOT   - Root of the disinto factory
 #   PROJECT_NAME   - Project name for the project repo (defaults to 'project')
