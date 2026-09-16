@@ -87,6 +87,7 @@ _render() {
 
 @test "rendered jobspec derives FORGE_REPO and FACTORY_REPO from the environment" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   export FORGE_REPO="acme/lab"
   _render
   [ -f "$JOBSPEC_OUT" ]
@@ -98,6 +99,7 @@ _render() {
 
 @test "FACTORY_REPO can differ from FORGE_REPO" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   export FORGE_REPO="acme/lab"
   export FACTORY_REPO="acme/factory"
   _render
@@ -107,6 +109,7 @@ _render() {
 
 @test "claude tuning values are derived, not hardcoded" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   export CLAUDE_TIMEOUT="3600"
   export CLAUDE_MAX_TURNS="120"
   export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="50"
@@ -130,6 +133,7 @@ _render() {
 
 @test "jobspec carries the bot identifiers, role and project paths" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   grep -q 'job "bot-labbot"' "$JOBSPEC_OUT"
   grep -q 'role *= *"bot-labbot"' "$JOBSPEC_OUT"
@@ -142,6 +146,7 @@ _render() {
 
 @test "jobspec mounts the four host volumes the entrypoint expects" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   for v in agent-data project-repos ops-repo factory-projects; do
     grep -q "volume \"$v\"" "$JOBSPEC_OUT"
@@ -151,6 +156,7 @@ _render() {
 
 @test "jobspec is validated before it is run" {
   _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   [ "$(head -1 "$NOMAD_CALLS")" = "validate" ]
   grep -q '^run$' "$NOMAD_CALLS"
@@ -160,6 +166,7 @@ _render() {
 
 @test "deploy is refused when the bot Vault role is not in place" {
   # No hvault.sh at all -> Vault unreachable -> role never confirmed.
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   [ "$(cat "$TMP/rc")" != "0" ]
   grep -q "refusing to deploy" "$TMP/stderr"
@@ -168,6 +175,7 @@ _render() {
 }
 
 @test "the refusal explains the crash-loop it prevents" {
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   grep -q "crash-loop" "$TMP/stderr"
   grep -qi "vault role" "$TMP/stderr"
