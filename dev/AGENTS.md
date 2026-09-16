@@ -1,14 +1,15 @@
-<!-- last-reviewed: e5360777096d323ba88086ae26726842d7e2e3ae -->
+<!-- last-reviewed: 6dd0a82d58adb2f3f9b88f7df354896494dd3891 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
 CI failures and review feedback.
 
 **Trigger**: `dev-poll.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 5 minutes (iteration math at line 171-175). Sources `lib/guard.sh` and calls
+every 5 minutes (`POLL_INTERVAL`, default 300s). Sources `lib/guard.sh` and calls
 `check_active dev` first — skips if `$FACTORY_ROOT/state/.dev-active` is absent. Then
 performs a direct-merge scan (approved + CI green PRs — including chore/gardener PRs
-without issue numbers), then checks the agent lock and scans for ready issues using a
+without issue numbers), then runs the merge-ready sweep (`dev/merge-ready.sh`, below),
+then checks the agent lock and scans for ready issues using a
 two-tier priority queue: (1) `priority`+`backlog` issues first (FIFO within tier), then
 (2) plain `backlog` issues (FIFO). Orphaned in-progress issues are also picked up. The
 direct-merge scan runs before the lock check so approved PRs get merged even while a
@@ -16,40 +17,68 @@ dev-agent session is active.
 
 **Key files**:
 - `dev/dev-poll.sh` — Polling loop participant: finds next ready issue, handles merge/rebase
-of approved PRs, tracks CI fix attempts. Invoked by `docker/agents/entrypoint.sh` every 5
+of approved PRs, tracks CI fix attempts via `lib/ci-fix-tracker.sh` (max 3 per PR).
+Invoked by `docker/agents/entrypoint.sh` every 5
 minutes. `BOT_USER` is resolved once at startup via the Forge `/user` API and cached for
-all assignee checks. Formula guard skips issues labeled `formula`, `prediction/dismissed`,
+all assignee checks. Guard skips issues labeled `formula`, `prediction/dismissed`,
 `prediction/unreviewed`, `waiting-on-compute` (readiness flag: work waiting on an
 external run — see root AGENTS.md label table, #1072), or `experiment` / `run` /
 `judgment` (research-template issues, #1295 — skipped even when queued with backlog,
 #1306). **Race prevention**: checks issue assignee before claiming —
 skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and
-deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh start).
+deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh
+start); the branch tested/deleted is the found PR's actual `head.ref`, so retry
+branches (`fix/issue-N-<attempt>`) are handled correctly (#1139).
 **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`.
 If the issue has a `vision` label, sets `BLOCKED_BY_INPROGRESS=true` and skips further
 stale checks (vision issues are managed by the architect). If the issue is assigned to
 `$BOT_USER` (this agent), checks for pending review feedback first — if an open PR has
-`REQUEST_CHANGES`, spawns the dev-agent to address it before setting `BLOCKED_BY_INPROGRESS=true`;
+`REQUEST_CHANGES` (head-aware live reviews via `pr_live_review_count` in
+`lib/pr-lifecycle.sh` — a reopened PR has every review marked stale, so stale-only
+checks see no decision, #1089), spawns the dev-agent to address it before setting
+`BLOCKED_BY_INPROGRESS=true`;
 otherwise just sets blocked. If assigned to another agent, logs and falls through (does not
-block). If no assignee, no open PR, and no agent lock file — removes `in-progress`, adds
-`blocked` with a human-triage comment. **Post-crash self-assigned recovery (#749)**: when the
-issue is self-assigned (this bot) but there is no open PR, dev-poll now checks for a lock
-file (`/tmp/dev-impl-summary-$PROJECT_NAME-$ISSUE_NUM.txt`) AND a remote branch
-(`fix/issue-$ISSUE_NUM`) before declaring "my thread is busy". If neither exists after a cold
-boot, it spawns a fresh dev-agent for recovery instead of looping forever. Before any such
-spawn it also checks the process table (`pgrep`) and never starts a second `dev-agent.sh`
-for an issue that already has a live one (#1070) — a started session that has written
-neither lock nor branch yet is invisible to both of those checks, but not to the process
-table. **Per-agent open-PR gate**: before starting new work,
+block). If no assignee, no open PR, and no agent lock file — `handle_stale_in_progress()`
+closes the issue instead of relabeling it `blocked` when the linked PR is already
+merged (merged PRs are found via a `state=all` lookup that matches retry branches too,
+#1130/#1137); otherwise it removes `in-progress` and adds `blocked` with a human-triage
+comment. **Post-crash self-assigned recovery (#749)**: when the
+issue is self-assigned (this bot) but there is no open PR, dev-poll checks a lock
+file (`/tmp/dev-impl-summary-$PROJECT_NAME-$ISSUE_NUM.txt`) and a remote branch
+(`fix/issue-$ISSUE_NUM`) before declaring "my thread is busy". A lock file means busy.
+A remote branch with no open PR means busy when a dev-agent process is live
+(`pgrep`, `_dev_agent_running`) or the branch was pushed within the last 6h; a
+branch older than 6h with no agent is an orphaned corpse — it is deleted (so the
+relaunch reuses `fix/issue-N` instead of stacking an attempt branch on top, #1251)
+and dev-agent is relaunched, which adopts any surviving state via `RECOVERY_MODE`
+(#1227). With neither lock nor branch, a fresh dev-agent is spawned — after checking
+the process table, since a started session that has written neither lock nor branch
+yet is invisible to both of those checks, but not to `pgrep` (#1070).
+**Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents'
-PRs do not block this agent's pipeline (#358, #369). **Merge-ready sweep** (dev/merge-ready.sh):
-called before the lock check each poll tick; auto-merges ANY open PR with review-bot
-APPROVED on current HEAD + green CI + no `blocked`/`do-not-merge` labels + a
-30-minute cooldown, regardless of issue assignee. This lands ops/gardener PRs (no linked
-issue) and clears orphaned APPROVED PRs that the author's own-PR scan would skip.
-Post-merge housekeeping (mirror_push, linked-issue close, in-progress cleanup) is
+PRs do not block this agent's pipeline (#358, #369). **Wedged-PR escalation (#1089)**:
+an open PR that is CI green but has zero *live* reviews (Forgejo marks every review
+stale on close/reopen, including the one pinned to the head) can be neither picked up
+(no live REQUEST_CHANGES) nor merged (no live APPROVE) — `escalate_wedged_pr()` posts a
+dedup'd comment, labels the issue `blocked`, and drops `in-progress` so the queue is
+not held; a re-review unblocks it automatically. **Merge-block escalation (#1090)**:
+`try_direct_merge` no longer retries forever when a merge keeps failing for the same
+reason on the same head — after `MERGE_BLOCK_RETRY_LIMIT` (default 3) identical
+failures, `escalate_merge_blocked_pr()` posts the full untruncated forge response,
+labels the issue `blocked`, drops `in-progress`, and callers stop retrying and skip
+the dev-agent fallback (return code 2).
+- `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
+called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open
+PR that is mergeable, has no `blocked`/`do-not-merge` label, has a review-bot
+APPROVED pinned to the current HEAD, no review-bot REQUEST_CHANGES on the HEAD,
+CI success on the HEAD, and an approval older than `MERGE_COOLDOWN_MIN` (default
+30 min — human veto window), regardless of issue assignee. Runs as dev-bot (the
+review identity never merges what it approved). This lands ops/gardener PRs (no
+linked issue) and clears orphaned APPROVED PRs that the author's own-PR scan would
+skip (#1250/#1259). Post-merge housekeeping (mirror_push, linked-issue close via
+branch ref / PR title / body keyword, in-progress cleanup, CI-tracker reset) is
 performed automatically.
-- `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval. **Launched as a subshell** (`("${SCRIPT_DIR}/dev-agent.sh" ...) &`) — not via `nohup` — to avoid deadlocking the polling loop and review-poll when running in the same container (#693).
+- `dev/dev-agent.sh` — Orchestrator: claims issue, creates worktree + tmux session with interactive `claude`, monitors phase file, injects CI results and review feedback, merges on approval. **Launched as a subshell** (`("${SCRIPT_DIR}/dev-agent.sh" ...) &`) — not via `nohup` — to avoid deadlocking the polling loop and review-poll when running in the same container (#693). **No-push decision (#1164)**: `no_push_outcome()` separates resource-limit exits — max turns (the run's `result` subtype) or the wall-clock timeout (`agent_run` exit code 124, `lib/agent-sdk.sh`) — from real no-push failures. Resource-limit exits are transient: `issue_requeue` (`lib/issue-lifecycle.sh`) puts the issue back in the claimable backlog for a fresh retry; on the third consecutive resource-limit exit (attempt ≥ 2) a human decision is needed, so the issue is blocked with reason `no_push_after_3_attempts`. Any other no-push reason keeps the historical `issue_block "no_push"` behavior. **Leftover-claude cleanup (#1070)**: `claude_run_with_watchdog` records the claude process-group id in a pgid file, so every exit path (release, crash, signal — HUP/INT/TERM are routed into the EXIT trap) runs `kill_stale_claude()`, which TERM/KILLs a claude group that outlived its watchdog and was holding an agent slot.
 - `dev/phase-test.sh` — Integration test for the phase protocol
 
 **Environment variables consumed** (via `lib/env.sh` + project TOML):
@@ -66,14 +95,14 @@ performed automatically.
 
 **Crash recovery**: on `PHASE:crashed` or non-zero exit, the worktree is **preserved** (not destroyed) for debugging. Location logged. Supervisor housekeeping removes stale crashed worktrees older than 24h.
 
-**Polling loop isolation (#753)**: `docker/agents/entrypoint.sh` now tracks fast-poll PIDs
-(`FAST_PIDS`) and calls `wait "${FAST_PIDS[@]}"` instead of `wait` (no-args). This means
-long-running dev-agent sessions no longer block the loop from launching the next iteration's
-fast polls — the loop only waits for review-poll and dev-poll (the fast agents), never for
-the dev-agent subprocess itself.
+**Polling loop isolation (#1333)**: `docker/agents/entrypoint.sh` runs one `oak/tick.sh`
+per project per loop (`POLL_INTERVAL`, default 300s); tick.sh senses, picks, and starts
+at most one organ per tick and backgrounds the organ itself — the entrypoint never
+starts organs itself and never waits on them. Long-running dev-agent sessions therefore
+never block the loop from launching the next iteration's polls.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
-tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box).
+tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box); or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164).
 On respawn after `PHASE:escalate`, the stale phase file is cleared first so the session
 starts clean; the reinject prompt tells Claude not to re-escalate for the same reason.
 On respawn for any active PR, the prompt explicitly tells Claude the PR already exists
