@@ -93,12 +93,23 @@ echo "=== 3/3 Unit test: configure_git_creds ==="
 
 cred_home=$(mktemp -d)
 
-# Export required globals
+# Export required globals. FORGE_TOKEN is a dummy non-empty value so the
+# token-resolution path runs; both network touchpoints below are stubbed,
+# so this step is hermetic — no live Forge, no real token, no 30-minute
+# wait (#1244). FORGE_URL may be unreachable: no real request is made.
 export FORGE_PASS="test-password-123"
 export FORGE_URL="http://forgejo:3000"
-export FORGE_TOKEN=""  # skip API call in test
+export FORGE_TOKEN="test-token"
 
-configure_git_creds "$cred_home"
+# Stub the two network touchpoints inside configure_git_creds:
+#   forge_whoami — normally resolves the token's login via GET /user
+#   curl         — used to verify the written helper against live Forgejo
+forge_whoami() { printf 'test-bot\n'; }
+curl() { return 0; }
+
+# Run with HOME redirected so `git config --global` writes into the temp
+# dir instead of the test runner's real git config.
+HOME="$cred_home" configure_git_creds "$cred_home"
 
 if [ -x "${cred_home}/.git-credentials-helper" ]; then
   pass "Credential helper script created and executable"
