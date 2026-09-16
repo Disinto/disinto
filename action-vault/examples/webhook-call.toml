@@ -1,4 +1,4 @@
-# vault/examples/webhook-call.toml
+# action-vault/examples/webhook-call.toml
 # Example: Call an external webhook with authentication
 #
 # This vault action demonstrates calling an external webhook endpoint
