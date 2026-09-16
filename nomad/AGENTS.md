@@ -35,6 +35,41 @@ split between `nomad/server.hcl` and `nomad/client.hcl` is for readability, not
 semantics. The top-of-file header in each config documents which blocks
 it owns.
 
+## The `chat` job is init-generated — no in-repo snapshot (#1237)
+
+The repo deliberately holds **no in-repo snapshot of the chat jobspec**:
+there is no `nomad/jobs/chat.hcl`, and that is by design. The chat spec is
+**generated at init** — `lib/generators.sh` emits it as part of
+`disinto init` (a `chat` service in the generated `docker-compose.yml` on
+the compose backend; on the Nomad backend init deploys the `edge` job,
+which serves chat in-process via `chat-server.py` since #1083). A
+checked-in snapshot would rot (the last one referenced the `service-chat`
+Vault role and the `disinto/chat:local` image — both gone), so the
+generator, not a file, is the source of truth.
+
+History: chat was a standalone Nomad job (`nomad/jobs/chat.hcl`, #989);
+it was merged into `edge` (#1083/#1085) and the standalone jobspec, its
+Vault role, and its seeder were removed in #1158. **Live boxes initialized
+before #1158 may still be running that legacy standalone `chat` job
+(group `chat`).** Such a job cannot be reproduced from git or updated
+through the normal jobspec flow — it is box drift, not a release gap.
+
+Surface it with the drift check:
+
+    disinto doctor
+
+`disinto doctor` compares the live `chat` job (if any) against the freshly
+generated init state and reports the difference explicitly:
+
+- `OK` (exit 0) — no standalone `chat` job registered on the cluster;
+  matches the generated state (chat is served inside the `edge` job).
+- `DRIFT` (exit 1) — a `chat` job the generated state does not account for
+  is running; the check prints the full live spec verbatim plus the
+  remediation (`nomad job stop chat`). If a `nomad/jobs/chat.hcl` snapshot
+  ever exists in the repo, the live spec is diffed against it instead.
+- exit 2 — uncheckable (no `nomad` CLI on PATH, or the Nomad API is
+  unreachable — e.g. a compose box).
+
 ## Vault ACL policies
 
 `vault/policies/` holds one `.hcl` file per Vault policy; see

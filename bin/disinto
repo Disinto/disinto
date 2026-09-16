@@ -17,6 +17,7 @@
 #   disinto vault <subcommand>          Vault maintenance (reseed-ops-repo, reseed-runner, reseed-voice, reseed-all)
 #   disinto wp reseed-secrets           Re-seed Woodpecker repo secrets from .env
 #   disinto stats [options]             Summarise agent-run telemetry
+#   disinto doctor                      Factory drift checks (chat jobspec, #1237)
 #
 # Usage:
 #   disinto init https://github.com/user/repo
@@ -86,6 +87,10 @@ Usage:
   disinto wp reseed-secrets            Re-seed Woodpecker repo secrets from .env
   disinto stats [--since <N>d|<N>h]    Summarise agent-run telemetry (per-role table + totals)
              [--role <role>] [--task <ref>] [--json]
+  disinto doctor                       Factory drift checks — live state vs the
+                                       state init generates from this repo
+                                       (chat jobspec drift, #1237). Exit codes:
+                                       0=OK, 1=DRIFT, 2=uncheckable
 
 Validate subcommands:
   lint-ci                              Lint .woodpecker/*.yml for missing timeouts
@@ -4221,6 +4226,116 @@ disinto_cut_release() {
   exec bash "${FACTORY_ROOT}/tools/cut-release.sh" "$@"
 }
 
+# ── disinto doctor — factory drift checks (#1237) ────────────────────────────
+#
+# Compares live factory state against the state init would generate from
+# this repo, and reports the difference explicitly.
+#
+# Exit codes:
+#   0  in sync — live state matches what init generates
+#   1  DRIFT   — live state differs from the generated state
+#   2  uncheckable — a check could not run (no `nomad` CLI on PATH, or the
+#      Nomad API is unreachable; e.g. a compose box, where chat is a
+#      compose-managed service and there is no standalone Nomad job)
+#
+# Checks:
+#   chat — standalone `chat` Nomad job drift. The repo holds NO in-repo
+#          snapshot of the chat jobspec (by design, #1237): the chat spec is
+#          generated at init by lib/generators.sh, and on the Nomad backend
+#          chat is served in-process inside the `edge` job (#1083; the
+#          standalone jobspec was removed in #1158). A box initialized before
+#          #1158 may still run a legacy standalone `chat` job that cannot be
+#          reproduced from git — this check surfaces it, printing the full
+#          live spec and the remediation.
+#
+# DISINTO_DOCTOR_NOMAD — optional: override the `nomad` binary used by the
+# checks (test seam; also handy for non-standard install paths).
+
+disinto_doctor() {
+  local rc=0
+  doctor_check_chat || rc=$?
+  return "$rc"
+}
+
+# doctor_check_chat — standalone `chat` Nomad job drift (see disinto_doctor
+# for the exit-code contract).
+doctor_check_chat() {
+  local nomad_bin="${DISINTO_DOCTOR_NOMAD:-nomad}"
+  if ! command -v "$nomad_bin" >/dev/null 2>&1; then
+    echo '── doctor: chat drift check ─────────────────────────────────'
+    echo "SKIP: no \`${nomad_bin}\` CLI on PATH — cannot query the Nomad API"
+    echo '      (expected on a compose box: chat is a compose-managed service'
+    echo '      there, and there is no standalone Nomad job to check)'
+    return 2
+  fi
+
+  # Reachability probe first, so "API down" is never misreported as
+  # "no chat job registered".
+  if ! "$nomad_bin" node status >/dev/null 2>&1; then
+    echo '── doctor: chat drift check ─────────────────────────────────'
+    echo "ERROR: cannot reach the Nomad API (NOMAD_ADDR=${NOMAD_ADDR:-http://127.0.0.1:4646})"
+    echo '       — inconclusive; not a drift verdict'
+    return 2
+  fi
+
+  local snapshot="${FACTORY_ROOT}/nomad/jobs/chat.hcl"
+  local live_json
+  live_json="$("$nomad_bin" job inspect -json "chat" 2>/dev/null)" || live_json=""
+
+  echo '── doctor: chat drift check ─────────────────────────────────'
+  if [ -z "$live_json" ]; then
+    echo 'generated : no standalone `chat` jobspec (init-generated; no in-repo snapshot, #1237)'
+    echo 'live      : no `chat` job registered on the cluster'
+    echo 'verdict   : OK — matches the generated state (on the Nomad backend'
+    echo '            chat is served in-process inside the `edge` job, #1083)'
+    return 0
+  fi
+
+  local status modified count
+  status="$(printf '%s' "$live_json" | jq -r '.Status // "unknown"' 2>/dev/null)" || status="unknown"
+  modified="$(printf '%s' "$live_json" | jq -r '.ModifiedAt // empty' 2>/dev/null)" || modified=""
+  count="$(printf '%s' "$live_json" | jq -r '[.Groups[]?.Count // 0] | add // 0' 2>/dev/null)" || count="?"
+
+  if [ -f "$snapshot" ]; then
+    # Rare path: an in-repo snapshot exists (the #1237 decision says the repo
+    # holds none) — diff the live spec against it byte-for-byte.
+    local live_hcl diff_out
+    live_hcl="$("$nomad_bin" job inspect "chat" 2>/dev/null)" || live_hcl=""
+    if [ -n "$live_hcl" ] \
+      && diff_out="$(diff -u --label live --label "generated (nomad/jobs/chat.hcl)" \
+        <(printf '%s\n' "$live_hcl") "$snapshot" 2>&1)"; then
+      echo "generated : in-repo snapshot ${snapshot#"$FACTORY_ROOT"/}"
+      echo "live      : job \`chat\` present (status=${status}, count=${count})"
+      echo 'verdict   : OK — live spec matches the in-repo snapshot'
+      return 0
+    fi
+    echo "generated : in-repo snapshot ${snapshot#"$FACTORY_ROOT"/}"
+    echo "live      : job \`chat\` present (status=${status}, count=${count})"
+    echo 'verdict   : DRIFT — live spec differs from the in-repo snapshot:'
+    printf '%s\n' "${diff_out:-live spec unavailable}" | sed 's/^/    /'
+    return 1
+  fi
+
+  # Expected path: no snapshot in the repo and init generates no standalone
+  # chat jobspec — so any live `chat` job is drift by definition.
+  echo 'generated : no standalone `chat` jobspec — the chat spec is generated at init'
+  echo '            by lib/generators.sh, and the repo holds NO in-repo snapshot'
+  echo '            (by design, #1237). On the Nomad backend chat is served in-process'
+  echo '            inside the `edge` job (#1083); on the compose backend the generated'
+  echo '            docker-compose.yml carries a `chat` service.'
+  echo "live      : job \`chat\` present — status=${status}${modified:+, modified_at=${modified}}, count=${count}"
+  echo 'diff      : live box runs a standalone `chat` job; the freshly generated state'
+  echo '            contains none — the live spec cannot be reproduced from git'
+  echo 'verdict   : DRIFT — legacy box drift from a pre-#1158 init (not a release gap)'
+  echo ''
+  echo 'live spec (verbatim, `nomad job inspect chat`):'
+  "$nomad_bin" job inspect "chat" 2>/dev/null | sed 's/^/    /' || true
+  echo ''
+  echo 'remediation : chat has been served by the `edge` job since #1083. To decommission'
+  echo '              the legacy job:  nomad job stop chat'
+  return 1
+}
+
 # ── Main dispatch ────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -4245,6 +4360,7 @@ case "${1:-}" in
  vault)           shift; disinto_vault "$@" ;;
   wp)              shift; disinto_wp "$@" ;;
   stats)           shift; disinto_stats "$@" ;;
+  doctor)          shift; disinto_doctor "$@" ;;
   -h|--help)       usage ;;
   *)               usage ;;
 esac
