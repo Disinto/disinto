@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/acceptance/issue-1350.sh — AGENTS.md says the tick, not interval organs
+# tests/acceptance/issue-1350.sh — AGENTS.md says cadence scheduler + dry-run
+# shadow tick
 #
-# Issue #1350 (docs): since #1333 the entrypoint no longer starts organs on
-# staggered intervals — one loop iteration runs one oak/tick.sh per project,
-# and the tick is the policy that picks (and starts) at most one organ.
-# The root AGENTS.md still described the old policy.
+# Issue #1350 (docs) originally made AGENTS.md match the tick-only policy
+# (#1333). #1388 restored the per-organ cadence scheduler and demoted the
+# oak tick to a dry-run shadow (OAK_DRY_RUN=1 — senses, picks, logs, never
+# execs an organ); the tick learner retires in #1390. This test now pins the
+# post-#1388 wording.
 #
 # Read-only checks against the checkout's AGENTS.md:
 #   1. contains oak/tick.sh
 #   2. the architecture blurb ("What this repo is") says the entrypoint loop
-#      calls oak/tick.sh per project per tick and scopes the start-only-on-pick
-#      claim to the tick organs (the edge dispatcher runs its own loop and
-#      launches the reproduce/triage sidecars — they are not tick starts)
-#   3. the AD-001 row mentions the tick — planner/predictor/gardener/
-#      supervisor are actions in oak/pack.example.toml, not a parallel cadence
-#   4. does not describe ARCHITECT_INTERVAL / PLANNER_INTERVAL / "every 12h"
-#      style fixed per-organ cadences as factory policy
+#      paces the organs on their own intervals AND names oak/tick.sh as a
+#      dry-run shadow with OAK_DRY_RUN=1
+#   3. the blurb no longer claims organs "start only when the tick picks
+#      them" (the pre-#1388 wording)
+#   4. the AD-001 row mentions the tick as a dry-run shadow, and keeps the
+#      "not PR-based actions" fact
 #
 # Last stdout line is PASS or FAIL: <reason>.
 # =============================================================================
@@ -39,27 +40,37 @@ ac_log "checking AGENTS.md contains oak/tick.sh"
 grep -q "oak/tick.sh" "$MD" \
   || ac_fail "AGENTS.md must contain oak/tick.sh"
 
-# 2. The "What this repo is" blurb carries the tick fact.
-ac_log "checking the architecture blurb names oak/tick.sh"
+# 2. The "What this repo is" blurb carries the post-#1388 facts: per-organ
+#    intervals + the tick as a dry-run shadow with OAK_DRY_RUN=1.
+ac_log "checking the architecture blurb names the cadence scheduler and the shadow tick"
 blurb="$(sed -n '/^## What this repo is/,/^## /p' "$MD")"
 [ -n "$blurb" ] || ac_fail "'What this repo is' section not found in AGENTS.md"
 grep -q "oak/tick.sh" <<< "$blurb" \
-  || ac_fail "the 'What this repo is' blurb must say the entrypoint loop calls oak/tick.sh per project per tick (organs start only when the tick picks them)"
-grep -qi "tick organs" <<< "$blurb" \
-  || ac_fail "the blurb must scope the start-only-on-pick claim to the tick organs (the edge dispatcher runs its own loop and launches the reproduce/triage sidecars)"
+  || ac_fail "the 'What this repo is' blurb must name oak/tick.sh"
+grep -q "OAK_DRY_RUN=1" <<< "$blurb" \
+  || ac_fail "the blurb must say the tick runs as a dry-run shadow (OAK_DRY_RUN=1)"
+grep -qi "dry-run" <<< "$blurb" \
+  || ac_fail "the blurb must call the tick a dry-run shadow"
+for cadence in "every 20 min" "every 12h" "daily"; do
+  grep -qi "$cadence" <<< "$blurb" \
+    || ac_fail "the blurb must describe the per-organ intervals (expected '$cadence')"
+done
 
-# 3. The AD-001 row mentions the tick.
-ac_log "checking the AD-001 row mentions the tick"
+# 3. The pre-#1388 start-only-on-pick wording is gone.
+ac_log "checking the old start-only-on-pick wording is gone"
+! grep -qi "start only when the tick picks" "$MD" \
+  || ac_fail "AGENTS.md must not claim organs start only when the tick picks them (the cadence scheduler was restored by #1388)"
+
+# 4. The AD-001 row mentions the tick as a dry-run shadow and keeps the
+#    polling-loop / not-PR-based-actions fact.
+ac_log "checking the AD-001 row"
 ad001="$(grep -E '^\| AD-001 \|' "$MD")"
 [ -n "$ad001" ] || ac_fail "AD-001 row not found in AGENTS.md"
 grep -qi "tick" <<< "$ad001" \
-  || ac_fail "AD-001 must say the entrypoint loop calls oak/tick.sh (the tick picks organs)"
-
-# 4. No fixed per-organ cadence is described as factory policy.
-ac_log "checking no interval-organ cadence remains"
-for needle in ARCHITECT_INTERVAL PLANNER_INTERVAL GARDENER_INTERVAL SUPERVISOR_INTERVAL predictor_interval "every 12h"; do
-  ! grep -qi -e "$needle" "$MD" \
-    || ac_fail "AGENTS.md must not describe '$needle' as factory policy (the tick is the policy, #1333)"
-done
+  || ac_fail "AD-001 must mention the oak tick"
+grep -qi "dry-run" <<< "$ad001" \
+  || ac_fail "AD-001 must say the tick runs as a dry-run shadow"
+grep -qi "PR-based" <<< "$ad001" \
+  || ac_fail "AD-001 must keep the 'not PR-based actions' fact"
 
 echo PASS

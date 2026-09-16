@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/acceptance/issue-1351.sh — site docs say the oak tick is the cadence
+# tests/acceptance/issue-1351.sh — site docs say cadence scheduler + dry-run
+# shadow tick
 #
-# Issue #1351 (docs): the live loop is one oak/tick.sh per POLL_INTERVAL
-# (default 5 min); the tick picks (and starts) at most one organ, legal
-# actions come from ops/pack.toml (falling back to oak/pack.example.toml),
-# and AGENT_ROLES filters. site/docs/architecture.html still listed per-organ
-# interval triggers and site/docs/quickstart.html still said the planner
-# reads VISION.md weekly. #1214 and #1279 flagged this.
+# Issue #1351 (docs) originally made the site docs match the tick-only
+# policy (#1333). #1388 restored the per-organ cadence scheduler (dev/review
+# every 5 min, supervisor 20 min, architect 15 min, gardener 6h, planner
+# 12h, predictor daily) and demoted the oak tick to a dry-run shadow
+# (OAK_DRY_RUN=1 — senses, picks, logs, never execs). This test now pins the
+# post-#1388 wording.
 #
 # Read-only checks against the checkout:
 #   1. architecture.html contains oak/tick.sh
-#   2. architecture.html states the tick cadence: one tick per POLL_INTERVAL,
-#      legal actions from ops/pack.toml / oak/pack.example.toml, AGENT_ROLES
-#      filters
-#   3. architecture.html no longer claims per-organ intervals (no gardener
-#      6h, no planner weekly/12-hour, no "Polling loop: every N" triggers)
-#   4. quickstart.html does not claim the planner reads VISION.md weekly;
-#      it says the planner runs when the tick picks planner-run
+#   2. architecture.html states the per-organ cadence (dev/review 5 min,
+#      supervisor 20 min, architect 15 min, gardener 6h, planner 12h,
+#      predictor daily)
+#   3. architecture.html names the tick as a dry-run shadow with
+#      OAK_DRY_RUN=1, still mentions POLL_INTERVAL, the pack sources
+#      (ops/pack.toml / oak/pack.example.toml), and the AGENT_ROLES filter
+#   4. quickstart.html says the planner reads VISION.md every 12 hours (not
+#      weekly, not "when a tick picks planner-run")
 #
 # Last stdout line is PASS or FAIL: <reason>.
 # =============================================================================
@@ -42,29 +44,36 @@ ac_log "checking architecture.html contains oak/tick.sh"
 grep -q "oak/tick.sh" "$ARCH" \
   || ac_fail "architecture.html must contain oak/tick.sh"
 
-# 2. The architecture doc states the tick cadence.
-ac_log "checking architecture.html states the tick cadence"
+# 2. The architecture doc states the per-organ cadence.
+ac_log "checking architecture.html states the per-organ cadence"
+for needle in "every 5 min" "every 20 min" "every 15 min" "every 6h" "every 12h" "daily"; do
+  grep -qi "$needle" "$ARCH" \
+    || ac_fail "architecture.html must describe the per-organ intervals (expected '$needle')"
+done
+
+# 3. The tick is named as a dry-run shadow; the pack sources and the
+#    AGENT_ROLES filter are still mentioned.
+ac_log "checking architecture.html names the dry-run shadow tick"
+grep -q "OAK_DRY_RUN=1" "$ARCH" \
+  || ac_fail "architecture.html must say the tick runs as a dry-run shadow (OAK_DRY_RUN=1)"
+grep -qi "shadow" "$ARCH" \
+  || ac_fail "architecture.html must call the tick a dry-run shadow"
 grep -q "POLL_INTERVAL" "$ARCH" \
-  || ac_fail "architecture.html must say one tick runs per POLL_INTERVAL"
+  || ac_fail "architecture.html must mention the tick runs per POLL_INTERVAL"
 grep -q "ops/pack.toml" "$ARCH" \
   || ac_fail "architecture.html must say legal actions come from ops/pack.toml"
 grep -q "oak/pack.example.toml" "$ARCH" \
   || ac_fail "architecture.html must say legal actions fall back to oak/pack.example.toml"
 grep -q "AGENT_ROLES" "$ARCH" \
-  || ac_fail "architecture.html must say AGENT_ROLES filters the legal actions"
+  || ac_fail "architecture.html must say AGENT_ROLES filters which organs a house runs"
 
-# 3. No per-organ interval trigger claims remain.
-ac_log "checking no per-organ interval cadence remains in architecture.html"
-for needle in "every 6h" "every 6 h" "6-hour" "weekly" "every 12 hours" "12-hour" "runs daily" "Polling loop: every"; do
-  ! grep -qi -e "$needle" "$ARCH" \
-    || ac_fail "architecture.html must not claim '$needle' (the oak tick is the cadence, #1351)"
-done
-
-# 4. Quickstart no longer says the planner reads VISION.md weekly.
+# 4. Quickstart says the planner reads VISION.md every 12 hours.
 ac_log "checking quickstart.html planner cadence"
 ! grep -qi "weekly" "$QUICK" \
   || ac_fail "quickstart.html must not claim the planner reads VISION.md weekly"
-grep -q "planner-run" "$QUICK" \
-  || ac_fail "quickstart.html must say the planner runs when the tick picks planner-run"
+grep -qi "every 12 hours" "$QUICK" \
+  || ac_fail "quickstart.html must say the planner reads VISION.md every 12 hours"
+! grep -q "tick picks" "$QUICK" \
+  || ac_fail "quickstart.html must not claim the planner runs when a tick picks planner-run (the cadence scheduler was restored by #1388)"
 
 echo PASS

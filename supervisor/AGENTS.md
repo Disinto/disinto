@@ -8,7 +8,7 @@ issues, and writes a daily journal. When blocked on external
 resources or human decisions, files vault items instead of escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): started by the oak tick — the loop runs one `oak/tick.sh` per project per `POLL_INTERVAL` (default 300s), and the tick's learned policy decides whether this tick starts `supervisor-run.sh` (#1333). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
+- **Agents container** (`docker/agents/entrypoint.sh`): started by the polling loop on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388); the oak tick runs alongside per project as a dry-run shadow (OAK_DRY_RUN=1) and never execs organs. Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
 Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
@@ -52,8 +52,8 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   disk, CI, git, dev-agent, review-agent, forge)
 
 **Log sinks**: `supervisor-run.sh`'s internal structured logging goes to
-`data/logs/supervisor/supervisor.log`; the oak tick's organ redirect (#1333)
-writes the invocation's stdout/stderr to `data/logs/supervisor-run.log`.
+`data/logs/supervisor/supervisor.log`; the polling loop's redirect (#1388)
+writes the invocation's stdout/stderr to the same `data/logs/supervisor/supervisor.log`.
 #1150 unified the *internal* logging on the `supervisor/` path after the
 dual-sink incident — do not introduce a second internal path.
 
@@ -71,7 +71,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Files vault items locally to `$PROJECT_REPO_ROOT/vault/pending/`
 - Logs a WARNING message at startup indicating degraded mode
 
-**Lifecycle**: supervisor-run.sh (started when the oak tick picks the `supervisor-run` action, `check_active supervisor`)
+**Lifecycle**: supervisor-run.sh (started by the polling loop on the SUPERVISOR_INTERVAL cadence, #1388; `check_active supervisor`)
 → lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
 (if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`

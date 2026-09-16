@@ -31,7 +31,7 @@ emit feature work — only observations challenging claims, exposing gaps,
 and surfacing risks.
 
 **Trigger**: `predictor-run.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 24 hours (iteration math at line 224-236). Sources `lib/guard.sh` and calls
+every 24 hours (iteration math at lines 807-818, #1388). Sources `lib/guard.sh` and calls
 `check_active predictor` first — skips if `$FACTORY_ROOT/state/.predictor-active` is absent.
 Also guarded by PID lock (`/tmp/predictor-run.lock`) and memory check (skips if available
 RAM < 2000 MB). Note: the 24h cadence is iteration-based, not anchored to 06:00 UTC —

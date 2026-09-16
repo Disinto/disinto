@@ -21,23 +21,30 @@ Point it at a git repo with a Woodpecker CI pipeline and it will pick up issues,
 ## Architecture
 
 ```
-entrypoint.sh (while-true polling loop, 5 min base interval)
+entrypoint.sh (while-true polling loop, 5 min base interval — per-organ cadence scheduler, #1388)
  │
- ├── every POLL_INTERVAL ────→ oak/tick.sh (one per project)
- │    sense → pick → start at most one organ per tick (#1333):
- │    ├── review-poll.sh   ← finds unreviewed PRs, spawns review
- │    │     └── review-pr.sh  ← claude -p: review → approve/request changes
- │    ├── dev-poll.sh      ← pulls ready issues, spawns dev-agent
- │    │     └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
- │    ├── gardener-step.sh ← backlog grooming (duplicates, stale, tech-debt)
- │    │     └── classify.sh ← one task per tick → formula (claude -p)
- │    ├── architect-run.sh ← strategic decomposition of vision into sprints
- │    ├── planner-run.sh   ← gap-analyse VISION.md, create backlog issues
- │    │     └── claude -p: update AGENTS.md → create issues
- │    ├── predictor-run.sh ← infrastructure pattern detection
- │    └── supervisor-run.sh ← health checks (fast path: bash checks, zero tokens)
- │           ├── all clear? → exit 0
- │           └── problem? → claude -p (diagnose, fix, or escalate)
+ ├── every POLL_INTERVAL ────→ oak/tick.sh (one per project, DRY-RUN SHADOW:
+ │    OAK_DRY_RUN=1 — senses → picks → logs the organ it WOULD start,
+ │    never execs an organ; the tick learner retires in #1390)
+ │
+ ├── every 5 min ──→ review-poll.sh   ← finds unreviewed PRs, spawns review
+ │                    └── review-pr.sh  ← claude -p: review → approve/request changes
+ │
+ ├── every 5 min ──→ dev-poll.sh      ← pulls ready issues, spawns dev-agent
+ │                    └── dev-agent.sh  ← claude -p: implement → PR → CI → review → merge
+ │
+ ├── every 6h  ────→ gardener-run.sh  ← backlog grooming (duplicates, stale, tech-debt)
+ │
+ ├── every 15m ───→ architect-run.sh ← strategic decomposition of vision into sprints
+ │
+ ├── every 12h ───→ planner-run.sh   ← gap-analyse VISION.md, create backlog issues
+ │                   └── claude -p: update AGENTS.md → create issues
+ │
+ ├── every 24h ───→ predictor-run.sh ← infrastructure pattern detection
+ │
+ └── every 20min ─→ supervisor-run.sh ← health checks (fast path: bash checks, zero tokens)
+                     ├── all clear? → exit 0
+                     └── problem? → claude -p (diagnose, fix, or escalate)
 
 entrypoint-edge.sh (edge container)
  ├── dispatcher.sh                    ← polls ops repo for vault actions
@@ -125,8 +132,8 @@ disinto/
 │   ├── review-poll.sh    # Poll: find unreviewed PRs
 │   └── review-pr.sh      # Review agent (claude -p)
 ├── gardener/
-│   ├── gardener-run.sh   # Full-formula executor (bare-metal host cron)
-│   ├── gardener-step.sh  # Polling-loop participant: per-tick step executor
+│   ├── gardener-run.sh   # Executor: full grooming pass (6h cadence)
+│   ├── gardener-step.sh  # Oak-tick organ: per-tick step executor
 │   ├── classify.sh       # Bash-only task classifier (emits one JSON task)
 │   └── best-practices.md # Gardener knowledge base
 ├── planner/
@@ -156,8 +163,10 @@ disinto/
 | **Supervisor** | Every 20 min | Health checks (RAM, disk, CI, git). Calls Claude only when something is broken. Self-improving via `best-practices/`. |
 | **Dev** | Every 5 min | Picks up `backlog`-labeled issues, creates a branch, implements, opens a PR, monitors CI, responds to review, merges. |
 | **Review** | Every 5 min | Finds PRs without review, runs Claude-powered code review, approves or requests changes. |
-| **Gardener** | Every 5 min | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
+| **Gardener** | Every 6h | Grooms the issue backlog: detects duplicates, promotes `tech-debt` to `backlog`, closes stale issues, escalates ambiguous items. |
 | **Planner** | Every 12h | Updates AGENTS.md documentation to reflect recent code changes, then gap-analyses VISION.md vs current state and creates up to 5 backlog issues for the highest-leverage gaps. |
+| **Architect** | Every 15 min | Decomposes the vision into sprints; a Forgejo-state machine decides what each poke does. |
+| **Predictor** | Daily | Detects infrastructure patterns (CI failures, disk, churn) and files predictions as issues. |
 
 > **Vault:** Being redesigned as a PR-based approval workflow (issues #73-#77).
 > See [docs/VAULT.md](docs/VAULT.md) for the vault PR workflow and branch protection details.
