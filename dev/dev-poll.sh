@@ -33,6 +33,8 @@ source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/guard.sh"
 # shellcheck source=../lib/ci-fix-tracker.sh
 source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
+# shellcheck source=../lib/tape.sh
+source "$(dirname "$0")/../lib/tape.sh"
 check_active dev
 
 # Initialize CI fix tracker (must be called before any tracker functions)
@@ -1206,6 +1208,68 @@ if [ -z "$READY_ISSUE" ]; then
 fi
 
 # =============================================================================
+# TAPE: emit a proposal record for the picked issue (#1398)
+#
+# dev-poll's proposal is "work this issue now"; the matching outcome record
+# lands when the dev PR reaches terminal state (#1399), keyed off the id file
+# written below. class = the issue's primary (first) label, or "dev" when it
+# has none; open_prs comes from one forge call and degrades to {} when it
+# fails. Any tape failure logs a warning — the pick proceeds unchanged.
+#
+# Args: issue_number
+# =============================================================================
+emit_tape_proposal() {
+  local issue="$1"
+  local id class ctx open_prs primary id_file
+
+  # Fresh uuid for the proposal: uuidgen when present, kernel random uuid
+  # otherwise (the dev image ships no uuid-runtime; /proc is there on Linux).
+  id="$(uuidgen 2>/dev/null)" || id=""
+  if [ -z "$id" ]; then
+    id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null)" || id=""
+  fi
+  if [ -z "$id" ]; then
+    log "WARNING: tape: no uuid generator available — skipping proposal record for #${issue}"
+    return 0
+  fi
+
+  # class: the issue's primary (first) label, or "dev" when it has none
+  class="dev"
+  primary="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${issue}" 2>/dev/null | jq -r '.labels[0].name // empty')" || true
+  [ -n "$primary" ] && class="$primary"
+
+  # open_prs: count of open PRs from one forge call; {} context when it
+  # fails. limit=50 is the API's max page size, so the count saturates at 50
+  # (the factory never approaches that many open PRs — AD-002).
+  ctx='{}'
+  open_prs="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/pulls?state=open&limit=50" 2>/dev/null \
+    | jq -r 'if type == "array" then length else empty end')" || open_prs=""
+  if [[ "$open_prs" =~ ^[0-9]+$ ]]; then
+    ctx="$(jq -cn --argjson n "$open_prs" '{open_prs: $n}')"
+  fi
+
+  if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "" "approved" "$issue" \
+      >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
+    return 0
+  fi
+
+  # Store the id next to the issue lock so the outcome step can reference it
+  # (#1399). Project-scoped like every other per-issue /tmp file in this
+  # script, so two projects sharing a /tmp can't clobber each other.
+  # Contents: just the id.
+  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
+  if ! printf '%s' "$id" > "$id_file"; then
+    log "WARNING: tape: failed to write proposal id file ${id_file}"
+  fi
+
+  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, open_prs: ${open_prs:-unknown})"
+  return 0
+}
+
+# =============================================================================
 # LAUNCH: start dev-agent for the ready issue
 # =============================================================================
 # Deferred CI fix increment — only now that we're certain we are launching.
@@ -1215,6 +1279,9 @@ if [ -n "${READY_PR_FOR_INCREMENT:-}" ]; then
     exit 0
   fi
 fi
+
+# Record the pick on the tape before launching (best effort — #1398).
+emit_tape_proposal "$READY_ISSUE"
 
 log "launching dev-agent for #${READY_ISSUE}"
 ("${SCRIPT_DIR}/dev-agent.sh" "$READY_ISSUE" >> "$LOGFILE" 2>&1) &
