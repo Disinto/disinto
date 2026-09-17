@@ -90,6 +90,46 @@ last_record() {
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
 }
 
+@test "open run record: empty ENDED+STATUS omit both fields" {
+  tape_run p-1 dev claude '2026-02-11T00:00:00Z' '' 1 '{}' ''
+  jq -e '
+      .type == "run"
+      and .proposal_id == "p-1" and .organ == "dev" and .agent == "claude"
+      and .started == "2026-02-11T00:00:00Z"
+      and .attempts == 1 and .cost == {}
+      and (has("ended") | not) and (has("status") | not)
+    ' <(last_record) >/dev/null
+}
+
+@test "open run record closes by a second append (records are immutable)" {
+  tape_run p-1 dev claude '2026-02-11T00:00:00Z' '' 1 '{}' ''
+  tape_run p-1 dev claude '2026-02-11T00:00:00Z' '2026-02-11T00:10:00Z' 1 '{}' failed
+  [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 2 ]
+  local open closed
+  open="$(sed -n 1p "$TAPE_DIR/tape.jsonl")"
+  closed="$(sed -n 2p "$TAPE_DIR/tape.jsonl")"
+  jq -ne --argjson o "$open" --argjson c "$closed" '
+      ($o | (has("ended") or has("status")) | not)
+      and ($c.ended == "2026-02-11T00:10:00Z")
+      and ($c.status == "failed")' >/dev/null
+}
+
+@test "run refuses a half-closed record (exactly one of ENDED/STATUS)" {
+  run tape_run p-1 dev claude s '' 1 '{}' completed
+  [ "$status" -eq 2 ]
+  run tape_run p-1 dev claude s e 1 '{}' ''
+  [ "$status" -eq 2 ]
+  [ ! -e "$TAPE_DIR/tape.jsonl" ]
+}
+
+@test "open run record still validates attempts and cost" {
+  run tape_run p-1 dev claude s '' twice '{}' ''
+  [ "$status" -eq 1 ]
+  run tape_run p-1 dev claude s '' 1 '0.05' ''
+  [ "$status" -eq 1 ]
+  [ ! -e "$TAPE_DIR/tape.jsonl" ]
+}
+
 # ── outcome ─────────────────────────────────────────────────────────────
 
 @test "outcome round-trip" {

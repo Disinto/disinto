@@ -23,6 +23,10 @@
 #   tape_run PROPOSAL_ID ORGAN AGENT STARTED ENDED ATTEMPTS COST_JSON STATUS
 #     -> {"type":"run","t",...,"attempts":<number>,"cost":{...},"status"}
 #     STATUS in completed|failed|abandoned; COST must be a JSON object.
+#     ENDED and STATUS are either both set (closed record) or both empty
+#     (OPEN record — session start; the fields are omitted from the line and
+#     the run is closed by a second tape_run append with the same
+#     PROPOSAL_ID and ended+status set — records are immutable).
 #   tape_outcome PROPOSAL_ID BITS_JSON NUMBERS_JSON CHILDREN_JSON PAYLOADS_JSON
 #     -> {"type":"outcome","t","proposal_id","bits":{...},"numbers":{...},
 #         "children":{...},"payloads":[...]}
@@ -122,19 +126,25 @@ tape_run() {
   local ended="${5:-}" attempts="${6:-}" cost_json="${7:-}" status="${8:-}"
 
   if [ -z "$pid" ] || [ -z "$organ" ] || [ -z "$agent" ] || [ -z "$started" ] \
-    || [ -z "$ended" ] || [ -z "$attempts" ] || [ -z "$cost_json" ] || [ -z "$status" ]; then
-    echo "usage: tape_run PROPOSAL_ID ORGAN AGENT STARTED ENDED ATTEMPTS COST_JSON STATUS" >&2
+    || [ -z "$attempts" ] || [ -z "$cost_json" ]; then
+    echo "usage: tape_run PROPOSAL_ID ORGAN AGENT STARTED ENDED ATTEMPTS COST_JSON STATUS (ENDED/STATUS both empty = open record)" >&2
+    return 2
+  fi
+  if { [ -z "$ended" ] && [ -n "$status" ]; } || { [ -n "$ended" ] && [ -z "$status" ]; }; then
+    echo "tape_run: ENDED and STATUS must be both set (closed) or both empty (open)" >&2
     return 2
   fi
   _tape_deps || return 2
 
-  case "$status" in
-    completed|failed|abandoned) ;;
-    *)
-      echo "tape_run: status must be completed|failed|abandoned (got '$status')" >&2
-      return 1
-      ;;
-  esac
+  if [ -n "$status" ]; then
+    case "$status" in
+      completed|failed|abandoned) ;;
+      *)
+        echo "tape_run: status must be completed|failed|abandoned (got '$status')" >&2
+        return 1
+        ;;
+    esac
+  fi
   if ! printf '%s\n' "$attempts" | jq -e 'type == "number"' >/dev/null 2>&1; then
     echo "tape_run: attempts must be a number" >&2
     return 1
@@ -151,8 +161,10 @@ tape_run() {
     --arg started "$started" --arg ended "$ended" \
     --arg attempts "$attempts" --arg cost "$cost_json" --arg status "$status" '
     {type: "run", t: $t, proposal_id: $pid, organ: $organ, agent: $agent,
-     started: $started, ended: $ended,
-     attempts: ($attempts | fromjson), cost: ($cost | fromjson), status: $status}')"
+     started: $started,
+     attempts: ($attempts | fromjson), cost: ($cost | fromjson)}
+    + (if $ended != "" then {ended: $ended} else {} end)
+    + (if $status != "" then {status: $status} else {} end)')"
   _tape_append "$record"
 }
 

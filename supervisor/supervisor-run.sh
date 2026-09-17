@@ -291,12 +291,18 @@ ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
+# Open the proposal-loop tape run record (#1391) — total, never fails us
+formula_session_start "supervisor"
+
 # Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
 # the script under set -e — record the rc and continue (#1164).
 SUPERVISOR_RUN_RC=0
 agent_run --worktree "$WORKTREE" "$PROMPT" || SUPERVISOR_RUN_RC=$?
 [ "$SUPERVISOR_RUN_RC" -eq 0 ] || log "supervisor agent_run exited ${SUPERVISOR_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
+
+# Close the tape run: outcome + closing run record (#1391)
+formula_session_end "$SUPERVISOR_RUN_RC"
 
 # Write journal entry post-session
 profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" "" || true
