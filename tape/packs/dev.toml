@@ -1,0 +1,9 @@
+# tape/packs/dev.toml — Dev-loop context pack (documentation-by-schema).
+#
+# The context fields the dev loop's tape proposal records will carry once a
+# reader lands (#1400). Nothing reads this file yet.
+
+area       = "dev"    # top directory of the files the dev loop touches (e.g. "dev", "lib")
+size_class = "M"      # issue size class S, M, or L, taken from the issue label
+open_prs   = 0        # number of open PRs when the issue was picked (int)
+backend    = "sonnet" # model name running the dev agent
