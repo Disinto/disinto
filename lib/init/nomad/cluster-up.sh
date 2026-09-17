@@ -65,6 +65,7 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/forgejo-data"
   "/srv/disinto/woodpecker-data"
   "/srv/disinto/agent-data"
+  "/srv/disinto/tape"
   "/srv/disinto/agent-data-qwen/review"
   "/srv/disinto/agent-data-gardener"
   "/srv/disinto/agent-data-opus-supervisor"
