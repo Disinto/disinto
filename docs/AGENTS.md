@@ -1,4 +1,4 @@
-<!-- last-reviewed: 2be13b40274230f8b65c33ea928d800c334f7e8c -->
+<!-- last-reviewed: 70bc2375dd863442f9acff3bf8ee564a8e49155e -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -7,7 +7,7 @@ Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md
 
 ```
 disinto/                 (code repo)
-├── dev/           dev-poll.sh, dev-agent.sh, phase-test.sh — issue implementation
+├── dev/           dev-poll.sh, dev-agent.sh, merge-ready.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
 ├── gardener/      gardener-run.sh — one-shot full-formula executor (bare-metal host cron)
 │                  gardener-step.sh — polling-loop participant: per-iteration step executor
@@ -27,7 +27,7 @@ disinto/                 (code repo)
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
-│                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call)
+│                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call, run-experiment)
 ├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh,
 │                  ci-fix-tracker.sh, load-project.sh, parse-deps.sh, guard.sh,
 │                  mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh,
@@ -37,16 +37,20 @@ disinto/                 (code repo)
 │                  secret-scan.sh, tea-helpers.sh, action-vault.sh, ci-log-reader.py,
 │                  git-creds.sh, sprint-filer.sh, hvault.sh, backfill-labels.sh,
 │                  claude-config.sh, backup.sh, forge-helpers.sh, inbox-sentinels.sh,
-│                  gardener-edit.sh, gardener-pr.sh, stale-base-check.sh
+│                  gardener-edit.sh, gardener-pr.sh, stale-base-check.sh,
+│                  agent-harness-dsh.sh, agent-metrics.sh, dsh-session.sh, resources.sh,
+│                  run-ledger.sh, snapshot-tmp.sh, stats.sh, tape.sh, vault-ssh.sh
 │                  hooks/ — Claude Code session hooks
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh,
-│                  wp-oauth-register.sh, wp-seed-secrets.sh
+│                  wp-oauth-register.sh, wp-seed-secrets.sh, lib-vault-mlock.sh
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
 │                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl
 │                  (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1);
 │                  agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch
 │                  dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy
-│                  + dispatcher, S5.1)
+│                  + dispatcher, S5.1); agents-dev-qwen.hcl, agents-gardener-qwen.hcl,
+│                  agents-review-qwen.hcl (qwen-backend jobs); agent-logs-rotate.hcl (batch log
+│                  rotation)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks).
 │                  run-gardener.toml, run-planner.toml, run-predictor.toml, run-supervisor.toml,
@@ -58,19 +62,27 @@ disinto/                 (code repo)
 │                  backlog enrichment specs
 │                  file-subissues.toml, pitch-vision.toml, revisit-blocked.toml, release.toml,
 │                  reproduce.toml — operational task specs
-├── docker/        Dockerfiles: reproduce, triage, runner; edge/ (Caddy + chat + voice + dispatcher
+│                  deploy-drift.toml — deploy-drift check spec; run-experiment.sh —
+│                  experiment runner script (wave 2, #1293)
+├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
+│                  edge/ (Caddy + chat + voice + dispatcher
 │                  + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator
-│                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents)
+│                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
+│                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh;
 │                  reserved-name blocklist, admin-approved allowlist, per-caller attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
+│                  check-deploy-drift.sh — verify deployed defaults match the repo
+│                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
+│                  seed-research-labels.sh — idempotently seed research labels on an existing forge
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
 │                  provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by
 │                  `bin/disinto --with <svc>`
-├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md);
+├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
+│                  branch-protection.md, stats.md);
 │                  voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md, issues-for-bots.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
@@ -82,9 +94,14 @@ disinto/                 (code repo)
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-voice, reseed-chat-oauth)
-│                  inbox-ack.sh, factory-walk.sh, snapshot-agents.sh, snapshot-daemon.sh,
+│                  agent-log-rotate.sh, inbox-ack.sh, factory-walk.sh, snapshot-agents.sh,
+│                  snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, threads.sh,
 │                  uninstall.sh
+├── tape/          Dev-loop tape schema packs (packs/dev.toml — proposal context fields) and
+│                  outcome rubrics (rubrics/failure-signature.toml — the 8 allowed
+│                  failure-signature labels); documentation-by-schema, nothing reads these yet
+│                  (#1400); tape records themselves are written by lib/tape.sh (#1389)
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
