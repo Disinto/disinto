@@ -1,1 +1,127 @@
-[]
+[
+  {
+    "action": "comment",
+    "issue": 1410,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1410,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1409,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1409,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1408,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1408,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1407,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1407,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1406,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1406,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1387,
+    "body": "Flagged by AI reviewer in PR #1386.\n\n## Problem\n\n`formulas/run-planner.toml` (the runtime prompt the planner executes on every run) is stale in two ways:\n\n1. **Template path moved, formula not updated.** Part C \"Template-or-vision filing gate\" step 1 instructs: \"Read issue templates from `.codeberg/ISSUE_TEMPLATE/*.yaml`\". The `.codeberg/` directory does not exist — templates live at `.forgejo/ISSUE_TEMPLATE/*.yaml` (bug/experiment/feature/refactor.yaml). The planner's template read therefore finds nothing on every run and the gate silently degrades toward the `vision` labeling path. PR #1386 updated `planner/AGENTS.md` to the `.forgejo` path, making the divergence visible, but the formula itself — which is what the planner actually follows — is uncorrected.\n\n2. **Header describes the pre-SDK execution model.** Lines 5-8: \"Executed directly by planner-run.sh via polling loop\" and \"planner-run.sh creates a tmux session with Claude (opus)\". The polling-loop trigger itself is still accurate (the entrypoint paces planner on PLANNER_INTERVAL, default 12h), but the tmux-session claim is stale: `planner-run.sh:4-6` states \"Synchronous bash loop using claude -p (one-shot invocation). No tmux sessions, no phase files — the bash script IS the state machine.\", and it launches Claude via `agent_run` (lib/agent-sdk.sh).\n\n## Suggested fix\n\n- `formulas/run-planner.toml:190`: `.codeberg/ISSUE_TEMPLATE/*.yaml` → `.forgejo/ISSUE_TEMPLATE/*.yaml`\n- Update the header comment (lines 5-8): keep the polling-loop trigger, replace the tmux-session claim with the current model — one-shot `claude -p` via `agent_run` (lib/agent-sdk.sh), no tmux sessions or phase files.\n\nRelated: PR #1386 (planner/AGENTS.md refresh — the matching stale tmux/phase-file and \"six steps\" claims in that file are requested to be fixed there).\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n- [ ] `formulas/run-planner.toml`'s template-or-vision gate reads templates from `.forgejo/ISSUE_TEMPLATE/*.yaml`\n- [ ] The formula header describes the current execution model (polling-loop trigger at PLANNER_INTERVAL; one-shot `claude -p` via `agent_run`; no tmux sessions / phase files)\n- [ ] No remaining `.codeberg/` template path or tmux-model references in the formula\n\n## Affected files\n- `formulas/run-planner.toml`"
+  },
+  {
+    "action": "add_label",
+    "issue": 1387,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1379,
+    "body": "Moot — `tests/oak-tick-lock.bats` was removed with the retired tick learner in #1390 (3d742e74, merged 2026-09-16); the flaky test no longer exists, so there is nothing to fix. Closing like #1301."
+  },
+  {
+    "action": "close",
+    "issue": 1379,
+    "reason": "moot — flaky test removed with the tick-learner retirement in #1390 (3d742e74)"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1255,
+    "body": "## Finding (investigated 2026-09-06, no code changed)\n\nThe ~10-13KB splice is the `dsh-agent-instructions` plugin (in the headless profile, `maxBytes: 65536`). It is NOT injected by lib/agent-harness-dsh.sh (verified — the harness passes the prompt through). Load order per session step 1, as one durable user-role `<system-reminder>` message:\n\n1. `$DSH_HOME/AGENTS.md` (user-global) — DOES NOT EXIST in our agent homes (only settings.yaml lives there), so contributes 0 bytes today.\n2. Every `AGENTS.md`/`CLAUDE.md` (+`.local` overlays) from project root down to cwd. Our review/dev worktrees run at the repo root, so the repo's root `AGENTS.md` (13,091 bytes) loads whole — 13KB < 64KB budget, rendered verbatim every session.\n\nBudget behavior if it ever overflows: most-specific files first, broader files dropped whole before truncating, with a visible `Workspace instruction budget ...` notice. The baseline message counts toward the 80k session budget and compacts like everything else (#1260).\n\n## Task (dev-sized, no further investigation needed)\n\nCompress the repo's root `AGENTS.md` (13KB → ≤8KB target): audit for redundancy (repeated conventions, verbose examples, sections no agent ever cites), keeping every rule that agents demonstrably follow. This is a repo file, so normal dev flow applies.\n\nOptional follow-up (only if compression stalls above ~10KB): lower the plugin `maxBytes` via a dsh profile patch so broader files drop with a budget notice — needs the profile-layer mechanism, riskier, do not bundle.\n\nAcceptance: root AGENTS.md ≤8KB; a fresh dsh review session's step-1 instruction message shrinks accordingly (check session.jsonl `system-reminder` block); no agent behavior regressions (one green review + one green dev implementation exercise the trimmed file).\n\nIn progress: PR #1275.\n\nGardener note 2026-09-17: PR #1275 (merged 2026-09-08) landed a compression pass; root `AGENTS.md` is now 8516 bytes — still over the ≤8KB (8192 B) acceptance target. Remaining work is a finishing trim of ~350+ bytes (audit for redundancy per the task above).\n\n## Acceptance criteria\n- [ ] Root `AGENTS.md` is ≤8KB (8192 bytes)\n- [ ] A fresh dsh session's step-1 instruction message shrinks accordingly (check session.jsonl `system-reminder` block)\n- [ ] No agent behavior regressions (one green review + one green dev implementation exercise the trimmed file)\n\n## Affected files\n- `AGENTS.md`"
+  },
+  {
+    "action": "remove_label",
+    "issue": 1255,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 1255,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1186,
+    "body": "Flagged by AI reviewer in PR #1181 (re-review of #1106).\n\n## Problem\n\n`_agent_run_dsh()` (`lib/agent-harness-dsh.sh`) wraps the run in\n`timeout -k 10 \"${CLAUDE_TIMEOUT:-7200}\"`. On a wall-clock timeout the zstd\non-disk session log is truncated, so `dsh_session_normalise` (#1105) returns 1\nwith no stdout (it never emits a partial parse), the diagnostics file is not\nwritten, and `metrics_record_run` therefore appends **no** record.\n\nThe Claude path, by contrast, records an `outcome=timeout` line on timeout\nbecause its stream-json is line-delimited and partially recoverable.\n\nConsequence: `stats.sh` counts Claude timeouts in its `timeout` column but\nsilently undercounts dsh timeouts — a dsh run that hit the wall-clock ceiling\nis invisible to the telemetry that `#1101`/`#1102` provide.\n\nThis is inherent to the zstd format (cannot be partially decompressed) and to\nthe \"never emit a partial parse\" design of `dsh_session_normalise`; it is not a\nrun-correctness bug (the run still returns 124 and cleans up).\n\n## Suggested fix\n\nOn rc=124 with a failed/absent normalisation, emit a minimal fallback metrics\nrecord (session_id + exit_code=124 + outcome=timeout + delivered flag) so dsh\ntimeouts are counted consistently with the Claude path.\n\n---\n*Auto-created from AI review of PR #1181 (re-review). Related: #1106, #1105, #1101, #1102.*\n\n---\n**Garden 2026-09-07:** Acceptance: a dsh run killed by the wall clock (rc 124) leaves an `outcome=timeout` metrics record visible to stats.sh, matching the Claude path. Suggested fix in body stands. No open decision — implement the fallback record.\n\n## Acceptance criteria\n- [ ] A dsh run killed by the wall clock (rc 124) with a failed/absent normalisation appends a minimal metrics record (session_id, exit_code=124, `outcome=timeout`, delivered flag)\n- [ ] `stats.sh` counts dsh timeouts in its `timeout` column, consistent with the Claude path\n- [ ] No behavior change for non-timeout runs\n\n## Affected files\n- `lib/agent-harness-dsh.sh`"
+  },
+  {
+    "action": "add_label",
+    "issue": 1186,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1108,
+    "body": "Flagged by AI reviewer in PR #1092 (re-review of commit 2653e00).\n\n## Problem\n\n`disinto_hire_an_agent_nomad()` (lib/hire-agent.sh) reads `VAULT_KV_MOUNT` for the KV API path it seeds (`${VAULT_KV_MOUNT:-kv}/data/disinto/bots/<name>`), but the inline ACL policy and the jobspec `template` stanza hardcode the `kv/` mount. `VAULT_KV_MOUNT` is a documented override (lib/hvault.sh: \"Override with: export VAULT_KV_MOUNT=secret\"), so on a box that sets it the KV seed lands at the custom mount while the policy and the jobspec template still reference `kv/` — the job would render `seed-me` placeholders (or fail the policy check) even though the seed succeeded.\n\nLow probability (the default mount is `kv` everywhere) but a concrete misconfiguration trap for operators who use the documented override.\n\nDeferred deliberately in #1092: every existing jobspec in the repo hardcodes `kv/` today, so fixing only this path would make it inconsistent rather than correct. Needs a repo-wide pass (inline policy, `template` stanzas in rendered/checked-in jobspecs) honouring the mount.\n\n---\n*Auto-created from AI review*\n\n---\n**Garden 2026-09-07:** Open decision: (a) parameterize all three spots (seed path, inline policy, template stanza) on VAULT_KV_MOUNT repo-wide, or (b) retire the override (document kv-only, remove from lib/hvault.sh). Prefer (a) only if a custom-mount box exists to test against; otherwise (b) — a documented-but-broken override is worse than none. State the choice in the PR.\n\n**Decision 2026-09-07 (no open choice — implement as specified):** do (b): retire the VAULT_KV_MOUNT override — document kv-only, remove the override from lib/hvault.sh, keep every path hardcoded to `kv/`. Rationale: no custom-mount box exists to test (a) against, and a documented-but-broken override is worse than none. If a custom mount is ever needed, reintroduce it parameterized with a test box. Acceptance: no VAULT_KV_MOUNT references remain; hire flow green.\n\n## Acceptance criteria\n- [ ] No `VAULT_KV_MOUNT` references remain — the override is removed from `lib/hvault.sh` and kv-only behavior is documented\n- [ ] All paths (KV seed path, inline ACL policy, jobspec `template` stanzas) stay hardcoded to `kv/`\n- [ ] The hire-an-agent flow renders and deploys green\n\n## Affected files\n- `lib/hvault.sh`\n- `lib/hire-agent.sh`"
+  },
+  {
+    "action": "add_label",
+    "issue": 1108,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1182,
+    "body": "Observed 2026-09-01: four stale April vault actions (release-v011, release-v020, release-v030, release-v0.1.1) were re-processed every 60s cycle in an infinite error loop.\n\n**Root cause:** `docker/edge/dispatcher.sh` `commit_result_via_git()` clones the ops repo anonymously (repo is public-read), writes the result.json, then `git push` gets a 401. Push stderr is suppressed (`2>/dev/null`) and every failure is mislogged as \"Push conflict — rebasing\". After 3 attempts it gives up; the result never lands, `is_action_completed` never becomes true, and the action is retried every cycle, forever.\n\n**Fix direction:** give the scratch clone push credentials, e.g. read the token from `FACTORY_FORGE_PAT_FILE` (/secrets/forge-pat) and either embed it in the clone URL or configure a one-shot `credential.helper` for the scratch repo. Also: log the real push stderr instead of always calling it a conflict, and consider moving processed .toml files out of `vault/actions/` (e.g. to `vault/rejected/`) as a belt-and-braces terminal state.\n\n**Manual workaround applied:** operator pushed the four missing result.json files as vault-bot, which breaks the loop via the existing `is_action_completed` check.\n\n## Acceptance criteria\n- [ ] `commit_result_via_git()`'s scratch clone has push credentials (token from `FACTORY_FORGE_PAT_FILE`, embedded in clone URL or one-shot credential helper) and the result.json push succeeds\n- [ ] Push failures log the real push stderr instead of always logging \"Push conflict — rebasing\"\n- [ ] Actions whose result has already landed (or are terminally rejected) are not re-processed every 60s cycle\n\n## Affected files\n- `docker/edge/dispatcher.sh`"
+  },
+  {
+    "action": "add_label",
+    "issue": 1182,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1301,
+    "body": "Verified at HEAD 70bc2375 (2026-09-17): the `action-vault/validate.sh` header now points at `action-vault/validate.sh` and `action-vault/SCHEMA.md`, the no-args usage echo prints `action-vault/examples/publish.toml`, and the example files' self-headers read `action-vault/examples/<name>.toml`. Already implemented — closing."
+  },
+  {
+    "action": "close",
+    "issue": 1301,
+    "reason": "already implemented at HEAD — header and usage example point at existing action-vault/ paths"
+  }
+]

@@ -1,4 +1,4 @@
-<!-- last-reviewed: bdd7faf8966cd7b66a0b77e7693644298242fe5c -->
+<!-- last-reviewed: 70bc2375dd863442f9acff3bf8ee564a8e49155e -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -34,6 +34,7 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **action-vault/** — vault item validation + examples
 - **docs/** — protocol docs (full tree: `docs/AGENTS.md`)
 - **vault/policies/** — vault HCL policies
+- **tape/** — dev-loop tape schema packs + outcome rubrics (records written via `lib/tape.sh`, #1389)
 
 ## Tech stack
 
