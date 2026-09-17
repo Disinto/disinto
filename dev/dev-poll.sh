@@ -513,6 +513,55 @@ issue_is_ready() {
 }
 
 # =============================================================================
+# TAPE: emit an outcome record when a dev PR reaches terminal state (#1399)
+#
+# The outcome half of the pick recorded by emit_tape_proposal() (#1398):
+# when the picked issue's PR is merged (try_direct_merge success) or closed
+# (stale-branch abandonment), append one outcome record to the tape keyed
+# off the proposal id file written at pick time:
+#
+#   bits    = {"merged":0|1,"ci_green":0|1}  (code-derived 0|1, never prose)
+#   numbers = {"review_rounds":<n>}          (REQUEST_CHANGES reviews, one call)
+#
+# No id file (issue predates the proposal step) → skip silently: no record,
+# no log line. Any tape failure logs a warning; the merge/close proceeds
+# unchanged. Defined here (not with the other tape section below) because the
+# pre-lock merge scan runs before that point in the script.
+#
+# Args: issue_number pr_number merged(0|1) ci_green(0|1)
+# =============================================================================
+emit_tape_outcome() {
+  local issue="$1" pr_num="$2" merged="$3" ci_green="$4"
+  local id_file id review_rounds bits numbers
+
+  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
+  id="$(cat "$id_file" 2>/dev/null)" || id=""
+  if [ -z "$id" ]; then
+    # Issue predates the proposal step — nothing to key an outcome on
+    return 0
+  fi
+
+  # review_rounds: REQUEST_CHANGES reviews on the PR from one forge call;
+  # 0 when the call fails or the response is not a review array.
+  review_rounds="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/pulls/${pr_num}/reviews" 2>/dev/null \
+    | jq -r 'if type == "array" then [.[] | select(.state == "REQUEST_CHANGES")] | length else empty end' 2>/dev/null)" || review_rounds=""
+  [[ "$review_rounds" =~ ^[0-9]+$ ]] || review_rounds=0
+
+  bits="$(jq -cn --argjson m "$merged" --argjson c "$ci_green" \
+    '{merged: $m, ci_green: $c}')"
+  numbers="$(jq -cn --argjson n "$review_rounds" '{review_rounds: $n}')"
+
+  if ! tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append outcome record ${id} for #${issue} (PR #${pr_num})"
+    return 0
+  fi
+
+  log "tape: recorded outcome for #${issue} (PR #${pr_num}, merged: ${merged}, ci_green: ${ci_green}, review_rounds: ${review_rounds})"
+  return 0
+}
+
+# =============================================================================
 # PRE-LOCK: merge approved + CI-green PRs (no Claude session needed)
 #
 # Merging is a single API call — it doesn't need the dev-agent lock.
@@ -573,6 +622,7 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
     try_direct_merge "$PL_PR_NUM" "$PL_ISSUE" "$PL_PR_SHA" || PL_TDM_RC=$?
     if [ "$PL_TDM_RC" -eq 0 ]; then
       PL_MERGED_ANY=true
+      emit_tape_outcome "$PL_ISSUE" "$PL_PR_NUM" 1 1
     elif [ "$PL_TDM_RC" -eq 2 ]; then
       : # merge-blocked and already escalated — no retry, no fallback (#1090)
     fi
@@ -788,6 +838,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             -H "Content-Type: application/json" \
             "${API}/pulls/${HAS_PR}" \
             -d '{"state":"closed"}' >/dev/null 2>&1 || true
+          emit_tape_outcome "$ISSUE_NUM" "$HAS_PR" 0 0
           # Delete the branch via git push
           git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
           # Reset to fresh start on primary branch
@@ -820,6 +871,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             try_direct_merge "$HAS_PR" "$ISSUE_NUM" "$PR_SHA" || IP_TDM_RC=$?
             if [ "$IP_TDM_RC" -eq 0 ]; then
               BLOCKED_BY_INPROGRESS=true
+              emit_tape_outcome "$ISSUE_NUM" "$HAS_PR" 1 1
             elif [ "$IP_TDM_RC" -eq 2 ]; then
               # Merge-blocked and escalated — no retry, no dev-agent. The
               # issue is now "blocked"-labeled, so the queue is not held (#1090).
@@ -1095,6 +1147,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
         -H "Content-Type: application/json" \
         "${API}/pulls/${EXISTING_PR}" \
         -d '{"state":"closed"}' >/dev/null 2>&1 || true
+      emit_tape_outcome "$ISSUE_NUM" "$EXISTING_PR" 0 0
       # Delete the branch via git push
       git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
       # Reset to fresh start on primary branch
@@ -1125,6 +1178,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
       BL_TDM_RC=0
       try_direct_merge "$EXISTING_PR" "$ISSUE_NUM" "$PR_SHA" || BL_TDM_RC=$?
       if [ "$BL_TDM_RC" -eq 0 ]; then
+        emit_tape_outcome "$ISSUE_NUM" "$EXISTING_PR" 1 1
         exit 0
       elif [ "$BL_TDM_RC" -eq 2 ]; then
         # merge-blocked and already escalated — no retry, no fallback
