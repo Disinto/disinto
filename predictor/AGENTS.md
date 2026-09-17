@@ -21,7 +21,7 @@ RESOURCES.md (from ops repo), open issues, agent logs, and external signals (via
 by pack, not by a project kind (#1336; the research formula from #1316 is
 deleted). The
 predictor is an adversary, not a learner: it MUST NOT write `r` or `Q`
-(the oak learner's cumulant and Q table — that is `oak/td.sh`'s job); it
+(reward and Q-table state); it
 reads evidence and files `prediction/unreviewed` issues, nothing else.
 No new polling loop — it runs on the existing 24h predictor cadence.
 

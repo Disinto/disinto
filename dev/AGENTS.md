@@ -99,8 +99,7 @@ performed automatically.
 `dev-poll.sh` every loop (`POLL_INTERVAL`, default 300s) and waits only for the
 current iteration's fast polls — long-running dev-agent sessions (spawned by
 dev-poll) therefore never block the loop from launching the next iteration's
-polls. The oak tick runs alongside per project as a dry-run shadow
-(OAK_DRY_RUN=1) and never execs an organ.
+polls.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
 tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box); or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164).

@@ -23,10 +23,6 @@ Point it at a git repo with a Woodpecker CI pipeline and it will pick up issues,
 ```
 entrypoint.sh (while-true polling loop, 5 min base interval — per-organ cadence scheduler, #1388)
  │
- ├── every POLL_INTERVAL ────→ oak/tick.sh (one per project, DRY-RUN SHADOW:
- │    OAK_DRY_RUN=1 — senses → picks → logs the organ it WOULD start,
- │    never execs an organ; the tick learner retires in #1390)
- │
  ├── every 5 min ──→ review-poll.sh   ← finds unreviewed PRs, spawns review
  │                    └── review-pr.sh  ← claude -p: review → approve/request changes
  │
@@ -133,7 +129,7 @@ disinto/
 │   └── review-pr.sh      # Review agent (claude -p)
 ├── gardener/
 │   ├── gardener-run.sh   # Executor: full grooming pass (6h cadence)
-│   ├── gardener-step.sh  # Oak-tick organ: per-tick step executor
+│   ├── gardener-step.sh  # Pull-one-task driver: one task per invocation
 │   ├── classify.sh       # Bash-only task classifier (emits one JSON task)
 │   └── best-practices.md # Gardener knowledge base
 ├── planner/

@@ -366,7 +366,7 @@
     <div class="section">
       <h2>Eight agents</h2>
       <p>Each agent has a single responsibility. They communicate through git, the forge API, and the filesystem.</p>
-      <p>Each organ runs on its own interval &mdash; dev and review every 5 min, supervisor every 20 min, architect every 15 min, gardener every 6h, planner every 12h, predictor daily. A dry-run shadow tick &mdash; <code>oak/tick.sh</code> with <code>OAK_DRY_RUN=1</code> &mdash; also runs per project per <code>POLL_INTERVAL</code> (default 5 min): it senses, picks, and logs the organ it <em>would</em> start, but never execs an organ (#1388); legal actions come from <code>ops/pack.toml</code> (falling back to <code>oak/pack.example.toml</code>). <code>AGENT_ROLES</code> filters which organs a house runs.</p>
+      <p>Each organ runs on its own interval &mdash; dev and review every 5 min, supervisor every 20 min, architect every 15 min, gardener every 6h, planner every 12h, predictor daily. <code>AGENT_ROLES</code> filters which organs a house runs.</p>
       <div class="agents-grid">
         <div class="agent-card">
           <div class="name">dev-agent</div>
@@ -474,7 +474,7 @@
         <div class="label">Tech stack</div>
         <p><strong>Bash scripts</strong> &mdash; every agent is a shell script. No compiled binaries, no runtimes to install.</p>
         <p><strong>Claude CLI</strong> &mdash; AI is invoked via <code>claude -p</code> (one-shot) or <code>claude</code> (persistent tmux sessions).</p>
-        <p><strong>Polling loop</strong> &mdash; agents are triggered by a <code>while true</code> loop in <code>entrypoint.sh</code>: each organ runs on its own interval from a 5 min base (<code>POLL_INTERVAL</code>), and a dry-run shadow tick (<code>oak/tick.sh</code> with <code>OAK_DRY_RUN=1</code>) runs per project each loop. Pull-based, not push-based.</p>
+        <p><strong>Polling loop</strong> &mdash; agents are triggered by a <code>while true</code> loop in <code>entrypoint.sh</code>: each organ runs on its own interval from a 5 min base (<code>POLL_INTERVAL</code>). Pull-based, not push-based.</p>
         <p><strong>Forgejo + Woodpecker</strong> &mdash; git hosting and CI. All state lives in git and the issue tracker. No external databases.</p>
         <p><strong>Single VPS</strong> &mdash; runs on an 8 GB server. Flat cost, no scaling surprises.</p>
       </div>

@@ -18,15 +18,9 @@ set -euo pipefail
 #   - predictor:   daily (24h)
 #   - supervisor:  every SUPERVISOR_INTERVAL (default 20 min)
 #
-# The oak tick (#1328, #1333) keeps running alongside as a DRY-RUN SHADOW
-# this release: for each project TOML the loop runs oak/tick.sh with
-# OAK_DRY_RUN=1, which senses, picks, and logs the organ it WOULD start but
-# never execs an organ (#1388). The tick learner retires in #1390.
-#
 # AGENT_ROLES env var (default: all seven roles
 # "review,dev,gardener,architect,planner,predictor,supervisor") is the house
-# filter: an organ whose role is not in AGENT_ROLES is never started. It is
-# exported so the gosu'd oak tick receives it as its house filter too.
+# filter: an organ whose role is not in AGENT_ROLES is never started.
 
 # ── Migration check: reject ENABLE_LLAMA_AGENT ───────────────────────────────
 # #846: The legacy ENABLE_LLAMA_AGENT env flag is no longer supported.
@@ -649,8 +643,8 @@ validate_projects_dir
 
 # Parse AGENT_ROLES env var (default: all agents)
 # Expected format: comma-separated list like "review,dev,gardener"
-# House filter: an organ whose role is not listed is never started. Exported
-# so the gosu'd oak tick also receives it as its house filter.
+# House filter: an organ whose role is not listed is never started.
+# Exported so the gosu'd poll scripts inherit it.
 export AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
@@ -679,11 +673,6 @@ log "Organ intervals — gardener: ${GARDENER_INTERVAL}s, architect: ${ARCHITECT
 # on their own intervals, guarded by pgrep so only one instance runs at a
 # time. The iteration counter paces the slow organs (iteration *
 # POLL_INTERVAL modulo their interval).
-#
-# The oak tick runs alongside each project as a DRY-RUN SHADOW (OAK_DRY_RUN=1,
-# #1388): it senses, picks, and logs the organ it WOULD start, but never execs
-# an organ. It is not the scheduler in this release; the tick learner retires
-# in #1390.
 iteration=0
 while true; do
   iteration=$((iteration + 1))
@@ -725,14 +714,6 @@ print(cfg.get('primary_branch', 'main'))
     export PRIMARY_BRANCH="${_pbranch:-main}"
 
     log "Processing project TOML: ${toml}"
-
-    # Oak tick in DRY-RUN shadow mode (#1388): OAK_DRY_RUN=1 makes tick.sh
-    # sense, pick, and log the organ it WOULD start, but never exec an organ.
-    # A tick that exits non-zero (malformed ops-repo pack, corrupt weights)
-    # must not kill the loop — log and continue, like the other per-iteration
-    # steps (a crash-restart would kill in-flight organs).
-    gosu agent bash -c "cd ${DISINTO_DIR} && OAK_DRY_RUN=1 bash oak/tick.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/oak-tick.log" 2>&1 \
-      || log "WARNING: oak tick (dry-run) failed for ${toml} — continuing (see ${DISINTO_LOG_DIR}/oak-tick.log)"
 
     # --- Fast organs: run in background, wait before slow organs ---
     FAST_PIDS=()

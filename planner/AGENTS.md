@@ -3,9 +3,7 @@
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
 invoked by the polling loop in `docker/agents/entrypoint.sh` every 12 hours
-(`PLANNER_INTERVAL`, default 43200s; #1388). `oak/tick.sh` runs alongside as
-a dry-run shadow (`OAK_DRY_RUN=1`, #1388): it senses, picks, and logs the organ
-it would start but never execs one. The planning session is a one-shot
+(`PLANNER_INTERVAL`, default 43200s; #1388). The planning session is a one-shot
 `claude -p` run via `agent_run` (`lib/agent-sdk.sh`) with model opus — no
 tmux, no phase file.
 The v4 formula (`formulas/run-planner.toml`, graph-driven) has three steps —
