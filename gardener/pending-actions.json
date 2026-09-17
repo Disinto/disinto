@@ -60,14 +60,14 @@
     "label": "backlog"
   },
   {
-    "action": "edit_body",
+    "action": "comment",
     "issue": 1379,
-    "body": "## Symptom\n\n`@test \"two overlapping dry-run ticks on one ops dir: both exit 0, no torn JSON\"` (tests/oak-tick-lock.bats:81, the `[ \"$rc2\" -eq 0 ]` assertion on line 90) fails intermittently in CI, while the rest of the 455-test suite passes.\n\nRecent runs failing on exactly this test:\n\n- push #2630, #2632, #2633 (fix/issue-1371)\n- push #2608, #2612 (fix/issue-1365) — passed on retry #2613\n- pull_request #2619, #2617\n\nPassing on the same commit/agent: PR #2631, push #2613. All on runner agent 131.\n\nThe failure is `[ \"$rc2\" -eq 0 ]` — one of the two backgrounded `OAK_DRY_RUN=1` ticks exits non-zero. It is a timing/concurrency flake, not a real regression (the identical suite passes on the same commit).\n\n## Why it matters\n\n`main`'s live branch protection requires `ci/woodpecker/push/ci`, so a red 417 on the push pipeline blocks an otherwise-green, approved PR from merging (see #1377 and #1378). The only current workaround is re-running CI until the flake passes, which wastes CI time and stalls merges.\n\n## Suggested fix\n\nMake the test robust to runner load (e.g., bound the overlap window, increase the flock wait margin, or assert the lock-serialization invariant directly instead of requiring both concurrent ticks to exit 0 under contention). Out of scope for docs PRs; needs a dedicated fix. (Not a candidate for the `EXCLUDED` list in `.woodpecker/ci.yml` — that excludes whole suites and would drop coverage of the other tests in oak-tick-lock.bats.)\n\n## Acceptance criteria\n- [ ] The `two overlapping dry-run ticks on one ops dir` test in `tests/oak-tick-lock.bats` passes deterministically under CI runner load (no intermittent failure on `rc2`)\n- [ ] The rest of oak-tick-lock.bats keeps its coverage (no whole-suite exclusion in `.woodpecker/ci.yml`)\n- [ ] Merges are no longer stalled on the `ci/woodpecker/push/ci` required check by this flake\n\n## Affected files\n- `tests/oak-tick-lock.bats`"
+    "body": "Moot — `tests/oak-tick-lock.bats` was removed with the retired tick learner in #1390 (3d742e74, merged 2026-09-16); the flaky test no longer exists, so there is nothing to fix. Closing like #1301."
   },
   {
-    "action": "add_label",
+    "action": "close",
     "issue": 1379,
-    "label": "backlog"
+    "reason": "moot — flaky test removed with the tick-learner retirement in #1390 (3d742e74)"
   },
   {
     "action": "edit_body",

@@ -50,7 +50,7 @@ disinto/                 (code repo)
 │                  dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy
 │                  + dispatcher, S5.1); agents-dev-qwen.hcl, agents-gardener-qwen.hcl,
 │                  agents-review-qwen.hcl (qwen-backend jobs); agent-logs-rotate.hcl (batch log
-│                  rotation)
+│                  rotation); edge-threads-gc.hcl (periodic threads-state GC)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks).
 │                  run-gardener.toml, run-planner.toml, run-predictor.toml, run-supervisor.toml,
