@@ -73,7 +73,14 @@ primary label (or `dev`), context = `{"open_prs":<n>}` from one forge call (`{}`
 failure), decision `approved`, ref the issue number — and stores the record's id in
 `/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id) so the
 #1399 outcome step can reference it. Any tape failure logs a WARNING; the pick proceeds
-unchanged.
+unchanged. **Tape outcome emission (#1399)**: when a dev PR reaches terminal state —
+merged via `try_direct_merge` (the three direct-merge paths, CI green by construction)
+or closed by stale-branch abandonment — `emit_tape_outcome()` appends one
+`{"type":"outcome","proposal_id":...}` record to the tape keyed off the stored id:
+bits `{"merged":0|1,"ci_green":0|1}`, numbers `{"review_rounds":<n>}` (the PR's
+REQUEST_CHANGES review count from one forge call, `0` when the call fails), children
+`{}`, payloads `[]`. No id file (issue predates the proposal step) → skip silently;
+any tape failure logs a WARNING; the merge/close proceeds unchanged.
 - `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
 called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open
 PR that is mergeable, has no `blocked`/`do-not-merge` label, has a review-bot
