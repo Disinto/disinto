@@ -66,7 +66,14 @@ not held; a re-review unblocks it automatically. **Merge-block escalation (#1090
 reason on the same head — after `MERGE_BLOCK_RETRY_LIMIT` (default 3) identical
 failures, `escalate_merge_blocked_pr()` posts the full untruncated forge response,
 labels the issue `blocked`, drops `in-progress`, and callers stop retrying and skip
-the dev-agent fallback (return code 2).
+the dev-agent fallback (return code 2). **Tape proposal emission (#1398)**: when the
+pick resolves, `emit_tape_proposal()` appends one `{"type":"proposal","loop":"dev",...}`
+record to the tape (`lib/tape.sh`) before launching dev-agent — class = the issue's
+primary label (or `dev`), context = `{"open_prs":<n>}` from one forge call (`{}` on
+failure), decision `approved`, ref the issue number — and stores the record's id in
+`/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id) so the
+#1399 outcome step can reference it. Any tape failure logs a WARNING; the pick proceeds
+unchanged.
 - `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
 called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open
 PR that is mergeable, has no `blocked`/`do-not-merge` label, has a review-bot

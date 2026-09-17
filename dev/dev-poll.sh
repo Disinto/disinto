@@ -1239,10 +1239,12 @@ emit_tape_proposal() {
     "${API}/issues/${issue}" 2>/dev/null | jq -r '.labels[0].name // empty')" || true
   [ -n "$primary" ] && class="$primary"
 
-  # open_prs: count of open PRs from one forge call; {} context when it fails
+  # open_prs: count of open PRs from one forge call; {} context when it
+  # fails. limit=50 is the API's max page size, so the count saturates at 50
+  # (the factory never approaches that many open PRs — AD-002).
   ctx='{}'
   open_prs="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/pulls?state=open&limit=20" 2>/dev/null \
+    "${API}/pulls?state=open&limit=50" 2>/dev/null \
     | jq -r 'if type == "array" then length else empty end')" || open_prs=""
   if [[ "$open_prs" =~ ^[0-9]+$ ]]; then
     ctx="$(jq -cn --argjson n "$open_prs" '{open_prs: $n}')"
@@ -1255,8 +1257,10 @@ emit_tape_proposal() {
   fi
 
   # Store the id next to the issue lock so the outcome step can reference it
-  # (#1399). Contents: just the id.
-  id_file="/tmp/dev-proposal-id-${issue}"
+  # (#1399). Project-scoped like every other per-issue /tmp file in this
+  # script, so two projects sharing a /tmp can't clobber each other.
+  # Contents: just the id.
+  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
   if ! printf '%s' "$id" > "$id_file"; then
     log "WARNING: tape: failed to write proposal id file ${id_file}"
   fi
