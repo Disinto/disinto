@@ -171,3 +171,58 @@ ac_has_call_matching() {
   done
   return 1
 }
+
+# ── Hermetic forge stub (shared by the tape-emitter extraction tests) ───────
+# tests/acceptance/issue-1398.sh (emit_tape_proposal) and
+# tests/acceptance/issue-1399.sh (emit_tape_outcome) extract their function
+# from dev/dev-poll.sh and run it in a subshell against a fake forge — no
+# network, no live services. These two helpers build that environment.
+
+# ac_write_curl_stub <STUB_BIN> — write a hermetic curl stub (a fake forge
+# API) to <STUB_BIN>/curl and chmod +x it. The stub keys on its last
+# argument (the URL):
+#   */issues/*          → {"labels":[{"name":"backlog"},{"name":"priority"}]}
+#   */pulls?state=open* → [{"number":1},{"number":2},{"number":3}]
+#   */pulls/*/reviews   → 4 reviews, 2 of them REQUEST_CHANGES
+#   anything else       → exit 22 (like an unreachable API)
+# AC_STUB_FAIL=1 makes every call fail with exit 22 (degradation tests).
+ac_write_curl_stub() {
+  local stub_bin="$1"
+  cat > "${stub_bin}/curl" <<'AC_CURL_STUB'
+#!/usr/bin/env bash
+# Fake forge API — last arg is the URL. AC_STUB_FAIL=1 forces failure.
+url="$*"
+if [ -n "${AC_STUB_FAIL:-}" ]; then
+  exit 22
+fi
+case "$url" in
+  */issues/*)
+    echo '{"labels":[{"name":"backlog"},{"name":"priority"}]}'
+    ;;
+  *'/pulls?state=open'*)
+    echo '[{"number":1},{"number":2},{"number":3}]'
+    ;;
+  *'/pulls/'*'/reviews')
+    echo '[{"state":"APPROVED","stale":false},{"state":"REQUEST_CHANGES","stale":true},{"state":"REQUEST_CHANGES","stale":false},{"state":"COMMENT"}]'
+    ;;
+  *)
+    exit 22
+    ;;
+esac
+AC_CURL_STUB
+  chmod +x "${stub_bin}/curl"
+}
+
+# ac_stub_env <STUB_BIN> <TAPE_DIR> — configure the calling subshell to run
+# an extracted tape emitter against the ac_write_curl_stub fake: stub curl
+# first on PATH, sentinel API/FORGE_TOKEN, the caller's TAPE_DIR, and the
+# inherited PROJECT_NAME (the test's sentinel). The subshell also inherits
+# the test's top-level log() stand-in, so the emitter's log lines land in
+# the runner's captured output.
+ac_stub_env() {
+  export PATH="$1:$PATH"
+  export API="https://forge.example/api/v1"
+  export FORGE_TOKEN="stub-token"
+  export TAPE_DIR="$2"
+  export PROJECT_NAME
+}

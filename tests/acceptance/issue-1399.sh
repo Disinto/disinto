@@ -30,10 +30,8 @@
 #   5. a forge API failure degrades review_rounds to 0 and still appends
 #   6. an unwritable $TAPE_DIR logs a warning and returns 0
 #
-# The stub curl stands in for the forge: */issues/* answers a labelled
-# issue, */pulls?state=open* answers an array of 3 open PRs (for the
-# proposal step), */pulls/N/reviews* answers 4 reviews of which 2 are
-# REQUEST_CHANGES, and AC_STUB_FAIL=1 makes it fail like an unreachable API.
+# The stub curl (ac_write_curl_stub, tests/lib/acceptance-helpers.sh) stands
+# in for the forge; AC_STUB_FAIL=1 makes it fail like an unreachable API.
 # =============================================================================
 set -euo pipefail
 
@@ -77,31 +75,17 @@ trap 'rm -rf "$TMP_DIR" \
   /tmp/dev-proposal-id-acceptance-1399-9998' EXIT
 
 # ── Stub curl: hermetic forge stand-in (no network, no live services) ───────
+# ac_write_curl_stub writes a fake forge curl: */issues/* answers a labelled
+# issue, */pulls?state=open* answers 3 open PRs, */pulls/*/reviews answers 4
+# reviews (2 REQUEST_CHANGES); AC_STUB_FAIL=1 makes it fail like an
+# unreachable API.
 STUB_BIN="$TMP_DIR/bin"
 mkdir -p "$STUB_BIN"
-cat > "$STUB_BIN/curl" <<'STUB'
-#!/usr/bin/env bash
-# Fake forge API — last arg is the URL. AC_STUB_FAIL=1 forces failure.
-url="$*"
-if [ -n "${AC_STUB_FAIL:-}" ]; then
-  exit 22
-fi
-case "$url" in
-  */issues/*)
-    echo '{"labels":[{"name":"backlog"},{"name":"priority"}]}'
-    ;;
-  *'/pulls?state=open'*)
-    echo '[{"number":1},{"number":2},{"number":3}]'
-    ;;
-  *'/pulls/'*'/reviews')
-    echo '[{"state":"APPROVED","stale":false},{"state":"REQUEST_CHANGES","stale":true},{"state":"REQUEST_CHANGES","stale":false},{"state":"COMMENT"}]'
-    ;;
-  *)
-    exit 22
-    ;;
-esac
-STUB
-chmod +x "$STUB_BIN/curl"
+ac_write_curl_stub "$STUB_BIN"
+
+# The extracted emitters log through log(); the subshells inherit this
+# stand-in so those lines land in the runner's captured output.
+log() { echo "poll: $*"; }
 
 # run_proposal <TAPE_DIR> <issue> — run the extracted #1398 emitter in an
 # isolated subshell so the outcome can be keyed off the id it writes (the
@@ -109,12 +93,7 @@ chmod +x "$STUB_BIN/curl"
 run_proposal() {
   local tape_dir="$1" issue="$2"
   (
-    export PATH="$STUB_BIN:$PATH"
-    export API="https://forge.example/api/v1"
-    export FORGE_TOKEN="stub-token"
-    export TAPE_DIR="$tape_dir"
-    export PROJECT_NAME
-    log() { echo "poll: $*"; }
+    ac_stub_env "$STUB_BIN" "$tape_dir"
     # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/tape.sh"
     eval "$FN_PROP"
@@ -129,12 +108,7 @@ run_proposal() {
 run_outcome() {
   local tape_dir="$1" issue="$2" pr="$3" merged="$4" ci_green="$5" fail="${6:-0}"
   (
-    export PATH="$STUB_BIN:$PATH"
-    export API="https://forge.example/api/v1"
-    export FORGE_TOKEN="stub-token"
-    export TAPE_DIR="$tape_dir"
-    export PROJECT_NAME
-    log() { echo "poll: $*"; }
+    ac_stub_env "$STUB_BIN" "$tape_dir"
     # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/tape.sh"
     eval "$FN_OUT"
