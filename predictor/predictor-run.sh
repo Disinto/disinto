@@ -125,12 +125,18 @@ ${PROMPT_FOOTER}"
 formula_worktree_setup "$WORKTREE"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
+# Open the proposal-loop tape run record (#1391) — total, never fails us
+formula_session_start "predictor"
+
 # Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
 # the script under set -e — record the rc and continue (#1164).
 PREDICTOR_RUN_RC=0
 agent_run --worktree "$WORKTREE" "$PROMPT" || PREDICTOR_RUN_RC=$?
 [ "$PREDICTOR_RUN_RC" -eq 0 ] || log "predictor agent_run exited ${PREDICTOR_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
+
+# Close the tape run: outcome + closing run record (#1391)
+formula_session_end "$PREDICTOR_RUN_RC"
 
 # Write journal entry post-session
 profile_write_journal "predictor-run" "Predictor run $(date -u +%Y-%m-%d)" "complete" "" || true

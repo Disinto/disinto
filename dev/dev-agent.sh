@@ -482,6 +482,9 @@ echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 # instead of guessing (same class as review-pr.sh REVIEW_OUTPUT_FILE).
 export IMPL_SUMMARY_FILE
 
+# Open the proposal-loop tape run record (#1391) — total, never fails us
+formula_session_start "dev"
+
 # Capture agent_run's exit code (its contract: 124 = wall-clock timeout,
 # #1164). Unguarded, a non-zero return would abort this set -e script before
 # the no-push decision below ever runs.
@@ -491,6 +494,9 @@ if [ -n "$_AGENT_SESSION_ID" ]; then
 else
   agent_run --worktree "$WORKTREE" --task "$ISSUE" "$INITIAL_PROMPT" || AGENT_RUN_RC=$?
 fi
+
+# Close the tape run: outcome + closing run record (#1391)
+formula_session_end "$AGENT_RUN_RC"
 
 # =============================================================================
 # CHECK RESULT: did Claude push?

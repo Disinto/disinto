@@ -370,12 +370,18 @@ touch "$RESULT_FILE"
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="sonnet"
 
+# Open the proposal-loop tape run record (#1391) — total, never fails us
+formula_session_start "gardener"
+
 # Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
 # the script under set -e — record the rc and let the PR walk decide (#1164).
 GARDENER_RUN_RC=0
 agent_run --worktree "$WORKTREE" "$PROMPT" || GARDENER_RUN_RC=$?
 [ "$GARDENER_RUN_RC" -eq 0 ] || log "gardener agent_run exited ${GARDENER_RUN_RC} (124 = wall-clock timeout) — continuing"
 log "agent_run complete"
+
+# Close the tape run: outcome + closing run record (#1391)
+formula_session_end "$GARDENER_RUN_RC"
 
 # ── Detect PR ─────────────────────────────────────────────────────────────
 detect_pr_number "chore/gardener-"
