@@ -29,9 +29,10 @@
 # Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
 #
 # Host_volume contract:
-#   This job mounts agent-data, project-repos, and ops-repo from
-#   nomad/client.hcl. Paths under /srv/disinto/* are created by
-#   lib/init/nomad/cluster-up.sh before any job references them.
+#   This job mounts agent-data, project-repos, ops-repo,
+#   factory-projects, and tape from nomad/client.hcl. Paths under
+#   /srv/disinto/* are created by lib/init/nomad/cluster-up.sh
+#   before any job references them.
 #
 # Vault integration (S4.1):
 #   - vault { role = "agents-dev-qwen" } at group scope — workload-identity
