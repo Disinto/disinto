@@ -37,6 +37,14 @@ client {
     read_only = false
   }
 
+  # tape records (tape.jsonl, written by lib/tape.sh). Agent jobs mount
+  # this at /srv/disinto/tape so the lib/tape.sh default TAPE_DIR needs
+  # no env override (#1405).
+  host_volume "tape" {
+    path      = "/srv/disinto/tape"
+    read_only = false
+  }
+
   # qwen review agent runtime data (added 2026-08-27 on the box, committed
   # with #1192). One role per job keeps logs and locks apart, the same way
   # the opus agents already do.

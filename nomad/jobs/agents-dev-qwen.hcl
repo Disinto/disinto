@@ -29,9 +29,10 @@
 # Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
 #
 # Host_volume contract:
-#   This job mounts agent-data, project-repos, and ops-repo from
-#   nomad/client.hcl. Paths under /srv/disinto/* are created by
-#   lib/init/nomad/cluster-up.sh before any job references them.
+#   This job mounts agent-data, project-repos, ops-repo,
+#   factory-projects, and tape from nomad/client.hcl. Paths under
+#   /srv/disinto/* are created by lib/init/nomad/cluster-up.sh
+#   before any job references them.
 #
 # Vault integration (S4.1):
 #   - vault { role = "agents-dev-qwen" } at group scope — workload-identity
@@ -89,6 +90,14 @@ job "agents-dev-qwen" {
       type      = "host"
       source    = "ops-repo"
       read_only = true
+    }
+
+    # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
+    # lib/tape.sh default TAPE_DIR, so no env override is needed (#1405).
+    volume "tape" {
+      type      = "host"
+      source    = "tape"
+      read_only = false
     }
 
     # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
@@ -160,6 +169,14 @@ job "agents-dev-qwen" {
         volume      = "factory-projects"
         destination = "/srv/disinto/project-repos/_factory/projects"
         read_only   = true
+      }
+
+      # tape (#1405): mounted at the lib/tape.sh default path so TAPE_DIR
+      # needs no env override.
+      volume_mount {
+        volume      = "tape"
+        destination = "/srv/disinto/tape"
+        read_only   = false
       }
 
       # ── Non-secret env ─────────────────────────────────────────────────────
