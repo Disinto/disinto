@@ -40,9 +40,9 @@ setup_file() {
   done
 
   # Enable kv-v2 at path=kv. Dev-mode vault only auto-mounts kv-v2 at
-  # secret/, but the module under test defaults to VAULT_KV_MOUNT=kv
-  # (the production S2 mount) — mirror the real cluster layout so
-  # hvault_kv_* writes land where the reads go.
+  # secret/, but the module under test is fixed to the kv mount (the
+  # production S2 mount, kv-only — #1108) — mirror the real cluster
+  # layout so hvault_kv_* writes land where the reads go.
   curl -sf -H "X-Vault-Token: test-root-token" \
     -X POST -d '{"type":"kv","options":{"version":"2"}}' \
     "${VAULT_ADDR}/v1/sys/mounts/kv" >/dev/null

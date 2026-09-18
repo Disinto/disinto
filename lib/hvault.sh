@@ -124,10 +124,14 @@ _hvault_request() {
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-# VAULT_KV_MOUNT — KV v2 mount point (default: "kv")
-#   Override with: export VAULT_KV_MOUNT=secret
+# KV v2 mount point: fixed to `kv` (the production S2 mount).
+#   kv-only — there is no env override. A custom-mount override was
+#   retired in #1108: the seed path, inline ACL policies, and jobspec
+#   `template` stanzas stay hardcoded to `kv/`, so a custom mount could
+#   desync the KV seed from them. If a custom mount is ever needed,
+#   reintroduce the override parameterized across all three spots with
+#   a test box.
 #   Used by: hvault_kv_get, hvault_kv_put, hvault_kv_list
-: "${VAULT_KV_MOUNT:=kv}"
 
 # hvault_ensure_kv_v2 MOUNT [LOG_PREFIX]
 #   Assert that the given KV mount is present and KV v2. If absent, enable
@@ -197,7 +201,7 @@ hvault_kv_get() {
   _hvault_check_prereqs "hvault_kv_get" || return 1
 
   local response
-  response="$(_hvault_request GET "${VAULT_KV_MOUNT}/data/${path}")" || return 1
+  response="$(_hvault_request GET "kv/data/${path}")" || return 1
 
   if [ -n "$key" ]; then
     printf '%s' "$response" | jq -e -r --arg key "$key" '.data.data[$key]' 2>/dev/null || {
@@ -237,7 +241,7 @@ hvault_kv_put() {
     payload="$(printf '%s' "$payload" | jq --arg k "$k" --arg v "$v" '.data[$k] = $v')"
   done
 
-  _hvault_request POST "${VAULT_KV_MOUNT}/data/${path}" "$payload" >/dev/null
+  _hvault_request POST "kv/data/${path}" "$payload" >/dev/null
 }
 
 # hvault_kv_list PATH
@@ -253,7 +257,7 @@ hvault_kv_list() {
   _hvault_check_prereqs "hvault_kv_list" || return 1
 
   local response
-  response="$(_hvault_request LIST "${VAULT_KV_MOUNT}/metadata/${path}")" || return 1
+  response="$(_hvault_request LIST "kv/metadata/${path}")" || return 1
 
   printf '%s' "$response" | jq -e '.data.keys' 2>/dev/null || {
     _hvault_err "hvault_kv_list" "failed to parse response" "path=$path"
@@ -428,7 +432,7 @@ _hvault_seed_key() {
   value=$(eval "$generator")
 
   # Read existing data to preserve sibling keys (KV v2 replaces atomically)
-  local kv_api="${VAULT_KV_MOUNT}/data/${path}"
+  local kv_api="kv/data/${path}"
   local raw existing_data payload
   raw="$(hvault_get_or_empty "$kv_api")" || return 2
   existing_data="{}"
