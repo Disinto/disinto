@@ -1,127 +1,72 @@
 [
   {
-    "action": "comment",
-    "issue": 1410,
-    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+    "action": "edit_body",
+    "issue": 1088,
+    "body": "## What's broken\n\nPushes to the repo produce **no CI status contexts at all**. Not a failure — no\npipeline. Because branch protection requires `ci/woodpecker/push/ci`, every\naffected PR becomes permanently unmergeable, and `pr_poll_ci` waits its full\n1800 s and then blocks the issue with a false `ci_timeout` (this already\nhappened to #1082 at 21:44 UTC).\n\nNothing surfaces the condition. The agents cannot tell \"CI has not run\" from\n\"CI has not finished\", so they wait, then block.\n\n## Root cause (measured)\n\nThe box is heavily oversubscribed. 4 CPUs, load average 14.8:\n\n```\n94.3% python -m tools.sweep --one {...\"family\": \"trim-th...   x8, running 1d 15h\n79.7% llama-server --model Qwen3.8-27B-IQ4_XS.gguf\n```\n\nEight selenocyte sweep processes at ~94% CPU each plus llama-server, against\n4 cores. This is legitimate research compute, not a runaway.\n\nForgejo runs SQLite (`DB_TYPE = sqlite3`), which serialises under concurrency.\nMeasured against the live instance:\n\n```\nsequential /raw/.woodpecker/<file>   0.23-0.35 s each   (fine)\n8 concurrent /contents/.woodpecker   15.8-16.8 s each   (17 s wall)\n```\n\nWoodpecker fans out ~13 config fetches per push. Against its short default\nforge deadline every one expired, so no pipeline was created:\n\n```\nmulti-pipeline cannot get .woodpecker/ci.yml:\n  Get \"http://10.10.10.132:3000/api/v1/...\" : context deadline exceeded\nerror while fetching config '' in 'disinto-admin/disinto'\n```\n\nForgejo also intermittently returned 500 on ordinary calls\n(`/pulls/1079/status`, `/pulls/937/reviews`) and logged\n`Render JSON failed: ... broken pipe` as clients gave up.\n\n## Partial mitigation applied 2026-08-28 22:06\n\n`WOODPECKER_FORGE_TIMEOUT = \"60s\"` added to\n`nomad/jobs/woodpecker-server.hcl` (backup:\n`woodpecker-server.hcl.bak-20260828-forgetimeout`), deployed and confirmed\nlive in the container env.\n\nIt worked as far as it goes: config fetches now succeed. Forgejo logged\n`GET /raw/.woodpecker/acceptance-tests.yml?ref=d915d35 200 OK` at 22:07:47,\nand woodpecker-server has logged **0** config-fetch errors since.\n\n## Still unresolved — do not assume the mitigation is sufficient\n\nDespite configs now being fetched successfully, commit `d915d35` on\n`fix/issue-1082` **still has zero status contexts** 15+ minutes later. So a\nsecond failure sits behind the first, and it is not yet isolated. Ruled out\nso far:\n\n- **Not the agent.** `woodpecker-agent` healthcheck returns 200, `:9000` is\n  open, and it stopped logging \"waiting for server connection\" after the\n  22:07 restart.\n- **Not the ports or hooks.** `:8000` answers 200, both repo webhooks are\n  active and point at the right URLs.\n- **Not a path filter.** `.woodpecker/ci.yml` has only\n  `when: event: [push, pull_request]`, no `path:`.\n\nOne unexplained signal to start from: Forgejo logs\n`Unable to deliver webhook task[6577|6579|6581] in\nhttp://10.10.10.132:8000/ci/api/hook?access_token=...` — that is hook id 1\n(`/ci/api/hook`). Hook id 2 (`/api/hook`) is separately configured and\napparently does deliver, since Woodpecker did fetch config for the same push.\nWhether hook 1 is simply stale and its failures are harmless noise, or whether\nboth hooks matter, has not been established.\n\nNote the two most recent commits on `fix/issue-1082` (`d73e0ab`, `d915d35`)\nare **empty commits pushed by hand purely to generate push events** while\ndiagnosing this. They carry no content change and can be squashed away.\n\n## Steps to reproduce\n\n1. With the box under load (load average >10 on 4 CPUs), push any commit.\n2. `GET /repos/disinto-admin/disinto/commits/<sha>/statuses` returns `[]`.\n3. `docker logs woodpecker-server | grep \"error while fetching config\"`.\n4. Any PR on that sha can never satisfy `ci/woodpecker/push/ci`.\n\n## Affected files\n\n- `nomad/jobs/woodpecker-server.hcl` (forge timeout; already changed)\n- `lib/pr-lifecycle.sh` (`pr_poll_ci` cannot distinguish \"no pipeline\" from \"pipeline pending\")\n- `dev/dev-poll.sh` / `dev/dev-agent.sh` (false `ci_timeout` blocks)\n- Forgejo database configuration (SQLite under concurrent load)\n\n## Acceptance criteria\n\n- [ ] A push while the box is loaded produces `ci/woodpecker/push/ci` within\n      the CI poll window, or the absence is reported rather than silently\n      waited on.\n- [ ] `pr_poll_ci` distinguishes \"no pipeline exists for this SHA\" from\n      \"pipeline pending\", and does not block an issue with `ci_timeout` for\n      the former — it should surface an infrastructure fault instead.\n- [ ] The remaining cause behind the config-fetch fix is identified, and the\n      hook-1 delivery failure is either fixed or documented as harmless.\n- [ ] A decision is recorded on Forgejo's database: either move off SQLite,\n      or cap Woodpecker's concurrent config fetches, or accept and document\n      that CI is unreliable while long research sweeps occupy the box.\n- [ ] The two empty commits on `fix/issue-1082` are squashed before merge.\n\n## Dependencies\n\nNone.\n\n## Acceptance test\n\n`tests/acceptance/issue-1088-ci-status-under-load.sh` — push a commit, poll\nfor status contexts, and assert that either the required context appears or\nthe absence is reported as an infrastructure fault rather than a CI timeout.\n\n\n---\n\n## What was reported\n\nPushes to the repo under heavy host load (load average ~15 on 4 CPUs) produce **no CI status contexts at all**: no pipeline is created, so every affected PR is permanently unmergeable against the `ci/woodpecker/push/ci` branch-protection rule, and `pr_poll_ci` waits its full 1800 s then blocks the issue with a false `ci_timeout` (already happened to #1082). Expected behavior: a push produces a `ci/woodpecker/push/ci` context within the CI poll window; absence should be reported as an infrastructure fault, not silently waited on.\n\n## Known context\n\n- Components: `nomad/jobs/woodpecker-server.hcl` (Forge fetch timeout — `WOODPECKER_FORGE_TIMEOUT=60s` already deployed 2026-08-28; config fetches succeed since), `lib/pr-lifecycle.sh` (`pr_poll_ci` cannot distinguish \"no pipeline\" from \"pipeline pending\"), `dev/dev-poll.sh` / `dev/dev-agent.sh` (false `ci_timeout` blocks), Forgejo on SQLite (serializes the ~13 concurrent config fetches per push under load).\n- Measured first failure: Woodpecker's fanned-out config fetches expired against the short default Forge deadline under load.\n- Unresolved second failure: after the fetch fix, commit `d915d35` on `fix/issue-1082` still has zero status contexts — the remaining cause is not yet isolated.\n- Suspicion: Forgejo webhook hook id 1 (`/ci/api/hook`) delivery failures in the logs (`Unable to deliver webhook task[...]`); hook 2 (`/api/hook`) delivers — whether hook 1 is stale/harmless or load-bearing is unknown.\n- Recent changes to involved components:\n  - `3281649f` fix: feat(dev): emit tape outcome record when a dev PR reaches terminal state (#1399)\n  - `b0a1c9ff` feat(dev): address review — acceptance test, docs, project-scoped id file, open-PR cap (#1398)\n  - `8d5682d2` fix: feat(dev): emit tape proposal record when dev-poll picks an issue (#1398)\n  - `1faaf6ef` fix: feat(lib): emit run+outcome tape records from formula-session.sh (#1391)\n  - `9e32f25e` Merge pull request 'fix: feat(entrypoint): restore per-organ cadence scheduler, oak tick to dry-run shadow (#1388)' (#1394)\n- Related: #1082 (false `ci_timeout` block victim).\n\n## Reproduction plan\n\nFollow the \"## Steps to reproduce\" section above:\n1. Saturate the box (load average >10 on 4 CPUs — e.g. an in-flight research sweep).\n2. Push any commit (the two empty commits `d73e0ab`, `d915d35` on `fix/issue-1082` were pushed purely to generate push events; safe to squash).\n3. `GET /repos/disinto-admin/disinto/commits/<sha>/statuses` → expect `[]` (bug: `ci/woodpecker/push/ci` never appears).\n4. `docker logs woodpecker-server | grep \"error while fetching config\"` → config-fetch errors (first failure mode).\n5. Check Forgejo webhook delivery logs for hook 1 (`/ci/api/hook`) failures.\n\n## What needs verification\n\n- [ ] Does the reported behavior still occur after the 60s Forge-timeout fix? (reproduce: push under load, poll the statuses API)\n- [ ] Which component drops the pipeline after config fetch succeeds? (woodpecker-server → agent handoff: agent healthcheck, `:9000`, logs)\n- [ ] Is the Forgejo webhook hook 1 (`/ci/api/hook`) delivery failure harmless noise (stale hook) or load-bearing for pipeline creation?\n- [ ] Is the SQLite-under-concurrency theory confirmed — move to Postgres, cap Woodpecker's fetch fan-out, or document as accepted?\n- [ ] Does `pr_poll_ci` distinguish \"no pipeline exists for this SHA\" from \"pipeline pending\", reporting an infrastructure fault instead of blocking with `ci_timeout`?\n"
   },
   {
-    "action": "remove_label",
-    "issue": 1410,
-    "label": "backlog"
+    "action": "add_label",
+    "issue": 1088,
+    "label": "bug-report"
   },
   {
-    "action": "comment",
-    "issue": 1409,
-    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 1409,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 1408,
-    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 1408,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 1407,
-    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
-  },
-  {
-    "action": "remove_label",
-    "issue": 1407,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
+    "action": "edit_body",
     "issue": 1406,
-    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+    "body": "## Task\n\nSame change in three files — `nomad/jobs/agents-review-qwen.hcl`, `nomad/jobs/agents-gardener-qwen.hcl`, `nomad/jobs/agents-supervisor-opus.hcl`: the identical `volume \"tape\"` group block + volume_mount at `/srv/disinto/tape` (read_only = false) introduced in the dependency issue. Copy it verbatim per file, nothing else.\n\n## Human steps (not for the bot)\n\n`nomad job run` + restart for the three jobs.\n\n## Acceptance\n\n`.probe` writable from all three containers, visible on the VM.\n\n## Depends on\n\n- #MOUNT1\n\n\n## Depends on\n\n- #1405\n\n## Acceptance criteria\n- [ ] `nomad/jobs/agents-review-qwen.hcl`, `nomad/jobs/agents-gardener-qwen.hcl`, and `nomad/jobs/agents-supervisor-opus.hcl` each contain the identical `volume \"tape\"` group block + volume_mount at `/srv/disinto/tape` (read_only = false), copied verbatim from the dependency issue\n- [ ] `.probe` is writable from all three containers and visible on the VM\n\n## Affected files\n- `nomad/jobs/agents-review-qwen.hcl`\n- `nomad/jobs/agents-gardener-qwen.hcl`\n- `nomad/jobs/agents-supervisor-opus.hcl`\n"
   },
   {
-    "action": "remove_label",
+    "action": "add_label",
     "issue": 1406,
     "label": "backlog"
   },
   {
     "action": "edit_body",
-    "issue": 1387,
-    "body": "Flagged by AI reviewer in PR #1386.\n\n## Problem\n\n`formulas/run-planner.toml` (the runtime prompt the planner executes on every run) is stale in two ways:\n\n1. **Template path moved, formula not updated.** Part C \"Template-or-vision filing gate\" step 1 instructs: \"Read issue templates from `.codeberg/ISSUE_TEMPLATE/*.yaml`\". The `.codeberg/` directory does not exist — templates live at `.forgejo/ISSUE_TEMPLATE/*.yaml` (bug/experiment/feature/refactor.yaml). The planner's template read therefore finds nothing on every run and the gate silently degrades toward the `vision` labeling path. PR #1386 updated `planner/AGENTS.md` to the `.forgejo` path, making the divergence visible, but the formula itself — which is what the planner actually follows — is uncorrected.\n\n2. **Header describes the pre-SDK execution model.** Lines 5-8: \"Executed directly by planner-run.sh via polling loop\" and \"planner-run.sh creates a tmux session with Claude (opus)\". The polling-loop trigger itself is still accurate (the entrypoint paces planner on PLANNER_INTERVAL, default 12h), but the tmux-session claim is stale: `planner-run.sh:4-6` states \"Synchronous bash loop using claude -p (one-shot invocation). No tmux sessions, no phase files — the bash script IS the state machine.\", and it launches Claude via `agent_run` (lib/agent-sdk.sh).\n\n## Suggested fix\n\n- `formulas/run-planner.toml:190`: `.codeberg/ISSUE_TEMPLATE/*.yaml` → `.forgejo/ISSUE_TEMPLATE/*.yaml`\n- Update the header comment (lines 5-8): keep the polling-loop trigger, replace the tmux-session claim with the current model — one-shot `claude -p` via `agent_run` (lib/agent-sdk.sh), no tmux sessions or phase files.\n\nRelated: PR #1386 (planner/AGENTS.md refresh — the matching stale tmux/phase-file and \"six steps\" claims in that file are requested to be fixed there).\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n- [ ] `formulas/run-planner.toml`'s template-or-vision gate reads templates from `.forgejo/ISSUE_TEMPLATE/*.yaml`\n- [ ] The formula header describes the current execution model (polling-loop trigger at PLANNER_INTERVAL; one-shot `claude -p` via `agent_run`; no tmux sessions / phase files)\n- [ ] No remaining `.codeberg/` template path or tmux-model references in the formula\n\n## Affected files\n- `formulas/run-planner.toml`"
+    "issue": 1407,
+    "body": "## Task\n\nOne file: `docker/edge/dispatcher.sh`. Uses `lib/tape.sh`.\n\nWhen the dispatcher fires an approved vault action: `tape_proposal` with loop=\"production\", class=<action kind from the TOML>, context `{\"target\":\"<resource>\"}`, ref=<action id>. When the action's container returns (result.json observed): `tape_outcome` with bits `{\"returned\":1,\"ok\":0|1}`, numbers `{\"duration_s\":...}`, payloads=[hash of the result/log files via tape_payload].\n\nTape failure must warn and continue — dispatch is never blocked by the tape.\n\n## Acceptance\n\nOne dispatched action writes one proposal + one outcome line to $TAPE_DIR/tape.jsonl.\n\n## Depends on\n\n- #MOUNT1\n\n\n## Depends on\n\n- #1405\n\n## Acceptance criteria\n- [ ] When the dispatcher fires an approved vault action, one `tape_proposal` line is written (loop=\"production\", class=<action kind from the TOML>, context `{\"target\":\"<resource>\"}`, ref=<action id>)\n- [ ] When the action's container returns (result.json observed), one `tape_outcome` line is written (bits `{\"returned\":1,\"ok\":0|1}`, numbers `{\"duration_s\":...}`, payloads = hash of result/log files via tape_payload)\n- [ ] A tape failure warns and continues — dispatch is never blocked by the tape\n\n## Affected files\n- `docker/edge/dispatcher.sh`\n"
   },
   {
     "action": "add_label",
-    "issue": 1387,
+    "issue": 1407,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1408,
+    "body": "## Task\n\nOne file: `supervisor/supervisor-run.sh`. Uses `lib/tape.sh`.\n\nWhen supervisor writes an incident or fires a recipe remedy: `tape_proposal` with loop=\"repair\", class=<recipe name or \"incident\">, caused_by=<offending condition identifier>, context `{\"signature\":\"<best code-derived label>\",\"organ\":\"<organ>\"}`. On the next preflight showing the condition cleared: `tape_outcome` with bits `{\"regression_cleared\":1}`.\n\nCode-derived labels only, no LLM. Tape failure warns and continues.\n\n## Acceptance\n\nTrigger one recipe in dev; one repair proposal appears in the tape.\n\n## Depends on\n\n- #MOUNT1\n\n\n## Depends on\n\n- #1405\n\n## Acceptance criteria\n- [ ] When the supervisor writes an incident or fires a recipe remedy, one `tape_proposal` line is written (loop=\"repair\", class=<recipe name or \"incident\">, caused_by=<offending condition identifier>, context `{\"signature\":\"<code-derived label>\",\"organ\":\"<organ>\"}`)\n- [ ] On the next preflight showing the condition cleared, one `tape_outcome` line is written (bits `{\"regression_cleared\":1}`)\n- [ ] A tape failure warns and continues — the supervisor run is never blocked by the tape\n\n## Affected files\n- `supervisor/supervisor-run.sh`\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 1408,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1409,
+    "body": "## Task\n\nOne file: `planner/planner-run.sh`. Uses `lib/tape.sh`.\n\nWhen planner files a new backlog issue: `tape_proposal` with loop=\"dev\", class=<label or \"dev\">, forecast=`{\"p_success\":0.5,\"est_cost\":0,\"est_dvision\":0}` (flat priors for now — calibration comes later), ref=<new issue number>.\n\nThat is the whole change. Tape failure warns and continues.\n\n## Acceptance\n\nOne planner run that files an issue leaves one proposal line with a forecast block in the tape.\n\n## Depends on\n\n- #MOUNT1\n\n\n## Depends on\n\n- #1405\n\n## Acceptance criteria\n- [ ] When the planner files a new backlog issue, one `tape_proposal` line is written (loop=\"dev\", class=<label or \"dev\">, flat-prior forecast `{\"p_success\":0.5,\"est_cost\":0,\"est_dvision\":0}`, ref=<new issue number>)\n- [ ] A tape failure warns and continues — planning is never blocked by the tape\n\n## Affected files\n- `planner/planner-run.sh`\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 1409,
+    "label": "backlog"
+  },
+  {
+    "action": "edit_body",
+    "issue": 1410,
+    "body": "## Task\n\nOne new file `tools/grade.sh` plus `tests/grade.bats`.\n\nUsage: `tools/grade.sh <proposal-id> <float> [at_approval|at_outcome]` — appends a grade record via lib/tape.sh (`who` = $USER, `when` default at_outcome). Prints the appended line. Missing args or non-float: usage on stderr, exit 64.\n\n## Acceptance\n\nbats test: grading a fixture proposal id appends a well-formed grade line; bad float exits 64.\n\n## Depends on\n\n- #MOUNT1\n\n\n## Depends on\n\n- #1405\n\n## Acceptance criteria\n- [ ] `tools/grade.sh <proposal-id> <float> [at_approval|at_outcome]` appends a well-formed grade record via lib/tape.sh (`who` = $USER, `when` defaults to at_outcome) and prints the appended line\n- [ ] Missing args or a non-float value print usage on stderr and exit 64\n- [ ] `tests/grade.bats` verifies both behaviors (well-formed grade line; exit 64 on bad float)\n\n## Affected files\n- `tools/grade.sh` (new)\n- `tests/grade.bats` (new)\n"
+  },
+  {
+    "action": "add_label",
+    "issue": 1410,
     "label": "backlog"
   },
   {
     "action": "comment",
-    "issue": 1379,
-    "body": "Moot — `tests/oak-tick-lock.bats` was removed with the retired tick learner in #1390 (3d742e74, merged 2026-09-16); the flaky test no longer exists, so there is nothing to fix. Closing like #1301."
+    "issue": 1414,
+    "body": "PR #1413 has been merged into main at `dc3660ba` (2026-09-17) — the requested human merge is complete. The 25 deferred manifest actions executed post-merge (verified: #1301 and #1379 are closed, #1406–#1410 quality-gate strips landed). Closing as done."
   },
   {
     "action": "close",
-    "issue": 1379,
-    "reason": "moot — flaky test removed with the tick-learner retirement in #1390 (3d742e74)"
-  },
-  {
-    "action": "edit_body",
-    "issue": 1255,
-    "body": "## Finding (investigated 2026-09-06, no code changed)\n\nThe ~10-13KB splice is the `dsh-agent-instructions` plugin (in the headless profile, `maxBytes: 65536`). It is NOT injected by lib/agent-harness-dsh.sh (verified — the harness passes the prompt through). Load order per session step 1, as one durable user-role `<system-reminder>` message:\n\n1. `$DSH_HOME/AGENTS.md` (user-global) — DOES NOT EXIST in our agent homes (only settings.yaml lives there), so contributes 0 bytes today.\n2. Every `AGENTS.md`/`CLAUDE.md` (+`.local` overlays) from project root down to cwd. Our review/dev worktrees run at the repo root, so the repo's root `AGENTS.md` (13,091 bytes) loads whole — 13KB < 64KB budget, rendered verbatim every session.\n\nBudget behavior if it ever overflows: most-specific files first, broader files dropped whole before truncating, with a visible `Workspace instruction budget ...` notice. The baseline message counts toward the 80k session budget and compacts like everything else (#1260).\n\n## Task (dev-sized, no further investigation needed)\n\nCompress the repo's root `AGENTS.md` (13KB → ≤8KB target): audit for redundancy (repeated conventions, verbose examples, sections no agent ever cites), keeping every rule that agents demonstrably follow. This is a repo file, so normal dev flow applies.\n\nOptional follow-up (only if compression stalls above ~10KB): lower the plugin `maxBytes` via a dsh profile patch so broader files drop with a budget notice — needs the profile-layer mechanism, riskier, do not bundle.\n\nAcceptance: root AGENTS.md ≤8KB; a fresh dsh review session's step-1 instruction message shrinks accordingly (check session.jsonl `system-reminder` block); no agent behavior regressions (one green review + one green dev implementation exercise the trimmed file).\n\nIn progress: PR #1275.\n\nGardener note 2026-09-17: PR #1275 (merged 2026-09-08) landed a compression pass; root `AGENTS.md` is now 8516 bytes — still over the ≤8KB (8192 B) acceptance target. Remaining work is a finishing trim of ~350+ bytes (audit for redundancy per the task above).\n\n## Acceptance criteria\n- [ ] Root `AGENTS.md` is ≤8KB (8192 bytes)\n- [ ] A fresh dsh session's step-1 instruction message shrinks accordingly (check session.jsonl `system-reminder` block)\n- [ ] No agent behavior regressions (one green review + one green dev implementation exercise the trimmed file)\n\n## Affected files\n- `AGENTS.md`"
-  },
-  {
-    "action": "remove_label",
-    "issue": 1255,
-    "label": "blocked"
-  },
-  {
-    "action": "add_label",
-    "issue": 1255,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 1186,
-    "body": "Flagged by AI reviewer in PR #1181 (re-review of #1106).\n\n## Problem\n\n`_agent_run_dsh()` (`lib/agent-harness-dsh.sh`) wraps the run in\n`timeout -k 10 \"${CLAUDE_TIMEOUT:-7200}\"`. On a wall-clock timeout the zstd\non-disk session log is truncated, so `dsh_session_normalise` (#1105) returns 1\nwith no stdout (it never emits a partial parse), the diagnostics file is not\nwritten, and `metrics_record_run` therefore appends **no** record.\n\nThe Claude path, by contrast, records an `outcome=timeout` line on timeout\nbecause its stream-json is line-delimited and partially recoverable.\n\nConsequence: `stats.sh` counts Claude timeouts in its `timeout` column but\nsilently undercounts dsh timeouts — a dsh run that hit the wall-clock ceiling\nis invisible to the telemetry that `#1101`/`#1102` provide.\n\nThis is inherent to the zstd format (cannot be partially decompressed) and to\nthe \"never emit a partial parse\" design of `dsh_session_normalise`; it is not a\nrun-correctness bug (the run still returns 124 and cleans up).\n\n## Suggested fix\n\nOn rc=124 with a failed/absent normalisation, emit a minimal fallback metrics\nrecord (session_id + exit_code=124 + outcome=timeout + delivered flag) so dsh\ntimeouts are counted consistently with the Claude path.\n\n---\n*Auto-created from AI review of PR #1181 (re-review). Related: #1106, #1105, #1101, #1102.*\n\n---\n**Garden 2026-09-07:** Acceptance: a dsh run killed by the wall clock (rc 124) leaves an `outcome=timeout` metrics record visible to stats.sh, matching the Claude path. Suggested fix in body stands. No open decision — implement the fallback record.\n\n## Acceptance criteria\n- [ ] A dsh run killed by the wall clock (rc 124) with a failed/absent normalisation appends a minimal metrics record (session_id, exit_code=124, `outcome=timeout`, delivered flag)\n- [ ] `stats.sh` counts dsh timeouts in its `timeout` column, consistent with the Claude path\n- [ ] No behavior change for non-timeout runs\n\n## Affected files\n- `lib/agent-harness-dsh.sh`"
-  },
-  {
-    "action": "add_label",
-    "issue": 1186,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 1108,
-    "body": "Flagged by AI reviewer in PR #1092 (re-review of commit 2653e00).\n\n## Problem\n\n`disinto_hire_an_agent_nomad()` (lib/hire-agent.sh) reads `VAULT_KV_MOUNT` for the KV API path it seeds (`${VAULT_KV_MOUNT:-kv}/data/disinto/bots/<name>`), but the inline ACL policy and the jobspec `template` stanza hardcode the `kv/` mount. `VAULT_KV_MOUNT` is a documented override (lib/hvault.sh: \"Override with: export VAULT_KV_MOUNT=secret\"), so on a box that sets it the KV seed lands at the custom mount while the policy and the jobspec template still reference `kv/` — the job would render `seed-me` placeholders (or fail the policy check) even though the seed succeeded.\n\nLow probability (the default mount is `kv` everywhere) but a concrete misconfiguration trap for operators who use the documented override.\n\nDeferred deliberately in #1092: every existing jobspec in the repo hardcodes `kv/` today, so fixing only this path would make it inconsistent rather than correct. Needs a repo-wide pass (inline policy, `template` stanzas in rendered/checked-in jobspecs) honouring the mount.\n\n---\n*Auto-created from AI review*\n\n---\n**Garden 2026-09-07:** Open decision: (a) parameterize all three spots (seed path, inline policy, template stanza) on VAULT_KV_MOUNT repo-wide, or (b) retire the override (document kv-only, remove from lib/hvault.sh). Prefer (a) only if a custom-mount box exists to test against; otherwise (b) — a documented-but-broken override is worse than none. State the choice in the PR.\n\n**Decision 2026-09-07 (no open choice — implement as specified):** do (b): retire the VAULT_KV_MOUNT override — document kv-only, remove the override from lib/hvault.sh, keep every path hardcoded to `kv/`. Rationale: no custom-mount box exists to test (a) against, and a documented-but-broken override is worse than none. If a custom mount is ever needed, reintroduce it parameterized with a test box. Acceptance: no VAULT_KV_MOUNT references remain; hire flow green.\n\n## Acceptance criteria\n- [ ] No `VAULT_KV_MOUNT` references remain — the override is removed from `lib/hvault.sh` and kv-only behavior is documented\n- [ ] All paths (KV seed path, inline ACL policy, jobspec `template` stanzas) stay hardcoded to `kv/`\n- [ ] The hire-an-agent flow renders and deploys green\n\n## Affected files\n- `lib/hvault.sh`\n- `lib/hire-agent.sh`"
-  },
-  {
-    "action": "add_label",
-    "issue": 1108,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 1182,
-    "body": "Observed 2026-09-01: four stale April vault actions (release-v011, release-v020, release-v030, release-v0.1.1) were re-processed every 60s cycle in an infinite error loop.\n\n**Root cause:** `docker/edge/dispatcher.sh` `commit_result_via_git()` clones the ops repo anonymously (repo is public-read), writes the result.json, then `git push` gets a 401. Push stderr is suppressed (`2>/dev/null`) and every failure is mislogged as \"Push conflict — rebasing\". After 3 attempts it gives up; the result never lands, `is_action_completed` never becomes true, and the action is retried every cycle, forever.\n\n**Fix direction:** give the scratch clone push credentials, e.g. read the token from `FACTORY_FORGE_PAT_FILE` (/secrets/forge-pat) and either embed it in the clone URL or configure a one-shot `credential.helper` for the scratch repo. Also: log the real push stderr instead of always calling it a conflict, and consider moving processed .toml files out of `vault/actions/` (e.g. to `vault/rejected/`) as a belt-and-braces terminal state.\n\n**Manual workaround applied:** operator pushed the four missing result.json files as vault-bot, which breaks the loop via the existing `is_action_completed` check.\n\n## Acceptance criteria\n- [ ] `commit_result_via_git()`'s scratch clone has push credentials (token from `FACTORY_FORGE_PAT_FILE`, embedded in clone URL or one-shot credential helper) and the result.json push succeeds\n- [ ] Push failures log the real push stderr instead of always logging \"Push conflict — rebasing\"\n- [ ] Actions whose result has already landed (or are terminally rejected) are not re-processed every 60s cycle\n\n## Affected files\n- `docker/edge/dispatcher.sh`"
-  },
-  {
-    "action": "add_label",
-    "issue": 1182,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 1301,
-    "body": "Verified at HEAD 70bc2375 (2026-09-17): the `action-vault/validate.sh` header now points at `action-vault/validate.sh` and `action-vault/SCHEMA.md`, the no-args usage echo prints `action-vault/examples/publish.toml`, and the example files' self-headers read `action-vault/examples/<name>.toml`. Already implemented — closing."
-  },
-  {
-    "action": "close",
-    "issue": 1301,
-    "reason": "already implemented at HEAD — header and usage example point at existing action-vault/ paths"
+    "issue": 1414,
+    "reason": "PR #1413 merged (dc3660ba) — requested human action completed"
   }
 ]
