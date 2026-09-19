@@ -6,17 +6,16 @@
 Disinto is an autonomous code factory: a polling loop
 (`docker/agents/entrypoint.sh`) paces the seven organs (dev, review, gardener,
 supervisor, planner, predictor, architect) on their own intervals —
-dev-poll/review-poll every 5 min, supervisor every 20 min, architect every
-15 min, gardener every 6h, planner every 12h, predictor daily — implementing
-forge issues, reviewing PRs, planning from the vision, and keeping the system
-healthy via the agent harnesses. The long-lived edge dispatcher runs its
-own loop, launches the reproduce/triage sidecars per issue, and executes
-formula-based operational tasks.
+dev/review 5 min, supervisor 20 min, architect 15 min, gardener 6h,
+planner 12h, predictor daily — implementing forge issues, reviewing PRs,
+planning from the vision, keeping the system healthy via the agent
+harnesses. The edge dispatcher runs its own loop, launches reproduce/triage
+sidecars per issue, and executes formula-based tasks.
 
 Each agent has a separate `.profile` repo on Forgejo: lessons-learned.md (injected
 into every session prompt) + `journal/` reflections, digested into lessons past
-`PROFILE_DIGEST_THRESHOLD`. `lib/profile.sh`: `profile_prepare_context()` (pre-session)
-/ `profile_write_journal` (post-session).
+`PROFILE_DIGEST_THRESHOLD`. `lib/profile.sh`: `profile_prepare_context()`
+/ `profile_write_journal`.
 
 See `README.md` for architecture, `disinto-factory/SKILL.md` for setup.
 
@@ -24,7 +23,7 @@ See `README.md` for architecture, `disinto-factory/SKILL.md` for setup.
 
 Full tree: `docs/AGENTS.md`. Key directories:
 
-- **Agent dirs** (dev, review, gardener, supervisor, planner, predictor, architect) — `*-run.sh` executor + `AGENTS.md` each
+- **Agent dirs** — one per organ: `*-run.sh` executor + `AGENTS.md` each
 - **lib/** — shared shell helpers, see [lib/AGENTS.md](lib/AGENTS.md)
 - **formulas/** — TOML templates for multi-step agent tasks; distinct from "processes" (`docs/EVIDENCE-ARCHITECTURE.md`)
 - **nomad/jobs/** — Nomad job HCL configs
@@ -32,20 +31,20 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **tools/** — operational tools (vault provisioning, edge-control)
 - **bin/** — `disinto` CLI + snapshot-*.sh collectors (Nomad: HTTP API, not CLI)
 - **action-vault/** — vault item validation + examples
-- **docs/** — protocol docs (full tree: `docs/AGENTS.md`)
+- **docs/** — protocol docs
 - **vault/policies/** — vault HCL policies
 - **tape/** — dev-loop tape schema packs + outcome rubrics (records written via `lib/tape.sh`, #1389)
 
 ## Tech stack
 
-bash (all agents) · agent harnesses (dsh/Claude) · Woodpecker CI (REST + Postgres) · Forgejo (Gitea API) · Forge activity.
+bash (all agents) · agent harnesses (dsh/Claude) · Woodpecker CI · Forgejo.
 
 ## Coding conventions
 
 - All scripts start with `#!/usr/bin/env bash` and `set -euo pipefail`
 - Source the shared environment: `source "$(dirname "$0")/../lib/env.sh"`
-- Log to `$LOGFILE` using the `log()` function (from env.sh or defined locally)
-- Never hardcode secrets: agent secrets come from `.env.enc`, vault secrets from `secrets/<NAME>.enc`; reference them as env vars (e.g. `$BASE_RPC_URL`), never in issue bodies, PR descriptions, or comments
+- Log to `$LOGFILE` using the `log()` function
+- Never hardcode secrets — follow AD-005; reference as env vars (e.g. `$BASE_RPC_URL`), never in issue bodies, PR descriptions, or comments
 - ShellCheck must pass (CI runs it on all `.sh` files)
 - Avoid duplicate code — shared helpers go in `lib/`
 
@@ -70,7 +69,7 @@ pushing, grep `tests/` for the old value. CI enforces this (`.woodpecker/check-d
 
 ## Agents
 
-Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/AGENTS.md) (PR review), [gardener/](gardener/AGENTS.md) (grooming, #872), [supervisor/](supervisor/AGENTS.md) (health), [planner/](planner/AGENTS.md) (planning), [predictor/](predictor/AGENTS.md) (infrastructure patterns), [architect/](architect/AGENTS.md) (sprints). Reproduce/Triage: `docker/reproduce/` (Playwright MCP). Edge dispatcher: `docker/edge/`. Local-model: `docker/agents/` (llama). Nomad: [nomad/AGENTS.md](nomad/AGENTS.md).
+Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/AGENTS.md) (PR review), [gardener/](gardener/AGENTS.md) (grooming), [supervisor/](supervisor/AGENTS.md) (health), [planner/](planner/AGENTS.md) (planning), [predictor/](predictor/AGENTS.md) (infrastructure patterns), [architect/](architect/AGENTS.md) (sprints). Reproduce/Triage: `docker/reproduce/` (Playwright MCP). Edge dispatcher: `docker/edge/`. Local-model: `docker/agents/` (llama). Nomad: [nomad/AGENTS.md](nomad/AGENTS.md).
 
 ## Issue lifecycle and labels
 
@@ -81,7 +80,7 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiti
 | `backlog` | Queued for implementation; dev-poll picks the first ready one; re-queue point for transient resource-limit exits (#1164). | Planner, gardener, humans, dev-agent |
 | `priority` | Queue tier above plain backlog; FIFO within tier. | Planner, humans |
 | `in-progress` | Dev-agent is working it (one per project); also on vision issues when sub-issues are filed (#764). | dev-agent.sh, filer-bot |
-| `blocked` | Stuck: no-push crash/failure, CI fixes exhausted, retry budget burned (3rd consecutive resource-limit exit → `no_push_after_3_attempts`), or unmet dependency. A single resource-limit exit is transient → re-queue to `backlog` (#1164); see the diagnostic comment. | dev-agent.sh, dev-poll.sh |
+| `blocked` | Stuck: no-push crash, CI fixes exhausted, 3rd consecutive resource-limit exit → `no_push_after_3_attempts`, or unmet dependency. A single resource-limit exit is transient → re-queue to `backlog` (#1164); see the diagnostic comment. | dev-agent.sh, dev-poll.sh |
 | `waiting-on-compute` | Dispatched, waiting on an external run; dev-poll skips. Removed when the run lands. | Humans, formulas |
 | `tech-debt` | Pre-existing issue flagged by the AI reviewer. | review-pr.sh |
 | `underspecified` | Refused as too large or vague. | dev-poll.sh, dev-agent.sh |
@@ -105,7 +104,7 @@ Humans write these; agents read and enforce them (dev-agent refuses work that vi
 
 | ID | Decision | Rationale |
 |---|---|---|
-| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`) pacing organs on their own intervals (dev/review every loop, supervisor 20 min, architect 15 min, gardener 6h, planner 12h, predictor daily), not PR-based actions. | Planner, predictor, gardener, supervisor create work, don't become work (PR #474 revert). |
+| AD-001 | Nervous system = polling loop (`docker/agents/entrypoint.sh`) pacing organs on their own intervals, not PR-based actions. | Planner, predictor, gardener, supervisor create work, don't become work (PR #474 revert). |
 | AD-002 | **Concurrency is bounded per LLM backend, not per project.** | **(a) Anthropic OAuth** — one concurrent Claude session per credential pool; isolate via per-session `CLAUDE_CONFIG_DIR`, native lockfile (rollback: `CLAUDE_EXTERNAL_LOCK=1`). **(b) llama-server** — `--kv-unified` (#1069): shared KV pool, budget = **sum of concurrent sessions' context** vs `--ctx-size`; size each agent's autocompact lane (docs/agents-llama.md). Without `--kv-unified`: one session per instance (parallel inference → cache thrash → OOM). **(c) Disjoint backends parallelize freely.** **(d) Per-project safety** = `issue_claim` + per-issue worktrees. |
 | AD-003 | The runtime creates and destroys; the formula preserves. | Runtime manages worktrees/sessions/temp; formulas commit knowledge to git before signaling done. |
 | AD-004 | Event-driven > polling > fixed delays. | Never `waitForTimeout` or hardcoded sleep; use phase files, webhooks, or poll loops with backoff. |
