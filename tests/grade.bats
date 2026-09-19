@@ -103,6 +103,20 @@ run_grading() {
   [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 1 ]
 }
 
+@test "append I/O failure: nonzero exit, nothing printed (no false confirmation)" {
+  fixture_proposal
+  # TAPE_DIR under a regular file: the append cannot succeed.
+  local blocker="$BATS_TEST_TMPDIR/blocker"
+  touch "$blocker"
+  local out="$BATS_TEST_TMPDIR/out-append-fail" rc=0
+  TAPE_DIR="$blocker/tape" bash "$TOOL" p-1 0.5 > "$out" 2>/dev/null || rc=$?
+  [ "$rc" -eq 1 ]
+  [ -z "$(cat "$out")" ]
+  [ ! -e "$blocker/tape" ]
+  # the fixture tape is untouched
+  [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 1 ]
+}
+
 @test "under concurrent tape writes the printed line is always grade.sh's own record" {
   fixture_proposal
   local stop="$BATS_TEST_TMPDIR/stop"

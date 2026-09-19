@@ -206,6 +206,20 @@ last_record() {
   [ -z "$out" ]
 }
 
+@test "grade: a failed append is not masked (nonzero return, no stdout)" {
+  # TAPE_DIR under a regular file: the append cannot succeed, and the
+  # record must not be echoed as if it had been appended.
+  local blocker="$BATS_TEST_TMPDIR/blocker"
+  touch "$blocker"
+  local rc=0 out
+  out="$(TAPE_DIR="$blocker/tape" bash -c '
+    source "$1/lib/tape.sh"
+    tape_grade p-1 0.5 at_outcome someone
+  ' _ "$BATS_TEST_DIRNAME/.." 2>/dev/null)" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ -z "$out" ]
+}
+
 # ── payload ─────────────────────────────────────────────────────────────
 
 @test "payload: content-addressed copy, idempotent, echoes the hash" {
