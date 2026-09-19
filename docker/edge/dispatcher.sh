@@ -10,7 +10,9 @@
 # 4. Validate TOML using vault-env.sh validator
 # 5. Decrypt declared secrets via load_secret (lib/env.sh)
 # 6. Launch: delegate to _launch_runner_{docker,nomad} backend
-# 7. Write <action-id>.result.json with exit code, timestamp, logs summary
+# 7. Write <action-id>.result.json with exit code, timestamp, logs summary,
+#    pushed with the rendered Forge PAT (one-shot credential helper, #1182);
+#    terminally rejected actions are additionally moved to vault/rejected/
 #
 # Part of #76.
 
@@ -62,7 +64,7 @@ log() {
 
 # Check if a user has admin role
 # Usage: is_user_admin <username>
-# Returns: 0=yes, 1=no
+# Returns: 0=admin, 1=not admin, 2=API error (transient, #1182)
 is_user_admin() {
   local username="$1"
   local user_json
@@ -73,11 +75,11 @@ is_user_admin() {
 
   # Fetch user info from Forgejo API
   user_json=$(curl -sf -H "Authorization: token ${admin_token}" \
-    "${FORGE_URL}/api/v1/users/${username}" 2>/dev/null) || return 1
+    "${FORGE_URL}/api/v1/users/${username}" 2>/dev/null) || return 2
 
   # Forgejo uses .is_admin for site-wide admin users
   local is_admin
-  is_admin=$(echo "$user_json" | jq -r '.is_admin // false' 2>/dev/null) || return 1
+  is_admin=$(echo "$user_json" | jq -r '.is_admin // false' 2>/dev/null) || return 2
 
   if [[ "$is_admin" == "true" ]]; then
     return 0
@@ -88,7 +90,7 @@ is_user_admin() {
 
 # Check if a user is in the allowed admin list
 # Usage: is_allowed_admin <username>
-# Returns: 0=yes, 1=no
+# Returns: 0=yes, 1=no, 2=API error (transient, #1182)
 is_allowed_admin() {
   local username="$1"
   local admin_list
@@ -102,7 +104,12 @@ is_allowed_admin() {
   done <<< "$admin_list"
 
   # Also check via API if not in static list
-  if is_user_admin "$username"; then
+  local api_rc=0
+  is_user_admin "$username" || api_rc=$?
+  if [ "$api_rc" -eq 2 ]; then
+    return 2
+  fi
+  if [ "$api_rc" -eq 0 ]; then
     return 0
   fi
 
@@ -152,23 +159,29 @@ get_pr_for_file() {
 # Get PR merger info
 # Usage: get_pr_merger <pr_number>
 # Returns: JSON with merger username and merged timestamp
+# Exit: 0=ok (JSON on stdout), 2=API error (transient, #1182)
 get_pr_merger() {
   local pr_number="$1"
 
   # Use ops repo API URL for PR lookups (not disinto repo)
   local ops_api="${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}"
 
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${ops_api}/pulls/${pr_number}" 2>/dev/null | jq -r '{
+  local pr_json
+  pr_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${ops_api}/pulls/${pr_number}" 2>/dev/null) || return 2
+
+  echo "$pr_json" | jq -r '{
       username: .merge_user?.login // .user?.login,
       merged: .merged,
       merged_at: .merged_at // empty
-    }'
+    }' || return 2
+  return 0
 }
 
 # Get PR reviews
 # Usage: get_pr_reviews <pr_number>
 # Returns: JSON array of reviews with reviewer login and state
+# Exit: 0=ok (JSON on stdout), 2=API error (transient, #1182)
 get_pr_reviews() {
   local pr_number="$1"
 
@@ -176,12 +189,13 @@ get_pr_reviews() {
   local ops_api="${FORGE_URL}/api/v1/repos/${FORGE_OPS_REPO}"
 
   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${ops_api}/pulls/${pr_number}/reviews" 2>/dev/null
+    "${ops_api}/pulls/${pr_number}/reviews" 2>/dev/null || return 2
+  return 0
 }
 
 # Verify vault action was approved by an admin via PR review
 # Usage: verify_admin_approver <pr_number> <action_id>
-# Returns: 0=verified, 1=not verified
+# Returns: 0=verified, 1=rejected (no admin approval), 2=transient API failure
 verify_admin_approver() {
   local pr_number="$1"
   local action_id="$2"
@@ -189,13 +203,13 @@ verify_admin_approver() {
   # Fetch reviews for this PR
   local reviews_json
   reviews_json=$(get_pr_reviews "$pr_number") || {
-    log "WARNING: Could not fetch reviews for PR #${pr_number} — skipping"
-    return 1
+    log "WARNING: Could not fetch reviews for PR #${pr_number} — retrying next cycle"
+    return 2
   }
 
   # Check if there are any reviews
   local review_count
-  review_count=$(echo "$reviews_json" | jq 'length // 0')
+  review_count=$(echo "$reviews_json" | jq 'length // 0' 2>/dev/null) || return 2
   if [ "$review_count" -eq 0 ]; then
     log "WARNING: No reviews found for PR #${pr_number} — rejecting"
     return 1
@@ -203,6 +217,7 @@ verify_admin_approver() {
 
   # Check each review for admin approval
   local review
+  local saw_transient=0
   while IFS= read -r review; do
     local reviewer state
     reviewer=$(echo "$review" | jq -r '.user?.login // empty')
@@ -218,12 +233,21 @@ verify_admin_approver() {
       continue
     fi
 
-    # Check if reviewer is admin
-    if is_allowed_admin "$reviewer"; then
+    # Check if reviewer is admin (0=admin, 1=not admin, 2=API error)
+    local allow_rc=0
+    is_allowed_admin "$reviewer" || allow_rc=$?
+    if [ "$allow_rc" -eq 0 ]; then
       log "Verified: PR #${pr_number} approved by admin '${reviewer}'"
       return 0
+    elif [ "$allow_rc" -eq 2 ]; then
+      saw_transient=1
     fi
   done < <(echo "$reviews_json" | jq -c '.[]')
+
+  if [ "$saw_transient" -eq 1 ]; then
+    log "WARNING: Admin approval check for PR #${pr_number} failed transiently — retrying next cycle"
+    return 2
+  fi
 
   log "WARNING: No admin approval found for PR #${pr_number} — rejecting"
   return 1
@@ -231,7 +255,8 @@ verify_admin_approver() {
 
 # Verify vault action arrived via admin-merged PR
 # Usage: verify_admin_merged <toml_file>
-# Returns: 0=verified, 1=not verified
+# Returns: 0=verified, 1=rejected (terminal), 2=transient API failure
+#          (transient: caller must NOT write a result — retry next cycle)
 #
 # Verification order (for auto-merge workflow):
 # 1. Check PR reviews for admin APPROVED state (primary check for auto-merge)
@@ -247,22 +272,31 @@ verify_admin_merged() {
   # Get the PR that introduced this file
   local pr_num
   pr_num=$(get_pr_for_file "$toml_file") || {
-    log "WARNING: No PR found for action ${action_id} — skipping (possible direct push)"
+    log "WARNING: No PR found for action ${action_id} — rejecting (possible direct push)"
     return 1
   }
 
   log "Action ${action_id} arrived via PR #${pr_num}"
 
   # First, try admin approver check (for auto-merge workflow)
-  if verify_admin_approver "$pr_num" "$action_id"; then
+  local approver_rc=0
+  verify_admin_approver "$pr_num" "$action_id" || approver_rc=$?
+  if [ "$approver_rc" -eq 0 ]; then
     return 0
   fi
+  if [ "$approver_rc" -eq 2 ]; then
+    # Transient API failure — do not let the merger fallback mask it with a
+    # false rejection; retry next cycle instead.
+    log "WARNING: Admin approval check for PR #${pr_num} failed transiently — retrying next cycle"
+    return 2
+  fi
 
-  # Fallback: Check merger (backwards compatibility for manual merges)
+  # approver_rc == 1: no admin approval (terminal) — fall back to merger check
+  # (backwards compatibility for manual merges)
   local merger_json
   merger_json=$(get_pr_merger "$pr_num") || {
-    log "WARNING: Could not fetch PR #${pr_num} details — skipping"
-    return 1
+    log "WARNING: Could not fetch PR #${pr_num} details — retrying next cycle"
+    return 2
   }
 
   local merged merger_username
@@ -271,18 +305,23 @@ verify_admin_merged() {
 
   # Check if PR is merged
   if [[ "$merged" != "true" ]]; then
-    log "WARNING: PR #${pr_num} is not merged — skipping"
+    log "WARNING: PR #${pr_num} is not merged — rejecting"
     return 1
   fi
 
   # Check if merger is admin
   if [ -z "$merger_username" ]; then
-    log "WARNING: Could not determine PR #${pr_num} merger — skipping"
-    return 1
+    log "WARNING: Could not determine PR #${pr_num} merger — retrying next cycle"
+    return 2
   fi
 
-  if ! is_allowed_admin "$merger_username"; then
-    log "WARNING: PR #${pr_num} merged by non-admin user '${merger_username}' — skipping"
+  local allow_rc=0
+  is_allowed_admin "$merger_username" || allow_rc=$?
+  if [ "$allow_rc" -eq 2 ]; then
+    log "WARNING: Admin check for PR #${pr_num} merger '${merger_username}' failed transiently — retrying next cycle"
+    return 2
+  elif [ "$allow_rc" -ne 0 ]; then
+    log "WARNING: PR #${pr_num} merged by non-admin user '${merger_username}' — rejecting"
     return 1
   fi
 
@@ -350,14 +389,32 @@ get_dispatch_mode() {
 # commits as vault-bot, and pushes to the primary branch.
 # Idempotent: skips if result.json already exists upstream.
 # Retries on push conflict with rebase-and-push (handles concurrent merges).
+# Push failures are logged with the real git stderr — historically every
+# failure was mislogged as "Push conflict — rebasing" (#1182).
 #
-# Usage: commit_result_via_git <action_id> <exit_code> <logs>
+# Push credentials: the ops repo is public-read, but pushing the result
+# requires the Forge admin PAT. The edge jobspec renders it to
+# $FACTORY_FORGE_PAT_FILE (default /secrets/forge-pat); the env var
+# FACTORY_FORGE_PAT wins if already set (dev override). The file is re-read
+# on every call so a Vault re-render (token rotation) is picked up without a
+# restart. The token is handed to a one-shot credential helper script inside
+# the scratch repo's .git/ directory — deleted with the scratch dir on every
+# return, never embedded in a clone URL or a log line.
+#
+# move_to_rejected=yes additionally moves the action's .toml from
+# vault/actions/ to vault/rejected/ in the same commit as the result: a
+# terminal state that keeps the 60s poll loop from re-processing rejected
+# actions even if the result file is ever lost (#1182).
+#
+# Usage: commit_result_via_git <action_id> <exit_code> <logs> [move_to_rejected]
 commit_result_via_git() {
   local action_id="$1"
   local exit_code="$2"
   local logs="$3"
+  local move_to_rejected="${4:-no}"
 
   local result_relpath="vault/actions/${action_id}.result.json"
+  local toml_relpath="vault/actions/${action_id}.toml"
   local ops_clone_url="${FORGE_URL}/${FORGE_OPS_REPO}.git"
   local branch="${PRIMARY_BRANCH:-main}"
   local scratch_dir
@@ -365,12 +422,44 @@ commit_result_via_git() {
   # shellcheck disable=SC2064
   trap "rm -rf '${scratch_dir}'" RETURN
 
-  # Shallow clone of the ops repo — only the primary branch
-  if ! git clone --depth 1 --branch "$branch" \
-    "$ops_clone_url" "$scratch_dir" 2>/dev/null; then
-    log "ERROR: Failed to clone ops repo for result commit (action ${action_id})"
+  # Resolve the Forge PAT for the push (see function doc). Without one the
+  # push is guaranteed to 401 — fail fast instead of burning the retry
+  # budget on an anonymous clone (#1182).
+  local forge_pat="${FACTORY_FORGE_PAT:-}"
+  local pat_file="${FACTORY_FORGE_PAT_FILE:-/secrets/forge-pat}"
+  if [ -z "$forge_pat" ] && [ -r "$pat_file" ] && [ -s "$pat_file" ]; then
+    forge_pat=$(tr -d '\r\n' < "$pat_file")
+  fi
+  if [ -z "$forge_pat" ]; then
+    log "ERROR: No Forge PAT available for result push (set FACTORY_FORGE_PAT or render ${pat_file}) — cannot push result for ${action_id}"
     return 1
   fi
+
+  # Shallow clone of the ops repo — only the primary branch (public-read,
+  # no credentials needed)
+  local clone_err
+  clone_err=$(mktemp /tmp/dispatcher-clone-err-XXXXXX)
+  if ! git clone --depth 1 --branch "$branch" \
+    "$ops_clone_url" "$scratch_dir" 2>"$clone_err"; then
+    log "ERROR: Failed to clone ops repo for result commit (action ${action_id}): $(tr '\n' ' ' < "$clone_err" | tr -d '\r')"
+    rm -f "$clone_err"
+    return 1
+  fi
+  rm -f "$clone_err"
+
+  # One-shot push credentials (#1182): scope the PAT to a credential helper
+  # script in the scratch repo's .git/ dir. It is deleted with the scratch
+  # dir on every return, and the token never appears in a URL, a persistent
+  # config, or a log line.
+  local quoted_pat
+  quoted_pat=$(printf '%q' "$forge_pat")
+  cat > "${scratch_dir}/.git/credential-pat.sh" <<EOF
+#!/bin/sh
+echo username=x-access-token
+echo password=${quoted_pat}
+EOF
+  chmod 700 "${scratch_dir}/.git/credential-pat.sh"
+  git -C "$scratch_dir" config credential.helper "${scratch_dir}/.git/credential-pat.sh"
 
   # Idempotency: skip if result.json already exists upstream
   if [ -f "${scratch_dir}/${result_relpath}" ]; then
@@ -397,21 +486,42 @@ commit_result_via_git() {
     '{id: $id, exit_code: $exit_code, timestamp: $timestamp, logs: $logs}' \
     > "${scratch_dir}/${result_relpath}"
 
+  # Terminal-rejected actions (#1182): move the .toml out of vault/actions/
+  # into vault/rejected/ in the same commit as the result, so the poll loop
+  # can never re-process it — belt-and-braces on top of the result.json
+  # check.
+  local commit_msg="vault: result for ${action_id}"
+  if [ "$move_to_rejected" = "yes" ] && [ -f "${scratch_dir}/${toml_relpath}" ]; then
+    if git -C "$scratch_dir" mv "$toml_relpath" "vault/rejected/${action_id}.toml"; then
+      commit_msg="${commit_msg} (rejected)"
+      log "Action ${action_id} terminally rejected — moving toml to vault/rejected/"
+    else
+      # Non-fatal: the result.json still lands, and the poll loop skips the
+      # action via the result check (is_action_completed).
+      log "WARNING: git mv to vault/rejected/ failed for ${action_id} — result still committed"
+    fi
+  fi
+
   git -C "$scratch_dir" add "$result_relpath"
-  git -C "$scratch_dir" commit -q -m "vault: result for ${action_id}"
+  git -C "$scratch_dir" commit -q -m "$commit_msg"
 
   # Push with retry on conflict (rebase-and-push pattern).
   # Common case: admin merges another action PR between our clone and push.
-  local attempt
+  # Every failure logs the real git stderr (#1182).
+  local push_err_file="${scratch_dir}/.git/push-err.log"
+  local attempt push_err
   for attempt in 1 2 3; do
-    if git -C "$scratch_dir" push origin "$branch" 2>/dev/null; then
+    if git -C "$scratch_dir" push origin "$branch" 2>"$push_err_file"; then
       log "Result committed and pushed for ${action_id} (attempt ${attempt})"
       return 0
     fi
 
-    log "Push conflict for ${action_id} (attempt ${attempt}/3) — rebasing"
+    push_err=$(tr '\n' ' ' < "$push_err_file" | tr -d '\r')
+    log "Push failed for ${action_id} (attempt ${attempt}/3): ${push_err:-no stderr captured}"
 
-    if ! git -C "$scratch_dir" pull --rebase origin "$branch" 2>/dev/null; then
+    if ! git -C "$scratch_dir" pull --rebase origin "$branch" 2>"$push_err_file"; then
+      push_err=$(tr '\n' ' ' < "$push_err_file" | tr -d '\r')
+      log "Rebase failed for ${action_id} (attempt ${attempt}/3): ${push_err:-no stderr captured}"
       # Rebase conflict — check if result was pushed by another process
       git -C "$scratch_dir" rebase --abort 2>/dev/null || true
       if git -C "$scratch_dir" fetch origin "$branch" 2>/dev/null && \
@@ -427,13 +537,16 @@ commit_result_via_git() {
 }
 
 # Write result file for an action via git push to the ops repo.
-# Usage: write_result <action_id> <exit_code> <logs>
+# move_to_rejected=yes additionally moves the action's .toml to
+# vault/rejected/ in the same commit (terminal state, #1182).
+# Usage: write_result <action_id> <exit_code> <logs> [move_to_rejected]
 write_result() {
   local action_id="$1"
   local exit_code="$2"
   local logs="$3"
+  local move_to_rejected="${4:-no}"
 
-  commit_result_via_git "$action_id" "$exit_code" "$logs"
+  commit_result_via_git "$action_id" "$exit_code" "$logs" "$move_to_rejected"
 }
 
 # -----------------------------------------------------------------------------
@@ -790,7 +903,9 @@ launch_runner() {
   # Validate TOML
   if ! validate_action "$toml_file"; then
     log "ERROR: Action validation failed for ${action_id}"
-    write_result "$action_id" 1 "Validation failed: see logs above"
+    # Validation failure is terminal for this TOML — move it to
+    # vault/rejected/ with the result (#1182).
+    write_result "$action_id" 1 "Validation failed: see logs above" yes
     return 1
   fi
 
@@ -803,9 +918,19 @@ launch_runner() {
   else
     # Verify admin merge for PR-based actions
     log "Action ${action_id}: tier=${VAULT_TIER:-unknown}, dispatch_mode=${dispatch_mode} — verifying admin merge"
-    if ! verify_admin_merged "$toml_file"; then
-      log "ERROR: Admin merge verification failed for ${action_id}"
-      write_result "$action_id" 1 "Admin merge verification failed: see logs above"
+    local verify_rc=0
+    verify_admin_merged "$toml_file" || verify_rc=$?
+    if [ "$verify_rc" -eq 2 ]; then
+      # Transient API failure — do NOT write a result; retry next cycle
+      # (a rejection here would turn a blip into a false terminal reject,
+      # #1182).
+      log "WARN: Admin merge verification for ${action_id} failed transiently — retrying next cycle"
+      return 1
+    elif [ "$verify_rc" -ne 0 ]; then
+      log "ERROR: Admin merge verification rejected ${action_id}"
+      # Terminal rejection — move the toml to vault/rejected/ with the
+      # result so the poll loop stops re-processing it (#1182).
+      write_result "$action_id" 1 "Admin merge verification failed: see logs above" yes
       return 1
     fi
     log "Action ${action_id}: admin merge verified"
