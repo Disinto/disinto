@@ -72,8 +72,9 @@ disinto_hire_an_agent_nomad() {
   local context_window="${10:-100000}"
 
   local vault_name="bot-${agent_name}"
-  local kv_mount="${VAULT_KV_MOUNT:-kv}"
-  local kv_api="${kv_mount}/data/disinto/bots/${agent_name}"
+  # KV mount is kv-only (no override, #1108) — matches the hardcoded `kv/`
+  # paths in the inline ACL policy and the jobspec `template` stanza below.
+  local kv_api="kv/data/disinto/bots/${agent_name}"
 
   echo "  Backend: Nomad — deploying job '${vault_name}'"
 

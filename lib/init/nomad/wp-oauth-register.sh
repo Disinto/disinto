@@ -58,7 +58,7 @@ FORGE_URL="${FORGE_URL:-http://127.0.0.1:3000}"
 FORGE_OAUTH_APP_NAME="woodpecker"
 WOODPECKER_HOST="${WOODPECKER_HOST:?WOODPECKER_HOST must be set to the public Woodpecker URL (e.g. https://self.disinto.ai/ci)}"
 FORGE_REDIRECT_URIS="[\"${WOODPECKER_HOST}/authorize\"]"
-KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
+KV_MOUNT="kv"  # kv-only — no mount override exists (#1108)
 KV_PATH="disinto/shared/woodpecker"
 KV_API_PATH="${KV_MOUNT}/data/${KV_PATH}"
 
