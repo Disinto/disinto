@@ -35,6 +35,7 @@
 #   tape_grade PROPOSAL_ID VALUE WHEN WHO
 #     -> {"type":"grade","t","proposal_id","value":<number|null>,"when","who"}
 #     VALUE may be null; WHEN in at_approval|at_outcome.
+#     Echoes the appended record on success (like tape_payload's hash).
 #   tape_payload FILE
 #     Copies FILE to $PAYLOAD_DIR/<sha256> (idempotent), echoes the hash.
 #
@@ -239,6 +240,7 @@ tape_grade() {
     {type: "grade", t: $t, proposal_id: $pid, value: ($value | fromjson),
      when: $when, who: $who}')"
   _tape_append "$record"
+  echo "$record"
 }
 
 tape_payload() {

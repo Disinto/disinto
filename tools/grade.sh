@@ -59,13 +59,7 @@ esac
 
 who="${USER:-$(id -un)}"
 
-# Grade under the tape's own lock, then print exactly the line we appended —
-# the (count-before + 1)th line, so a concurrent writer's interleaving
-# cannot print the wrong record.
-tape_file="${TAPE_DIR}/tape.jsonl"
-before=0
-[ -f "$tape_file" ] && before="$(wc -l < "$tape_file")"
-
+# tape_grade echoes the exact record it appended (built in memory, not
+# re-read from the file), so the printed line is always ours even if a
+# concurrent writer interleaves its own append.
 tape_grade "$pid" "$value" "$when" "$who" || exit "$?"
-
-sed -n "$((before + 1))p" "$tape_file"

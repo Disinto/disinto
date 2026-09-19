@@ -193,6 +193,19 @@ last_record() {
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
 }
 
+@test "grade echoes the appended record; no stdout on refusal" {
+  run tape_grade p-1 0.8 at_outcome predictor
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(tail -n 1 "$TAPE_DIR/tape.jsonl")" ]
+
+  # `run` merges stderr into $output on bats < 1.9, so capture stdout
+  # explicitly: a refusal prints nothing to stdout.
+  local rc=0 out
+  out="$(tape_grade p-1 'high' at_outcome someone 2>/dev/null)" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ -z "$out" ]
+}
+
 # ── payload ─────────────────────────────────────────────────────────────
 
 @test "payload: content-addressed copy, idempotent, echoes the hash" {

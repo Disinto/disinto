@@ -102,3 +102,38 @@ run_grading() {
   grep -q "at_approval|at_outcome" "$ERR"
   [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 1 ]
 }
+
+@test "under concurrent tape writes the printed line is always grade.sh's own record" {
+  fixture_proposal
+  local stop="$BATS_TEST_TMPDIR/stop"
+  local lib="$BATS_TEST_DIRNAME/../lib/tape.sh"
+
+  # Background writer hammering the same tape (the natural race: an organ
+  # session ending while at_outcome grading lands on the same tape).
+  (
+    # shellcheck disable=SC1091
+    source "$lib"
+    while [ ! -e "$stop" ]; do
+      tape_run w-1 dev background-writer s e 1 '{}' completed
+    done
+  ) >/dev/null 2>&1 &
+  local writer=$!
+
+  local i line
+  for i in $(seq 1 30); do
+    line="$(bash "$TOOL" p-1 0.85)"
+    jq -e --arg who "$USER" '
+      .type == "grade"
+      and .proposal_id == "p-1"
+      and .value == 0.85
+      and .when == "at_outcome"
+      and .who == $who
+    ' <(printf '%s\n' "$line") >/dev/null || {
+      touch "$stop"
+      wait "$writer"
+      return 1
+    }
+  done
+  touch "$stop"
+  wait "$writer"
+}
