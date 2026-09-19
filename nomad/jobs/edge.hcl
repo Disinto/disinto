@@ -13,10 +13,11 @@
 # dynamic address:port for each backend.
 #
 # Host_volume contract:
-#   This job mounts caddy-data from nomad/client.hcl. Path
-#   /srv/disinto/caddy-data is created by lib/init/nomad/cluster-up.sh before
-#   any job references it. Keep the `source = "caddy-data"` below in sync
-#   with the host_volume stanza in client.hcl.
+#   This job mounts caddy-data and tape from nomad/client.hcl. Paths
+#   /srv/disinto/caddy-data and /srv/disinto/tape are created by
+#   lib/init/nomad/cluster-up.sh before any job references them. Keep the
+#   `source = "caddy-data"` and `source = "tape"` below in sync with the
+#   host_volume stanzas in client.hcl.
 #
 # Build step (S5.1):
 #   docker/edge/Dockerfile is custom (adds bash, jq, curl, git, docker-cli,
@@ -95,6 +96,14 @@ job "edge" {
     volume "inbox-state" {
       type      = "host"
       source    = "inbox-state"
+      read_only = false
+    }
+
+    # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
+    # lib/tape.sh default TAPE_DIR, so no env override is needed (#1405).
+    volume "tape" {
+      type      = "host"
+      source    = "tape"
       read_only = false
     }
 
@@ -197,6 +206,14 @@ job "edge" {
         volume      = "inbox-state"
         destination = "/var/lib/disinto/inbox"
         read_only   = true
+      }
+
+      # tape (#1405): mounted at the lib/tape.sh default path so TAPE_DIR
+      # needs no env override.
+      volume_mount {
+        volume      = "tape"
+        destination = "/srv/disinto/tape"
+        read_only   = false
       }
 
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
