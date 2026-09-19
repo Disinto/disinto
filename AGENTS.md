@@ -1,4 +1,4 @@
-<!-- last-reviewed: 75d125b3913e44fb6127153e1c238cbaeba6f39b -->
+<!-- last-reviewed: 3548aa2847237e9dc2c9ac3bcba88bfc3474616a -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -23,7 +23,7 @@ See `README.md` for architecture, `disinto-factory/SKILL.md` for setup.
 
 Full tree: `docs/AGENTS.md`. Key directories:
 
-- **Agent dirs** — one per organ: `*-run.sh` executor + `AGENTS.md` each
+- **Agent dirs** — one per organ, each with `AGENTS.md`; the executor is `*-run.sh` (gardener, supervisor, planner, predictor, architect) — dev/ uses `dev-agent.sh`/`dev-poll.sh` and review/ uses `review-pr.sh`/`review-poll.sh` (#1431)
 - **lib/** — shared shell helpers, see [lib/AGENTS.md](lib/AGENTS.md)
 - **formulas/** — TOML templates for multi-step agent tasks; distinct from "processes" (`docs/EVIDENCE-ARCHITECTURE.md`)
 - **nomad/jobs/** — Nomad job HCL configs
