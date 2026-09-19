@@ -94,6 +94,14 @@ job "agents-review-qwen" {
       read_only = true
     }
 
+    # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
+    # lib/tape.sh default TAPE_DIR, so no env override is needed (#1405).
+    volume "tape" {
+      type      = "host"
+      source    = "tape"
+      read_only = false
+    }
+
     # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
     # the path bootstrap_factory_repo already reads from, so per-env config
     # changes do not require an image rebuild. Backed by /srv/disinto/projects/
@@ -163,6 +171,14 @@ job "agents-review-qwen" {
         volume      = "factory-projects"
         destination = "/srv/disinto/project-repos/_factory/projects"
         read_only   = true
+      }
+
+      # tape (#1405): mounted at the lib/tape.sh default path so TAPE_DIR
+      # needs no env override.
+      volume_mount {
+        volume      = "tape"
+        destination = "/srv/disinto/tape"
+        read_only   = false
       }
 
       # ── Non-secret env ─────────────────────────────────────────────────────
