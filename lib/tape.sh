@@ -11,7 +11,8 @@
 #
 # Storage (both env-overridable, e.g. for tests):
 #   $TAPE_DIR    — default /srv/disinto/tape; records in $TAPE_DIR/tape.jsonl
-#   $PAYLOAD_DIR — default /srv/disinto/payloads; content-addressed payloads
+#   $PAYLOAD_DIR — default /srv/disinto/tape/payloads; content-addressed
+#                  payloads (under the /srv/disinto/tape host_volume, #1424)
 #
 # Functions:
 #   tape_proposal ID LOOP CLASS PARENT CAUSED_BY CONTEXT_JSON FORECAST_JSON DECISION REF
@@ -45,7 +46,7 @@
 set -euo pipefail
 
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
-PAYLOAD_DIR="${PAYLOAD_DIR:-/srv/disinto/payloads}"
+PAYLOAD_DIR="${PAYLOAD_DIR:-/srv/disinto/tape/payloads}"
 
 # _tape_deps — refuse early when a required tool is missing.
 _tape_deps() {
