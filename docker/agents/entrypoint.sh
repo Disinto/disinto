@@ -73,6 +73,18 @@ chmod 700 /home/agent/data/logs 2>/dev/null || true
 find /home/agent/data/logs -mindepth 1 -type d -exec chmod 700 {} + 2>/dev/null || true
 find /home/agent/data/logs -type f -exec chmod 600 {} + 2>/dev/null || true
 
+# tape mount (#1425): the tape host volume (#1405) is mounted RW at
+# /srv/disinto/tape but lands root-owned from the host, so uid 1000 (agent)
+# cannot append records and lib/tape.sh warn-and-continues. Chown the mount
+# dir itself and open it to 0777 (the container uid need not match the host
+# uid). No recursion — payloads inside keep whatever ownership they already
+# have. A missing mount (backend without the tape volume) must not abort the
+# entrypoint; chown/chmod failures are tolerated like the sweeps above.
+if [ -d /srv/disinto/tape ]; then
+  chown agent:agent /srv/disinto/tape 2>/dev/null || true
+  chmod 0777 /srv/disinto/tape 2>/dev/null || true
+fi
+
 # dsh headless profile (#1107): hired dsh agents run `dsh --profile headless`
 # with DSH_HOME=/home/agent/data/dsh (set by the compose/nomad env block).
 # The profile is baked into the image at /opt/dsh/profiles/headless.json.
