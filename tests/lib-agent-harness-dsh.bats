@@ -32,12 +32,23 @@ setup() {
   echo "DSH_HOME=${DSH_HOME:-}"
   echo "cwd: $PWD"
 } > "${DSH_STUB_LOG:-/dev/null}"
-[ -n "${DSH_STUB_SLEEP:-}" ] && sleep "$DSH_STUB_SLEEP"
+# hang-after-write writes its session dir FIRST (truncated log) and then
+# hangs, so the wall-clock kill truncates a log that already exists — the
+# other modes sleep before writing anything (killed mid-sleep, no dir).
+if [ -n "${DSH_STUB_SLEEP:-}" ] && [ "${DSH_STUB_MODE:-ok}" != "hang-after-write" ]; then
+  sleep "$DSH_STUB_SLEEP"
+fi
 [ -n "${DSH_STUB_EXIT:-}" ] && [ "${DSH_STUB_EXIT:-0}" != "0" ] && exit "$DSH_STUB_EXIT"
 dir="$DSH_HOME/sessions/fake-slug/sess-$(date +%s)-$$"
 mkdir -p "$dir"
 case "${DSH_STUB_MODE:-ok}" in
   corrupt) printf 'not a zstd stream' > "$dir/session.jsonl.zstd" ;;
+  hang-after-write)
+    # A log the wall-clock kill leaves truncated: unreadable by zstdcat,
+    # so dsh_session_normalise returns 1 with no stdout.
+    printf 'truncated zstd' > "$dir/session.jsonl.zstd"
+    sleep "${DSH_STUB_SLEEP:-10}"
+    ;;
   *)
     printf '%s\n' \
       '{"type":"session","seq":0,"time":"2026-09-01T10:00:00.000Z","data":{"id":"stub","cwd":"'"$PWD"'"}}' \
@@ -141,6 +152,53 @@ teardown() {
   [ ! -f "$DISINTO_LOG_DIR/test/agent-run-last.json" ]
 }
 
+# ── Wall-clock timeout with no recoverable log: fallback metrics record (#1186) ──
+
+@test "timeout with unnormalisable log: minimal fallback metrics record (outcome=timeout)" {
+  export AGENT_HARNESS=dsh
+  local wt="$TMP_DIR/wt" rc=0
+  mkdir -p "$wt"
+  # The stub writes a truncated session dir, then hangs past the limit — the
+  # kill truncates the log the way a real wall-clock timeout does.
+  export CLAUDE_TIMEOUT=1 DSH_STUB_SLEEP=3 DSH_STUB_MODE=hang-after-write
+  agent_run --worktree "$wt" --task "1186" "go" || rc=$?
+  [ "$rc" -eq 124 ]
+
+  # The session dir existed but its log is unreadable: no diagnostics file…
+  [ -n "$_AGENT_SESSION_ID" ]
+  [ ! -f "$DISINTO_LOG_DIR/test/agent-run-last.json" ]
+
+  # …but a minimal metrics record was appended (#1186): session id, exit 124,
+  # outcome timeout, delivered flag and task attribution, like the Claude path.
+  local metrics="$DISINTO_LOG_DIR/metrics/agent-runs.jsonl"
+  [ -f "$metrics" ]
+  local rec
+  rec=$(tail -1 "$metrics")
+  [ "$(jq -r '.session_id' <<<"$rec")" = "$_AGENT_SESSION_ID" ]
+  [ "$(jq -r '.exit_code' <<<"$rec")" = "124" ]
+  [ "$(jq -r '.outcome' <<<"$rec")" = "timeout" ]
+  [ "$(jq -r '.delivered' <<<"$rec")" = "false" ]
+  [ "$(jq -r '.task_ref' <<<"$rec")" = "1186" ]
+  # Result-derived fields stay null (no recoverable session log)
+  [ "$(jq -r '.num_turns' <<<"$rec")" = "null" ]
+  [ "$(jq -r '.duration_ms' <<<"$rec")" = "null" ]
+}
+
+@test "timeout with no session dir: fallback metrics record with null session id" {
+  export AGENT_HARNESS=dsh
+  local rc=0
+  export CLAUDE_TIMEOUT=1 DSH_STUB_SLEEP=5
+  agent_run "go" || rc=$?
+  [ "$rc" -eq 124 ]
+  local metrics="$DISINTO_LOG_DIR/metrics/agent-runs.jsonl"
+  [ -f "$metrics" ]
+  local rec
+  rec=$(tail -1 "$metrics")
+  [ "$(jq -r '.outcome' <<<"$rec")" = "timeout" ]
+  [ "$(jq -r '.exit_code' <<<"$rec")" = "124" ]
+  [ "$(jq -r '.session_id' <<<"$rec")" = "null" ]
+}
+
 @test "a non-zero dsh exit code is propagated" {
   export AGENT_HARNESS=dsh
   local rc=0
@@ -201,6 +259,8 @@ teardown() {
   [ -n "$_AGENT_SESSION_ID" ]
   [ -z "$_AGENT_LAST_OUTPUT" ]
   [ ! -f "$diag" ]
+  # A non-timeout run gets no fallback metrics record (#1186 is rc-124 only)
+  [ ! -f "$DISINTO_LOG_DIR/metrics/agent-runs.jsonl" ]
 }
 
 # ── Dispatcher behaviour ────────────────────────────────────────────────────

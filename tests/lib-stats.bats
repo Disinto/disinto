@@ -297,6 +297,31 @@ write_fixture() {
   [ "$out" = "no runs recorded for task 9999" ]
 }
 
+# ── dsh timeout fallback record (#1186) ──────────────────────────────────────
+
+@test "dsh timeout fallback record (all-null result fields) counts in the timeout column" {
+  # The dsh harness appends this minimal record when a wall-clock timeout
+  # leaves no recoverable session log: only ts/role/project/session id,
+  # exit 124, outcome timeout and delivered are populated — every
+  # result-derived field is null.
+  local ts
+  ts="$(stats_epoch_to_iso "$(date -u +%s)")"
+  jq -cn --arg ts "$ts" \
+    '{ts:$ts,session_id:"dsh-sess",task_ref:"1186",role:"dev",project:"disinto",model:null,outcome:"timeout",exit_code:124,num_turns:null,duration_ms:null,duration_api_ms:null,input_tokens:null,output_tokens:null,cache_read_input_tokens:null,cache_creation_input_tokens:null,output_tps:null,cost_usd:null,context_window:null,compactions:0,compaction_pre_tokens:[],delivered:false}' \
+    >> "$METRICS"
+  local out
+  out="$(stats_main --json)"
+  [ "$(jq -r '.totals.runs' <<<"$out")" = "1" ]
+  [ "$(jq -r '.totals.timeout' <<<"$out")" = "1" ]
+  [ "$(jq -r '.totals.excluded_no_duration' <<<"$out")" = "1" ]
+  # Table rendering: the timeout column shows the run, no partial column.
+  local table
+  table="$(stats_main)"
+  grep -qE '^dev +1 +0 +1 ' <<<"$table"
+  grep -qE '^totals +1 +0 +1 ' <<<"$table"
+  ! grep -qF 'partial' <<<"$table"
+}
+
 # ── epoch -> ISO helper ──────────────────────────────────────────────────────
 
 @test "stats_epoch_to_iso converts known epochs correctly" {

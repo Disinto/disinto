@@ -124,6 +124,11 @@ _render() {
   unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render
   grep -q 'FORGE_REPO *= *"disinto-admin/disinto"' "$JOBSPEC_OUT"
+  # CLAUDE_TIMEOUT pins the 7200s wall-clock default shared by the agent
+  # harnesses (lib/agent-sdk.sh watchdog and lib/agent-harness-dsh.sh, both
+  # falling back via ${CLAUDE_TIMEOUT:-7200} — the dsh harness gains a
+  # timeout fallback metrics record in #1186): moving that default must
+  # move this pin in the same PR (defaults-golden check, #1261).
   grep -q 'CLAUDE_TIMEOUT *= *"7200"' "$JOBSPEC_OUT"
   grep -q 'CLAUDE_MAX_TURNS *= *"60"' "$JOBSPEC_OUT"
   grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE *= *"60"' "$JOBSPEC_OUT"
