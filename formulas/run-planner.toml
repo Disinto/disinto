@@ -3,8 +3,10 @@
 # The single planner formula: planner-run.sh always loads this file
 # (the research formula was deleted, #1334; the kind switch is gone, #1338).
 #
-# Executed directly by planner-run.sh via polling loop — no action issues.
-# planner-run.sh creates a tmux session with Claude (opus) and injects
+# Executed directly by planner-run.sh via polling loop (planned on
+# PLANNER_INTERVAL, default 12h) — no action issues.
+# planner-run.sh runs a one-shot `claude -p` (opus) via agent_run
+# (lib/agent-sdk.sh) — no tmux sessions, no phase files — and injects
 # this formula as context, plus the graph report from build-graph.py.
 #
 # Steps: preflight → triage-and-plan → commit-ops-changes
@@ -187,7 +189,7 @@ HUMAN_BLOCKED handling (needs human decision or external resource):
     Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
 
 Template-or-vision filing gate (for non-stuck constraints):
-  1. Read issue templates from .codeberg/ISSUE_TEMPLATE/*.yaml:
+  1. Read issue templates from .forgejo/ISSUE_TEMPLATE/*.yaml:
      - bug.yaml: for broken/incorrect behavior (error in logs, failing test)
      - feature.yaml: for new capabilities (prerequisite doesn't exist)
      - refactor.yaml: for restructuring without behavior change
