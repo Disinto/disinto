@@ -16,7 +16,7 @@ FIXTURES="$BATS_TEST_DIRNAME/fixtures/lint-ci"
   output=$(bash "$DISINTO" validate lint-ci "$FIXTURES/missing-timeout" 2>&1) || rc=$?
   echo "$output"
   [ "$rc" -eq 1 ]
-  echo "$output" | grep -q "error:.*no-timeout-step.*step has no timeout"
+  grep -q "error:.*no-timeout-step.*step has no timeout" <<< "$output"
 }
 
 @test "workflow-level timeout satisfies all steps" {
@@ -25,7 +25,7 @@ FIXTURES="$BATS_TEST_DIRNAME/fixtures/lint-ci"
   local rc=$?
   echo "$output"
   [ "$rc" -eq 0 ]
-  echo "$output" | grep -q "lint-ci: 0 error(s), 0 warning(s)"
+  grep -q "lint-ci: 0 error(s), 0 warning(s)" <<< "$output"
 }
 
 # ── Command-level timeout warnings ───────────────────────────────────────────
@@ -36,7 +36,7 @@ FIXTURES="$BATS_TEST_DIRNAME/fixtures/lint-ci"
   local rc=$?
   echo "$output"
   [ "$rc" -eq 0 ]
-  echo "$output" | grep -q "warning:.*curl without --max-time"
+  grep -q "warning:.*curl without --max-time" <<< "$output"
 }
 
 @test "curl with --max-time passes cleanly" {
@@ -45,5 +45,5 @@ FIXTURES="$BATS_TEST_DIRNAME/fixtures/lint-ci"
   local rc=$?
   echo "$output"
   [ "$rc" -eq 0 ]
-  echo "$output" | grep -q "lint-ci: 0 error(s), 0 warning(s)"
+  grep -q "lint-ci: 0 error(s), 0 warning(s)" <<< "$output"
 }

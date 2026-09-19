@@ -25,6 +25,8 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_ROOT}/../lib/env.sh"
 # shellcheck source=lib/vault-ssh.sh
 source "${SCRIPT_ROOT}/../lib/vault-ssh.sh"
+# shellcheck source=lib/tape.sh
+source "${SCRIPT_ROOT}/../lib/tape.sh"
 
 # Project TOML location: prefer mounted path, fall back to cloned path
 # Edge container mounts ./projects to /opt/disinto-projects;
@@ -486,6 +488,10 @@ EOF
     '{id: $id, exit_code: $exit_code, timestamp: $timestamp, logs: $logs}' \
     > "${scratch_dir}/${result_relpath}"
 
+  # The result is now on disk — record it on the production tape (best
+  # effort — #1407; a tape failure never blocks the push).
+  emit_tape_outcome "$action_id" "$exit_code" "${scratch_dir}/${result_relpath}"
+
   # Terminal-rejected actions (#1182): move the .toml out of vault/actions/
   # into vault/rejected/ in the same commit as the result, so the poll loop
   # can never re-process it — belt-and-braces on top of the result.json
@@ -891,6 +897,108 @@ _launch_runner_nomad() {
   return "$exit_code"
 }
 
+# -----------------------------------------------------------------------------
+# TAPE: production-loop instrumentation (#1407)
+#
+# The dispatcher is the production organ of the proposal loop (lib/tape.sh,
+# #1389): firing an approved vault action appends one
+# {"type":"proposal","loop":"production"} record, and the action's
+# result.json being observed (written by commit_result_via_git) appends the
+# matching {"type":"outcome"} record. The action id is both records' id /
+# proposal_id, so the pair keys off the action itself — no id file needed.
+# The fire epoch goes to a project-scoped /tmp file so the outcome step can
+# compute duration_s; an action that never fired (rejected before the
+# proposal) has no file and gets no outcome. Every tape failure logs a
+# WARNING and returns 0 — dispatch is never blocked by the tape.
+# -----------------------------------------------------------------------------
+
+# emit_tape_proposal ACTION_ID
+# Record that the dispatcher is firing an approved vault action. class = the
+# action kind (the TOML's formula field — "production" when somehow empty);
+# context = {"target":<host>}, the action's RESOURCES.md alias ("" when the
+# TOML has no host field); decision approved; id and ref = the action id.
+# VAULT_ACTION_FORMULA / VAULT_ACTION_HOST are set by validate_action.
+# Always returns 0.
+emit_tape_proposal() {
+  local action_id="${1:-}"
+  local ctx class start_file
+
+  if [ -z "$action_id" ]; then
+    log "WARNING: tape: no action id — skipping proposal record"
+    return 0
+  fi
+
+  class="${VAULT_ACTION_FORMULA:-production}"
+  if ! ctx="$(jq -cn --arg t "${VAULT_ACTION_HOST:-}" '{target: $t}')"; then
+    log "WARNING: tape: failed to build context for ${action_id}"
+    return 0
+  fi
+
+  if ! tape_proposal "$action_id" production "$class" "" "" "$ctx" "" \
+      "approved" "$action_id" >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append proposal record ${action_id}"
+    return 0
+  fi
+
+  # Fire epoch for the outcome's duration_s, project-scoped like every other
+  # per-action /tmp file in this script.
+  start_file="/tmp/dispatcher-tape-start-${PROJECT_NAME:-default}-${action_id}"
+  if ! date +%s > "$start_file"; then
+    log "WARNING: tape: failed to write fire-epoch file ${start_file}"
+  fi
+
+  log "tape: recorded production proposal ${action_id} (class: ${class})"
+  return 0
+}
+
+# emit_tape_outcome ACTION_ID EXIT_CODE [RESULT_FILE]
+# Record the observed result of a fired action: bits
+# {"returned":1,"ok":0|1}, numbers {"duration_s":<fire→result>},
+# children {}, payloads = [tape_payload of RESULT_FILE] ([] when the file is
+# missing or the payload store refuses it). No fire-epoch file (the action
+# never fired — rejected before the proposal) → no record, no log. Always
+# returns 0.
+emit_tape_outcome() {
+  local action_id="${1:-}" exit_code="${2:-}" result_file="${3:-}"
+  local start_file start_epoch now_epoch duration_s ok bits numbers payloads payload_ref
+
+  case "$exit_code" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+
+  start_file="/tmp/dispatcher-tape-start-${PROJECT_NAME:-default}-${action_id}"
+  start_epoch="$(cat "$start_file" 2>/dev/null)" || start_epoch=""
+  case "$start_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+
+  now_epoch="$(date +%s)"
+  duration_s=$(( now_epoch - start_epoch ))
+  [ "$duration_s" -ge 0 ] || duration_s=0
+
+  if [ "$exit_code" -eq 0 ]; then ok=1; else ok=0; fi
+  bits="$(jq -cn --argjson o "$ok" '{"returned":1,"ok":$o}')"
+  numbers="$(jq -cn --argjson d "$duration_s" '{"duration_s":$d}')"
+
+  payloads="[]"
+  payload_ref=""
+  if [ -n "$result_file" ] && [ -f "$result_file" ]; then
+    if payload_ref="$(tape_payload "$result_file" 2>/dev/null)"; then
+      payloads="$(jq -cn --arg h "$payload_ref" '[$h]')"
+    else
+      log "WARNING: tape: failed to store result payload ${result_file} for ${action_id}"
+    fi
+  fi
+
+  if ! tape_outcome "$action_id" "$bits" "$numbers" '{}' "$payloads" >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append outcome record ${action_id}"
+    return 0
+  fi
+
+  log "tape: recorded outcome for ${action_id} (ok: ${ok}, duration_s: ${duration_s})"
+  return 0
+}
+
 # Launch runner for the given action (backend-agnostic orchestrator)
 # Usage: launch_runner <toml_file>
 launch_runner() {
@@ -955,6 +1063,10 @@ launch_runner() {
   if [ -n "${VAULT_ACTION_ARTIFACTS:-}" ]; then
     artifacts_csv=$(echo "${VAULT_ACTION_ARTIFACTS}" | xargs | tr ' ' ',')
   fi
+
+  # Record the fire on the production tape before delegating (best effort —
+  # #1407; a tape failure never blocks dispatch).
+  emit_tape_proposal "$action_id"
 
   # Delegate to the selected backend
   "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv" "$image" "$artifacts_csv"
