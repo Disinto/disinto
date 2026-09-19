@@ -41,6 +41,8 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
 # shellcheck source=../lib/pr-lifecycle.sh
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
+# shellcheck source=../lib/tape.sh
+source "$FACTORY_ROOT/lib/tape.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/planner/planner.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -59,6 +61,105 @@ LOG_AGENT="planner"
 log() {
   local agent="${LOG_AGENT:-planner}"
   printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$agent" "$*" >> "$LOG_FILE"
+}
+
+# ── Tape: dev-loop proposal records for filed backlog issues (#1409) ──────
+#
+# The planning session files issues itself (tea/curl inside agent_run), so
+# the wrapper learns of them by diffing the open-issue set around the
+# session: a snapshot before agent_run, one fetch after, and
+# emit_planner_proposal() for each new issue that carries the backlog label.
+# Vision/prediction filings get no record — loop="dev" is for the backlog.
+# Every helper below is total: any tape or API failure logs a WARNING and
+# returns 0, so the planner run is never blocked by the tape.
+
+# planner_open_issues_json — the project's open issues (one page, limit=50 —
+# the API's max page size; a backlog deeper than that degrades the diff to
+# best effort) as the API's JSON array on stdout. Returns 1 when the forge
+# API is unreachable or answers with a non-array.
+planner_open_issues_json() {
+  local body
+  body="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${FORGE_API}/issues?state=open&limit=50" 2>/dev/null)" || return 1
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$body" || return 1
+  printf '%s' "$body"
+}
+
+# emit_planner_proposal ISSUE_NUMBER [LABEL]
+# Append one {"type":"proposal","loop":"dev",...} record for a backlog issue
+# the planner just filed: class = LABEL (the filed primary label) or, when
+# empty, the issue's primary label from one forge call, degrading to "dev"
+# on API failure (the dev-poll convention); forecast = flat priors
+# {"p_success":0.5,"est_cost":0,"est_dvision":0} (calibration comes later);
+# ref = the issue number; id = a fresh ULID (formula_tape_ulid). Always
+# returns 0 — a tape failure logs a WARNING and the run continues.
+emit_planner_proposal() {
+  local issue="${1:-}" label="${2:-}"
+  local id class primary ctx
+
+  if [ -z "$issue" ]; then
+    log "WARNING: tape: no issue number — skipping planner proposal"
+    return 0
+  fi
+
+  id="$(formula_tape_ulid 2>/dev/null)" || id=""
+  [ -n "$id" ] || id="planner-$(date -u +%Y%m%d%H%M%S)-$$-${issue}"
+
+  class="${label:-}"
+  if [ -z "$class" ]; then
+    class="dev"
+    primary="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/issues/${issue}" 2>/dev/null | jq -r '.labels[0].name // empty')" || primary=""
+    [ -n "$primary" ] && class="$primary"
+  fi
+
+  if ! ctx="$(jq -cn --arg organ "planner" '{organ: $organ}')"; then
+    log "WARNING: tape: failed to build context for #${issue}"
+    return 0
+  fi
+
+  if ! tape_proposal "$id" dev "$class" "" "" "$ctx" \
+      '{"p_success":0.5,"est_cost":0,"est_dvision":0}' "approved" "$issue" \
+      >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
+    return 0
+  fi
+
+  log "tape: recorded planner proposal ${id} for #${issue} (class: ${class})"
+  return 0
+}
+
+# planner_tape_tick PRE_NUMBERS_FILE — called after the planning session
+# closes: fetch the current open issues once (numbers + labels in one call)
+# and, for each issue number missing from the pre-session snapshot, emit one
+# dev-loop proposal when it carries the backlog label. An empty or unreadable
+# pre-file (the pre-session fetch failed — the caller removed it) skips the
+# tick entirely, so a broken forge API can never emit a false-positive
+# proposal storm. Always returns 0.
+planner_tape_tick() {
+  local pre_file="${1:-}" post_file num labels_json has_backlog primary
+  [ -n "$pre_file" ] && [ -r "$pre_file" ] || return 0
+
+  post_file="$(mktemp)" || return 0
+  if ! planner_open_issues_json > "$post_file"; then
+    log "WARNING: tape: post-session issue fetch failed — no planner proposals this run"
+    rm -f "$post_file"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r num labels_json; do
+    [ -n "$num" ] || continue
+    grep -qx "$num" "$pre_file" 2>/dev/null && continue
+    has_backlog="$(jq -r '[.[] | select(.name == "backlog")] | length' \
+      <<<"$labels_json" 2>/dev/null)" || has_backlog="0"
+    [ "$has_backlog" = "1" ] || continue
+    primary="$(jq -r '.[0].name // empty' <<<"$labels_json" 2>/dev/null)" || primary=""
+    emit_planner_proposal "$num" "$primary" </dev/null
+  done < <(jq -r '.[] | [(.number | tostring), ((.labels // []) | tojson)] | @tsv' \
+    "$post_file" 2>/dev/null)
+
+  rm -f "$post_file"
+  return 0
 }
 
 # ── Guards ────────────────────────────────────────────────────────────────
@@ -175,6 +276,17 @@ log "ops branch: ${PLANNER_OPS_BRANCH}"
 # ── Run agent ─────────────────────────────────────────────────────────────
 export CLAUDE_MODEL="opus"
 
+# ── Tape: pre-session snapshot for the filed-issue diff (#1409) ────────────
+# Open-issue numbers, one per line. A failed fetch removes the file and
+# empties the variable — planner_tape_tick then skips, so a broken forge
+# API can never emit a false-positive proposal storm.
+PLANNER_PRE_ISSUES="$(mktemp)"
+if ! planner_open_issues_json | jq -r '.[].number' > "$PLANNER_PRE_ISSUES" 2>/dev/null; then
+  log "WARNING: tape: pre-session issue fetch failed — no planner proposals this run"
+  rm -f "$PLANNER_PRE_ISSUES"
+  PLANNER_PRE_ISSUES=""
+fi
+
 # Open the proposal-loop tape run record (#1391) — total, never fails us
 formula_session_start "planner"
 
@@ -187,6 +299,13 @@ log "agent_run complete"
 
 # Close the tape run: outcome + closing run record (#1391)
 formula_session_end "$PLANNER_RUN_RC"
+
+# ── Tape: emit dev-loop proposals for the issues filed this run (#1409) ──
+# Total — a tape/API failure can never abort the planner run.
+planner_tape_tick "$PLANNER_PRE_ISSUES"
+if [ -n "$PLANNER_PRE_ISSUES" ]; then
+  rm -f "$PLANNER_PRE_ISSUES"
+fi
 
 # ── PR lifecycle: create PR on ops repo and walk to merge (#765) ─────────
 OPS_FORGE_API="${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}"
