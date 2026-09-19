@@ -10,6 +10,10 @@
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
+#   4a. Repair tape (#1408): one repair proposal per newly fired condition
+#       (fired recipes, open CI incident PR); a condition that a later
+#       preflight shows cleared earns an outcome with
+#       bits {"regression_cleared":1}
 #   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
 #   6. Load formula (formulas/run-supervisor.toml)
 #   7. Context: AGENTS.md, preflight metrics, structural graph
@@ -42,6 +46,8 @@ source "$FACTORY_ROOT/lib/worktree.sh"
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
+# shellcheck source=../lib/tape.sh
+source "$FACTORY_ROOT/lib/tape.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -163,6 +169,211 @@ if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
     log "WARNING: recipe evaluator exited $_eval_exit — falling back to always-LLM gate"
   fi
 fi
+
+# ── Repair tape (#1408) ───────────────────────────────────────────────────
+# Every condition the supervisor fires on — a recipe whose action this run
+# is about to execute, or the CI circuit breaker (an incident PR is open) —
+# gets ONE repair proposal on the tape when it first fires (loop="repair",
+# class=<recipe name or "incident">, caused_by=<condition identifier>,
+# context={"signature":<label>,"organ":"supervisor"}). When a later
+# preflight no longer shows the condition, the open proposal earns one
+# outcome with bits {"regression_cleared":1}. All labels are code-derived
+# (recipe names, condition identifiers) — no LLM input. Every emitter is
+# total: a tape failure logs a WARNING and returns 0, so the tape never
+# blocks the supervisor.
+
+# repair_tape_state_file — per-project state file (JSON object:
+# condition → {proposal_id, class, since}) tracking which conditions
+# currently have an open repair proposal. Override with
+# SUPERVISOR_REPAIR_STATE_FILE (tests).
+repair_tape_state_file() {
+  if [ -n "${SUPERVISOR_REPAIR_STATE_FILE:-}" ]; then
+    printf '%s\n' "$SUPERVISOR_REPAIR_STATE_FILE"
+  else
+    printf '%s/state/supervisor-repairs-%s.json' \
+      "${FACTORY_ROOT:-.}" "${PROJECT_NAME:-default}"
+  fi
+}
+
+# repair_conditions_current_json — the condition identifiers firing this
+# tick as a JSON array: every fired recipe name (straight out of
+# evaluate-recipes.sh) plus "ci-incident-pr" while the CI circuit breaker
+# is open. Code-derived only — no LLM input.
+repair_conditions_current_json() {
+  local ci_cond="" recipe_names=""
+  if [ "${CI_UNTRUSTED:-false}" = "true" ]; then
+    ci_cond="ci-incident-pr"
+  fi
+  if [ -n "${RECIPE_OUTPUT:-}" ]; then
+    recipe_names="$(printf '%s' "$RECIPE_OUTPUT" \
+      | jq -r '(.fired // [])[] | .name // empty' 2>/dev/null)" \
+      || recipe_names=""
+  fi
+  jq -cn --arg ci "$ci_cond" --arg recipes "$recipe_names" '
+    (if $ci != "" then [$ci] else [] end)
+    + ($recipes | split("\n") | map(select(length > 0)))'
+}
+
+# _repair_state_update JQ_EXPR — atomically rewrite the repair state file
+# by applying JQ_EXPR to the current state object ({} when the file is
+# missing or holds a non-object, so a torn line can never crash a tick).
+# Total: warns and returns 0 on any failure.
+_repair_state_update() {
+  local expr="$1" state_file cur next tmp
+  state_file="$(repair_tape_state_file)"
+  cur="$(cat "$state_file" 2>/dev/null)" || cur="{}"
+  if ! printf '%s' "$cur" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    cur="{}"
+  fi
+  if ! next="$(printf '%s' "$cur" | jq -c "$expr" 2>/dev/null)"; then
+    log "WARNING: tape: failed to update repair state ${state_file}"
+    return 0
+  fi
+  tmp="${state_file}.tmp.$$"
+  if ! mkdir -p "$(dirname "$state_file")" 2>/dev/null \
+    || ! printf '%s\n' "$next" > "$tmp" 2>/dev/null \
+    || ! mv -f "$tmp" "$state_file" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    log "WARNING: tape: failed to update repair state ${state_file}"
+    return 0
+  fi
+  return 0
+}
+
+# repair_state_put CONDITION PROPOSAL_ID [CLASS] — record an open repair
+# condition so a later tick whose preflight shows it cleared can emit the
+# matched outcome. Total: warns and returns 0 on any failure.
+repair_state_put() {
+  local condition="${1:-}" proposal_id="${2:-}" class="${3:-incident}" entry
+  if [ -z "$condition" ] || [ -z "$proposal_id" ]; then
+    return 0
+  fi
+  case "$condition" in
+    *[!A-Za-z0-9._-]*)
+      log "WARNING: tape: refusing unsafe condition identifier '${condition}' (state update skipped)"
+      return 0
+      ;;
+  esac
+  if ! entry="$(jq -cn --arg p "$proposal_id" --arg k "$class" \
+      --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{proposal_id: $p, class: $k, since: $t}')" || [ -z "$entry" ]; then
+    log "WARNING: tape: failed to build state entry for ${condition}"
+    return 0
+  fi
+  _repair_state_update "{ \"${condition}\": ${entry} } + ."
+  return 0
+}
+
+# emit_repair_proposal CONDITION [CLASS] [REF] — append one repair
+# proposal to the tape (loop="repair") and register the condition in the
+# state file for the cleared-outcome pairing. Total: warns and returns 0
+# on any failure — a failed tape append also skips the state write, so the
+# next tick retries the proposal.
+emit_repair_proposal() {
+  local condition="${1:-}" class="${2:-}" ref="${3:-}" id ctx
+  if [ -z "$condition" ]; then
+    log "WARNING: tape: no condition identifier — skipping repair proposal"
+    return 0
+  fi
+  [ -n "$class" ] || class="incident"
+  [ -n "$ref" ] || ref="$condition"
+
+  id="$(formula_tape_ulid 2>/dev/null)" || id=""
+  [ -n "$id" ] || id="repair-$(date -u +%Y%m%d%H%M%S)-$$"
+
+  if ! ctx="$(jq -cn --arg sig "$condition" --arg organ "supervisor" \
+      '{signature: $sig, organ: $organ}')" || [ -z "$ctx" ]; then
+    log "WARNING: tape: failed to build context for ${condition}"
+    return 0
+  fi
+
+  if ! tape_proposal "$id" repair "$class" "" "$condition" "$ctx" "" \
+      "auto" "$ref" >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append repair proposal ${id} (${condition})"
+    return 0
+  fi
+
+  repair_state_put "$condition" "$id" "$class"
+  log "tape: recorded repair proposal ${id} (class: ${class}, condition: ${condition})"
+  return 0
+}
+
+# repair_tape_tick — one repair-tape pass per supervisor tick, called after
+# recipe evaluation and before the LLM escalation gate so both the fast
+# path and the LLM path are covered: a condition firing this tick with no
+# open repair record gets one repair proposal; a recorded condition no
+# longer firing (a later preflight shows the condition cleared) gets one
+# outcome with bits {"regression_cleared":1} and drops out of the state
+# file. Total: always returns 0 — the tape never blocks the supervisor.
+repair_tape_tick() {
+  local state_file prev_json cur_json new_list cleared_list
+  state_file="$(repair_tape_state_file)"
+  cur_json="$(repair_conditions_current_json)" || cur_json="[]"
+  [ -n "$cur_json" ] || cur_json="[]"
+
+  prev_json="$(cat "$state_file" 2>/dev/null)" || prev_json="{}"
+  if ! printf '%s' "$prev_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    prev_json="{}"
+  fi
+
+  new_list="$(jq -rn --argjson cur "$cur_json" --argjson prev "$prev_json" '
+      $cur[] | select(. as $c | ($prev | has($c)) | not)')" || new_list=""
+  cleared_list="$(jq -rn --argjson cur "$cur_json" --argjson prev "$prev_json" '
+      ($prev | keys[]) | select(. as $c | ($cur | index($c)) == null)')" \
+    || cleared_list=""
+
+  local cond class
+  while IFS= read -r cond; do
+    [ -n "$cond" ] || continue
+    if [ "$cond" = "ci-incident-pr" ]; then
+      if [ -n "${INCIDENT_PR:-}" ]; then
+        emit_repair_proposal "ci-incident-pr" "incident" "incident-pr-${INCIDENT_PR}"
+      else
+        emit_repair_proposal "ci-incident-pr" "incident"
+      fi
+    else
+      emit_repair_proposal "$cond" "$cond"
+    fi
+  done <<< "$new_list"
+
+  local proposal_id
+  while IFS= read -r cond; do
+    [ -n "$cond" ] || continue
+    proposal_id="$(printf '%s' "$prev_json" \
+      | jq -r --arg c "$cond" '.[$c].proposal_id // empty' 2>/dev/null)" \
+      || proposal_id=""
+    if [ -z "$proposal_id" ]; then
+      log "WARNING: tape: no proposal id recorded for cleared condition ${cond}"
+      continue
+    fi
+    if ! tape_outcome "$proposal_id" '{"regression_cleared":1}' '{}' '{}' '[]' \
+        >/dev/null 2>&1; then
+      log "WARNING: tape: failed to append cleared outcome for ${cond} (${proposal_id})"
+    else
+      log "tape: condition ${cond} cleared — outcome recorded for ${proposal_id}"
+    fi
+  done <<< "$cleared_list"
+
+  # Drop the cleared conditions from the state file (tape records are
+  # immutable; the state file only tracks open regressions).
+  local keys_json="[]" k
+  while IFS= read -r k; do
+    [ -n "$k" ] || continue
+    case "$k" in
+      *[!A-Za-z0-9._-]*) continue ;;
+    esac
+    keys_json="$(jq -c --arg key "$k" '. + [$key]' <<< "$keys_json")" \
+      || keys_json="[]"
+  done <<< "$cleared_list"
+  if [ "$keys_json" != "[]" ]; then
+    _repair_state_update \
+      "with_entries(select(.key as \$k | ${keys_json} | index(\$k) | not))"
+  fi
+  return 0
+}
+
+# One pass per tick — covers both the fast path and the LLM path (#1408).
+repair_tape_tick
 
 # ── LLM escalation gate ───────────────────────────────────────────────────
 # Fast path: no abnormal signals → skip LLM entirely.
