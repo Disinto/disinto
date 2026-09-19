@@ -94,22 +94,13 @@ chmod +x "$LIST_STUB_BIN/curl"
 # shellcheck disable=SC2034
 log() { echo "planner: $*"; }
 
-# run_emit <TAPE_DIR> <issue> [label] [fail] — run emit_planner_proposal in a
-# subshell against the fake forge + TAPE_DIR; prints its output. fail=1 makes
-# the stub curl always fail (API degradation).
+# run_emit <TAPE_DIR> <issue> [label] [fail] — run emit_planner_proposal via
+# the shared ac_run_tape_emit subshell runner (fake forge + TAPE_DIR);
+# fail=1 makes the stub curl always fail (API degradation).
 run_emit() {
   local tape_dir="$1" issue="$2" label="${3:-}" fail="${4:-}"
-  (
-    ac_stub_env "$STUB_BIN" "$tape_dir"
-    export FORGE_API="https://forge.example/api/v1"
-    # shellcheck disable=SC1090,SC1091
-    source "$REPO_ROOT/lib/tape.sh"
-    eval "$FN_SRC"
-    if [ "$fail" = "1" ]; then
-      export AC_STUB_FAIL=1
-    fi
+  ac_run_tape_emit "$STUB_BIN" "$tape_dir" "$FN_SRC" "$fail" \
     emit_planner_proposal "$issue" "$label"
-  ) 2>&1
 }
 
 # ── 2. emit path: one proposal line with the forecast block ─────────────────

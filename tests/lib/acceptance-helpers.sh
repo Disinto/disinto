@@ -173,10 +173,11 @@ ac_has_call_matching() {
 }
 
 # ── Hermetic forge stub (shared by the tape-emitter extraction tests) ───────
-# tests/acceptance/issue-1398.sh (emit_tape_proposal) and
-# tests/acceptance/issue-1399.sh (emit_tape_outcome) extract their function
-# from dev/dev-poll.sh and run it in a subshell against a fake forge — no
-# network, no live services. These two helpers build that environment.
+# tests/acceptance/issue-1398.sh (emit_tape_proposal), issue-1399.sh
+# (emit_tape_outcome), and issue-1409.sh (emit_planner_proposal) extract
+# their function from the top-level executable and run it in a subshell
+# against a fake forge — no network, no live services. These helpers build
+# that environment.
 
 # ac_write_curl_stub <STUB_BIN> — write a hermetic curl stub (a fake forge
 # API) to <STUB_BIN>/curl and chmod +x it. The stub keys on its last
@@ -225,4 +226,28 @@ ac_stub_env() {
   export FORGE_TOKEN="stub-token"
   export TAPE_DIR="$2"
   export PROJECT_NAME
+}
+
+# ac_run_tape_emit <STUB_BIN> <TAPE_DIR> <FN_SRC> <fail> <fn-name> [args...]
+# — run the extracted tape emitter given by <FN_SRC> (usually from
+# ac_extract_fn) in a throwaway subshell: the ac_write_curl_stub fake curl
+# first on PATH, the ac_stub_env sentinels plus a sentinel FORGE_API, the
+# real lib/tape.sh, and the test's top-level log() stand-in (inherited).
+# <fail>=1 makes the stub curl fail like an unreachable API (AC_STUB_FAIL=1).
+# Prints the subshell's combined output; the exit status is the emitter's.
+# Shared by the tape-emitter extraction tests (issue-1398.sh, issue-1409.sh).
+ac_run_tape_emit() {
+  local stub_bin="$1" tape_dir="$2" fn_src="$3" fail="$4" fn_name="$5"
+  shift 5
+  (
+    ac_stub_env "$stub_bin" "$tape_dir"
+    export FORGE_API="https://forge.example/api/v1"
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/tape.sh"
+    eval "$fn_src"
+    if [ "$fail" = "1" ]; then
+      export AC_STUB_FAIL=1
+    fi
+    "$fn_name" "$@"
+  ) 2>&1
 }
