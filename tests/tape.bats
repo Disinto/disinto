@@ -265,10 +265,10 @@ last_record() {
   [ -f "$PAYLOAD_DIR/$h" ]
 }
 
-@test "defaults are /srv/disinto/tape and /srv/disinto/payloads" {
+@test "defaults are /srv/disinto/tape and /srv/disinto/tape/payloads" {
   run bash -c "unset TAPE_DIR PAYLOAD_DIR; source '$BATS_TEST_DIRNAME/../lib/tape.sh'; echo \"\$TAPE_DIR \$PAYLOAD_DIR\""
   [ "$status" -eq 0 ]
-  [ "$output" = "/srv/disinto/tape /srv/disinto/payloads" ]
+  [ "$output" = "/srv/disinto/tape /srv/disinto/tape/payloads" ]
 }
 
 @test "two concurrent writers: no lost or interleaved records" {
