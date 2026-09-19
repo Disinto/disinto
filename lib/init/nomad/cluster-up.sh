@@ -70,6 +70,7 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/agent-data-gardener"
   "/srv/disinto/agent-data-opus-supervisor"
   "/srv/disinto/claude-creds"
+  "/var/lib/disinto/claude-shared"
   "/srv/disinto/project-repos"
   "/srv/disinto/caddy-data"
   "/srv/disinto/docker"

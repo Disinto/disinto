@@ -116,6 +116,13 @@ client {
     read_only = true
   }
 
+  # Shared Claude OAuth session volume — the same volume the edge job and
+  # the opus agents source for the refreshed OAuth session (#648).
+  host_volume "claude-shared" {
+    path      = "/var/lib/disinto/claude-shared"
+    read_only = false
+  }
+
   # factory-state snapshot output (written by snapshot-daemon, read RO by
   # consumers such as the factory-state skill). Host path is
   # /srv/disinto/snapshot-state — must match the SNAPSHOT_PATH env in
