@@ -76,7 +76,7 @@ setup() {
     --sops "$FIXTURES_DIR/.env.vault.enc" \
     --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "Security check failed"
+  grep -q "Security check failed" <<< "$output"
 }
 
 @test "refuses if age key file permissions are not 0400" {
@@ -90,7 +90,7 @@ setup() {
     --sops "$FIXTURES_DIR/.env.vault.enc" \
     --age-key "$bad_key"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "permissions"
+  grep -q "permissions" <<< "$output"
 }
 
 # --- Dry-run mode ─────────────────────────────────────────────────────────────
@@ -102,9 +102,9 @@ setup() {
     --age-key "$AGE_KEY_FILE" \
     --dry-run
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "DRY-RUN"
-  echo "$output" | grep -q "Import plan"
-  echo "$output" | grep -q "Planned operations"
+  grep -q "DRY-RUN" <<< "$output"
+  grep -q "Import plan" <<< "$output"
+  grep -q "Planned operations" <<< "$output"
 
   # Verify nothing was written to Vault
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
@@ -124,17 +124,17 @@ setup() {
   [ "$status" -eq 0 ]
 
   # Every per-key line reports (created); none report updated/unchanged
-  echo "$output" | grep -q "(created)"
-  ! echo "$output" | grep -q "(updated)"
-  ! echo "$output" | grep -q "(unchanged)"
+  grep -q "(created)" <<< "$output"
+  ! grep -q "(updated)" <<< "$output"
+  ! grep -q "(unchanged)" <<< "$output"
 
   # Summary counters match the per-key lines and are non-zero
   local created_count
   created_count="$(echo "$output" | grep -c '(created)')"
   [ "$created_count" -gt 10 ]
-  echo "$output" | grep -q "Created: ${created_count}"
-  echo "$output" | grep -q "Updated: 0"
-  echo "$output" | grep -q "Unchanged: 0"
+  grep -q "Created: ${created_count}" <<< "$output"
+  grep -q "Updated: 0" <<< "$output"
+  grep -q "Unchanged: 0" <<< "$output"
 }
 
 # --- Complete fixture import ─────────────────────────────────────────────────
@@ -150,41 +150,41 @@ setup() {
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/bots/review"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "review-token"
-  echo "$output" | grep -q "review-pass"
+  grep -q "review-token" <<< "$output"
+  grep -q "review-pass" <<< "$output"
 
   # Check bots/dev-qwen
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/bots/dev-qwen"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "llama-token"
-  echo "$output" | grep -q "llama-pass"
+  grep -q "llama-token" <<< "$output"
+  grep -q "llama-pass" <<< "$output"
 
   # Check forge
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/shared/forge"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "generic-forge-token"
-  echo "$output" | grep -q "generic-forge-pass"
-  echo "$output" | grep -q "generic-admin-token"
+  grep -q "generic-forge-token" <<< "$output"
+  grep -q "generic-forge-pass" <<< "$output"
+  grep -q "generic-admin-token" <<< "$output"
 
   # Check woodpecker
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/shared/woodpecker"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "wp-agent-secret"
+  grep -q "wp-agent-secret" <<< "$output"
   # Forgejo keys are normalized: WP_FORGEJO_* → forgejo_* (no wp_ prefix in key name)
-  echo "$output" | grep -q "wp-forgejo-client"
-  echo "$output" | grep -q "wp-forgejo-secret"
-  echo "$output" | grep -q "wp-token"
+  grep -q "wp-forgejo-client" <<< "$output"
+  grep -q "wp-forgejo-secret" <<< "$output"
+  grep -q "wp-token" <<< "$output"
 
   # Check chat
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/shared/chat"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "forward-auth-secret"
-  echo "$output" | grep -q "chat-client-id"
-  echo "$output" | grep -q "chat-client-secret"
+  grep -q "forward-auth-secret" <<< "$output"
+  grep -q "chat-client-id" <<< "$output"
+  grep -q "chat-client-secret" <<< "$output"
 
   # Check runner tokens from sops
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
@@ -211,16 +211,16 @@ setup() {
   [ "$status" -eq 0 ]
 
   # Check that all keys report unchanged
-  echo "$output" | grep -q "unchanged"
+  grep -q "unchanged" <<< "$output"
   # Count unchanged occurrences (should be many)
   local unchanged_count
   unchanged_count=$(echo "$output" | grep -c "unchanged" || true)
   [ "$unchanged_count" -gt 10 ]
 
   # Summary counters: nothing created or updated, unchanged matches per-key lines
-  echo "$output" | grep -q "Created: 0"
-  echo "$output" | grep -q "Updated: 0"
-  echo "$output" | grep -q "Unchanged: ${unchanged_count}"
+  grep -q "Created: 0" <<< "$output"
+  grep -q "Updated: 0" <<< "$output"
+  grep -q "Unchanged: ${unchanged_count}" <<< "$output"
 }
 
 @test "re-run with modified value reports only that key as updated" {
@@ -240,10 +240,10 @@ setup() {
 
   # Check that dev-qwen token was updated (and the sibling pass key on the
   # same path is still reported unchanged — per-key, not per-path status)
-  echo "$output" | grep -q "dev-qwen.*updated"
-  echo "$output" | grep -q "dev-qwen.*unchanged"
+  grep -q "dev-qwen.*updated" <<< "$output"
+  grep -q "dev-qwen.*unchanged" <<< "$output"
   # Summary: exactly one key updated
-  echo "$output" | grep -q "Updated: 1"
+  grep -q "Updated: 1" <<< "$output"
 
   # Verify the new value was written (path is disinto/bots/dev-qwen, key is token)
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
@@ -305,7 +305,7 @@ setup() {
   [ "$status" -eq 0 ]
 
   # Should have imported what was available
-  echo "$output" | grep -q "review"
+  grep -q "review" <<< "$output"
 
   # Should complete successfully even with incomplete fixture
   # The script handles missing pairs gracefully with warnings to stderr
@@ -345,7 +345,7 @@ setup() {
   )
 
   for pattern in "${secret_patterns[@]}"; do
-    if echo "$output" | grep -q "$pattern"; then
+    if grep -q "$pattern" <<< "$output"; then
       echo "FAIL: Found secret pattern '$pattern' in output" >&2
       echo "Output was:" >&2
       echo "$output" >&2
@@ -361,7 +361,7 @@ setup() {
     --sops "$FIXTURES_DIR/.env.vault.enc" \
     --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "Missing required argument"
+  grep -q "Missing required argument" <<< "$output"
 }
 
 @test "fails with missing --sops argument" {
@@ -372,7 +372,7 @@ setup() {
     --env "$FIXTURES_DIR/dot-env-complete" \
     --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q -- "--age-key requires --sops"
+  grep -q -- "--age-key requires --sops" <<< "$output"
 }
 
 @test "fails with missing --age-key argument" {
@@ -383,7 +383,7 @@ setup() {
     --env "$FIXTURES_DIR/dot-env-complete" \
     --sops "$FIXTURES_DIR/.env.vault.enc"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q -- "--sops requires --age-key"
+  grep -q -- "--sops requires --age-key" <<< "$output"
 }
 
 @test "fails with non-existent env file" {
@@ -392,7 +392,7 @@ setup() {
     --sops "$FIXTURES_DIR/.env.vault.enc" \
     --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "not found"
+  grep -q "not found" <<< "$output"
 }
 
 @test "fails with non-existent sops file" {
@@ -401,7 +401,7 @@ setup() {
     --sops "/nonexistent/.env.vault.enc" \
     --age-key "$AGE_KEY_FILE"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "not found"
+  grep -q "not found" <<< "$output"
 }
 
 @test "fails with non-existent age key file" {
@@ -410,5 +410,5 @@ setup() {
     --sops "$FIXTURES_DIR/.env.vault.enc" \
     --age-key "/nonexistent/age-keys.txt"
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "not found"
+  grep -q "not found" <<< "$output"
 }
