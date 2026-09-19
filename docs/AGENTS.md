@@ -1,4 +1,4 @@
-<!-- last-reviewed: 19981bf4d3ec4deee141696e9b7d98132a63a642 -->
+<!-- last-reviewed: 75d125b3913e44fb6127153e1c238cbaeba6f39b -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -44,8 +44,8 @@ disinto/                 (code repo)
 │                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh,
 │                  wp-oauth-register.sh, wp-seed-secrets.sh, lib-vault-mlock.sh
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
-│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server/agent.hcl
-│                  (host-net, docker.sock, Vault KV, S3.1-S3.2); agents.hcl (7 roles + llama, S4.1);
+│                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server.hcl (S3.1); woodpecker-agent.hcl
+│                  (host-net, docker.sock, Vault KV, S3.2); agents.hcl (7 roles + llama, S4.1);
 │                  agents-supervisor-opus.hcl (standalone Opus, S4.1); vault-runner.hcl (batch
 │                  dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy
 │                  + dispatcher, S5.1); agents-dev-qwen.hcl, agents-gardener-qwen.hcl,

@@ -1,1 +1,2 @@
 {"issue":1412,"group":"nomad/jobs","title":"Stale host_volume contract header in nomad/jobs/agents-dev-qwen.hcl (lists 3 of 5 mounts)","reason":"single-file doc-header update, no behavior change — dust per dust-vs-ore rules; tech-debt processed as dust","ts":"2026-09-18T02:48:18Z"}
+{"issue":1427,"group":"lib/AGENTS.md","title":"lib/AGENTS.md tape.sh Sourced-by column missing dispatcher.sh and supervisor-run.sh","reason":"single-line doc-table update, no behavior change","ts":"2026-09-19T15:35:00Z"}

@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "action": "comment",
+    "issue": 1409,
+    "body": "This issue is missing required sections. Please use the issue templates at `.forgejo/ISSUE_TEMPLATE/` — needs: acceptance criteria, affected files."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1409,
+    "label": "backlog"
+  }
+]
