@@ -1,4 +1,4 @@
-<!-- last-reviewed: 75d125b3913e44fb6127153e1c238cbaeba6f39b -->
+<!-- last-reviewed: 3548aa2847237e9dc2c9ac3bcba88bfc3474616a -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -76,6 +76,7 @@ disinto/                 (code repo)
 │                  images, check GHCR visibility (#1228)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
 │                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
+│                  grade.sh — one-command human grading of a proposal (#1410)
 │                  seed-research-labels.sh — idempotently seed research labels on an existing forge
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
 │                  provisioning (S2.1/S2.2)
