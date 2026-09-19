@@ -29,6 +29,12 @@
 #     appended), so the mtime scan would miss it
 #   - calls dsh_session_normalise (#1105) and writes its output to the
 #     same diagnostics path the Claude path uses, ${diag_dir}/agent-run-last.json
+#   - on a wall-clock timeout (rc 124) with no recoverable session log
+#     (normalisation failed or no session directory exists) appends a
+#     minimal fallback metrics record (session id + exit 124 → outcome
+#     "timeout" + delivered flag) from a scratch stream, so dsh timeouts
+#     are counted by stats.sh like the Claude path's timeout records
+#     (#1186); the scratch stream is never written to the diagnostics file
 #   - sets _AGENT_SESSION_ID (the session directory name, persisted to
 #     SID_FILE) and _AGENT_LAST_OUTPUT (the normalised output)
 #   - returns the run's exit code
@@ -59,7 +65,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/dsh-session.sh"
 # Sets: _AGENT_SESSION_ID (persisted to SID_FILE) and _AGENT_LAST_OUTPUT
 # (the normalised session record). Writes the normalised record to
 # ${diag_dir}/agent-run-last.json, appends one metrics record (#1101),
-# and returns the run's exit code — 124 = wall-clock timeout.
+# and returns the run's exit code — 124 = wall-clock timeout. A wall-clock
+# timeout that left no recoverable session log still appends a minimal
+# fallback record (session id, exit 124, outcome "timeout", delivered
+# flag, #1186) so stats.sh counts it like the Claude path.
 _agent_run_dsh() {
   _agent_parse_run_args "$@"
   local resume_id="$_AGENT_RESUME_ID" worktree_dir="$_AGENT_WORKTREE_DIR" task_ref="$_AGENT_TASK_REF" prompt="$_AGENT_PROMPT"
@@ -180,7 +189,35 @@ _agent_run_dsh() {
   # must never fail the run.
   has_pushed=$(cd "$run_dir" && git log --oneline "${FORGE_REMOTE:-origin}/${PRIMARY_BRANCH:-main}..HEAD" 2>/dev/null | head -1) || true
   if [ -n "$has_pushed" ]; then delivered="true"; else delivered="false"; fi
-  metrics_record_run "$diag_file" "$rc" "$task_ref" "$delivered" || true
+
+  # Wall-clock timeout with no recoverable session log (#1186): the kill
+  # truncates the zstd record and dsh_session_normalise never emits a
+  # partial parse, so $diag_file is absent and metrics_record_run would
+  # append nothing — the run would be invisible to stats.sh, unlike the
+  # Claude path, whose line-delimited stream-json survives the kill
+  # partially. Record a minimal fallback (session id only) from a scratch
+  # stream instead: no result row + exit 124 → outcome "timeout" in
+  # metrics_record_run, exactly like the Claude path's timeout records.
+  # The scratch stream is never written to $diag_file — the
+  # absent-diagnostics contract of the normalisation failure stands.
+  local metrics_source="$diag_file" fallback=""
+  if [ "$rc" -eq 124 ] && [ ! -f "$diag_file" ]; then
+    if fallback=$(mktemp); then
+      if ! jq -cn --arg sid "${_AGENT_SESSION_ID:-}" \
+        '{type:"system",subtype:"init",session_id:(if $sid == "" then null else $sid end)}' \
+        > "$fallback" 2>/dev/null; then
+        rm -f "$fallback"
+        fallback=""
+      fi
+      if [ -n "$fallback" ]; then
+        metrics_source="$fallback"
+      fi
+    fi
+  fi
+  metrics_record_run "$metrics_source" "$rc" "$task_ref" "$delivered" || true
+  if [ -n "$fallback" ]; then
+    rm -f "$fallback"
+  fi
 
   return "$rc"
 }
