@@ -35,6 +35,7 @@
 #   tape_grade PROPOSAL_ID VALUE WHEN WHO
 #     -> {"type":"grade","t","proposal_id","value":<number|null>,"when","who"}
 #     VALUE may be null; WHEN in at_approval|at_outcome.
+#     Echoes the appended record on success (like tape_payload's hash).
 #   tape_payload FILE
 #     Copies FILE to $PAYLOAD_DIR/<sha256> (idempotent), echoes the hash.
 #
@@ -238,7 +239,12 @@ tape_grade() {
     --arg when "$when" --arg who "$who" '
     {type: "grade", t: $t, proposal_id: $pid, value: ($value | fromjson),
      when: $when, who: $who}')"
-  _tape_append "$record"
+  # Guard the echo on the append's status: in a caller's errexit-suppressed
+  # context (e.g. `tape_grade ... || exit "$?"`), a failed _tape_append
+  # would not stop the function, and a never-appended record would be
+  # echoed as if it had been appended.
+  _tape_append "$record" || return 1
+  echo "$record"
 }
 
 tape_payload() {
