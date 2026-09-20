@@ -69,22 +69,14 @@ ac_write_curl_stub "$STUB_BIN"
 # stand-in so those lines land in the runner's captured output.
 log() { echo "poll: $*"; }
 
-# run_emit <TAPE_DIR> <issue> [fail] — run the extracted function in an
-# isolated subshell (stub curl on PATH, real lib/tape.sh, sentinel
-# PROJECT_NAME, caller's TAPE_DIR) and capture its output; the exit status
-# is the function's.
+# run_emit <TAPE_DIR> <issue> [fail] — run the extracted function via the
+# shared ac_run_tape_emit subshell runner (stub curl on PATH, real
+# lib/tape.sh, sentinel PROJECT_NAME, caller's TAPE_DIR); fail=1 degrades
+# the stub like an unreachable API.
 run_emit() {
   local tape_dir="$1" issue="$2" fail="${3:-0}"
-  (
-    ac_stub_env "$STUB_BIN" "$tape_dir"
-    # shellcheck disable=SC1091  # path only known at runtime
-    source "$REPO_ROOT/lib/tape.sh"
-    eval "$FN_SRC"
-    if [ "$fail" = "1" ]; then
-      export AC_STUB_FAIL=1
-    fi
+  ac_run_tape_emit "$STUB_BIN" "$tape_dir" "$FN_SRC" "$fail" \
     emit_tape_proposal "$issue"
-  ) 2>&1
 }
 
 # ── 2. Happy path: one proposal record + project-scoped id file ────────────
