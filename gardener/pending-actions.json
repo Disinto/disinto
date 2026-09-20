@@ -1,32 +1,57 @@
 [
   {
     "action": "comment",
-    "issue": 1431,
-    "body": "This fix is already in place. The root AGENTS.md Directory layout now reads: 'the executor is `*-run.sh` (gardener, supervisor, planner, predictor, architect) — dev/ uses `dev-agent.sh`/`dev-poll.sh` and review/ uses `review-pr.sh`/`review-poll.sh`' — dev/ and review/ are correctly distinguished. Merged via #1437."
+    "issue": 1440,
+    "body": "Gardener: closing this issue — the work is already implemented on main. PR #1444 (branch fix/issue-1440, commit f8e96770, merged 2026-09-20T09:52Z) merged the TAPE_PROPOSAL_ID-from-id-file change into main (dev/dev-agent.sh L492-496). The issue was never auto-closed after merge and carried a stale `blocked` label. Verified not a revert; code present on main."
   },
   {
     "action": "close",
-    "issue": 1431,
-    "reason": "already implemented — root AGENTS.md already distinguishes dev/review executors (fix merged in #1437)"
+    "issue": 1440,
+    "reason": "Work already implemented on main — PR #1444 (fix/issue-1440, commit f8e96770) merged 2026-09-20; issue was stale open, never auto-closed."
   },
   {
     "action": "comment",
-    "issue": 1427,
-    "body": "This fix is already in place. The `lib/tape.sh` row in `lib/AGENTS.md` now lists all four direct sourcers — dev/dev-poll.sh (#1398), lib/formula-session.sh (#1391), docker/edge/dispatcher.sh (#1407), supervisor/supervisor-run.sh (#1422) — plus tools/grade.sh (#1410). Merged via #1437."
+    "issue": 1441,
+    "body": "Gardener: promoting to backlog. Well-specified (complete Acceptance criteria + Affected files in body); dependency #1398 resolved and on main. Factory was starved (0 backlog items), so removing stale `blocked` and adding `backlog` for the dev-agent. Sibling of #1440/#1442/#1443 — independent work items; no bidirectional deps (sibling rule)."
   },
   {
-    "action": "close",
-    "issue": 1427,
-    "reason": "already implemented — lib/AGENTS.md tape.sh Sourced-by column now lists all direct consumers (fix merged in #1437)"
+    "action": "remove_label",
+    "issue": 1441,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 1441,
+    "label": "backlog"
   },
   {
     "action": "comment",
-    "issue": 1412,
-    "body": "This fix is already in place. The host_volume contract header in `nomad/jobs/agents-dev-qwen.hcl` now lists all five mounts: agent-data, project-repos, ops-repo, factory-projects, and tape. Merged via #1437."
+    "issue": 1442,
+    "body": "Gardener: promoting to backlog. Well-specified (complete Acceptance criteria + Affected files in body); no unmet dependencies. Factory was starved (0 backlog items), so removing stale `blocked` and adding `backlog` for the dev-agent. Sibling of #1440/#1441/#1443 — independent work items; no bidirectional deps (sibling rule)."
   },
   {
-    "action": "close",
-    "issue": 1412,
-    "reason": "already implemented — hcl host_volume header now lists all five mounts (fix merged in #1437)"
+    "action": "remove_label",
+    "issue": 1442,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 1442,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1443,
+    "body": "Gardener: promoting to backlog. Well-specified (complete Acceptance criteria + Affected files in body); dependency #1398 resolved and on main. Factory was starved (0 backlog items), so removing stale `blocked` and adding `backlog` for the dev-agent. Sibling of #1440/#1441/#1442 — independent work items; no bidirectional deps (sibling rule)."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1443,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 1443,
+    "label": "backlog"
   }
 ]
