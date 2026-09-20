@@ -59,9 +59,6 @@ source "$REPO_ROOT/tests/lib/review-harness.sh"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-no-push-harness.sh"
 
-ac_require_cmd awk
-ac_require_cmd jq
-
 TARGET="$REPO_ROOT/dev/dev-agent.sh"
 ac_assert_file "$TARGET" "dev/dev-agent.sh must exist"
 
