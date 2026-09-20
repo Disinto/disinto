@@ -30,7 +30,7 @@
 # Idempotent guard — a test that sources the harness twice (e.g. via nested
 # sourcing) shouldn't redefine functions or re-run setup.
 if [ -n "${AC_NO_PUSH_HARNESS_LOADED:-}" ]; then
-  return 0 2>/dev/null || exit 0
+  return 0 2>/dev/null
 fi
 AC_NO_PUSH_HARNESS_LOADED=1
 
@@ -45,8 +45,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # extracted function must not need the live API).
 ac_no_push_stub() {
   CALLS=()
+  # The stubs are consumed by the sourcing tests, not by this file.
+  # shellcheck disable=SC2317
   issue_block()   { CALLS+=("issue_block $*"); }
+  # shellcheck disable=SC2317
   issue_requeue() { CALLS+=("issue_requeue $*"); }
+  # shellcheck disable=SC2317
   forge_api()     { :; }
 }
 

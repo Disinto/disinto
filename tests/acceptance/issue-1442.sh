@@ -120,6 +120,7 @@ ac_assert_block_reason "$DIAG_NO_RESULT_STREAM" 0 3 "no_push_after_3_attempts" \
   "subtype no_result, attempt 3"
 
 # ── 4. rc 124 wins over no_result when both signals are present ───────────────
+# shellcheck disable=SC2034 # CALLS is reset here, consumed by the sourced harness
 CALLS=()
 no_push_outcome "$ISSUE" "$DIAG_NO_RESULT_OBJ" 124 0 "$NO_PUSH_TEXT"
 ac_has_call_matching "issue_requeue ${ISSUE} timeout " \
@@ -143,6 +144,7 @@ ac_assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
   "rc 124 with no diag file (regression)"
 
 # 6c. rc 124 still wins over error_max_turns when both are present.
+# shellcheck disable=SC2034 # CALLS is reset here, consumed by the sourced harness
 CALLS=()
 no_push_outcome "$ISSUE" "$DIAG_MAX_TURNS_OBJ" 124 0 "$NO_PUSH_TEXT"
 ac_has_call_matching "issue_requeue ${ISSUE} timeout " \
