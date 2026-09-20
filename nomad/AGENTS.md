@@ -1,4 +1,4 @@
-<!-- last-reviewed: 3548aa2847237e9dc2c9ac3bcba88bfc3474616a -->
+<!-- last-reviewed: 887dee1e091f0e2830c5c3d71fff87daf822760d -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are

@@ -1,12 +1,32 @@
 [
   {
-    "action": "edit_body",
-    "issue": 1409,
-    "body": "## Task\n\nOne file: `planner/planner-run.sh`. Uses `lib/tape.sh`.\n\nWhen planner files a new backlog issue: `tape_proposal` with loop=\"dev\", class=<label or \"dev\">, forecast=`{\"p_success\":0.5,\"est_cost\":0,\"est_dvision\":0}` (flat priors; calibration comes later), ref=<new issue number>.\n\nThat is the whole change. Tape failure warns and continues.\n\n## Acceptance\n\nFixture: invoke the emit path with a fake issue number (TAPE_DIR override); one proposal line containing the forecast block lands in the tape. Verify with a bats test or shell fixture.\n\n\n## Depends on\n\n- #1405\n\n## Status\n\n2026-09-19 13:37–14:08 attempt: 22 turns of real work, no branch. llama-server aborted (CUDA error in mmproj/CLIP encode); dsh got 503 Loading model and exited rc 1. `no_push` was infra, not the spec. Worktree gone — start from scratch. Requeued to backlog.\n\n\n## Acceptance criteria\n\n- [ ] When planner files a new backlog issue, a proposal record is emitted via `tape_proposal` with loop=\"dev\", class=<label or \"dev\">, forecast `{\"p_success\":0.5,\"est_cost\":0,\"est_dvision\":0}`, ref=<new issue number>\n- [ ] Tape failure warns and continues (planner run does not abort)\n- [ ] A fixture/bats test invokes the emit path with a fake issue number (TAPE_DIR override) and verifies one proposal line containing the forecast block lands in the tape\n\n## Affected files\n\n- `planner/planner-run.sh` (emits the proposal record on backlog issue filing)\n- `lib/tape.sh` (used via `tape_proposal`; expected unchanged)"
+    "action": "comment",
+    "issue": 1431,
+    "body": "This fix is already in place. The root AGENTS.md Directory layout now reads: 'the executor is `*-run.sh` (gardener, supervisor, planner, predictor, architect) — dev/ uses `dev-agent.sh`/`dev-poll.sh` and review/ uses `review-pr.sh`/`review-poll.sh`' — dev/ and review/ are correctly distinguished. Merged via #1437."
   },
   {
-    "action": "add_label",
-    "issue": 1409,
-    "label": "backlog"
+    "action": "close",
+    "issue": 1431,
+    "reason": "already implemented — root AGENTS.md already distinguishes dev/review executors (fix merged in #1437)"
+  },
+  {
+    "action": "comment",
+    "issue": 1427,
+    "body": "This fix is already in place. The `lib/tape.sh` row in `lib/AGENTS.md` now lists all four direct sourcers — dev/dev-poll.sh (#1398), lib/formula-session.sh (#1391), docker/edge/dispatcher.sh (#1407), supervisor/supervisor-run.sh (#1422) — plus tools/grade.sh (#1410). Merged via #1437."
+  },
+  {
+    "action": "close",
+    "issue": 1427,
+    "reason": "already implemented — lib/AGENTS.md tape.sh Sourced-by column now lists all direct consumers (fix merged in #1437)"
+  },
+  {
+    "action": "comment",
+    "issue": 1412,
+    "body": "This fix is already in place. The host_volume contract header in `nomad/jobs/agents-dev-qwen.hcl` now lists all five mounts: agent-data, project-repos, ops-repo, factory-projects, and tape. Merged via #1437."
+  },
+  {
+    "action": "close",
+    "issue": 1412,
+    "reason": "already implemented — hcl host_volume header now lists all five mounts (fix merged in #1437)"
   }
 ]
