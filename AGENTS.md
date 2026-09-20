@@ -1,4 +1,4 @@
-<!-- last-reviewed: 887dee1e091f0e2830c5c3d71fff87daf822760d -->
+<!-- last-reviewed: b277687c84ac8e90e424df2f6235cea695734bee -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -34,6 +34,7 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **docs/** — protocol docs
 - **vault/policies/** — vault HCL policies
 - **tape/** — dev-loop tape schema packs + outcome rubrics (records written via `lib/tape.sh`, #1389)
+- **tests/** — golden + acceptance tests; pinned default-constant goldens (see "How to lint and test"), per-issue acceptance scripts (`tests/acceptance/issue-<n>.sh`) via `tools/run-acceptance.sh`; CI enforces `.woodpecker/check-defaults-golden.sh` (#1261)
 
 ## Tech stack
 
