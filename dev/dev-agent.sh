@@ -482,6 +482,22 @@ echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 # instead of guessing (same class as review-pr.sh REVIEW_OUTPUT_FILE).
 export IMPL_SUMMARY_FILE
 
+# Key the tape run off the pick's proposal id (#1440): dev-poll wrote the
+# picked issue's proposal id to this project-scoped id file at pick time
+# (#1398; contents: just the id), and formula-session attaches the run
+# record to $TAPE_PROPOSAL_ID when set (#1391) — so the run pairs with the
+# pick instead of a fresh ULID. Missing or empty id file (issue predates
+# the pick step) → leave unset; the run keys on its own ULID as before.
+# No proposal record is created here.
+PROPOSAL_ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}"
+if [ -s "$PROPOSAL_ID_FILE" ]; then
+  PROPOSAL_ID="$(cat "$PROPOSAL_ID_FILE" 2>/dev/null || true)"
+  if [ -n "$PROPOSAL_ID" ]; then
+    export TAPE_PROPOSAL_ID="$PROPOSAL_ID"
+    log "tape: keying run off pick proposal ${PROPOSAL_ID}"
+  fi
+fi
+
 # Open the proposal-loop tape run record (#1391) — total, never fails us
 formula_session_start "dev"
 
