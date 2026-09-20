@@ -422,23 +422,27 @@ fi
 # =============================================================================
 # no_push_outcome — decide what to do when agent_run finished without pushing.
 #
-# A run stopped by a resource limit (max turns, or the wall-clock timeout)
-# is a TRANSIENT failure: the issue goes back to the claimable backlog
-# (issue_requeue) instead of "blocked", so a fresh run can retry it. On the
-# third consecutive resource-limit exit (attempt >= 2, 0-indexed count of
-# existing fix/issue-N* branches) the repeated limit means a human decision
-# is needed, so the issue is blocked with a distinct reason. Any other
-# no-push reason keeps the historical issue_block "no_push" behavior.
+# A run stopped by a resource limit (max turns, the wall-clock timeout, or a
+# no_result terminal row — the harness never wrote a normal result row, i.e.
+# server/harness death rather than "agent chose not to push") is a TRANSIENT
+# failure: the issue goes back to the claimable backlog (issue_requeue)
+# instead of "blocked", so a fresh run can retry it. On the third consecutive
+# resource-limit exit (attempt >= 2, 0-indexed count of existing
+# fix/issue-N* branches) the repeated limit means a human decision is needed,
+# so the issue is blocked with a distinct reason. Any other no-push reason
+# keeps the historical issue_block "no_push" behavior.
 #
 # Args: issue diag_file agent_run_rc attempt result_text
 no_push_outcome() {
   local issue="$1" diag_file="$2" agent_run_rc="$3" attempt="${4:-0}" result_text="${5:-}"
   local subtype requeue_reason=""
 
-  # The terminal stream-json row carries the run's subtype ("success" or
-  # "error_max_turns"). The diag file may be a multi-line stream, a single
-  # nudge object, or a line truncated by a watchdog kill — parse line by
-  # line and keep the last result row's subtype.
+  # The terminal stream-json row carries the run's subtype ("success",
+  # "error_max_turns", or "no_result" — the latter written by the harness when
+  # it died before a normal result row, e.g. server crash or llama 503).
+  # The diag file may be a multi-line stream, a single nudge object, or a line
+  # truncated by a watchdog kill — parse line by line and keep the last
+  # result row's subtype.
   subtype=$(jq -R -s -r '
     split("\n")
     | map(select(. != "") | (try fromjson))
@@ -450,9 +454,12 @@ no_push_outcome() {
   case "$agent_run_rc" in '' | *[!0-9]*) agent_run_rc=0 ;; esac
   case "$attempt" in '' | *[!0-9]*) attempt=0 ;; esac
 
-  if [ "$subtype" = "error_max_turns" ]; then
-    requeue_reason="error_max_turns"
-  fi
+  # Last-result-row subtype picks a requeue reason: the turn cap, or the
+  # no_result terminal row (harness death — not a push decision).
+  case "$subtype" in
+    error_max_turns) requeue_reason="error_max_turns" ;;
+    no_result)       requeue_reason="no_result" ;;
+  esac
   # rc 124 is the wall-clock timeout ceiling (agent_run contract) and is the
   # more recent event, so it wins when both signals are present.
   if [ "$agent_run_rc" -eq 124 ]; then

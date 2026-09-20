@@ -56,9 +56,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/review-harness.sh"
-
-ac_require_cmd awk
-ac_require_cmd jq
+# shellcheck disable=SC1091
+source "$REPO_ROOT/tests/lib/acceptance-no-push-harness.sh"
 
 TARGET="$REPO_ROOT/dev/dev-agent.sh"
 ac_assert_file "$TARGET" "dev/dev-agent.sh must exist"
@@ -67,24 +66,13 @@ ISSUE=1164
 # no_push_outcome() interpolates the branch name into its messages.
 BRANCH="fix/issue-${ISSUE}"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# ── Stubs: record every lifecycle call with its full argument list ─────────
-CALLS=()
-issue_block()   { CALLS+=("issue_block $*"); }
-issue_requeue() { CALLS+=("issue_requeue $*"); }
-forge_api()     { :; }  # defensive: the extracted function must not need it
-
-# ── Extract no_push_outcome() from dev-agent.sh ─────────────────────────────
-# dev-agent.sh is a top-level executable (sourcing it would run the whole
-# agent), so the function is extracted by header — ac_extract_fn() takes
-# `name() {` to the next column-0 closing brace — as issue-1130 does.
-fn_body="$(ac_extract_fn no_push_outcome "$TARGET")"
-[ -n "$fn_body" ] || ac_fail "could not locate no_push_outcome() in dev/dev-agent.sh"
-eval "$fn_body"
-type no_push_outcome >/dev/null 2>&1 \
-  || ac_fail "no_push_outcome() did not evaluate to a function"
+# ── Stubs + extraction (shared no-push harness) ─────────────────────────────
+# The harness owns $TMP_DIR and its EXIT trap and installs the issue_block()/
+# issue_requeue() stubs (see ac_no_push_stub). dev-agent.sh is a top-level
+# executable (sourcing it would run the whole agent), so ac_load_decision_fn()
+# extracts no_push_outcome() by header and evals it, as issue-1130 does.
+ac_no_push_stub
+ac_load_decision_fn "$TARGET" "no_push_outcome"
 
 # ── Synthetic diagnostic files (real stream-json shapes) ────────────────────
 DIAG_MAX_TURNS_OBJ="$TMP_DIR/maxturns-obj.json"
@@ -114,39 +102,28 @@ EOF
 
 NO_PUSH_TEXT="Claude did not push branch ${BRANCH}"
 
-# ── 1. error_max_turns → requeue, never block ───────────────────────────────
-assert_requeue() {
-  local diag="$1" rc="$2" attempt="$3" reason="$4" what="$5"
-  CALLS=()
-  no_push_outcome "$ISSUE" "$diag" "$rc" "$attempt" "$NO_PUSH_TEXT"
-  if ac_has_call_matching "issue_block "; then
-    ac_fail "resource-limit exit must NOT call issue_block (${what})"
-  fi
-  # Trailing space: the recorded reason must be exactly `$reason`.
-  ac_has_call_matching "issue_requeue ${ISSUE} ${reason} " \
-    || ac_fail "expected issue_requeue ${ISSUE} ${reason}, got: ${CALLS[*]:-nothing} (${what})"
-}
+# ── 1. error_max_turns → requeue, never block (ac_assert_requeue) ───────────
 
 # 1a. Single-object diag file (nudge output shape).
-assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 0 "error_max_turns" \
+ac_assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 0 "error_max_turns" \
   "single object, subtype error_max_turns"
 
 # 1b. Multi-line stream — a naive whole-file `.subtype` read would see the
 #     init row's subtype first and miss it; the last result row must win.
-assert_requeue "$DIAG_MAX_TURNS_STREAM" 0 0 "error_max_turns" \
+ac_assert_requeue "$DIAG_MAX_TURNS_STREAM" 0 0 "error_max_turns" \
   "multi-line stream, subtype error_max_turns"
 
 # 1c. Second attempt (attempt=1) still requeues — the cap is the third.
-assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 1 "error_max_turns" \
+ac_assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 1 "error_max_turns" \
   "second attempt (attempt=1)"
 
 # ── 2. rc 124 (wall-clock timeout) → requeue ────────────────────────────────
 # 2a. Watchdog kill: truncated stream, no result row.
-assert_requeue "$DIAG_TRUNCATED" 124 0 "timeout" \
+ac_assert_requeue "$DIAG_TRUNCATED" 124 0 "timeout" \
   "rc 124 with a truncated diag file (no result row)"
 
 # 2b. No diag file at all (crash before the write).
-assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
+ac_assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
   "rc 124 with no diag file"
 
 # ── 3. rc 124 wins when both signals are present ────────────────────────────
@@ -159,42 +136,20 @@ if ac_has_call_matching "issue_requeue ${ISSUE} error_max_turns "; then
 fi
 
 # ── 4. Every other no-push reason → issue_block "no_push", unchanged ────────
-assert_no_push_block() {
-  local diag="$1" rc="$2" what="$3"
-  CALLS=()
-  no_push_outcome "$ISSUE" "$diag" "$rc" 0 "$NO_PUSH_TEXT"
-  if ac_has_call_matching "issue_requeue "; then
-    ac_fail "non-resource-limit no_push must NOT requeue (${what})"
-  fi
-  # Trailing space: must be the plain "no_push" reason, not the
-  # no_push_after_3_attempts one.
-  ac_has_call_matching "issue_block ${ISSUE} no_push " \
-    || ac_fail "expected issue_block ${ISSUE} no_push, got: ${CALLS[*]:-nothing} (${what})"
-}
-
 # 4a. Run finished successfully but pushed nothing.
-assert_no_push_block "$DIAG_SUCCESS" 0 "result subtype success but no push"
+ac_assert_block_reason "$DIAG_SUCCESS" 0 0 "no_push" "result subtype success but no push"
 
 # 4b. Non-timeout crash (rc 3), no result row.
-assert_no_push_block "$DIAG_TRUNCATED" 3 "non-timeout exit code, no result row"
+ac_assert_block_reason "$DIAG_TRUNCATED" 3 0 "no_push" "non-timeout exit code, no result row"
 
 # ── 5. Retry cap: third consecutive resource-limit exit → block ─────────────
-assert_block_after_3() {
-  local diag="$1" rc="$2" what="$3"
-  CALLS=()
-  no_push_outcome "$ISSUE" "$diag" "$rc" 2 "$NO_PUSH_TEXT"
-  if ac_has_call_matching "issue_requeue "; then
-    ac_fail "third resource-limit exit must NOT requeue (${what})"
-  fi
-  ac_has_call_matching "issue_block ${ISSUE} no_push_after_3_attempts " \
-    || ac_fail "expected no_push_after_3_attempts, got: ${CALLS[*]:-nothing} (${what})"
-}
-
 # 5a. attempt=2 (the third attempt) with error_max_turns.
-assert_block_after_3 "$DIAG_MAX_TURNS_OBJ" 0 "third attempt, subtype error_max_turns"
+ac_assert_block_reason "$DIAG_MAX_TURNS_OBJ" 0 2 "no_push_after_3_attempts" \
+  "third attempt, subtype error_max_turns"
 
 # 5b. attempt=2 (the third attempt) with a timeout.
-assert_block_after_3 "$DIAG_TRUNCATED" 124 "third attempt, rc 124"
+ac_assert_block_reason "$DIAG_TRUNCATED" 124 2 "no_push_after_3_attempts" \
+  "third attempt, rc 124"
 
 # 5c. An unrelated (non-resource-limit) exit on attempt 2 still blocks with
 #     the plain no_push reason — the cap only applies to resource limits.
