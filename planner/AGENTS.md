@@ -1,4 +1,4 @@
-<!-- last-reviewed: 75d125b3913e44fb6127153e1c238cbaeba6f39b -->
+<!-- last-reviewed: 887dee1e091f0e2830c5c3d71fff87daf822760d -->
 # Planner Agent
 
 **Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
@@ -82,7 +82,13 @@ planner formula.
   creates the `planner/run-YYYY-MM-DD` ops branch, runs the agent one-shot via
   `agent_run` (`lib/agent-sdk.sh`), guards a resource-limit exit (rc 124,
   #1164) so the PR walk still runs, then creates the ops PR and walks it to
-  merge, writes the journal via `profile_write_journal`, and cleans up
+  merge, writes the journal via `profile_write_journal`, and cleans up.
+  **Dev-loop tape (#1409)**: after the session closes, `planner_tape_tick`
+  diffs the current open-issue set against a pre-session snapshot and, for each
+  newly filed `backlog` issue, appends one dev-loop proposal record via
+  `emit_planner_proposal` (flat-prior `forecast` `{"p_success":0.5,"est_cost":0,
+  "est_dvision":0}`; `id` = `formula_tape_ulid`). Total — a tape or forge-API
+  failure logs a WARNING and returns 0, so it can never abort the planner run.
 - `formulas/run-planner.toml` — The execution spec (the only planner formula,
   #1334; v4, graph-driven, tea helpers): three steps with `needs` dependencies
   — preflight, triage-and-plan (unifies the former prediction-triage /
