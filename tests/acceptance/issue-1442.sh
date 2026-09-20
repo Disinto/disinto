@@ -47,6 +47,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/tests/lib/acceptance-no-push-harness.sh"
 
 ac_require_cmd awk
 ac_require_cmd jq
@@ -58,23 +60,13 @@ ISSUE=1442
 # no_push_outcome() interpolates the branch name into its messages.
 BRANCH="fix/issue-${ISSUE}"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# ── Stubs: record every lifecycle call with its full argument list ───────────
-CALLS=()
-issue_block()   { CALLS+=("issue_block $*"); }
-issue_requeue() { CALLS+=("issue_requeue $*"); }
-forge_api()     { :; }  # defensive: the extracted function must not need it
-
-# ── Extract no_push_outcome() from dev-agent.sh ───────────────────────────────
-# The function is extracted by header — ac_extract_fn() takes `name() {`
-# to the next column-0 closing brace, as issue-1164 does.
-fn_body="$(ac_extract_fn no_push_outcome "$TARGET")"
-[ -n "$fn_body" ] || ac_fail "could not locate no_push_outcome() in dev/dev-agent.sh"
-eval "$fn_body"
-type no_push_outcome >/dev/null 2>&1 \
-  || ac_fail "no_push_outcome() did not evaluate to a function"
+# ── Stubs + extraction (shared no-push harness) ─────────────────────────────
+# The harness owns $TMP_DIR and its EXIT trap and installs the issue_block()/
+# issue_requeue() stubs (see ac_no_push_stub). dev-agent.sh is a top-level
+# executable (sourcing it would run the whole agent), so ac_load_decision_fn()
+# extracts no_push_outcome() by header and evals it, as issue-1164 does.
+ac_no_push_stub
+ac_load_decision_fn "$TARGET" "no_push_outcome"
 
 # ── Synthetic diagnostic files (real stream-json shapes) ──────────────────────
 # #1186-style server/harness death: 0 tokens, ~14s, no normal result row —
@@ -108,46 +100,26 @@ EOF
 
 NO_PUSH_TEXT="Claude did not push branch ${BRANCH}"
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-# A requeue happened with exactly the given reason, and issue_block never fired.
-assert_requeue() {
-  local diag="$1" rc="$2" attempt="$3" reason="$4" what="$5"
-  CALLS=()
-  no_push_outcome "$ISSUE" "$diag" "$rc" "$attempt" "$NO_PUSH_TEXT"
-  if ac_has_call_matching "issue_block "; then
-    ac_fail "no-push exit must NOT call issue_block (${what})"
-  fi
-  # Trailing space: the recorded reason must be exactly `$reason` (the block
-  # path is the only thing that could otherwise carry a longer reason).
-  ac_has_call_matching "issue_requeue ${ISSUE} ${reason} " \
-    || ac_fail "expected issue_requeue ${ISSUE} ${reason}, got: ${CALLS[*]:-nothing} (${what})"
-}
-
-# A block happened with exactly the given reason, and issue_requeue never fired.
-assert_block_reason() {
-  local diag="$1" rc="$2" attempt="$3" reason="$4" what="$5"
-  CALLS=()
-  no_push_outcome "$ISSUE" "$diag" "$rc" "$attempt" "$NO_PUSH_TEXT"
-  if ac_has_call_matching "issue_requeue "; then
-    ac_fail "attempt $attempt with reason ${reason} must NOT requeue (${what})"
-  fi
-  ac_has_call_matching "issue_block ${ISSUE} ${reason} " \
-    || ac_fail "expected issue_block ${ISSUE} ${reason}, got: ${CALLS[*]:-nothing} (${what})"
-}
+# Assertions (from the shared no-push harness):
+#   ac_assert_requeue     <diag> <rc> <attempt> <reason> <what>
+#   ac_assert_block_reason <diag> <rc> <attempt> <reason> <what>
+# Both reset the stub's CALLS log, run no_push_outcome(), and check the
+# recorded lifecycle call — exactly the reason (with a trailing space, so the
+# block-class "no_push_after_3_attempts" can't match a plain "no_push" check
+# or vice versa).
 
 # ── 1. subtype=no_result, attempt 0 → issue_requeue no_result ─────────────────
-assert_requeue "$DIAG_NO_RESULT_OBJ" 0 0 "no_result" \
+ac_assert_requeue "$DIAG_NO_RESULT_OBJ" 0 0 "no_result" \
   "single object, subtype no_result, attempt 0"
 
 # ── 2. subtype=no_result, attempt 1 → still requeue (cap is the 3rd exit) ───
-assert_requeue "$DIAG_NO_RESULT_OBJ" 0 1 "no_result" \
+ac_assert_requeue "$DIAG_NO_RESULT_OBJ" 0 1 "no_result" \
   "single object, subtype no_result, attempt 1"
 
 # ── 3. subtype=no_result, attempt >= 2 → issue_block no_push_after_3_attempts ─
-assert_block_reason "$DIAG_NO_RESULT_OBJ" 0 2 "no_push_after_3_attempts" \
+ac_assert_block_reason "$DIAG_NO_RESULT_OBJ" 0 2 "no_push_after_3_attempts" \
   "subtype no_result, attempt 2 (third exit)"
-assert_block_reason "$DIAG_NO_RESULT_STREAM" 0 3 "no_push_after_3_attempts" \
+ac_assert_block_reason "$DIAG_NO_RESULT_STREAM" 0 3 "no_push_after_3_attempts" \
   "subtype no_result, attempt 3"
 
 # ── 4. rc 124 wins over no_result when both signals are present ───────────────
@@ -160,18 +132,18 @@ if ac_has_call_matching "issue_requeue ${ISSUE} no_result "; then
 fi
 
 # ── 5. multi-line stream: the LAST result row (no_result) is what counts ─────
-assert_requeue "$DIAG_NO_RESULT_STREAM" 0 0 "no_result" \
+ac_assert_requeue "$DIAG_NO_RESULT_STREAM" 0 0 "no_result" \
   "multi-line stream, last result row no_result (#1409-style)"
 
 # ── 6. regression: the #1164 paths are unchanged by this fix ──────────────────
 
 # 6a. error_max_turns still requeues with its own reason.
-assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 0 "error_max_turns" \
+ac_assert_requeue "$DIAG_MAX_TURNS_OBJ" 0 0 "error_max_turns" \
   "subtype error_max_turns, attempt 0"
 
 # 6b. rc 124 with no diag file at all still requeues timeout.
-assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
-  "rc 124 with no diag file"
+ac_assert_requeue "$TMP_DIR/does-not-exist.json" 124 0 "timeout" \
+  "rc 124 with no diag file (regression)"
 
 # 6c. rc 124 still wins over error_max_turns when both are present.
 CALLS=()
@@ -183,22 +155,11 @@ if ac_has_call_matching "issue_requeue ${ISSUE} error_max_turns "; then
 fi
 
 # 6d. a successful run that pushed nothing still blocks with plain no_push.
-CALLS=()
-no_push_outcome "$ISSUE" "$DIAG_SUCCESS" 0 0 "$NO_PUSH_TEXT"
-if ac_has_call_matching "issue_requeue "; then
-  ac_fail "a successful run that pushed nothing must NOT requeue"
-fi
-ac_has_call_matching "issue_block ${ISSUE} no_push " \
-  || ac_fail "expected issue_block ${ISSUE} no_push, got: ${CALLS[*]:-nothing}"
+ac_assert_block_reason "$DIAG_SUCCESS" 0 0 "no_push" "successful run pushed nothing (regression)"
 
 # 6e. the no_push_after_3_attempts cap only applies to resource-limit exits:
-#     a non-resource-limit no_push on attempt 2 stays plain no_push.
-CALLS=()
-no_push_outcome "$ISSUE" "$DIAG_SUCCESS" 0 2 "$NO_PUSH_TEXT"
-ac_has_call_matching "issue_block ${ISSUE} no_push " \
-  || ac_fail "a non-resource-limit no_push on attempt 2 must stay 'no_push'"
-if ac_has_call_matching "no_push_after_3_attempts"; then
-  ac_fail "no_push_after_3_attempts must only fire for resource-limit exits (no_result included)"
-fi
+#     a non-resource-limit no_push on attempt 2 stays plain no_push (the
+#     trailing-space match above can't be satisfied by a longer reason).
+ac_assert_block_reason "$DIAG_SUCCESS" 0 2 "no_push" "non-resource-limit no_push on attempt 2 (regression)"
 
 ac_pass
