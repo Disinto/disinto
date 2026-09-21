@@ -126,9 +126,9 @@ ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (no size label, DSH_MOD
 ac_assert_file "$TAPE1/tape.jsonl" "no tape record was appended to $TAPE1/tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" "a pick must append exactly one tape line"
 LINE="$(head -n 1 "$TAPE1/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1443" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and .context.backend == "dsh-model-1443" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and (.forecast | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1443" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and .context.backend == "dsh-model-1443" and .context.forecast_method == "prior" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and (.forecast.p_success == 0.5) and (.forecast.est_cost == 0) and (.forecast.est_dvision == 0)' \
   "$LINE" \
-  "no size label yields size_class M, backend from DSH_MODEL, no area/parent/caused_by/forecast"
+  "no size label yields size_class M, backend from DSH_MODEL, forecast_method prior, flat-prior forecast, no area/parent/caused_by"
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-1443"
 [ -f "$ID_FILE" ] || ac_fail "id file $ID_FILE missing after a successful pick"
 ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \
