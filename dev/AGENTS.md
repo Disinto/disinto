@@ -77,18 +77,24 @@ from measured data — omitted on the API-failure path, where the context degrad
 forecast = `{"p_success":0.5,"est_cost":0,"est_dvision":0}` (flat prior, written on every
 fresh pick, identical to the planner's prior in planner-run.sh), decision `approved`, ref
 the issue number — and stores the record's id in
-`/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id) so the
-#1399 outcome step can reference it. A re-pick (no-push -> backlog -> pick again, #1441)
-finds that same id file and reuses the stored id — it logs the reuse and returns 0
-without minting a second uuid or appending a second proposal, so the tape holds one
-sample of one decision. Any tape failure logs a WARNING; the pick proceeds
+`/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id)
+so the #1399 outcome step can reference it, plus the pick's wall-clock epoch
+(`date -u +%s`) in the sibling `/tmp/dev-proposal-started-${PROJECT_NAME:-default}-<issue>`
+(#1452). A re-pick (no-push -> backlog -> pick again, #1441) finds that same
+id file and reuses the stored id — it logs the reuse and returns 0 without
+minting a second uuid, appending a second proposal, or rewriting the started
+epoch (so the outcome's duration spans the issue's whole life, not just one
+attempt), so the tape holds one sample of one decision. Any tape failure logs
+a WARNING; the pick proceeds
 unchanged. **Tape outcome emission (#1399)**: when a dev PR reaches terminal state —
 merged via `try_direct_merge` (the three direct-merge paths, CI green by construction)
 or closed by stale-branch abandonment — `emit_tape_outcome()` appends one
 `{"type":"outcome","proposal_id":...}` record to the tape keyed off the stored id:
 bits `{"merged":0|1,"ci_green":0|1}`, numbers `{"review_rounds":<n>}` (the PR's
-REQUEST_CHANGES review count from one forge call, `0` when the call fails), children
-`{}`, payloads `[]`. No id file (issue predates the proposal step) → skip silently;
+REQUEST_CHANGES review count from one forge call, `0` when the call fails)
+plus `{"duration_s":<s>}` (#1452: wall-clock pick→terminal seconds, now − start,
+integer, clamped ≥ 0; omitted — never 0 — when the started file is missing or
+not an integer), children `{}`, payloads `[]`. No id file (issue predates the proposal step) → skip silently;
 any tape failure logs a WARNING; the merge/close proceeds unchanged.
 - `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
 called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open

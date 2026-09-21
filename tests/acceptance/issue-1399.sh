@@ -138,7 +138,7 @@ ac_assert_eq "$rc" "0" "emit_tape_outcome must return 0 on success (got $rc): $o
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "2" \
   "merging a dev PR must append exactly one outcome line to the proposal line"
 LINE="$(sed -n 2p "$TAPE1/tape.jsonl")"
-ac_assert_jq ".type == \"outcome\" and .proposal_id == \"${PROP_ID}\" and .bits == {\"merged\":1,\"ci_green\":1} and .numbers == {\"review_rounds\":2} and .children == {} and .payloads == []" \
+ac_assert_jq ".type == \"outcome\" and .proposal_id == \"${PROP_ID}\" and .bits == {\"merged\":1,\"ci_green\":1} and .numbers.review_rounds == 2 and .children == {} and .payloads == []" \
   "$LINE" \
   "the outcome line's proposal must match the id written by the proposal step, with merged/ci_green bits and the REQUEST_CHANGES review count"
 
