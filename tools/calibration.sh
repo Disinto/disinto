@@ -15,15 +15,24 @@
 # Pairs are grouped by (loop, class) — both taken from the proposal — and
 # summarised as a markdown table on stdout:
 #
-#   | loop | class | n | merged rate | mean duration_s |
+#   | loop | class | n | promised | actual | error | mean duration_s |
 #
 #   n               number of pairs in the group
-#   merged rate     share of the group's pairs whose outcome carries
+#   promised        mean of the proposals' forecast.p_success (as an
+#                   integer percent) over the pairs that carry a numeric one;
+#                   "-" when no pair in the group carries one (old-tape rows
+#                   have no forecast, so a whole group may be "-")
+#   actual          share of the group's pairs whose outcome carries
 #                   bits.merged true or 1, as an integer percentage
+#   error           |promised - actual| in percentage points when promised
+#                   is present; "-" otherwise
 #   mean duration_s mean of the pairs' outcome numbers.duration_s over the
 #                   pairs that carry one (missing ones are skipped, never
 #                   counted as zero); "-" when no pair in the group carries
 #                   a duration
+#
+# Pairs without a forecast still count in n and actual (old-tape rows are
+# not dropped).
 #
 # Pure bash + jq. No git, no network, no writes: the tape is only read.
 # Malformed tape lines (e.g. a torn final line from a crashed writer) are
@@ -47,8 +56,8 @@ command -v jq >/dev/null 2>&1 || { echo "calibration: required tool missing: jq"
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 TAPE_FILE="${TAPE_DIR}/tape.jsonl"
 
-echo '| loop | class | n | merged rate | mean duration_s |'
-echo '|---|---|---|---|---|'
+echo '| loop | class | n | promised | actual | error | mean duration_s |'
+echo '|---|---|---|---|---|---|---|'
 
 [ -f "$TAPE_FILE" ] || exit 0
 [ -s "$TAPE_FILE" ] || exit 0
@@ -65,8 +74,10 @@ skipped=$(( total_lines - valid_lines ))
 [ "$skipped" -eq 0 ] || echo "calibration: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
 
 # One tab-separated row per (loop, class) group:
-# loop <tab> class <tab> n <tab> merged rate (integer %) <tab> mean
-# duration_s (the literal "NA" when no pair in the group carries one).
+# loop <tab> class <tab> n <tab> promised (integer %, or the literal
+# "-") <tab> actual (integer %) <tab> mean duration_s (the literal
+# "NA" when no pair in the group carries one). The reader derives
+# error = |promised - actual| (or "-") from the same values.
 jq -R -s -r '
   [ split("\n")[]
     | (try fromjson catch null)
@@ -75,16 +86,19 @@ jq -R -s -r '
                  and ((.id | type) == "string")
                  and ((.loop | type) == "string")
                  and ((.class | type) == "string")))
-      | map({key: .id, value: {loop: .loop, class: .class}})
-      | from_entries) as $props
+     | map({ key: .id, value: { loop: .loop, class: .class,
+                                 promised: (.forecast.p_success
+                                            | if type == "number" then . else null end) } })
+     | from_entries) as $props
   | [ $recs[]
-      | select(.type == "outcome"
-               and ((.proposal_id | type) == "string")
-               and ($props[.proposal_id] != null)) ]
+       | select(.type == "outcome"
+                and ((.proposal_id | type) == "string")
+                and ($props[.proposal_id] != null)) ]
   | group_by(.proposal_id)
   | map(last)
   | map({ loop: $props[.proposal_id].loop,
           class: $props[.proposal_id].class,
+          promised: $props[.proposal_id].promised,
           merged: (.bits.merged == true or .bits.merged == 1),
           duration: (.numbers.duration_s
                      | if type == "number" then . else null end) })
@@ -92,17 +106,28 @@ jq -R -s -r '
   | map({ loop: .[0].loop,
           class: .[0].class,
           n: length,
+          promised: ((map(.promised) | map(select(. != null)))
+                     | if length > 0 then ((100 * add / length) | round) else null end),
           mr: (100 * (map(select(.merged)) | length) / length | round),
           md: ((map(.duration) | map(select(. != null)))
                | if length > 0 then add / length else null end) })
   | .[]
-  | "\(.loop)\t\(.class)\t\(.n)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)"
+  | "\(.loop)\t\(.class)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)"
 ' "$TAPE_FILE" |
-while IFS=$'\t' read -r lp cl n mr md; do
+while IFS=$'\t' read -r lp cl n promised actual md; do
   if [ "$md" = "NA" ]; then
     mean="-"
   else
     mean="$(printf "%.1f" "$md")"
   fi
-  printf '| %s | %s | %s | %s%% | %s |\n' "$lp" "$cl" "$n" "$mr" "$mean"
+  if [ "$promised" = "-" ]; then
+    p="-"
+    e="-"
+  else
+    p="${promised}%"
+    d=$(( promised - actual ))
+    [ "$d" -lt 0 ] && d=$(( -d ))
+    e="$d"
+  fi
+  printf '| %s | %s | %s | %s | %s%% | %s | %s |\n' "$lp" "$cl" "$n" "$p" "$actual" "$e" "$mean"
 done
