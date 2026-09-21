@@ -1274,7 +1274,7 @@ fi
 # =============================================================================
 emit_tape_proposal() {
   local issue="$1"
-  local id class ctx open_prs primary id_file
+  local id class ctx open_prs primary id_file issue_json api_ok size_class backend
 
   # Fresh uuid for the proposal: uuidgen when present, kernel random uuid
   # otherwise (the dev image ships no uuid-runtime; /proc is there on Linux).
@@ -1287,21 +1287,59 @@ emit_tape_proposal() {
     return 0
   fi
 
-  # class: the issue's primary (first) label, or "dev" when it has none
+  # class: the issue's primary (first) label, or "dev" when it has none;
+  # size_class: S/M/L from a size label (case-insensitive, exact), else "M".
+  # One fetch supplies both — the same issue GET the stub answers for the
+  # primary label.
   class="dev"
-  primary="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${API}/issues/${issue}" 2>/dev/null | jq -r '.labels[0].name // empty')" || true
+  size_class="M"
+  issue_json="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${issue}" 2>/dev/null)" || true
+  primary="$(printf '%s' "$issue_json" | jq -r '.labels[0].name // empty' 2>/dev/null)" || true
   [ -n "$primary" ] && class="$primary"
+  size_class="$(printf '%s' "$issue_json" | jq -r '
+    ([.labels[]?.name | select(type == "string") | ascii_downcase]
+      | map(select(. == "s" or . == "m" or . == "l"))) as $s
+    | if ($s | any(. == "s")) then "S"
+      elif ($s | any(. == "m")) then "M"
+      elif ($s | any(. == "l")) then "L"
+      else "M"
+      end' 2>/dev/null)" || true
+  case "$size_class" in
+    S | M | L) ;;
+    *) size_class="M" ;;
+  esac
 
-  # open_prs: count of open PRs from one forge call; {} context when it
-  # fails. limit=50 is the API's max page size, so the count saturates at 50
-  # (the factory never approaches that many open PRs — AD-002).
-  ctx='{}'
+  # open_prs: count of open PRs from one forge call. limit=50 is the API's
+  # max page size, so the count saturates at 50 (the factory never approaches
+  # that many open PRs — AD-002).
   open_prs="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/pulls?state=open&limit=50" 2>/dev/null \
     | jq -r 'if type == "array" then length else empty end')" || open_prs=""
-  if [[ "$open_prs" =~ ^[0-9]+$ ]]; then
-    ctx="$(jq -cn --argjson n "$open_prs" '{open_prs: $n}')"
+
+  # backend: the model running this agent — DSH_MODEL > CLAUDE_MODEL >
+  # AGENT_HARNESS, omitted when none is set (the pack documents it, so a
+  # reader can condition on it; write-side honesty only — nothing reads it yet).
+  backend="${DSH_MODEL:-}"
+  [ -n "$backend" ] || backend="${CLAUDE_MODEL:-}"
+  [ -n "$backend" ] || backend="${AGENT_HARNESS:-}"
+
+  # ctx is populated only when the forge answered both fetches (open_prs parses
+  # as a count and the issue JSON is an object); otherwise it degrades to {}
+  # — the existing #1398 behavior — so the pick proceeds unchanged. area is
+  # never written (files are unknown at pick time, per the pack).
+  ctx='{}'
+  api_ok=1
+  [[ "$open_prs" =~ ^[0-9]+$ ]] || api_ok=0
+  [[ -n "$issue_json" ]] || api_ok=0
+  { printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; } \
+    || api_ok=0
+  if [ "$api_ok" -eq 1 ]; then
+    ctx="$(jq -cn --argjson n "$open_prs" --arg sc "$size_class" \
+      '{open_prs: $n, size_class: $sc}')"
+    if [ -n "$backend" ]; then
+      ctx="$(jq -cn --argjson c "$ctx" --arg b "$backend" '$c + {backend: $b}')"
+    fi
   fi
 
   if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "" "approved" "$issue" \
@@ -1319,7 +1357,7 @@ emit_tape_proposal() {
     log "WARNING: tape: failed to write proposal id file ${id_file}"
   fi
 
-  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, open_prs: ${open_prs:-unknown})"
+  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, open_prs: ${open_prs:-unknown}, size_class: ${size_class}, backend: ${backend:-none})"
   return 0
 }
 
