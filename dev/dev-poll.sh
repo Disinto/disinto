@@ -1331,6 +1331,7 @@ emit_tape_proposal() {
   ctx='{}'
   api_ok=1
   [[ "$open_prs" =~ ^[0-9]+$ ]] || api_ok=0
+  [[ -n "$issue_json" ]] || api_ok=0
   { printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; } \
     || api_ok=0
   if [ "$api_ok" -eq 1 ]; then
