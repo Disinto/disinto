@@ -251,3 +251,23 @@ ac_run_tape_emit() {
     "$fn_name" "$@"
   ) 2>&1
 }
+
+# ac_tape_emitter_wiring <target-file> <fn-name> <call-text> — assert a tape
+# emitter is wired into a top-level executable: <target-file> sources
+# lib/tape.sh and contains the literal call <call-text> (e.g.
+# 'emit_tape_proposal "$READY_ISSUE"'), then extract and print <fn-name>()'s
+# source to stdout for use as the extracted function. Shared by the per-issue
+# tape-emitter acceptance tests that exercise the same dev-poll emitter, so the
+# wiring checks are not copy-pasted file-into-file (duplicate-detection).
+ac_tape_emitter_wiring() {
+  local target="$1" fn="$2" call="$3"
+  local base="${target##*/}"
+  grep -q '^source .*lib/tape\.sh' "$target" \
+    || ac_fail "${base} must source lib/tape.sh"
+  grep -qF -- "$call" "$target" \
+    || ac_fail "${base} must call ${fn} for the picked issue"
+  local src
+  src="$(ac_extract_fn "$fn" "$target")" || true
+  [ -n "$src" ] || ac_fail "could not extract ${fn}() from ${base}"
+  printf '%s\n' "$src"
+}

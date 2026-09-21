@@ -1275,6 +1275,24 @@ fi
 emit_tape_proposal() {
   local issue="$1"
   local id class ctx open_prs primary id_file issue_json api_ok size_class backend
+  local existing_id
+
+  # Re-pick guard (#1441): after the first pick the id file holds the proposal's
+  # id. If it is present and contains a non-empty id, the proposal is already on
+  # the tape — reuse it and leave the file alone instead of minting a second uuid
+  # for the same decision. A re-queued issue (no-push -> backlog -> pick again)
+  # would otherwise land two samples of one decision on the live tape.
+  # First pick (or a wiped /tmp, which leaves the file missing or empty) falls
+  # through to a fresh proposal. The file path is project-scoped exactly like the
+  # write below, so two projects sharing /tmp can't clobber each other's ids.
+  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
+  if [ -f "$id_file" ]; then
+    existing_id="$(cat "$id_file" 2>/dev/null)"
+    if [ -n "$existing_id" ]; then
+      log "tape: reusing existing proposal id ${existing_id} for #${issue} (id file present)"
+      return 0
+    fi
+  fi
 
   # Fresh uuid for the proposal: uuidgen when present, kernel random uuid
   # otherwise (the dev image ships no uuid-runtime; /proc is there on Linux).
