@@ -42,16 +42,16 @@ ac_require_cmd awk
 ac_require_cmd jq
 
 TARGET="$REPO_ROOT/dev/dev-poll.sh"
-ac_assert_file "$TARGET" "dev/dev-poll.sh must exist"
+ac_assert_file "$TARGET" "dev-poll.sh must exist for the context-emitter check"
 
 # ── 1. Wiring: dev-poll sources the tape lib and calls the emitter ─────────
 grep -q '^source .*lib/tape\.sh' "$TARGET" \
-  || ac_fail "dev-poll.sh must source lib/tape.sh"
+  || ac_fail "dev-poll.sh must source lib/tape.sh (context wiring)"
 grep -q 'emit_tape_proposal "\$READY_ISSUE"' "$TARGET" \
   || ac_fail "dev-poll.sh must call emit_tape_proposal for the picked issue"
 
 FN_SRC="$(ac_extract_fn emit_tape_proposal "$TARGET")"
-[ -n "$FN_SRC" ] || ac_fail "could not extract emit_tape_proposal() from dev-poll.sh"
+[ -n "$FN_SRC" ] || ac_fail "could not extract emit_tape_proposal() (context) from dev-poll.sh"
 
 TMP_DIR="$(mktemp -d)"
 PROJECT_NAME="acceptance-1443"   # sentinel — can never clobber a live id file
@@ -196,7 +196,7 @@ out="$(run_emit "$TAPE7" 9999 0 "" "")" || rc=$?
 ac_assert_eq "$rc" "0" "an unwritable TAPE_DIR must not fail the pick (got $rc): $out"
 case "$out" in
   *"tape: failed to append"*) ;;
-  *) ac_fail "unwritable TAPE_DIR must log a tape warning, got: $out" ;;
+  *) ac_fail "unwritable TAPE_DIR must log a tape-append warning, got: $out" ;;
 esac
 [ ! -f "$TAPE7/tape.jsonl" ] || ac_fail "no tape record may be written when TAPE_DIR is unwritable"
 [ ! -f "/tmp/dev-proposal-id-${PROJECT_NAME}-9999" ] \
