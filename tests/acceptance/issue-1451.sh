@@ -36,11 +36,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd awk
-ac_require_cmd jq
-
 TARGET="$REPO_ROOT/dev/dev-poll.sh"
-ac_assert_file "$TARGET" "dev/dev-poll.sh must exist"
 
 # ── 1. Wiring: dev-poll sources the tape lib and calls the emitter ─────────
 # Shared wiring checks (lib helper) — the extracted source is what the
@@ -64,15 +60,7 @@ ac_write_curl_stub "$STUB_BIN"
 # stand-in so its lines land in the runner's captured output.
 log() { echo "poll: $*"; }
 
-# run_emit <TAPE_DIR> <issue> [fail] — run the extracted function via the
-# shared ac_run_tape_emit subshell runner (stub curl on PATH, real
-# lib/tape.sh, sentinel PROJECT_NAME, caller's TAPE_DIR); fail=1 degrades
-# the stub like an unreachable API.
-run_emit() {
-  local tape_dir="$1" issue="$2" fail="${3:-0}"
-  ac_run_tape_emit "$STUB_BIN" "$tape_dir" "$FN_SRC" "$fail" \
-    emit_tape_proposal "$issue"
-}
+
 
 # ── 2. Fresh pick: flat-prior forecast + context.forecast_method="prior" ────
 # The shared stub (backlog+priority, no size label) yields size_class=M and
@@ -80,7 +68,7 @@ run_emit() {
 # carries forecast_method. area/parent/caused_by must not appear.
 TAPE1="$TMP_DIR/tape-happy"
 rc=0
-out="$(run_emit "$TAPE1" 1451)" || rc=$?
+out="$(ac_run_tape_emit "$STUB_BIN" "$TAPE1" "$FN_SRC" "0" emit_tape_proposal 1451)" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 on a fresh pick (got $rc): $out"
 ac_assert_file "$TAPE1/tape.jsonl" "no tape record was appended to $TAPE1/tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" \
@@ -103,19 +91,15 @@ ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \
 # guard reuses the id, logs it, and returns 0 before minting a second uuid
 # or appending a second proposal.
 rc=0
-out2="$(run_emit "$TAPE1" 1451)" || rc=$?
-ac_assert_eq "$rc" "0" "re-pick must return 0 (got $rc): $out2"
-case "$out2" in
-  *"reusing existing proposal id"*) ;;
-  *) ac_fail "re-pick must log that the existing id is reused, got: $out2" ;;
-esac
+out2="$(ac_run_tape_emit "$STUB_BIN" "$TAPE1" "$FN_SRC" "0" emit_tape_proposal 1451)" || rc=$?
+ac_assert_repick "$rc" "$out2"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" \
   "two calls on one issue must leave exactly one tape line (re-pick guard)"
 
 # ── 4. Forge API failure: context={} + forecast present, rc 0 ───────────────
 TAPE2="$TMP_DIR/tape-apifail"
 rc=0
-out3="$(run_emit "$TAPE2" 9998 1)" || rc=$?
+out3="$(ac_run_tape_emit "$STUB_BIN" "$TAPE2" "$FN_SRC" "1" emit_tape_proposal 9998)" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 when the forge API fails (got $rc): $out3"
 LINE="$(head -n 1 "$TAPE2/tape.jsonl" 2>/dev/null || true)"
 [ -n "$LINE" ] || ac_fail "a record must still be appended when the forge API is unreachable"

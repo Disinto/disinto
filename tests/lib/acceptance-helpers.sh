@@ -253,15 +253,19 @@ ac_run_tape_emit() {
 }
 
 # ac_tape_emitter_wiring <target-file> <fn-name> <call-text> — assert a tape
-# emitter is wired into a top-level executable: <target-file> sources
-# lib/tape.sh and contains the literal call <call-text> (e.g.
+# emitter is wired into a top-level executable: <target-file> exists, sources
+# lib/tape.sh, and contains the literal call <call-text> (e.g.
 # 'emit_tape_proposal "$READY_ISSUE"'), then extract and print <fn-name>()'s
-# source to stdout for use as the extracted function. Shared by the per-issue
+# source to stdout for use as the extracted function. It also pre-flights
+# awk/jq (awk is used by the extraction, jq by the caller's assertions) so a
+# missing dependency fails fast before any tape work. Shared by the per-issue
 # tape-emitter acceptance tests that exercise the same dev-poll emitter, so the
 # wiring checks are not copy-pasted file-into-file (duplicate-detection).
 ac_tape_emitter_wiring() {
   local target="$1" fn="$2" call="$3"
+  ac_require_cmd awk jq
   local base="${target##*/}"
+  ac_assert_file "$target" "${base} must exist"
   grep -q '^source .*lib/tape\.sh' "$target" \
     || ac_fail "${base} must source lib/tape.sh"
   grep -qF -- "$call" "$target" \
@@ -270,4 +274,17 @@ ac_tape_emitter_wiring() {
   src="$(ac_extract_fn "$fn" "$target")" || true
   [ -n "$src" ] || ac_fail "could not extract ${fn}() from ${base}"
   printf '%s\n' "$src"
+}
+
+# ac_assert_repick <rc> <out> — the re-pick guard (#1441) returns 0 and logs
+# that the existing id is reused. Used by the re-pick checks in issue-1441 and
+# issue-1451 so the identical case block is not duplicated file-into-file
+# (duplicate-detection).
+ac_assert_repick() {
+  local rc="$1" out="$2"
+  ac_assert_eq "$rc" "0" "re-pick must return 0 (got $rc): $out"
+  case "$out" in
+    *"reusing existing proposal id"*) ;;
+    *) ac_fail "re-pick must log that the existing id is reused, got: $out" ;;
+  esac
 }
