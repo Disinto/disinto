@@ -71,8 +71,12 @@ pick resolves, `emit_tape_proposal()` appends one `{"type":"proposal","loop":"de
 record to the tape (`lib/tape.sh`) before launching dev-agent — class = the issue's
 primary label (or `dev`), context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?"}` (open_prs
 from one pull GET, size_class from the issue's size label — case-insensitive, default
-M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set); `{}` on
-forge API failure, decision `approved`, ref the issue number — and stores the record's id in
+M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; `forecast_method: "prior"`
+recorded when the context is non-empty so the #1453 calibration reader can tell a flat prior
+from measured data — omitted on the API-failure path, where the context degrades to `{}`),
+forecast = `{"p_success":0.5,"est_cost":0,"est_dvision":0}` (flat prior, written on every
+fresh pick, identical to the planner's prior in planner-run.sh), decision `approved`, ref
+the issue number — and stores the record's id in
 `/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id) so the
 #1399 outcome step can reference it. A re-pick (no-push -> backlog -> pick again, #1441)
 finds that same id file and reuses the stored id — it logs the reuse and returns 0

@@ -91,9 +91,11 @@ LINE="$(head -n 1 "$TAPE1/tape.jsonl")"
 # #1443 relaxed the happy-path assertion: context may now also carry size_class
 # and backend. The shared stub (backlog+priority, no size label) still yields
 # size_class=M, and open_prs must remain exactly 3. area must not appear.
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1398" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and (.forecast | not)' \
+# #1451: a fresh pick also carries a flat-prior forecast block, and the
+# (non-empty) context records forecast_method="prior".
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1398" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and .context.forecast_method == "prior" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and (.forecast.p_success == 0.5) and (.forecast.est_cost == 0) and (.forecast.est_dvision == 0)' \
   "$LINE" \
-  "record must be an approved dev-loop proposal: primary label as class, open-PR count 3, size_class M, no area/parent/caused_by/forecast"
+  "record must be an approved dev-loop proposal: primary label as class, open-PR count 3, size_class M, forecast_method prior, flat-prior forecast, no area/parent/caused_by"
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-1398"
 [ -f "$ID_FILE" ] || ac_fail "id file $ID_FILE missing after a successful pick"
 ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \

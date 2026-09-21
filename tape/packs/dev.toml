@@ -7,3 +7,4 @@ area       = "dev"    # top directory of the files the dev loop touches (e.g. "d
 size_class = "M"      # issue size class S, M, or L, taken from the issue label
 open_prs   = 0        # number of open PRs when the issue was picked (int)
 backend    = "sonnet" # model name running the dev agent
+forecast_method = "prior"  # names the flat-prior forecast written by emit_tape_proposal(); only present when the context is non-empty (omitted on the API-failure path, where context = {})

@@ -1275,7 +1275,7 @@ fi
 emit_tape_proposal() {
   local issue="$1"
   local id class ctx open_prs primary id_file issue_json api_ok size_class backend
-  local existing_id
+  local forecast existing_id
 
   # Re-pick guard (#1441): after the first pick the id file holds the proposal's
   # id. If it is present and contains a non-empty id, the proposal is already on
@@ -1358,9 +1358,18 @@ emit_tape_proposal() {
     if [ -n "$backend" ]; then
       ctx="$(jq -cn --argjson c "$ctx" --arg b "$backend" '$c + {backend: $b}')"
     fi
+    # forecast_method names the flat prior below so the calibration reader
+    # (#1453) knows it is a prior, not measured data. Only when ctx carries
+    # real numbers (non-empty object) — on the API-failure path it degrades to
+    # {} and the method is omitted.
+    ctx="$(jq -cn --argjson c "$ctx" '$c + {forecast_method: "prior"}')"
   fi
 
-  if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "" "approved" "$issue" \
+  # Flat-prior forecast: p_success 0.5, est_cost/est_dvision 0. Honest until a
+  # later issue replaces it with per-issue counts (calibration).
+  forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
+
+  if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "$forecast" "approved" "$issue" \
       >/dev/null 2>&1; then
     log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
     return 0

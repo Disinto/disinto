@@ -36,11 +36,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd awk
-ac_require_cmd jq
-
 TARGET="$REPO_ROOT/dev/dev-poll.sh"
-ac_assert_file "$TARGET" "dev/dev-poll.sh must exist"
 
 # ── 1. Wiring: dev-poll sources the tape lib and calls the emitter ─────────
 # Shared wiring checks (lib helper) — the extracted source is what the
@@ -90,11 +86,7 @@ ac_assert_eq "$(jq -r '.id' <<<"$LINE")" "$ID_AFTER_1" \
 # Second call: same issue, id file present and non-empty -> guard fires.
 rc=0
 out2="$(ac_run_tape_emit "$STUB_BIN" "$TAPE_REPICK" "$FN_SRC" "0" emit_tape_proposal 1441)" || rc=$?
-ac_assert_eq "$rc" "0" "re-pick must return 0 (got $rc): $out2"
-case "$out2" in
-  *"reusing existing proposal id"*) ;;
-  *) ac_fail "re-pick must log that the existing id is reused, got: $out2" ;;
-esac
+ac_assert_repick "$rc" "$out2"
 ac_assert_eq "$(wc -l < "$TAPE_REPICK/tape.jsonl")" "1" \
   "two calls on one issue must leave exactly one tape line"
 ac_assert_eq "$(cat "$ID_REPICK")" "$ID_AFTER_1" \
