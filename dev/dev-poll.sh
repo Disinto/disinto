@@ -522,6 +522,9 @@ issue_is_ready() {
 #
 #   bits    = {"merged":0|1,"ci_green":0|1}  (code-derived 0|1, never prose)
 #   numbers = {"review_rounds":<n>}          (REQUEST_CHANGES reviews, one call)
+#           + {"duration_s":<s>} (#1452)     wall-clock pick→terminal seconds,
+#             now - start, integer, clamped ≥ 0; omitted (never 0) when the
+#             fresh pick's started file is missing or not an integer
 #
 # No id file (issue predates the proposal step) → skip silently: no record,
 # no log line. Any tape failure logs a warning; the merge/close proceeds
@@ -533,6 +536,7 @@ issue_is_ready() {
 emit_tape_outcome() {
   local issue="$1" pr_num="$2" merged="$3" ci_green="$4"
   local id_file id review_rounds bits numbers
+  local started_file started now duration_s has_duration
 
   id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
   id="$(cat "$id_file" 2>/dev/null)" || id=""
@@ -548,16 +552,43 @@ emit_tape_outcome() {
     | jq -r 'if type == "array" then [.[] | select(.state == "REQUEST_CHANGES")] | length else empty end' 2>/dev/null)" || review_rounds=""
   [[ "$review_rounds" =~ ^[0-9]+$ ]] || review_rounds=0
 
+  # duration_s (#1452): the wall-clock pick→terminal span, read from the
+  # started epoch written by the fresh pick (never rewritten on the #1441
+  # re-pick, so it spans the issue's whole life). Missing / non-integer file
+  # → omitted (never 0); a future date (clock skew) clamps to 0.
+  has_duration=0
+  started_file="/tmp/dev-proposal-started-${PROJECT_NAME:-default}-${issue}"
+  if [ -f "$started_file" ]; then
+    started="$(cat "$started_file" 2>/dev/null)" || started=""
+    if [[ "$started" =~ ^[0-9]+$ ]]; then
+      now="$(date -u +%s)"
+      duration_s=$(( now - started ))
+      if (( duration_s < 0 )); then
+        duration_s=0
+      fi
+      has_duration=1
+    fi
+  fi
+
   bits="$(jq -cn --argjson m "$merged" --argjson c "$ci_green" \
     '{merged: $m, ci_green: $c}')"
-  numbers="$(jq -cn --argjson n "$review_rounds" '{review_rounds: $n}')"
+  if [ "$has_duration" = 1 ]; then
+    numbers="$(jq -cn --argjson n "$review_rounds" --argjson d "$duration_s" \
+      '{review_rounds: $n, duration_s: $d}')"
+  else
+    numbers="$(jq -cn --argjson n "$review_rounds" '{review_rounds: $n}')"
+  fi
 
   if ! tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1; then
     log "WARNING: tape: failed to append outcome record ${id} for #${issue} (PR #${pr_num})"
     return 0
   fi
 
-  log "tape: recorded outcome for #${issue} (PR #${pr_num}, merged: ${merged}, ci_green: ${ci_green}, review_rounds: ${review_rounds})"
+  if [ "$has_duration" = 1 ]; then
+    log "tape: recorded outcome for #${issue} (PR #${pr_num}, merged: ${merged}, ci_green: ${ci_green}, review_rounds: ${review_rounds}, duration_s: ${duration_s})"
+  else
+    log "tape: recorded outcome for #${issue} (PR #${pr_num}, merged: ${merged}, ci_green: ${ci_green}, review_rounds: ${review_rounds})"
+  fi
   return 0
 }
 
@@ -1274,7 +1305,7 @@ fi
 # =============================================================================
 emit_tape_proposal() {
   local issue="$1"
-  local id class ctx open_prs primary id_file issue_json api_ok size_class backend
+  local id class ctx open_prs primary id_file issue_json api_ok size_class backend started_file
   local forecast existing_id
 
   # Re-pick guard (#1441): after the first pick the id file holds the proposal's
@@ -1380,7 +1411,17 @@ emit_tape_proposal() {
   # script, so two projects sharing a /tmp can't clobber each other.
   # Contents: just the id.
   id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
-  if ! printf '%s' "$id" > "$id_file"; then
+  if printf '%s' "$id" > "$id_file"; then
+    # Record the pick's wall-clock epoch (#1452) in the sibling file, so the
+    # terminal outcome can compute the pick→terminal duration. Written only
+    # on the fresh-pick path — the #1441 re-pick guard above returns before
+    # this block — so a re-queued pick never resets it and the duration spans
+    # the issue's whole life, not just one attempt. Best effort: a failed
+    # write just leaves the file absent, which the outcome step treats as
+    # "no duration" (never 0).
+    started_file="/tmp/dev-proposal-started-${PROJECT_NAME:-default}-${issue}"
+    date -u +%s > "$started_file" 2>/dev/null || true
+  else
     log "WARNING: tape: failed to write proposal id file ${id_file}"
   fi
 
