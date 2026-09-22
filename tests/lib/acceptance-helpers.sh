@@ -228,6 +228,20 @@ ac_stub_env() {
   export PROJECT_NAME
 }
 
+# ac_stub_bin_and_log <STUB_BIN> — write the hermetic curl stub to <STUB_BIN>
+# (ac_write_curl_stub), create it, and define a top-level log() stand-in so
+# the extracted emitter's poll lines reach the runner's captured output. The
+# run subshells inherit both; STUB_BIN is set as a global for the test's
+# ac_stub_env() call.
+ac_stub_bin_and_log() {
+  local stub_bin="$1"
+  STUB_BIN="$stub_bin"
+  mkdir -p "$STUB_BIN"
+  ac_write_curl_stub "$STUB_BIN"
+  # shellcheck disable=SC2317
+  log() { echo "poll: $*"; }
+}
+
 # ac_run_tape_emit <STUB_BIN> <TAPE_DIR> <FN_SRC> <fail> <fn-name> [args...]
 # — run the extracted tape emitter given by <FN_SRC> (usually from
 # ac_extract_fn) in a throwaway subshell: the ac_write_curl_stub fake curl

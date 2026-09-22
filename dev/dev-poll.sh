@@ -35,6 +35,8 @@ source "$(dirname "$0")/../lib/guard.sh"
 source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 # shellcheck source=../lib/tape.sh
 source "$(dirname "$0")/../lib/tape.sh"
+# shellcheck source=../lib/catalog-forecast.sh
+source "$(dirname "$0")/../lib/catalog-forecast.sh"
 check_active dev
 
 # Initialize CI fix tracker (must be called before any tracker functions)
@@ -1306,7 +1308,7 @@ fi
 emit_tape_proposal() {
   local issue="$1"
   local id class ctx open_prs primary id_file issue_json api_ok size_class backend started_file
-  local forecast existing_id
+  local forecast existing_id tmp_forecast
 
   # Re-pick guard (#1441): after the first pick the id file holds the proposal's
   # id. If it is present and contains a non-empty id, the proposal is already on
@@ -1372,6 +1374,26 @@ emit_tape_proposal() {
   backend="${DSH_MODEL:-}"
   [ -n "$backend" ] || backend="${CLAUDE_MODEL:-}"
   [ -n "$backend" ] || backend="${AGENT_HARNESS:-}"
+  # forecast (#1461): a fresh pick mints one proposal. Prefer the catalog
+  # forecast lib's measured prior when the lib is sourced; fall back to the
+  # flat prior when catalog_forecast is undefined (e.g. a test that sources
+  # lib/tape.sh alone) so the pick never fails. The lib always writes a forecast
+  # line and always exports CATALOG_FORECAST_METHOD ("counts" | "prior").
+  tmp_forecast="$(mktemp)"
+  if command -v catalog_forecast >/dev/null 2>&1; then
+    # stdout captured in a file (not $()) so CATALOG_FORECAST_METHOD is visible
+    # in this shell for the context build below.
+    catalog_forecast dev "$class" >"$tmp_forecast" 2>/dev/null
+    if [ -n "$(cat "$tmp_forecast" 2>/dev/null)" ]; then
+      forecast="$(cat "$tmp_forecast")"
+    else
+      forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
+    fi
+  else
+    forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
+  fi
+  rm -f "$tmp_forecast"
+
 
   # ctx is populated only when the forge answered both fetches (open_prs parses
   # as a count and the issue JSON is an object); otherwise it degrades to {}
@@ -1389,16 +1411,13 @@ emit_tape_proposal() {
     if [ -n "$backend" ]; then
       ctx="$(jq -cn --argjson c "$ctx" --arg b "$backend" '$c + {backend: $b}')"
     fi
-    # forecast_method names the flat prior below so the calibration reader
-    # (#1453) knows it is a prior, not measured data. Only when ctx carries
-    # real numbers (non-empty object) — on the API-failure path it degrades to
+    # forecast_method records the method the forecast step actually used
+    # (#1461) so the #1453 calibration reader can tell a measured prior
+    # (catalog "counts") from the flat prior. Only when ctx carries real
+    # numbers (non-empty object) — on the API-failure path it degrades to
     # {} and the method is omitted.
-    ctx="$(jq -cn --argjson c "$ctx" '$c + {forecast_method: "prior"}')"
+    ctx="$(jq -cn --argjson c "$ctx" --arg fm "${CATALOG_FORECAST_METHOD:-prior}" '$c + {forecast_method: $fm}')"
   fi
-
-  # Flat-prior forecast: p_success 0.5, est_cost/est_dvision 0. Honest until a
-  # later issue replaces it with per-issue counts (calibration).
-  forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
 
   if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "$forecast" "approved" "$issue" \
       >/dev/null 2>&1; then
