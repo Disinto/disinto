@@ -21,7 +21,7 @@
 #   load_formula_or_profile [ROLE] [FORMULA_FILE] — load from .profile or fallback
 #   formula_tape_ulid                    — emit a 26-char Crockford-base32 ULID
 #   formula_session_start [ORGAN]        — open the tape run record for a session
-#   formula_session_end [RC] [TRANSCRIPT] — close it: outcome + closing run record
+#   formula_session_end [RC] [TRANSCRIPT] — close it: closing run record with cost
 #
 # Subsystems (sourced):
 #   profile.sh  — agent .profile repository: lessons-learned digest + per-session journal
@@ -480,13 +480,14 @@ formula_session_start() {
 
 # formula_session_end [EXIT_CODE] [TRANSCRIPT_FILE]
 # Closes the run opened by formula_session_start:
-#   - tape_outcome: bits {"exit_ok":0|1}, numbers {"duration_s":...} plus
-#     tokens_in/tokens_out when the transcript's final result row carries
-#     usage (whatever the harness already measures — omitted when it does
-#     not), payloads [sha256 of the transcript] when a transcript file
-#     exists, children {}
 #   - closing tape_run (records are immutable — a second append with
-#     ended + status completed|failed set)
+#     ended + status completed|failed set), carrying the session cost on the
+#     run's `cost` object: duration_s (integer seconds, >=0), tokens_in/
+#     tokens_out when the transcript's final result row carries usage (the
+#     same parse as before — omitted when it does not), and transcript = the
+#     tape_payload hash of the transcript when the store succeeds (key
+#     omitted on failure). No tape_outcome is written: run status lives on the
+#     run record, not on a separate outcome (#1474).
 # TRANSCRIPT_FILE defaults to the harness diagnostics file
 # (${DISINTO_LOG_DIR:-/tmp}/${LOG_AGENT}/agent-run-last.json).
 # No-ops (return 0) when no session was started. A tape failure logs a
@@ -501,12 +502,12 @@ formula_session_end() {
     return 0
   fi
 
-  local ended epoch_now duration_s status exit_ok
+  local ended epoch_now duration_s status
   ended=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   epoch_now=$(date -u +%s)
   duration_s=$(( epoch_now - _FORMULA_TAPE_START_EPOCH ))
   [ "$duration_s" -ge 0 ] || duration_s=0
-  if [ "$exit_code" -eq 0 ]; then status="completed"; exit_ok=1; else status="failed"; exit_ok=0; fi
+  if [ "$exit_code" -eq 0 ]; then status="completed"; else status="failed"; fi
 
   # Transcript → payload ref + token counts from the final result row
   # (usage.input_tokens / usage.output_tokens, same shape the harness
@@ -526,24 +527,22 @@ formula_session_end() {
   case "$tokens_in" in '' | *[!0-9]*) tokens_in="" ;; esac
   case "$tokens_out" in '' | *[!0-9]*) tokens_out="" ;; esac
 
-  local bits numbers payloads
-  bits=$(jq -cn --argjson e "$exit_ok" '{exit_ok: $e}')
-  numbers=$(jq -cn --argjson d "$duration_s" --arg ti "$tokens_in" --arg to "$tokens_out" '
+  # Session cost on the closing run record (not an outcome — #1474):
+  #   duration_s always (int, >=0); tokens_in/tokens_out when the transcript
+  #   carries usage; transcript = tape_payload hash when the store succeeded.
+  local cost
+  cost=$(jq -cn \
+      --argjson d "$duration_s" \
+      --arg ti "$tokens_in" \
+      --arg to "$tokens_out" \
+      --arg h "$payload_ref" '
     {duration_s: $d}
     + (if $ti != "" then {tokens_in: ($ti | tonumber)} else {} end)
-    + (if $to != "" then {tokens_out: ($to | tonumber)} else {} end)')
-  if [ -n "$payload_ref" ]; then
-    payloads=$(jq -cn --arg h "$payload_ref" '[$h]')
-  else
-    payloads='[]'
-  fi
+    + (if $to != "" then {tokens_out: ($to | tonumber)} else {} end)
+    + (if $h != "" then {transcript: $h} else {} end)')
 
-  if ! tape_outcome "$_FORMULA_TAPE_PROPOSAL" "$bits" "$numbers" '{}' "$payloads" \
-      >/dev/null 2>&1; then
-    log "WARNING: tape: failed to append outcome record"
-  fi
   if ! tape_run "$_FORMULA_TAPE_PROPOSAL" "$_FORMULA_TAPE_ORGAN" "$_FORMULA_TAPE_AGENT" \
-      "$_FORMULA_TAPE_STARTED" "$ended" "$_FORMULA_TAPE_ATTEMPTS" '{}' "$status" \
+      "$_FORMULA_TAPE_STARTED" "$ended" "$_FORMULA_TAPE_ATTEMPTS" "$cost" "$status" \
       >/dev/null 2>&1; then
     log "WARNING: tape: failed to append closing run record"
   fi
