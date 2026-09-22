@@ -1,4 +1,4 @@
-<!-- last-reviewed: 3b525882d7bd5c208808a51930eeb30f3acaef99 -->
+<!-- last-reviewed: 1da4a8f85641caf270e7f07b765f9c879e46589a -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -32,7 +32,12 @@ and executes the pending-actions manifest post-merge.
   `lib/pr-lifecycle.sh`. Executes pending-actions manifest via
   `_gardener_execute_manifest` after PR merge. Sources `lib/gardener-pr.sh` for
   PR detection helper (`detect_pr_number`). Loads engagement evidence from ops repo
-  (`load_engagement_evidence`) for website addressable decisions.
+  (`load_engagement_evidence`) for website addressable decisions. Refreshes the ops
+  catalog after the session ends (`refresh_ops_calibration`, #1454): runs
+  `tools/calibration.sh` (#1453 — promised-vs-actual table over the proposal-loop
+  tape) and writes the report to `${OPS_REPO_ROOT}/catalog/calibration.md` via
+  `ops_commit_and_push`; never fatal — a failed `calibration.sh` (rc!=0) or an unset
+  `OPS_REPO_ROOT` only logs a warning and leaves the file untouched.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.
