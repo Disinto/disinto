@@ -16,10 +16,10 @@ setup() {
   TAPE_DIR="$BATS_TEST_TMPDIR/tape"
   PAYLOAD_DIR="$BATS_TEST_TMPDIR/payloads"
   export ROOT TAPE_DIR PAYLOAD_DIR
-  # Control the environment: the default organs key on their own run ULID,
-  # so an inherited TAPE_PROPOSAL_ID (a caller-supplied proposal) would
-  # append a spurious proposal record. Tests that need a caller proposal
-  # export their own inside the driver.
+  # Control the environment: the default organs key on their own run ULID;
+  # an inherited TAPE_PROPOSAL_ID (a caller-supplied proposal) would make
+  # the run orphan (its proposal row absent). Tests that need a caller
+  # proposal export their own inside the driver.
   unset TAPE_PROPOSAL_ID
 }
 
@@ -146,7 +146,7 @@ EOF
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
-@test "TAPE_PROPOSAL_ID: minimal proposal appended once when unknown" {
+@test "TAPE_PROPOSAL_ID: unknown proposal is an orphan run (no proposal row appended)" {
   write_driver <<'EOF'
 set -euo pipefail
 log() { :; }
@@ -157,18 +157,15 @@ formula_session_end 0
 EOF
   [ "$status" -eq 0 ]
   jq -es '
-      (length == 3)
-      and (.[0].type == "proposal")
-      and (.[0].id == "prop-42")
-      and (.[0].loop == "formula")
-      and (.[0].decision == "auto")
-      and (.[0].ref == "prop-42")
-      and (.[0].context.organ == "planner")
-      and ((map(select(.type == "proposal")) | length) == 1)
+      (length == 2)
+      and ((map(select(.type == "proposal")) | length) == 0)
+      and (.[0].type == "run")
+      and (.[0].proposal_id == "prop-42")
+      and ((.[0] | has("ended")) | not)
+      and ((.[0] | has("status")) | not)
       and (.[1].type == "run")
       and (.[1].proposal_id == "prop-42")
       and ((map(select(.type == "outcome")) | length) == 0)
-      and (.[2].type == "run")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 

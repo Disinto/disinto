@@ -419,9 +419,10 @@ formula_tape_ulid() {
 
 # formula_session_start [ORGAN]
 # Opens the tape run record for the current formula session:
-#   - run id = fresh ULID; proposal = $TAPE_PROPOSAL_ID when set (with a
-#     minimal tape_proposal appended if the tape has no record for that id
-#     yet), else the run ULID
+#   - run id = fresh ULID; proposal = $TAPE_PROPOSAL_ID when set
+#     (caller-supplied; this function never reads the tape and never appends
+#     a proposal — a missing proposal row is an orphan run, not a new
+#     proposal), else the run ULID
 #   - organ = $1 (default "organ"), agent = <harness>/<model>
 #     (AGENT_HARNESS, default claude, + CLAUDE_MODEL when set)
 # Appends one OPEN tape_run line (started + attempts set, ended/status
@@ -445,31 +446,6 @@ formula_session_start() {
   _FORMULA_TAPE_STARTED="$started"
   _FORMULA_TAPE_START_EPOCH=$(date -u +%s)
   _FORMULA_TAPE_ATTEMPTS=1
-
-  # Known caller proposal? Append a minimal proposal record if none exists
-  # yet. The parse is line-tolerant (try fromjson) so a torn final line from
-  # a concurrent writer can only cost us a duplicate, never a crash.
-  if [ -n "${TAPE_PROPOSAL_ID:-}" ]; then
-    local tape_file="${TAPE_DIR}/tape.jsonl"
-    local found=""
-    if [ -f "$tape_file" ]; then
-      found=$(jq -R -r -s --arg id "$proposal" '
-          [splits("\n")]
-          | map(select(. != "") | (try fromjson))
-          | map(select(type == "object"))
-          | map(select(.type == "proposal" and .id == $id) | .id)
-          | first // ""
-        ' "$tape_file" 2>/dev/null) || found=""
-    fi
-    if [ -z "$found" ]; then
-      local ctx
-      ctx=$(jq -cn --arg organ "$organ" '{organ: $organ}')
-      if ! tape_proposal "$proposal" formula "$organ" '' '' "$ctx" '' auto "$proposal" \
-          >/dev/null 2>&1; then
-        log "WARNING: tape: failed to append minimal proposal ${proposal}"
-      fi
-    fi
-  fi
 
   if ! tape_run "$proposal" "$organ" "$agent" "$started" '' \
       "$_FORMULA_TAPE_ATTEMPTS" '{}' '' >/dev/null 2>&1; then
