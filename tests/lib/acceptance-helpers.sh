@@ -288,3 +288,16 @@ ac_assert_repick() {
     *) ac_fail "re-pick must log that the existing id is reused, got: $out" ;;
   esac
 }
+
+# ac_run_empty_tape <dir> <tool> — prepare <dir> with an empty tape.jsonl
+# (mkdir -p, truncate), run <tool> with TAPE_DIR set, and store the exit
+# status in the global rc and stdout in the global out. Shared by the
+# empty-tape acceptance ACs (issue-1453.sh, issue-1473.sh) so the identical
+# fixture + run lines are not duplicated file-to-file (duplicate-detection).
+ac_run_empty_tape() {
+  local d="$1" t="$2"
+  mkdir -p "$d"
+  : > "$d/tape.jsonl"
+  rc=0
+  out="$(TAPE_DIR="$d" bash "$t")" || rc=$?
+}

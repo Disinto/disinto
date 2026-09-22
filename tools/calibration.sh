@@ -12,27 +12,34 @@
 # matches no proposal (orphan) is skipped; a proposal without any outcome
 # forms no pair.
 #
-# Pairs are grouped by (loop, class) — both taken from the proposal — and
-# summarised as a markdown table on stdout:
+# Pairs are grouped by (loop, class) — both taken from the proposal — after
+# dropping non-samples, and summarised as a markdown table on stdout:
 #
 #   | loop | class | n | promised | actual | error | mean duration_s |
 #
-#   n               number of pairs in the group
+#   n               number of sample pairs in the group
 #   promised        mean of the proposals' forecast.p_success (as an
-#                   integer percent) over the pairs that carry a numeric one;
-#                   "-" when no pair in the group carries one (old-tape rows
-#                   have no forecast, so a whole group may be "-")
-#   actual          share of the group's pairs whose outcome carries
-#                   bits.merged true or 1, as an integer percentage
+#                   integer percent) over the sample pairs that carry a
+#                   numeric one; "-" when no sample pair in the group
+#                   carries one (old-tape rows have no forecast, so a whole
+#                   group may be "-")
+#   actual          share of sample pairs whose last outcome carries the
+#                   loop's own competence bit true or 1, as an integer
+#                   percentage:
+#                     dev    -> bits.merged
+#                     repair -> bits.regression_cleared
 #   error           |promised - actual| in percentage points when promised
 #                   is present; "-" otherwise
-#   mean duration_s mean of the pairs' outcome numbers.duration_s over the
-#                   pairs that carry one (missing ones are skipped, never
-#                   counted as zero); "-" when no pair in the group carries
-#                   a duration
+#   mean duration_s mean of the sample pairs' outcome numbers.duration_s over
+#                   the pairs that carry one (missing ones are skipped, never
+#                   counted as zero); "-" when no sample pair in the group
+#                   carries a duration
 #
-# Pairs without a forecast still count in n and actual (old-tape rows are
-# not dropped).
+# A pair is a sample only when the loop is dev or repair and the LAST
+# outcome carries that loop's competence bit (true/false/1/0): true/1 is a
+# success, false/0 a failure. Any other loop, or a last outcome without the
+# bit, is dropped from n, promised, actual, and mean duration_s — never
+# counted as 0%. Same last-outcome pairing as before.
 #
 # Pure bash + jq. No git, no network, no writes: the tape is only read.
 # Malformed tape lines (e.g. a torn final line from a crashed writer) are
@@ -46,7 +53,8 @@
 #   TAPE_DIR  tape directory (default /srv/disinto/tape)
 #
 # Exit codes:
-#   0  report printed; a missing or empty tape prints the header row only
+#   0  report printed; a missing or empty tape, or a tape with no sample
+#      pairs, prints the header row only
 #   1  jq missing
 # =============================================================================
 set -euo pipefail
@@ -73,7 +81,7 @@ skipped=$(( total_lines - valid_lines ))
 [ "$skipped" -ge 0 ] || skipped=0
 [ "$skipped" -eq 0 ] || echo "calibration: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
 
-# One tab-separated row per (loop, class) group:
+# One tab-separated row per (loop, class) sample group:
 # loop <tab> class <tab> n <tab> promised (integer %, or the literal
 # "-") <tab> actual (integer %) <tab> mean duration_s (the literal
 # "NA" when no pair in the group carries one). The reader derives
@@ -83,34 +91,49 @@ jq -R -s -r '
     | (try fromjson catch null)
     | select(type == "object") ] as $recs
   | ($recs | map(select(.type == "proposal"
-                 and ((.id | type) == "string")
-                 and ((.loop | type) == "string")
-                 and ((.class | type) == "string")))
-     | map({ key: .id, value: { loop: .loop, class: .class,
-                                 promised: (.forecast.p_success
-                                            | if type == "number" then . else null end) } })
-     | from_entries) as $props
+                  and ((.id | type) == "string")
+                  and ((.loop | type) == "string")
+                  and ((.class | type) == "string")))
+      | map({ key: .id, value: { loop: .loop, class: .class,
+                                  promised: (.forecast.p_success
+                                             | if type == "number" then . else null end) } })
+      | from_entries) as $props
   | [ $recs[]
-       | select(.type == "outcome"
-                and ((.proposal_id | type) == "string")
-                and ($props[.proposal_id] != null)) ]
+        | select(.type == "outcome"
+                 and ((.proposal_id | type) == "string")
+                 and ($props[.proposal_id] != null)) ]
   | group_by(.proposal_id)
   | map(last)
   | map({ loop: $props[.proposal_id].loop,
-          class: $props[.proposal_id].class,
-          promised: $props[.proposal_id].promised,
-          merged: (.bits.merged == true or .bits.merged == 1),
-          duration: (.numbers.duration_s
-                     | if type == "number" then . else null end) })
+           class: $props[.proposal_id].class,
+           promised: $props[.proposal_id].promised,
+           bits: (.bits | if type == "object" then . else {} end),
+           duration: (.numbers.duration_s
+                      | if type == "number" then . else null end) })
+  # A pair is a sample only when the competence bit of the loop is carried
+  # by the last outcome: dev -> merged, repair -> regression_cleared; any
+  # other loop has no competence bit, so it is never a sample. Only a
+  # well-formed bit (true/false/1/0, the values the tape writers emit)
+  # counts as carried: true/1 is a success, false/0 a failure.
+  | map({ loop: .loop,
+           class: .class,
+           promised: .promised,
+           competence: (if .loop == "dev" then .bits.merged
+                         else (if .loop == "repair" then .bits.regression_cleared
+                                else null end) end),
+           duration: .duration })
+  | map(select(.competence == true or .competence == false
+                or .competence == 1 or .competence == 0))
   | group_by([.loop, .class])
   | map({ loop: .[0].loop,
-          class: .[0].class,
-          n: length,
-          promised: ((map(.promised) | map(select(. != null)))
-                     | if length > 0 then ((100 * add / length) | round) else null end),
-          mr: (100 * (map(select(.merged)) | length) / length | round),
-          md: ((map(.duration) | map(select(. != null)))
-               | if length > 0 then add / length else null end) })
+           class: .[0].class,
+           n: length,
+           promised: ((map(.promised) | map(select(. != null)))
+                      | if length > 0 then ((100 * add / length) | round) else null end),
+           mr: (100 * (map(select(.competence == true or .competence == 1)) | length)
+                 / length | round),
+           md: ((map(.duration) | map(select(. != null)))
+                | if length > 0 then add / length else null end) })
   | .[]
   | "\(.loop)\t\(.class)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)"
 ' "$TAPE_FILE" |
