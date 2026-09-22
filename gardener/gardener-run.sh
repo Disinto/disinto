@@ -363,6 +363,34 @@ _gardener_execute_manifest() {
   log "manifest: execution complete (${count} actions processed)"
 }
 
+# ── Ops catalog: calibration.md (#1454) ──────────────────────────────────
+# Writes the calibration tape report (tools/calibration.sh, #1453) into the
+# ops repo as catalog/calibration.md so organs and humans can read the
+# promised-vs-actual table out of the WAL. Bash only, no LLM; runs after
+# formula_session_end so the session's own tape row is closed first. Never
+# fatal: a failed calibration.sh only logs a warning and skips the file, and a
+# missing ops git leaves the file on disk (ops_commit_and_push is a no-op).
+refresh_ops_calibration() {
+  local ops_root="${OPS_REPO_ROOT:-}"
+  if [ -z "$ops_root" ]; then
+    log "catalog: OPS_REPO_ROOT unset — skipping calibration.md refresh"
+    return 0
+  fi
+  local out rc=0
+  if ! mkdir -p "${ops_root}/catalog" 2>/dev/null; then
+    log "WARNING: mkdir ${ops_root}/catalog failed — skipping calibration.md refresh"
+    return 0
+  fi
+  out="$( "$FACTORY_ROOT/tools/calibration.sh" )" || rc=$?
+  if [ $rc -eq 0 ]; then
+    printf '%s' "$out" > "${ops_root}/catalog/calibration.md"
+    ops_commit_and_push "catalog: refresh calibration.md" catalog/calibration.md
+    log "catalog: calibration.md refreshed in ops repo"
+  else
+    log "WARNING: calibration.sh failed (rc=$rc) — calibration.md not refreshed"
+  fi
+}
+
 # ── Reset result file ────────────────────────────────────────────────────
 rm -f "$RESULT_FILE" "$GARDENER_PR_FILE"
 touch "$RESULT_FILE"
@@ -382,6 +410,9 @@ log "agent_run complete"
 
 # Close the tape run: outcome + closing run record (#1391)
 formula_session_end "$GARDENER_RUN_RC"
+
+# Write the calibration table to the ops repo catalog (#1454)
+refresh_ops_calibration
 
 # ── Detect PR ─────────────────────────────────────────────────────────────
 detect_pr_number "chore/gardener-"
