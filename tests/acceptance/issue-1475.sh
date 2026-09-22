@@ -78,7 +78,7 @@ set -euo pipefail
 # Stands in for lib/env.sh's log() (the real organ runners source env.sh
 # first). The driver must not be a no-op or the missing-TAPE_DIR AC
 # (which checks the logged warning) would see nothing.
-log() { printf 'WARN %s\n' "\$*" >&2; }
+log() { printf 'AC %s\n' "\$*" >&2; }
 unset TAPE_PROPOSAL_ID
 export AGENT_HARNESS=claude LOG_AGENT=acceptance
 source "$REPO_ROOT/lib/formula-session.sh"
