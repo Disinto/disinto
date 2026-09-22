@@ -1,4 +1,4 @@
-<!-- last-reviewed: 510d3225cb46fd116ff9aa7709f4509ac348afa4 -->
+<!-- last-reviewed: 73d8ee70886f94d028811ac28d946655f0c44ad4 -->
 # Predictor Agent
 
 **Role**: Abstract adversary (the "goblin"). Runs a 2-step formula
