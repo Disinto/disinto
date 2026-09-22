@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tape.sh — append-only experience tape for the proposal loop (#1389)
 #
-# Stage 1 is WRITE-ONLY: the organs append narrow typed records to a tape;
-# nothing reads the tape to act yet (readers land in #1391/#1392/#1393).
+# The organs append narrow typed records to a tape;
+# calibration reads the tape to report, no organ reads the tape to act.
 # One JSON object per line, appended under a single flock. No prose fields —
 # text stays in payloads.
 #
