@@ -3,17 +3,24 @@
 #
 # lib/formula-session.sh brackets a formula session with
 # formula_session_start / formula_session_end: an OPEN tape_run line (started,
-# attempts, ended/status omitted), a tape_outcome (exit_ok bit, duration +
-# whatever token counts the harness measured, transcript payload ref) and a
-# closing tape_run (ended + status) — records are immutable, so the close is a
-# second append. The functions are total: every tape failure logs a WARNING
-# and returns 0, so an unwritable TAPE_DIR can never fail the organ.
+# attempts, ended/status omitted) and a closing tape_run (ended + status
+# completed|failed, session cost on the run's cost object: duration_s +
+# tokens_in/tokens_out from the transcript's final usage row + transcript
+# payload ref) — records are immutable, so the close is a second append.
+# No tape_outcome is written (#1474): run status lives on the run record, not
+# on a separate outcome. The functions are total: every tape failure logs a
+# WARNING and returns 0, so an unwritable TAPE_DIR can never fail the organ.
 
 setup() {
   ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   TAPE_DIR="$BATS_TEST_TMPDIR/tape"
   PAYLOAD_DIR="$BATS_TEST_TMPDIR/payloads"
   export ROOT TAPE_DIR PAYLOAD_DIR
+  # Control the environment: the default organs key on their own run ULID,
+  # so an inherited TAPE_PROPOSAL_ID (a caller-supplied proposal) would
+  # append a spurious proposal record. Tests that need a caller proposal
+  # export their own inside the driver.
+  unset TAPE_PROPOSAL_ID
 }
 
 # write_driver — drop a driver script (inheriting ROOT/TAPE_DIR/PAYLOAD_DIR)
@@ -54,7 +61,7 @@ EOF
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
 }
 
-@test "start→end: open run, outcome, closing run; payload + tokens from transcript" {
+@test "start→end: open run, closing run with cost; payload + tokens from transcript" {
   local t="$BATS_TEST_TMPDIR/transcript.json"
   printf '%s\n' \
     '{"type":"assistant","message":{"id":"m1"}}' \
@@ -71,9 +78,9 @@ formula_session_end 0 "$t"
 EOF
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 3 ]
+  [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 2 ]
   jq -es '
-      (length == 3)
+      (length == 2)
       and (.[0].type == "run")
       and ((.[0] | has("ended")) | not)
       and ((.[0] | has("status")) | not)
@@ -83,29 +90,25 @@ EOF
       and (.[0].cost == {})
       and (.[0].proposal_id | test("^[0-9A-HJKMNP-TV-Z]{26}$"))
       and (.[0].started | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-      and (.[1].type == "outcome")
+      and (.[1].type == "run")
       and (.[1].proposal_id == .[0].proposal_id)
-      and (.[1].bits == {"exit_ok": 1})
-      and ((.[1].numbers.duration_s | type) == "number")
-      and (.[1].numbers.duration_s >= 1)
-      and (.[1].numbers.tokens_in == 123)
-      and (.[1].numbers.tokens_out == 45)
-      and (.[1].children == {})
-      and (.[2].type == "run")
-      and (.[2].proposal_id == .[0].proposal_id)
-      and (.[2].started == .[0].started)
-      and (.[2].ended | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-      and (.[2].status == "completed")
-      and (.[2].attempts == 1)
+      and (.[1].started == .[0].started)
+      and ((.[1].cost.duration_s | type) == "number")
+      and (.[1].cost.duration_s >= 1)
+      and (.[1].cost.tokens_in == 123)
+      and (.[1].cost.tokens_out == 45)
+      and (.[1].ended | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+      and (.[1].status == "completed")
+      and (.[1].attempts == 1)
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
   local h
   h="$(sha256sum "$t" | cut -d' ' -f1)"
-  jq -es --arg h "$h" -e '.[1].payloads == [$h]' "$TAPE_DIR/tape.jsonl" >/dev/null
+  jq -es --arg h "$h" -e '.[1].cost.transcript == $h' "$TAPE_DIR/tape.jsonl" >/dev/null
   [ -f "$PAYLOAD_DIR/$h" ]
   diff "$t" "$PAYLOAD_DIR/$h"
 }
 
-@test "non-zero exit code → exit_ok 0 and status failed" {
+@test "non-zero exit code → status failed, no outcome" {
   write_driver <<'EOF'
 set -euo pipefail
 log() { :; }
@@ -115,13 +118,14 @@ formula_session_end 124
 EOF
   [ "$status" -eq 0 ]
   jq -es '
-      (length == 3)
-      and (.[1].bits == {"exit_ok": 0})
-      and (.[2].status == "failed")
+      (length == 2)
+      and ((map(select(.type == "outcome")) | length) == 0)
+      and (.[1].status == "failed")
+      and ((.[1].cost.duration_s | type) == "number")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
-@test "missing transcript → empty payloads, no token fields, agent without model" {
+@test "missing transcript → no transcript key, no token fields, agent without model" {
   write_driver <<EOF
 set -euo pipefail
 log() { printf 'WARN %s\n' "\$*" >&2; }
@@ -134,10 +138,11 @@ EOF
   [ "$status" -eq 0 ]
   jq -es '
       (.[0].agent == "claude")
-      and (.[1].payloads == [])
-      and ((.[1].numbers | has("tokens_in")) | not)
-      and ((.[1].numbers | has("tokens_out")) | not)
-      and ((.[1].numbers.duration_s | type) == "number")
+      and ((.[1].cost | has("tokens_in")) | not)
+      and ((.[1].cost | has("tokens_out")) | not)
+      and ((.[1].cost | has("transcript")) | not)
+      and ((.[1].cost.duration_s | type) == "number")
+      and (.[1].status == "completed")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
@@ -152,7 +157,7 @@ formula_session_end 0
 EOF
   [ "$status" -eq 0 ]
   jq -es '
-      (length == 4)
+      (length == 3)
       and (.[0].type == "proposal")
       and (.[0].id == "prop-42")
       and (.[0].loop == "formula")
@@ -162,8 +167,8 @@ EOF
       and ((map(select(.type == "proposal")) | length) == 1)
       and (.[1].type == "run")
       and (.[1].proposal_id == "prop-42")
-      and (.[2].type == "outcome")
-      and (.[3].type == "run")
+      and ((map(select(.type == "outcome")) | length) == 0)
+      and (.[2].type == "run")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
@@ -179,14 +184,16 @@ formula_session_end 0
 EOF
   [ "$status" -eq 0 ]
   jq -es '
-      (length == 4)
+      (length == 3)
       and (.[0].type == "proposal" and .[0].loop == "review")
       and ((map(select(.type == "proposal")) | length) == 1)
       and (.[1].proposal_id == "prop-9")
+      and ((map(select(.type == "outcome")) | length) == 0)
+      and (.[2].type == "run")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
-@test "double end appends a single outcome (idempotent close)" {
+@test "double end appends a single closing run (idempotent close)" {
   write_driver <<'EOF'
 set -euo pipefail
 log() { :; }
@@ -197,8 +204,8 @@ formula_session_end 0
 EOF
   [ "$status" -eq 0 ]
   jq -es '
-      (length == 3)
-      and ((map(select(.type == "outcome")) | length) == 1)
+      (length == 2)
+      and ((map(select(.type == "outcome")) | length) == 0)
       and ((map(select(.type == "run")) | length) == 2)
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
