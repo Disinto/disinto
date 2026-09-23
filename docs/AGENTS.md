@@ -72,7 +72,7 @@ disinto/                 (code repo)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
 │                  dispatch.sh, key-command.sh; lib/ (ports.sh, caddy.sh,
 │                  authorized_keys.sh, accounts.sh); verbs/ (approve.sh,
-│                  credits.sh, credits-grant.sh, register-request.sh,
+│                  credits.sh, credits-buy.sh, credits-grant.sh, register-request.sh,
 │                  revoke.sh, status.sh, ticket.sh, tickets.sh, whoami.sh);
 │                  reserved-name blocklist, admin-approved allowlist, per-caller
 │                  attribution);
