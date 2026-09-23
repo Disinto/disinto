@@ -83,12 +83,16 @@ planner formula.
   `agent_run` (`lib/agent-sdk.sh`), guards a resource-limit exit (rc 124,
   #1164) so the PR walk still runs, then creates the ops PR and walks it to
   merge, writes the journal via `profile_write_journal`, and cleans up.
-  **Dev-loop tape (#1409)**: after the session closes, `planner_tape_tick`
-  diffs the current open-issue set against a pre-session snapshot and, for each
-  newly filed `backlog` issue, appends one dev-loop proposal record via
-  `emit_planner_proposal` (flat-prior `forecast` `{"p_success":0.5,"est_cost":0,
-  "est_dvision":0}`; `id` = `formula_tape_ulid`). Total — a tape or forge-API
-  failure logs a WARNING and returns 0, so it can never abort the planner run.
+  **Dev-loop tape (#1409, #1476)**: the dev-loop *proposal* for a filed backlog
+  issue is owned by the pick (dev-poll claims the issue and appends the
+  `approved` proposal) — the pick is the sample. #1409 had added a planner-side
+  `emit_planner_proposal` (via `planner_tape_tick`) that wrote a *second*
+  `approved` row, pre-approving work the factory had not run; #1476 removes that
+  emission. `planner_tape_tick` is now an intentional no-op stub kept as the
+  guarded call site after the session closes (verified by
+  `tests/acceptance/issue-1476.sh`), and `emit_planner_proposal` / the pre-session
+  open-issue snapshot are deleted (they had no remaining caller). The run-lifecycle
+  tape records (`formula_session_start` / `formula_session_end`) are unchanged.
 - `formulas/run-planner.toml` — The execution spec (the only planner formula,
   #1334; v4, graph-driven, tea helpers): three steps with `needs` dependencies
   — preflight, triage-and-plan (unifies the former prediction-triage /

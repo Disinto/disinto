@@ -173,11 +173,12 @@ ac_has_call_matching() {
 }
 
 # ── Hermetic forge stub (shared by the tape-emitter extraction tests) ───────
-# tests/acceptance/issue-1398.sh (emit_tape_proposal), issue-1399.sh
-# (emit_tape_outcome), and issue-1409.sh (emit_planner_proposal) extract
-# their function from the top-level executable and run it in a subshell
-# against a fake forge — no network, no live services. These helpers build
-# that environment.
+# tests/acceptance/issue-1398.sh (emit_tape_proposal) and issue-1399.sh
+# (emit_tape_outcome) extract their function from the top-level executable and
+# run it in a subshell against a fake forge — no network, no live services.
+# These helpers build that environment. (issue-1409.sh was deleted by #1476,
+# which removed emit_planner_proposal from planner-run.sh; the planner tick is
+# now a no-op stub verified by issue-1476.sh.)
 
 # ac_write_curl_stub <STUB_BIN> — write a hermetic curl stub (a fake forge
 # API) to <STUB_BIN>/curl and chmod +x it. The stub keys on its last
@@ -249,7 +250,7 @@ ac_stub_bin_and_log() {
 # real lib/tape.sh, and the test's top-level log() stand-in (inherited).
 # <fail>=1 makes the stub curl fail like an unreachable API (AC_STUB_FAIL=1).
 # Prints the subshell's combined output; the exit status is the emitter's.
-# Shared by the tape-emitter extraction tests (issue-1398.sh, issue-1409.sh).
+# Shared by the tape-emitter extraction tests (issue-1398.sh, issue-1399.sh).
 ac_run_tape_emit() {
   local stub_bin="$1" tape_dir="$2" fn_src="$3" fail="$4" fn_name="$5"
   shift 5
