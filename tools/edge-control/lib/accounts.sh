@@ -37,6 +37,15 @@
 #     Print the compact JSON row for <fp> on stdout. Exits non-zero (empty
 #     output) if the row is absent.
 #
+#   account_set_name <fp> <name>
+#     Set the row's `name` field to <name>, leaving all other fields
+#     (status, credits, created_at) untouched — atomic read-modify-write over
+#     a tmp path + rename (like account_ensure). If the row is absent, a fresh
+#     pending row is created with the name already bound. The caller validates
+#     <name> and decides whether the claim is allowed (collision checks live in
+#     the calling verb); this function itself never refuses an overwrite.
+#     Returns 0 on success, 1 on a bad fingerprint or failed update.
+#
 #   print_account_row
 #     Report the caller's account row (used by the report verbs, whoami and
 #     status). dispatch.sh always exports DISPATCH_FP before exec'ing a verb,
@@ -46,7 +55,8 @@
 #     verb 0.
 #
 # Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(),
-# account_row(), and print_account_row() become available to the caller.
+# account_row(), account_set_name(), and print_account_row() become available
+# to the caller.
 # =============================================================================
 
 set -euo pipefail
@@ -107,6 +117,41 @@ account_ensure() {
 account_row() {
   local fp="$1"
   jq -c --arg fp "$fp" '.accounts // {} | .[$fp] // empty' "$ACCOUNTS_FILE"
+}
+
+# Set the name field for <fp> (see header). Caller validates <name>; this is
+# the atomic write the verbs use.
+account_set_name() {
+  local fp="$1" name="$2"
+  local now tmp
+
+  if [[ ! "$fp" =~ $FINGERPRINT_RE ]]; then
+    echo "account_set_name: invalid fingerprint" >&2
+    return 1
+  fi
+
+  accounts_init
+
+  # Same atomic read-modify-write as account_ensure: a missing row is created
+  # fresh (status=pending, credits=0), an existing row is only touched on the
+  # name field, so status/credits/created_at survive untouched.
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  tmp="$(mktemp)" || { echo "account_set_name: mktemp failed" >&2; return 1; }
+
+  if jq --arg fp "$fp" --arg name "$name" --arg now "$now" \
+        '.accounts = (.accounts // {})
+         | .accounts[$fp] = (.accounts[$fp] //
+            {fingerprint: $fp, status: "pending", credits: 0, name: null, created_at: $now})
+         | .accounts[$fp].name = $name' \
+        "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$ACCOUNTS_FILE"
+  else
+    rm -f "$tmp"
+    echo "account_set_name: failed to update $ACCOUNTS_FILE" >&2
+    return 1
+  fi
+
+  return 0
 }
 
 # Report the caller's account row (see file header). dispatch.sh exports
