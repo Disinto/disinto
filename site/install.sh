@@ -44,9 +44,9 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# --- Clone the tagged release -----------------------------------------------
+# --- Clone the tagged release --------------------------------------------------
 echo "Cloning repository (tag ${VERSION}) ..."
-git clone --depth 1 --branch "$VERSION" https://codeberg.org/johba/disinto /opt/disinto
+git clone --depth 1 --branch "$VERSION" https://self.disinto.ai/forge/disinto-admin/disinto.git /opt/disinto
 
 # --- Symlink the CLI --------------------------------------------------------
 ln -sf /opt/disinto/bin/disinto /usr/local/bin/disinto
