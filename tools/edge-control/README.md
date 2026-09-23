@@ -281,7 +281,8 @@ For high availability, add a second edge host:
 fingerprint, type, and data; on a valid key it prints a single restricted line,
 `restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY`,
 which routes the caller through `dispatch.sh` to the verbs under `verbs/`
-(`whoami`, `status`, `ticket`, `tickets`). The fingerprint is the account — no username, no password.
+(`whoami`, `status`, `ticket`, `tickets`, `register-request`, `credits`,
+`credits-grant`). The fingerprint is the account — no username, no password.
 Enabling `AuthorizedKeysCommand` is an operator step on the edge host and is
 **not** turned on by this tree.
 

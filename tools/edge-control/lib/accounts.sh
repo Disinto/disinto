@@ -48,6 +48,14 @@
 #     the calling verb); this function itself never refuses an overwrite.
 #     Returns 0 on success, 1 on a bad fingerprint or failed update.
 #
+#   account_add_credits <fp> <n>
+#     Add <n> to the row's `credits` field, leaving every other field
+#     (status, name, admin, created_at) untouched — atomic read-modify-write
+#     over a tmp path + rename (like account_set_name). The caller validates
+#     <n> and runs account_ensure <fp> first; the row is never created here —
+#     a missing row is a caller bug. Returns 0 on success, 1 on a bad
+#     fingerprint, a missing row, or a failed update.
+#
 #   print_account_row
 #     Report the caller's account row (used by the report verbs, whoami and
 #     status). dispatch.sh always exports DISPATCH_FP before exec'ing a verb,
@@ -57,8 +65,8 @@
 #     verb 0.
 #
 # Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(),
-# account_row(), account_set_name(), and print_account_row() become available
-# to the caller.
+# account_row(), account_set_name(), account_add_credits(), and
+# print_account_row() become available to the caller.
 # =============================================================================
 
 set -euo pipefail
@@ -154,6 +162,41 @@ account_set_name() {
   fi
 
   return 0
+}
+
+# Add <n> to the `credits` field of <fp>'s row (see header). The caller
+# validates <n> and runs account_ensure <fp> first; this function is the
+# atomic write the verbs use and it never creates a row itself.
+account_add_credits() {
+  local fp="$1" n="$2"
+  local tmp
+
+  if [[ ! "$fp" =~ $FINGERPRINT_RE ]]; then
+    echo "account_add_credits: invalid fingerprint" >&2
+    return 1
+  fi
+
+  # The row must exist (the caller runs account_ensure first). Without this
+  # guard, assigning on an absent key would rewrite the whole entry as the
+  # scalar <n> instead of a row object.
+  if ! jq -e --arg fp "$fp" '(.accounts // {}) | has($fp)' "$ACCOUNTS_FILE" \
+       >/dev/null 2>&1; then
+    echo "account_add_credits: no row for $fp" >&2
+    return 1
+  fi
+
+  tmp="$(mktemp)" || { echo "account_add_credits: mktemp failed" >&2; return 1; }
+
+  if jq --arg fp "$fp" --argjson n "$n" \
+        '.accounts[$fp].credits = (.accounts[$fp].credits + $n)' \
+        "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$ACCOUNTS_FILE"
+    return 0
+  else
+    rm -f "$tmp"
+    echo "account_add_credits: failed to update $ACCOUNTS_FILE" >&2
+    return 1
+  fi
 }
 
 # Require the dispatcher fingerprint (exported by dispatch.sh before exec'ing
