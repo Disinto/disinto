@@ -9,9 +9,15 @@ Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md
 disinto/                 (code repo)
 ├── dev/           dev-poll.sh, dev-agent.sh, merge-ready.sh, phase-test.sh — issue implementation
 ├── review/        review-poll.sh, review-pr.sh — PR review
-├── gardener/      gardener-run.sh — one-shot full-formula executor (bare-metal host cron)
-│                  gardener-step.sh — polling-loop participant: per-iteration step executor
-│                  classify.sh — bash-only task classifier (emits JSON)
+├── gardener/      gardener-run.sh — one-shot full-formula executor (bare-metal
+│                  │                 host cron; started by entrypoint.sh poll)
+│                  │                 gardener-step.sh — per-iteration step
+│                  │                 executor; not a polling-loop participant —
+│                  │                 not started by entrypoint.sh (poll runs
+│                  │                 gardener-run.sh only, #1480)
+│                  │                 classify.sh — bash-only task classifier
+│                  │                 (emits JSON); not on the scheduler
+│                  │                 (not started by entrypoint.sh, #1480)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)

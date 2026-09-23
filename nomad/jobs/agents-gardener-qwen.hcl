@@ -12,7 +12,8 @@
 # The six-role agents.hcl job was split into per-role jobs (one role per
 # job — two claude processes are two llama slots, and the slot count must be
 # a property of the deployment). This job brings the gardener role back;
-# its classify.sh findings (including the deploy-drift check, #1119) run
+# the poll runs gardener/gardener-run.sh, not classify.sh (#1480) — the
+# classify.sh findings (including the deploy-drift check, #1119) run
 # only if a runner exists for the role (#1123).
 #
 # Autocompact lane (#1069):
