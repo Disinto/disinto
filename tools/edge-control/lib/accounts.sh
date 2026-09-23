@@ -156,14 +156,26 @@ account_set_name() {
   return 0
 }
 
-# Report the caller's account row (see file header). dispatch.sh exports
-# DISPATCH_FP before exec'ing any verb; this guard makes an internal miswire a
-# loud, visible failure rather than a silent empty row.
-print_account_row() {
-  if [[ -z "${DISPATCH_FP:-}" ]]; then
-    echo '{"error":"missing fingerprint"}' >&2
-    exit 1
+# Require the dispatcher fingerprint (exported by dispatch.sh before exec'ing
+# the verb). On a miswire (empty/absent), fail closed: emit the standard error
+# JSON to stderr and return 1. On success, print the fingerprint on stdout and
+# return 0. Verbs capture it as:  fp="$(require_dispatch_fp)" || exit 1
+require_dispatch_fp() {
+  local fp="${DISPATCH_FP:-}"
+  if [[ -z "$fp" ]]; then
+    printf '{"error":"missing fingerprint"}\n' >&2
+    return 1
   fi
-  account_row "${DISPATCH_FP}"
+  printf '%s\n' "$fp"
+  return 0
+}
+
+# Report the caller's account row (see file header). dispatch.sh exports
+# DISPATCH_FP before exec'ing any verb; require_dispatch_fp() makes an internal
+# miswire a loud, visible failure rather than a silent empty row.
+print_account_row() {
+  local fp
+  fp="$(require_dispatch_fp)" || exit 1
+  account_row "$fp"
   exit 0
 }

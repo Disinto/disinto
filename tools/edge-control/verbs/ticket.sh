@@ -49,12 +49,8 @@ if [[ -z "$subject" ]]; then
   fail_error "empty subject"
 fi
 
-# ── fingerprint (set by dispatch.sh and exported for every verb) ────────────
-fp="${DISPATCH_FP:-}"
-if [[ -z "$fp" ]]; then
-  printf '{"error":"missing fingerprint"}\n' >&2
-  exit 1
-fi
+# ── fingerprint (set by dispatch.sh; validated via require_dispatch_fp) ──────
+fp="$(require_dispatch_fp)" || exit 1
 
 # ── body: read stdin, enforce <=8192 bytes and no NUL, into a scratch file ──
 body_file="$(mktemp)" || { printf '{"error":"mktemp failed"}\n' >&2; exit 1; }

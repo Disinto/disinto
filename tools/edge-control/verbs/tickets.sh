@@ -27,12 +27,8 @@ source "${SCRIPT_DIR}/../lib/accounts.sh"
 
 TICKETS_FILE="${TICKETS_FILE:-/var/lib/disinto/tickets.jsonl}"
 
-# ── fingerprint (set by dispatch.sh and exported for every verb) ────────────
-fp="${DISPATCH_FP:-}"
-if [[ -z "$fp" ]]; then
-  printf '{"error":"missing fingerprint"}\n' >&2
-  exit 1
-fi
+# ── fingerprint (set by dispatch.sh; validated via require_dispatch_fp) ──────
+fp="$(require_dispatch_fp)" || exit 1
 
 # Admin gate, failing closed on anything not exactly true.
 if ! jq -e --arg fp "$fp" \
