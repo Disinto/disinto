@@ -1,0 +1,45 @@
+# ============================================================================
+# stripe-webhook.caddy — COMMENTED EXAMPLE ONLY
+# ============================================================================
+# This is a reference for the operator who wires up the Stripe webhook later.
+# It is NOT active in this repo: the script `tools/edge-control/stripe-webhook.sh`
+# is a stateless single-shot receiver (no port, no daemon) and is never bound
+# or routed by this PR. The operator wires it into Caddy manually.
+#
+# Contract for the wired-up handler (see stripe-webhook.sh):
+#   - The handler MUST pass the raw request body to the script's stdin,
+#     byte-for-byte (including any trailing newline).
+#   - The handler MUST set the STRIPE_SIGNATURE env var to the request's
+#     `Stripe-Signature` header value.
+#   - The handler MUST set STRIPE_WEBHOOK_SECRET (from the operator's env,
+#     AD-005: never hardcoded).
+#   - Optionally set STRIPE_CREDITS_PER_PURCHASE (default 100) and
+#     STRIPE_EVENTS_FILE (default /var/lib/disinto/stripe-events).
+#   - Exit code 0 from the script is a success (credit granted or replay);
+#     exit code 1 is a rejection (bad signature / stale / no credit).
+#
+# Caddy cannot fork an arbitrary shell command per request natively, so the
+# operator typically places a thin process in front (a systemd unit, a
+# supervisor hook, or a 127.0.0.1 listener) that invokes the script per
+# request and relays its exit code. The route below shows the intended
+# shape; adapt to the chosen mechanism:
+#
+# ───────────────────────────────────────────────────────────────────────────
+# /stripe/webhook {
+#     # example only — replace the target with the operator's chosen
+#     # per-request invoker (listener/systemd) that pipes stdin +
+#     # STRIPE_SIGNATURE into tools/edge-control/stripe-webhook.sh.
+#     # reverse_proxy 127.0.0.1:<WEBHOOK_LISTENER_PORT>
+#     #
+#     # Forward the Stripe signature header into the handler's env:
+#     # header_up X-Stripe-Signature {header Stripe-Signature}
+#     #
+#     # The operator's listener sets:
+#     #   STRIPE_SIGNATURE      = X-Stripe-Signature
+#     #   STRIPE_WEBHOOK_SECRET = from the operator env
+#     #   STRIPE_EVENTS_FILE    = /var/lib/disinto/stripe-events
+# }
+#
+# ───────────────────────────────────────────────────────────────────────────
+# Do not activate this route in this PR. The webhook is intentionally not
+# reachable until the operator wires up the per-request invoker.
