@@ -191,16 +191,15 @@ backup_unpack_tarball() {
 backup_import_disinto_repo() {
   backup_log "Step 2: Configuring disinto repo..."
 
-  # Create disinto repo if missing
+  # Create disinto repo if missing. The repo itself is restored from the backup
+  # bundle (ops repo) and issues are re-created via the API; the disinto code
+  # repo is only created here so it exists on Forgejo for the agent worktrees.
   backup_create_repo_if_missing "disinto-admin/disinto"
-
-  # Note: Manual mirror configuration recommended (avoids SSH deploy-key handling)
-  backup_log "Note: Configure Codeberg → Forgejo pull mirror manually"
-  backup_log "  Run on Forgejo admin panel: Repository Settings → Repository Mirroring"
-  backup_log "  Source: ssh://git@codeberg.org/johba/disinto.git"
-  backup_log "  Mirror: disinto-admin/disinto"
-  backup_log "  Or use: git clone --mirror ssh://git@codeberg.org/johba/disinto.git"
-  backup_log "          cd disinto.git && git push --mirror ${FORGE_URL}/disinto-admin/disinto.git"
+  # The disinto code repo is only created here (via the Forgejo API) so it exists
+  # on the forge for agent worktrees. It is NOT restored by pulling a mirror from
+  # an upstream forge — restore content comes from the backup bundle (ops repo)
+  # and the issue JSON, and the disinto-ops repo is pushed from the bundle in
+  # Step 3.
 
   return 0
 }

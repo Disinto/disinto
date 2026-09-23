@@ -1,10 +1,10 @@
 # projects/disinto.toml.example — Template for disinto self-management
 #
 # Copy to projects/disinto.toml and fill in box-specific values,
-# or run: disinto init johba/disinto
+# or run: disinto init disinto-admin/disinto
 
 name            = "disinto"
-repo            = "johba/disinto"
+repo            = "disinto-admin/disinto"
 ops_repo        = "disinto-admin/disinto-ops"
 forge_url       = "http://localhost:3000"
 repo_root       = "/home/YOU/dark-factory"
@@ -66,6 +66,8 @@ check_pipeline_stall = false
 #   EDGE_TUNNEL_FQDN_CI=ci.<project>.disinto.ai
 #   EDGE_TUNNEL_FQDN_CHAT=chat.<project>.disinto.ai
 
-# [mirrors]
+# [mirrors]  (optional read-only mirrors; NOT the repo field — repo points at
+#             the live Forgejo repo disinto-admin/disinto; the Codeberg URL is
+#             only an optional read-only mirror of the historical source)
 # github   = "git@github.com:johba/disinto.git"
-# codeberg = "git@codeberg.org:johba/disinto.git"
+# codeberg = "git@codeberg.org:johba/disinto.git"  # optional read-only mirror of the historical source
