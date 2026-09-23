@@ -71,10 +71,11 @@ disinto/                 (code repo)
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
 │                  dispatch.sh, key-command.sh; lib/ (ports.sh, caddy.sh,
-│                  authorized_keys.sh, accounts.sh); verbs/ (credits.sh,
-│                  credits-grant.sh, register-request.sh, status.sh, ticket.sh,
-│                  tickets.sh, whoami.sh); reserved-name blocklist,
-│                  admin-approved allowlist, per-caller attribution);
+│                  authorized_keys.sh, accounts.sh); verbs/ (approve.sh,
+│                  credits.sh, credits-grant.sh, register-request.sh,
+│                  revoke.sh, status.sh, ticket.sh, tickets.sh, whoami.sh);
+│                  reserved-name blocklist, admin-approved allowlist, per-caller
+│                  attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
