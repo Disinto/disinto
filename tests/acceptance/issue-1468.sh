@@ -132,8 +132,10 @@ if [[ "$(balance_of "$FP_B")" != 100 ]]; then
 fi
 ac_log "AC3: admin grant adds exactly N (incl. creating a row for a new target)"
 
-# ── AC4. zero, negative, out-of-range and non-integer amounts are rejected ────
-for amount in 0 -5 1000001 5.5 abc; do
+# ── AC4. zero, negative, out-of-range, non-integer and 2^64-overflow amounts
+#   are rejected. The overflow case (2^64+500) guards the digit-length cap so
+#   bash 64-bit wrap / jq parsing can never corrupt the ledger.
+for amount in 0 -5 1000001 5.5 abc 18446744073709552116; do
   run_grant "$FP_ADMIN" "$FP_A" "$amount"
   if [ "$RC" -eq 0 ]; then
     ac_fail "AC4: amount $amount should be rejected (rc=0, out=$OUT)"
@@ -145,5 +147,5 @@ for amount in 0 -5 1000001 5.5 abc; do
     ac_fail "AC4: rejected amount $amount changed the balance"
   fi
 done
-ac_log "AC4: 0, -5, 1000001, 5.5, abc -> bad amount, nothing written"
+ac_log "AC4: 0, -5, 1000001, 5.5, abc, 2^64+500 -> bad amount, nothing written"
 ac_pass

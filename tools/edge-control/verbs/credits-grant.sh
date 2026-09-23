@@ -59,7 +59,12 @@ fp="$(require_dispatch_fp)" || exit 1
   || fail_error "invalid fingerprint"
 
 # ── amount: canonical positive integer (no leading zeros), 1..MAX_GRANT ─────
-[[ "$n" =~ ^[1-9][0-9]*$ ]] \
+# Cap the digit count to 7 (MAX_CREDIT_GRANT is 7 digits). Without the cap, an
+# unbounded input slips the *range* check: bash 64-bit (( )) arithmetic wraps
+# mod 2^64 (18446744073709552116 -> 500, which passes 1..1000000) while jq's
+# --argjson in account_add_credits() parses the *original* string and credits
+# ~2^64, corrupting the ledger. With a 7-digit cap both agree on the value.
+[[ "$n" =~ ^[1-9][0-9]{0,6}$ ]] \
   || fail_error "bad amount"
 if (( n < 1 || n > MAX_CREDIT_GRANT )); then
   fail_error "bad amount"
