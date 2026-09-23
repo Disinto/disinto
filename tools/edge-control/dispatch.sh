@@ -12,7 +12,10 @@
 #      account-ledger fingerprint regex).
 #   2. account_ensure <fp>: make sure this fingerprint's account row exists in
 #      the ledger (creates a fresh row with status=pending, credits=0 if needed).
-#   3. Read SSH_ORIGINAL_COMMAND. If it is empty: {"error":"no command"}.
+#   3. Read SSH_ORIGINAL_COMMAND. If empty and stdin is a tty (interactive
+#      login) or DISPATCH_FORCE_MENU=1: print the verbs/ menu (one executable
+#      name per line), read one line from stdin as the command. Empty line →
+#      exit 0. Otherwise: {"error":"no command"}.
 #   4. First whitespace-delimited token is the verb; it must match
 #      ^[a-z][a-z0-9-]*$. Otherwise: {"error":"unknown command"}.
 #   5. Export DISPATCH_FP and exec verbs/<verb>.sh (relative to this script)
@@ -26,8 +29,9 @@
 #     inside verbs/ (no '/', no '..', no absolute path, no shell metacharacters).
 #   • SSH_ORIGINAL_COMMAND itself is only read; it is never shell input.
 #
-# Exit: the verb's exit status on success. 1 on missing/invalid --fp, empty
-# command, or unknown/non-executable verb.
+# Exit: the verb's exit status on success. 0 on empty menu line (interactive
+# login, no command chosen). 1 on missing/invalid --fp, no command (non-interactive
+# with no pty), or unknown/non-executable verb.
 #
 # NOTE: enabling sshd's AuthorizedKeysCommand is operator work on the edge
 #       host; no file in this tree performs it.
@@ -63,8 +67,28 @@ account_ensure "$fp"
 # --- forced command -----------------------------------------------------------
 command="${SSH_ORIGINAL_COMMAND:-}"
 if [[ -z "$command" ]]; then
-  echo '{"error":"no command"}'
-  exit 1
+  # Interactive login (no forced command) or forced menu test (DISPATCH_FORCE_MENU).
+  # Print the verb menu: one executable name per line, read from the verbs/
+  # directory (never hard-coded — later verbs appear automatically because they
+  # are files). Empty line: exit 0. Otherwise the line is parsed with the same
+  # verb rules as a forced command. No shell, no colors, no daemon.
+  if [[ -n "${DISPATCH_FORCE_MENU:-}" ]] || [[ -t 0 ]]; then
+    # One executable verb per line, in stable sorted order.
+    while IFS= read -r entry; do
+      [[ "$entry" == *.sh ]] || continue
+      [[ -f "${VERBS_DIR}/${entry}" ]] || continue
+      [[ -x "${VERBS_DIR}/${entry}" ]] || continue
+      printf '%s\n' "${entry%.sh}"
+    done < <(ls -1 "$VERBS_DIR" 2>/dev/null | sort)
+    # Take one line from stdin as the command.
+    IFS= read -r command || command=""
+    if [[ -z "$command" ]]; then
+      exit 0
+    fi
+  else
+    echo '{"error":"no command"}'
+    exit 1
+  fi
 fi
 
 # First whitespace-delimited token is the verb; the rest (verbatim, including
