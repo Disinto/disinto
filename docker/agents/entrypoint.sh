@@ -18,8 +18,8 @@ set -euo pipefail
 #   - predictor:   daily (24h)
 #   - supervisor:  every SUPERVISOR_INTERVAL (default 20 min)
 #
-# AGENT_ROLES env var (default: all seven roles
-# "review,dev,gardener,architect,planner,predictor,supervisor") is the house
+# AGENT_ROLES env var (default: all six roles
+# "review,dev,gardener,architect,planner,supervisor") is the house
 # filter: an organ whose role is not in AGENT_ROLES is never started.
 
 # ── Migration check: reject ENABLE_LLAMA_AGENT ───────────────────────────────
@@ -657,7 +657,7 @@ validate_projects_dir
 # Expected format: comma-separated list like "review,dev,gardener"
 # House filter: an organ whose role is not listed is never started.
 # Exported so the gosu'd poll scripts inherit it.
-export AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,predictor,supervisor}"
+export AGENT_ROLES="${AGENT_ROLES:-review,dev,gardener,architect,planner,supervisor}"
 log "Agent roles configured: ${AGENT_ROLES}"
 
 # Poll interval in seconds (5 minutes default)

@@ -2,8 +2,8 @@
 # nomad/jobs/agents.hcl — All-role agent polling loop (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S4.1, issue #955). Runs the main bot
-# polling loop with 6 agent roles (review, dev, gardener, architect,
-# planner, predictor) against the local llama server.
+# polling loop with 5 agent roles (review, dev, gardener, architect,
+# planner) against the local llama server.
 # Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
 #
 # Host_volume contract:
@@ -151,7 +151,7 @@ job "agents" {
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"
-        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor"
+        AGENT_ROLES        = "review,dev,gardener,architect,planner"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
