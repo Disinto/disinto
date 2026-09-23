@@ -20,6 +20,7 @@
 #         "status": "pending",          # pending -> registered -> active; revoked
 #         "credits": 0,                 # integer, debited/credited by verbs
 #         "name": null,                 # bound name (set by the admin-approve verb)
+#         "admin": false,               # admin-privileged caller (set by admin-grant)
 #         "created_at": "2026-09-23T00:00:00Z"
 #       }
 #     }
@@ -31,7 +32,8 @@
 #     and make sure a row exists for <fp>. Idempotent: an existing row is left
 #     untouched so that later verbs (which credit/debit, bind a name, change
 #     status) are not clobbered. A fresh row is created with
-#     status=pending, credits=0. Returns 0 on success, 1 on a bad fingerprint.
+#     status=pending, credits=0, admin=false. Returns 0 on success, 1 on a bad
+#     fingerprint.
 #
 #   account_row <fp>
 #     Print the compact JSON row for <fp> on stdout. Exits non-zero (empty
@@ -101,7 +103,7 @@ account_ensure() {
   if jq --arg fp "$fp" --arg now "$now" \
     '.accounts = (.accounts // {})
      | .accounts[$fp] = (.accounts[$fp] //
-        {fingerprint: $fp, status: "pending", credits: 0, name: null, created_at: $now})' \
+        {fingerprint: $fp, status: "pending", credits: 0, name: null, admin: false, created_at: $now})' \
     "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$ACCOUNTS_FILE"
   else
@@ -141,7 +143,7 @@ account_set_name() {
   if jq --arg fp "$fp" --arg name "$name" --arg now "$now" \
         '.accounts = (.accounts // {})
          | .accounts[$fp] = (.accounts[$fp] //
-            {fingerprint: $fp, status: "pending", credits: 0, name: null, created_at: $now})
+            {fingerprint: $fp, status: "pending", credits: 0, name: null, admin: false, created_at: $now})
          | .accounts[$fp].name = $name' \
         "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$ACCOUNTS_FILE"
@@ -154,14 +156,26 @@ account_set_name() {
   return 0
 }
 
-# Report the caller's account row (see file header). dispatch.sh exports
-# DISPATCH_FP before exec'ing any verb; this guard makes an internal miswire a
-# loud, visible failure rather than a silent empty row.
-print_account_row() {
-  if [[ -z "${DISPATCH_FP:-}" ]]; then
-    echo '{"error":"missing fingerprint"}' >&2
-    exit 1
+# Require the dispatcher fingerprint (exported by dispatch.sh before exec'ing
+# the verb). On a miswire (empty/absent), fail closed: emit the standard error
+# JSON to stderr and return 1. On success, print the fingerprint on stdout and
+# return 0. Verbs capture it as:  fp="$(require_dispatch_fp)" || exit 1
+require_dispatch_fp() {
+  local fp="${DISPATCH_FP:-}"
+  if [[ -z "$fp" ]]; then
+    printf '{"error":"missing fingerprint"}\n' >&2
+    return 1
   fi
-  account_row "${DISPATCH_FP}"
+  printf '%s\n' "$fp"
+  return 0
+}
+
+# Report the caller's account row (see file header). dispatch.sh exports
+# DISPATCH_FP before exec'ing any verb; require_dispatch_fp() makes an internal
+# miswire a loud, visible failure rather than a silent empty row.
+print_account_row() {
+  local fp
+  fp="$(require_dispatch_fp)" || exit 1
+  account_row "$fp"
   exit 0
 }
