@@ -37,8 +37,16 @@
 #     Print the compact JSON row for <fp> on stdout. Exits non-zero (empty
 #     output) if the row is absent.
 #
-# Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(), and
-# account_row() become available to the caller.
+#   print_account_row
+#     Report the caller's account row (used by the report verbs, whoami and
+#     status). dispatch.sh always exports DISPATCH_FP before exec'ing a verb,
+#     so its absence here is an internal miswire: a visible failure (a
+#     {"error":"missing fingerprint"} on stderr) and exit 1, not a silent miss.
+#     On success, prints the compact row for DISPATCH_FP and exits the calling
+#     verb 0.
+#
+# Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(),
+# account_row(), and print_account_row() become available to the caller.
 # =============================================================================
 
 set -euo pipefail
@@ -99,4 +107,16 @@ account_ensure() {
 account_row() {
   local fp="$1"
   jq -c --arg fp "$fp" '.accounts // {} | .[$fp] // empty' "$ACCOUNTS_FILE"
+}
+
+# Report the caller's account row (see file header). dispatch.sh exports
+# DISPATCH_FP before exec'ing any verb; this guard makes an internal miswire a
+# loud, visible failure rather than a silent empty row.
+print_account_row() {
+  if [[ -z "${DISPATCH_FP:-}" ]]; then
+    echo '{"error":"missing fingerprint"}' >&2
+    exit 1
+  fi
+  account_row "${DISPATCH_FP}"
+  exit 0
 }
