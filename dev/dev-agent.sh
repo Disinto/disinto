@@ -298,7 +298,19 @@ if [ "$RECOVERY_MODE" = false ]; then
     BRANCH="fix/issue-${ISSUE}-${ATTEMPT}"
   fi
 fi
-log "using branch: ${BRANCH}"
+# run.attempts is the branch attempt count, not a fiction (#1478): the pick's
+# branch count (0 = first attempt / recovery mode / failed ls-remote) is the
+# 1-based attempt number the tape run record should carry. Non-negative integer
+# → ATTEMPT+1; anything else (unset/empty/junk) → 1. Total: never fails the
+# pick.
+TAPE_RUN_ATTEMPTS="${ATTEMPT:0:0}"
+if [[ "$ATTEMPT" =~ ^[0-9]+$ ]]; then
+  TAPE_RUN_ATTEMPTS=$((ATTEMPT + 1))
+else
+  TAPE_RUN_ATTEMPTS=1
+fi
+export TAPE_RUN_ATTEMPTS
+log "using branch: ${BRANCH} (tape run attempts: ${TAPE_RUN_ATTEMPTS})"
 
 if [ "$RECOVERY_MODE" = true ]; then
   if ! worktree_recover "$WORKTREE" "$BRANCH" "$FORGE_REMOTE"; then
