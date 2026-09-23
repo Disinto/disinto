@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # gardener/gardener-step.sh — Pull-one-task driver for the gardener
+# Not started by docker/agents/entrypoint.sh (that poll runs
+# gardener/gardener-run.sh only; #1480).
 #
 # Per-iteration script: does exactly one task per invocation. Same loop shape
 # as dev/dev-poll.sh — invoked once per polling iteration.
