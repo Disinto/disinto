@@ -111,10 +111,10 @@ disinto/                 (code repo)
 │                  snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, threads.sh,
 │                  uninstall.sh
-├── tape/          Dev-loop tape schema packs (packs/dev.toml — proposal context fields) and
-│                  outcome rubrics (rubrics/failure-signature.toml — the 8 allowed
-│                  failure-signature labels); documentation-by-schema, nothing reads these yet
-│                  (#1400); tape records themselves are written by lib/tape.sh (#1389)
+├── tape/          Tape records written by lib/tape.sh (#1389); the dev-loop
+│                  context pack and failure-signature rubric stubs (#1400) were
+│                  removed in #1481 — no reader exists. Packs and rubrics come
+│                  back when an extractor lands.
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
