@@ -1,4 +1,4 @@
-<!-- last-reviewed: 07e0bea6af5e585d6e7b3c94f7a4b21cb8e51909 -->
+<!-- last-reviewed: 1b547212302b9aedd9f1f72f946341be2b536910 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -70,10 +70,11 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh; lib/ (ports.sh, caddy.sh,
-│                  authorized_keys.sh, accounts.sh); verbs/ (approve.sh,
-│                  credits.sh, credits-buy.sh, credits-grant.sh, register-request.sh,
-│                  revoke.sh, status.sh, ticket.sh, tickets.sh, whoami.sh);
+│                  dispatch.sh, key-command.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
+│                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
+│                  credits-grant.sh, register-request.sh, revoke.sh, status.sh,
+│                  ticket.sh, tickets.sh, whoami.sh); examples/ (stripe-webhook.caddy);
 │                  reserved-name blocklist, admin-approved allowlist, per-caller
 │                  attribution);
 │                  run-acceptance.sh — acceptance test runner for CI

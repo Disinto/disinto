@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "action": "remove_label",
+    "issue": 1471,
+    "label": "blocked"
+  },
+  {
+    "action": "add_label",
+    "issue": 1471,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1471,
+    "body": "Gardener promotion: dependency #1466 (admin approve and revoke bind a name) is now closed. Issue moved from blocked to backlog for dev-poll pickup."
+  }
+]
