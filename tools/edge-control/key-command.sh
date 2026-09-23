@@ -7,12 +7,15 @@
 # Its job is to turn an arbitrary SSH key into the edge-control account identified
 # by that key's fingerprint, and to emit a single restricted authorized_keys line:
 #
-#     restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY
+#     pty,restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY
 #
 # That line:
+#   • grants a pty so interactive (menu) sessions have a TTY for the dispatcher
+#     to list verbs and read one line from stdin — the pty does NOT grant a
+#     shell; the forced command still runs;
 #   • forces the dispatcher as the only command the caller can run (never a shell);
 #   • carries the caller's fingerprint so dispatch.sh can attribute the session;
-#   • is a *restrict* line — no permitlisten, no permitopen, no pty, no
+#   • is a *restrict* line — no permitlisten, no permitopen, no
 #     agent-forwarding. The caller can only run dispatcher verbs.
 #
 # Output contract:
@@ -58,5 +61,5 @@ key_data="$3"
 [[ "$key_type" =~ $ALLOWED_KEY_TYPES ]] || fail "unsupported key type: $key_type"
 
 # One line, and nothing else, on stdout.
-printf 'restrict,command="%s --fp %s" %s %s\n' \
+printf 'pty,restrict,command="%s --fp %s" %s %s\n' \
   "$DISPATCH_CMD" "$fingerprint" "$key_type" "$key_data"

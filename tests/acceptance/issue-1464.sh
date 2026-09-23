@@ -51,7 +51,7 @@ FP2="SHA256:$(printf 'B%.0s' {1..43})"
   || ac_fail "test fixture fingerprint is malformed: $FP"
 
 # ── AC1. key-command.sh: valid input -> one restrict line, fp present, no
-#    permitlisten/permitopen/pty/agent-forward --------------------------------
+#    permitlisten/permitopen/agent-forward ----------------------------------
 out=""
 rc=0
 out="$(ACCOUNTS_FILE="$ACCOUNTS_FILE" bash "$KEY_SCRIPT" "$FP" "ssh-ed25519" "AAAAB...")" || rc=$?
@@ -62,6 +62,7 @@ if [ "$(printf '%s\n' "$out" | grep -c .)" -ne 1 ]; then
   ac_fail "AC1: key-command.sh should print exactly one line, got: $out"
 fi
 case "$out" in
+  pty,restrict,command=*) ;;
   restrict,command=*) ;;
   *) ac_fail "AC1: key-command.sh line is not a restrict line: $out" ;;
 esac
@@ -70,8 +71,9 @@ esac
 if [[ "$out" == *permitlisten* || "$out" == *permitopen* ]]; then
   ac_fail "AC1: restrict line contains permitlisten/permitopen: $out"
 fi
-if [[ "$out" == *pty* || "$out" == *agent-forward* ]]; then
-  ac_fail "AC1: restrict line contains pty/agent-forward: $out"
+# pty is now allowed (needed for the interactive menu); agent-forward is still not.
+if [[ "$out" == *agent-forward* ]]; then
+  ac_fail "AC1: restrict line contains agent-forward: $out"
 fi
 ac_log "AC1: key-command.sh prints one restrict line carrying the fingerprint"
 
