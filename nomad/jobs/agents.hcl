@@ -151,7 +151,7 @@ job "agents" {
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"
-        AGENT_ROLES        = "review,dev,gardener,architect,planner,predictor"
+        AGENT_ROLES        = "review,dev,gardener,architect,planner"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"
