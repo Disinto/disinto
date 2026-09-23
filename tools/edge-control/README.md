@@ -274,6 +274,17 @@ For high availability, add a second edge host:
 - **Port validation**: Tunnel connections outside allocated ports are refused
 - **Forced command**: `disinto-register` can only execute `register.sh`
 
+### Restricted dispatcher (any-key identity)
+
+`key-command.sh` and `dispatch.sh` are the store door for *any* SSH key. sshd's
+`AuthorizedKeysCommand` invokes `key-command.sh` with the incoming key's
+fingerprint, type, and data; on a valid key it prints a single restricted line,
+`restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY`,
+which routes the caller through `dispatch.sh` to the verbs under `verbs/`
+(`whoami`, `status`). The fingerprint is the account — no username, no password.
+Enabling `AuthorizedKeysCommand` is an operator step on the edge host and is
+**not** turned on by this tree.
+
 ### Certificate Strategy
 
 - Single wildcard `*.disinto.ai` cert via DNS-01 through Gandi
