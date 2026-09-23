@@ -18,7 +18,7 @@
 #   - 3 steps instead of 6.
 #
 # AGENTS.md maintenance is handled by the gardener (#246).
-# All git writes (tree, memory) happen in one commit at the end.
+# All git writes (tree, vault) happen in one commit at the end.
 # Journal writing is delegated to generic profile_write_journal() function.
 
 name        = "run-planner"
@@ -47,13 +47,10 @@ description = """
      HEAD_SHA=$(git rev-parse HEAD)
      echo "$HEAD_SHA" > /tmp/planner-head-sha
 
-4. Read the planner memory file at: $OPS_REPO_ROOT/knowledge/planner-memory.md
-   If it does not exist, this is the first planning run.
-
 5. Read the prerequisite tree at: $OPS_REPO_ROOT/prerequisites.md
    If it does not exist, create an initial tree from VISION.md in the next step.
 
-6. Read the graph report injected into the prompt (## Structural analysis).
+5. Read the graph report injected into the prompt (## Structural analysis).
    This JSON contains: orphans, cycles, disconnected clusters, thin_objectives,
    bottlenecks (by betweenness centrality). Use it instead of manual file scanning.
 """
@@ -112,7 +109,7 @@ and file-at-constraints steps.
 ### Part B: Update prerequisite tree
 
 Read these inputs:
-  - VISION.md, RESOURCES.md, planner memory (from preflight)
+  - VISION.md, RESOURCES.md, prerequisite tree (preflight)
   - Graph report: orphans, cycles, thin_objectives, bottlenecks, disconnected
   - Portfolio: ## Addressables and ## Observables tables in AGENTS.md —
     use these as the concrete inventory of what the factory has produced.
@@ -248,25 +245,17 @@ needs = ["preflight"]
 
 [[steps]]
 id    = "commit-ops-changes"
-title = "Write tree, memory, and journal; commit and push branch"
+title = "Write tree and journal; commit and push branch"
 description = """
 ### 1. Write prerequisite tree
 Write to: $OPS_REPO_ROOT/prerequisites.md
 
-### 2. Memory update (every 5th run)
-Count "# Planner run —" headers across all journal files.
-Check "<!-- summarized-through-run: N -->" in planner-memory.md.
-If (count - N) >= 5 or planner-memory.md missing, write to:
-  $OPS_REPO_ROOT/knowledge/planner-memory.md
-Include: run counter marker, date, constraint focus, patterns, direction.
-Keep under 100 lines. Replace entire file.
-
-### 3. Commit ops repo changes to the planner branch
-Commit the ops repo changes (prerequisites, memory, vault items) and push the
+### 2. Commit ops repo changes to the planner branch
+Commit the ops repo changes (prerequisites, vault items) and push the
 branch. Do NOT push directly to $PRIMARY_BRANCH — planner-run.sh will create a
 PR and walk it to merge via review-bot.
   cd "$OPS_REPO_ROOT"
-  git add prerequisites.md knowledge/planner-memory.md vault/pending/
+  git add prerequisites.md vault/pending/
   git add -u
   if ! git diff --cached --quiet; then
     git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
@@ -274,7 +263,7 @@ PR and walk it to merge via review-bot.
   fi
   cd "$PROJECT_REPO_ROOT"
 
-### 4. Write journal entry (generic)
+### 3. Write journal entry (generic)
 The planner-run.sh wrapper will handle journal writing via profile_write_journal()
 after the formula completes. This step is informational only.
 """

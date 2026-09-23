@@ -9,7 +9,7 @@
 #   1. Guards: run lock, memory check
 #   2. Load formula (formulas/run-planner.toml)
 #   3. Context: VISION.md, AGENTS.md, ops:RESOURCES.md, structural graph,
-#      planner memory, journal entries
+#      journal entries
 #   4. Create ops branch planner/run-YYYY-MM-DD for changes
 #   5. agent_run(worktree, prompt) → Claude plans, commits to ops branch
 #   6. If ops branch has commits: pr_create → pr_walk_to_merge (review-bot)
@@ -147,15 +147,6 @@ build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:prerequisites.md
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
 
-# ── Read planner memory ─────────────────────────────────────────────────
-MEMORY_BLOCK=""
-MEMORY_FILE="$OPS_REPO_ROOT/knowledge/planner-memory.md"
-if [ -f "$MEMORY_FILE" ]; then
-  MEMORY_BLOCK="
-### knowledge/planner-memory.md (persistent memory from prior runs)
-$(cat "$MEMORY_FILE")
-"
-fi
 
 # ── Prepare .profile context (lessons injection) ─────────────────────────
 formula_prepare_profile_context
@@ -174,7 +165,7 @@ build_sdk_prompt_footer "
 PROMPT="You are the strategic planner for ${FORGE_REPO}. Work through the formula below.
 
 ## Project context
-${CONTEXT_BLOCK}${MEMORY_BLOCK}$(formula_lessons_block)
+${CONTEXT_BLOCK}$(formula_lessons_block)
 ${GRAPH_SECTION}
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
@@ -246,7 +237,7 @@ if [ "$ops_has_commits" = "true" ]; then
 
   PR_NUM=$(pr_create "$PLANNER_OPS_BRANCH" \
     "chore: planner run $(date -u +%Y-%m-%d)" \
-    "Automated planner run — updates prerequisite tree, memory, and vault items." \
+    "Automated planner run — updates prerequisite tree and vault items." \
     "${PRIMARY_BRANCH}" \
     "$OPS_FORGE_API") || true
 
