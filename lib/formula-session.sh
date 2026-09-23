@@ -389,6 +389,25 @@ cleanup_stale_crashed_worktrees() {
 # These functions are TOTAL: they always return 0. A tape failure (unwritable
 # $TAPE_DIR, missing jq/flock, validation refusal) logs a WARNING and is
 # ignored — the organ never fails because of the tape.
+#
+# Attempt count (#1478): both run records (open + closing) carry a 1-based
+# `attempts` integer from the caller. _FORMULA_TAPE_ATTEMPTS prefers
+# $TAPE_RUN_ATTEMPTS when it is a positive integer (dev-agent.sh exports
+# ATTEMPT+1 from its branch-count block; recovery mode / a failed ls-remote
+# leaves ATTEMPT empty → export 1) and falls back to 1 for an unset or
+# non-integer value. No git is called from this file.
+
+# _formula_tape_attempts
+# Resolves the tape run's 1-based attempt count. $1 = the raw value (a
+# positive integer → echoed as-is; anything else → 1).
+_formula_tape_attempts() {
+  local val="$1"
+  if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ]; then
+    printf '%s' "$val"
+  else
+    printf '1'
+  fi
+}
 
 # formula_tape_ulid
 # Emits a 26-char Crockford-base32 ULID: 10 chars of 48-bit millisecond
@@ -445,7 +464,11 @@ formula_session_start() {
   _FORMULA_TAPE_AGENT="$agent"
   _FORMULA_TAPE_STARTED="$started"
   _FORMULA_TAPE_START_EPOCH=$(date -u +%s)
-  _FORMULA_TAPE_ATTEMPTS=1
+  # 1-based attempt count (#1478): $TAPE_RUN_ATTEMPTS (ATTEMPT+1 from the
+  # dev-agent branch-count block) when a positive integer, else 1.
+  _FORMULA_TAPE_ATTEMPTS=$(
+    _formula_tape_attempts "${TAPE_RUN_ATTEMPTS:-}"
+  )
 
   if ! tape_run "$proposal" "$organ" "$agent" "$started" '' \
       "$_FORMULA_TAPE_ATTEMPTS" '{}' '' >/dev/null 2>&1; then
