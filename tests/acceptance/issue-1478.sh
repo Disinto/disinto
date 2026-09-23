@@ -155,10 +155,9 @@ BLOCK="$(awk -v start="$ASSIGN_LINE" '
 ' "$DEV_AGENT")"
 [ -n "$BLOCK" ] || ac_fail "could not extract the TAPE_RUN_ATTEMPTS export block from dev-agent.sh"
 
-PROJECT_NAME="acceptance-1478"
-
 # run_export_block <attempts> — run the extracted block in a subshell with the
-# given ATTEMPT value (empty = unset).
+# given ATTEMPT value (empty = unset). The block itself does not reference
+# $PROJECT_NAME, so no sentinel is needed.
 run_export_block() {
   local attempt="$1"
   ATTEMPT="$attempt" bash -c '
