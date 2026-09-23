@@ -20,16 +20,9 @@
 #     integer >= 1. Both the open run and the closing run carry that value.
 #     No git calls in formula-session.
 #
-# Acceptance (hermetic — no live services, no agents started, no network;
-# formula_session_start/end are exercised in a throwaway subshell against
-# fixture TAPE_DIR/PAYLOAD_DIR, exactly as issue-1474/1475 do; the
-# dev-agent export block is extracted and run in a subshell with a sentinel
-# PROJECT_NAME, exactly as issue-1440 does; the AC-3 static wiring check is
-# the same line-order assertion issue-1440 uses for TAPE_PROPOSAL_ID):
+# Acceptance (hermetic — no live services, no agents started, no network):
 #   1. TAPE_RUN_ATTEMPTS=3 → open and closing run attempts equal 3, rc 0
 #   2. TAPE_RUN_ATTEMPTS unset, junk, 0, or negative → attempts 1, rc 0
-#      (junk/0/negative are non-integers-or-below-1; a failed ls-remote is
-#      the same as unset → 1)
 #   3. dev-agent.sh exports TAPE_RUN_ATTEMPTS before formula_session_start
 #      "dev" (and after the branch-count block that sets ATTEMPT)
 #   4. extracted ATTEMPT export block: non-negative ATTEMPT → export ATTEMPT+1;
@@ -55,39 +48,21 @@ ac_assert_file "$FORMULA_SESSION" "lib/formula-session.sh must exist"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# ── Driver: source lib/formula-session.sh in a throwaway subshell and drive
-# formula_session_start + formula_session_end against caller-owned
-# TAPE_DIR/PAYLOAD_DIR. $1 = TAPE_RUN_ATTEMPTS value to export in the subshell
-# (empty = unset). $2 = exit code handed to formula_session_end.
-# ─────────────────────────────────────────────────────────────────────────────
-driver() {
-  local attempts="${1:-}" rc="${2:-0}" tape_dir="$3" payload_dir="$4"
-  local driver_file prop_line
-  driver_file="$(mktemp "${TMP_DIR}/drv.XXXXXX.sh")"
-  if [ -n "$attempts" ]; then
-    prop_line="export TAPE_RUN_ATTEMPTS=$attempts"
-  else
-    prop_line="unset TAPE_RUN_ATTEMPTS"
-  fi
-  cat > "$driver_file" <<EOF
-set -euo pipefail
-# Stands in for lib/env.sh's log() (the real organ runners source env.sh
-# first). The driver must not be a no-op or the warning AC would see nothing.
-log() { printf 'AC %s\n' "\$*" >&2; }
-export AGENT_HARNESS=claude LOG_AGENT=acceptance
-source "$REPO_ROOT/lib/formula-session.sh"
-export TAPE_DIR="$tape_dir" PAYLOAD_DIR="$payload_dir"
-$prop_line
-formula_session_start "acceptance-organ"
-formula_session_end $rc
-EOF
-  bash "$driver_file" 2>&1
-}
-
 # ── AC 1: TAPE_RUN_ATTEMPTS=3 → open and closing run attempts equal 3, rc 0 ─
 T1="$TMP_DIR/tape-3"; P1="$TMP_DIR/payload-3"
 rc=0
-out="$(driver 3 0 "$T1" "$P1")" || rc=$?
+out="$(
+  (
+    set -euo pipefail
+    log() { printf 'AC %s\\n' "\$*" >&2; }
+    export AGENT_HARNESS=claude LOG_AGENT=acceptance
+    source "$REPO_ROOT/lib/formula-session.sh"
+    export TAPE_DIR="$T1" PAYLOAD_DIR="$P1"
+    export TAPE_RUN_ATTEMPTS=3
+    formula_session_start "acceptance-organ"
+    formula_session_end 0
+  ) 2>&1
+)" || rc=$?
 ac_assert_eq "$rc" "0" \
   "TAPE_RUN_ATTEMPTS=3 session must return 0 (got $rc): $out"
 ac_assert_file "$T1/tape.jsonl" "TAPE_RUN_ATTEMPTS=3 session must append a tape record: $T1/tape.jsonl"
@@ -112,7 +87,22 @@ for val in "" "junk" "0" "-3"; do
   T2="$TMP_DIR/tape-junk-${val:-empty}"
   P2="$TMP_DIR/payload-junk-${val:-empty}"
   rc=0
-  out="$(driver "$val" 0 "$T2" "$P2")" || rc=$?
+  out="$(
+    (
+      set -euo pipefail
+      log() { printf 'AC %s\\n' "\$*" >&2; }
+      export AGENT_HARNESS=claude LOG_AGENT=acceptance
+      source "$REPO_ROOT/lib/formula-session.sh"
+      export TAPE_DIR="$T2" PAYLOAD_DIR="$P2"
+      if [ -n "$val" ]; then
+        export TAPE_RUN_ATTEMPTS=$val
+      else
+        unset TAPE_RUN_ATTEMPTS
+      fi
+      formula_session_start "acceptance-organ"
+      formula_session_end 0
+    ) 2>&1
+  )" || rc=$?
   ac_assert_eq "$rc" "0" "TAPE_RUN_ATTEMPTS='${val:-<unset>}' session must return 0 (got $rc): $out"
   ac_assert_file "$T2/tape.jsonl" "session must append a tape record for '${val:-<unset>}'"
   jq -es '
@@ -141,10 +131,9 @@ start_line="$(grep -nF 'formula_session_start "dev"' "$DEV_AGENT" | head -n 1 | 
 ac_log "AC 3 OK: TAPE_RUN_ATTEMPTS export precedes formula_session_start \"dev\""
 
 # ── AC 4: extract the TAPE_RUN_ATTEMPTS export block from dev-agent.sh and
-# run it in a subshell with a sentinel PROJECT_NAME.
+# run it in a subshell; the block must map non-negative integer ATTEMPT to
+# ATTEMPT+1, else 1 (recovery mode / failed ls-remote never fail the pick).
 # ────────────────────────────────────────────────────────────────────────────
-# Use grep to find the line number of the unique assignment, then awk to
-# extract from that line to the next column-0 'fi'.
 ASSIGN_LINE="$(grep -nF 'ATTEMPT:0:0}' "$DEV_AGENT" | head -n 1 | cut -d: -f1)"
 [ -n "$ASSIGN_LINE" ] || ac_fail "could not find the TAPE_RUN_ATTEMPTS assignment line in dev-agent.sh"
 
@@ -155,9 +144,6 @@ BLOCK="$(awk -v start="$ASSIGN_LINE" '
 ' "$DEV_AGENT")"
 [ -n "$BLOCK" ] || ac_fail "could not extract the TAPE_RUN_ATTEMPTS export block from dev-agent.sh"
 
-# run_export_block <attempts> — run the extracted block in a subshell with the
-# given ATTEMPT value (empty = unset). The block itself does not reference
-# $PROJECT_NAME, so no sentinel is needed.
 run_export_block() {
   local attempt="$1"
   ATTEMPT="$attempt" bash -c '
