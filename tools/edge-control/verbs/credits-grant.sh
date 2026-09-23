@@ -65,13 +65,8 @@ if (( n < 1 || n > MAX_CREDIT_GRANT )); then
   fail_error "bad amount"
 fi
 
-# ── admin gate: caller's row, failing closed on anything not exactly true ───
-if ! jq -e --arg fp "$fp" \
-     '(.accounts // {})[($fp)].admin == true' "$ACCOUNTS_FILE" \
-     >/dev/null 2>&1; then
-  printf '{"error":"not admin"}\n'
-  exit 1
-fi
+# ── admin gate: caller's row, failing closed on anything not exactly true ────
+require_admin "$fp"
 
 # ── credit the target row, then print its updated form ───────────────────────
 if ! account_ensure "$target"; then

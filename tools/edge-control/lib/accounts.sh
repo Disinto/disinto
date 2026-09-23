@@ -65,8 +65,9 @@
 #     verb 0.
 #
 # Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(),
-# account_row(), account_set_name(), account_add_credits(), and
-# print_account_row() become available to the caller.
+# account_row(), account_set_name(), account_add_credits(), is_admin(),
+# require_admin(), require_dispatch_fp(), and print_account_row() become
+# available to the caller.
 # =============================================================================
 
 set -euo pipefail
@@ -197,6 +198,25 @@ account_add_credits() {
     echo "account_add_credits: failed to update $ACCOUNTS_FILE" >&2
     return 1
   fi
+}
+
+# is_admin <fp> — return 0 if $ACCOUNTS_FILE[$fp] carries exactly
+# "admin": true; fail closed (return 1) on a missing row, a missing field, or
+# anything not the boolean true (jq -e exits 1 on no/empty output). The
+# caller validates <fp> against FINGERPRINT_RE first.
+is_admin() {
+  local fp="$1"
+  jq -e --arg fp "$fp" '(.accounts // {})[$fp].admin == true' "$ACCOUNTS_FILE" \
+    >/dev/null 2>&1
+}
+
+# require_admin <fp> — process gate for admin verbs (tickets.sh,
+# credits-grant.sh): exit the verb process with {"error":"not admin"} (rc 1)
+# when the caller is not admin, or continue otherwise. Call it after
+# require_dispatch_fp() so <fp> is the caller, not a target.
+require_admin() {
+  is_admin "$1" \
+    || { printf '{"error":"not admin"}\n'; exit 1; }
 }
 
 # Require the dispatcher fingerprint (exported by dispatch.sh before exec'ing

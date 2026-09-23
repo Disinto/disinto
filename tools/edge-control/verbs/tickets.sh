@@ -31,12 +31,7 @@ TICKETS_FILE="${TICKETS_FILE:-/var/lib/disinto/tickets.jsonl}"
 fp="$(require_dispatch_fp)" || exit 1
 
 # Admin gate, failing closed on anything not exactly true.
-if ! jq -e --arg fp "$fp" \
-     '(.accounts // {})[($fp)].admin == true' "$ACCOUNTS_FILE" \
-     >/dev/null 2>&1; then
-  printf '{"error":"not admin"}\n'
-  exit 1
-fi
+require_admin "$fp"
 
 # JSONL -> JSON array. An empty or missing file yields [].
 if [[ -f "$TICKETS_FILE" ]]; then
