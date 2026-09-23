@@ -4,7 +4,7 @@
 # Implements the release workflow without Claude:
 #   1. Validate prerequisites
 #   2. Tag Forgejo main via API
-#   3. Push tag to mirrors (Codeberg, GitHub) via token auth
+#   3. Push tag to GitHub mirror via token auth
 #   4. Build and tag the agents Docker image
 #   5. Restart agent containers
 #
@@ -13,7 +13,6 @@
 # Expects env vars:
 #   FORGE_URL, FORGE_TOKEN, FORGE_REPO, PRIMARY_BRANCH
 #   GITHUB_TOKEN    — for pushing tags to GitHub mirror
-#   CODEBERG_TOKEN  — for pushing tags to Codeberg mirror
 #
 # The action TOML context field must contain the version, e.g.:
 #   context = "Release v1.2.0"
@@ -125,9 +124,9 @@ curl -sf -X POST \
 
 log "Tag ${RELEASE_VERSION} created (SHA: ${head_sha})"
 
-# ── Step 3: Push tag to mirrors ──────────────────────────────────────────
+# ── Step 3: Push tag to GitHub mirror ────────────────────────────────────
 
-log "Step 3/6: Pushing tag to mirrors"
+log "Step 3/6: Pushing tag to GitHub mirror"
 
 # Extract org/repo from FORGE_REPO (e.g. "disinto-admin/disinto" → "disinto")
 project_name="${FORGE_REPO##*/}"
@@ -150,25 +149,10 @@ else
   log "WARNING: GITHUB_TOKEN not set — skipping GitHub mirror"
 fi
 
-# Push to Codeberg mirror (if CODEBERG_TOKEN is available)
-if [ -n "${CODEBERG_TOKEN:-}" ]; then
-  log "Pushing tag to Codeberg mirror"
-  # Codeberg uses Gitea-compatible API
-  # Extract owner from FORGE_REPO for Codeberg (use same owner)
-  codeberg_owner="${FORGE_REPO%%/*}"
-  if curl -sf -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "https://codeberg.org/api/v1/repos/${codeberg_owner}/${project_name}/tags" \
-    -d "{\"tag_name\":\"${RELEASE_VERSION}\",\"target\":\"${head_sha}\",\"message\":\"Release ${RELEASE_VERSION}\"}" \
-    >/dev/null 2>&1; then
-    log "Codeberg: tag pushed"
-  else
-    log "WARNING: Codeberg tag push failed (may already exist)"
-  fi
-else
-  log "WARNING: CODEBERG_TOKEN not set — skipping Codeberg mirror"
-fi
+# (Codeberg push removed — #1482: Forgejo is the publisher, and the old block
+#  POSTed the tag to the disinto-admin repo on Codeberg, not a mirror of this
+#  repo. Release tags are now pushed to Forgejo (step 2) and the GitHub
+#  mirror only.)
 
 # ── Step 4: Build agents Docker image ────────────────────────────────────
 
