@@ -242,3 +242,53 @@ print_account_row() {
   account_row "$fp"
   exit 0
 }
+
+# row_fp_by_name <name> — fingerprint of the row whose `name` field equals
+# <name>, or empty when no row holds that name. This is the reverse lookup the
+# name-keyed verbs (verbs/approve.sh, verbs/revoke.sh) and lib/apply-name.sh
+# use to turn a claimed subdomain back into the account row it belongs to.
+row_fp_by_name() {
+  local name="$1"
+  jq -r --arg n "$name" \
+      '[ (.accounts // {}) | to_entries[]
+         | select((.value.name // empty) == $n)
+         | .key ]
+       | .[0] // empty' "$ACCOUNTS_FILE"
+}
+
+# account_set_status <fp> <status> — set the row's `status` field, leaving every
+# other field (name, credits, admin, created_at) untouched — an atomic
+# read-modify-write over a tmp path + rename (like account_set_name). The
+# caller validates <status> (a verb decides which values are legal and when);
+# this function itself never refuses an overwrite. The row must exist — this is
+# a mutation, not an upsert (a missing row is a caller bug: the verb ran
+# row_fp_by_name() first and only proceeds when it found the row). Returns 0
+# on success, 1 on a bad fingerprint, a missing row, or a failed update.
+account_set_status() {
+  local fp="$1" status="$2"
+  local tmp
+
+  if [[ ! "$fp" =~ $FINGERPRINT_RE ]]; then
+    echo "account_set_status: invalid fingerprint" >&2
+    return 1
+  fi
+
+  if ! jq -e --arg fp "$fp" '(.accounts // {}) | has($fp)' \
+       "$ACCOUNTS_FILE" >/dev/null 2>&1; then
+    echo "account_set_status: no row for $fp" >&2
+    return 1
+  fi
+
+  tmp="$(mktemp)" || { echo "account_set_status: mktemp failed" >&2; return 1; }
+
+  if jq --arg fp "$fp" --arg status "$status" \
+        '.accounts[$fp].status = $status' \
+        "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$ACCOUNTS_FILE"
+    return 0
+  else
+    rm -f "$tmp"
+    echo "account_set_status: failed to update $ACCOUNTS_FILE" >&2
+    return 1
+  fi
+}
