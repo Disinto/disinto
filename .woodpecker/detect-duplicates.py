@@ -349,6 +349,10 @@ def main() -> int:
         "2653705045fdf65072cccfd16eb04900": "Standard prompt template (GRAPH_SECTION, SCRATCH_CONTEXT, FORMULA_CONTENT)",
         "93726a3c799b72ed2898a55552031921": "Standard prompt template continuation (SCRATCH_CONTEXT, FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
         "c11eaaacab69c9a2d3c38c75215eca84": "Standard prompt template end (FORMULA_CONTENT, SCRATCH_INSTRUCTION)",
+        # Same template family — post #1477, planner no longer has ${MEMORY_BLOCK}
+        # between CONTEXT_BLOCK and formula_lessons_block, so planner and predictor
+        # share an identical 5-line context window.
+        "831dcf16d261efabb5d54254bc5e8e58": "Standard prompt template context (CONTEXT_BLOCK, GRAPH_SECTION, SCRATCH_CONTEXT, FORMULA_CONTENT)",
         # Appears in stack_lock_acquire (lib/stack-lock.sh) and lib/pr-lifecycle.sh
         "29d4f34b703f44699237713cc8d8065b": "Structural end-of-while-loop+case (return 1, esac, done, closing brace)",
         # Forgejo org-creation API call pattern shared between forge-setup.sh and ops-setup.sh
