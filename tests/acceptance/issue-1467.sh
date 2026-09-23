@@ -51,29 +51,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 printf '{"version":1,"accounts":{}}\n' > "$ACCOUNTS_FILE"
 : > "$TICKETS_FILE"
 
-# Make a ledger row for <fp> (status=pending) with an optional bound name and
-# admin flag, the same shape dispatch.sh + account_ensure produce.
-seed_row() {
-  local fp="$1" name="$2" admin="$3"
-  local tmp
-  tmp="$ACCOUNTS_FILE.tmp"
-  jq --arg fp "$fp" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-     --arg name "$name" --arg admin "$admin" \
-     '.accounts[$fp] = {fingerprint: $fp, status: "pending", credits: 0,
-      name: (if $name == "" then null else $name end),
-      admin: (if $admin == "true" then true else false end),
-      created_at: $now}' \
-     "$ACCOUNTS_FILE" > "$tmp" \
-    || ac_fail "seed_row: cannot seed row for $fp"
-  mv "$tmp" "$ACCOUNTS_FILE"
-}
-
-# Valid SHA256 fingerprints: "SHA256:" + exactly 43 base64url chars.
-FP_A="SHA256:$(printf 'A%.0s' {1..43})"
-FP_B="SHA256:$(printf 'B%.0s' {1..43})"
-FP_ADMIN="SHA256:$(printf 'C%.0s' {1..43})"
-[[ "$FP_A" =~ ^SHA256:[A-Za-z0-9_-]{43}$ ]] \
-  || ac_fail "test fixture fingerprint is malformed: $FP_A"
+# (seed_row + FP_A/FP_B/FP_ADMIN come from tests/lib/acceptance-helpers.sh)
 
 # Two pending non-admin callers (one with no name, one bound), plus a *pending*
 # admin so the admin gate is provably independent of status.

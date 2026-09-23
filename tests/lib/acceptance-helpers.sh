@@ -315,3 +315,45 @@ ac_run_empty_tape() {
   rc=0
   out="$(TAPE_DIR="$d" bash "$t")" || rc=$?
 }
+
+# ── Edge-control ledger fixtures (edge-verb acceptance tests) ────────────────
+# The edge verbs read a throwaway $ACCOUNTS_FILE that each test sets up in an
+# mktemp dir (never /var/lib/disinto). These are the single definition of the
+# fixture building blocks shared by issue-1467.sh and issue-1468.sh
+# (duplicate-detection: each test file would otherwise carry its own copy).
+# seed_row() rewrites only the calling test's own $ACCOUNTS_FILE — it never
+# POSTs and never touches a live service.
+
+# Canonical 43-char fixture fingerprints: "SHA256:" + exactly 43 base64url
+# chars.
+FP_A="SHA256:$(printf 'A%.0s' {1..43})"
+FP_B="SHA256:$(printf 'B%.0s' {1..43})"
+FP_ADMIN="SHA256:$(printf 'C%.0s' {1..43})"
+# Validate every constant up front (catches construction typos at source time
+# before any acceptance test relies on them).
+[[ "$FP_A" =~ ^SHA256:[A-Za-z0-9_-]{43}$ ]] \
+  || ac_fail "test fixture fingerprint is malformed: $FP_A"
+[[ "$FP_B" =~ ^SHA256:[A-Za-z0-9_-]{43}$ ]] \
+  || ac_fail "test fixture fingerprint is malformed: $FP_B"
+[[ "$FP_ADMIN" =~ ^SHA256:[A-Za-z0-9_-]{43}$ ]] \
+  || ac_fail "test fixture fingerprint is malformed: $FP_ADMIN"
+
+# seed_row <fp> [name] [admin] [credits=0]
+# Write a row for <fp> into $ACCOUNTS_FILE in the same shape dispatch.sh +
+# account_ensure emit: status=pending, name "" means no bound name, admin
+# "true"/"false", credits default 0. <fp> should be one of FP_A/FP_B/FP_ADMIN
+# (validated upstream by FINGERPRINT_RE).
+seed_row() {
+  local fp="$1" name="$2" admin="$3" credits="${4:-0}"
+  local tmpfile
+  tmpfile="$ACCOUNTS_FILE.tmp"
+  jq --arg fp "$fp" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+     --arg name "$name" --arg admin "$admin" --argjson credits "$credits" \
+     '.accounts[$fp] = {fingerprint: $fp, status: "pending", credits: $credits,
+      name: (if $name == "" then null else $name end),
+      admin: (if $admin == "true" then true else false end),
+      created_at: $now}' \
+     "$ACCOUNTS_FILE" > "$tmpfile" \
+    || ac_fail "seed_row: cannot seed row for $fp"
+  mv "$tmpfile" "$ACCOUNTS_FILE"
+}
