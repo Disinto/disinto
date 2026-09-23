@@ -1,4 +1,4 @@
-<!-- last-reviewed: b022154b0d583bdb5a06ac89d2c11715ed7fdca2 -->
+<!-- last-reviewed: 4f53639e16dff8c48927da52c316a8151b60c7fc -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -69,8 +69,11 @@ disinto/                 (code repo)
 │                  + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
-├── tools/         Operational tools: edge-control/ (register.sh, install.sh;
-│                  reserved-name blocklist, admin-approved allowlist, per-caller attribution);
+├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
+│                  dispatch.sh, key-command.sh; lib/ (ports.sh, caddy.sh,
+│                  authorized_keys.sh, accounts.sh); verbs/ (register-request.sh,
+│                  status.sh, whoami.sh); reserved-name blocklist,
+│                  admin-approved allowlist, per-caller attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
