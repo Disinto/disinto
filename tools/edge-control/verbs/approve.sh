@@ -26,47 +26,20 @@
 #       "unknown name"         — no row holds <name> (nothing written)
 #       "not approvable"       — the holder's status is not pending/approved
 #       "apply failed"         — the side effects (lib/apply-name.sh) failed
-#   Every failure path returns before the ledger status is changed.
-# =============================================================================
+#   Every failure path returns before the holder's status is ever changed.
+# Approval is the only name verb that may allocate a port or add a route.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1090,SC1091
-source "${SCRIPT_DIR}/../lib/accounts.sh"
-source "${SCRIPT_DIR}/../lib/apply-name.sh"
-
-fail_error() {
-  printf '{"error":"%s"}\n' "$1"
-  exit 1
-}
-
-[[ $# -eq 1 ]] \
-  || fail_error "bad arguments"
-name="$1"
-
-# The caller (DISPATCH_FP), then the admin gate — before anything is written.
-fp="$(require_dispatch_fp)" || exit 1
-require_admin "$fp"
-
-# The name's shape and reservedness were validated at claim time (register
-# request); a malformed <name> simply matches no row below ("unknown name").
-holder="$(row_fp_by_name "$name")"
-if [[ -z "$holder" ]]; then
-  fail_error "unknown name"
-fi
-
-status="$(jq -r --arg fp "$holder" \
-  '(.accounts // {})[$fp].status // empty' "$ACCOUNTS_FILE")"
+source "${SCRIPT_DIR}/../lib/name-verbs.sh"
+name_verb_preamble "$@"
+status="$(jq -r --arg fp "$HOLDER" '(.accounts // {})[$fp].status // empty' "$ACCOUNTS_FILE")"
 if [[ "$status" != "pending" && "$status" != "approved" ]]; then
   fail_error "not approvable"
 fi
-
-# Side effects first; only a successful apply (stub and 0 count as success)
-# may leave the status changed.
-if ! apply_approve "$name" "$fp"; then
+if ! apply_approve "$NAME" "$ADMIN_FP"; then
   fail_error "apply failed"
 fi
-
-account_set_status "$holder" "approved"
-account_row "$holder"
+account_set_status "$HOLDER" "approved"
+account_row "$HOLDER"
 exit 0

@@ -26,38 +26,16 @@
 #       "not admin"           — caller's row is not admin (nothing written)
 #       "unknown name"        — no row holds <name> (nothing written)
 #       "apply failed"        — the side effects (lib/apply-name.sh) failed
-#   Every failure path returns before the ledger status is changed.
-# =============================================================================
+# Every failure path returns before the holder's row is ever rewritten.
+# Revocation frees the route and port but keeps the ledger row intact.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1090,SC1091
-source "${SCRIPT_DIR}/../lib/accounts.sh"
-source "${SCRIPT_DIR}/../lib/apply-name.sh"
-
-fail_error() {
-  printf '{"error":"%s"}\n' "$1"
-  exit 1
-}
-
-[[ $# -eq 1 ]] \
-  || fail_error "bad arguments"
-name="$1"
-
-fp="$(require_dispatch_fp)" || exit 1
-require_admin "$fp"
-
-holder="$(row_fp_by_name "$name")"
-if [[ -z "$holder" ]]; then
-  fail_error "unknown name"
-fi
-
-# Side effects first; only a successful apply (stub and 0 count as success)
-# may leave the status changed.
-if ! apply_revoke "$name" "$fp"; then
+source "${SCRIPT_DIR}/../lib/name-verbs.sh"
+name_verb_preamble "$@"
+if ! apply_revoke "$NAME" "$ADMIN_FP"; then
   fail_error "apply failed"
 fi
-
-account_set_status "$holder" "revoked"
-account_row "$holder"
+account_set_status "$HOLDER" "revoked"
+account_row "$HOLDER"
 exit 0
