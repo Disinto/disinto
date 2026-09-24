@@ -1,0 +1,13 @@
+{"action": "close", "issue": 1515, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1514, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1513, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1512, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1510, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1509, "reason": "review process artifact, no action needed"}
+{"action": "close", "issue": 1507, "reason": "review process artifact, no action needed"}
+{"action": "edit_body", "issue": 1508, "body": "Flagged by AI reviewer in PR #1506.\n\n## Problem\nAGENTS.md line 7 intro states the polling loop 'paces the seven organs (dev, review, gardener, supervisor, planner, predictor, architect)'. After PR #1506 the default AGENT_ROLES excludes predictor (entrypoint: review,dev,gardener,architect,planner,supervisor; Nomad combined job: five llama roles; supervisor standalone opus job), so 'seven organs' as default pacing is now misleading.\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] Root `AGENTS.md` intro says \"six organs\" (predictor now opt-in via `AGENT_ROLES`) or lists the six default organs (dev, review, gardener, supervisor, planner, architect) and notes predictor as opt-in\n- [ ] Root `AGENTS.md` line 1 watermark is updated to current HEAD SHA\n- [ ] `git ls-files 'AGENTS.md' | xargs wc -l` shows root AGENTS.md is under 200 lines\n\n## Affected files\n\n- `AGENTS.md` (root intro paragraph, line 7)\n"}
+{"action": "add_label", "issue": 1508, "label": "backlog"}
+{"action": "remove_label", "issue": 1500, "label": "blocked"}
+{"action": "add_label", "issue": 1500, "label": "backlog"}
+{"action": "remove_label", "issue": 1471, "label": "blocked"}
+{"action": "add_label", "issue": 1471, "label": "backlog"}
