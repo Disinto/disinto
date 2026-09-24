@@ -168,8 +168,11 @@ steps:
   #
   # The image TAG does not change, so `nomad job run` alone is a no-op for
   # running allocations (Nomad compares job specs, not image contents).
-  # `nomad job restart` forces each allocation to come back up on the
-  # freshly built image.
+  # `nomad job restart -on-error=fail` forces each allocation to come back
+  # up on the freshly built image. The default -on-error=ask exits 1 when
+  # the helper container has no TTY (pipeline 2999). Do not pass -yes:
+  # it ignores batch errors, and the health poll cannot see an in-place
+  # restart that never happened.
   - name: rebuild-and-deploy-agents
     image: alpine:3.20
     when:
@@ -228,6 +231,15 @@ steps:
 
         for spec in $specs; do
           job=$(basename "$spec" .hcl)
+          # agents.hcl is the pre-cutover all-roles job (header: "Not the
+          # runtime yet"). job run would register a second polling loop
+          # beside the live per-role jobs. Keep the agents*.hcl glob so a
+          # future agents-<role>.hcl is still discovered (#1173), but do
+          # not submit or restart this basename.
+          if [ "$job" = "agents" ]; then
+            echo "skip $job: not the live runtime"
+            continue
+          fi
           # Paths are relative to the /jobspecs mount inside the helper
           # container (see nomad_api), not the workspace.
           nomad_api job validate "/jobspecs/$job.hcl"
@@ -235,21 +247,28 @@ steps:
           # Tag unchanged, so job run alone would keep the old image;
           # restart brings each allocation back on the rebuilt image.
           # This kills in-flight sessions (acceptable — see note above).
-          nomad_api job restart "$job"
+          # -on-error=fail: ask is the default and exits 1 with no TTY.
+          nomad_api job restart -on-error=fail "$job"
 
           # Health poll, same 120s/5s two-pass shape as acceptance-tests.yml:
           # every allocation at the newest job version must be running. A
           # failed or empty status is treated as NOT healthy — a transient
           # failure right after the restart must not read as "no unhealthy
-          # allocations".
+          # allocations". nomad job status -json is a one-element array,
+          # not an object; indexing .Allocations on the array makes jq
+          # exit 5 (pipeline 2999 never reached this, so it was untested).
           deadline=$(( $(date +%s) + 120 ))
           healthy=no
           while [ "$(date +%s)" -lt "$deadline" ]; do
             status_json=$(nomad_api job status -json "$job" 2>/dev/null || echo '')
-            if [ -n "$status_json" ] && [ "$status_json" != "{}" ]; then
-              unhealthy=$(echo "$status_json" | jq -r '(.Allocations // []) as $a
-                   | (($a | map(.JobVersion // 0) | max) // 0) as $v
-                   | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length')
+            if [ -n "$status_json" ] && [ "$status_json" != "{}" ] && [ "$status_json" != "[]" ]; then
+              unhealthy=$(echo "$status_json" | jq -r '
+                   (if type == "array" then (.[0] // {}) else . end) as $root
+                   | ($root.Allocations // []) as $a
+                   | if ($a | length) == 0 then 1
+                     else (($a | map(.JobVersion // 0) | max) // 0) as $v
+                       | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != "running")) | length
+                     end' || echo 1)
               if [ "$unhealthy" = "0" ]; then
                 echo "$job: healthy after rebuild"
                 healthy=yes
