@@ -1,13 +1,16 @@
-<!-- last-reviewed: 1b547212302b9aedd9f1f72f946341be2b536910 -->
+<!-- last-reviewed: 3954e070d7f86f302426039bb8fd9ae9c03a40fd -->
 # Disinto — Agent Instructions
 
 ## What this repo is
 
 Disinto is an autonomous code factory: a polling loop
-(`docker/agents/entrypoint.sh`) paces the seven organs (dev, review, gardener,
-supervisor, planner, predictor, architect) on their own intervals —
+(`docker/agents/entrypoint.sh`) paces the six default organs (dev, review,
+gardener, supervisor, planner, architect) on their own intervals —
 dev/review 5 min, supervisor 20 min, architect 15 min, gardener 6h,
-planner 12h, predictor daily — implementing forge issues, reviewing PRs,
+planner 12h — and optionally the predictor (daily) when `AGENT_ROLES`
+includes it. The default `AGENT_ROLES`
+(`review,dev,gardener,architect,planner,supervisor`) excludes predictor
+since #1506. — implementing forge issues, reviewing PRs,
 planning from the vision, keeping the system healthy via the agent
 harnesses. The edge dispatcher runs its own loop, launches reproduce/triage
 sidecars per issue, and executes formula-based tasks.
