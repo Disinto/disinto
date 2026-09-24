@@ -75,7 +75,7 @@ M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; `forec
 records the method used — `counts` (a measured catalog row) or `prior` (the flat 0.5 fallback) —
 so the #1453 calibration reader can tell a flat prior from measured data; omitted on the
 API-failure path, where the context degrades to `{}`), forecast = `{"p_success":<actual/100>,
-"est_cost":0,"est_dvision":0}` (measured: the catalog row's `actual` percent / 100 when that
+"est_cost":0,"est_dvision":<mean_duration_s-or-0>}` (measured: p_success is the catalog row's `actual` percent / 100 and `est_dvision` is the row's `mean duration_s` when that cell is a number, else 0, when that
 row's `n` is an integer >= CATALOG_FORECAST_MIN_N (default 5) AND its `actual` is an integer
 percent, or the flat prior `{"p_success":0.5,"est_cost":0,"est_dvision":0}` (= the planner's
 prior in planner-run.sh); written on every fresh pick), decision `approved`, ref
