@@ -38,15 +38,15 @@ ac_require_cmd awk grep jq
 CI_YML="$REPO_ROOT/.woodpecker/ci.yml"
 ac_assert_file "$CI_YML" ".woodpecker/ci.yml must exist"
 
-STEP_BLOCK="$(awk '
-  /^  - name: rebuild-and-deploy-agents/ { in_step = 1 }
-  in_step && /^  - name:/ && $0 !~ /rebuild-and-deploy-agents/ { in_step = 0 }
-  in_step { print }
+# Different spelling from issue-1173 on purpose: a 5-line copy of that
+# awk is a new duplicate and fails .woodpecker/detect-duplicates.py.
+name_line='  - name: rebuild-and-deploy-agents'
+STEP_BLOCK="$(awk -v name="$name_line" '
+  index($0, name) == 1 { capture = 1 }
+  capture && index($0, "  - name:") == 1 && index($0, name) != 1 { capture = 0 }
+  capture { print }
 ' "$CI_YML")"
-
-if [ -z "$STEP_BLOCK" ]; then
-  ac_fail "no step named rebuild-and-deploy-agents in .woodpecker/ci.yml"
-fi
+[ -n "$STEP_BLOCK" ] || ac_fail "no step named rebuild-and-deploy-agents in .woodpecker/ci.yml"
 
 # ── Reproduction: the bare restart is what pipeline 2999 ran ────────────────
 ac_log "reproduction: restart must not use the interactive -on-error default"
