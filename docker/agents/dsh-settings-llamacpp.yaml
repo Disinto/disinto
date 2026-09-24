@@ -11,9 +11,25 @@ llm-pi-ai:
       baseURL: __DSH_BASE_URL__
       # llama-server speaks plain chat-completions: no `developer` role,
       # and the output cap is `max_tokens`, not `max_completion_tokens`.
+      #
+      # The Bonsai embedded template (2026-09-21) defaults thinking ON at
+      # xhigh and only uses `reasoning_effort` as prompt instruction wording —
+      # not a token budget. pi-ai resolves the below kwargs per request:
+      #   reasoningEffort=off  -> { enable_thinking: false }
+      #   reasoningEffort=low  -> { enable_thinking: true, reasoning_effort: "low" }
+      #   reasoningEffort=off  -> reasoning_effort omitted (omitWhenOff)
+      # The wire kwargs are passed through to llama-server so a template that
+      # does act on `reasoning_effort` can cap the budget.
       compat:
         supportsDeveloperRole: false
         maxTokensField: max_tokens
+        thinkingFormat: chat-template
+        chatTemplateKwargs:
+          enable_thinking:
+            $var: thinking.enabled
+          reasoning_effort:
+            $var: thinking.effort
+            omitWhenOff: true
       streamIdleTimeoutMs: 600000
       models:
         - id: unsloth/Qwen3.8-27B
