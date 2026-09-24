@@ -39,6 +39,13 @@
 #     Echoes the appended record on success (like tape_payload's hash).
 #   tape_payload FILE
 #     Copies FILE to $PAYLOAD_DIR/<sha256> (idempotent), echoes the hash.
+#   proposal_elapsed_s ISSUE — echo the wall-clock pick->terminal span in
+#     integer seconds, read from /tmp/dev-proposal-started-<project>-<issue>
+#     (project = $PROJECT_NAME, or "default"). Returns 0, echoing the span
+#     (now - started, clamped >= 0) when the file exists and holds a non-
+#     negative integer epoch; returns 1 (no output) when it is missing or
+#     the content is not an integer epoch — callers then omit duration_s from
+#     the numbers block (omitted, never 0).
 #
 # Return codes (writers): 0 = appended, 1 = refused (validation),
 # 2 = usage error. tape_payload: 0 = stored, 2 = usage error.
@@ -268,4 +275,33 @@ tape_payload() {
     cp "$file" "$dest"
   fi
   echo "$hash"
+}
+
+# proposal_elapsed_s — wall-clock pick->terminal span in integer seconds
+# (#1452). Shared by the dev proposal outcome emitters in
+# dev-poll.sh (emit_tape_outcome) and dev-agent.sh (close_dev_tape_outcome).
+# Reads /tmp/dev-proposal-started-<project>-<issue>, where <project> is the
+# calling process's $PROJECT_NAME (or "default"). Echoes the span (now -
+# started, clamped >= 0) and returns 0 when the file exists and holds a non-
+# negative integer epoch; returns 1 (no output) otherwise — callers then
+# omit duration_s from the numbers block (omitted, never 0).
+proposal_elapsed_s() {
+  local issue="${1:-}" project started_file started now duration_s
+  project="${PROJECT_NAME:-default}"
+  if [ -n "$issue" ]; then
+    started_file="/tmp/dev-proposal-started-${project}-${issue}"
+    if [ -f "$started_file" ]; then
+      started="$(cat "$started_file" 2>/dev/null)" || started=""
+      if [[ "$started" =~ ^[0-9]+$ ]]; then
+        now="$(date -u +%s)"
+        duration_s=$(( now - started ))
+        if (( duration_s < 0 )); then
+          duration_s=0
+        fi
+        echo "$duration_s"
+        return 0
+      fi
+    fi
+  fi
+  return 1
 }

@@ -538,7 +538,7 @@ issue_is_ready() {
 emit_tape_outcome() {
   local issue="$1" pr_num="$2" merged="$3" ci_green="$4"
   local id_file id review_rounds bits numbers
-  local started_file started now duration_s has_duration
+  local duration_s has_duration
 
   id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
   id="$(cat "$id_file" 2>/dev/null)" || id=""
@@ -554,22 +554,11 @@ emit_tape_outcome() {
     | jq -r 'if type == "array" then [.[] | select(.state == "REQUEST_CHANGES")] | length else empty end' 2>/dev/null)" || review_rounds=""
   [[ "$review_rounds" =~ ^[0-9]+$ ]] || review_rounds=0
 
-  # duration_s (#1452): the wall-clock pick→terminal span, read from the
-  # started epoch written by the fresh pick (never rewritten on the #1441
-  # re-pick, so it spans the issue's whole life). Missing / non-integer file
-  # → omitted (never 0); a future date (clock skew) clamps to 0.
+  # duration_s (#1452): pick->terminal span via proposal_elapsed_s;
+  # omitted (never 0) when the started file is missing or not an integer epoch.
   has_duration=0
-  started_file="/tmp/dev-proposal-started-${PROJECT_NAME:-default}-${issue}"
-  if [ -f "$started_file" ]; then
-    started="$(cat "$started_file" 2>/dev/null)" || started=""
-    if [[ "$started" =~ ^[0-9]+$ ]]; then
-      now="$(date -u +%s)"
-      duration_s=$(( now - started ))
-      if (( duration_s < 0 )); then
-        duration_s=0
-      fi
-      has_duration=1
-    fi
+  if duration_s="$(proposal_elapsed_s "$issue")"; then
+    has_duration=1
   fi
 
   bits="$(jq -cn --argjson m "$merged" --argjson c "$ci_green" \
