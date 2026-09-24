@@ -170,20 +170,27 @@ steps:
           status_json="$(nomad_api job status -json edge 2>/dev/null || echo '')"
           # A failed or empty status is NOT healthy — only a parsed response
           # with zero unhealthy allocs passes the gate.
-          if [ -n "$status_json" ] && [ "$status_json" != "{}" ]; then
+          if [ -n "$status_json" ] && [ "$status_json" != "{}" ] && [ "$status_json" != "[]" ]; then
             # All the latest-version allocs must have ClientStatus=running.
-            # Two-pass: first compute the max JobVersion across all allocs,
-            # then filter for unhealthy allocs at that version. Doing it in
-            # one pass via `.[0].JobVersion` would compare against the first
-            # array element, not the latest deployment, and silently
-            # mis-report health.
+            # `nomad job status -json` returns a one-element array
+            # ([{Allocations:[...]}]), not a plain object — unwrap it first
+            # (same filter as ci.yml, #1522) so `.Allocations` indexes the
+            # object, not the array (a raw `.Allocations` would jq-exit 5).
+            # Two-pass: compute the max JobVersion across all allocs, then
+            # filter for unhealthy allocs at that version. An empty allocation
+            # list reads as unhealthy, and a parse failure falls back to
+            # `|| echo 1`, so a broken response never passes the gate and
+            # never aborts the step under `set -e`.
             unhealthy="$(echo "$status_json" \
-              | jq -r '(.Allocations // []) as $a
-                       | (($a | map(.JobVersion // 0) | max) // 0) as $v
-                       | $a
-                       | map(select((.JobVersion // 0) == $v
-                                    and .ClientStatus != "running"))
-                       | length')"
+              | jq -r '
+                  (if type == "array" then (.[0] // {}) else . end) as $root
+                  | ($root.Allocations // []) as $a
+                  | if ($a | length) == 0 then 1
+                    else (($a | map(.JobVersion // 0) | max) // 0) as $v
+                      | $a | map(select((.JobVersion // 0) == $v
+                                         and .ClientStatus != "running"))
+                      | length
+                    end' || echo 1)"
             if [ "${unhealthy:-1}" = "0" ]; then
               echo "rebuild-and-deploy: edge job healthy"
               exit 0
