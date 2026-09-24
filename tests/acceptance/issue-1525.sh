@@ -56,7 +56,7 @@ cat > "$CAT_ROOT/cal_meanminus.md" <<'CAT'
 CAT
 
 # n=4 (< MIN_N 5) -> prior, est_dvision stays 0 (n-check gates it out).
-cat > "$CAT_ROOT/cal_toosmall.md" <<'CAT'
+cat > "$CAT_ROOT/cal_n4_prior.md" <<'CAT'
 | loop | class | n | promised | actual | error | mean duration_s |
 |---|---|---|---|---|---|---|
 | dev | backlog | 4 | 50% | 63% | 13 | 100.0 |
@@ -101,7 +101,7 @@ ac_assert_jq '.p_success == 0.63 and .est_cost == 0 and .est_dvision == 0' \
 ac_assert_eq "$method2" "counts" "case 2: method=counts"
 
 # ── Case 3: n too small -> prior, est_dvision stays 0 ─────────────────────────
-out="$(run_forecast "$CAT_ROOT/cal_toosmall.md")"
+out="$(run_forecast "$CAT_ROOT/cal_n4_prior.md")"
 forecast_json="$(printf '%s\n' "$out" | sed -n '/^FORECAST:/{s/^FORECAST://;p}')"
 method3="$(printf '%s\n' "$out" | sed -n '/^METHOD:/{s/^METHOD://;p}')"
 [ -n "$forecast_json" ] || ac_fail "case 3: forecast JSON empty (out=$out)"
