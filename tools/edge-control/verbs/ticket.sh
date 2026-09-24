@@ -35,11 +35,6 @@ source "${SCRIPT_DIR}/../lib/accounts.sh"
 TICKETS_FILE="${TICKETS_FILE:-/var/lib/disinto/tickets.jsonl}"
 MAX_BODY_BYTES=8192
 
-fail_error() {
-  printf '{"error":"%s"}\n' "$1"
-  exit 1
-}
-
 # ── arguments ────────────────────────────────────────────────────────────────
 if [[ $# -ne 1 ]]; then
   fail_error "bad arguments"

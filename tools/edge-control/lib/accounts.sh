@@ -64,7 +64,11 @@
 #     On success, prints the compact row for DISPATCH_FP and exits the calling
 #     verb 0.
 #
-# Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, account_ensure(),
+#   fail_error <message>
+#     Print the canonical JSON error object ({"error":"<message>"}) on stdout
+#     and exit 1. Shared by every verb so the failure shape is uniform.
+#
+# Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, fail_error(), account_ensure(),
 # account_row(), account_set_name(), account_add_credits(), is_admin(),
 # require_admin(), require_dispatch_fp(), and print_account_row() become
 # available to the caller.
@@ -89,6 +93,14 @@ accounts_init() {
   if [ ! -f "$ACCOUNTS_FILE" ]; then
     printf '{"version":1,"accounts":{}}\n' > "$ACCOUNTS_FILE"
   fi
+}
+
+# Print the canonical JSON error object to stdout and exit non-zero. Shared by
+# every verb so the failure shape is uniform: {"error":"<message>"}. The
+# <message> must never contain state, a fingerprint, or a secret.
+fail_error() {
+  printf '{"error":"%s"}\n' "$1"
+  exit 1
 }
 
 # Ensure a row exists for <fp>. See the file header for the contract.

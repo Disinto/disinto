@@ -40,11 +40,6 @@ source "${SCRIPT_DIR}/../lib/accounts.sh"
 
 MAX_CREDIT_GRANT=1000000
 
-fail_error() {
-  printf '{"error":"%s"}\n' "$1"
-  exit 1
-}
-
 # ── arguments ────────────────────────────────────────────────────────────────
 [[ $# -eq 2 ]] \
   || fail_error "bad arguments"

@@ -484,6 +484,20 @@ def main() -> int:
         "c2c1df8184b838251b4c0ed39a7a0860": "forge_api_all window env.sh:243 + forge-paginate.sh (inlined function)",
         "9276d71ea72d9dbcd8bb1f91eb87942f": "forge_api_all window env.sh:244 + forge-paginate.sh (inlined function)",
         "2b5a82793a819934b53e6f42e4aa7f4a": "forge_api_all window env.sh:245 + forge-paginate.sh (inlined function)",
+        # Per-issue acceptance tests each embed the same self-contained
+        # fake-curl HTTP stub (test-harness boilerplate; one copy per issue
+        # keeps each acceptance test isolated). Intentional duplication, not
+        # copy-paste — issue-1469.sh <-> issue-1471.sh.
+        "db1a3733eafe76e0d23f371a17f1bb7d": "Fake-curl stub bootstrap (set -u) issue-1469.sh + issue-1471.sh",
+        "f970e060b0b5b8514b5ed8be636caca3": "Fake-curl stub STUB_INVOKED_FILE check issue-1469.sh + issue-1471.sh",
+        "507491e372adae5ec187d4c396ff5d78": "Fake-curl stub STUB_INVOKED_FILE touch issue-1469.sh + issue-1471.sh",
+        "f1ea96893e9d4d5a22cbc8b05b4887b3": "Fake-curl stub closing fi issue-1469.sh + issue-1471.sh",
+        "84083c503ada1be26cbf2d883472643c": "Fake-curl stub args capture issue-1469.sh + issue-1471.sh",
+        "d603d2ed5c50dabc59c915a27167152d": "Fake-curl stub arg count issue-1469.sh + issue-1471.sh",
+        "c6dd49b2e34797fffe4401d5544aa723": "Fake-curl stub index init issue-1469.sh + issue-1471.sh",
+        "b763b708e92c4a819fb26ca30cc7a499": "Fake-curl stub payload init issue-1469.sh + issue-1471.sh",
+        "8f372ed5f3e253945a05fc6bcf4b4711": "Fake-curl stub auth init issue-1469.sh + issue-1471.sh",
+        "d47cc6e003cdd6dd42c3c67d2fbf5a9f": "Fake-curl stub else issue-1469.sh + issue-1471.sh",
     }
 
     if not sh_files:
