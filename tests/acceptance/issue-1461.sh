@@ -131,7 +131,7 @@ ac_assert_eq "$rc" "0" "counts pick must return 0 (got $rc): $out"
 ac_assert_file "$TAPE1/tape.jsonl" "no tape record was appended to $TAPE1/tape.jsonl"
 LINE="$(head -n 1 "$TAPE1/tape.jsonl" 2>/dev/null)"
 [ -n "$LINE" ] || ac_fail "a record must be appended on the counts path"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .class == "backlog" and .decision == "approved" and .ref == "1461" and .context.open_prs == 3 and .context.size_class == "M" and .context.forecast_method == "counts" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and .forecast.p_success == 0.63 and .forecast.est_cost == 0 and .forecast.est_dvision == 0' "$LINE" "counts path: forecast from catalog (p_success 0.63), forecast_method=counts, no flat-prior override"
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .class == "backlog" and .decision == "approved" and .ref == "1461" and .context.open_prs == 3 and .context.size_class == "M" and .context.forecast_method == "counts" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not) and .forecast.p_success == 0.63 and .forecast.est_cost == 0 and .forecast.est_dvision == 100' "$LINE" "counts path: forecast from catalog (p_success 0.63, est_dvision from mean duration_s), forecast_method=counts, no flat-prior override"
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-1461"
 [ -f "$ID_FILE" ] || ac_fail "id file $ID_FILE missing after a successful counts pick"
 ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \
