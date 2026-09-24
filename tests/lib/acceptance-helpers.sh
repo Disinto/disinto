@@ -317,6 +317,36 @@ ac_run_empty_tape() {
   out="$(TAPE_DIR="$d" bash "$t")" || rc=$?
 }
 
+# ac_run_tape_tool <dir-name> <write-fn> <tool> — prepare a tape dir
+# $TMP_DIR/<dir-name> (mkdir -p), write it via the function named in
+# <write-fn>, run <tool> with TAPE_DIR set, and store the exit status in the
+# global rc and the combined stdout in the global out. The global TC_DIR is
+# also set to the tape dir for callers that need it. Shared by the calibration
+# acceptance ACs (issue-1473.sh, issue-1526.sh) so the `TC_DIR/mkdir/write` +
+# run + rc lines are not duplicated file-to-file (duplicate-detection).
+ac_run_tape_tool() {
+  local dir_name="$1" write_fn="$2" tool="$3"
+  TC_DIR="$TMP_DIR/$dir_name"
+  mkdir -p "$TC_DIR"
+  "$write_fn" "$TC_DIR"
+  rc=0
+  out="$(TAPE_DIR="$TC_DIR" bash "$tool")" || rc=$?
+}
+
+# ac_run_bats_suite <suite-path> — run a bats suite, storing the exit status in
+# the global bats_rc and the combined stdout/stderr in the global bats_out.
+# Returns 0 so set -e callers are not aborted before the asserting
+# `ac_assert_eq "$bats_rc" "0" ...` line can print the FAIL message. Shared by
+# the calibration acceptance ACs (issue-1453.sh, issue-1454.sh, issue-1473.sh,
+# issue-1526.sh) so the identical `bats` invocation + rc capture is not
+# duplicated file-to-file (duplicate-detection).
+ac_run_bats_suite() {
+  local suite="$1"
+  bats_rc=0
+  # shellcheck disable=SC2034  # bats_out/bats_rc are consumed by the calling acceptance script
+  bats_out="$(bats "$suite" 2>&1)" || bats_rc=$?
+}
+
 # ── Edge-control ledger fixtures (edge-verb acceptance tests) ────────────────
 # The edge verbs read a throwaway $ACCOUNTS_FILE that each test sets up in an
 # mktemp dir (never /var/lib/disinto). These are the single definition of the

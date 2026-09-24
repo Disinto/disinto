@@ -15,7 +15,7 @@
 # Pairs are grouped by (loop, class) — both taken from the proposal — after
 # dropping non-samples, and summarised as a markdown table on stdout:
 #
-#   | loop | class | n | promised | actual | error | mean duration_s |
+#   | loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 #
 #   n               number of sample pairs in the group
 #   promised        mean of the proposals' forecast.p_success (as an
@@ -34,12 +34,21 @@
 #                   the pairs that carry one (missing ones are skipped, never
 #                   counted as zero); "-" when no sample pair in the group
 #                   carries a duration
+#   dur_promised    mean of the proposals' forecast.est_dvision (seconds) over
+#                   the sample pairs whose value is numeric and greater than 0,
+#                   one decimal (same style as mean duration_s); "-" when no
+#                   sample pair in the group carries a positive one (0 is the
+#                   pre-#1525 stub and missing is not a forecast, so neither
+#                   is counted)
+#   dur_error       |dur_promised - mean duration_s|, one decimal, when both
+#                   are present; "-" otherwise
 #
 # A pair is a sample only when the loop is dev or repair and the LAST
 # outcome carries that loop's competence bit (true/false/1/0): true/1 is a
 # success, false/0 a failure. Any other loop, or a last outcome without the
-# bit, is dropped from n, promised, actual, and mean duration_s — never
-# counted as 0%. Same last-outcome pairing as before.
+# bit, is dropped from n, promised, actual, mean duration_s, dur_promised,
+# and dur_error — never counted as 0% or a zero-duration forecast. Same
+# last-outcome pairing as before.
 #
 # Pure bash + jq. No git, no network, no writes: the tape is only read.
 # Malformed tape lines (e.g. a torn final line from a crashed writer) are
@@ -64,8 +73,8 @@ command -v jq >/dev/null 2>&1 || { echo "calibration: required tool missing: jq"
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 TAPE_FILE="${TAPE_DIR}/tape.jsonl"
 
-echo '| loop | class | n | promised | actual | error | mean duration_s |'
-echo '|---|---|---|---|---|---|---|'
+echo '| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
+echo '|---|---|---|---|---|---|---|---|---|'
 
 [ -f "$TAPE_FILE" ] || exit 0
 [ -s "$TAPE_FILE" ] || exit 0
@@ -84,8 +93,11 @@ skipped=$(( total_lines - valid_lines ))
 # One tab-separated row per (loop, class) sample group:
 # loop <tab> class <tab> n <tab> promised (integer %, or the literal
 # "-") <tab> actual (integer %) <tab> mean duration_s (the literal
-# "NA" when no pair in the group carries one). The reader derives
-# error = |promised - actual| (or "-") from the same values.
+# "NA" when no pair in the group carries one) <tab> est duration_s (the
+# literal "NA" when no sample pair in the group carries a numeric
+# est_dvision greater than 0). The reader derives error =
+# |promised - actual| (or "-") and dur_error = |est duration_s - mean
+# duration_s| (or "-") from the same values.
 jq -R -s -r '
   [ split("\n")[]
     | (try fromjson catch null)
@@ -96,7 +108,9 @@ jq -R -s -r '
                   and ((.class | type) == "string")))
       | map({ key: .id, value: { loop: .loop, class: .class,
                                   promised: (.forecast.p_success
-                                             | if type == "number" then . else null end) } })
+                                             | if type == "number" then . else null end),
+                                  est_dvision: (.forecast.est_dvision
+                                               | if type == "number" then . else null end) } })
       | from_entries) as $props
   | [ $recs[]
         | select(.type == "outcome"
@@ -107,6 +121,7 @@ jq -R -s -r '
   | map({ loop: $props[.proposal_id].loop,
            class: $props[.proposal_id].class,
            promised: $props[.proposal_id].promised,
+           est_dvision: $props[.proposal_id].est_dvision,
            bits: (.bits | if type == "object" then . else {} end),
            duration: (.numbers.duration_s
                       | if type == "number" then . else null end) })
@@ -118,6 +133,7 @@ jq -R -s -r '
   | map({ loop: .loop,
            class: .class,
            promised: .promised,
+           est_dvision: .est_dvision,
            competence: (if .loop == "dev" then .bits.merged
                          else (if .loop == "repair" then .bits.regression_cleared
                                 else null end) end),
@@ -133,11 +149,13 @@ jq -R -s -r '
            mr: (100 * (map(select(.competence == true or .competence == 1)) | length)
                  / length | round),
            md: ((map(.duration) | map(select(. != null)))
+                | if length > 0 then add / length else null end),
+           df: ((map(.est_dvision) | map(select(. != null)) | map(select(. > 0)))
                 | if length > 0 then add / length else null end) })
   | .[]
-  | "\(.loop)\t\(.class)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)"
+  | "\(.loop)\t\(.class)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)\t\(if .df == null then "NA" else (.df | tostring) end)"
 ' "$TAPE_FILE" |
-while IFS=$'\t' read -r lp cl n promised actual md; do
+while IFS=$'\t' read -r lp cl n promised actual md df; do
   if [ "$md" = "NA" ]; then
     mean="-"
   else
@@ -152,5 +170,18 @@ while IFS=$'\t' read -r lp cl n promised actual md; do
     [ "$d" -lt 0 ] && d=$(( -d ))
     e="$d"
   fi
-  printf '| %s | %s | %s | %s | %s%% | %s | %s |\n' "$lp" "$cl" "$n" "$p" "$actual" "$e" "$mean"
+  if [ "$df" = "NA" ]; then
+    durp="-"
+    dure="-"
+  else
+    durp="$(printf "%.1f" "$df")"
+    if [ "$md" = "NA" ]; then
+      dure="-"
+    else
+      dure="$(awk -v a="$durp" -v b="$mean" \
+        'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.1f", d }')"
+    fi
+  fi
+  printf '| %s | %s | %s | %s | %s%% | %s | %s | %s | %s |\n' \
+    "$lp" "$cl" "$n" "$p" "$actual" "$e" "$mean" "$durp" "$dure"
 done
