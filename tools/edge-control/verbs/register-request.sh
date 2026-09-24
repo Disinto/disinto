@@ -37,12 +37,6 @@ source "${SCRIPT_DIR}/../lib/accounts.sh"
 # Operator-adjacent and internal-role names; no project may claim one of these.
 RESERVED_NAMES=(www api admin root mail chat forge ci edge caddy disinto register tunnel)
 
-# JSON error on stdout; non-zero exit.
-fail_error() {
-  printf '{"error":"%s"}\n' "$1"
-  exit 1
-}
-
 [[ $# -eq 1 ]] \
   || fail_error "bad arguments"
 project="$1"
