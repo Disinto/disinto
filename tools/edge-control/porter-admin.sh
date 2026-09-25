@@ -28,11 +28,13 @@
 #   3. Fingerprint must match the ledger regex ^SHA256:[A-Za-z0-9_-]{43}$
 #      (FINGERPRINT_RE from lib/accounts.sh). Otherwise {"error":"invalid
 #      fingerprint"}, rc 1, nothing written.
-#   4. Ensure the ledger file and directory (seed {"version":1,"accounts":{}}
-#      only if the file is missing — never overwrite), then one atomic jq
-#      pass over a tmp path + rename: create the row if missing (status=
-#      pending, credits=0, admin=false) and always set admin=true. Existing
-#      rows keep status, credits, name and created_at untouched.
+#   4. Reuse the shared account_ensure (lib/accounts.sh) to create the ledger
+#      file/directory and the default-shaped row (status=pending, credits=0,
+#      admin=false), then a single local-only jq pass over a tmp + rename
+#      flips admin=true. The admin-grant deliberately stays out of the door's
+#      shared lib (lib/ ships to the door runtime; admin must be grantable
+#      only by this local tool). Existing rows keep status, credits, name and
+#      created_at untouched — only admin moves.
 #   5. Print the compact row. rc 0.
 #
 # Output contract (JSON on stdout unless noted):
@@ -78,20 +80,20 @@ if [[ ! "$target" =~ $FINGERPRINT_RE ]]; then
   fail_error "invalid fingerprint"
 fi
 
-# ── ensure ledger file + dir (idempotent, never overwrite an existing file) ───
-mkdir -p "$(dirname "$LEDGER")"
-[[ -f "$LEDGER" ]] || printf '{"version":1,"accounts":{}}\n' > "$LEDGER"
+# ── ensure the row via the shared lib (lib/accounts.sh). It creates the ledger
+# file + directory (seeded only when the file is absent) and a default-shaped
+# row (status=pending, credits=0, admin=false), atomically — a neutral, shared
+# operation the door itself needs. Reusing it avoids re-implementing ensure.
+if ! account_ensure "$target"; then
+  fail_error "failed to update ledger"
+fi
 
-# ── atomic ensure-row + admin=true (same shape as porter-install --admin-key) ──
-now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+# ── flip admin=true: a single local-only pass over a tmp path + rename. Only
+# the admin field moves; status/credits/name/created_at are left untouched.
+# This block lives only in this local operator tool — it is never shipped to
+# the door runtime (see file header), so the edge has no admin-grant primitive.
 tmp="${LEDGER}.admin-tmp"
-if jq --arg fp "$target" --arg now "$now" \
-     '.accounts = (.accounts // {})
-      | .accounts[$fp] = (.accounts[$fp] //
-         {fingerprint: $fp, status: "pending", credits: 0, name: null,
-          admin: false, created_at: $now})
-      | .accounts[$fp].admin = true' \
-      "$LEDGER" > "$tmp"; then
+if jq --arg fp "$target" '.accounts[$fp].admin = true' "$LEDGER" > "$tmp"; then
   mv "$tmp" "$LEDGER"
 else
   rm -f "$tmp"
