@@ -76,7 +76,7 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-wrap.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, register-request.sh, revoke.sh, status.sh,

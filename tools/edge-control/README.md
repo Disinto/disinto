@@ -276,11 +276,12 @@ For high availability, add a second edge host:
 
 ### Restricted dispatcher (any-key identity)
 
-`key-command.sh` and `dispatch.sh` are the store door for *any* SSH key. sshd's
+`key-command.sh` is the store door for *any* SSH key. sshd's
 `AuthorizedKeysCommand` invokes `key-command.sh` with the incoming key's
 fingerprint, type, and data; on a valid key it prints a single restricted line,
-`restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY`,
-which routes the caller through `dispatch.sh` to the verbs under `verbs/`
+`pty,restrict,command="<install-dir>/porter-wrap.sh --fp FINGERPRINT" TYPE KEY`,
+whose forced command `porter-wrap.sh` loads the allowlisted env and `exec`s
+`dispatch.sh`, routing the caller to the verbs under `verbs/`
 (`whoami`, `status`, `ticket`, `tickets`, `register-request`, `credits`,
 `credits-buy`, `credits-grant`). The fingerprint is the account — no username, no password.
 Enabling `AuthorizedKeysCommand` is an operator step on the edge host and is
