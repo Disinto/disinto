@@ -1,4 +1,4 @@
-<!-- last-reviewed: 687ade250b6dcc2919d090a000585a8b1a0d48ac -->
+<!-- last-reviewed: 539b3b54b0e6a2ed649192047a34fe75b43cb365 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -79,8 +79,8 @@ disinto/                 (code repo)
 │                  dispatch.sh, key-command.sh, porter-wrap.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
-│                  credits-grant.sh, register-request.sh, revoke.sh, status.sh,
-│                  ticket.sh, tickets.sh, whoami.sh); examples/ (stripe-webhook.caddy);
+│                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,
+│                  ticket.sh, tickets.sh, whoami.sh); packs/ (scope.json); examples/ (stripe-webhook.caddy);
 │                  reserved-name blocklist, admin-approved allowlist, per-caller
 │                  attribution);
 │                  run-acceptance.sh — acceptance test runner for CI
