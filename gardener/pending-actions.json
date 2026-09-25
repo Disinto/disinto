@@ -1,98 +1,17 @@
 [
   {
-    "action": "file_edit",
-    "path": "docs/AGENTS.md",
-    "change": "FIX LIE: correct path in docker/edge tree diagram: chat-skills/factory-state.sh -> chat-skills/factory-state/factory-state.sh",
-    "ts": "2026-09-25T16:00:21Z"
+    "action": "edit_body",
+    "issue": 1533,
+    "body": "## Problem\n\n`repair_tape_tick` writes a repair proposal, and writes `regression_cleared` when the condition disappears. The fast path then runs the direct action script and exits 0 before `formula_session_start`. No action script writes the tape.\n\nLive: 46 repair proposals, 0 runs on those ids, 42 outcomes. The pair says the symptom went away. It does not say which script ran.\n\n## Change\n\nOne file: `supervisor/supervisor-run.sh`.\n\nAdd `repair_direct_dispatch` and call it from the fast-path direct-action loop, in place of the current bare `bash` loop. Do not move that loop onto the LLM path.\n\nFor each fired recipe with `action == \"direct\"` and a real `action_script`:\n\n- Run the script as today (`FACTORY_ROOT/<script> \"$PROJECT_TOML\" evidence`). A non-zero exit must not abort the tick.\n- Look up `proposal_id` in the repair state file (`repair_tape_state_file`) under the recipe `name`.\n- If the id is missing, log a warning, still run the script, write no tape line.\n- If the id is present, append an open `tape_run` and a closing `tape_run` on that id. `organ` is `supervisor`. `agent` is `bash`. `attempts` is 1. `cost` is `{\"duration_s\": <integer seconds, >= 0>}`. Closing `status` is `completed` when the script exits 0, else `failed`.\n- Do not call `tape_outcome`.\n- A tape failure logs a warning. The script still runs. The function returns 0.\n\nDo not edit `supervisor/recipes.yaml`. Do not set `TAPE_PROPOSAL_ID`. Do not change `formula_session_start`. Do not skip the LLM gate.\n\n## Affected files\n\n- `supervisor/supervisor-run.sh`\n- `tests/acceptance/issue-<this>.sh`\n\n## Acceptance\n\n`bash tests/acceptance/issue-<this>.sh` exits 0 and calls `ac_pass`.\n\nNo network. Extract `repair_direct_dispatch` with `ac_extract_fn`. Temp `TAPE_DIR`, temp `SUPERVISOR_REPAIR_STATE_FILE`, temp `FACTORY_ROOT` script.\n\n- [ ] state has `close-stuck-pr` → proposal id `PROP1`; recipe fires direct; script exits 0 → two run lines on `PROP1`, status `completed`, `cost.duration_s` a number, no outcome line, script ran\n- [ ] same, script exits 3 → closing status `failed`, function returns 0, script ran\n- [ ] recipe name absent from the state file → script ran, no run line, return 0\n- [ ] unwritable `TAPE_DIR` → script ran, return 0\n\n"
   },
   {
-    "action": "file_edit",
-    "path": "docs/AGENTS.md",
-    "change": "FILL GAP: add porter-install.sh, porter-admin.sh, porter-doctor.sh to edge-control/ layout (new since watermark)",
-    "ts": "2026-09-25T16:00:21Z"
+    "action": "edit_body",
+    "issue": 1508,
+    "body": "Flagged by AI reviewer in PR #1506.\n\n## Problem\nAGENTS.md line 7 intro states the polling loop 'paces the seven organs (dev, review, gardener, supervisor, planner, predictor, architect)'. After PR #1506 the default AGENT_ROLES excludes predictor (entrypoint: review,dev,gardener,architect,planner,supervisor; Nomad combined job: five llama roles; supervisor standalone opus job), so 'seven organs' as default pacing is now misleading.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- AGENTS.md (root, intro paragraph)\n\n## Acceptance criteria\n- [ ] Root AGENTS.md intro lists the six default organs (dev, review, gardener, supervisor, planner, architect); predictor explicitly marked opt-in\n- [ ] Intro matches the `AGENT_ROLES` default in docker/agents/entrypoint.sh\n- [ ] Watermark bumped to the new HEAD in the same agents-update commit\n"
   },
   {
-    "action": "watermark_bump",
-    "path": "AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "dev/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "review/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "gardener/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "lib/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "nomad/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "planner/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "predictor/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "supervisor/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "architect/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "docs/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
-  },
-  {
-    "action": "watermark_bump",
-    "path": "vault/policies/AGENTS.md",
-    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
-    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
-    "ts": "2026-09-25T16:00:21Z"
+    "action": "add_label",
+    "issue": 1508,
+    "label": "backlog"
   }
 ]
