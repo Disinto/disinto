@@ -8,12 +8,16 @@
 # seeds porter.env, and writes the drop-in. It needs no Gandi token;
 # Caddy/DNS is separate optional work (install.sh).
 #
-# Paths (if PORTER_ROOT is set and non-empty, every path is prefixed with it,
-# and the script does not useradd, does not chown, and does not reload sshd):
-#   ${PORTER_ROOT}opt/porter           — the door: the copied scripts plus
-#                                       lib/, verbs/, packs/
-#   ${PORTER_ROOT}var/lib/porter       — the accounts.json ledger
-#   ${PORTER_ROOT}etc/porter/porter.env  — allowlisted edge env (mode 640)
+# Paths (if PORTER_ROOT is set and non-empty, every path is prefixed with it;
+# the script also skips useradd/chown and never reloads sshd):
+#   ${PORTER_ROOT}opt/porter            — the door: the copied scripts plus
+#                                         lib/, verbs/, packs/
+#   ${PORTER_ROOT}var/lib/disinto       — the accounts.json ledger (the door
+#                                         runtime's ACCOUNTS_FILE default; the
+#                                         installer must match it, since
+#                                         porter-wrap.sh will not load an
+#                                         alternate ACCOUNTS_FILE)
+#   ${PORTER_ROOT}etc/porter/porter.env — allowlisted edge env (mode 640)
 #   ${PORTER_ROOT}etc/ssh/sshd_config.d — the porter.conf drop-in
 #
 # Usage:
@@ -47,8 +51,13 @@ if [[ -n "${PORTER_ROOT:-}" ]]; then
 else
   PREFIX="/"
 fi
+# The door runtime reads the ledger via lib/accounts.sh's ACCOUNTS_FILE
+# default (/var/lib/disinto/accounts.json) and porter-wrap.sh excludes
+# ACCOUNTS_FILE from its env allowlist, so the installer MUST seed the ledger
+# at exactly that path (prefixed). A different path would mean the door never
+# sees the seeded rows.
 OPT_DIR="${PREFIX}opt/porter"
-LIB_DIR="${PREFIX}var/lib/porter"
+LIB_DIR="${PREFIX}var/lib/disinto"
 ENV_FILE="${PREFIX}etc/porter/porter.env"
 DROPIN_DIR="${PREFIX}etc/ssh/sshd_config.d"
 DROPIN="${DROPIN_DIR}/porter.conf"
@@ -131,8 +140,25 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
       || die "cannot create user porter"
     log "User porter created"
   fi
-  chown -R porter:porter "${OPT_DIR}" "${LIB_DIR}"
-  log "Owned by porter: ${OPT_DIR} ${LIB_DIR}"
+
+  # The forced command runs as user `porter`, which must be able to (a) read/
+  # exec the door, (b) read porter.env (loaded by porter-wrap.sh), and (c)
+  # write the ledger — the verbs `mv` a tmp file into ${LIB_DIR}/. So chown the
+  # door to porter and give porter ownership of the ledger dir + ledger file
+  # + env file.
+  #
+  # ${LIB_DIR} (/var/lib/disinto) is shared with install.sh's registry
+  # (root:disinto-register 0750). We hand it to porter (the only user that
+  # must *write* there for the ledger) and open it to 0755 so other users
+  # (disinto-register, etc.) can still read it — the files inside (e.g.
+  # registry.json 0644) were already world-readable, so 0755 exposes nothing
+  # new. The ledger itself stays 0640 (porter-owned) so it is not world-
+  # readable. The drop-in is read by sshd (root), so it stays root-owned.
+  chown -R porter:porter "${OPT_DIR}"
+  chown porter:porter "${LIB_DIR}"
+  chmod 0755 "${LIB_DIR}"
+  chown porter:porter "${LEDGER}" "${ENV_FILE}"
+  log "Owned by porter: ${OPT_DIR} ${LIB_DIR} (0755) ${LEDGER} ${ENV_FILE}"
 fi
 
 # ── sshd drop-in: written every run; sshd not reloaded, sshd_config untouched ──

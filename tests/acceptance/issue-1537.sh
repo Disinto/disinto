@@ -37,7 +37,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash jq mktemp grep cat chmod stat date printf ssh-keygen awk
+ac_require_cmd bash jq mktemp grep sed cat chmod stat date printf ssh-keygen awk
 
 PORTER_INSTALL="$REPO_ROOT/tools/edge-control/porter-install.sh"
 ac_assert_file "${PORTER_INSTALL}" "tools/edge-control/porter-install.sh is missing"
@@ -58,9 +58,31 @@ mkdir -p "${ROOT}"
 ac_log "issue-1537: PORTER_ROOT=${ROOT}"
 
 OPT_DIR="${ROOT}/opt/porter"
-LEDGER="${ROOT}/var/lib/porter/accounts.json"
 ENV_FILE="${ROOT}/etc/porter/porter.env"
 DROPIN="${ROOT}/etc/ssh/sshd_config.d/porter.conf"
+
+# ── The runtime ledger path, derived from the door's own source ─────────────
+# The door reads its ledger via lib/accounts.sh's ACCOUNTS_FILE default
+# (/var/lib/disinto/accounts.json). porter-wrap.sh excludes ACCOUNTS_FILE from
+# its env allowlist, so the door can never read another path. Derive the
+# expected path from the door source (not a hardcoded one) so this test stays
+# tied to the runtime: if the installer seeds a different path, the file check
+# below fails.
+ACCOUNTS_SRC="${REPO_ROOT}/tools/edge-control/lib/accounts.sh"
+ac_assert_file "${ACCOUNTS_SRC}" "lib/accounts.sh is missing"
+# Extract the default from ACCOUNTS_FILE="${ACCOUNTS_FILE:-/path}" — everything
+# between ":-" and the closing "}".
+RUNTIME_DEFAULT="$(grep -m1 'ACCOUNTS_FILE=' "${ACCOUNTS_SRC}" \
+  | sed -n 's/.*:-\([^}"]*\)}.*/\1/p')"
+[[ -n "${RUNTIME_DEFAULT}" ]] \
+  || ac_fail "AC1: cannot extract the runtime ACCOUNTS_FILE default from lib/accounts.sh"
+# Sanity: the default should be an absolute path under /var/lib (not a
+# relative or malformed value that would silently point the test at the wrong dir).
+[[ "${RUNTIME_DEFAULT}" == /var/lib/* ]] \
+  || ac_fail "AC1: runtime ACCOUNTS_FILE default ${RUNTIME_DEFAULT} is not an absolute /var/lib path"
+RUNTIME_REL="${RUNTIME_DEFAULT#/}"
+LEDGER="${ROOT}/${RUNTIME_REL}"
+ac_log "AC1: runtime ledger path = ${LEDGER} (ACCOUNTS_FILE default ${RUNTIME_DEFAULT})"
 
 run_install() {
   PORTER_ROOT="${ROOT}" bash "${PORTER_INSTALL}" "$@"
@@ -95,8 +117,10 @@ done
 [[ "$(stat -c '%a' "${OPT_DIR}/verbs/jev.sh")" == 755 ]] \
   || ac_fail "AC1: verbs/jev.sh mode is not 755 (got $(stat -c '%a' "${OPT_DIR}/verbs/jev.sh"))"
 
-# Ledger seeded empty, env seeded with exactly the two allowlisted lines.
-[[ -f "${LEDGER}" ]] || ac_fail "AC1: ledger missing at ${LEDGER}"
+# Ledger seeded empty. LEDGER is the runtime-default path (prefixed), so this
+# check is the tie: a divergent installer path (e.g. the old /var/lib/porter)
+# would make the file missing at the runtime default and fail here.
+[[ -f "${LEDGER}" ]] || ac_fail "AC1: ledger missing at the runtime-default path ${LEDGER}"
 jq -e '.version == 1 and (.accounts | length == 0)' "${LEDGER}" >/dev/null 2>&1 \
   || ac_fail "AC1: ledger is not {version:1, accounts:{}}: $(cat "${LEDGER}")"
 [[ -f "${ENV_FILE}" ]] || ac_fail "AC1: porter.env missing at ${ENV_FILE}"
