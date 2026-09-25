@@ -1,4 +1,4 @@
-<!-- last-reviewed: 539b3b54b0e6a2ed649192047a34fe75b43cb365 -->
+<!-- last-reviewed: 949e201dd96b49b49331bc71779716cf7d34f4aa -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -72,11 +72,11 @@ disinto/                 (code repo)
 │                  experiment runner script (wave 2, #1293)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
 │                  edge/ (Caddy + chat + voice + dispatcher
-│                  + chat-skills/factory-state.sh — snapshot state reader for chat/voice operator
+│                  + chat-skills/factory-state/factory-state.sh — snapshot state reader for chat/voice operator
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, porter-wrap.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-install.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,

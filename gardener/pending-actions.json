@@ -1,0 +1,98 @@
+[
+  {
+    "action": "file_edit",
+    "path": "docs/AGENTS.md",
+    "change": "FIX LIE: correct path in docker/edge tree diagram: chat-skills/factory-state.sh -> chat-skills/factory-state/factory-state.sh",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "file_edit",
+    "path": "docs/AGENTS.md",
+    "change": "FILL GAP: add porter-install.sh, porter-admin.sh, porter-doctor.sh to edge-control/ layout (new since watermark)",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "dev/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "review/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "gardener/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "lib/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "nomad/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "planner/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "predictor/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "supervisor/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "architect/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "docs/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  },
+  {
+    "action": "watermark_bump",
+    "path": "vault/policies/AGENTS.md",
+    "from": "539b3b54b0e6a2ed649192047a34fe75b43cb365",
+    "to": "949e201dd96b49b49331bc71779716cf7d34f4aa",
+    "ts": "2026-09-25T16:00:21Z"
+  }
+]
