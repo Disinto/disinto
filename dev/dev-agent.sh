@@ -31,6 +31,7 @@ source "$(dirname "$0")/../lib/pr-lifecycle.sh"
 source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
+source "$(dirname "$0")/../lib/tape.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -71,6 +72,11 @@ status() {
 # =============================================================================
 CLAIMED=false
 PR_NUMBER=""
+# #1532: PR_WALK_RC is 0 only when pr_walk_to_merge() returned 0 (merged); 1 for
+# every other exit. close_dev_tape_outcome() records merged/ci_green from this
+# flag, never from the process exit code. One outcome per process.
+PR_WALK_RC=1
+_DEV_TAPE_OUTCOME_WRITTEN=0
 
 # kill_stale_claude — kill any claude process group left behind by
 # claude_run_with_watchdog (#1070: a session was observed outliving its
@@ -103,13 +109,100 @@ cleanup() {
     issue_release "$ISSUE"
   fi
 }
-# Route HUP/INT/TERM through exit so the EXIT trap (cleanup) always runs,
-# including on signal death — otherwise a signalled dev-agent leaves its
-# claude child running (#1070).
+
+# close_dev_tape_outcome — append the terminal outcome for the picked proposal
+# (#1532: close the dev tape pair).
+#
+# dev-poll.sh emits an outcome only when it itself merges or abandons a PR
+# (the direct-merge scan and stale-branch abandonment). dev-agent.sh merges
+# via pr_walk_to_merge() and returns, so without this the outcome would never
+# land: Forge closes the issue and the next poll sees no open PR, writing nothing.
+# This runs from the EXIT trap on every terminal path (merge, no-push refusal,
+# block, signal, crash) and appends at most one outcome for the picked proposal.
+#
+#   * bits.merged / bits.ci_green are 1 only when pr_walk_to_merge() returned 0
+#     (PR_WALK_RC); every other exit records 0/0. Never inferred from the process
+#     exit code.
+#   * numbers.review_rounds is 0 (no forge call).
+#   * numbers.duration_s = now - started (clamped >= 0) when the started epoch
+#     file /tmp/dev-proposal-started-<project>-<issue> is present and an integer
+#     epoch; omitted (never 0) otherwise.
+#   * children = {}, payloads = [].
+#
+# No id file (missing or empty) -> write nothing (return 0). The id and started
+# files are never deleted. Always returns 0; a tape failure only logs a WARNING
+# and never changes the exit code.
+close_dev_tape_outcome() {
+  if [ "${_DEV_TAPE_OUTCOME_WRITTEN:-0}" = 1 ]; then
+    return 0
+  fi
+
+  local id_file id bits numbers merged
+  local duration_s has_duration
+
+  # merged/ci_green come from the walk result, not the process exit code.
+  if [ "$PR_WALK_RC" -eq 0 ]; then
+    merged=1
+  else
+    merged=0
+  fi
+
+  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}"
+  id="$(cat "$id_file" 2>/dev/null)" || id=""
+  if [ -z "$id" ]; then
+    return 0
+  fi
+
+  bits="$(jq -cn --argjson m "$merged" '{merged: $m, ci_green: $m}' 2>/dev/null)" || bits=""
+  if [ -z "$bits" ]; then
+    log "WARNING: tape: could not build outcome bits for #${ISSUE}"
+    return 0
+  fi
+
+  # duration_s (#1532): pick->terminal span via proposal_elapsed_s (#1452);
+  # omitted (never 0) when the started file is missing or not an integer epoch.
+  has_duration=0
+  if duration_s="$(proposal_elapsed_s "$ISSUE")"; then
+    has_duration=1
+  fi
+
+  if [ "$has_duration" = 1 ]; then
+    numbers="$(jq -cn --argjson n 0 --argjson d "$duration_s" \
+      '{review_rounds: $n, duration_s: $d}' 2>/dev/null)" || numbers=""
+  else
+    numbers="$(jq -cn --argjson n 0 '{review_rounds: $n}' 2>/dev/null)" || numbers=""
+  fi
+  if [ -z "$numbers" ]; then
+    log "WARNING: tape: could not build outcome numbers for #${ISSUE}"
+    return 0
+  fi
+
+  # Claim the write so a second invocation in the same process appends nothing.
+  _DEV_TAPE_OUTCOME_WRITTEN=1
+  if ! tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append outcome record ${id} for #${ISSUE}"
+    return 0
+  fi
+
+  if [ "$has_duration" = 1 ]; then
+    log "tape: recorded dev outcome for #${ISSUE} (merged: ${merged}, duration_s: ${duration_s})"
+  else
+    log "tape: recorded dev outcome for #${ISSUE} (merged: ${merged})"
+  fi
+  return 0
+}
+# Route HUP/INT/TERM through exit so the EXIT trap (cleanup +
+# close_dev_tape_outcome) always runs, including on signal death — otherwise
+# a signalled dev-agent leaves its claude child running (#1070) and the dev
+# tape pair stays open (#1532). The trap captures the original exit status and
+# restores it: every command in the body is guarded so set -e cannot abort
+# mid-trap, and close_dev_tape_outcome() always returns 0, so a tape failure
+# logs a WARNING without changing the exit code.
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-trap cleanup EXIT
+# shellcheck disable=SC2154  # _trap_rc is assigned inside the trap string
+trap '_trap_rc=$?; cleanup || true; close_dev_tape_outcome || true; exit $_trap_rc' EXIT
 # Note: no rm of $CLAUDE_PGID_FILE at startup — a stale file from a crashed
 # prior run points at the leaked claude group, and cleanup() will kill it
 # (self-healing). claude_run_with_watchdog overwrites the file each run.
@@ -684,6 +777,7 @@ status "walking PR #${PR_NUMBER} to merge"
 
 rc=0
 pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
+PR_WALK_RC="$rc"
 
 if [ "$rc" -eq 0 ]; then
   # Merged successfully — keep open with awaiting-live-verification label
