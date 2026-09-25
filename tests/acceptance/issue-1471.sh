@@ -49,13 +49,21 @@ ac_assert_file "$JEV" "verbs/jev.sh is missing"
 ac_assert_file "$ACCOUNTS_LIB" "lib/accounts.sh is missing"
 ac_assert_file "$SCOPE_PACK" "packs/scope.json is missing"
 
-# The pack must be exactly the "noul" the issue names.
-jq -e --arg e "The proposal is one concept, one repo, and one observable behavior." '
-  (.instructions == $e)
-  and (.questions | (type == "array") and (length > 0) and all(. | (type == "string")))
-  and (.questions == ["What is the one concept?", "What is the one repo?", "What is the one observable behavior?"])' \
+# The pack must be exactly the questions *map* the issue names: three Nouls
+# (one per key), each with `type == "noul"` and its named instruction — a
+# string array or any other shape is no longer valid (issue #1535).
+jq -e '
+  (.questions
+    | (type == "object")
+      and (keys == ["one_behavior", "one_concept", "one_repo"]))
+  and (.questions.one_concept
+       == {type: "noul", instructions: "The proposal is one concept."})
+  and (.questions.one_repo
+       == {type: "noul", instructions: "The proposal names one repository."})
+  and (.questions.one_behavior
+       == {type: "noul", instructions: "The proposal names one observable behavior."})' \
    "$SCOPE_PACK" >/dev/null 2>&1 \
-  || ac_fail "scope.json instructions/questions wrong: $(jq -c '.' "$SCOPE_PACK")"
+  || ac_fail "scope.json questions noul map wrong: $(jq -c '.' "$SCOPE_PACK")"
 
 # ── Fixtures: throwaway ledger ───────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"
@@ -95,125 +103,12 @@ approve_row "$FP_C"
 approve_row "$FP_D"
 approve_row "$FP_E"
 
-# ── TypeSafe stub: a fake `curl` at the front of PATH ────────────────────────
-# Captures the POST body (--data), the Bearer auth it saw, and the URL it got
-# pointed at; touches STUB_INVOKED_FILE as proof it ran. STUB_HTTP_CODE
-# overrides the returned status (default 200 on /v1/systemone, 404 elsewhere);
-# STUB_BODY overrides the returned body. It always exits 0 (real curl does on
-# HTTP errors without -f), so the verb classifies by code, not process rc.
-STUB_DIR="$TMP_DIR/stub"
-mkdir -p "$STUB_DIR"
-cat > "$STUB_DIR/curl" <<'STUB_CURL'
-#!/usr/bin/env bash
-set -u
-
-# Proof that this stub was invoked at all (reject paths must NOT reach it).
-if [[ -n "${STUB_INVOKED_FILE:-}" ]]; then
-  touch "$STUB_INVOKED_FILE" 2>/dev/null || true
-fi
-
-args=("$@")
-n=${#args[@]}
-i=0
-body=""
-auth=""
-url=""
-while (( i < n )); do
-  arg="${args[i]}"
-  case "$arg" in
-    -d)        i=$((i + 1)); body="${args[i]}" ;;
-    -d=*):     body="${arg#-d=}" ;;
-    --data)    i=$((i + 1)); body="${args[i]}" ;;
-    --data=*): body="${arg#--data=}" ;;
-    --header)
-      i=$((i + 1))
-      hdr="${args[i]}"
-      if [[ "$hdr" == "Authorization: Bearer "* ]]; then
-        auth="${hdr#Authorization: Bearer }"
-      fi
-      ;;
-    -w) ;;
-    -s) ;;
-    --request) i=$((i + 1)) ;;
-    *)
-      if [[ "$arg" == "http://"* || "$arg" == "https://"* || "$arg" == "localhost:"* ]]; then
-        [[ -z "$url" ]] && url="$arg"
-      fi
-      # Single-arg catch-all: the trailing i=$((i + 1)) below advances past it.
-      ;;
-  esac
-  i=$((i + 1))
-done
-
-[[ -n "${STUB_BODY_FILE:-}" ]]  && printf '%s' "$body" > "$STUB_BODY_FILE"
-[[ -n "${STUB_AUTH_FILE:-}" ]] && printf '%s' "$auth" > "$STUB_AUTH_FILE"
-[[ -n "${STUB_URL_FILE:-}" ]]  && printf '%s' "$url"  > "$STUB_URL_FILE"
-
-# HTTP code: explicit override, else 200 on the systemone endpoint.
-case "$url" in
-  *"/v1/systemone") code="${STUB_HTTP_CODE:-200}" ;;
-  *)               code="${STUB_HTTP_CODE:-404}" ;;
-esac
-
-if [[ -n "${STUB_BODY:-}" ]]; then
-  resp_body="$STUB_BODY"
-elif [[ "$code" =~ ^2[0-9]{2}$ ]]; then
-  resp_body="$(printf '{"status":"ok"}')"
-else
-  resp_body=""
-fi
-
-# -w $'\n%{http_code}' => body, newline, code.
-printf '%s\n%s\n' "$resp_body" "$code"
-STUB_CURL
-chmod +x "$STUB_DIR/curl"
-
-# ── Env: fake TypeSafe API + capture files ───────────────────────────────────
-TYPESAFE_API_URL="http://127.0.0.1:9999"   # local stub; never api.typesafe.ai
-API_KEY="stub-jev-key-abcdef"
-STUB_BODY_FILE="$TMP_DIR/curl_body.json"
-STUB_AUTH_FILE="$TMP_DIR/curl_auth.txt"
-STUB_URL_FILE="$TMP_DIR/curl_url.txt"
-STUB_INVOKED="$TMP_DIR/stub_invoked"
-export STUB_BODY_FILE STUB_AUTH_FILE STUB_URL_FILE STUB_INVOKED
-# EDGE_APPLY and the key are left unset by default; run_jev manages the key per
-# call so a parent env value can never leak into the "unset key" AC.
-unset EDGE_APPLY 2>/dev/null || true
-unset TYPESAFE_API_KEY 2>/dev/null || true
-
-# ── Run jev exactly as the dispatcher would (fake curl on PATH) ──────────────
-# $1=fp  $2=pack_id  $3=stdin-state  $4=api_key ("" = unset)  $5=http_code
-# stdout -> OUT, stderr -> ERR, exit status -> RC.
-run_jev() {
-  local fp="$1" pack_id="$2" state="$3" api_key="${4:-}" http_code="${5:-}"
-  local errfile
-  errfile="$TMP_DIR/jev-stderr.txt"
-  : > "$errfile"
-  RC=0
-  OUT="$(
-    # Key set or unset exactly as required (subshell => no leak to the test).
-    if [[ -n "$api_key" ]]; then
-      export TYPESAFE_API_KEY="$api_key"
-    else
-      unset TYPESAFE_API_KEY
-    fi
-    printf '%s' "$state" |
-      STUB_HTTP_CODE="$http_code" \
-        STUB_BODY_FILE="$STUB_BODY_FILE" STUB_AUTH_FILE="$STUB_AUTH_FILE" \
-        STUB_URL_FILE="$STUB_URL_FILE" \
-        STUB_INVOKED_FILE="$STUB_INVOKED" \
-        ACCOUNTS_FILE="$ACCOUNTS_FILE" DISPATCH_FP="$fp" \
-        TYPESAFE_API_URL="$TYPESAFE_API_URL" \
-        PATH="$STUB_DIR:$PATH" \
-        bash "$JEV" "$pack_id" 2>"$errfile"
-  )" || RC=$?
-  ERR="$(cat "$errfile")"
-}
-
-# The row's credits ("" -> empty).
-balance_of() {
-  jq -r --arg fp "$1" '(.accounts // {})[$fp].credits // ""' "$ACCOUNTS_FILE"
-}
+# ── TypeSafe stub: sourced from tests/lib/fake-typesafe.sh (shared) ──────────
+# TMP_DIR, ACCOUNTS_FILE, and JEV are defined above. Provides STUB_DIR,
+# TYPESAFE_API_URL, API_KEY, the STUB_* capture files, run_jev(), and
+# balance_of().
+# shellcheck source=../lib/fake-typesafe.sh
+source "$REPO_ROOT/tests/lib/fake-typesafe.sh"
 
 STATE="one concept: one repo: one observable behavior"
 
