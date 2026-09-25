@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
+# NOTE: install.sh is the optional Caddy installer, not the Porter door.
+# The door is porter-install.sh: it copies the door scripts, seeds the
+# ledger and porter.env, and writes the sshd Match block, no Gandi token.
+# This script stays an optional Caddy-only installer (plus user/registry).
+# =============================================================================
+# =============================================================================
 # install.sh — One-shot installer for edge control plane on Debian DO box
 #
 # Usage:
