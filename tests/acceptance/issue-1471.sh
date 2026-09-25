@@ -166,15 +166,21 @@ ac_log "AC3: unset API key -> jev not configured, not debited, no socket"
 # ── AC4. configured 200: rc 0, body echoed, exactly one credit, questions ────
 #        from the pack, model/state round-trip, key sent, local URL, clean log
 rm -f "$STUB_INVOKED" "$STUB_BODY_FILE" "$STUB_AUTH_FILE" "$STUB_URL_FILE"
+# AC4 stub body: a 200 that is JSON with an `answers` object (plus a .model) —
+# the shape jev now requires to echo the body and debit. STUB_BODY is the
+# stub's knob to override its returned body; scope it to just this run.
+AC4_BODY='{"model":"jev-1.13.0","answers":{"one_concept":{"type":"noul","noul":0.5}}}'
+export STUB_BODY="$AC4_BODY"
 run_jev "$FP_D" "scope" "$STATE" "$API_KEY" "200"
+unset STUB_BODY
 if [ "$RC" -ne 0 ]; then
   ac_fail "AC4: configured 200 jev should succeed (rc=$RC, out=$OUT)"
 fi
 if [ ! -f "$STUB_INVOKED" ]; then
   ac_fail "AC4: stub never invoked on the configured path"
 fi
-if [[ "$OUT" != '{"status":"ok"}' ]]; then
-  ac_fail "AC4: expected {\"status\":\"ok\"}, got: $OUT"
+if [[ "$OUT" != "$AC4_BODY" ]]; then
+  ac_fail "AC4: expected $AC4_BODY, got: $OUT"
 fi
 if [[ "$(balance_of "$FP_D")" != 0 ]]; then
   ac_fail "AC4: 200 response debited the wrong amount (now $(balance_of "$FP_D"))"

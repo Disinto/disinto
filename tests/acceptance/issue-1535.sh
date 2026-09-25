@@ -100,7 +100,13 @@ ac_log "AC1: string-array pack -> unknown pack, not debited, no socket"
 
 # ── AC2. scope posts its questions object and round-trips stdin state ────────
 rm -f "$STUB_INVOKED" "$STUB_BODY_FILE" "$STUB_AUTH_FILE" "$STUB_URL_FILE"
+# A 200 that is JSON with an `answers` object (plus a .model) — the shape jev
+# now requires to echo the body and debit (#1536). STUB_BODY is the stub's knob
+# to override its returned body; scope it to just this run.
+AC2_BODY='{"model":"jev-1.13.0","answers":{"one_concept":{"type":"noul","noul":0.5}}}'
+export STUB_BODY="$AC2_BODY"
 run_jev "$FP_A" "scope" "$STATE" "$API_KEY" "200"
+unset STUB_BODY
 if [ "$RC" -ne 0 ]; then
   ac_fail "AC2: scope 200 jev should succeed (rc=$RC, out=$OUT)"
 fi
