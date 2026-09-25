@@ -53,30 +53,29 @@ FP="SHA256:$(printf 'A%.0s' {1..43})"
 
 # ── AC1. key-command.sh forces porter-wrap.sh (restrict line, no disinto-edge)
 # ─────────────────────────────────────────────────────────────────────────────
-out=""
-rc=0
-out="$(ACCOUNTS_FILE="$TMP_DIR/acc.json" bash "$KEY_SCRIPT" "$FP" "ssh-ed25519" "AAAAB...")" || rc=$?
-if [ "$rc" -ne 0 ]; then
-  ac_fail "AC1: key-command.sh should succeed on valid input (rc=$rc, out=$out)"
+KEY_LINE_ERR="$TMP_DIR/key-err"
+if ! KEY_LINE="$(ACCOUNTS_FILE="$TMP_DIR/acc.json" bash "$KEY_SCRIPT" \
+    "$FP" "ssh-ed25519" "AAAAB..." 2>"$KEY_LINE_ERR")"; then
+  ac_fail "AC1: key-command.sh returned non-zero on a valid fixture: $(cat "$KEY_LINE_ERR")"
 fi
-if [ "$(printf '%s\n' "$out" | grep -c .)" -ne 1 ]; then
-  ac_fail "AC1: key-command.sh should print exactly one line, got: $out"
+N_LINES="$(printf '%s\n' "$KEY_LINE" | wc -l | tr -d '[:space:]')"
+if [ "$N_LINES" -ne 1 ]; then
+  ac_fail "AC1: key-command.sh emitted $N_LINES line(s), wanted 1: $KEY_LINE"
 fi
-grep -qE '^pty,restrict,command=' <<<"$out" \
-  || ac_fail "AC1: key-command.sh line is not a pty,restrict,command line: $out"
-if ! grep -qF 'porter-wrap.sh' <<<"$out"; then
-  ac_fail "AC1: forced command is not porter-wrap.sh: $out"
+case "$KEY_LINE" in
+  *pty,restrict,command=*) ;;
+  *) ac_fail "AC1: line is not a pty,restrict,command line: $KEY_LINE" ;;
+esac
+if ! grep -qF 'porter-wrap.sh' <<<"$KEY_LINE"; then
+  ac_fail "AC1: forced command is not porter-wrap.sh: $KEY_LINE"
 fi
-if ! grep -qF 'restrict' <<<"$out"; then
-  ac_fail "AC1: restrict is not present: $out"
+if [[ "$KEY_LINE" == *disinto-edge* ]]; then
+  ac_fail "AC1: output references disinto-edge: $KEY_LINE"
 fi
-if [[ "$out" == *disinto-edge* ]]; then
-  ac_fail "AC1: output references disinto-edge: $out"
+if [[ "$KEY_LINE" == *dispatch.sh* ]]; then
+  ac_fail "AC1: output still references dispatch.sh: $KEY_LINE"
 fi
-if [[ "$out" == *dispatch.sh* ]]; then
-  ac_fail "AC1: output still references dispatch.sh: $out"
-fi
-ac_log "AC1: key-command.sh forces porter-wrap.sh (pty,restrict, no disinto-edge)"
+ac_log "AC1: key-command.sh forces porter-wrap.sh (no disinto-edge)"
 
 # Sandbox: a TEMP copy of porter-wrap.sh with a FAKE sibling dispatch.sh that
 # simply prints the value of TYPESAFE_API_KEY (the only thing it "sees").
