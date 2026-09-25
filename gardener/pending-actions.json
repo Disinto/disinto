@@ -1,12 +1,62 @@
 [
   {
+    "action": "comment",
+    "issue": 1536,
+    "body": "This issue is missing the required sections for dev-agent pickup. It uses \"## Files\" (bullets) and \"## Acceptance\" (bullets) instead of the template-required \"## Affected files\" (with file paths) and \"## Acceptance criteria\" (with checkboxes). Please update using the issue templates at `.forgejo/ISSUE_TEMPLATE/`."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1536,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1537,
+    "body": "This issue is missing the required sections for dev-agent pickup. It uses \"## Files\" (bullets) and \"## Acceptance\" (bullets) instead of the template-required \"## Affected files\" (with file paths) and \"## Acceptance criteria\" (with checkboxes). Please update using the issue templates at `.forgejo/ISSUE_TEMPLATE/`."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1537,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1538,
+    "body": "This issue is missing the required sections for dev-agent pickup. It uses \"## Files\" (bullets) and \"## Acceptance\" (bullets) instead of the template-required \"## Affected files\" (with file paths) and \"## Acceptance criteria\" (with checkboxes). Please update using the issue templates at `.forgejo/ISSUE_TEMPLATE/`."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1538,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1539,
+    "body": "This issue is missing the required sections for dev-agent pickup. It uses \"## Files\" (bullets) and \"## Acceptance\" (bullets) instead of the template-required \"## Affected files\" (with file paths) and \"## Acceptance criteria\" (with checkboxes). Please update using the issue templates at `.forgejo/ISSUE_TEMPLATE/`."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1539,
+    "label": "backlog"
+  },
+  {
+    "action": "comment",
+    "issue": 1540,
+    "body": "This issue is missing the required sections for dev-agent pickup. It uses \"## Files\" (bullets) and \"## Acceptance\" (bullets) instead of the template-required \"## Affected files\" (with file paths) and \"## Acceptance criteria\" (with checkboxes). Please update using the issue templates at `.forgejo/ISSUE_TEMPLATE/`."
+  },
+  {
+    "action": "remove_label",
+    "issue": 1540,
+    "label": "backlog"
+  },
+  {
     "action": "edit_body",
-    "issue": 1524,
-    "body": "Flagged by AI reviewer in PR #1523.\n\n## Problem\nThe sibling `rebuild-and-deploy` (edge job) step in `.woodpecker/acceptance-tests.yml` (lines ~170–188) still uses the pre-#1522 jq filter:\n\n    unhealthy=\"$(echo \"$status_json\" | jq -r '(.Allocations // []) as $a\n         | (($a | map(.JobVersion // 0) | max) // 0) as $v\n         | $a | map(select((.JobVersion // 0) == $v and .ClientStatus != \"running\")) | length')\"\n\n`nomad job status -json` returns a **one-element array** (`[{\"Allocations\":[...]}]`), not a plain object, so `(.Allocations // [])` exits 5 (`Cannot index array with string \"Allocations\"`). Confirmed: the array form fed to this filter exits 5 (the same latent bug #1522 fixed only in the `ci.yml` agents path).\n\nUnlike the `ci.yml` step, this edge step carries **neither** the array-unwrap fix **nor** the `|| echo 1` fallback from #1522. With `set -e`, the failing jq in the `unhealthy=$(...)` assignment kills the step on the first health-poll iteration, so the edge deploy step dies with a raw jq exit instead of reporting \"edge job not healthy after 120s\".\n\n## Fix\nApply the same array-unwrap filter from #1522's `ci.yml` to the edge step so both deploy paths parse `nomad job status -json` identically:\n    (if type == \"array\" then (.[0] // {}) else . end) as $root\n    | ($root.Allocations // []) as $a\n    | ...\nand add the `|| echo 1` fallback so a parse failure reads as \"unhealthy\" rather than aborting.\n\nNot introduced by PR #1522; reported as pre-existing tech debt for a follow-up.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- .woodpecker/acceptance-tests.yml — `rebuild-and-deploy` edge job step (jq health-poll filter, lines ~176-188)\n\n## Acceptance criteria\n- [ ] The edge `rebuild-and-deploy` step parses the one-element-array form of `nomad job status -json` (`[{\"Allocations\":[...]}]`) without the jq filter exiting 5\n- [ ] The edge step carries the same array-unwrap filter as `.woodpecker/ci.yml` (from #1522), so both deploy paths parse job status identically\n- [ ] A parse failure or empty status reads as \"unhealthy\" via the `|| echo 1` fallback instead of aborting the step under `set -e` (the step reports \"edge job not healthy after 120s\")\n- [ ] The edge health-poll path exits 0 only when all latest-version allocs report ClientStatus=running"
+    "issue": 1508,
+    "body": "Flagged by AI reviewer in PR #1506.\n\n## Problem\nAGENTS.md line 7 intro states the polling loop 'paces the seven organs (dev, review, gardener, supervisor, planner, predictor, architect)'. After PR #1506 the default AGENT_ROLES excludes predictor (entrypoint: review,dev,gardener,architect,planner,supervisor; Nomad combined job: five llama roles; supervisor standalone opus job), so 'seven organs' as default pacing is now misleading.\n\n## Affected files\n- AGENTS.md — intro paragraph (line ~7), 'paces the seven organs' wording\n\n## Acceptance criteria\n- [ ] Root AGENTS.md intro no longer states 'seven organs' as the default pacing\n- [ ] Intro accurately reflects that predictor is now opt-in (default AGENT_ROLES: review,dev,gardener,architect,planner,supervisor)\n- [ ] No other doc (README, per-agent AGENTS.md) contradicts the corrected organ count\n- [ ] CI green\n\n---\n*Auto-created from AI review*"
   },
   {
     "action": "add_label",
-    "issue": 1524,
+    "issue": 1508,
     "label": "backlog"
   }
 ]
