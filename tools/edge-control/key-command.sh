@@ -7,7 +7,11 @@
 # Its job is to turn an arbitrary SSH key into the edge-control account identified
 # by that key's fingerprint, and to emit a single restricted authorized_keys line:
 #
-#     pty,restrict,command="/opt/disinto-edge/dispatch.sh --fp FINGERPRINT" TYPE KEY
+#     pty,restrict,command="<SCRIPT_DIR>/porter-wrap.sh --fp FINGERPRINT" TYPE KEY
+#
+# porter-wrap.sh is the wrapper the dispatcher hands the caller to: it loads
+# the allowlisted edge env (PORTER_ENV) that sshd otherwise strips, then execs
+# the sibling dispatch.sh with the same arguments.
 #
 # That line:
 #   • grants a pty so interactive (menu) sessions have a TTY for the dispatcher
@@ -35,9 +39,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/accounts.sh
 source "${SCRIPT_DIR}/lib/accounts.sh"
 
-# The dispatcher the restrict line hands the caller to. Matches install.sh
-# INSTALL_DIR; the operator enables AuthorizedKeysCommand to point at this file.
-DISPATCH_CMD='/opt/disinto-edge/dispatch.sh'
+# The forced command the restrict line hands the caller to: the sibling
+# porter-wrap.sh (resolved relative to this file, so it tracks the install
+# directory — /opt/disinto-edge/ in production). porter-wrap.sh loads the
+# allowlisted edge env and execs the sibling dispatch.sh. The operator enables
+# AuthorizedKeysCommand to point at this file.
+DISPATCH_CMD="${SCRIPT_DIR}/porter-wrap.sh"
 
 # Only these public-key types are acceptable (the account ledger's allowlist).
 ALLOWED_KEY_TYPES='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)$'
