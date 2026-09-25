@@ -5,13 +5,17 @@
 # Issue #1539: feat(edge): porter-admin grants admin on the local ledger
 #
 # Exercises tools/edge-control/porter-admin.sh against a throwaway
-# PORTER_LEDGER in a mktemp dir — no network, no sshd, and never /var/lib/
-# disinto or any live ledger. The default-path euid case (AC1) is run with
-# PORTER_LEDGER unset; per issue #1539 this test is expected to run as
-# non-root ("no network, no root").
+# PORTER_LEDGER in a mktemp dir (AC2-AC4) and, in AC1, against the real
+# default path /var/lib/disinto/accounts.json (the file the door reads).
+# AC1 branches on the caller's euid: non-root -> the euid gate refuses the
+# default-path grant (nothing is written); root -> the default-path grant
+# writes the door-readable ledger. The post-merge pipeline (alpine:3, no
+# user: directive) runs this test as root, so the test must be correct in
+# both modes.
 #
-#   AC1  default path (PORTER_LEDGER unset) + non-root euid ->
-#        {"error":"not root"}, rc 1, nothing written to /var/lib/disinto/accounts.json.
+#   AC1  default path (PORTER_LEDGER unset), branched on the caller's euid:
+#        non-root -> {"error":"not root"}, rc 1, default ledger untouched;
+#        root     -> rc 0, admin row written to /var/lib/disinto/accounts.json.
 #   AC2  valid fingerprint on an empty ledger -> one row: admin true, credits
 #        0, status pending, name null; stdout is the compact row.
 #   AC3  running it again leaves one row and does not change credits; an
@@ -35,12 +39,9 @@ ac_require_cmd bash jq mktemp env
 ADMINSH="$REPO_ROOT/tools/edge-control/porter-admin.sh"
 ac_assert_file "$ADMINSH" "tools/edge-control/porter-admin.sh is missing"
 
-# AC1 needs a non-root euid; a root run would take the "default path,
-# euid 0" branch instead, and the assertions below would no longer
-# describe what ran.
-if [[ $EUID -eq 0 ]]; then
-  ac_fail "this test must run as non-root (AC1 checks the euid gate)"
-fi
+# AC1 branches on the caller's euid (see header): non-root exercises the euid
+# gate; root exercises the real default-path grant. Both are valid execution
+# modes, so nothing here is a hard fail.
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -64,19 +65,62 @@ n_rows() {
   jq '(.accounts // {}) | length' "$LEDGER"
 }
 
-# ── AC1: default path + non-root euid -> not root, nothing written ───────────
+# ── AC1: default path (PORTER_LEDGER unset), branched on the caller's euid ───
 printf '{"version":1,"accounts":{}}\n' > "$LEDGER"
-run_admin_default "add-admin" "$FP_A"
-if [[ "$RC" -ne 1 ]]; then
-  ac_fail "AC1: default path as non-root should be refused (rc=$RC, out=$OUT)"
+if [[ $EUID -ne 0 ]]; then
+  # Non-root: the euid gate must refuse the default-path grant. Capture the
+  # default-path ledger state before and after so the "untouched" claim holds
+  # whether or not the file pre-existed.
+  default_before=""
+  if [ -f "/var/lib/disinto/accounts.json" ]; then
+    default_before="$(cat "/var/lib/disinto/accounts.json")"
+  fi
+  run_admin_default "add-admin" "$FP_A"
+  if [[ "$RC" -ne 1 ]]; then
+    ac_fail "AC1: default path as non-root should be refused (rc=$RC, out=$OUT)"
+  fi
+  if [[ "$OUT" != '{"error":"not root"}' ]]; then
+    ac_fail "AC1: expected {\"error\":\"not root\"}, got: $OUT"
+  fi
+  default_after=""
+  if [ -f "/var/lib/disinto/accounts.json" ]; then
+    default_after="$(cat "/var/lib/disinto/accounts.json")"
+  fi
+  if [[ "$default_after" != "$default_before" ]]; then
+    ac_fail "AC1: the not-root refusal changed the default-path ledger (was: $default_before; now: $default_after)"
+  fi
+  ac_log "AC1: default path + non-root euid -> {\"error\":\"not root\"}, default ledger untouched"
+else
+  # Root: the euid gate does not fire, so the default-path grant must write
+  # the file the door reads. Verify that contract: rc 0, an admin row present
+  # in /var/lib/disinto/accounts.json, and stdout is the compact row.
+  run_admin_default "add-admin" "$FP_A"
+  if [[ "$RC" -ne 0 ]]; then
+    ac_fail "AC1: default path as root should grant (rc=$RC, out=$OUT)"
+  fi
+  if ! jq -e --arg fp "$FP_A" '
+    (.accounts // {})
+    | (
+        has($fp)
+        and .[$fp].admin == true
+        and .[$fp].credits == 0
+        and .[$fp].status == "pending"
+        and .[$fp].fingerprint == $fp
+      )
+  ' /var/lib/disinto/accounts.json >/dev/null 2>&1; then
+    ac_fail "AC1: root default-path grant did not write an admin row to /var/lib/disinto/accounts.json: $(cat /var/lib/disinto/accounts.json 2>/dev/null)"
+  fi
+  if ! jq -e --arg fp "$FP_A" '
+    .fingerprint == $fp
+    and .admin == true
+    and .credits == 0
+    and .status == "pending"
+    and .name == null
+  ' <<<"$OUT" >/dev/null 2>&1; then
+    ac_fail "AC1: stdout for the root default-path grant is not the compact row (out=$OUT)"
+  fi
+  ac_log "AC1: default path + root -> admin row written to /var/lib/disinto/accounts.json"
 fi
-if [[ "$OUT" != '{"error":"not root"}' ]]; then
-  ac_fail "AC1: expected {\"error\":\"not root\"}, got: $OUT"
-fi
-if [ -f "/var/lib/disinto/accounts.json" ]; then
-  ac_fail "AC1: a file appeared at the default path despite the not-root refusal"
-fi
-ac_log "AC1: default path + non-root euid -> {\"error\":\"not root\"}, nothing written"
 
 # ── AC2: valid fp on an empty ledger -> one row, admin true, credits 0 ──────
 run_admin "add-admin" "$FP_A"
