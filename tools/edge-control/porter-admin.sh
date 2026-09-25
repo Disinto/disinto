@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# =============================================================================
+# porter-admin.sh — grant admin on the local ledger (local only, never a verb)
+#
+#     porter-admin.sh add-admin FINGERPRINT
+#
+# The door has no admin-granting verb: credits-grant and approve both refuse
+# a caller whose row is not admin, and any remote verb that could flip
+# admin: true would let every key that reaches the door take full control of
+# the ledger (privilege escalation). So the first admin is bootstrapped
+# from the edge box itself, by the operator, with this local-only tool.
+#
+# Deliberately kept out of the door: not under verbs/ and not in the
+# porter-install.sh copy list (#1537) — nothing ships it to the door runtime.
+#
+# Ledger path: ${PORTER_LEDGER:-/var/lib/porter/accounts.json}. When the
+# path is the default and the effective uid is not 0, refuse with
+# {"error":"not root"} and exit 1 — nothing is written (the check precedes
+# any file access). Setting PORTER_LEDGER is the test seam: no euid check,
+# the tool works against any writable path.
+#
+# Flow:
+#   1. Validate the subcommand: exactly `add-admin FINGERPRINT`. Otherwise
+#      {"error":"bad arguments (expected: add-admin FINGERPRINT)"} /
+#      {"error":"unknown command"}; rc 1.
+#   2. Default path + non-zero euid -> {"error":"not root"}, rc 1, nothing
+#      written.
+#   3. Fingerprint must match the ledger regex ^SHA256:[A-Za-z0-9_-]{43}$
+#      (FINGERPRINT_RE from lib/accounts.sh). Otherwise {"error":"invalid
+#      fingerprint"}, rc 1, nothing written.
+#   4. Ensure the ledger file and directory (seed {"version":1,"accounts":{}}
+#      only if the file is missing — never overwrite), then one atomic jq
+#      pass over a tmp path + rename: create the row if missing (status=
+#      pending, credits=0, admin=false) and always set admin=true. Existing
+#      rows keep status, credits, name and created_at untouched.
+#   5. Print the compact row. rc 0.
+#
+# Output contract (JSON on stdout unless noted):
+#   rc 0 -> the compact account row of FINGERPRINT
+#   rc 1 -> {"error":"..."} with one of:
+#       "bad arguments (expected: add-admin FINGERPRINT)"
+#       "unknown command"
+#       "not root"                  — default path, euid != 0
+#       "invalid fingerprint"
+#       "failed to update ledger"
+#   Every failure path returns before the ledger is written.
+# =============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DEFAULT_LEDGER="/var/lib/porter/accounts.json"
+LEDGER="${PORTER_LEDGER:-$DEFAULT_LEDGER}"
+# lib/accounts.sh honors a pre-set ACCOUNTS_FILE (the verbs are driven this
+# way in the acceptance tests); it otherwise defaults to /var/lib/disinto.
+# shellcheck disable=SC2034
+ACCOUNTS_FILE="$LEDGER"
+
+# shellcheck source=lib/accounts.sh
+source "${SCRIPT_DIR}/lib/accounts.sh"
+
+# ── subcommand + argument count ───────────────────────────────────────────────
+if [[ $# -ne 2 ]]; then
+  fail_error "bad arguments (expected: add-admin FINGERPRINT)"
+fi
+if [[ "$1" != "add-admin" ]]; then
+  fail_error "unknown command"
+fi
+target="$2"
+
+# ── default path: /var/lib/porter requires root; PORTER_LEDGER is the seam ───
+if [[ "$LEDGER" == "$DEFAULT_LEDGER" && $EUID -ne 0 ]]; then
+  fail_error "not root"
+fi
+
+# ── fingerprint: the account-ledger regex; fail before any write ─────────────
+if [[ ! "$target" =~ $FINGERPRINT_RE ]]; then
+  fail_error "invalid fingerprint"
+fi
+
+# ── ensure ledger file + dir (idempotent, never overwrite an existing file) ───
+mkdir -p "$(dirname "$LEDGER")"
+[[ -f "$LEDGER" ]] || printf '{"version":1,"accounts":{}}\n' > "$LEDGER"
+
+# ── atomic ensure-row + admin=true (same shape as porter-install --admin-key) ──
+now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+tmp="${LEDGER}.admin-tmp"
+if jq --arg fp "$target" --arg now "$now" \
+     '.accounts = (.accounts // {})
+      | .accounts[$fp] = (.accounts[$fp] //
+         {fingerprint: $fp, status: "pending", credits: 0, name: null,
+          admin: false, created_at: $now})
+      | .accounts[$fp].admin = true' \
+      "$LEDGER" > "$tmp"; then
+  mv "$tmp" "$LEDGER"
+else
+  rm -f "$tmp"
+  fail_error "failed to update ledger"
+fi
+
+account_row "$target"
+exit 0
