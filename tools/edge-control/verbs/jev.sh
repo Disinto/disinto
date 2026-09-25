@@ -9,9 +9,13 @@
 # packs/) against the TypeSafe systemone endpoint. The caller's stdin is the
 # *state* (max 32768 bytes); the *questions* come only from the pack file —
 # never from stdin, never hardcoded (the shared TypeSafe key is env-only,
-# AD-005, and the pack is the sole question source). On HTTP 200 the account
-# is debited exactly one credit and the response body is echoed verbatim; on
-# every other outcome nothing is debited.
+# AD-005, and the pack is the sole question source). Exactly one credit is
+# debited — and only when the final HTTP status is 200 and the response body
+# is JSON with an `answers` object — and only then is the body echoed
+# verbatim; on every other outcome nothing is debited. A 429/529 is retried
+# twice (three attempts total) with 1s then 2s backoff; no other status is
+# retried, and each call is bounded by `curl --max-time 20` so a hung request
+# cannot hold the SSH session.
 #
 # Config (environment; secrets are never written to disk or to a log):
 #   TYPESAFE_API_KEY   required  — the shared TypeSafe key (never logged)
@@ -27,7 +31,9 @@
 # Output contract (stdout unless noted):
 #   rc 0  -> the response body. On stderr exactly one line:
 #             "jev fp=<fp> pack=<pack-id> model=<model> status=<http-code>"
-#             — only fp/pack/model/status, never the state or the key.
+#             — only fp/pack/model/status, never the state or the key. The
+#             model is the body's `.model` when that is a non-empty string,
+#             else the request model.
 #   rc 1  -> one-line JSON {"error":"..."} with one of:
 #             "bad arguments"         — not exactly one argument
 #             "unknown pack"          — id fails the regex, or the pack file
@@ -37,7 +43,9 @@
 #             "jev not configured"      — TYPESAFE_API_KEY is unset
 #             "not approved"            — the account status is not "approved"
 #             "no credits"              — the account has fewer than 1 credit
-#             "jev failed"              — the API returned other than 200
+#             "jev failed"              — the final outcome was not a 200 with
+#                                        a JSON body carrying an `answers`
+#                                        object
 #           {"error":"missing fingerprint"} to stderr + rc 1 (miswire)
 #   Every failure path returns before the debit.
 # =============================================================================
@@ -134,10 +142,10 @@ fi
 # ── request payload: model + state + the pack's questions. The state is sent
 #     as-is (never re-parsed into questions); the pack file is the sole source
 #     of the questions. ───────────────────────────────────────────────────────
-model="${JEV_MODEL:-jev-1.13.0}"
+request_model="${JEV_MODEL:-jev-1.13.0}"
 questions="$(jq -c '.questions' "$pack_file" 2>/dev/null)" || { fail_error "unknown pack"; }
 payload="$(jq -cn \
-   --arg model "$model" \
+   --arg model "$request_model" \
    --rawfile state "$state_file" \
    --argjson questions "$questions" \
    '{ model: $model, state: $state, questions: $questions }')" \
@@ -146,34 +154,76 @@ payload="$(jq -cn \
 # ── POST to the TypeSafe systemone endpoint ───────────────────────────────────
 # TYPESAFE_API_URL defaults to the live host; tests point it at a local stub
 # so no request reaches api.typesafe.ai. The key rides along as a header and
-# is never echoed. -w $'\n%{http_code}' appends the code as a trailing line.
+# is never echoed. `curl --max-time 20` bounds a hung call (so the SSH session
+# is not held) and its own stderr is discarded. -w $'\n%{http_code}' appends
+# the code as a trailing line (command substitution strips the trailing \n).
+# A 429/529 is retried twice (three attempts total) with 1s then 2s backoff;
+# no other status is retried.
 url="${TYPESAFE_API_URL:-https://api.typesafe.ai}/v1/systemone"
 response=""
 http_code=""
-if ! response="$(curl -s -w $'\n%{http_code}' \
-    --request POST \
-    --header "Content-Type: application/json" \
-    --header "Authorization: Bearer ${TYPESAFE_API_KEY}" \
-    --data "$payload" \
-    "$url" \
-    2>/dev/null)"; then
-  # Transfer failure (refused/timeout): no HTTP code, no body, no debit.
-  http_code="0"
+body=""
+attempt=1
+while :; do
+  if ! response="$(curl -s --max-time 20 -w $'\n%{http_code}' \
+      --request POST \
+      --header "Content-Type: application/json" \
+      --header "Authorization: Bearer ${TYPESAFE_API_KEY}" \
+      --data "$payload" \
+      "$url" \
+      2>/dev/null)"; then
+    # Transfer failure (refused/timeout): no HTTP code, no body.
+    http_code="0"
+    body=""
+  else
+    # With the trailing \n stripped, the code follows the last \n and the body
+    # precedes the first.
+    http_code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+  fi
+  case "$http_code" in
+    429|529)
+      # Retry with backoff while a retry remains (1s after the 1st, 2s after
+      # the 2nd); the 3rd attempt is always final.
+      if (( attempt == 1 )); then
+        sleep 1
+        attempt=2
+        continue
+      elif (( attempt == 2 )); then
+        sleep 2
+        attempt=3
+        continue
+      fi
+      ;;
+  esac
+  break
+done
+
+# model for the log: the body's .model when that is a non-empty string, else the
+# request model. Never the body itself, the state, or the key.
+model_log="$request_model"
+body_model="$(jq -r 'if (.model | type) == "string" and ((.model | length) > 0) then .model else empty end' <<<"$body" 2>/dev/null)" || body_model=""
+if [[ -n "$body_model" ]]; then
+  model_log="$body_model"
 fi
-http_code="${response##*$'\n'}"
-body="${response%$'\n'*}"
 
 # One-line stderr log: only fp / pack / model / status. Never the state,
 # never the key.
 printf 'jev fp=%s pack=%s model=%s status=%s\n' \
-     "$fp" "$pack_id" "$model" "${http_code:-0}" >&2
+     "$fp" "$pack_id" "$model_log" "$http_code" >&2
 
+# Debit only when the final outcome is a 200 whose body is JSON with an
+# `answers` object; any other outcome (including 200 without `answers`) is a
+# "jev failed" — no debit, no body echo.
 if [[ "$http_code" == "200" ]]; then
-  if ! account_add_credits "$fp" -1; then
-    printf '{"error":"failed to debit credit"}\n' >&2
-    exit 1
+  body_ok="$(jq -r 'if (type == "object") and ((.answers | type) == "object") then "ok" else "no" end' <<<"$body" 2>/dev/null)" || body_ok="no"
+  if [[ "$body_ok" == "ok" ]]; then
+    if ! account_add_credits "$fp" -1; then
+      printf '{"error":"failed to debit credit"}\n' >&2
+      exit 1
+    fi
+    printf '%s\n' "$body"
+    exit 0
   fi
-  printf '%s\n' "$body"
-  exit 0
 fi
 fail_error "jev failed"
