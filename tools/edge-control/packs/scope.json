@@ -1,8 +1,16 @@
 {
-  "instructions": "The proposal is one concept, one repo, and one observable behavior.",
-  "questions": [
-    "What is the one concept?",
-    "What is the one repo?",
-    "What is the one observable behavior?"
-  ]
+  "questions": {
+    "one_concept": {
+      "type": "noul",
+      "instructions": "The proposal is one concept."
+    },
+    "one_repo": {
+      "type": "noul",
+      "instructions": "The proposal names one repository."
+    },
+    "one_behavior": {
+      "type": "noul",
+      "instructions": "The proposal names one observable behavior."
+    }
+  }
 }

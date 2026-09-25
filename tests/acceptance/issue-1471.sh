@@ -49,13 +49,21 @@ ac_assert_file "$JEV" "verbs/jev.sh is missing"
 ac_assert_file "$ACCOUNTS_LIB" "lib/accounts.sh is missing"
 ac_assert_file "$SCOPE_PACK" "packs/scope.json is missing"
 
-# The pack must be exactly the "noul" the issue names.
-jq -e --arg e "The proposal is one concept, one repo, and one observable behavior." '
-  (.instructions == $e)
-  and (.questions | (type == "array") and (length > 0) and all(. | (type == "string")))
-  and (.questions == ["What is the one concept?", "What is the one repo?", "What is the one observable behavior?"])' \
+# The pack must be exactly the questions *map* the issue names: three Nouls
+# (one per key), each with `type == "noul"` and its named instruction — a
+# string array or any other shape is no longer valid (issue #1535).
+jq -e '
+  (.questions
+    | (type == "object")
+      and (keys == ["one_behavior", "one_concept", "one_repo"]))
+  and (.questions.one_concept
+       == {type: "noul", instructions: "The proposal is one concept."})
+  and (.questions.one_repo
+       == {type: "noul", instructions: "The proposal names one repository."})
+  and (.questions.one_behavior
+       == {type: "noul", instructions: "The proposal names one observable behavior."})' \
    "$SCOPE_PACK" >/dev/null 2>&1 \
-  || ac_fail "scope.json instructions/questions wrong: $(jq -c '.' "$SCOPE_PACK")"
+  || ac_fail "scope.json questions noul map wrong: $(jq -c '.' "$SCOPE_PACK")"
 
 # ── Fixtures: throwaway ledger ───────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"

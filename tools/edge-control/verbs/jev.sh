@@ -88,16 +88,32 @@ if [[ ! "$credits" =~ ^[0-9]+$ ]] || (( credits < 1 )); then
   fail_error "no credits"
 fi
 
-# ── pack: a noul with a questions array; the ONLY source of questions ───────
+# ── pack: a noul; questions is a *map* of typed questions (the ONLY source
+#     of questions) ─────────────────────────────────────────────────────────────
 pack_file="${PACKS_DIR}/${pack_id}.json"
 if [[ ! -f "$pack_file" ]]; then
   fail_error "unknown pack"
 fi
 # (The expression's stdout — just a boolean — is discarded; only its exit code
 #  matters, and the key/state must never leak to a log or the response.)
-if ! jq -e '.questions | (type == "array")
-            and (length > 0)
-            and all(. | (type == "string"))' "$pack_file" >/dev/null 2>&1; then
+# A pack is valid only when `questions` is a non-empty object and every value
+# is a typed question: `type` is `noul`/`choice`/`score` and `instructions`
+# is a non-empty string (a TypeSafe "Noul" is one yes/no — not a string list).
+# A string array, an empty object, or any other shape is "unknown pack"
+# (rejected pre-socket, no debit).
+if ! jq -e '.questions
+            | (type == "object")
+              and (length > 0)
+              and (to_entries
+                   | all(
+                       (   (.value.type == "noul"
+                            or .value.type == "choice"
+                            or .value.type == "score")
+                            and ((.value.instructions | type) == "string")
+                            and ((.value.instructions | length) > 0)
+                       )
+                   )
+                 )' "$pack_file" >/dev/null 2>&1; then
   fail_error "unknown pack"
 fi
 
