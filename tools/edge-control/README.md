@@ -99,6 +99,42 @@ curl -sL https://raw.githubusercontent.com/disinto-admin/disinto/fix/issue-621/t
    - `/opt/disinto-edge/register.sh` — forced command handler
    - `/opt/disinto-edge/lib/*.sh` — helper libraries
 
+### Porter Door — `porter-install.sh`
+
+`install.sh` is the **Caddy** installer (it needs a Gandi token and owns the
+registry/Caddy/SSH setup). `porter-install.sh` is the **door** installer — it
+is independent of Caddy and needs **no** Gandi token. Run it on the edge host,
+from the repo on the matching branch:
+
+```bash
+# from the repo, on the edge host:
+bash tools/edge-control/porter-install.sh
+# optionally, mark an admin pubkey:
+bash tools/edge-control/porter-install.sh --admin-key ~/.ssh/id_ed25519.pub
+```
+
+It:
+
+1. **Copies the door** to `/opt/porter/` — `dispatch.sh`, `key-command.sh`,
+   `porter-wrap.sh`, `stripe-webhook.sh`, plus `lib/`, `verbs/`, `packs/`.
+   `register.sh` and `install.sh` are *not* copied. Every `.sh` is `chmod 755`.
+2. **Seeds the ledger** `/var/lib/disinto/accounts.json` — created only if
+   missing (`{"version":1,"accounts":{}}`), never overwritten; mode `0640`.
+   This is the path the door runtime reads (`lib/accounts.sh`'s
+   `ACCOUNTS_FILE` default).
+3. **Seeds `porter.env`** at `/etc/porter/porter.env` — only the two allowlisted
+   vars (`TYPESAFE_API_KEY=`, `JEV_MODEL=jev-1.13.0`), created only if missing;
+   mode tightened to `0640`. Contents are never rewritten.
+4. **Creates the `porter` user** (system, nologin) and hands it ownership of
+   `/opt/porter`, the ledger directory + ledger, and the env file (so the
+   user that runs the forced command can write the ledger and read the env).
+5. **Writes the sshd drop-in** `/etc/ssh/sshd_config.d/porter.conf` — the
+   7-line `Match User porter` block (with `AuthorizedKeysCommand` indented under
+   it). It does **not** reload sshd and never touches `/etc/ssh/sshd_config`;
+   `systemctl reload ssh` is operator work.
+
+The script is idempotent (a second run upgrades in place without re-seeding).
+
 ## Operator-Owned Site Blocks
 
 Edge-control owns the top-level `/etc/caddy/Caddyfile` and dynamic `<project>.<DOMAIN_SUFFIX>` routes injected via the Caddy admin API. Operators own everything under `/etc/caddy/extra.d/`.
@@ -284,8 +320,10 @@ whose forced command `porter-wrap.sh` loads the allowlisted env and `exec`s
 `dispatch.sh`, routing the caller to the verbs under `verbs/`
 (`whoami`, `status`, `ticket`, `tickets`, `register-request`, `credits`,
 `credits-buy`, `credits-grant`). The fingerprint is the account — no username, no password.
-Enabling `AuthorizedKeysCommand` is an operator step on the edge host and is
-**not** turned on by this tree.
+`porter-install.sh` writes the sshd drop-in (`Match User porter` plus the
+`AuthorizedKeysCommand` line), so the configuration is created by this tree.
+It does **not** reload sshd and never touches `/etc/ssh/sshd_config` —
+`systemctl reload ssh` is operator work.
 
 ### Certificate Strategy
 
@@ -325,7 +363,8 @@ ssh disinto-register@edge.disinto.ai "register myproject $(cat ~/.ssh/id_ed25519
 
 ## Files
 
-- `install.sh` — One-shot installer for fresh Debian DO box
+- `install.sh` — One-shot installer for fresh Debian DO box (Caddy/registry; optional, needs a Gandi token)
+- `porter-install.sh` — One-shot installer for the **Porter door**: copies the door scripts, seeds `accounts.json` (the `ACCOUNTS_FILE` runtime default) + `porter.env`, creates the `porter` user, and writes the sshd `Match User porter` drop-in. Needs no Gandi token and no Caddy; the sshd reload is operator work.
 - `register.sh` — Forced-command handler (dispatches to `register|deregister|list`)
 - `lib/ports.sh` — Port allocator over `20000-29999`, jq-based, flockd
 - `lib/authorized_keys.sh` — Deterministic rebuild of `disinto-tunnel` authorized_keys
