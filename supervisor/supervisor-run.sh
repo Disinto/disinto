@@ -375,6 +375,75 @@ repair_tape_tick() {
 # One pass per tick — covers both the fast path and the LLM path (#1408).
 repair_tape_tick
 
+# repair_direct_dispatch — run the direct-action scripts for the recipes that
+# fired this tick (fast path, #1533). For each real `action_script`, run the
+# script as today — `$FACTORY_ROOT/<action_script> "$PROJECT_TOML" "$evidence"`
+# — and pair it with the repair proposal registered by the repair tape (#1408):
+# the recipe name's entry in the repair state file (repair_tape_state_file)
+# yields the proposal id to run under. A present id gets an OPEN tape_run
+# (attempts=1, cost {}, organ=supervisor, agent=bash) and, after the script,
+# a closing tape_run (cost {"duration_s":N}, status=completed|failed). An
+# absent id logs a warning, still runs the script, and writes no tape line.
+# No tape_outcome is written — run status lives on the run record. A non-zero
+# script exit never interrupts the tick (the closing run is `failed`), and a
+# failed tape append logs a warning without aborting. Total: always returns 0.
+repair_direct_dispatch() {
+  local recipe_output="${1:-}"
+  local name script evidence started started_epoch tsv
+  local ended ended_epoch rc duration_s status state_file proposal_id cost
+  if [ -z "$recipe_output" ]; then
+    return 0
+  fi
+  state_file="$(repair_tape_state_file)"
+  tsv="$(printf '%s' "$recipe_output" \
+    | jq -r '.fired[] | select(.action == "direct") | [.name, .action_script, (.evidence // empty)] | @tsv' 2>/dev/null)" \
+    || tsv=""
+  while IFS=$'\t' read -r name script evidence; do
+    [ -n "$name" ] || continue
+    # A real action_script fires the script; "__MISSING__"/empty does not.
+    if [ -z "$script" ] || [ "$script" = "__MISSING__" ]; then
+      continue
+    fi
+    # Repair-tape pairing: recipe name -> proposal id in the state file.
+    proposal_id=""
+    if [ -f "$state_file" ]; then
+      proposal_id="$(printf '%s' "$(cat "$state_file" 2>/dev/null)" \
+        | jq -r --arg c "$name" '.[$c].proposal_id // empty' 2>/dev/null)" \
+        || proposal_id=""
+    fi
+    started_epoch="$(date -u +%s)"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -n "$proposal_id" ]; then
+      if ! tape_run "$proposal_id" "supervisor" "bash" "$started" '' '1' '{}' '' \
+        >/dev/null 2>&1; then
+        log "WARNING: tape: failed to append open run for ${name} (${proposal_id})"
+      fi
+    else
+      log "WARNING: tape: no repair proposal for direct recipe ${name} — running ${script} without a tape run"
+    fi
+    # Run the script as today; a non-zero exit must not interrupt the tick.
+    rc=0
+    bash "$FACTORY_ROOT/$script" "$PROJECT_TOML" "$evidence" || rc=$?
+    ended_epoch="$(date -u +%s)"
+    ended="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    duration_s=$(( ended_epoch - started_epoch ))
+    [ "$duration_s" -ge 0 ] || duration_s=0
+    case "$rc" in
+      0) status="completed" ;;
+      *) status="failed" ;;
+    esac
+    if [ -n "$proposal_id" ]; then
+      cost="$(jq -cn --argjson d "$duration_s" '{duration_s: $d}')" \
+        || cost='{"duration_s":0}'
+      if ! tape_run "$proposal_id" "supervisor" "bash" "$started" "$ended" '1' "$cost" "$status" \
+        >/dev/null 2>&1; then
+        log "WARNING: tape: failed to append closing run for ${name} (${proposal_id})"
+      fi
+    fi
+  done <<< "$tsv"
+  return 0
+}
+
 # ── LLM escalation gate ───────────────────────────────────────────────────
 # Fast path: no abnormal signals → skip LLM entirely.
 # Only invoke claude -p when recipe evaluator fired at least one abnormal
@@ -414,16 +483,12 @@ fi
 if [ "$LLM_REQUIRED" = false ]; then
   log "No abnormal signals requiring LLM — fast path, skipping agent_run"
 
-  # ── Execute direct-action scripts for all fired direct recipes ──────
-  # This is the dispatch loop that runs remediation scripts before the
-  # fast-path exit. Without it, direct-action scripts are dead code.
-  # Passes PROJECT_TOML + evidence (health reason for wp-agent-restart.sh).
+  # ── Dispatch direct-action scripts for all fired direct recipes ───────
+  # Fast path only (the LLM path never runs these, #594). Each real
+  # action_script is run and gets a paired tape run under the recipe's
+  # repair proposal id, if the repair state registered one (#1533).
   if [ -n "$RECIPE_OUTPUT" ]; then
-    while IFS=$'\t' read -r _script _evidence; do
-      if [ -n "$_script" ] && [ "$_script" != "__MISSING__" ]; then
-        bash "$FACTORY_ROOT/$_script" "$PROJECT_TOML" "$_evidence" || true
-      fi
-    done < <(printf '%s' "$RECIPE_OUTPUT" | jq -r '.fired[] | select(.action == "direct") | [.action_script, .evidence // empty] | @tsv' 2>/dev/null)
+    repair_direct_dispatch "$RECIPE_OUTPUT"
   fi
 
   # Write journal entry (brief "all clear" only if prior run had findings)
