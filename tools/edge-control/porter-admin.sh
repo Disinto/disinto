@@ -13,7 +13,7 @@
 # Deliberately kept out of the door: not under verbs/ and not in the
 # porter-install.sh copy list (#1537) — nothing ships it to the door runtime.
 #
-# Ledger path: ${PORTER_LEDGER:-/var/lib/porter/accounts.json}. When the
+# Ledger path: ${PORTER_LEDGER:-/var/lib/disinto/accounts.json}. When the
 # path is the default and the effective uid is not 0, refuse with
 # {"error":"not root"} and exit 1 — nothing is written (the check precedes
 # any file access). Setting PORTER_LEDGER is the test seam: no euid check,
@@ -51,7 +51,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-DEFAULT_LEDGER="/var/lib/porter/accounts.json"
+DEFAULT_LEDGER="/var/lib/disinto/accounts.json"
 LEDGER="${PORTER_LEDGER:-$DEFAULT_LEDGER}"
 # lib/accounts.sh honors a pre-set ACCOUNTS_FILE (the verbs are driven this
 # way in the acceptance tests); it otherwise defaults to /var/lib/disinto.
@@ -70,7 +70,7 @@ if [[ "$1" != "add-admin" ]]; then
 fi
 target="$2"
 
-# ── default path: /var/lib/porter requires root; PORTER_LEDGER is the seam ───
+# ── default path: /var/lib/disinto requires root; PORTER_LEDGER is the seam ───
 if [[ "$LEDGER" == "$DEFAULT_LEDGER" && $EUID -ne 0 ]]; then
   fail_error "not root"
 fi

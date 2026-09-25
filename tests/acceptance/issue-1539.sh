@@ -11,7 +11,7 @@
 # non-root ("no network, no root").
 #
 #   AC1  default path (PORTER_LEDGER unset) + non-root euid ->
-#        {"error":"not root"}, rc 1, nothing written to /var/lib/porter.
+#        {"error":"not root"}, rc 1, nothing written to /var/lib/disinto/accounts.json.
 #   AC2  valid fingerprint on an empty ledger -> one row: admin true, credits
 #        0, status pending, name null; stdout is the compact row.
 #   AC3  running it again leaves one row and does not change credits; an
@@ -73,7 +73,7 @@ fi
 if [[ "$OUT" != '{"error":"not root"}' ]]; then
   ac_fail "AC1: expected {\"error\":\"not root\"}, got: $OUT"
 fi
-if [ -f "/var/lib/porter/accounts.json" ]; then
+if [ -f "/var/lib/disinto/accounts.json" ]; then
   ac_fail "AC1: a file appeared at the default path despite the not-root refusal"
 fi
 ac_log "AC1: default path + non-root euid -> {\"error\":\"not root\"}, nothing written"
