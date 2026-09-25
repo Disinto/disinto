@@ -1,4 +1,4 @@
-<!-- last-reviewed: 1ba0df0b171008d2d8850e634e9ad7c30a11c11b -->
+<!-- last-reviewed: 687ade250b6dcc2919d090a000585a8b1a0d48ac -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -16,7 +16,13 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
   runs preflight.sh, sources disinto project config, runs claude -p via agent-sdk.sh,
-  injects formula prompt with metrics, handles crash recovery
+  injects formula prompt with metrics, handles crash recovery. **Repair tape (#1408,
+  #1533)**: each tick (`repair_tape_tick`) turns fired direct recipes into repair
+  proposals (`emit_repair_proposal` → `repair_state_put`); the fast path dispatches
+  them via `repair_direct_dispatch()`, pairing each script run with a tape `tape_run`
+  (open, then close with status completed/failed, organ=supervisor, agent=bash) under
+  the recipe's repair proposal id; no tape_outcome is written — run status lives on
+  the run record. A non-zero script exit never interrupts the tick.
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
