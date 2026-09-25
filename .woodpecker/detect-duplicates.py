@@ -498,6 +498,30 @@ def main() -> int:
         "b763b708e92c4a819fb26ca30cc7a499": "Fake-curl stub payload init issue-1469.sh + issue-1471.sh",
         "8f372ed5f3e253945a05fc6bcf4b4711": "Fake-curl stub auth init issue-1469.sh + issue-1471.sh",
         "d47cc6e003cdd6dd42c3c67d2fbf5a9f": "Fake-curl stub else issue-1469.sh + issue-1471.sh",
+        # issue-1536.sh: a self-contained *counting*, per-attempt stub plus its
+        # throwaway ledger fixture. Like the 1469/1471 stubs above, each
+        # acceptance test is deliberately isolated (no network, own tmp dir,
+        # own stub), so its per-attempt run_jev mirrors fake-typesafe.sh's shape
+        # and its ledger fixture mirrors issue-1471.sh's. Intentional
+        # duplication, not copy-paste.
+        #
+        # Ledger fixture (issue-1471.sh <-> issue-1536.sh): mktemp +
+        # ACCOUNTS_FILE init + trap + the approve_row() helper.
+        "08bcb9f5a82b685670efdd40a33f7e4f": "Fixture TMP_DIR+ACCOUNTS_FILE+trap (issue-1471.sh + issue-1536.sh)",
+        "c4bb9f895c7c3883640b0a2dc881ffb9": "Fixture ACCOUNTS_FILE+trap+accounts.json init (issue-1471.sh + issue-1536.sh)",
+        "08c81e7dfaf4b8f22ea2bf9a791df56a": "Fixture trap+init+approve_row() (issue-1471.sh + issue-1536.sh)",
+        "5899985e8370a006a3fc5f5550333a8b": "Fixture init+approve_row()+local fp (issue-1471.sh + issue-1536.sh)",
+        "b29d18f31cf6da8f7249c4897805e6fc": "Fixture approve_row()+local fp+jq flip (issue-1471.sh + issue-1536.sh)",
+        "792b634117c929cbfed82cde41c3bdd9": "Fixture local fp+jq flip+tmp write (issue-1471.sh + issue-1536.sh)",
+        # Counting per-attempt run_jev (issue-1536.sh <-> tests/lib/fake-typesafe.sh):
+        # 1536 needs a *different* code/body per attempt plus an invocation counter,
+        # so it reuses the same run_jev shape, passing STUB_CODES/STUB_BODIES/
+        # STUB_INVOKED_FILE.
+        "69f4237da94b9abe8512694e45f73922": "Counting run_jev RC=0+OUT subshell+key guard (issue-1536.sh + fake-typesafe.sh)",
+        "1553934c17986e1ce8590de465c6e8d3": "Counting run_jev OUT subshell+key guard (issue-1536.sh + fake-typesafe.sh)",
+        "882551614692afca2f8f0edd950c0a75": "Counting run_jev key guard if/else (issue-1536.sh + fake-typesafe.sh)",
+        "660df288b64a8a95a585a9bbd0eae1f6": "Counting run_jev TYPESAFE_API_KEY export/unset (issue-1536.sh + fake-typesafe.sh)",
+        "3914f2e0d3bbd8fc65b894f7f623e83c": "Counting run_jev jev invocation+ERR capture (issue-1536.sh + fake-typesafe.sh)",
     }
 
     if not sh_files:
