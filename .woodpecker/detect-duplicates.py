@@ -522,6 +522,32 @@ def main() -> int:
         "882551614692afca2f8f0edd950c0a75": "Counting run_jev key guard if/else (issue-1536.sh + fake-typesafe.sh)",
         "660df288b64a8a95a585a9bbd0eae1f6": "Counting run_jev TYPESAFE_API_KEY export/unset (issue-1536.sh + fake-typesafe.sh)",
         "3914f2e0d3bbd8fc65b894f7f623e83c": "Counting run_jev jev invocation+ERR capture (issue-1536.sh + fake-typesafe.sh)",
+        # issue-1559.sh: Caddy-stub acceptance test for the revoke verb, kept
+        # deliberately isolated (one self-contained throwaway-root / caddy-stub /
+        # run_* / no_dns_request / ledger fixture per issue) like the other
+        # per-issue edge tests (issue-1558.sh approve). Intentional duplication,
+        # not copy-paste.
+        # (a) issue-1557.sh <-> issue-1559.sh: JSON ledger row (created_at+pubkey+close).
+        # (b) issue-1558.sh <-> issue-1559.sh: porter-dns source check,
+        #     cleanup+trap, ac_caddy_stub, new_root(), the run_* envs array,
+        #     and no_dns_request.
+        "b1f0952a3b66119a29842a6b1450bd2a": "Ledger JSON row (created_at/pubkey) issue-1557.sh + issue-1559.sh",
+        "6de1b411275d8e73b12fbf2f13d51945": "porter-dns source check (if grep header) issue-1558.sh + issue-1559.sh",
+        "9025fae0708ad60a46bc41808498f137": "porter-dns source check (if grep + ac_fail) issue-1558.sh + issue-1559.sh",
+        "219ecd98ced396dc8a2b25446d66569f": "cleanup() head (rm -rf TMP_DIR) issue-1558.sh + issue-1559.sh",
+        "b10f981336e40ee8f81e5ea38641fadb": "cleanup() tail + trap cleanup EXIT issue-1558.sh + issue-1559.sh",
+        "7a052f89066a9a491598f78c763cda58": "cleanup close + trap + ac_caddy_stub issue-1558.sh + issue-1559.sh",
+        "93108ad8a8e5d6931bbc577c67c5a2e5": "trap + ac_caddy_stub + new_root() issue-1558.sh + issue-1559.sh",
+        "66502becedf992284369767b425513a3": "ac_caddy_stub + new_root() + local issue-1558.sh + issue-1559.sh",
+        "06577562f12a90ac0b35d750cb1fe57d": "new_root() + local name + ROOT issue-1558.sh + issue-1559.sh",
+        "e0f30c5b3f7c237a9a5be1de0c37ca6f": "new_root() local + ROOT + mkdir issue-1558.sh + issue-1559.sh",
+        "eb2a78f7149fed574248b161c2bc41f6": "run_* envs: local + PATH + ACCOUNTS_FILE issue-1558.sh + issue-1559.sh",
+        "b930bbd8df2822d3f035a0820810d9bd": "run_* envs: PATH + ACCOUNTS_FILE + REGISTRY_DIR issue-1558.sh + issue-1559.sh",
+        "10673888bff26ebb8e49da185ad11c72": "run_* envs: ACCOUNTS_FILE + REGISTRY_DIR + PORTER_ROOT issue-1558.sh + issue-1559.sh",
+        "d3105d5dd09a93c7492dc672fd400856": "run_* envs: REGISTRY_DIR + PORTER_ROOT + CADDY_ADMIN_URL issue-1558.sh + issue-1559.sh",
+        "42fb4798b8d5b0425759d820a054c10c": "run_* envs: PORTER_ROOT + CADDY_ADMIN_URL + DOMAIN_SUFFIX issue-1558.sh + issue-1559.sh",
+        "21d0ad4b606da27338e423659c050d65": "no_dns_request() head issue-1558.sh + issue-1559.sh",
+        "7b6f778ac9d29488bec37787a2ff4e17": "no_dns_request() if + ac_fail issue-1558.sh + issue-1559.sh",
     }
 
     if not sh_files:
