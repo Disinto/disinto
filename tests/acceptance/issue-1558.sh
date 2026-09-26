@@ -47,6 +47,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../lib/caddy-stub.sh
+source "$REPO_ROOT/tests/lib/caddy-stub.sh"
 
 ac_require_cmd bash jq grep mktemp rm cat printf sed awk chmod hostname env
 
@@ -77,90 +79,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Stateful curl stub (Caddy admin API) ─────────────────────────────────────
-STUB_DIR="$TMP_DIR/stub"
-STATE="$TMP_DIR/caddy-state.json"
-LOG="$TMP_DIR/caddy-calls.jsonl"
-mkdir -p "$STUB_DIR"
-
-cat > "$STUB_DIR/curl" <<'STUB'
-#!/usr/bin/env bash
-set -u
-STATE_FILE="${CADDY_STUB_STATE:?}"
-CALL_LOG="${CADDY_STUB_LOG:?}"
-URL=""
-METHOD="GET"
-BODY=""
-HAS_W=0
-prev=""
-for arg in "$@"; do
-  case "$prev" in
-    -X) METHOD="$arg"; prev=""; continue;;
-    -d) BODY="$arg"; prev=""; continue;;
-    -w) HAS_W=1; prev=""; continue;;
-  esac
-  if [[ "$arg" =~ ^http:// ]]; then
-    URL="$arg"; prev=""; continue
-  fi
-  prev="$arg"
-done
-# Response: <json-body>, then, when the caller asked for -w, a newline and
-# status 200 (mirroring real `curl -w '\n%{http_code}'`).
-resp() {
-  printf '%s\n' "$1"
-  if [[ $HAS_W -eq 1 ]]; then
-    printf '200\n'
-  fi
-}
-[ -n "$URL" ] || { resp '[]'; exit 0; }
-host_and_path="${URL#*://}"
-path="${host_and_path#*/}"
-b="null"
-if [ -n "$BODY" ]; then
-  b="$(printf '%s' "$BODY" | jq -c . 2>/dev/null || printf 'null')"
-fi
-# Record every request for the test.
-jq -cn --arg m "$METHOD" --arg u "$URL" --arg p "$path" --argjson b "$b" \
-  '{method:$m,url:$u,path:$p,body:$b}' >> "$CALL_LOG" 2>/dev/null || true
-# AC2: a "downed Caddy" — POST to routes exits 1 without a response.
-if [[ "$METHOD" == "POST" && -n "${AC_STUB_FAIL_POST:-}" \
-    && "$path" == "config/apps/http/servers"/*/routes ]]; then
-  exit 1
-fi
-if [ ! -f "$STATE_FILE" ]; then printf '[]' > "$STATE_FILE"; fi
-case "$path" in
-  config/apps/http/servers)
-    resp '{"srv0":{"listen":["http://127.0.0.1:80","https://127.0.0.1:443"]}}'
-    ;;
-  config/apps/http/servers/*/routes/*)
-    idx="${path##*/}"
-    tmp="${STATE_FILE}.del.$$"
-    if jq --argjson i "$idx" 'del(.[$i])' "$STATE_FILE" > "$tmp" 2>/dev/null; then
-      mv "$tmp" "$STATE_FILE"
-    fi
-    rm -f "$tmp"
-    resp '{}'
-    ;;
-  config/apps/http/servers/*/routes)
-    if [[ "$METHOD" == "POST" ]]; then
-      tmp="${STATE_FILE}.append.$$"
-      if jq --argjson new "$BODY" '. + [$new]' "$STATE_FILE" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$STATE_FILE"
-      fi
-      rm -f "$tmp"
-      resp '{}'
-    else
-      body_content="$(cat "$STATE_FILE" 2>/dev/null || printf '[]')"
-      resp "$body_content"
-    fi
-    ;;
-  *)
-    resp '[]'
-    ;;
-esac
-exit 0
-STUB
-chmod +x "$STUB_DIR/curl"
-export CADDY_STUB_STATE="$STATE" CADDY_STUB_LOG="$LOG"
+ac_caddy_stub
 
 # Fresh throwaway root: ledger + pre-existing registry dir (so ports.sh
 # skips its real-host root/chown) with a "other" project at 20000 (acme then
