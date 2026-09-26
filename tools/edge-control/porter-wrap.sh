@@ -42,6 +42,10 @@ load_porter_env() {
     [[ "$line" == *=* ]] || continue
     key="${line%%=*}"   # name: everything before the first '='
     value="${line#*=}"  # value: everything after the first '=', literal
+    # GANDI_API_KEY is deliberately NOT in the allowlist: the door must
+    # never see a registrar token. DNS work happens in the root script
+    # porter-dns.sh, which reads the token file directly (mode 600) and
+    # never exports the key.
     case "$key" in
       TYPESAFE_API_KEY|TYPESAFE_API_URL|JEV_MODEL|STRIPE_SECRET_KEY|\
         STRIPE_WEBHOOK_SECRET|STRIPE_PRICE_ID|STRIPE_API_BASE|\
