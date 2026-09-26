@@ -15,10 +15,18 @@
 #       otherwise) -> require its status in {pending, approved} -> apply the
 #       network side effects (lib/apply-name.sh, EDGE_APPLY mode) -> only after
 #       a successful apply, set status to approved -> print the updated row.
+#       When the apply actually ran (EDGE_APPLY=1), two plain lines follow the
+#       row on stdout: the tunnel URL and the exact ssh -N -R command. No DNS
+#       is ever created here (lib/apply-name.sh never calls porter-dns.sh).
 #       Re-approving an already-approved name is idempotent.
 #
 # Output contract (JSON on stdout unless noted):
-#   rc 0  -> the updated compact account row of the name holder.
+#   rc 0  -> the updated compact account row of the name holder; when
+#           EDGE_APPLY=1, two plain lines follow the row on stdout:
+#             https://<name>.<DOMAIN_SUFFIX>
+#             ssh -N -R 127.0.0.1:<port>:127.0.0.1:<port> disinto-tunnel@<host>
+#           where <port> is the allocated port and <host> is $PORTER_SSH_HOST
+#           when set, otherwise the machine's hostname.
 #   rc 1  -> {"error":"..."} with one of:
 #       "bad arguments"        — not exactly one argument
 #       "missing fingerprint"  — DISPATCH_FP unset [stderr]
@@ -42,4 +50,15 @@ if ! apply_approve "$NAME" "$ADMIN_FP"; then
 fi
 account_set_status "$HOLDER" "approved"
 account_row "$HOLDER"
+# When the apply actually ran (EDGE_APPLY=1), print the two plain lines that
+# let the account open its tunnel. apply_approve() in that mode published the
+# results on APPLY_PORT/APPLY_FQDN; in stub/0 mode it never did, so nothing
+# is printed there. No DNS is created by this verb.
+if [[ "${EDGE_APPLY:-0}" == "1" ]]; then
+  printf 'https://%s\n' "$APPLY_FQDN"
+  host="${PORTER_SSH_HOST:-}"
+  [[ -n "$host" ]] || host="$(hostname 2>/dev/null || true)"
+  printf 'ssh -N -R 127.0.0.1:%s:127.0.0.1:%s disinto-tunnel@%s\n' \
+    "$APPLY_PORT" "$APPLY_PORT" "$host"
+fi
 exit 0

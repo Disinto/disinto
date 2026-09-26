@@ -15,7 +15,11 @@
 #             approve: allocate_port, add_route, rebuild_authorized_keys.
 #             revoke:  remove_route, free_port, rebuild_authorized_keys.
 #           A non-zero from any one of them fails the apply (rc 1), so the
-#           calling verb leaves the status untouched.
+#           calling verb leaves the status untouched. On success, apply_approve
+#           in mode 1 also publishes the globals APPLY_PORT (the allocated
+#           port) and APPLY_FQDN (<name>.<DOMAIN_SUFFIX>) for the verb's
+#           output contract (URL + tunnel command, printed only when
+#           EDGE_APPLY=1).
 #   stub  — no network libs are sourced. Append `approve NAME` or `revoke
 #           NAME` to $EDGE_APPLY_LOG. Stub counts as success: the apply is a
 #           no-op on the ledger and on the network, so a failed (best-effort)
@@ -58,7 +62,10 @@ _apply_log() {
 # approve <name> <admin_fp>
 #   EDGE_APPLY=1    : allocate the name's port, add its Caddy route, rebuild
 #                     the tunnel authorized_keys (the admin's fp is recorded
-#                     as registered_by).
+#                     as registered_by). On success, sets the globals
+#                     APPLY_PORT (the allocated port) and APPLY_FQDN
+#                     (<name>.<DOMAIN_SUFFIX>) so the calling verb can print
+#                     the tunnel URL and command.
 #   EDGE_APPLY=stub : log "approve <name>" to $EDGE_APPLY_LOG.
 #   EDGE_APPLY=0    : no-op.
 #   Returns 0 on success, 1 if any side effect fails (mode 1 only).
@@ -87,6 +94,14 @@ apply_approve() {
       if ! rebuild_authorized_keys; then
         return 1
       fi
+      # Publish the results for the verb's output contract (URL + tunnel
+      # command, printed only when EDGE_APPLY=1). Consumed by the verb
+      # (approve.sh) in the same shell — shellcheck can't see across
+      # sourced libs.
+      # shellcheck disable=SC2034
+      APPLY_PORT="$port"
+      # shellcheck disable=SC2034
+      APPLY_FQDN="$fqdn"
       ;;
     stub)
       _apply_log "approve" "$name"
