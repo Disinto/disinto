@@ -5,11 +5,14 @@
 # The Porter door is sshd: `Match User porter` + AuthorizedKeysCommand
 # -> key-command.sh -> porter-wrap.sh (loads $PORTER_ENV literally) ->
 # dispatch.sh + verbs/. This script copies the door, seeds the ledger,
-# seeds porter.env, and writes the drop-in. It needs no Gandi token;
-# Caddy/DNS is separate optional work (install.sh).
+# seeds porter.env, creates the tunnel user, writes the drop-in, and then
+# wires in the Caddy + DNS steps (porter-caddy.sh / porter-dns.sh) plus one
+# conditional sshd reload. It needs no Gandi token of its own: porter-dns.sh
+# reads the token from the existing gandi env file, and porter.env is never
+# given one.
 #
 # Paths (if PORTER_ROOT is set and non-empty, every path is prefixed with it;
-# the script also skips useradd/chown and never reloads sshd):
+# the script also skips useradd/chown, sshd -t, and the reload):
 #   ${PORTER_ROOT}opt/porter            — the door: the copied scripts plus
 #                                         lib/, verbs/, packs/
 #   ${PORTER_ROOT}var/lib/disinto       — the accounts.json ledger (the door
@@ -33,15 +36,56 @@
 # the row for the pubkey and sets admin=true, leaving credits and status
 # untouched; a later run without --admin-key keeps both.
 #
-# The sshd drop-in is written every run (content is exactly the Match block
-# below with the command path prefixed). sshd is not reloaded and
-# /etc/ssh/sshd_config is never touched; `systemctl reload ssh` is
-# operator work.
+# Tunnel user: the real-host run creates `disinto-tunnel` (system, nologin,
+# no home) when it is missing. That user carries no AuthorizedKeysCommand:
+# its keys are the plain file lib/authorized_keys.sh (rebuild_authorized_keys)
+# writes — the installer never useradds any match block for it.
+#
+# Caddy + DNS: after the door copy and the drop-in, this script calls
+# porter-caddy.sh and porter-dns.sh from the same directory (no
+# --set-wildcard). porter-dns.sh ensures the wildcard * A record once and
+# never edits other names. A DNS refusal (wildcard pointing elsewhere) is a
+# non-zero exit AFTER the door files are in place: the door is not rolled
+# back and DNS is not edited (the refusal propagates as this script's exit
+# code).
+#
+# sshd: the drop-in is written every run. On a real host, sshd -t is run;
+# sshd is reloaded only when that exits 0 and the drop-in is a `Match User
+# porter` block with no column-0 AuthorizedKeysCommand. If sshd -t fails the
+# previous drop-in (if any) is restored, sshd is not reloaded, and the
+# script exits non-zero. Under PORTER_ROOT (acceptance tests) useradd,
+# sshd -t and the reload are all skipped.
 # =============================================================================
 set -euo pipefail
 
 log() { printf '%s\n' "$*"; }
 die() { printf 'porter-install.sh: %s\n' "$*" >&2; exit 1; }
+
+# ── Real-host sshd safety gate: validate, then reload only if the drop-in is
+#     a clean `Match User porter` block with no column-0 AuthorizedKeysCommand.
+#     On sshd -t failure it restores any previous drop-in, does not reload, and
+#     returns non-zero. Self-contained (no die/log) so acceptance tests can
+#     extract and drive it with stubbed sshd/systemctl. ─────────────────────────
+reload_sshd_if_safe() {
+  local dropin="$1"
+  local backup="${dropin}.prev"
+  if ! sshd -t > /dev/null 2>&1; then
+    if [[ -n "${backup}" && -f "${backup}" ]]; then
+      mv -- "${backup}" "${dropin}"
+      chmod 600 "${dropin}" 2>/dev/null || true
+    fi
+    printf 'sshd -t failed; did not reload sshd\n' >&2
+    return 1
+  fi
+  # Config validated: discard the backup (the new drop-in is now live).
+  [[ -f "${backup}" ]] && rm -f -- "${backup}"
+  if grep -Eq '^Match[[:space:]]+User[[:space:]]+porter' "${dropin}" \
+     && ! grep -Eq '^AuthorizedKeysCommand' "${dropin}"; then
+    systemctl reload ssh
+  else
+    printf 'drop-in not a clean Match User porter block; skipping sshd reload\n' >&2
+  fi
+}
 
 # ── Paths (PORTER_ROOT prefixes everything when set and non-empty) ──────────
 # PREFIX is "/" for real installs; a trailing-slash-normalized PORTER_ROOT
@@ -117,11 +161,19 @@ fi
 # ── porter.env: create only if missing (mode 640); contents never clobbered ───
 mkdir -p "${ENV_FILE%/*}"
 if [[ ! -f "${ENV_FILE}" ]]; then
-  printf 'TYPESAFE_API_KEY=\nJEV_MODEL=jev-1.13.0\n' > "${ENV_FILE}"
+  # EDGE_APPLY=1 sits beside the two existing assignments: the door is the
+  # apply-side of a bound name (see verbs/approve.sh), so a fresh install
+  # enables it by default. Never a Gandi token.
+  printf 'TYPESAFE_API_KEY=\nJEV_MODEL=jev-1.13.0\nEDGE_APPLY=1\n' > "${ENV_FILE}"
   chmod 640 "${ENV_FILE}"
-  log "porter.env created: ${ENV_FILE}"
+  log "porter.env created: ${ENV_FILE} (mode 640)"
 else
-  log "porter.env present — contents untouched: ${ENV_FILE}"
+  # Append EDGE_APPLY=1 only when the key is absent; do not change any other
+  # line, and never write a Gandi token here.
+  if ! grep -EqE '^EDGE_APPLY=' "${ENV_FILE}"; then
+    printf 'EDGE_APPLY=1\n' >> "${ENV_FILE}"
+  fi
+  log "porter.env: EDGE_APPLY=1 ensured (${ENV_FILE})"
 fi
 
 # Enforce the declared mode: tighten any env file looser than 640 (others
@@ -161,8 +213,30 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
   log "Owned by porter: ${OPT_DIR} ${LIB_DIR} (0755) ${LEDGER} ${ENV_FILE}"
 fi
 
-# ── sshd drop-in: written every run; sshd not reloaded, sshd_config untouched ──
+# ── Tunnel user: real host only; keys live in a file, never AuthorizedKeysCommand
+#     disinto-tunnel is the sshd user whose authorized_keys (a plain file,
+#     rebuilt by lib/authorized_keys.sh) carries the projects' keys. No match
+#     block / AuthorizedKeysCommand is written for it. ─────────────────────────
+if [[ -z "${PORTER_ROOT:-}" ]]; then
+  if id disinto-tunnel >/dev/null 2>&1; then
+    log "Tunnel user disinto-tunnel already exists"
+  else
+    useradd -r -s /usr/sbin/nologin -M disinto-tunnel \
+      || die "cannot create user disinto-tunnel"
+    log "Tunnel user disinto-tunnel created (nologin, no home, no AuthorizedKeysCommand)"
+  fi
+fi
+
+# ── sshd drop-in: written every run ───────────────────────────────────────────
 mkdir -p "${DROPIN_DIR}"
+# Keep a backup of any existing drop-in so a failed sshd -t (real host) can
+# restore it. The door files are never rolled back on a DNS refusal.
+DROPIN_BACKUP="${DROPIN}.prev"
+if [[ -f "${DROPIN}" ]]; then
+  cp -- "${DROPIN}" "${DROPIN_BACKUP}"
+else
+  DROPIN_BACKUP=""
+fi
 cat > "${DROPIN}" <<EOF
 Match User porter
     AuthorizedKeysCommand ${OPT_DIR}/key-command.sh %f %t %k
@@ -173,7 +247,23 @@ Match User porter
     PermitTunnel no
 EOF
 chmod 600 "${DROPIN}"
-log "sshd drop-in written: ${DROPIN} (operator work: systemctl reload ssh)"
+log "sshd drop-in written: ${DROPIN}"
+
+# ── Caddy + DNS: called from the same directory; never --set-wildcard ─────────
+# porter-caddy.sh adopts/installs the Caddy admin listener (never rewrites
+# operator sites). porter-dns.sh ensures the wildcard * A record once and
+# never edits other names. A DNS refusal is a non-zero exit after the door
+# files are in place (the door is not rolled back; DNS is not edited).
+# These are library-style helpers (mode 100644), invoked via bash.
+bash "${SRC_DIR}/porter-caddy.sh"
+bash "${SRC_DIR}/porter-dns.sh"
+
+# ── sshd: real host only — validate then conditionally reload ────────────────
+if [[ -z "${PORTER_ROOT:-}" ]]; then
+  if ! reload_sshd_if_safe "${DROPIN}"; then
+    die "sshd -t failed; previous drop-in restored (if any); not reloaded"
+  fi
+fi
 
 # ── --admin-key: ensure the row, set admin=true (credits/status untouched) ───
 if [[ -n "${ADMIN_KEY_FILE}" ]]; then
@@ -195,7 +285,7 @@ if [[ -n "${ADMIN_KEY_FILE}" ]]; then
          {fingerprint: $fp, status: "pending", credits: 0, name: null,
           admin: false, created_at: $now})
       | .accounts[$fp].admin = true' \
-      "${LEDGER}" > "${tmp}" \
+       "${LEDGER}" > "${tmp}" \
     || { rm -f "${tmp}"; die "failed to mark ${fp} admin in ${LEDGER}"; }
   mv "${tmp}" "${LEDGER}"
   chmod 640 "${LEDGER}"
