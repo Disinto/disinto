@@ -2,10 +2,15 @@
 # =============================================================================
 # stripe-webhook.sh — Stripe webhook receiver: credit the SSH fingerprint
 #
-# Single-shot receiver, NOT a daemon, binds no port. The operator invokes it
-# once per Stripe webhook POST (Caddy route, see examples/stripe-webhook.caddy);
-# it reads the raw event body from stdin, verifies the `Stripe-Signature`
-# header, and writes the ledger.
+# Single-shot receiver, NOT a daemon, binds no port. The operator runs a
+# per-request invoker/listener on 127.0.0.1:9088 (see
+# examples/stripe-webhook.caddy) that, for each Stripe POST, pipes the raw
+# body to this script's stdin and sets STRIPE_SIGNATURE; this script verifies
+# and credits, and refuses to print the Stripe body. The Caddy path route
+# /stripe/webhook -> 127.0.0.1:9088 is mounted on the EXISTING Caddy by
+# tools/edge-control/porter-caddy.sh (lib/caddy.sh::add_webhook_route) at the
+# end of a successful adopt/install — one path on the Caddy Porter already
+# manages, never a separate HTTP server.
 #
 # Contract
 #   stdin                — raw event JSON body, verbatim (trailing newlines

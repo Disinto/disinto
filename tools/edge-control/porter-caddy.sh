@@ -38,11 +38,27 @@
 # The Caddy systemd unit is install.sh's responsibility; this script never
 # writes or rewrites it, so it cannot replace existing site config.
 #
+# After a successful adopt OR install this script mounts the Stripe webhook as
+# ONE PATH on the existing Caddy: it sources lib/caddy.sh and calls
+# add_webhook_route, which POSTs a single route /stripe/webhook ->
+# 127.0.0.1:9088 (the port the operator runs the per-request invoker on,
+# see tools/edge-control/stripe-webhook.sh). It is never a new HTTP server,
+# never a PUT /config/, and never touches any other route or site block;
+# add_webhook_route is idempotent (no-op when the path route already exists),
+# so re-running this script is safe.
+#
 # This script does not call install.sh and requires no token of any kind
 # (AD-005). It must not be sourced by verbs — verbs use lib/caddy.sh for
 # route management only.
 # =============================================================================
 set -euo pipefail
+
+# Source the Caddy admin-route helpers (add_route / remove_route /
+# add_webhook_route / reload_caddy). They have no main(); safe to source
+# alongside this script's own set -euo pipefail.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/caddy.sh
+source "${SCRIPT_DIR}/lib/caddy.sh"
 
 # ── Paths (PORTER_ROOT prefixed when set) ─────────────────────────────────────
 if [[ -n "${PORTER_ROOT:-}" ]]; then
@@ -242,6 +258,24 @@ if [[ -f "$CADDYFILE" ]] || [[ -f "$CADDY_BIN" ]]; then
 else
   log "mode: install (no Caddyfile at ${CADDYFILE} and no caddy binary at ${CADDY_BIN})"
   install
+fi
+
+# Both modes now leave a Caddy with an admin listener. Mount the Stripe
+# webhook as ONE PATH (/stripe/webhook -> 127.0.0.1:9088) on that existing
+# Caddy. Never a new server, never a PUT /config/, and never touching any
+# other route (site blocks, other project routes, a self.disinto.ai stub, etc.).
+# add_webhook_route is idempotent (no-op when the path route is already
+# present), so re-running porter-install / porter-caddy is safe.
+#
+# A failed add is loud but NOT fatal: on a real fresh install the caddy
+# service may not be listening on 2019 yet (the optional Caddy installer
+# enables it via systemd),
+# so the route is logged as PENDING rather than aborting an otherwise
+# successful install. Re-run once caddy is up and it will land.
+if add_webhook_route; then
+  log "stripe webhook path route is live on the existing Caddy"
+else
+  log "ERROR: add_webhook_route failed (Caddy admin unreachable?); the /stripe/webhook route is PENDING — run this script again once caddy is listening on localhost:2019 (the optional Caddy installer enables the caddy service via systemd)"
 fi
 
 exit 0

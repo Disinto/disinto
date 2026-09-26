@@ -9,6 +9,15 @@
 #       [<project>.${DOMAIN_SUFFIX}] as a reverse_proxy to
 #       127.0.0.1:<port>. Never PUTs /config/, never replaces a server.
 #       No wildcard hosts, no wildcard proxy sites.
+#   - add_webhook_route
+#       POSTs exactly one new route whose `match.uri` is exactly
+#       /stripe/webhook as a reverse_proxy to 127.0.0.1:9088 — the port the
+#       operator's per-request invoker listens on (stripe-webhook.sh). No
+#       host match (path only), no wildcard, no catch-all. Never PUTs /config/,
+#       never replaces a server, never touches any other route (site blocks,
+#       other project routes, a self.disinto.ai stub, etc.). If a route with
+#       that path already exists, it is a no-op (returns 0, does not POST).
+#       Returns 0 on success (added or already present), 1 on any failure.
 #   - remove_route <project>
 #       GETs the server's routes, finds the single route index whose host
 #       list is EXACTLY [<project>.${DOMAIN_SUFFIX}], and DELETEs only that
@@ -160,6 +169,99 @@ remove_route() {
   fi
 
   echo "Removed route: ${fqdn}" >&2
+}
+
+# ── add_webhook_route: POST exactly one path route for /stripe/webhook ──────
+# add_webhook_route
+# No arguments: the contract is fixed to the exact path /stripe/webhook
+# reverse-proxied to 127.0.0.1:9088 (the port the operator runs the
+# per-request invoker that pipes stdin + STRIPE_SIGNATURE into
+# stripe-webhook.sh). No host is chosen, no wildcard, no catch-all.
+#
+# Idempotent: GETs the current routes first; if any route already matches
+# the exact path /stripe/webhook (match[].uri), it returns 0 and does not
+# POST again. Otherwise it POSTs exactly one route, leaving every other
+# route untouched (no PUT /config/, no DELETE of any existing route).
+#
+# Returns 0 on success (added, or already present), 1 on any failure.
+add_webhook_route() {
+  local WEBHOOK_PATH="/stripe/webhook"
+  local WEBHOOK_PORT=9088
+
+  local server_name
+  server_name=$(_discover_server_name) || return 1
+
+  # Current routes for the server.
+  local response status body
+  response=$(curl -sS -w '\n%{http_code}' \
+    "${CADDY_ADMIN_URL}/config/apps/http/servers/${server_name}/routes" \
+    -H "Content-Type: application/json") || {
+    echo "Error: failed to get current routes for add_webhook_route" >&2
+    return 1
+  }
+  status=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+  if [ "$status" -ge 400 ]; then
+    echo "Error: Caddy admin API returned ${status}: ${body}" >&2
+    return 1
+  fi
+
+  # Idempotency: find any route whose match array contains an entry whose
+  # `uri` is EXACTLY /stripe/webhook. A host-only route (e.g.
+  # self.disinto.ai) does NOT match and is left untouched. If one exists,
+  # do nothing and return 0.
+  local route_index
+  route_index=$(echo "$body" | jq -r --arg p "$WEBHOOK_PATH" \
+    'to_entries[]
+     | select((.value.match // []) | map(.uri // "") | any(. == $p))
+     | .key' 2>/dev/null | head -n1)
+
+  if [ -n "$route_index" ] && [ "$route_index" != "null" ]; then
+    echo "Route for ${WEBHOOK_PATH} already present; nothing to add" >&2
+    return 0
+  fi
+
+  # The route: one match on the exact path /stripe/webhook (uri, not host),
+  # proxied to 127.0.0.1:9088. No host, no wildcard, no catch-all.
+  local route_config
+  route_config=$(cat <<EOF
+{
+  "match": [
+    {
+      "uri": "${WEBHOOK_PATH}"
+    }
+  ],
+  "handle": [
+    {
+      "handler": "reverse_proxy",
+      "upstreams": [
+        {
+          "dial": "127.0.0.1:${WEBHOOK_PORT}"
+        }
+      ]
+    }
+  ]
+}
+EOF
+  )
+
+  # POST appends the single route to the server's routes array.
+  # Never PUT /config/, never replace a server.
+  response=$(curl -sS -w '\n%{http_code}' -X POST \
+    "${CADDY_ADMIN_URL}/config/apps/http/servers/${server_name}/routes" \
+    -H "Content-Type: application/json" \
+    -d "$route_config") || {
+    echo "Error: failed to add webhook route for ${WEBHOOK_PATH}" >&2
+    return 1
+  }
+  status=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+  if [ "$status" -ge 400 ]; then
+    echo "Error: Caddy admin API returned ${status}: ${body}" >&2
+    return 1
+  fi
+
+  echo "Added webhook route: ${WEBHOOK_PATH} -> 127.0.0.1:${WEBHOOK_PORT}" >&2
 }
 
 # ── reload_caddy: POST /reload on the admin API ───────────────────────────────
