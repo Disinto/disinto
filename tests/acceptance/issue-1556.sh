@@ -173,7 +173,7 @@ case "$path" in
 esac
 exit 0
 STUB
-chmod +x "$STUB_DIR/curl"
+chmod a+x "$STUB_DIR/curl"
 export GANDI_STUB_STATE="$STATE_FILE" GANDI_STUB_LOG="$CALL_LOG"
 touch "$CALL_LOG"
 

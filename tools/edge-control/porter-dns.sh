@@ -44,10 +44,9 @@ log() { printf 'porter-dns: %s\n' "$*"; }
 die() { printf 'porter-dns: %s\n' "$*" >&2; exit 1; }
 
 # ── Paths (PORTER_ROOT prefix when set) ──────────────────────────────────────
+PREFIX="/"
 if [[ -n "${PORTER_ROOT:-}" ]]; then
   PREFIX="${PORTER_ROOT%/}/"
-else
-  PREFIX="/"
 fi
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
@@ -58,13 +57,13 @@ usage() {
 SET_WILDCARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --set-wildcard)
-      SET_WILDCARD=1
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
+      ;;
+    --set-wildcard)
+      SET_WILDCARD=1
+      shift
       ;;
     *)
       usage >&2
