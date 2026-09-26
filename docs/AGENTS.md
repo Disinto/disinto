@@ -1,4 +1,4 @@
-<!-- last-reviewed: 949e201dd96b49b49331bc71779716cf7d34f4aa -->
+<!-- last-reviewed: c78e21d8627b611cdae7c1d9e2f9d488151a38d3 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -76,7 +76,7 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, porter-install.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,
