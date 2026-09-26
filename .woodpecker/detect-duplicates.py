@@ -548,6 +548,22 @@ def main() -> int:
         "42fb4798b8d5b0425759d820a054c10c": "run_* envs: PORTER_ROOT + CADDY_ADMIN_URL + DOMAIN_SUFFIX issue-1558.sh + issue-1559.sh",
         "21d0ad4b606da27338e423659c050d65": "no_dns_request() head issue-1558.sh + issue-1559.sh",
         "7b6f778ac9d29488bec37787a2ff4e17": "no_dns_request() if + ac_fail issue-1558.sh + issue-1559.sh",
+        # issue-1561.sh (stripe webhook: add_webhook_route) vs issue-1555.sh
+        # (adopt/install): both are per-issue Caddy-stub edge tests, kept
+        # deliberately isolated (own throwaway root, own caddy-stub, own
+        # run_webhook_route / run_route helper, and the same ac_require_cmd +
+        # PORTER_CADDY/CADDY_LIB file asserts). The shared 5-line setup + run_*
+        # windows are intentional duplication, not copy-paste — the same
+        # convention as issue-1558.sh <-> issue-1559.sh above.
+        "8d59b1943824b6e13d761460ff07dd97": "caddy-stub source + ac_require_cmd setup (issue-1555.sh + issue-1561.sh)",
+        "15424bc30ad7ab8bae7c9310bcfe3adc": "ac_require_cmd + PORTER_CADDY setup (issue-1555.sh + issue-1561.sh)",
+        "7c2b556bb7f17224c4743dffa421c591": "PORTER_CADDY + ac_assert_file setup (issue-1555.sh + issue-1561.sh)",
+        "18d4d2b26f904a1097dc60cbd32ceb31": "run_* head: local + out_file + err_file (issue-1555.sh + issue-1561.sh)",
+        "c78ed193bad81acd79ceb86ee6008daa": "run_* out_file + err_file + rc init (issue-1555.sh + issue-1561.sh)",
+        "77f7aad58b618b67a5b04eb9d4bd54b5": "run_* err_file + rc + err init (issue-1555.sh + issue-1561.sh)",
+        "afa17e7361941758805d0defaf69d204": "run_* rc + err + block open (issue-1555.sh + issue-1561.sh)",
+        "90f6a1edce24225ef84e3ce18d6dc676": "run_* block open + PATH export (issue-1555.sh + issue-1561.sh)",
+        "916ac222b6cc0a1ac3d116eb31f5d8d7": "run_* PATH + CADDY_ADMIN_URL export (issue-1555.sh + issue-1561.sh)",
     }
 
     if not sh_files:
