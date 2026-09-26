@@ -67,6 +67,19 @@ key_data="$3"
 [[ "$fingerprint" =~ $FINGERPRINT_RE ]] || fail "invalid fingerprint"
 [[ "$key_type" =~ $ALLOWED_KEY_TYPES ]] || fail "unsupported key type: $key_type"
 
+# Persist the caller's public key on that fingerprint's ledger row before
+# emitting the restrict line. The stored field is `pubkey` =
+# "KEY_TYPE KEY_DATA" (one space, no options, no comments) — the value the
+# tunnel side (lib/apply-name.sh) drops into disinto-tunnel's
+# authorized_keys. A fresh row is created if absent (status=pending,
+# credits=0, admin=false); an existing row is touched on its `pubkey` field
+# only. A failed write refuses the connection (empty stdout, exit 1) rather
+# than opening a session whose row does not carry the key; the key material
+# itself is never written to stderr.
+if ! account_set_pubkey "$fingerprint" "$key_type" "$key_data"; then
+  fail "failed to store public key for $fingerprint"
+fi
+
 # One line, and nothing else, on stdout.
 printf 'pty,restrict,command="%s --fp %s" %s %s\n' \
   "$DISPATCH_CMD" "$fingerprint" "$key_type" "$key_data"

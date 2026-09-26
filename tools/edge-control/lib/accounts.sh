@@ -56,6 +56,19 @@
 #     a missing row is a caller bug. Returns 0 on success, 1 on a bad
 #     fingerprint, a missing row, or a failed update.
 #
+#   account_set_pubkey <fp> <key-type> <key-data>
+#     Store the public key on the <fp> row in the `pubkey` field as
+#     "<key-type> <key-data>" — a single space, no options, no comments.
+#     Atomic read-modify-write over a tmp path + rename (like
+#     account_set_name): the row is created if absent (status=pending,
+#     credits=0, name=null, admin=false), and an existing row is touched on
+#     its `pubkey` field only — status, credits, name, admin, and
+#     created_at all survive. Idempotent: a second connection with the same
+#     key writes the same value and changes nothing else. The key material
+#     is never echoed (failure messages name only the ledger path). Returns
+#     0 on success, 1 on a bad fingerprint, an empty field, or a failed
+#     update.
+#
 #   print_account_row
 #     Report the caller's account row (used by the report verbs, whoami and
 #     status). dispatch.sh always exports DISPATCH_FP before exec'ing a verb,
@@ -69,9 +82,9 @@
 #     and exit 1. Shared by every verb so the failure shape is uniform.
 #
 # Sourcing contract: FINGERPRINT_RE, ACCOUNTS_FILE, fail_error(), account_ensure(),
-# account_row(), account_set_name(), account_add_credits(), is_admin(),
-# require_admin(), require_dispatch_fp(), and print_account_row() become
-# available to the caller.
+# account_row(), account_set_name(), account_set_pubkey(),
+# account_add_credits(), is_admin(), require_admin(), require_dispatch_fp(),
+# and print_account_row() become available to the caller.
 # =============================================================================
 
 set -euo pipefail
@@ -175,6 +188,46 @@ account_set_name() {
   fi
 
   return 0
+}
+
+# Store the public key for <fp> (see header). The caller validates the key
+# type against the allowlist (key-command.sh); this function is the atomic
+# write that persists it, and it never echoes the key material.
+account_set_pubkey() {
+  local fp="$1" key_type="$2" key_data="$3"
+  local now tmp
+
+  if [[ ! "$fp" =~ $FINGERPRINT_RE ]]; then
+    echo "account_set_pubkey: invalid fingerprint" >&2
+    return 1
+  fi
+  if [[ -z "$key_type" ]] || [[ -z "$key_data" ]]; then
+    echo "account_set_pubkey: key type and key data must be non-empty" >&2
+    return 1
+  fi
+
+  # Atomic read-modify-write: a missing row is created fresh (status=pending,
+  # credits=0, name=null, admin=false, created_at=now), an existing row is
+  # touched on the pubkey field only, so status/credits/name/admin/created_at
+  # survive untouched.
+  accounts_init
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  tmp="$(mktemp)" || { echo "account_set_pubkey: mktemp failed" >&2; return 1; }
+
+  if jq --arg fp "$fp" --arg key_type "$key_type" --arg key_data "$key_data" \
+        --arg now "$now" \
+        '.accounts = (.accounts // {})
+         | .accounts[$fp] = (.accounts[$fp] //
+            {fingerprint: $fp, status: "pending", credits: 0, name: null, admin: false, created_at: $now})
+         | .accounts[$fp].pubkey = ($key_type + " " + $key_data)' \
+        "$ACCOUNTS_FILE" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$ACCOUNTS_FILE"
+    return 0
+  else
+    rm -f "$tmp"
+    echo "account_set_pubkey: failed to update $ACCOUNTS_FILE" >&2
+    return 1
+  fi
 }
 
 # Add <n> to the `credits` field of <fp>'s row (see header). The caller
