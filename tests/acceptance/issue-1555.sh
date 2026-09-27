@@ -15,10 +15,15 @@
 #     admin listener is not yet configured. Site blocks stay byte-for-byte.
 #     No `extra.d` files or server config are ever deleted or rewritten.
 #   * INSTALLS a fresh Caddy (no Caddyfile, no binary): writes a NEW Caddyfile
-#     whose whole content is the global block (`admin localhost:2019`) plus
-#     `import <prefix>/etc/caddy/extra.d/*.caddy`, and creates `extra.d` if
-#     missing. No site for `self`, `www`, apex, or any customer name; no
-#     catch-all :80/:443 site (Porter never listens on 80/443).
+#     whose content is the global block (`admin localhost:2019`), the
+#     `import <prefix>/etc/caddy/extra.d/*.caddy`, and exactly one site — the
+#     wildcard `*.<DOMAIN_SUFFIX>` (default disinto.ai) whose only directive is
+#     the cert `tls { dns gandi {env.GANDI_API_KEY} }` — and creates `extra.d`
+#     if missing. No site for `self`, `www`, apex, or any customer name; no
+#     catch-all :80/:443 site (Porter never listens on 80/443). It also writes
+#     `${prefix}etc/systemd/system/caddy.service` when no `caddy.service`
+#     already exists under `${prefix}etc/systemd/system` or
+#     `${prefix}lib/systemd/system` (an existing unit is never overwritten).
 # And re-specifies lib/caddy.sh route helpers:
 #   * add_route POSTs exactly one route whose match.host is exactly
 #     [<project>.<DOMAIN_SUFFIX>; never PUT /config/, never replaces a server,
@@ -30,7 +35,9 @@
 #   * AC1 adopt: a Caddyfile containing `self.disinto.ai` keeps that site
 #     block byte-for-byte and writes no customer site;
 #   * AC2 install: a fresh install writes a Caddyfile with
-#     `admin localhost:2019` and `import extra.d`, no `self`/apex site;
+#     `admin localhost:2019` and `import extra.d` plus exactly one wildcard
+#     `*.disinto.ai` site (no `self`/apex/customer site, no catch-all :80/:443)
+#     and a prefixed caddy.service unit;
 #   * AC3 add_route records a POST with one exact host; remove_route removes
 #     only that host, leaving `self.disinto.ai` in the stub;
 #   * AC4 the test exits 0 and calls ac_pass.
@@ -194,10 +201,15 @@ fi
 if ! [ -d "$ROOT3/etc/caddy/extra.d" ]; then
   ac_fail "AC2: extra.d directory not created"
 fi
-# No site block of any name (self, www, apex, customer, catch-all).
-installed_sites="$(site_region "$CADDY3")"
-if [ -n "$installed_sites" ]; then
-  ac_fail "AC2: install wrote a site block: $installed_sites"
+# Exactly one site block: the *.disinto.ai wildcard cert — the only column-0
+# host block (nested `tls {`/`dns gandi {` braces are not counted). No
+# self/, www/, apex, or customer site; no catch-all :80/:443.
+n_sites=$(grep -cE '^[A-Za-z0-9*.-]+[[:space:]]*\{' "$CADDY3" || true)
+if [ "$n_sites" -ne 1 ]; then
+  ac_fail "AC2: expected exactly one site block (the wildcard), found $n_sites"
+fi
+if ! grep -qF '*.disinto.ai {' "$CADDY3"; then
+  ac_fail "AC2: the single site block is not *.disinto.ai"
 fi
 if grep -qE '^[[:space:]]*:80' "$CADDY3" || grep -qE '^[[:space:]]*:443' "$CADDY3"; then
   ac_fail "AC2: catch-all :80/:443 site written"
@@ -205,14 +217,29 @@ fi
 if grep -qE '^[[:space:]]*(self|www)\.' "$CADDY3"; then
   ac_fail "AC2: self or www site written"
 fi
-# TEST_MODE must skip real-host artifacts.
+if grep -qF 'reverse_proxy' "$CADDY3"; then
+  ac_fail "AC2: fresh install wrote a reverse_proxy (forbidden)"
+fi
+# TEST_MODE must skip real-host actions: no caddy binary, no systemctl — but the
+# prefixed unit file IS written (a file, not a real-host action) and must be
+# well-formed.
 if [ -f "$ROOT3/usr/bin/caddy" ]; then
   ac_fail "AC2: TEST_MODE installed a caddy binary"
 fi
-if [ -f "$ROOT3/etc/systemd/system/caddy.service" ]; then
-  ac_fail "AC2: TEST_MODE wrote a systemd unit"
+UNIT3="$ROOT3/etc/systemd/system/caddy.service"
+if [ ! -f "$UNIT3" ]; then
+  ac_fail "AC2: TEST_MODE fresh install must write the unit under the prefix"
 fi
-ac_log "AC2: fresh install wrote admin + import only, no sites, no real-host artifacts"
+if ! grep -qF 'caddy run --config' "$UNIT3"; then
+  ac_fail "AC2: unit ExecStart is not 'caddy run --config ...'"
+fi
+if ! grep -qF 'EnvironmentFile=-' "$UNIT3"; then
+  ac_fail "AC2: unit must load gandi.env with EnvironmentFile=-"
+fi
+if grep -qF 'GANDI_API_KEY=' "$UNIT3"; then
+  ac_fail "AC2: token written into the unit"
+fi
+ac_log "AC2: fresh install wrote admin + import + *.disinto.ai wildcard site + prefixed unit"
 
 # ── AC3. caddy.sh route helpers against a stateful curl stub ─────────────────
 ac_log "AC3: add_route / remove_route route behavior"
