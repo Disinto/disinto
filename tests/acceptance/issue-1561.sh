@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154  # err is set by run_webhook_route (tests/lib/webhook-route-helpers.sh)
 # =============================================================================
 # tests/acceptance/issue-1561.sh
 #
@@ -6,14 +7,14 @@
 #
 # stripe-webhook.sh credits a fingerprint but nothing mounted it. A NEW HTTP
 # server is the wrong mount. This change adds lib/caddy.sh::add_webhook_route
-# (POSTs exactly one route whose match.uri is /stripe/webhook, reverse_proxied
+# (POSTs exactly one route whose match.path is /stripe/webhook, reverse_proxied
 # to 127.0.0.1:9088 — no host, no wildcard, no PUT /config/, idempotent, never
 # touches any other route) and wires it into porter-caddy.sh at the end of a
 # successful adopt/install.
 #
 # Contract under test (#1561):
 #   * AC1 add_webhook_route POSTs exactly one path route for /stripe/webhook to
-#     127.0.0.1:9088 (uri match, no host, no PUT/DELETE).
+#     127.0.0.1:9088 (path match, no host, no PUT/DELETE).
 #   * AC2 a second add_webhook_route call returns 0 and does NOT POST again
 #     (idempotent).
 #   * AC3 the self.disinto.ai stub route stays present and is never PUT or
@@ -54,29 +55,9 @@ fi
 
 TMP_DIR="$(mktemp -d /tmp/disinto-acceptance-1561.XXXXXX)"
 rc=0
-cleanup() {
-  rm -rf "$TMP_DIR" 2>/dev/null || true
-}
+# shellcheck source=../lib/webhook-route-helpers.sh
+source "$REPO_ROOT/tests/lib/webhook-route-helpers.sh"
 trap cleanup EXIT
-
-# Run add_webhook_route against the stubbed Caddy. On return, globals rc and
-# err are set (rc = function's exit status, err = captured stderr).
-run_webhook_route() {
-  local out_file err_file
-  out_file="$TMP_DIR/route_out.txt"
-  err_file="$TMP_DIR/route_err.txt"
-  rc=0
-  err=""
-  {
-    export PATH="$STUB_DIR:$PATH"
-    export CADDY_ADMIN_URL="http://127.0.0.1:2019"
-    export DOMAIN_SUFFIX="disinto.ai"
-    # shellcheck source=lib/caddy.sh
-    source "$CADDY_LIB"
-    add_webhook_route
-  } >"$out_file" 2>"$err_file" || rc=$?
-  err="$(cat "$err_file" 2>/dev/null || true)"
-}
 
 # ── AC1: the helper POSTs exactly one /stripe/webhook path route ─────────────
 ac_caddy_stub
@@ -91,7 +72,7 @@ post_count=$(jq -cs 'length' <(jq -c 'select(.method == "POST")' "$LOG" 2>/dev/n
 if [ "$post_count" != "1" ]; then
   ac_fail "AC1: expected exactly one POST, got $post_count"
 fi
-if ! jq -e 'select(.method == "POST") | .body.match[0].uri == "/stripe/webhook"' "$LOG" >/dev/null 2>&1; then
+if ! jq -e 'select(.method == "POST") | .body.match[0].path == "/stripe/webhook"' "$LOG" >/dev/null 2>&1; then
   ac_fail "AC1: POST does not match path /stripe/webhook"
 fi
 if ! jq -e 'select(.method == "POST") | .body.handle[0].handler == "reverse_proxy" and .body.handle[0].upstreams[0].dial == "127.0.0.1:9088"' "$LOG" >/dev/null 2>&1; then
@@ -153,7 +134,7 @@ post_count=$(jq -cs 'length' <(jq -c 'select(.method == "POST")' "$LOG" 2>/dev/n
 if [ "$post_count" != "1" ]; then
   ac_fail "AC4: porter-caddy.sh adopt expected exactly one webhook POST, got $post_count"
 fi
-if ! jq -e 'select(.method == "POST") | .body.match[0].uri == "/stripe/webhook" and .body.handle[0].upstreams[0].dial == "127.0.0.1:9088"' "$LOG" >/dev/null 2>&1; then
+if ! jq -e 'select(.method == "POST") | .body.match[0].path == "/stripe/webhook" and .body.handle[0].upstreams[0].dial == "127.0.0.1:9088"' "$LOG" >/dev/null 2>&1; then
   ac_fail "AC4: porter-caddy.sh webhook POST is not /stripe/webhook -> 127.0.0.1:9088"
 fi
 if jq -e 'select(.method == "PUT")' "$LOG" >/dev/null 2>&1; then

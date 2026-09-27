@@ -10,7 +10,7 @@
 #       127.0.0.1:<port>. Never PUTs /config/, never replaces a server.
 #       No wildcard hosts, no wildcard proxy sites.
 #   - add_webhook_route
-#       POSTs exactly one new route whose `match.uri` is exactly
+#       POSTs exactly one new route whose `match.path` is exactly
 #       /stripe/webhook as a reverse_proxy to 127.0.0.1:9088 — the port the
 #       operator's per-request invoker listens on (stripe-webhook.sh). No
 #       host match (path only), no wildcard, no catch-all. Never PUTs /config/,
@@ -179,7 +179,7 @@ remove_route() {
 # stripe-webhook.sh). No host is chosen, no wildcard, no catch-all.
 #
 # Idempotent: GETs the current routes first; if any route already matches
-# the exact path /stripe/webhook (match[].uri), it returns 0 and does not
+# the exact path /stripe/webhook (match[].path), it returns 0 and does not
 # POST again. Otherwise it POSTs exactly one route, leaving every other
 # route untouched (no PUT /config/, no DELETE of any existing route).
 #
@@ -207,13 +207,13 @@ add_webhook_route() {
   fi
 
   # Idempotency: find any route whose match array contains an entry whose
-  # `uri` is EXACTLY /stripe/webhook. A host-only route (e.g.
+  # `path` is EXACTLY /stripe/webhook. A host-only route (e.g.
   # self.disinto.ai) does NOT match and is left untouched. If one exists,
   # do nothing and return 0.
   local route_index
   route_index=$(echo "$body" | jq -r --arg p "$WEBHOOK_PATH" \
     'to_entries[]
-     | select((.value.match // []) | map(.uri // "") | any(. == $p))
+     | select((.value.match // []) | map(.path // "") | any(. == $p))
      | .key' 2>/dev/null | head -n1)
 
   if [ -n "$route_index" ] && [ "$route_index" != "null" ]; then
@@ -221,14 +221,14 @@ add_webhook_route() {
     return 0
   fi
 
-  # The route: one match on the exact path /stripe/webhook (uri, not host),
+  # The route: one match on the exact path /stripe/webhook (path, not host),
   # proxied to 127.0.0.1:9088. No host, no wildcard, no catch-all.
   local route_config
   route_config=$(cat <<EOF
 {
   "match": [
     {
-      "uri": "${WEBHOOK_PATH}"
+      "path": "${WEBHOOK_PATH}"
     }
   ],
   "handle": [
