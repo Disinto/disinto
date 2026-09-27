@@ -564,6 +564,20 @@ def main() -> int:
         "afa17e7361941758805d0defaf69d204": "run_* rc + err + block open (issue-1555.sh + issue-1561.sh)",
         "90f6a1edce24225ef84e3ce18d6dc676": "run_* block open + PATH export (issue-1555.sh + issue-1561.sh)",
         "916ac222b6cc0a1ac3d116eb31f5d8d7": "run_* PATH + CADDY_ADMIN_URL export (issue-1555.sh + issue-1561.sh)",
+        # issue-1571.sh (fresh Caddy wildcard cert) vs issue-1555.sh / issue-1556.sh /
+        # issue-1561.sh: same family of per-issue Caddy-stub edge tests, kept
+        # deliberately isolated (own throwaway root, own caddy/systemctl stubs).
+        # The shared PORTER_CADDY/CADDY_LIB file-assert + install.sh sanity window,
+        # the rc=0/cleanup()/trap boilerplate, and the systemd-enable / env.GANDI_API_KEY
+        # source checks are intentional duplication, not copy-paste — same convention as
+        # issue-1555.sh <-> issue-1561.sh above.
+        "8bf760fb109d2e467f281e314bc3c11b": "PORTER_CADDY/CADDY_LIB asserts + install.sh check (issue-1555.sh + issue-1571.sh)",
+        "c756f85cce92fdefbdf959979b25a9d4": "CADDY_LIB assert + install.sh check head (issue-1555.sh + issue-1571.sh)",
+        "02fe0e12105ba3573f1018b8f863de1a": "install.sh check if/grep/ac_fail (issue-1555.sh + issue-1571.sh)",
+        "09a839ef2f72e4d3158beae7dc0879a0": "install.sh check grep+ac_fail+fi (issue-1555.sh + issue-1571.sh)",
+        "02ab539d7441c68b87f714f3bcd8f870": "cleanup() head (rm -rf + } + trap) (issue-1556.sh + issue-1571.sh)",
+        "9bde44682bdc27bf9c7258286649208b": "cleanup() tail + trap cleanup EXIT (issue-1556.sh + issue-1571.sh)",
+        "8a094008e3c39f88ec7e8fbc38709d93": "rc=0 + cleanup head (issue-1561.sh + issue-1571.sh)",
     }
 
     if not sh_files:

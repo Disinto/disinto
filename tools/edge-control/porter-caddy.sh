@@ -14,29 +14,46 @@
 # inserting `admin localhost:2019` into the global options block when that
 # exact admin listener is not yet configured. Site blocks are left
 # byte-for-byte. No site blocks, `extra.d` files, or server config are ever
-# deleted or rewritten. No catch-all :80/:443 site is ever written (Porter
-# does not listen on 80/443 — the customer is a Caddy route). This script
-# never becomes an HTTP server.
+# deleted or rewritten. A catch-all :80/:443 site is never written (Porter
+# does not listen on 80/443 — the customer is a Caddy route).
 #
-# Fresh install writes a NEW Caddyfile whose entire content is:
+# Fresh install writes a NEW Caddyfile:
+#
 #   {
 #     admin localhost:2019
 #   }
 #
 #   import <prefix>/etc/caddy/extra.d/*.caddy
 #
-# and creates `extra.d` if missing. Operator sites remain as files in
-# `extra.d`; nothing else is written.
+#   *.<domain> {
+#     tls {
+#       dns gandi {env.GANDI_API_KEY}
+#     }
+#   }
+#
+# plus `extra.d` created if missing. The wildcard site (address *.<domain>,
+# default disinto.ai) is the only site: no self/, www/, apex, or customer
+# site, no catch-all :80/:443. Its only directive is the wildcard cert, so
+# Caddy listens on 443 and add_route finds a server on :443 for the
+# exact-host routes that arrive later. Operator sites remain as files in
+# `extra.d`; the import stays, so a more specific extra.d file wins over the
+# wildcard.
 #
 # PORTER_ROOT prefixing: when PORTER_ROOT is set/non-empty (acceptance tests),
 # every path is prefixed with it and every real-host action (downloading/running
-# the caddy binary, `caddy validate`, `caddy reload`) is skipped.
+# the caddy binary, `caddy validate`, `caddy reload`, `systemctl`) is skipped.
 # On a real host, a successful file edit is followed by `caddy validate`; only
-# on a passing validate is Caddy reloaded. A failed validate restores the
-# previous Caddyfile and does NOT reload.
+# on a passing validate is Caddy reloaded (adopt mode). A failed validate
+# restores the previous Caddyfile and does NOT reload. A fresh install on a
+# real host additionally calls `systemctl enable --now caddy` after a passing
+# validate; a failed validate exits non-zero and never enables.
 #
-# The Caddy systemd unit is install.sh's responsibility; this script never
-# writes or rewrites it, so it cannot replace existing site config.
+# A fresh install writes ${prefix}etc/systemd/system/caddy.service only when
+# no caddy.service exists under ${prefix}etc/systemd/system or
+# ${prefix}lib/systemd/system — it never overwrites an existing unit. The unit
+# runs `${CADDY_BIN} run --config` the Caddyfile and loads
+# ${prefix}etc/caddy/gandi.env with `EnvironmentFile=-` (missing token does not
+# stop it); it never contains the token.
 #
 # After a successful adopt OR install this script mounts the Stripe webhook as
 # ONE PATH on the existing Caddy: it sources lib/caddy.sh and calls
@@ -232,20 +249,46 @@ install() {
   # extra.d holds operator site blocks. Create only if missing.
   mkdir -p "$EXTRA_DIR"
 
-  # The NEW Caddyfile: global block + import only. No site blocks, no catch-
-  # all :80/:443, no self/www/apex/customer sites.
-  printf '{\n  admin localhost:2019\n}\n\nimport %s\n' "$EXTRA_IMPORT" > "$CADDYFILE"
+  # The NEW Caddyfile: global block + import + exactly one site block — the
+  # wildcard *.<DOMAIN_SUFFIX> (default disinto.ai). The block's only
+  # directive is the wildcard cert (tls dns gandi with env.GANDI_API_KEY); no
+  # reverse_proxy, no self/, www/, apex, or customer site, no catch-all
+  # :80/:443. This gives add_route a server on :443 to hang exact-host routes
+  # on. Customer routes arrive later as one exact-host POST.
+  local domain="${DOMAIN_SUFFIX:-disinto.ai}"
+  printf '{\n  admin localhost:2019\n}\n\nimport %s\n\n*.%s {\n  tls {\n    dns gandi {env.GANDI_API_KEY}\n  }\n}\n' \
+    "$EXTRA_IMPORT" "$domain" > "$CADDYFILE"
   chmod 644 "$CADDYFILE"
+  log "wrote ${CADDYFILE} with the *.$domain wildcard cert site"
+
+  # caddy.service (fresh install only): written at
+  # ${PREFIX}etc/systemd/system/caddy.service only when no caddy.service
+  # already exists under ${PREFIX}etc/systemd/system or
+  # ${PREFIX}lib/systemd/system — an existing unit is never overwritten. It
+  # runs ${CADDY_BIN} run --config the Caddyfile and loads
+  # ${PREFIX}etc/caddy/gandi.env with EnvironmentFile=- so a missing token
+  # never stops the process; the unit contains no token.
+  local unit_file unit_lib gandi_env
+  unit_file="${PREFIX}etc/systemd/system/caddy.service"
+  unit_lib="${PREFIX}lib/systemd/system/caddy.service"
+  gandi_env="${PREFIX}etc/caddy/gandi.env"
+  if [[ ! -f "$unit_file" && ! -f "$unit_lib" ]]; then
+    mkdir -p "$(dirname "$unit_file")"
+    printf '[Unit]\nDescription=Caddy HTTP/HTTPS web server\nAfter=network.target network-online.target\nWants=network-online.target\n\n[Service]\nType=notify\nEnvironmentFile=-%s\nExecStart=%s run --config %s\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n\n' \
+      "$gandi_env" "$CADDY_BIN" "$CADDYFILE" > "$unit_file"
+    chmod 644 "$unit_file"
+    log "wrote ${unit_file}"
+  else
+    log "caddy.service already present; not touching it"
+  fi
 
   if [[ $TEST_MODE -eq 0 ]]; then
     install_caddy_binary
     if ! "$CADDY_BIN" validate --config "$CADDYFILE" >/dev/null 2>&1; then
       die "caddy validate failed after install"
     fi
-    # The Caddy systemd unit is owned by install.sh (the optional Caddy
-    # installer). This script never rewrites it, so it cannot replace site
-    # config. Enable it on the host: systemctl enable --now caddy
-    log "caddy binary + Caddyfile installed (validate OK); enable the caddy service via systemd (the optional Caddy installer owns that unit)"
+    systemctl enable --now caddy
+    log "caddy validated and enabled via systemctl enable --now caddy"
   fi
 
   log "fresh install complete"
@@ -268,14 +311,14 @@ fi
 # present), so re-running porter-install / porter-caddy is safe.
 #
 # A failed add is loud but NOT fatal: on a real fresh install the caddy
-# service may not be listening on 2019 yet (the optional Caddy installer
-# enables it via systemd),
+# service may not be listening on 2019 yet (a fresh install enables it via
+# systemctl; on an existing install the operator may start caddy manually),
 # so the route is logged as PENDING rather than aborting an otherwise
 # successful install. Re-run once caddy is up and it will land.
 if add_webhook_route; then
   log "stripe webhook path route is live on the existing Caddy"
 else
-  log "ERROR: add_webhook_route failed (Caddy admin unreachable?); the /stripe/webhook route is PENDING — run this script again once caddy is listening on localhost:2019 (the optional Caddy installer enables the caddy service via systemd)"
+  log "ERROR: add_webhook_route failed (Caddy admin unreachable?); the /stripe/webhook route is PENDING — run this script again once caddy is listening on localhost:2019"
 fi
 
 exit 0
