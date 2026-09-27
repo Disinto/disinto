@@ -234,7 +234,11 @@ install_caddy_binary() {
     die "caddy download failed"
   }
   chmod +x "$tmp" || die "cannot make temporary caddy executable"
-  if ! "$tmp" version 2>&1 | grep -qi gandi; then
+  # Caddy prints only the version line from `version` — the plugin's presence
+  # lives in `list-modules` (a line like dns.providers.gandi). Detect the
+  # plugin there, not the version string (2.11.4 shows no `gandi` in the
+  # version output).
+  if ! "$tmp" list-modules 2>&1 | grep -qF 'dns.providers.gandi'; then
     rm -f "$tmp"
     die "downloaded caddy binary does not contain the gandi plugin"
   fi
