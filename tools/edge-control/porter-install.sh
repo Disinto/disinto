@@ -27,9 +27,9 @@
 #   bash porter-install.sh [--admin-key <pubkey-file>]
 #
 # Copies exactly: dispatch.sh, key-command.sh, porter-wrap.sh,
-# stripe-webhook.sh, lib/, verbs/, packs/. register.sh and install.sh are
-# NOT copied. chmod 755 on every .sh in the prefix. The prefix is never
-# rm -rf'd: a second run upgrades in place.
+# stripe-webhook.sh, porter-tunnel-keys.sh, lib/, verbs/, packs/. register.sh
+# and install.sh are NOT copied. chmod 755 on every .sh in the prefix. The
+# prefix is never rm -rf'd: a second run upgrades in place.
 #
 # Ledger (accounts.json): created only if missing
 # ({"version":1,"accounts":{}}) and never overwritten. --admin-key ensures
@@ -37,9 +37,15 @@
 # untouched; a later run without --admin-key keeps both.
 #
 # Tunnel user: the real-host run creates `disinto-tunnel` (system, nologin,
-# no home) when it is missing. That user carries no AuthorizedKeysCommand:
-# its keys are the plain file lib/authorized_keys.sh (rebuild_authorized_keys)
-# writes — the installer never useradds any match block for it.
+# home /home/disinto-tunnel) when it is missing. -M (skip home) is deliberately
+# absent: sshd's StrictModes rejects an authorized_keys file whose home dir
+# does not exist, so the user must have a real home. A re-run keeps an
+# existing user only if its home is /home/disinto-tunnel; otherwise it exits
+# non-zero without touching passwd. That user carries no AuthorizedKeysCommand
+# (no match block is written for it); its keys are the plain file
+# lib/authorized_keys.sh (rebuild_authorized_keys) writes, and
+# /etc/sudoers.d/porter-tunnel (440) grants `porter` exactly one NOPASSWD
+# command: running the tunnel-keys helper as root.
 #
 # Caddy + DNS: after the door copy and the drop-in, this script calls
 # porter-caddy.sh and porter-dns.sh from the same directory (no
@@ -131,7 +137,8 @@ done
 log "Source tree: ${SRC_DIR}"
 mkdir -p "${OPT_DIR}"
 
-for src in dispatch.sh key-command.sh porter-wrap.sh stripe-webhook.sh; do
+for src in dispatch.sh key-command.sh porter-wrap.sh stripe-webhook.sh \
+    porter-tunnel-keys.sh; do
   [[ -f "${SRC_DIR}/${src}" ]] || die "source script missing: ${src}"
   cp -- "${SRC_DIR}/${src}" "${OPT_DIR}/${src}"
   chmod 755 "${OPT_DIR}/${src}"
@@ -207,25 +214,50 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
   # new. The ledger itself stays 0640 (porter-owned) so it is not world-
   # readable. The drop-in is read by sshd (root), so it stays root-owned.
   chown -R porter:porter "${OPT_DIR}"
+  # The tunnel-keys helper is a NOPASSWD sudo command: re-claim it to root so
+  # porter (who owns the rest of the door) cannot modify what it runs as root.
+  chown root:root "${OPT_DIR}/porter-tunnel-keys.sh"
   chown porter:porter "${LIB_DIR}"
   chmod 0755 "${LIB_DIR}"
   chown porter:porter "${LEDGER}" "${ENV_FILE}"
   log "Owned by porter: ${OPT_DIR} ${LIB_DIR} (0755) ${LEDGER} ${ENV_FILE}"
 fi
 
-# ── Tunnel user: real host only; keys live in a file, never AuthorizedKeysCommand
-#     disinto-tunnel is the sshd user whose authorized_keys (a plain file,
-#     rebuilt by lib/authorized_keys.sh) carries the projects' keys. No match
-#     block / AuthorizedKeysCommand is written for it. ─────────────────────────
+# ── Tunnel user: real host only (PORTER_ROOT skips useradd/chown) ─────────────
+# disinto-tunnel is the sshd user whose authorized_keys (a plain file, rebuilt
+# by lib/authorized_keys.sh) carries the projects' keys. No match block /
+# AuthorizedKeysCommand is written for it.
 if [[ -z "${PORTER_ROOT:-}" ]]; then
+  TUNNEL_HOME="/home/disinto-tunnel"
   if id disinto-tunnel >/dev/null 2>&1; then
-    log "Tunnel user disinto-tunnel already exists"
+    existing_home="$(getent passwd disinto-tunnel | cut -d: -f6)"
+    if [[ "${existing_home}" != "${TUNNEL_HOME}" ]]; then
+      die "disinto-tunnel home is ${existing_home:-<unset>}; expected ${TUNNEL_HOME} (passwd untouched)"
+    fi
+    log "Tunnel user disinto-tunnel already exists (home ${TUNNEL_HOME})"
   else
-    useradd -r -s /usr/sbin/nologin -M disinto-tunnel \
+    # -d /home/disinto-tunnel -m: a real home. NEVER -M (skip home), which
+    # would leave no home and trip sshd StrictModes on the authorized_keys.
+    useradd -r -d "${TUNNEL_HOME}" -m -s /usr/sbin/nologin disinto-tunnel \
       || die "cannot create user disinto-tunnel"
-    log "Tunnel user disinto-tunnel created (nologin, no home, no AuthorizedKeysCommand)"
+    log "Tunnel user disinto-tunnel created (home ${TUNNEL_HOME}, nologin)"
   fi
+  # .ssh (created if missing) owned by the tunnel user at 700.
+  mkdir -p "${TUNNEL_HOME}/.ssh"
+  chown disinto-tunnel:disinto-tunnel "${TUNNEL_HOME}/.ssh"
+  chmod 700 "${TUNNEL_HOME}/.ssh"
 fi
+
+# ── Sudo drop-in: porter may run EXACTLY the tunnel-keys helper as root ──────
+# A single command, NOPASSWD, nothing else. root-owned 440. On a real host this
+# is /etc/sudoers.d/porter-tunnel; under PORTER_ROOT it is written under the
+# prefix (test seam — never /etc).
+SUDOERS_FILE="${PREFIX}etc/sudoers.d/porter-tunnel"
+mkdir -p "$(dirname "${SUDOERS_FILE}")"
+printf 'porter ALL=(root) NOPASSWD: %s/porter-tunnel-keys.sh\n' "${OPT_DIR}" \
+  > "${SUDOERS_FILE}"
+chmod 440 "${SUDOERS_FILE}"
+log "Sudo drop-in: ${SUDOERS_FILE} (porter -> ${OPT_DIR%/}/porter-tunnel-keys.sh NOPASSWD)"
 
 # ── sshd drop-in: written every run ───────────────────────────────────────────
 mkdir -p "${DROPIN_DIR}"

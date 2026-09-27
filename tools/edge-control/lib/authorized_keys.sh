@@ -58,6 +58,13 @@ if [[ -n "${PORTER_ROOT:-}" ]]; then
   TUNNEL_AUTH_KEYS="${PORTER_ROOT%/}/home/${TUNNEL_USER}/.ssh/authorized_keys"
 fi
 
+# The root helper that hands the .ssh over to disinto-tunnel (NOPASSWD sudo,
+# per /etc/sudoers.d/porter-tunnel). It lives next to this lib in the door and
+# is copied there by porter-install.sh. Derived from this lib's own location so
+# it resolves to /opt/porter/porter-tunnel-keys.sh on a real host (and the
+# same-relative path under PORTER_ROOT).
+TUNNEL_KEYS_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/porter-tunnel-keys.sh"
+
 # Emit the generated authorized_keys content: one line per registered project
 # whose ledger row carries a valid pubkey. Always returns 0; prints nothing
 # (an empty authorized_keys) when no registered project qualifies.
@@ -126,6 +133,19 @@ rebuild_authorized_keys() {
   mkdir -p "$(dirname "$TUNNEL_AUTH_KEYS")"
   printf '%s\n' "$content" > "$TUNNEL_AUTH_KEYS"
   chmod 600 "$TUNNEL_AUTH_KEYS"
+
+  # Hand ownership to the tunnel user via the root helper. The file is written
+  # by `porter` (the SSH user, per the door's Match User porter block) and must
+  # be handed to disinto-tunnel for sshd to accept it. On a real host we run it
+  # as `sudo -n` (NOPASSWD, per /etc/sudoers.d/porter-tunnel); under
+  # PORTER_ROOT (acceptance tests) sudo is skipped and the file is left where
+  # the test can read it.
+  if [[ -z "${PORTER_ROOT:-}" ]]; then
+    if ! sudo -n "${TUNNEL_KEYS_HELPER}"; then
+      echo "rebuild_authorized_keys: sudo -n ${TUNNEL_KEYS_HELPER} failed" >&2
+      return 1
+    fi
+  fi
 
   local entries
   entries="$(printf '%s\n' "$content" | grep -cF 'ssh-' 2>/dev/null || true)"
