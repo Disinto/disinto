@@ -58,13 +58,17 @@ trap cleanup EXIT
 
 ROOT="$TMP_DIR/root"
 mkdir -p "$ROOT/var/lib/disinto" "$ROOT/home"
+# Issue-specific extra paths (door + sudo drop-in); absent in #1557.
+OPT_DIR="$ROOT/opt/porter"
+SUDOERS_FILE="$ROOT/etc/sudoers.d/porter-tunnel"
 
+# Shared-shape fixtures (ledger + registry); see #1557's setup for the
+# common throwaway-root contract this test also reuses.
 ACCOUNTS_FILE="$ROOT/var/lib/disinto/accounts.json"
 REGISTRY_DIR="$ROOT/var/lib/disinto"
 REGISTRY_FILE="$ROOT/var/lib/disinto/registry.json"
+# Where rebuild_authorized_keys lands the tunnel's key file.
 TUNNEL_AUTH_KEYS="$ROOT/home/disinto-tunnel/.ssh/authorized_keys"
-OPT_DIR="$ROOT/opt/porter"
-SUDOERS_FILE="$ROOT/etc/sudoers.d/porter-tunnel"
 
 # The sudo + chown stubs. sudo is absent from this box's PATH, so the rebuild's
 # `sudo -n` can only be exercised here via the stub; the test records its args
@@ -85,13 +89,25 @@ cat > "$STUB_DIR/chown" <<EOF
 EOF
 chmod +x "$STUB_DIR/sudo" "$STUB_DIR/chown"
 
-# Ledger + registry: one registered project (acme) whose ledger row carries a
-# valid ed25519 pubkey — the rebuild's only qualifying case (a fingerprint or a
-# missing row writes nothing, per the #1557 contract this reuses).
+# Fixtures (issue-specific, distinct from #1557's multi-account ledger):
+# the registry lists one registered project; the ledger row carries the valid
+# ed25519 pubkey the rebuild must copy — the only qualifying case.
 FP_A="SHA256:$(printf 'A%.0s' {1..43})"
 KEY_DATA="AAAAC3NzaC1lZDI1NTE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB"
 ACME_PUBKEY="ssh-ed25519 ${KEY_DATA}"
 
+# Registry first (opposite of #1557): one registered project.
+cat > "$REGISTRY_FILE" <<EOF
+{
+  "version": 1,
+  "projects": {
+    "acme": { "port": 20000, "fqdn": "acme.disinto.ai", "registered_by": "admin" }
+  }
+}
+EOF
+
+# Ledger second: the single approved account whose pubkey the rebuild copies
+# (the registry copy is deliberately ignored, per #1557's contract).
 cat > "$ACCOUNTS_FILE" <<EOF
 {
   "version": 1,
@@ -102,15 +118,6 @@ cat > "$ACCOUNTS_FILE" <<EOF
       "created_at": "2026-01-01T00:00:00Z",
       "pubkey": "${ACME_PUBKEY}"
     }
-  }
-}
-EOF
-
-cat > "$REGISTRY_FILE" <<EOF
-{
-  "version": 1,
-  "projects": {
-    "acme": { "port": 20000, "fqdn": "acme.disinto.ai", "registered_by": "admin" }
   }
 }
 EOF
