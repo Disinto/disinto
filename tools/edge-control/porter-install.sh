@@ -95,6 +95,34 @@ reload_sshd_if_safe() {
   fi
 }
 
+# ── Porter user: create with an executable shell (never nologin) so sshd's
+#     AuthorizedKeysCommand forced command (command=) actually starts. nologin
+#     makes OpenSSH abort the session with "This account is currently not
+#     available." before the forced command runs. The account still gets no
+#     shell: the key line from key-command.sh is restrict + command=, so the
+#     caller is locked to that single forced command. Real host only — PORTER_ROOT
+#     (acceptance tests) skips useradd/usermod. ─────────────────────────────────
+setup_porter_user() {
+  if id porter >/dev/null 2>&1; then
+    log "User porter already exists"
+    # If the existing shell is nologin (the pre-fix state), migrate to
+    # /bin/sh so the door can start the forced command. An account that already
+    # has an executable shell is left alone (it is not nologin).
+    current_shell="$(getent passwd porter | cut -d: -f7)"
+    case "${current_shell}" in
+      */nologin)
+        usermod -s /bin/sh porter \
+          || die "cannot set porter shell to /bin/sh"
+        log "User porter shell set to /bin/sh (was ${current_shell})"
+        ;;
+    esac
+  else
+    useradd -r -s /bin/sh -m -d /home/porter porter \
+      || die "cannot create user porter"
+    log "User porter created"
+  fi
+}
+
 # ── Paths (PORTER_ROOT prefixes everything when set and non-empty) ──────────
 # PREFIX is "/" for real installs; a trailing-slash-normalized PORTER_ROOT
 # otherwise. (useradd/chown are only attempted for the real path.)
@@ -201,13 +229,7 @@ fi
 
 # ── User + ownership: real-host installs only (skipped under PORTER_ROOT) ─────
 if [[ -z "${PORTER_ROOT:-}" ]]; then
-  if id porter >/dev/null 2>&1; then
-    log "User porter already exists"
-  else
-    useradd -r -s /usr/sbin/nologin -m -d /home/porter porter \
-      || die "cannot create user porter"
-    log "User porter created"
-  fi
+  setup_porter_user
 
   # The forced command runs as user `porter`, which must be able to (a) read/
   # exec the door, (b) read porter.env (loaded by porter-wrap.sh), and (c)
