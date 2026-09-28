@@ -47,7 +47,8 @@
 #
 # PORTER_ROOT prefixing: when PORTER_ROOT is set/non-empty (acceptance tests),
 # every path is prefixed with it and every real-host action (downloading/running
-# the caddy binary, `caddy validate`, `caddy reload`, `systemctl`) is skipped.
+# the caddy binary, `caddy validate`, `caddy reload`, `systemctl`, and the
+# /var/lib/caddy certificate-directory preparation) is skipped.
 # On a real host, a successful file edit is followed by `caddy validate`; only
 # on a passing validate is Caddy reloaded (adopt mode). A failed validate
 # restores the previous Caddyfile and does NOT reload. A fresh install on a
@@ -57,9 +58,13 @@
 # A fresh install writes ${prefix}etc/systemd/system/caddy.service only when
 # no caddy.service exists under ${prefix}etc/systemd/system or
 # ${prefix}lib/systemd/system — it never overwrites an existing unit. The unit
-# runs `${CADDY_BIN} run --config` the Caddyfile and loads
-# ${prefix}etc/caddy/gandi.env with `EnvironmentFile=-` (missing token does not
-# stop it); it never contains the token.
+# runs `${CADDY_BIN} run --config` the Caddyfile, sets `HOME` and
+# `XDG_DATA_HOME` to /var/lib/caddy (Caddy's certificate directory, mode 700,
+# created by this script on a real host), adds `ExecReload=${CADDY_BIN} reload
+# --config ${CADDYFILE}` so `systemctl reload caddy` works on this
+# Type=notify unit, and loads ${prefix}etc/caddy/gandi.env with
+# `EnvironmentFile=-` (missing token does not stop it); it never contains the
+# token.
 #
 # After a successful adopt OR install this script mounts the Stripe webhook as
 # ONE PATH on the existing Caddy: it sources lib/caddy.sh and calls
@@ -279,15 +284,20 @@ install() {
   # ${PREFIX}lib/systemd/system — an existing unit is never overwritten. It
   # runs ${CADDY_BIN} run --config the Caddyfile and loads
   # ${PREFIX}etc/caddy/gandi.env with EnvironmentFile=- so a missing token
-  # never stops the process; the unit contains no token.
+  # never stops the process; the unit contains no token. It sets
+  # HOME/XDG_DATA_HOME to /var/lib/caddy (the directory Caddy stores ACME
+  # certificates in — without them Caddy would store certs under ./caddy in
+  # its working directory, which was /) and adds
+  # ExecReload=${CADDY_BIN} reload --config ${CADDYFILE} so
+  # `systemctl reload caddy` works (the unit is Type=notify).
   local unit_file unit_lib gandi_env
   unit_file="${PREFIX}etc/systemd/system/caddy.service"
   unit_lib="${PREFIX}lib/systemd/system/caddy.service"
   gandi_env="${PREFIX}etc/caddy/gandi.env"
   if [[ ! -f "$unit_file" && ! -f "$unit_lib" ]]; then
     mkdir -p "$(dirname "$unit_file")"
-    printf '[Unit]\nDescription=Caddy HTTP/HTTPS web server\nAfter=network.target network-online.target\nWants=network-online.target\n\n[Service]\nType=notify\nEnvironmentFile=-%s\nExecStart=%s run --config %s\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n\n' \
-      "$gandi_env" "$CADDY_BIN" "$CADDYFILE" > "$unit_file"
+    printf '[Unit]\nDescription=Caddy HTTP/HTTPS web server\nAfter=network.target network-online.target\nWants=network-online.target\n\n[Service]\nType=notify\nEnvironment=HOME=/var/lib/caddy\nEnvironment=XDG_DATA_HOME=/var/lib/caddy\nEnvironmentFile=-%s\nExecStart=%s run --config %s\nExecReload=%s reload --config %s\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n\n' \
+      "$gandi_env" "$CADDY_BIN" "$CADDYFILE" "$CADDY_BIN" "$CADDYFILE" > "$unit_file"
     chmod 644 "$unit_file"
     log "wrote ${unit_file}"
   else
@@ -299,6 +309,16 @@ install() {
     if ! "$CADDY_BIN" validate --config "$CADDYFILE" >/dev/null 2>&1; then
       die "caddy validate failed after install"
     fi
+    # The unit's HOME/XDG_DATA_HOME point at /var/lib/caddy, so the directory
+    # must exist, root-only, before Caddy starts: otherwise Caddy would store
+    # its ACME certificates in ./caddy under its working directory (/).
+    if ! mkdir -p /var/lib/caddy; then
+      die "cannot create /var/lib/caddy for Caddy certificate storage"
+    fi
+    if ! chmod 700 /var/lib/caddy; then
+      die "cannot set mode 700 on /var/lib/caddy"
+    fi
+    log "prepared /var/lib/caddy (mode 700) for Caddy certificates"
     systemctl enable --now caddy
     log "caddy validated and enabled via systemctl enable --now caddy"
   fi
