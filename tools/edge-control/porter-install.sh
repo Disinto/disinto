@@ -47,18 +47,20 @@
 # /etc/sudoers.d/porter-tunnel (440) grants `porter` exactly one NOPASSWD
 # command: running the tunnel-keys helper as root.
 #
-# Caddy + DNS: after the door copy and the drop-in, this script calls
-# porter-caddy.sh and porter-dns.sh from the same directory (no
-# --set-wildcard). porter-dns.sh ensures the wildcard * A record once and
-# never edits other names. A DNS refusal (wildcard pointing elsewhere) is a
-# non-zero exit AFTER the door files are in place: the door is not rolled
-# back and DNS is not edited (the refusal propagates as this script's exit
-# code).
+# Caddy + DNS: after the door copy, the sshd drop-in (and its backup) is
+# written and the real-host sshd gate (sshd -t plus conditional reload) runs;
+# only then are porter-caddy.sh and porter-dns.sh called from the same
+# directory (no --set-wildcard). porter-dns.sh ensures the wildcard * A
+# record once and never edits other names. A DNS refusal (wildcard pointing
+# elsewhere) is a non-zero exit AFTER the door files and the sshd gate are
+# in place: the door is not rolled back and DNS is not edited (the refusal
+# propagates as this script exit code).
 #
-# sshd: the drop-in is written every run. On a real host, sshd -t is run;
-# sshd is reloaded only when that exits 0 and the drop-in is a `Match User
-# porter` block with no column-0 AuthorizedKeysCommand. If sshd -t fails the
-# previous drop-in (if any) is restored, sshd is not reloaded, and the
+# sshd: the drop-in is written every run. On a real host, sshd -t is run
+# before the Caddy/DNS calls, so a DNS refusal cannot skip the gate. sshd
+# is reloaded only when that exits 0 and the drop-in is a `Match User
+# porter` block with no column-0 AuthorizedKeysCommand. If sshd -t fails,
+# the previous drop-in (if any) is restored, sshd is not reloaded, and the
 # script exits non-zero. Under PORTER_ROOT (acceptance tests) useradd,
 # sshd -t and the reload are all skipped.
 # =============================================================================
@@ -281,6 +283,15 @@ EOF
 chmod 600 "${DROPIN}"
 log "sshd drop-in written: ${DROPIN}"
 
+# ── sshd: real host only — validate, then conditionally reload. This gate runs before
+#     porter-caddy.sh / porter-dns.sh: a DNS refusal must not skip the gate
+#     (the new drop-in would otherwise sit on disk with the old sshd). ────
+if [[ -z "${PORTER_ROOT:-}" ]]; then
+  if ! reload_sshd_if_safe "${DROPIN}"; then
+    die "sshd -t failed; previous drop-in restored (if any); not reloaded"
+  fi
+fi
+
 # ── Caddy + DNS: called from the same directory; never --set-wildcard ─────────
 # porter-caddy.sh adopts/installs the Caddy admin listener (never rewrites
 # operator sites). porter-dns.sh ensures the wildcard * A record once and
@@ -289,13 +300,6 @@ log "sshd drop-in written: ${DROPIN}"
 # These are library-style helpers (mode 100644), invoked via bash.
 bash "${SRC_DIR}/porter-caddy.sh"
 bash "${SRC_DIR}/porter-dns.sh"
-
-# ── sshd: real host only — validate then conditionally reload ────────────────
-if [[ -z "${PORTER_ROOT:-}" ]]; then
-  if ! reload_sshd_if_safe "${DROPIN}"; then
-    die "sshd -t failed; previous drop-in restored (if any); not reloaded"
-  fi
-fi
 
 # ── --admin-key: ensure the row, set admin=true (credits/status untouched) ───
 if [[ -n "${ADMIN_KEY_FILE}" ]]; then
