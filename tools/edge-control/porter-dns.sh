@@ -12,14 +12,15 @@
 #     interfaces, never an external IP-echo service.
 #
 # Behavior:
-#   * A record absent,                create it (one POST .../records), exit 0
+#   * A record absent,                create it (one PUT .../records/%2A/A), exit 0
 #   * A record present, same IP,      do nothing, exit 0
 #   * A record present, different IP: no --set-wildcard  -> exit non-zero,
 #     print the current value (never the token), change nothing;
-#     --set-wildcard -> update only that record (one PUT .../records/<id>)
+#     --set-wildcard -> update only that record (one PUT .../records/%2A/A)
 #
 # Hard guarantees (AD-005 style):
-#   * Never PUTs a zone: the only PUT ever issued is on a single record id.
+#   * Never PUTs a zone: the only PUTs ever issued target the wildcard `*` A
+#     record (name-based path). No record id or zone PUT is ever sent.
 #   * Never requests a name other than `*`: the only record name sent to the
 #     API is `*`; the record list GET is name-agnostic.
 #   * Never touches `@`, `www`, `self`, `NS`, or `MX`: no such name or
@@ -172,7 +173,7 @@ IP="$(resolve_ip)"
 
 # ── Gandi LiveDNS v5 calls: the token only ever rides the Authorization
 #     header; response bodies are never echoed to stdout/stderr. ──────────────
-GANDI_BASE="https://api.gandi.net/v5"
+GANDI_BASE="https://api.gandi.net/v5/livedns"
 DOMAIN_SUFFIX="${DOMAIN_SUFFIX:-disinto.ai}"
 
 _gandi() {
@@ -194,22 +195,23 @@ records_path="/domains/${DOMAIN_SUFFIX}/records"
 records_body="$( _gandi GET "$records_path" )"
 jq -e . <<<"$records_body" >/dev/null 2>&1 || die "gandi API GET ${records_path}: response is not JSON"
 
-# The single record this script knows about: A record named `*`.
-wildcard_id=""
+# The single record this script knows about: an A rrset named `*`. The LiveDNS
+# records list carries rrset_name / rrset_type / rrset_values (no `name`/`type`/
+# `value` fields).
 wildcard_value=""
 if [[ -n "$records_body" ]]; then
-  wildcard_id="$(jq -r '.data[]? | select(.type == "A" and .name == "*") | .id // empty' <<<"$records_body" | head -n1)"
-  wildcard_value="$(jq -r '.data[]? | select(.type == "A" and .name == "*") | (.value_list[0] // .value // empty)' <<<"$records_body" | head -n1)"
+  wildcard_value="$(jq -r '.data[]? | select(.rrset_type == "A" and .rrset_name == "*") | (.rrset_values[0] // empty)' <<<"$records_body" | head -n1)"
 fi
 
-# {"name":"*","type":"A","value":"<ip>"} — the only body shape ever sent.
+# {"rrset_ttl":300,"rrset_values":["<ip>"]} — the only body shape ever sent.
 record_body() {
-  jq -cn --arg name '*' --arg ip "$IP" '{name: $name, type: "A", value: $ip}'
+  jq -cn --arg ip "$IP" '{rrset_ttl: 300, rrset_values: [$ip]}'
 }
 
-if [[ -z "$wildcard_id" && -z "$wildcard_value" ]]; then
-  # Absent: create it. This is the only write that may touch the zone.
-  _gandi POST "$records_path" "$(record_body)" >/dev/null
+if [[ -z "${wildcard_value:-}" ]]; then
+  # Absent: create it via the name-based upsert. This is the only write that
+  # may touch the zone.
+  _gandi PUT "${records_path}/%2A/A" "$(record_body)" >/dev/null
   log "created * A record for ${DOMAIN_SUFFIX} -> ${IP}"
   exit 0
 fi
@@ -220,8 +222,9 @@ if [[ "$wildcard_value" == "$IP" ]]; then
 fi
 
 if [[ $SET_WILDCARD -eq 1 ]]; then
-  # Present with a different value: update only this one record.
-  _gandi PUT "${records_path}/${wildcard_id}" "$(record_body)" >/dev/null
+  # Present with a different value: update only this one record (name-based
+  # upsert; never touches any other name).
+  _gandi PUT "${records_path}/%2A/A" "$(record_body)" >/dev/null
   log "updated * A record for ${DOMAIN_SUFFIX} -> ${IP}"
   exit 0
 fi
