@@ -151,8 +151,15 @@ for dir in lib verbs packs; do
   cp -r "${SRC_DIR}/${dir}" "${OPT_DIR}/"
 done
 
-# 755 on every script that landed (lib/*.sh, verbs/*.sh).
+# 755 on every script that landed (lib/*.sh, verbs/, verbs/*.sh), plus the
+# prefix dir + key-command.sh: sshd's StrictModes rejects an
+# AuthorizedKeysCommand whose script or directory is not owned by root (or
+# not 755) — the live host logged `Unsafe AuthorizedKeysCommand ... bad
+# ownership or modes for file /opt/porter/key-command.sh` and closed the
+# connection. chmod is owner-agnostic so it runs on every install; the
+# root:root chown that goes with it is real-host only (see below).
 find "${OPT_DIR}" -type f -name '*.sh' -exec chmod 755 {} +
+chmod 755 "${OPT_DIR}" "${OPT_DIR}/key-command.sh"
 
 # Never rm -rf the prefix: a second run upgrades in place.
 log "Door copied to ${OPT_DIR} (lib/, verbs/, packs/; register.sh and install.sh excluded)"
@@ -204,9 +211,25 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
 
   # The forced command runs as user `porter`, which must be able to (a) read/
   # exec the door, (b) read porter.env (loaded by porter-wrap.sh), and (c)
-  # write the ledger — the verbs `mv` a tmp file into ${LIB_DIR}/. So chown the
-  # door to porter and give porter ownership of the ledger dir + ledger file
-  # + env file.
+  # write the ledger — the verbs `mv` a tmp file into ${LIB_DIR}/.
+  #
+  # sshd refuses to run AuthorizedKeysCommand if the script or its directory is
+  # owned by the target user: the live host logged
+  # `Unsafe AuthorizedKeysCommand ... bad ownership or modes for file
+  # /opt/porter/key-command.sh` and closed the connection. So the prefix
+  # ${OPT_DIR} and the command itself, ${OPT_DIR}/key-command.sh, must be
+  # root:root, mode 755: not writable by group or other. Everything else in
+  # the door (not the AuthorizedKeysCommand path) stays porter-owned: 755 =
+  # world-readable/executable, which is all porter needs for dispatch.sh,
+  # porter-wrap.sh, stripe-webhook.sh, lib/, verbs/, packs/.
+  chown root:root "${OPT_DIR}" "${OPT_DIR}/key-command.sh"
+  chown -R porter:porter "${OPT_DIR}/lib" "${OPT_DIR}/verbs" \
+      "${OPT_DIR}/packs"
+  chown porter:porter "${OPT_DIR}/dispatch.sh" "${OPT_DIR}/porter-wrap.sh" \
+      "${OPT_DIR}/stripe-webhook.sh"
+  # The tunnel-keys helper is a NOPASSWD sudo command: re-claim it to root so
+  # porter (who owns the rest of the door) cannot modify what it runs as root.
+  chown root:root "${OPT_DIR}/porter-tunnel-keys.sh"
   #
   # ${LIB_DIR} (/var/lib/disinto) is shared with install.sh's registry
   # (root:disinto-register 0750). We hand it to porter (the only user that
@@ -215,14 +238,10 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
   # registry.json 0644) were already world-readable, so 0755 exposes nothing
   # new. The ledger itself stays 0640 (porter-owned) so it is not world-
   # readable. The drop-in is read by sshd (root), so it stays root-owned.
-  chown -R porter:porter "${OPT_DIR}"
-  # The tunnel-keys helper is a NOPASSWD sudo command: re-claim it to root so
-  # porter (who owns the rest of the door) cannot modify what it runs as root.
-  chown root:root "${OPT_DIR}/porter-tunnel-keys.sh"
   chown porter:porter "${LIB_DIR}"
   chmod 0755 "${LIB_DIR}"
   chown porter:porter "${LEDGER}" "${ENV_FILE}"
-  log "Owned by porter: ${OPT_DIR} ${LIB_DIR} (0755) ${LEDGER} ${ENV_FILE}"
+  log "Owned: ${OPT_DIR} + key-command.sh root:root (755); rest of door porter-owned; ${LIB_DIR} (0755), ${LEDGER} + env file porter:porter (0640)"
 fi
 
 # ── Tunnel user: real host only (PORTER_ROOT skips useradd/chown) ─────────────

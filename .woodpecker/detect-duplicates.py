@@ -765,6 +765,27 @@ def main() -> int:
         "cfde7c99a55373e695e991c4564dbc8d": "source + reload + subshell close (AC3) issue-1560.sh + issue-1581.sh",
         "d2d547119cca47baf43483e19315231a": "reload + subshell close + rc assert (AC3) issue-1560.sh + issue-1581.sh",
         "10f5e53ed1c75ff04eb3df8c7ad2ea35": "subshell close + rc assert + grep reload ssh (AC3) issue-1560.sh + issue-1581.sh",
+        # --- 1581 <-> 1595 (porter-install / sshd-gate acceptance tests) --------------
+        # issue-1595.sh (#1595) and issue-1581.sh (#1581) are per-issue edge acceptance
+        # tests of the same lib/edge-control/porter-install.sh, kept deliberately isolated
+        # (own throwaway root, own GANDI fake-curl stub, systemd/sshd stubs, make_root /
+        # run_install drivers, AC subshells) per the per-test-isolation convention used by
+        # 1555 <-> 1559 / 1556 <-> 1578 / 1571 <-> 1579 / 1557 <-> 1582 / 1560 <-> 1581.
+        # Shared 5-line windows are intentional isolation, not copy-paste.  Hashes computed
+        # against CURRENT content of both tests; refresh if their shared boilerplate changes.
+        "ffa9ab14d2c70dbc8a3a0e87a480d5d2": "auth= + while arg-parse head (curl stub) issue-1581.sh + issue-1595.sh",
+        "b0a1f570bb8477e2c8388c9092fe2e09": "while $# loop + case $1 (curl stub) issue-1581.sh + issue-1595.sh",
+        "978962655ea3a6d013e233f289afdd9a": "case $1 + -X (curl stub arg parse) issue-1581.sh + issue-1595.sh",
+        "764eda9964894d5e480d4b8609ae95bc": "-X method + -u url (curl stub arg parse) issue-1581.sh + issue-1595.sh",
+        "61e54aeb64d38ded21c1a17db3ea8a8c": "-u url + -H auth + -d body (curl stub arg parse) issue-1581.sh + issue-1595.sh",
+        "80b707feed1a4c6626248feaaed572f3": "-H auth + -d body + -o shift (curl stub arg parse) issue-1581.sh + issue-1595.sh",
+        "31fddb3a0386ccd3f6390fa6485b8b06": "echo [] + esac + AC_GANDI_STUB (curl heredoc end) issue-1581.sh + issue-1595.sh",
+        "00346186ff3b5c3705221b15760f7dc0": "printf GANDI_API_KEY + chmod 600 (make_root gandi.env) issue-1581.sh + issue-1595.sh",
+        "a706a325fc05cc1df5b93e6cda95d59f": "chmod 600 + } + state-agree printf (make_root end) issue-1581.sh + issue-1595.sh",
+        "65a8b0ebc0b598186b72b75ada7eb6ad": "local out err rc (run_install head) issue-1581.sh + issue-1595.sh",
+        "3949502b727a6a56c3afe28ec640dd97": "out/err + rc=0 + run (run_install) issue-1581.sh + issue-1595.sh",
+        "e57c40aeb409eccd24633db24e1b5e72": "rc=0 + run + unset -v (run_install) issue-1581.sh + issue-1595.sh",
+        "9204573809a71ff00e68d0cd3e25b237": "run + unset -v envs (run_install end) issue-1581.sh + issue-1595.sh",
 
         # --- 1557 <-> 1582 (authorized_keys / reverse-tunnel acceptance tests)#######
         # issue-1582.sh (#1582) and issue-1557.sh (#1557) are per-issue edge acceptance
