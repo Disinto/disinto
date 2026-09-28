@@ -672,6 +672,42 @@ def main() -> int:
         "fd1b7f6766a376467194bc1959118581": "LiveDNS stub shared block (issue-1556.sh + issue-1578.sh)",
         "fded45133f80e3ff210abf34338e25cc": "LiveDNS stub shared block (issue-1556.sh + issue-1578.sh)",
         "fe7cc9852342e2ba425d4d5cf5a88342": "LiveDNS stub shared block (issue-1556.sh + issue-1578.sh)",
+
+        # --- 1555 <-> 1579 (Caddy stub / self.disinto.ai fixture) -------------------
+        # issue-1555.sh (adopt) and issue-1579.sh (wildcard cert / #1579) both seed
+        # the same `self.disinto.ai { reverse_proxy 127.0.0.1:20000 }` Caddyfile
+        # fixture for their AC3b/AC2 no-op checks — intentional per-test isolation
+        # (same family as 1555 <-> 1561 / 1555 <-> 1571), not copy-paste.
+        "25ccdd590a4596ef3f12b22e3e014e86": "self.disinto.ai Caddyfile fixture (issue-1555.sh + issue-1579.sh)",
+        "c9cf6f3c7dd364a3f73eb5d06a93333e": "self.disinto.ai Caddyfile fixture (issue-1555.sh + issue-1579.sh)",
+
+        # --- 1571 <-> 1579 (Caddy stub / caddy + systemd) ---------------------------
+        # issue-1571.sh (fresh, caddy + systemd) and issue-1579.sh (fresh, caddy +
+        # systemd) both run the same portable caddy/systemctl call-recording stub
+        # (PORTER_ROOT + run_install/systemctl stub + env PATH=...), the run_install()
+        # driver, and the same AC1 fresh-install checks (rc / CADDYFILE / extra.d).
+        # The 19 windows below are the sliding 5-line pieces of that shared driver.
+        # Intentional per-test isolation (issue-1571.sh <-> issue-1579.sh), not
+        # copy-paste.
+        "1ca75ad7ec54fc8135d5e8607ec61322": "caddy/systemctl stub end + run_install() head (issue-1571.sh + issue-1579.sh)",
+        "d5a74137b167dba603e25f2382c1564f": "run_install() local vars (issue-1571.sh + issue-1579.sh)",
+        "408cecb0c153b65afbbb5b6bbe41ecc1": "run_install() local vars (issue-1571.sh + issue-1579.sh)",
+        "8215ce11907e362cac76dbedefe14bed": "run_install() env PATH + run (issue-1571.sh + issue-1579.sh)",
+        "0cbc9d8b73086c954cb4ae1b280c3f14": "run_install() env PATH + run (issue-1571.sh + issue-1579.sh)",
+        "eaf910a6f69a21ac40759130d6133a53": "run_install() env PATH + run (issue-1571.sh + issue-1579.sh)",
+        "9bf9497eeaa844b34317630ebf69a46e": "run_install() env PATH + run (issue-1571.sh + issue-1579.sh)",
+        "b714fa75ae31bd2a10eec4d8a603ac1f": "run_install() env PATH + run (issue-1571.sh + issue-1579.sh)",
+        "2066abd2d43b24cbc0af1b9cc8ad6fbe": "run_install() env PATH + run + redirect (issue-1571.sh + issue-1579.sh)",
+        "a9870b725f1123c9703425ffd6a7cde1": "run_install() env PATH + run + redirect (issue-1571.sh + issue-1579.sh)",
+        "ff08d87e2231ad13deb29bc9b0ddaeb5": "run_install() end + ROOT1 + run (issue-1571.sh + issue-1579.sh)",
+        "20fac03970bd7ce17fe7f7f650644d08": "run_install() end + ROOT1 + run (issue-1571.sh + issue-1579.sh)",
+        "748880b8c50d0e128b7ae0a07941f670": "run_install + rc check + ac_fail (issue-1571.sh + issue-1579.sh)",
+        "723a555ad530dcd8ca270fbcec418107": "run_install + rc check + ac_fail (issue-1571.sh + issue-1579.sh)",
+        "348bea2e1937235f835c06f56cd734c1": "run_install + rc check + ac_fail (issue-1571.sh + issue-1579.sh)",
+        "95066cef7e247701a025b0e9f936ce3b": "run_install + rc check + ac_fail (issue-1571.sh + issue-1579.sh)",
+        "ff23279c3f66bae2348097562d0b255c": "run_install + ac_fail + CADDYFILE (issue-1571.sh + issue-1579.sh)",
+        "fa5222594ec22a825a19e129c06f288f": "CADDYFILE + ac_fail missing (issue-1571.sh + issue-1579.sh)",
+        "64bb5cdad731ee3960038739c1a532c1": "CADDYFILE + ac_fail missing (issue-1571.sh + issue-1579.sh)",
     }
 
     if not sh_files:
