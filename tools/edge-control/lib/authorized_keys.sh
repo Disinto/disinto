@@ -7,7 +7,7 @@
 # project's name, and writes a single line ONLY when that row carries a
 # valid (allowlisted) public key:
 #
-#     restrict,port-forwarding,permitlisten="127.0.0.1:PORT",command="/bin/false" PUBKEY
+#     restrict,port-forwarding,permitlisten="127.0.0.1:PORT" PUBKEY
 #
 # Rules:
 #   * The line's key is the ledger row's `pubkey` — never the registry entry's
@@ -20,8 +20,8 @@
 #   * A project that is not in the registry is not written (even if its
 #     ledger row carries a valid key).
 #   * No other options: `restrict` + `port-forwarding`, `permitlisten` limited
-#     to the registry port, and `command="/bin/false"` — no shell, no agent
-#     forwarding, nothing else.
+#     to the registry port, and no forced `command=` — the tunnel user's
+#     shell is `nologin`, so a session without `-N` gets no shell; nothing else.
 #
 # The tunnel user (disinto-tunnel) is created by porter-install.sh — not here.
 # This library never useradds; it only creates the directory for the file and
@@ -106,7 +106,7 @@ generate_authorized_keys_content() {
     fi
 
     local auth_line
-    auth_line="restrict,port-forwarding,permitlisten=\"127.0.0.1:${port}\",command=\"/bin/false\" ${pubkey}"
+    auth_line="restrict,port-forwarding,permitlisten=\"127.0.0.1:${port}\" ${pubkey}"
     if [ "$first" = true ]; then
       content="$auth_line"
       first=false
