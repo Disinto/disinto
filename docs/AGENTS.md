@@ -1,4 +1,4 @@
-<!-- last-reviewed: 6711705b02019b73e99d64191b501ec7a1311d62 -->
+<!-- last-reviewed: d5bac1fdfd0379a3406bc2fe0544df5d601e6ff1 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -107,7 +107,7 @@ disinto/                 (code repo)
 │                  vault-import.bats, disinto-init-nomad.bats)
 ├── tests/acceptance/  Acceptance test scripts per issue (issue-<n>.sh); runner at
 │                  tools/run-acceptance.sh; helpers at tests/lib/acceptance-helpers.sh
-├── tests/lib/       Shared test helpers (acceptance-helpers.sh)
+├── tests/lib/       Shared test helpers (acceptance-helpers.sh, webhook-route-helpers.sh)
 ├── templates/     Issue templates
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
