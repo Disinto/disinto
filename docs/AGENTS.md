@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5e4aa714a9069257efe0b5815627fb5b266ceb71 -->
+<!-- last-reviewed: 6711705b02019b73e99d64191b501ec7a1311d62 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -76,13 +76,18 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,
 │                  ticket.sh, tickets.sh, whoami.sh); packs/ (scope.json); examples/ (stripe-webhook.caddy);
 │                  reserved-name blocklist, admin-approved allowlist, per-caller
-│                  attribution);
+│                  attribution); the tunnel user disinto-tunnel keeps a real
+│                  home (/home/disinto-tunnel) so sshd StrictModes accepts its
+│                  authorized_keys, and porter runs the root-owned
+│                  porter-tunnel-keys.sh via a single NOPASSWD drop-in
+│                  /etc/sudoers.d/porter-tunnel (mode 440, root-owned) — see
+│                  tests/acceptance/issue-1572.sh
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
