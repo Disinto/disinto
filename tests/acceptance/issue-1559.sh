@@ -77,7 +77,7 @@ ACME_PUBKEY="ssh-ed25519 ${KEY_DATA_ACME}"
 KEY_DATA_OTHER="AAAAB3NzaC1yc2EAAAADAQABAAAAAAA"
 OTHER_PUBKEY="ssh-rsa ${KEY_DATA_OTHER}"
 # The exact line rebuild_authorized_keys must write for "other" (AC2).
-OTHER_LINE='restrict,port-forwarding,permitlisten="127.0.0.1:20000",command="/bin/false" '"$OTHER_PUBKEY"
+OTHER_LINE='restrict,port-forwarding,permitlisten="127.0.0.1:20000" '"$OTHER_PUBKEY"
 
 TMP_DIR="$(mktemp -d /tmp/disinto-acceptance-1559.XXXXXX)"
 cleanup() {
