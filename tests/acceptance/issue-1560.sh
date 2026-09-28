@@ -58,6 +58,10 @@ mkdir -p "$STUB_DIR"
 # Authorization header mutates the seeded state file; otherwise it no-ops.
 cat > "$TMP_DIR/curl" <<'AC_GANDI_STUB'
 #!/usr/bin/env bash
+# Fake Gandi LiveDNS v5 endpoint. State lives in GANDI_STUB_STATE
+# ({"data":[{"id","rrset_name","rrset_type","rrset_values"}]}); every request
+# appends {method,url,auth,body} to GANDI_STUB_LOG. A PUT upserts the * A
+# record when the auth is tok-1560 (the new API never POSTs).
 state="${GANDI_STUB_STATE:-}"
 log="${GANDI_STUB_LOG:-}"
 method="GET"
@@ -87,26 +91,16 @@ if [[ -n "$log" && -n "$url" ]]; then
 fi
 case "$url" in
   */domains/disinto.ai/records)
-    case "$method" in
-      PUT)
-        if [[ -n "$auth" && "$auth" == "tok-1560" ]]; then
-          body_ip="${body}"
-          jq --arg ip "$body_ip" '.data[0] = {id:"rec1",name:"*",type:"A",value:$ip}' \
-             "$state" > "$state.tmp" && mv "$state.tmp" "$state"
-        fi
-        ;;
-      POST)
-        if [[ -n "$auth" && "$auth" == "tok-1560" ]]; then
-          jq --arg rec "$body" '.data = (.data // []) + [.data[0]]' "$state" > "$state.tmp" \
-            || true
-          jq --arg v "$body" '.data = (.data // []) + [{id:"rec2",name:"*",type:"A",value:"*"}]' \
-            "$state" > "$state.tmp" 2>/dev/null && mv "$state.tmp" "$state" || true
-        fi
-        ;;
-      GET) ;;
-      *) exit 22 ;;
-    esac
-    jq . "$state" 2>/dev/null || echo "[]" ;;
+    jq . "$state" 2>/dev/null || echo "[]"
+    ;;
+  */domains/disinto.ai/records/*)
+    if [[ "$method" == "PUT" && -n "$auth" && "$auth" == "tok-1560" && -n "$body" ]]; then
+      jq --argjson b "$body" \
+        '.data[0].rrset_name = "*"; .data[0].rrset_type = "A"; .data[0].rrset_values = $b.rrset_values' \
+        "$state" > "$state.tmp" && mv "$state.tmp" "$state"
+    fi
+    jq . "$state" 2>/dev/null || echo "[]"
+    ;;
   *)
     echo "[]" ;;
 esac
@@ -137,7 +131,7 @@ make_root() {
 }
 
 # The no-op zone: wildcard * A already equals $IP, so porter-dns.sh no-ops.
-printf '{"data":[{"id":"rec1","name":"*","type":"A","value":"%s"}]}' "$IP" \
+printf '{"data":[{"id":"rec1","rrset_name":"*","rrset_type":"A","rrset_values":["%s"]}]}' "$IP" \
   > "$TMP_DIR/state.json"
 
 # run_install <root> [state-file] — run porter-install.sh under PORTER_ROOT
@@ -358,7 +352,7 @@ ROOT5="$TMP_DIR/root5"
 make_root "$ROOT5"
 # A conflicting zone: wildcard * A points elsewhere, so porter-dns.sh refuses
 # without --set-wildcard.
-printf '{"data":[{"id":"rec1","name":"*","type":"A","value":"203.0.113.99"}]}' \
+printf '{"data":[{"id":"rec1","rrset_name":"*","rrset_type":"A","rrset_values":["203.0.113.99"]}]}' \
   > "$TMP_DIR/state-conflict.json"
 export PORTER_ROOT="$ROOT5"
 export PORTER_PUBLIC_IP="$IP"
