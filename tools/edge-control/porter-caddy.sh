@@ -26,18 +26,24 @@
 #   import <prefix>/etc/caddy/extra.d/*.caddy
 #
 #   *.<domain> {
-#     tls {
+#     tls acme {
 #       dns gandi {env.GANDI_API_KEY}
+#       propagation_delay 20s
+#       propagation_timeout 10m
+#       resolvers ns-163-a.gandi.net ns-102-b.gandi.net ns-91-c.gandi.net
 #     }
 #   }
 #
 # plus `extra.d` created if missing. The wildcard site (address *.<domain>,
 # default disinto.ai) is the only site: no self/, www/, apex, or customer
-# site, no catch-all :80/:443. Its only directive is the wildcard cert, so
-# Caddy listens on 443 and add_route finds a server on :443 for the
-# exact-host routes that arrive later. Operator sites remain as files in
-# `extra.d`; the import stays, so a more specific extra.d file wins over the
-# wildcard.
+# site, no catch-all :80/:443. Its only directive is the wildcard cert — the
+# ACME issuer (tls acme, gandi DNS plugin) with a 20s propagation delay and
+# a 10m propagation timeout, so Caddy keeps polling the Gandi nameservers
+# until the TXT propagates instead of giving up after ~2 minutes, plus the
+# Gandi resolvers. Caddy listens on 443 and add_route finds a server on
+# :443 for the exact-host routes that arrive later. Operator sites remain
+# as files in `extra.d`; the import stays, so a more specific extra.d file
+# wins over the wildcard.
 #
 # PORTER_ROOT prefixing: when PORTER_ROOT is set/non-empty (acceptance tests),
 # every path is prefixed with it and every real-host action (downloading/running
@@ -255,12 +261,14 @@ install() {
 
   # The NEW Caddyfile: global block + import + exactly one site block — the
   # wildcard *.<DOMAIN_SUFFIX> (default disinto.ai). The block's only
-  # directive is the wildcard cert (tls dns gandi with env.GANDI_API_KEY); no
-  # reverse_proxy, no self/, www/, apex, or customer site, no catch-all
-  # :80/:443. This gives add_route a server on :443 to hang exact-host routes
-  # on. Customer routes arrive later as one exact-host POST.
+  # directive is the wildcard cert: the ACME issuer (tls acme, gandi DNS
+  # plugin with env.GANDI_API_KEY, a 20s propagation delay, a 10m
+  # propagation timeout, and the Gandi resolvers) — no other issuer, no
+  # staging CA — no reverse_proxy, no self/, www/, apex, or customer site,
+  # no catch-all :80/:443. This gives add_route a server on :443 to hang
+  # exact-host routes on. Customer routes arrive later as one exact-host POST.
   local domain="${DOMAIN_SUFFIX:-disinto.ai}"
-  printf '{\n  admin localhost:2019\n}\n\nimport %s\n\n*.%s {\n  tls {\n    dns gandi {env.GANDI_API_KEY}\n  }\n}\n' \
+  printf '{\n  admin localhost:2019\n}\n\nimport %s\n\n*.%s {\n  tls acme {\n    dns gandi {env.GANDI_API_KEY}\n    propagation_delay 20s\n    propagation_timeout 10m\n    resolvers ns-163-a.gandi.net ns-102-b.gandi.net ns-91-c.gandi.net\n  }\n}\n' \
     "$EXTRA_IMPORT" "$domain" > "$CADDYFILE"
   chmod 644 "$CADDYFILE"
   log "wrote ${CADDYFILE} with the *.$domain wildcard cert site"

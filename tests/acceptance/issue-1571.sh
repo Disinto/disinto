@@ -14,8 +14,8 @@
 #   * the same global block (`admin localhost:2019`) and the same `extra.d`
 #     import;
 #   * ONE site block for `*.${DOMAIN_SUFFIX}` (default disinto.ai) whose only
-#     directive is the wildcard cert
-#     (`tls { dns gandi {env.GANDI_API_KEY} }`) — no reverse_proxy, no
+#     directive is the wildcard cert (the ACME issuer `tls acme` with the
+#     gandi DNS plugin) — no reverse_proxy, no
 #     self/, apex, or customer site, no catch-all :80/:443;
 #   * `${prefix}etc/systemd/system/caddy.service` only when no `caddy.service`
 #     already exists under `${prefix}etc/systemd/system` or
@@ -33,9 +33,9 @@
 # and its site blocks stay byte-for-byte; adopt never writes a unit.
 #
 # Contract under test (#1571):
-#   * AC1 a fresh PORTER_ROOT install writes a `*.disinto.ai` site with `tls`
-#     and `dns gandi`, and the file has neither a `self.disinto.ai` site nor
-#     an apex site (and no catch-all :80/:443);
+#   * AC1 a fresh PORTER_ROOT install writes a `*.disinto.ai` site with the
+#     `tls acme` issuer and `dns gandi`, and the file has neither a
+#     `self.disinto.ai` site nor an apex site (and no catch-all :80/:443);
 #   * AC2 the same Caddyfile still has `admin localhost:2019` and the `extra.d`
 #     import;
 #   * AC3 the unit file is written only when none exists (both etc and lib
@@ -143,12 +143,12 @@ if ! grep -qE 'import[[:space:]]+.*extra\.d/\*\.caddy' "$CADDYFILE"; then
   ac_fail "AC2: extra.d import missing from Caddyfile"
 fi
 
-# AC1: the *.disinto.ai site with tls + dns gandi + env ref, no self/apex.
+# AC1: the *.disinto.ai site with tls acme + dns gandi + env ref, no self/apex.
 if ! grep -Fq '*.disinto.ai {' "$CADDYFILE"; then
   ac_fail "AC1: *.disinto.ai site block missing from Caddyfile"
 fi
-if ! grep -qF 'tls {' "$CADDYFILE"; then
-  ac_fail "AC1: tls block missing from Caddyfile"
+if ! grep -qF 'tls acme {' "$CADDYFILE"; then
+  ac_fail "AC1: tls acme issuer block missing from Caddyfile"
 fi
 if ! grep -qF 'dns gandi' "$CADDYFILE"; then
   ac_fail "AC1: dns gandi directive missing from Caddyfile"
@@ -174,7 +174,7 @@ fi
 if [ ! -d "$ROOT1/etc/caddy/extra.d" ]; then
   ac_fail "AC2: extra.d directory missing after fresh install"
 fi
-ac_log "AC1/AC2: fresh Caddyfile has *.disinto.ai tls gandi site + admin + import, no self/apex/catch-all"
+ac_log "AC1/AC2: fresh Caddyfile has *.disinto.ai tls acme gandi site + admin + import, no self/apex/catch-all"
 
 # ── AC3: unit written only when none exists, right shape, no token ──────────
 UNIT1="$ROOT1/etc/systemd/system/caddy.service"
