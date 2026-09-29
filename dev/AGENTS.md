@@ -69,12 +69,15 @@ labels the issue `blocked`, drops `in-progress`, and callers stop retrying and s
 the dev-agent fallback (return code 2). **Tape proposal emission (#1398)**: when the
 pick resolves, `emit_tape_proposal()` appends one `{"type":"proposal","loop":"dev",...}`
 record to the tape (`lib/tape.sh`) before launching dev-agent — class = the issue's
-primary label (or `dev`), context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?"}` (open_prs
+primary label (or `dev`), context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?", "jev"?}` (open_prs
 from one pull GET, size_class from the issue's size label — case-insensitive, default
 M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; `forecast_method`
 records the method used — `counts` (a measured catalog row) or `prior` (the flat 0.5 fallback) —
-so the #1453 calibration reader can tell a flat prior from measured data; omitted on the
-API-failure path, where the context degrades to `{}`), forecast = `{"p_success":<actual/100>,
+so the #1453 calibration reader can tell a flat prior from measured data; `jev` = `{"method":"jev","pack":"scope","one_concept":<n>,
+"one_repo":<n>,"one_behavior":<n>}` (each noul in [0,1]) records the Jev-scope (#1597) reading of the issue — present only on a valid
+exit-0 read from `tools/jev-scope.sh` (`JEV_SCOPE_TOOL`), pure calibration that never changes the pick; omitted when the tool is
+missing/unconfigured/failed/invalid or the readings are out of range, and on the API-failure path, where the context degrades to `{}`),
+forecast = `{"p_success":<actual/100>,
 "est_cost":0,"est_dvision":<mean_duration_s-or-0>}` (measured: p_success is the catalog row's `actual` percent / 100 and `est_dvision` is the row's `mean duration_s` when that cell is a number, else 0, when that
 row's `n` is an integer >= CATALOG_FORECAST_MIN_N (default 5) AND its `actual` is an integer
 percent, or the flat prior `{"p_success":0.5,"est_cost":0,"est_dvision":0}` (= the planner's
