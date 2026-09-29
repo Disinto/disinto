@@ -1,4 +1,4 @@
-<!-- last-reviewed: c36311406aa8c07098ceea2ee0644e7ec6ff9476 -->
+<!-- last-reviewed: 70c1b8e3503504946fa19ffb97e7c412c33edd58 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -76,7 +76,7 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-install.sh, porter-front.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,
@@ -89,6 +89,10 @@ disinto/                 (code repo)
 │                  /etc/sudoers.d/porter-tunnel (mode 440, root-owned) — see
 │                  tests/acceptance/issue-1572.sh
 │                  run-acceptance.sh — acceptance test runner for CI
+│                  jev-scope.sh — factory-side Jev-scope reader: pipes the picked
+│                  issue text to the Porter door and records the three noul
+│                  readings on the tape context (#1598); pure calibration, never
+│                  changes the pick; see dev/AGENTS.md
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
