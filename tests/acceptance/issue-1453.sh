@@ -49,17 +49,27 @@ TOOL="$REPO_ROOT/tools/calibration.sh"
 
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s |\n|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
 
 # Expected row for the forecast fixture: mean(0.5,0.7)=60%, 1/2 merged=50%,
 # error |60-50|=10, mean duration (100+50)/2=75.0:
-EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 |'
+EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 | - | - |'
 
 # Expected row for the no-forecast group (1 pair, merged, dur 100):
-EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 |'
+EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 | - | - |'
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+# The calibration tool (issue #1605) reads the loop->competence-bit pack from
+# $CALIBRATION_LOOPS_FILE. Point it at a fixture that carries the standard
+# mapping (dev -> merged, repair -> regression_cleared) so every AC below keeps
+# the pre-#1605 output.
+cat > "$TMP_DIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
 
 # ── Fixture builders ─────────────────────────────────────────────────────────
 

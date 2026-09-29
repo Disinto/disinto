@@ -48,10 +48,20 @@ TOOL="$REPO_ROOT/tools/calibration.sh"
 
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s |\n|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+# The calibration tool (issue #1605) reads the loop->competence-bit pack from
+# $CALIBRATION_LOOPS_FILE. Point it at a fixture that carries the standard
+# mapping (dev -> merged, repair -> regression_cleared) so every AC below keeps
+# the pre-#1605 output.
+cat > "$TMP_DIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
 
 # ── Fixture builders ──────────────────────────────────────────────────────────
 
@@ -119,7 +129,7 @@ ac_assert_eq "$rc" "0" "dev AC 1 fixture must exit 0 (rc=$rc)"
 # covers the 10 dev PR pairs only; mean duration is over those 10 (100s),
 # never diluted by the 999-s exit_ok durations.
 expected="$HEADER
-| dev | fix | 10 | - | 100% | - | 100.0 |"
+| dev | fix | 10 | - | 100% | - | 100.0 | - | - |"
 ac_assert_eq "$out" "$expected" \
   "AC 1 must print n=10 actual=100% mean=100.0 for the merged dev pairs only, got: $out"
 
@@ -139,7 +149,7 @@ ac_assert_eq "$rc" "0" "repair AC 2 fixture must exit 0 (rc=$rc)"
 # Only r-1 carries regression_cleared -> n=1 (not 2), 100%, mean 100.0
 # (not 50% / 150.0).
 expected="$HEADER
-| repair | incident | 1 | - | 100% | - | 100.0 |"
+| repair | incident | 1 | - | 100% | - | 100.0 | - | - |"
 ac_assert_eq "$out" "$expected" \
   "AC 2 must count only the regression_cleared pair (n=1, 100%, mean 100.0), got: $out"
 
@@ -159,7 +169,7 @@ ac_assert_eq "$rc" "0" "repair AC 3 fixture must exit 0 (rc=$rc)"
 # Bit present (0) -> a sample with a failure: n=1, actual=0%. No duration
 # -> mean "-".
 expected="$HEADER
-| repair | incident | 1 | - | 0% | - | - |"
+| repair | incident | 1 | - | 0% | - | - | - | - |"
 ac_assert_eq "$out" "$expected" \
   "AC 3 must count the regression_cleared:0 pair as a failure (n=1, 0%), got: $out"
 

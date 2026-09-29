@@ -119,9 +119,19 @@ run_refresh() {
   '
 }
 
-HEADER='| loop | class | n | promised | actual | error | mean duration_s |'
+HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+# The real tools/calibration.sh (issue #1605) reads the loop->competence-bit
+# pack from $CALIBRATION_LOOPS_FILE; point AC 2 (real tool) at a fixture carrying
+# the standard mapping (dev -> merged, repair -> regression_cleared). AC 3 uses
+# a deliberately failing stub factory, so it is unaffected.
+cat > "$TMP_DIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
 
 # ── AC 2: successful run → catalog/calibration.md with header + commit call ─
 

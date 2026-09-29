@@ -50,6 +50,16 @@ HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# The calibration tool (issue #1605) reads the loop->competence-bit pack from
+# $CALIBRATION_LOOPS_FILE. Point it at a fixture that carries the standard
+# mapping (dev -> merged, repair -> regression_cleared) so every AC below keeps
+# the pre-#1605 output.
+cat > "$TMP_DIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
+
 # Global state populated by the sourced helpers: ac_run_tape_tool writes rc/out
 # (and TC_DIR), ac_run_bats_suite writes bats_rc/bats_out. Initialised up front
 # so the `set -u` guard and every ac_assert_eq reference below are always
