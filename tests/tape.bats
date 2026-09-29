@@ -168,6 +168,57 @@ last_record() {
   jq -e '.type == "outcome" and .payloads == []' <(last_record) >/dev/null
 }
 
+# ── outcome signature (#1607) ─────────────────────────────────────────────
+
+@test "outcome carries a valid signature" {
+  local h
+  h="$(printf 'a%.0s' $(seq 64))"
+  local payloads
+  payloads="[\"$h\"]"
+  tape_outcome p-1 '{"ok":true}' '{"sum":3}' '{"n":1}' "$payloads" agent-loop
+  jq -e '
+      .type == "outcome"
+      and .proposal_id == "p-1"
+      and .signature == "agent-loop"
+    ' <(last_record) >/dev/null
+}
+
+@test "outcome omits the signature key when none is given (pre-#1607 shape)" {
+  local h
+  h="$(printf 'a%.0s' $(seq 64))"
+  local payloads
+  payloads="[\"$h\"]"
+  tape_outcome p-1 '{"ok":true}' '{"sum":3}' '{"n":1}' "$payloads"
+  jq -e '
+      .type == "outcome"
+      and .proposal_id == "p-1"
+      and (has("signature") | not)
+    ' <(last_record) >/dev/null
+}
+
+@test "outcome treats an empty signature as absent" {
+  local h
+  h="$(printf 'a%.0s' $(seq 64))"
+  local payloads
+  payloads="[\"$h\"]"
+  tape_outcome p-1 '{"ok":true}' '{"sum":3}' '{"n":1}' "$payloads" ""
+  jq -e '
+      .type == "outcome"
+      and .proposal_id == "p-1"
+      and (has("signature") | not)
+    ' <(last_record) >/dev/null
+}
+
+@test "outcome refuses an invalid signature and appends nothing" {
+  local h
+  h="$(printf 'a%.0s' $(seq 64))"
+  local payloads
+  payloads="[\"$h\"]"
+  run tape_outcome p-1 '{"ok":true}' '{"sum":3}' '{"n":1}' "$payloads" Agent-loop
+  [ "$status" -eq 1 ]
+  [ ! -e "$TAPE_DIR/tape.jsonl" ]
+}
+
 # ── grade ───────────────────────────────────────────────────────────────
 
 @test "grade round-trip: numeric value" {

@@ -28,11 +28,15 @@
 #     (OPEN record — session start; the fields are omitted from the line and
 #     the run is closed by a second tape_run append with the same
 #     PROPOSAL_ID and ended+status set — records are immutable).
-#   tape_outcome PROPOSAL_ID BITS_JSON NUMBERS_JSON CHILDREN_JSON PAYLOADS_JSON
+#   tape_outcome PROPOSAL_ID BITS_JSON NUMBERS_JSON CHILDREN_JSON PAYLOADS_JSON [SIGNATURE]
 #     -> {"type":"outcome","t","proposal_id","bits":{...},"numbers":{...},
 #         "children":{...},"payloads":[...]}
 #     bits/numbers/children are small code-derived JSON objects; payloads is
 #     an array of sha256 refs (lowercase 64-hex, produced by tape_payload).
+#     SIGNATURE is optional (see lib/signature.sh): when set it must match
+#     ^[a-z][a-z0-9-]*$ (validated, return 1 otherwise) and the record gains a
+#     "signature" field; when absent the record is byte-identical to the
+#     pre-#1607 shape.
 #   tape_grade PROPOSAL_ID VALUE WHEN WHO
 #     -> {"type":"grade","t","proposal_id","value":<number|null>,"when","who"}
 #     VALUE may be null; WHEN in at_approval|at_outcome.
@@ -179,12 +183,16 @@ tape_run() {
 
 tape_outcome() {
   local pid="${1:-}" bits_json="${2:-}" numbers_json="${3:-}"
-  local children_json="${4:-}" payloads_json="${5:-}"
+  local children_json="${4:-}" payloads_json="${5:-}" signature="${6:-}" sig_re='^[a-z][a-z0-9-]*$'
 
   if [ -z "$pid" ] || [ -z "$bits_json" ] || [ -z "$numbers_json" ] \
     || [ -z "$children_json" ] || [ -z "$payloads_json" ]; then
-    echo "usage: tape_outcome PROPOSAL_ID BITS_JSON NUMBERS_JSON CHILDREN_JSON PAYLOADS_JSON" >&2
+    echo "usage: tape_outcome PROPOSAL_ID BITS_JSON NUMBERS_JSON CHILDREN_JSON PAYLOADS_JSON [SIGNATURE]" >&2
     return 2
+  fi
+  if [ -n "$signature" ] && ! [[ "$signature" =~ $sig_re ]]; then
+    echo "tape_outcome: invalid signature '$signature' (must match ^[a-z][a-z0-9-]*$)" >&2
+    return 1
   fi
   _tape_deps || return 2
 
@@ -212,10 +220,8 @@ tape_outcome() {
   record="$(jq -cn \
     --arg t "$t" --arg pid "$pid" \
     --arg bits "$bits_json" --arg numbers "$numbers_json" \
-    --arg children "$children_json" --arg payloads "$payloads_json" '
-    {type: "outcome", t: $t, proposal_id: $pid,
-     bits: ($bits | fromjson), numbers: ($numbers | fromjson),
-     children: ($children | fromjson), payloads: ($payloads | fromjson)}')"
+    --arg children "$children_json" --arg payloads "$payloads_json" --arg signature "$signature" \
+    '{type: "outcome", t: $t, proposal_id: $pid, bits: ($bits | fromjson), numbers: ($numbers | fromjson), children: ($children | fromjson), payloads: ($payloads | fromjson)} + (if $signature != "" then {signature: $signature} else {} end)')"
   _tape_append "$record"
 }
 
