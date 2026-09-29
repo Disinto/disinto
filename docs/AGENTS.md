@@ -1,4 +1,4 @@
-<!-- last-reviewed: c36311406aa8c07098ceea2ee0644e7ec6ff9476 -->
+<!-- last-reviewed: bbdddab9fe4ab6527b4d0f3a04686902fc6a94cc -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -76,7 +76,7 @@ disinto/                 (code repo)
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
-│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
+│                  dispatch.sh, key-command.sh, porter-install.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-front.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
 │                  apply-name.sh); verbs/ (approve.sh, credits.sh, credits-buy.sh,
 │                  credits-grant.sh, jev.sh, register-request.sh, revoke.sh, status.sh,
@@ -94,6 +94,7 @@ disinto/                 (code repo)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
 │                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
 │                  grade.sh — one-command human grading of a proposal (#1410)
+│                  jev-scope.sh — factory-side scope reader (single-ssh to the door, fails closed; #1597)
 │                  seed-research-labels.sh — idempotently seed research labels on an existing forge
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
 │                  provisioning (S2.1/S2.2)
