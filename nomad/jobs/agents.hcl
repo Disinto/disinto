@@ -152,6 +152,15 @@ job "agents" {
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.5-35B-A3B"
         AGENT_ROLES        = "review,dev,gardener,architect,planner"
+
+        # Porter door — the dev role in this multi-role job asks Jev for a
+        # scope reading on each pick (#1598 wiring). Same env contract as
+        # agents-dev-qwen.hcl: the key lives on the agent-data volume mounted
+        # at /home/agent/data (no API key in the job, per AD-005).
+        PORTER_SSH_TARGET    = "porter@165.227.129.61"
+        PORTER_JEV_KEY       = "/home/agent/data/porter/id_ed25519"
+        PORTER_JEV_KNOWN_HOSTS = "/home/agent/data/porter/known_hosts"
+
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "project"

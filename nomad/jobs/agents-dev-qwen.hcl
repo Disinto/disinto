@@ -205,6 +205,14 @@ job "agents-dev-qwen" {
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "dev"
 
+        # Porter door — the dev role asks Jev for a scope reading on each pick
+        # (#1598 wiring). tools/jev-scope.sh fails closed when any of the three
+        # is unset; the key file lives on the agent-data volume mounted at
+        # /home/agent/data (no API key in the job, per AD-005).
+        PORTER_SSH_TARGET    = "porter@165.227.129.61"
+        PORTER_JEV_KEY       = "/home/agent/data/porter/id_ed25519"
+        PORTER_JEV_KNOWN_HOSTS = "/home/agent/data/porter/known_hosts"
+
         # dsh harness migration: dev joins review on the dsh harness
         # (llama.cpp Qwen3.8-27B via DSH_BASE_URL). Revert = remove this
         # block (dispatcher default is claude). Known dsh gap: wall-clock
