@@ -45,8 +45,6 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash jq awk grep bats
 
-TOOL="$REPO_ROOT/tools/calibration.sh"
-
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
 HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
@@ -58,18 +56,10 @@ EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 | - | - |'
 # Expected row for the no-forecast group (1 pair, merged, dur 100):
 EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 | - | - |'
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# The calibration tool (issue #1605) reads the loop->competence-bit pack from
-# $CALIBRATION_LOOPS_FILE. Point it at a fixture that carries the standard
-# mapping (dev -> merged, repair -> regression_cleared) so every AC below keeps
-# the pre-#1605 output.
-cat > "$TMP_DIR/loops.toml" <<'EOF'
-dev = "merged"
-repair = "regression_cleared"
-EOF
-export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
+# Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
+# competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
+# (tests/lib/acceptance-helpers.sh).
+ac_calibration_env
 
 # ── Fixture builders ─────────────────────────────────────────────────────────
 
