@@ -119,9 +119,11 @@ run_refresh() {
   '
 }
 
-HEADER='| loop | class | n | promised | actual | error | mean duration_s |'
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
+# Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
+# competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
+# (tests/lib/acceptance-helpers.sh).
+ac_calibration_env
 
 # ── AC 2: successful run → catalog/calibration.md with header + commit call ─
 

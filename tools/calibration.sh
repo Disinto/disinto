@@ -25,9 +25,13 @@
 #                   group may be "-")
 #   actual          share of sample pairs whose last outcome carries the
 #                   loop's own competence bit true or 1, as an integer
-#                   percentage:
-#                     dev    -> bits.merged
-#                     repair -> bits.regression_cleared
+#                   percentage. Which .bits key is each loop's competence bit
+#                   is named in the loops pack (the file $CALIBRATION_LOOPS_FILE
+#                   points at) as one `loop = "bit"` assignment per loop: the
+#                   bit is the .bits key to look up. A loop absent from the
+#                   pack has no competence bit and is never a sample (the
+#                   pack — not this script — decides which loops are samples and
+#                   which bit each carries, #1605).
 #   error           |promised - actual| in percentage points when promised
 #                   is present; "-" otherwise
 #   mean duration_s mean of the sample pairs' outcome numbers.duration_s over
@@ -43,28 +47,32 @@
 #   dur_error       |dur_promised - mean duration_s|, one decimal, when both
 #                   are present; "-" otherwise
 #
-# A pair is a sample only when the loop is dev or repair and the LAST
-# outcome carries that loop's competence bit (true/false/1/0): true/1 is a
-# success, false/0 a failure. Any other loop, or a last outcome without the
-# bit, is dropped from n, promised, actual, mean duration_s, dur_promised,
-# and dur_error — never counted as 0% or a zero-duration forecast. Same
-# last-outcome pairing as before.
+# A pair is a sample only when the loop is named in the loops pack AND the
+# LAST outcome carries that loop's competence bit (true/false/1/0): true/1
+# is a success, false/0 a failure. A loop absent from the pack, or a last
+# outcome without the bit, is dropped from n, promised, actual, mean
+# duration_s, dur_promised, and dur_error — never counted as 0% or a
+# zero-duration forecast. Same last-outcome pairing and row format as before.
 #
-# Pure bash + jq. No git, no network, no writes: the tape is only read.
-# Malformed tape lines (e.g. a torn final line from a crashed writer) are
-# skipped with a stderr note, mirroring lib/stats.sh; they never fail the
-# report.
+# Pure bash + jq. No git, no network, no writes: the tape and the loops pack
+# are only read. Malformed tape lines (e.g. a torn final line from a crashed
+# writer) are skipped with a stderr note, mirroring lib/stats.sh; they never
+# fail the report.
 #
 # Usage:
 #   tools/calibration.sh
 #
 # Environment:
 #   TAPE_DIR  tape directory (default /srv/disinto/tape)
+#   CALIBRATION_LOOPS_FILE  path to the loop->competence-bit pack (TOML, one
+#                           `loop = "bit"` assignment per loop, double-quoted
+#                           value); default
+#                           ${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/loops.toml.
 #
 # Exit codes:
 #   0  report printed; a missing or empty tape, or a tape with no sample
 #      pairs, prints the header row only
-#   1  jq missing
+#   1  jq missing, or the loops pack file is missing or unparsable
 # =============================================================================
 set -euo pipefail
 
@@ -72,9 +80,67 @@ command -v jq >/dev/null 2>&1 || { echo "calibration: required tool missing: jq"
 
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 TAPE_FILE="${TAPE_DIR}/tape.jsonl"
+# The loop->competence-bit pack. $CALIBRATION_LOOPS_FILE is the test seam; the
+# default is the ops repo's packs/loops.toml (shipped separately, disinto-ops
+# issue #1605).
+LOOPS_FILE="${CALIBRATION_LOOPS_FILE:-${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/loops.toml}"
 
 echo '| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
 echo '|---|---|---|---|---|---|---|---|---|'
+
+# Fail closed before touching the tape: the loop->competence-bit map now lives
+# in the pack, so without a readable pack there is no sample to summarise and
+# there is no fallback to a hardcoded loop->bit map (removing that map is the
+# point of #1605).
+[ -f "$LOOPS_FILE" ] || { echo "calibration: loops pack file missing: $LOOPS_FILE" >&2; exit 1; }
+
+# Parse the pack (a flat TOML, one `loop = "bit"` assignment per loop) into a
+# JSON object with the pack as its key and the bit name as its value. Double-
+# quoted values only (the documented pack format); anything else — a missing
+# "=", an invalid key, or a non-double-quoted value — is an unparsable pack.
+# The parse is done in awk (no extra dependency); a blank line, a comment (
+# full-line or inline #), and a line whose key/value do not match the documented
+# shape are rejected. Exit 3 on the first bad line.
+rc=0
+pack_json="$(awk '
+  BEGIN { n = 0 }
+  {
+    l = $0
+    sub(/[[:space:]]*#.*$/, "", l)   # strip inline comment
+    sub(/^[[:space:]]+/, "", l)
+    sub(/[[:space:]]+$/, "", l)
+    if (l == "") next                # blank line
+    eqpos = index(l, "=")
+    if (eqpos <= 1) { print "unparsable line " NR ": no assignment"; exit 3 }
+    key = substr(l, 1, eqpos - 1)
+    val = substr(l, eqpos + 1)
+    sub(/^[[:space:]]+/, "", key)
+    sub(/[[:space:]]+$/, "", key)
+    sub(/^[[:space:]]+/, "", val)
+    sub(/[[:space:]]+$/, "", val)
+    if (key !~ /^[A-Za-z_][A-Za-z0-9_-]*$/) { print "unparsable line " NR ": " $0; exit 3 }
+    if (val !~ /^"[^"]*"$/) { print "unparsable line " NR ": " $0; exit 3 }
+    val = substr(val, 2, length(val) - 2)
+    n++
+    entry[n] = "\"" key "\" : \"" val "\""
+  }
+  END {
+    if (n == 0) { print "{}" }
+    else {
+      out = "{"
+      for (i = 1; i <= n; i++) {
+        out = out entry[i]
+        if (i < n) out = out ","
+      }
+      out = out "}"
+      print out
+    }
+  }
+' "$LOOPS_FILE")" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "calibration: failed to parse loops pack $LOOPS_FILE" >&2
+  exit 1
+fi
 
 [ -f "$TAPE_FILE" ] || exit 0
 [ -s "$TAPE_FILE" ] || exit 0
@@ -98,7 +164,7 @@ skipped=$(( total_lines - valid_lines ))
 # est_dvision greater than 0). The reader derives error =
 # |promised - actual| (or "-") and dur_error = |est duration_s - mean
 # duration_s| (or "-") from the same values.
-jq -R -s -r '
+jq -R -s -r --argjson loops "$pack_json" '
   [ split("\n")[]
     | (try fromjson catch null)
     | select(type == "object") ] as $recs
@@ -125,18 +191,19 @@ jq -R -s -r '
            bits: (.bits | if type == "object" then . else {} end),
            duration: (.numbers.duration_s
                       | if type == "number" then . else null end) })
-  # A pair is a sample only when the competence bit of the loop is carried
-  # by the last outcome: dev -> merged, repair -> regression_cleared; any
-  # other loop has no competence bit, so it is never a sample. Only a
-  # well-formed bit (true/false/1/0, the values the tape writers emit)
-  # counts as carried: true/1 is a success, false/0 a failure.
+  # A pair is a sample only when the loop is named in the loops pack AND the
+  # LAST outcome carries the competence bit of that loop. The pack names the
+  # bit as $loops[.loop]; it is looked up in the bits of the pair. true/1 is a
+  # false/0 a failure; only a well-formed bit (true/false/1/0, the values the
+  # tape writers emit) counts as carried. A loop absent from the pack, or a
+  # last outcome without the bit, is never a sample.
   | map({ loop: .loop,
            class: .class,
            promised: .promised,
            est_dvision: .est_dvision,
-           competence: (if .loop == "dev" then .bits.merged
-                         else (if .loop == "repair" then .bits.regression_cleared
-                                else null end) end),
+           competence: (($loops[.loop]) as $bit
+                        | if ($bit | type) == "string" then .bits[$bit]
+                          else null end),
            duration: .duration })
   | map(select(.competence == true or .competence == false
                 or .competence == 1 or .competence == 0))

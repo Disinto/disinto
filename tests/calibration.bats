@@ -13,8 +13,10 @@
 #                     (forecast lands on the proposal record, #1451);
 #                     "-" when no sample pair in the group carries one
 #   - actual          share of sample pairs whose last outcome carries the
-#                     loop's own competence bit true/1, integer percent:
-#                       dev -> bits.merged, repair -> bits.regression_cleared
+#                     loop's own competence bit (true/1), integer percent; the
+#                     bit is the .bits key named for the loop in the loops
+#                     pack ($CALIBRATION_LOOPS_FILE) — for the fixture here,
+#                     dev -> merged, repair -> regression_cleared
 #   - error           |promised - actual| in percentage points when promised
 #                     is present; "-" otherwise
 #   - mean duration_s mean of sample pairs' outcome numbers.duration_s over
@@ -29,11 +31,12 @@
 #   - dur_error       |dur_promised - mean duration_s|, one decimal, when both
 #                     are present; "-" otherwise
 #
-# A pair is a sample only when the loop is dev or repair and the LAST
-# outcome carries that loop's competence bit (true/false/1/0): true/1 is a
-# success, false/0 a failure. Any other loop, or a last outcome without the
-# bit, is dropped from n, promised, actual, mean duration_s, dur_promised,
-# and dur_error (never counted as 0% or a zero forecast).
+# A pair is a sample only when the loop is named in the loops pack AND the
+# LAST outcome carries that loop's competence bit (true/false/1/0): true/1 is
+# a success, false/0 a failure. A loop absent from the pack, or a last
+# outcome without the bit, is dropped from n, promised, actual, mean
+# duration_s, dur_promised, and dur_error (never counted as 0% or a zero
+# forecast).
 #
 # Pure bash + jq; the tape is only read, never written.
 
@@ -43,6 +46,16 @@ setup() {
   TAPE_DIR="$BATS_TEST_TMPDIR/tape"
   export TAPE_DIR
   mkdir -p "$TAPE_DIR"
+  # Loop->competence-bit pack, read from $CALIBRATION_LOOPS_FILE (a test
+  # seam, #1605). Fixture carries the standard mapping (dev->merged,
+  # repair->regression_cleared) so every existing expectation is unchanged;
+  # the ops commit shipping packs/loops.toml is a separate issue.
+  cat > "$BATS_TEST_TMPDIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+  CALIBRATION_LOOPS_FILE="$BATS_TEST_TMPDIR/loops.toml"
+  export CALIBRATION_LOOPS_FILE
 }
 
 # header_only — the whole output is the header row and its separator.
@@ -300,4 +313,38 @@ EOF
   [ "$status" -eq 0 ]
   after="$(md5sum "$TAPE_DIR/tape.jsonl" | awk '{print $1}')"
   [ "$before" = "$after" ]
+}
+
+@test "loop competence bit comes from the pack (not hardcoded): research row appears only when research is named in the pack" {
+  # One pair per loop; the research row appears only if the pack names
+  # research = "report_present" (the tool must not know "research" in advance).
+  cat > "$TAPE_DIR/tape.jsonl" <<'EOF'
+{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"r-1","loop":"research","class":"docs","context":{},"decision":"approved","ref":"1605-r1"}
+{"type":"outcome","t":"2026-02-01T00:01:00Z","proposal_id":"r-1","bits":{"report_present":1},"numbers":{"duration_s":15},"children":{},"payloads":[]}
+{"type":"proposal","t":"2026-02-01T00:00:01Z","id":"d-1","loop":"dev","class":"fix","context":{},"decision":"approved","ref":"1605-d1"}
+{"type":"outcome","t":"2026-02-01T00:01:41Z","proposal_id":"d-1","bits":{"merged":1},"numbers":{"duration_s":100},"children":{},"payloads":[]}
+{"type":"proposal","t":"2026-02-01T00:00:02Z","id":"p-1","loop":"repair","class":"incident","context":{},"decision":"approved","ref":"1605-p1"}
+{"type":"outcome","t":"2026-02-01T00:01:50Z","proposal_id":"p-1","bits":{"regression_cleared":1},"numbers":{"duration_s":50},"children":{},"payloads":[]}
+EOF
+  # Pack without research -> no research row (dev/repair only).
+  cat > "$BATS_TEST_TMPDIR/pack-no-research.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+  CALIBRATION_LOOPS_FILE="$BATS_TEST_TMPDIR/pack-no-research.toml"
+  export CALIBRATION_LOOPS_FILE
+  run bash "$TOOL"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 50.0 | - | - |' ]
+  # Pack with research -> research row appears.
+  cat > "$BATS_TEST_TMPDIR/pack-with-research.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+research = "report_present"
+EOF
+  CALIBRATION_LOOPS_FILE="$BATS_TEST_TMPDIR/pack-with-research.toml"
+  export CALIBRATION_LOOPS_FILE
+  run bash "$TOOL"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 50.0 | - | - |\n| research | docs | 1 | - | 100% | - | 15.0 | - | - |' ]
 }

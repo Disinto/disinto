@@ -41,14 +41,14 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash jq awk grep bats
 
-TOOL="$REPO_ROOT/tools/calibration.sh"
-
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
 HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+# Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
+# competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
+# (tests/lib/acceptance-helpers.sh).
+ac_calibration_env
 
 # Global state populated by the sourced helpers: ac_run_tape_tool writes rc/out
 # (and TC_DIR), ac_run_bats_suite writes bats_rc/bats_out. Initialised up front

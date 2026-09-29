@@ -347,6 +347,29 @@ ac_run_bats_suite() {
   bats_out="$(bats "$suite" 2>&1)" || bats_rc=$?
 }
 
+# ac_calibration_env — set up the shared calibration acceptance environment:
+#   TMP_DIR="$(mktemp -d)" + an EXIT trap that removes it,
+#   the standard loop->competence-bit pack (dev -> merged,
+#   repair -> regression_cleared) written to $TMP_DIR/loops.toml,
+#   CALIBRATION_LOOPS_FILE exported to point at it, and TOOL set to the
+#   calibration tool. The standard pack (issue #1605) keeps the pre-#1605
+#   output for the four calibration acceptance tests (issue-1453.sh,
+#   issue-1454.sh, issue-1473.sh, issue-1526.sh), so this is the single
+#   definition of that shared TMP_DIR/trap/pack/TOOL setup (duplicate-detection:
+#   each test file would otherwise carry its own copy). TMP_DIR is a global
+#   the ACs index (e.g. $TMP_DIR/tape-<ac>).
+ac_calibration_env() {
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  cat > "$TMP_DIR/loops.toml" <<'EOF'
+dev = "merged"
+repair = "regression_cleared"
+EOF
+  export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
+  # shellcheck disable=SC2034  # TOOL is consumed by the calling acceptance scripts
+  TOOL="$REPO_ROOT/tools/calibration.sh"
+}
+
 # ── Edge-control ledger fixtures (edge-verb acceptance tests) ────────────────
 # The edge verbs read a throwaway $ACCOUNTS_FILE that each test sets up in an
 # mktemp dir (never /var/lib/disinto). These are the single definition of the

@@ -45,21 +45,21 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash jq awk grep bats
 
-TOOL="$REPO_ROOT/tools/calibration.sh"
-
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s |\n|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
 
 # Expected row for the forecast fixture: mean(0.5,0.7)=60%, 1/2 merged=50%,
 # error |60-50|=10, mean duration (100+50)/2=75.0:
-EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 |'
+EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 | - | - |'
 
 # Expected row for the no-forecast group (1 pair, merged, dur 100):
-EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 |'
+EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 | - | - |'
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+# Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
+# competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
+# (tests/lib/acceptance-helpers.sh).
+ac_calibration_env
 
 # ── Fixture builders ─────────────────────────────────────────────────────────
 
