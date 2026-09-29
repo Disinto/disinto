@@ -122,8 +122,10 @@ disinto/                 (code repo)
 │                  uninstall.sh
 ├── tape/          Tape records written by lib/tape.sh (#1389); the dev-loop
 │                  context pack and failure-signature rubric stubs (#1400) were
-│                  removed in #1481 — no reader exists. Packs and rubrics come
-│                  back when an extractor lands.
+│                  removed in #1481. The failure-signature rubric now lives in
+│                  the ops repo (rubrics/<loop>.toml, [map] read by
+│                  lib/signature.sh signature_for) and outcomes may carry a
+│                  signature field (#1607). No context-pack extractor exists.
 ├── disinto-factory/  Setup documentation and skill
 ├── state/         Runtime state
 ├── .woodpecker/   Woodpecker CI pipeline configs
