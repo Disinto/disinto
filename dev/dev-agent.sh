@@ -517,6 +517,8 @@ ${LESSONS_INJECTION}
 If you cannot implement this issue, write ONLY a JSON object to ${IMPL_SUMMARY_FILE}:
 - Unmet dependency: {\"status\":\"unmet_dependency\",\"blocked_by\":\"what's missing\",\"suggestion\":<number-or-null>}
 - Too large: {\"status\":\"too_large\",\"reason\":\"explanation\"}
+- Needs ops access: {\"status\":\"needs_ops\",\"reason\":\"what access is missing\"}
+- Design conflict: {\"status\":\"design_conflict\",\"reason\":\"the contradiction\"}
 - Already done: {\"status\":\"already_done\",\"reason\":\"where\"}
 
 ${PUSH_INSTRUCTIONS}"
@@ -585,6 +587,123 @@ no_push_outcome() {
 }
 
 # =============================================================================
+# REFUSAL HANDLING (#1613)
+# =============================================================================
+#
+# _dev_refusal_relabel — the shared tail of the refusal paths that leave the
+# issue out of the dev queue (too_large, needs_ops, design_conflict): add the
+# given label and drop backlog + in-progress. Labels are looked up by name via
+# forge_api; every mutation is guarded so an API hiccup never aborts the run
+# (matching the pre-#1613 too_large block).
+_dev_refusal_relabel() {
+  local issue="$1" label_name="$2"
+  local label_id backlog_id in_progress_id
+
+  label_id=$(forge_api GET "/labels" 2>/dev/null \
+    | jq -r --arg n "$label_name" '.[] | select(.name == $n) | .id' 2>/dev/null || true)
+  if [ -n "$label_id" ]; then
+    forge_api POST "/issues/${issue}/labels" \
+      -d "{\"labels\":[${label_id}]}" >/dev/null 2>&1 || true
+  fi
+
+  backlog_id=$(forge_api GET "/labels" 2>/dev/null \
+    | jq -r --arg n "backlog" '.[] | select(.name == $n) | .id' 2>/dev/null || true)
+  if [ -n "$backlog_id" ]; then
+    forge_api DELETE "/issues/${issue}/labels/${backlog_id}" >/dev/null 2>&1 || true
+  fi
+
+  in_progress_id=$(forge_api GET "/labels" 2>/dev/null \
+    | jq -r --arg n "in-progress" '.[] | select(.name == $n) | .id' 2>/dev/null || true)
+  if [ -n "$in_progress_id" ]; then
+    forge_api DELETE "/issues/${issue}/labels/${in_progress_id}" >/dev/null 2>&1 || true
+  fi
+}
+
+# handle_refusal — act on the refusal summary the agent wrote to the summary
+# file.
+#
+# Args: STATUS (the .status field) REFUSAL_JSON (the raw JSON object).
+#
+# Statuses and behavior:
+#   * unmet_dependency -> refusal comment, release the issue (pre-#1613).
+#   * too_large        -> refusal comment; add `underspecified`, drop
+#       backlog + in-progress (pre-#1613).
+#   * already_done     -> refusal comment, close the issue (pre-#1613).
+#   * needs_ops        -> refusal comment (body = reason); add `rejected`,
+#       drop backlog + in-progress. (#1613) The issue needs access this repo's
+#       code change can't provide: a secret, the ops repo, a running host, or
+#       a human step.
+#   * design_conflict  -> refusal comment (body = reason); add `rejected`,
+#       drop backlog + in-progress. (#1613) The issue contradicts the current
+#       code or a design document it cites; name both sides in the reason.
+#   * (anything else)  -> no-op on the issue (pre-#1613 behavior: no
+#       comment, no relabel; the caller still cleans up the worktree and exits).
+handle_refusal() {
+  local status="$1" refusal_json="${2:-}"
+  local reason blocked_by_msg suggestion comment_body
+
+  case "$status" in
+    unmet_dependency)
+      blocked_by_msg=$(printf '%s' "$refusal_json" | jq -r '.blocked_by // "unknown"')
+      suggestion=$(printf '%s' "$refusal_json" | jq -r '.suggestion // empty')
+      comment_body="### Blocked by unmet dependency
+
+  ${blocked_by_msg}"
+      [ -n "$suggestion" ] && [ "$suggestion" != "null" ] && \
+        comment_body="${comment_body}
+
+  **Suggestion:** Work on #${suggestion} first."
+      issue_post_refusal "$ISSUE" "🚧" "Unmet dependency" "$comment_body"
+      issue_release "$ISSUE"
+      CLAIMED=false
+      ;;
+    too_large)
+      reason=$(printf '%s' "$refusal_json" | jq -r '.reason // "unspecified"')
+      issue_post_refusal "$ISSUE" "📏" "Too large for single session" \
+        "### Why this can't be implemented as-is
+
+  ${reason}
+
+  ### Next steps
+  A maintainer should split this issue or add more detail to the spec."
+      # Add underspecified label, remove backlog + in-progress
+      _dev_refusal_relabel "$ISSUE" "underspecified"
+      CLAIMED=false
+      ;;
+    already_done)
+      reason=$(printf '%s' "$refusal_json" | jq -r '.reason // "unspecified"')
+      issue_post_refusal "$ISSUE" "✅" "Already implemented" \
+        "### Existing implementation
+
+  ${reason}
+
+  Closing as already implemented."
+      issue_close "$ISSUE"
+      CLAIMED=false
+      ;;
+    needs_ops)
+      # Refusal needs access this repo's code change can't provide: a secret,
+      # the ops repo, a running host, or a human step.
+      reason=$(printf '%s' "$refusal_json" | jq -r '.reason // "unspecified"')
+      issue_post_refusal "$ISSUE" "🔧" "Needs ops access" "$reason"
+      _dev_refusal_relabel "$ISSUE" "rejected"
+      CLAIMED=false
+      ;;
+    design_conflict)
+      # The issue contradicts the current code or a design document it cites;
+      # name both sides in the reason.
+      reason=$(printf '%s' "$refusal_json" | jq -r '.reason // "unspecified"')
+      issue_post_refusal "$ISSUE" "⚠️" "Design conflict" "$reason"
+      _dev_refusal_relabel "$ISSUE" "rejected"
+      CLAIMED=false
+      ;;
+    *)
+      # Unknown status: no-op on the issue (pre-#1613 behavior).
+      :
+      ;;
+  esac
+}
+
 # IMPLEMENT
 # =============================================================================
 status "running implementation"
@@ -640,61 +759,7 @@ if [ -z "$REMOTE_SHA" ]; then
     log "claude refused: ${REFUSAL_STATUS}"
     printf '%s' "$REFUSAL_JSON" > "$PREFLIGHT_RESULT"
 
-    case "$REFUSAL_STATUS" in
-      unmet_dependency)
-        BLOCKED_BY_MSG=$(printf '%s' "$REFUSAL_JSON" | jq -r '.blocked_by // "unknown"')
-        SUGGESTION=$(printf '%s' "$REFUSAL_JSON" | jq -r '.suggestion // empty')
-        COMMENT_BODY="### Blocked by unmet dependency
-
-${BLOCKED_BY_MSG}"
-        [ -n "$SUGGESTION" ] && [ "$SUGGESTION" != "null" ] && \
-          COMMENT_BODY="${COMMENT_BODY}
-
-**Suggestion:** Work on #${SUGGESTION} first."
-        issue_post_refusal "$ISSUE" "🚧" "Unmet dependency" "$COMMENT_BODY"
-        issue_release "$ISSUE"
-        CLAIMED=false
-        ;;
-      too_large)
-        REASON=$(printf '%s' "$REFUSAL_JSON" | jq -r '.reason // "unspecified"')
-        issue_post_refusal "$ISSUE" "📏" "Too large for single session" \
-          "### Why this can't be implemented as-is
-
-${REASON}
-
-### Next steps
-A maintainer should split this issue or add more detail to the spec."
-        # Add underspecified label, remove backlog + in-progress
-        UNDERSPEC_ID=$(forge_api GET "/labels" 2>/dev/null \
-          | jq -r '.[] | select(.name == "underspecified") | .id' 2>/dev/null || true)
-        if [ -n "$UNDERSPEC_ID" ]; then
-          forge_api POST "/issues/${ISSUE}/labels" \
-            -d "{\"labels\":[${UNDERSPEC_ID}]}" >/dev/null 2>&1 || true
-        fi
-        BACKLOG_ID=$(forge_api GET "/labels" 2>/dev/null \
-          | jq -r '.[] | select(.name == "backlog") | .id' 2>/dev/null || true)
-        if [ -n "$BACKLOG_ID" ]; then
-          forge_api DELETE "/issues/${ISSUE}/labels/${BACKLOG_ID}" >/dev/null 2>&1 || true
-        fi
-        IP_ID=$(forge_api GET "/labels" 2>/dev/null \
-          | jq -r '.[] | select(.name == "in-progress") | .id' 2>/dev/null || true)
-        if [ -n "$IP_ID" ]; then
-          forge_api DELETE "/issues/${ISSUE}/labels/${IP_ID}" >/dev/null 2>&1 || true
-        fi
-        CLAIMED=false
-        ;;
-      already_done)
-        REASON=$(printf '%s' "$REFUSAL_JSON" | jq -r '.reason // "unspecified"')
-        issue_post_refusal "$ISSUE" "✅" "Already implemented" \
-          "### Existing implementation
-
-${REASON}
-
-Closing as already implemented."
-        issue_close "$ISSUE"
-        CLAIMED=false
-        ;;
-    esac
+    handle_refusal "$REFUSAL_STATUS" "$REFUSAL_JSON"
     worktree_cleanup "$WORKTREE"
     rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
     exit 0
