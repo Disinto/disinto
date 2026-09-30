@@ -5,15 +5,22 @@
 # Appends one grade record to the proposal-loop tape via lib/tape.sh (#1389):
 #   {"type":"grade","t","proposal_id","value":<number>,"when","who"}
 #
-# who    = the invoking user ($USER; falls back to `id -un` when unset)
-# when   = at_outcome by default (graded after seeing the outcome);
-#          pass at_approval to grade at approval time
+# target  = a proposal id, or `milestone:<N>` (#1621) which resolves the
+#           sprint's tape proposal id from ${TAPE_DIR}/sprints/<N> — the
+#           file minted by lib/sprint-tape.sh (#1618). The id file is read
+#           verbatim (an empty file counts as absent, same convention as the
+#           re-pick guard); missing/empty -> exit 64.
+# value   = a float bounded to -1..1 (#1621): negative means the sprint moved
+#           away from the vision. Below -1 or above 1 -> exit 64.
+# who     = the invoking user ($USER; falls back to `id -un` when unset)
+# when    = at_outcome by default (graded after seeing the outcome);
+#           pass at_approval to grade at approval time
 #
 # The appended line is printed to stdout and nothing else. All errors (usage,
 # refusal) go to stderr.
 #
 # Usage:
-#   tools/grade.sh <proposal-id> <float> [at_approval|at_outcome]
+#   tools/grade.sh [<proposal-id>|milestone:<N>] <float -1..1> [at_approval|at_outcome]
 #
 # Environment:
 #   TAPE_DIR  tape directory (default /srv/disinto/tape, from lib/tape.sh)
@@ -21,7 +28,8 @@
 #
 # Exit codes:
 #   0    grade appended and printed
-#   64   usage error: missing args, non-float value, unknown `when`
+#   64   usage error: missing args, non-float value, value outside -1..1,
+#        missing/empty sprint id file for milestone:<N>, unknown `when`
 #   1/2  propagated from lib/tape.sh (refused / usage)
 # =============================================================================
 set -euo pipefail
@@ -32,7 +40,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/tape.sh"
 
 usage() {
-  echo "usage: $(basename "$0") <proposal-id> <float> [at_approval|at_outcome]" >&2
+  echo "usage: $(basename "$0") [<proposal-id>|milestone:<N>] <float -1..1> [at_approval|at_outcome]" >&2
 }
 
 pid="${1:-}"
@@ -47,6 +55,25 @@ if ! [[ "$value" =~ ^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]]; then
   echo "grade: value must be a float (got '$value')" >&2
   usage
   exit 64
+fi
+if ! awk -v v="$value" 'BEGIN { if (v >= -1 && v <= 1) exit 0; exit 1 }'; then
+  echo "grade: value must be between -1 and 1" >&2
+  usage
+  exit 64
+fi
+
+# milestone:<N> -> the sprint proposal id stored by
+# sprint_proposal_id (lib/sprint-tape.sh, #1618). An empty or missing
+# id file counts as "no proposal" (same convention as the re-pick guard),
+# so the id is never minted by grade.sh itself.
+if [[ "$pid" =~ ^milestone:[0-9]+$ ]]; then
+  n="${pid#milestone:}"
+  pid="$(cat "${TAPE_DIR}/sprints/${n}" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    echo "grade: no sprint proposal for milestone ${n}" >&2
+    usage
+    exit 64
+  fi
 fi
 case "$when" in
   at_approval|at_outcome) ;;
