@@ -23,15 +23,20 @@
 #                   numeric one; "-" when no sample pair in the group
 #                   carries one (old-tape rows have no forecast, so a whole
 #                   group may be "-")
-#   actual          share of sample pairs whose last outcome carries the
-#                   loop's own competence bit true or 1, as an integer
-#                   percentage. Which .bits key is each loop's competence bit
-#                   is named in the loops pack (the file $CALIBRATION_LOOPS_FILE
-#                   points at) as one `loop = "bit"` assignment per loop: the
-#                   bit is the .bits key to look up. A loop absent from the
-#                   pack has no competence bit and is never a sample (the
-#                   pack — not this script — decides which loops are samples and
-#                   which bit each carries, #1605).
+#   actual          share of sample pairs whose last outcome carries at least
+#                   one of the loop's own competence bits true or 1, as an
+#                   integer percentage. Each loop's competence bits are the
+#                   .bits keys named for it in the loops pack
+#                   ($CALIBRATION_LOOPS_FILE): either one `loop = "bit"`
+#                   assignment (a single bit) or a `loop = ["bit1", "bit2"]`
+#                   array of double-quoted names (#1614); a single string stays
+#                   valid and means a one-element array. A pair is a sample when
+#                   its last outcome carries any listed bit (true/false/1/0) and
+#                   is a success when any carried bit is true/1, a failure when
+#                   all carried bits are false/0. A loop absent from the pack
+#                   has no competence bits and is never a sample (the pack —
+#                   not this script — decides which loops are samples and which
+#                   bits each carries, #1605).
 #   error           |promised - actual| in percentage points when promised
 #                   is present; "-" otherwise
 #   mean duration_s mean of the sample pairs' outcome numbers.duration_s over
@@ -48,9 +53,10 @@
 #                   are present; "-" otherwise
 #
 # A pair is a sample only when the loop is named in the loops pack AND the
-# LAST outcome carries that loop's competence bit (true/false/1/0): true/1
-# is a success, false/0 a failure. A loop absent from the pack, or a last
-# outcome without the bit, is dropped from n, promised, actual, mean
+# LAST outcome carries at least one of that loop's competence bits
+# (true/false/1/0): a success when any carried bit is true/1, a failure when
+# all carried bits are false/0. A loop absent from the pack, or a last outcome
+# without any carried bit, is dropped from n, promised, actual, mean
 # duration_s, dur_promised, and dur_error — never counted as 0% or a
 # zero-duration forecast. Same last-outcome pairing and row format as before.
 #
@@ -64,9 +70,12 @@
 #
 # Environment:
 #   TAPE_DIR  tape directory (default /srv/disinto/tape)
-#   CALIBRATION_LOOPS_FILE  path to the loop->competence-bit pack (TOML, one
-#                           `loop = "bit"` assignment per loop, double-quoted
-#                           value); default
+#   CALIBRATION_LOOPS_FILE  path to the loop->competence-bits pack (TOML, one
+#                           assignment per loop: either a single double-quoted
+#                           name, `loop = "bit"`, or a TOML array of one or
+#                           more double-quoted names, `loop = ["bit1",
+#                           "bit2"]` (#1614); a single string stays valid);
+#                           default
 #                           ${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/loops.toml.
 #
 # Exit codes:
@@ -94,13 +103,16 @@ echo '|---|---|---|---|---|---|---|---|---|'
 # point of #1605).
 [ -f "$LOOPS_FILE" ] || { echo "calibration: loops pack file missing: $LOOPS_FILE" >&2; exit 1; }
 
-# Parse the pack (a flat TOML, one `loop = "bit"` assignment per loop) into a
-# JSON object with the pack as its key and the bit name as its value. Double-
-# quoted values only (the documented pack format); anything else — a missing
-# "=", an invalid key, or a non-double-quoted value — is an unparsable pack.
-# The parse is done in awk (no extra dependency); a blank line, a comment (
-# full-line or inline #), and a line whose key/value do not match the documented
-# shape are rejected. Exit 3 on the first bad line.
+# Parse the pack (a flat TOML, one assignment per loop) into a JSON object with
+# the loop name as its key and the array of competence bits as its value. Each
+# value may be either a single double-quoted name (the pre-#1614 form, read as
+# a one-element array) or a TOML array of one or more double-quoted names
+# (#1614, e.g. `dev = ["merged", "rejected"]`); a single string stays valid.
+# Anything else — a missing "=", an invalid key, an unquoted value, or a value
+# that is neither a quoted name nor a quoted-name array — is an unparsable
+# pack. The parse is done in awk (no extra dependency); a blank line, a comment
+# (full-line or inline #), and a line whose key/value do not match the
+# documented shape are rejected. Exit 3 on the first bad line.
 rc=0
 pack_json="$(awk '
   BEGIN { n = 0 }
@@ -119,10 +131,38 @@ pack_json="$(awk '
     sub(/^[[:space:]]+/, "", val)
     sub(/[[:space:]]+$/, "", val)
     if (key !~ /^[A-Za-z_][A-Za-z0-9_-]*$/) { print "unparsable line " NR ": " $0; exit 3 }
-    if (val !~ /^"[^"]*"$/) { print "unparsable line " NR ": " $0; exit 3 }
-    val = substr(val, 2, length(val) - 2)
-    n++
-    entry[n] = "\"" key "\" : \"" val "\""
+    if (val ~ /^"[^"]*"$/) {
+      # a single double-quoted name (the pre-#1614 form): kept valid and read
+      # as a one-element array
+      v = substr(val, 2, length(val) - 2)
+      n++
+      entry[n] = "\"" key "\" : [\"" v "\"]"
+    } else if (val ~ /^\[.*\]$/) {
+      # a TOML array of one or more double-quoted names (#1614): the value is
+      # "[name1", "name2", ...]" with the leading "[" and trailing "]" stripped
+      inner = substr(val, 2, length(val) - 2)
+      nbody = split(inner, parts, ",")
+      if (nbody == 0) { print "unparsable line " NR ": " $0; exit 3 }
+      for (i = 1; i <= nbody; i++) {
+        part = parts[i]
+        sub(/^[[:space:]]+/, "", part)
+        sub(/[[:space:]]+$/, "", part)
+        if (part !~ /^"[^"]*"$/) { print "unparsable line " NR ": " $0; exit 3 }
+      }
+      n++
+      entry[n] = "\"" key "\" : ["
+      for (i = 1; i <= nbody; i++) {
+        part = parts[i]
+        sub(/^[[:space:]]+/, "", part)
+        sub(/[[:space:]]+$/, "", part)
+        entry[n] = entry[n] part
+        if (i < nbody) entry[n] = entry[n] ","
+      }
+      entry[n] = entry[n] "]"
+    } else {
+      print "unparsable line " NR ": " $0
+      exit 3
+    }
   }
   END {
     if (n == 0) { print "{}" }
@@ -192,28 +232,31 @@ jq -R -s -r --argjson loops "$pack_json" '
            duration: (.numbers.duration_s
                       | if type == "number" then . else null end) })
   # A pair is a sample only when the loop is named in the loops pack AND the
-  # LAST outcome carries the competence bit of that loop. The pack names the
-  # bit as $loops[.loop]; it is looked up in the bits of the pair. true/1 is a
-  # false/0 a failure; only a well-formed bit (true/false/1/0, the values the
-  # tape writers emit) counts as carried. A loop absent from the pack, or a
-  # last outcome without the bit, is never a sample.
+  # LAST outcome carries at least one competence bit of the named loop. The
+  # pack names those bits as the array $loops[.loop]; each is looked up in the
+  # bits of the pair. A pair is a sample when at least one of its listed bits
+  # is carried (true/false/1/0 — only the values the tape writers emit counts);
+  # it is a success when any carried bit is true/1 and a failure when all are
+  # false/0. A loop absent from the pack, or a last outcome without any carried
+  # bit, is never a sample.
   | map({ loop: .loop,
            class: .class,
            promised: .promised,
            est_dvision: .est_dvision,
-           competence: (($loops[.loop]) as $bit
-                        | if ($bit | type) == "string" then .bits[$bit]
-                          else null end),
+           competence: (($loops[.loop]) as $bits
+                        | if ($bits | type) == "array"
+                           then [ $bits[] as $b | .bits[$b] ]
+                                 | map(select(. == true or . == false or . == 1 or . == 0))
+                           else null end),
            duration: .duration })
-  | map(select(.competence == true or .competence == false
-                or .competence == 1 or .competence == 0))
+  | map(select((.competence | type) == "array" and (.competence | length) > 0))
   | group_by([.loop, .class])
   | map({ loop: .[0].loop,
            class: .[0].class,
            n: length,
            promised: ((map(.promised) | map(select(. != null)))
                       | if length > 0 then ((100 * add / length) | round) else null end),
-           mr: (100 * (map(select(.competence == true or .competence == 1)) | length)
+           mr: (100 * (map(select(.competence | any(. == true or . == 1))) | length)
                  / length | round),
            md: ((map(.duration) | map(select(. != null)))
                 | if length > 0 then add / length else null end),

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154  # rc/out/err_out/HEADER/TMP_DIR set by ac_calib_env (tests/lib/acceptance-helpers.sh)
 # =============================================================================
 # tests/acceptance/issue-1605.sh
 #
@@ -34,20 +35,11 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash jq awk
 
-TOOL="$REPO_ROOT/tools/calibration.sh"
-
-# Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# Global state for the per-run assertions, initialised up front so the
-# `set -u` guard and every ac_assert_eq reference below is always defined
-# (ShellCheck cannot see cross-file global assignment).
-rc=0
-out=""
-err_out=""
+# Shared calibration environment (TMP_DIR/trap, TOOL, the table HEADER, the
+# rc/out/err_out run state, and the per-run pack runner run_calib) — the single
+# definition lives in tests/lib/acceptance-helpers.sh so the two per-pack tests
+# do not duplicate it file-to-file.
+ac_calib_env
 
 # Fixture packs (loop = "bit"). `with-research` names research so AC 1 can show
 # the row appears purely from the pack; `without-research` does not (AC 2).
@@ -81,17 +73,6 @@ write_tape() {
 EOF
 }
 
-# run_calib <pack-path> <tape-dir> — run the tool with CALIBRATION_LOOPS_FILE
-# and TAPE_DIR set per run, capturing stdout, stderr, and rc. The pack seam is
-# set per run, so calibration.sh is never edited (AC 1).
-run_calib() {
-  local pack="$1" dir="$2" errfile
-  errfile="$(mktemp)"
-  rc=0
-  out="$(CALIBRATION_LOOPS_FILE="$pack" TAPE_DIR="$dir" bash "$TOOL" 2>"$errfile")" || rc=$?
-  err_out="$(cat "$errfile" 2>/dev/null || true)"
-  rm -f "$errfile"
-}
 
 write_tape "$TMP_DIR"
 
