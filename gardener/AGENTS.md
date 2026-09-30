@@ -1,4 +1,4 @@
-<!-- last-reviewed: bc40ed4e896a3a50a89071a5366ce86e971a9881 -->
+<!-- last-reviewed: 8d6461825c69cfa9aa0a3b378ffab482d4013d7f -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -25,7 +25,9 @@ and executes the pending-actions manifest post-merge.
 
 **Key files**:
 - `gardener/gardener-run.sh` — One-shot full-formula executor (invoked from host cron in
-  bare-metal mode, `lib/ci-setup.sh:63`): lock, memory guard,
+  bare-metal mode, `lib/ci-setup.sh:63`): lock, memory guard, syncs the ops clone at the
+  start of every run via `ensure_ops_repo()` (#1653) — before the precondition checks, so
+  even early-exit runs read fresh operational data (non-fatal, warnings only),
   sources disinto project config, loads formula via `load_formula_or_profile`,
   builds context block via `build_context_block`, invokes `agent_run` from
   `lib/agent-sdk.sh`. Walks PR to merge via `pr_walk_to_merge` from

@@ -1,4 +1,4 @@
-<!-- last-reviewed: bc40ed4e896a3a50a89071a5366ce86e971a9881 -->
+<!-- last-reviewed: 8d6461825c69cfa9aa0a3b378ffab482d4013d7f -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -98,9 +98,11 @@ construction), closed by stale-branch abandonment, or its CI fixes exhausted (a
 single `ci_exhausted_poll` outcome emitted by `handle_ci_exhaustion()` **before**
 `issue_block` marks the issue blocked, #1609) — `emit_tape_outcome()` appends one
 `{"type":"outcome","proposal_id":...}` record to the tape keyed off the stored id:
-bits `{"merged":0|1,"ci_green":0|1}`, numbers `{"review_rounds":<n>}` (the PR's
-REQUEST_CHANGES review count from one forge call, `0` when the call fails)
-plus `{"duration_s":<s>}` (#1452: wall-clock pick→terminal seconds, now − start,
+bits `{"merged":0|1,"ci_green":0|1}`, numbers `{"ci_red":<c>,
+"review_rounds":<n>}` (#1616: `ci_red` = every CI failure the walk observed,
+`${PR_WALK_CI_RED:-0}`; `review_rounds` = `${PR_WALK_REVIEW_ROUNDS:-0}` REQUEST_CHANGES
+rounds — both `0` when no walk ran), plus `{"duration_s":<s>}` (#1452:
+wall-clock pick→terminal seconds, now − start,
 integer, clamped ≥ 0; omitted — never 0 — when the started file is missing or
 not an integer), children `{}`, payloads `[]`; and, when the caller passes a
 `REASON` (#1609 — the CI-exhaustion and stale-branch paths), the record may
