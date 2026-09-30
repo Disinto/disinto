@@ -66,6 +66,9 @@ LOG_AGENT="gardener"
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active gardener
 acquire_run_lock "/tmp/gardener-run.lock"
+# Sync the ops clone at the start of every run (#1653), before the precondition
+# checks, so runs that exit early still read fresh operational data.
+ensure_ops_repo
 memory_guard 2000
 
 log "--- Gardener run start ---"
