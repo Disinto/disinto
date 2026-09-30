@@ -675,7 +675,16 @@ pr_close() {
 #
 # Args: pr_number session_id worktree [max_ci_fixes=3] [max_review_rounds=5]
 # Returns: 0=merged, 1=exhausted or unrecoverable failure
-# Sets: _PR_WALK_EXIT_REASON
+# Sets:
+#   _PR_WALK_EXIT_REASON — reason for a non-merge exit (ci_timeout,
+#                           ci_exhausted, review_timeout, review_exhausted,
+#                           closed_externally, unexpected_verdict); "merged"
+#                           on success.
+#   PR_WALK_CI_RED        — every CI failure the walk observed (never reset,
+#                           unlike the per-cycle ci_fix_count).
+#   PR_WALK_REVIEW_ROUNDS — review rounds the walk executed (one per
+#                           REQUEST_CHANGES/DISCUS round; 0 when the walk exits
+#                           before any review round).
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2034  # _PR_WALK_EXIT_REASON read by callers
 pr_walk_to_merge() {
@@ -683,6 +692,11 @@ pr_walk_to_merge() {
   local max_ci_fixes="${4:-3}" max_review_rounds="${5:-5}"
   local ci_fix_count=0 ci_retry_count=0 review_round=0
   local rc=0 remote="${FORGE_REMOTE:-origin}"
+
+  # Walk-wide totals — cumulative across the whole walk, never reset (unlike
+  # ci_fix_count / ci_retry_count, which reset between fix cycles).
+  PR_WALK_CI_RED=0
+  PR_WALK_REVIEW_ROUNDS=0
 
   _PR_WALK_EXIT_REASON=""
   _prl_log "walking PR #${pr_num} to merge (max CI: ${max_ci_fixes}, max review: ${max_review_rounds})"
@@ -697,6 +711,9 @@ pr_walk_to_merge() {
     fi
 
     if [ "$rc" -eq 1 ]; then
+      # Count every CI failure the walk observes (including infra retries —
+      # they are still CI failures). Never reset, unlike ci_fix_count.
+      PR_WALK_CI_RED=$((PR_WALK_CI_RED + 1))
       # Infra failure — retry once via empty commit + push
       if [ "${_PR_CI_FAILURE_TYPE:-}" = "infra" ] && [ "$ci_retry_count" -lt 1 ]; then
         ci_retry_count=$((ci_retry_count + 1))
@@ -890,6 +907,8 @@ Rebase onto ${PRIMARY_BRANCH} and push:
 
       REQUEST_CHANGES|DISCUSS)
         review_round=$((review_round + 1))
+        # Mirror the review round count into the cumulative walk total.
+        PR_WALK_REVIEW_ROUNDS="$review_round"
         if [ "$review_round" -gt "$max_review_rounds" ]; then
           _prl_log "review budget exhausted (${review_round}/${max_review_rounds})"
           _PR_WALK_EXIT_REASON="review_exhausted"
