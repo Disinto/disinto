@@ -432,19 +432,7 @@ if [ "$RECOVERY_MODE" = false ]; then
     BRANCH="fix/issue-${ISSUE}-${ATTEMPT}"
   fi
 fi
-# run.attempts is the branch attempt count, not a fiction (#1478): the pick's
-# branch count (0 = first attempt / recovery mode / failed ls-remote) is the
-# 1-based attempt number the tape run record should carry. Non-negative integer
-# → ATTEMPT+1; anything else (unset/empty/junk) → 1. Total: never fails the
-# pick.
-TAPE_RUN_ATTEMPTS="${ATTEMPT:0:0}"
-if [[ "$ATTEMPT" =~ ^[0-9]+$ ]]; then
-  TAPE_RUN_ATTEMPTS=$((ATTEMPT + 1))
-else
-  TAPE_RUN_ATTEMPTS=1
-fi
-export TAPE_RUN_ATTEMPTS
-log "using branch: ${BRANCH} (tape run attempts: ${TAPE_RUN_ATTEMPTS})"
+log "using branch: ${BRANCH}"
 
 if [ "$RECOVERY_MODE" = true ]; then
   if ! worktree_recover "$WORKTREE" "$BRANCH" "$FORGE_REMOTE"; then
@@ -627,6 +615,29 @@ no_push_outcome() {
   fi
 }
 
+# dev_failed_attempts ID — count the proposal's failed attempts from the tape
+# (#1646). A run that pushed nothing never grows the branch count, so the
+# tape is the ledger, not ATTEMPT: count this proposal's outcome records whose
+# merged is 0 or false and whose rejected is not 1 or true. Empty ID or a
+# missing tape -> 0; malformed lines are skipped; never fails the pick.
+dev_failed_attempts() {
+  local id="$1"
+  local tape_file count
+
+  tape_file="${TAPE_DIR:-/srv/disinto/tape}/tape.jsonl"
+  if [ -z "$id" ] || [ ! -f "$tape_file" ]; then
+    printf '0\n'
+    return 0
+  fi
+  count="$(jq -R -s -r --arg id "$id" 'split("\n") | map(select(. != "")) | map(try fromjson | select(type == "object")) | [ .[] | select(.type == "outcome") | select(.proposal_id == $id) | select((.bits.merged == 0) or (.bits.merged == false)) | select(.bits.rejected != 1 and .bits.rejected != true) ] | length' "$tape_file" 2>/dev/null)" || count=0
+  if [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$count"
+  else
+    printf '0\n'
+  fi
+  return 0
+}
+
 # =============================================================================
 # REFUSAL HANDLING (#1613)
 # =============================================================================
@@ -784,6 +795,14 @@ if [ -s "$PROPOSAL_ID_FILE" ]; then
   fi
 fi
 
+# #1646: the retry budget is this proposal's ledger of failed attempts from the
+# tape — outcomes that neither merged nor were rejected — not the branch count.
+# A run that pushed nothing never grew the branch count, so the old ATTEMPT
+# counter sat at 0 and the cap never fired. 1-based: failed + 1.
+DEV_FAILED_ATTEMPTS="$(dev_failed_attempts "${PROPOSAL_ID:-}")"
+TAPE_RUN_ATTEMPTS=$((DEV_FAILED_ATTEMPTS + 1))
+export TAPE_RUN_ATTEMPTS
+
 # Open the proposal-loop tape run record (#1391) — total, never fails us
 formula_session_start "dev"
 
@@ -855,7 +874,7 @@ if [ -z "$REMOTE_SHA" ]; then
     log "no_push session summary: turns=${_total_turns} reads=${_read_calls} edits=${_edit_calls} bash=${_bash_calls} text=${_text_calls} failed=${_failed_calls}"
   fi
 
-  no_push_outcome "$ISSUE" "$diag_file" "$AGENT_RUN_RC" "${ATTEMPT:-0}" \
+  no_push_outcome "$ISSUE" "$diag_file" "$AGENT_RUN_RC" "${DEV_FAILED_ATTEMPTS:-0}" \
     "Claude did not push branch ${BRANCH}"
   CLAIMED=false
   worktree_cleanup "$WORKTREE"
