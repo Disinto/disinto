@@ -86,7 +86,7 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiti
 | `underspecified` | Refused as too large or vague. | dev-poll.sh, dev-agent.sh |
 | `bug-report` | User-facing breakage with repro steps; separate triage track. | Gardener |
 | `in-triage` | Reproduced, cause unclear; alongside `bug-report`. | reproduce-agent |
-| `rejected` | Cannot reproduce, out of scope, or invalid. | reproduce-agent, humans |
+| `rejected` | Cannot reproduce, out of scope, or invalid; or, per the dev-agent refusal protocol (#1613), **needs ops access** (issue needs access this repo's code change can't provide — a secret, the ops repo, a running host, or a human step) or **design conflict** (issue contradicts the current code or a cited design document). | reproduce-agent, humans, dev-agent.sh |
 | `vision` | Goal anchors from VISION.md. | Planner, humans |
 | `prediction/unreviewed` | Unprocessed prediction. | predictor-run.sh |
 | `prediction/dismissed` | Triaged DISMISS (planner disagreed). | Planner |
