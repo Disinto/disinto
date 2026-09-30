@@ -204,10 +204,20 @@ ensure_ops_repo() {
   [ -n "$ops_root" ] || return 0
 
   if [ -d "${ops_root}/.git" ]; then
-    # Pull latest from primary branch
-    git -C "$ops_root" fetch origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
-    git -C "$ops_root" checkout "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
-    git -C "$ops_root" pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>/dev/null || true
+    # Pull latest from primary branch. Non-fatal per step (#1653): each git
+    # op that fails logs exactly one "WARNING: ops repo <step> failed: ..."
+    # line (the last line of git's stderr) and the run continues. ensure_ops_repo
+    # always returns 0 — a sync failure must never abort a gardener run.
+    local git_err
+    if ! git_err="$(git -C "$ops_root" fetch origin "${PRIMARY_BRANCH}" --quiet 2>&1 1>/dev/null)"; then
+      log "WARNING: ops repo fetch failed: $(tail -n 1 <<<"$git_err")"
+    fi
+    if ! git_err="$(git -C "$ops_root" checkout "${PRIMARY_BRANCH}" --quiet 2>&1 1>/dev/null)"; then
+      log "WARNING: ops repo checkout failed: $(tail -n 1 <<<"$git_err")"
+    fi
+    if ! git_err="$(git -C "$ops_root" pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>&1 1>/dev/null)"; then
+      log "WARNING: ops repo pull failed: $(tail -n 1 <<<"$git_err")"
+    fi
     migrate_ops_repo "$ops_root" "${PRIMARY_BRANCH}"
     return 0
   fi
@@ -226,6 +236,7 @@ ensure_ops_repo() {
     log "WARNING: failed to clone ops repo ${ops_repo} — creating local directory"
     mkdir -p "$ops_root"
   fi
+  return 0
 }
 
 # ops_commit_and_push MESSAGE [FILE ...]
