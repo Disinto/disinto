@@ -861,6 +861,40 @@ def main() -> int:
         "f12c4380c44f0d5a548f48424c156afe": "cat > '$ACCOUNTS_FILE' <<EOF issue-1557.sh + issue-1582.sh",
         "f8651b698c1b0996f9ab07a62a64cb9d": "'fingerprint': '$FP_A', issue-1557.sh + issue-1582.sh",
         "fe697bec9f20c7fa602459c50afc4e33": "run_rebuild() { issue-1557.sh + issue-1582.sh",
+        # --- #1608: dev-agent.sh outcome emission mirrors dev-poll.sh (#1609) ---
+        # Two independent dev-loop outcome paths (dev-agent.sh close_dev_tape_outcome()
+        # and dev-poll.sh emit_tape_outcome()) that must agree on the 5-arg vs 6-arg
+        # tape_outcome() (signature) call. lib/tape.sh is out of scope for this change,
+        # so the near-identical 5-line window is intentional, not copy-paste.
+        "1c236de2e43e7e1027286e3d8143d465": "dev-agent.sh + dev-poll.sh: if sig nonempty / rc=0 / tape_outcome 6-arg (#1608)",
+        "e634274f40a5b13d940ee3a86075d759": "dev-agent.sh + dev-poll.sh: rc=0 / tape_outcome 6-arg / else (#1608)",
+        "c855704a5ea61721d882f7c80969f8e4": "dev-agent.sh + dev-poll.sh: tape_outcome 6-arg / else / rc=0 (#1608)",
+        "32a11885ac27207c592325238e179df7": "dev-agent.sh + dev-poll.sh: else / rc=0 / tape_outcome 5-arg (#1608)",
+        # --- #1608: tests/acceptance/issue-1608.sh boilerplate vs issue-1609.sh/issue-1613.sh ---
+        # Per-test-isolation stubs (mktemp + RUBRICS_DIR, issue_post_refusal, the
+        # forge_api method dispatch, last_json) are deliberately identical across
+        # isolated per-issue tests, per the per-test-isolation convention.
+        "c60a24735b112d892ca9b249b9e25248": "issue-1608.sh + issue-1609.sh: TMP_DIR/RUBRICS_DIR/mkdir stub (#1608)",
+        "61cd00710b6ea8fa769c7fc3c95a3bd2": "issue-1608.sh + issue-1613.sh: CALLS=()/REFUSALS=()/issue_post_refusal() { (#1608)",
+        "51887f0eb72aa5ce7503cb1da0de15dc": "issue-1608.sh + issue-1613.sh: REFUSALS=()/issue_post_refusal()/REFUSALS+= (#1608)",
+        "c92a273884ae9d67184d9b02236023f6": "issue-1608.sh + issue-1613.sh: issue_post_refusal()/REFUSALS+=/CALLS+= (#1608)",
+        "e28b9189288fbe6731fe94455f73d148": "issue-1608.sh + issue-1613.sh: REFUSALS+=/CALLS+=/} (#1608)",
+        "484466af43aae0e1452444cdd65a9413": "issue-1608.sh + issue-1613.sh: forge_api case / GET labels / printf (#1608)",
+        "314d41bb04d3c04119f9778c8c487c51": "issue-1608.sh + issue-1613.sh: GET labels / printf / ;; (#1608)",
+        "3f554baebe264aaea903a056f70dd263": "issue-1608.sh + issue-1613.sh: printf / ;; / POST issues labels (#1608)",
+        "0ba18c98be739990f64ec0344da72a48": "issue-1608.sh + issue-1613.sh: ;; / POST issues labels / for i in extra (#1608)",
+        "f94c89a1fcdef4f435afa623a37c332a": "issue-1608.sh + issue-1613.sh: POST issues labels / for i in extra / -d data test (#1608)",
+        "7851ff7d85338dfcad011a95c4de8741": "issue-1608.sh + issue-1613.sh: for i in extra / -d data test / done (#1608)",
+        "c87ebd7f083ce0f36709807e3c39327d": "issue-1608.sh + issue-1613.sh: -d data test / done / CALLS+= POST labels (#1608)",
+        "a52d56bc2996665e79483cb8ef41c5f8": "issue-1608.sh + issue-1613.sh: done / CALLS+= POST labels / printf null (#1608)",
+        "5db14b483f110bbaeb1237ccc5a74056": "issue-1608.sh + issue-1613.sh: CALLS+= POST labels / printf null / ;; (#1608)",
+        "5c07afa83b3ff1626e6ce0faeaf3ccec": "issue-1608.sh + issue-1613.sh: printf null / ;; / DELETE labels (#1608)",
+        "b9de288f574a065da350568be85cd5bb": "issue-1608.sh + issue-1613.sh: ;; / DELETE labels / local lid (#1608)",
+        "6ad3982913b4e193c6c9cb4d705a83fc": "issue-1608.sh + issue-1613.sh: DELETE labels / local lid / CALLS+= DELETE (#1608)",
+        "e46349231f2a1d5939a13ca1851ec069": "issue-1608.sh + issue-1613.sh: local lid / CALLS+= DELETE / printf null (#1608)",
+        "629fa80f55e9b1509e007547707ac21f": "issue-1608.sh + issue-1613.sh: CALLS+= DELETE / printf null / ;; (#1608)",
+        "b4fe665dea93f1171ea7f438b4ffda6d": "issue-1608.sh + issue-1609.sh: } / last_json() { (#1608)",
+        "80a21053da9907fa691a61b638cec77e": "issue-1608.sh + issue-1609.sh: } / last_json() / tail tape.jsonl (#1608)",
     }
 
     if not sh_files:
