@@ -688,8 +688,11 @@ handle_refusal() {
   # four disposition statuses qualify: unmet_dependency releases the issue back
   # to the backlog (not a disposition) and unknown statuses are a no-op, so
   # neither is recorded — both then take the failure-walk shape in the outcome.
+  # (The pattern is one unspaced `a|b|c|d)` line so the first token is followed
+  # by `|` and correctly skipped by the CI function-resolver, which otherwise
+  # would treat a spaced `a | b)` first token as an undefined call.)
   case "$status" in
-    too_large | already_done | needs_ops | design_conflict)
+    too_large|already_done|needs_ops|design_conflict)
       _DEV_REFUSAL_STATUS="$status"
       ;;
   esac
