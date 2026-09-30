@@ -128,7 +128,9 @@ cleanup() {
 #   * bits.merged / bits.ci_green are 1 only when pr_walk_to_merge() returned 0
 #     (PR_WALK_RC); every other exit records 0/0. Never inferred from the process
 #     exit code.
-#   * numbers.review_rounds is 0 (no forge call).
+#   * numbers.ci_red = ${PR_WALK_CI_RED:-0} (every CI failure the walk
+#     observed, 0 when no walk ran) and numbers.review_rounds =
+#     ${PR_WALK_REVIEW_ROUNDS:-0} (#1616).
 #   * numbers.duration_s = now - started (clamped >= 0) when the started epoch
 #     file /tmp/dev-proposal-started-<project>-<issue> is present and an integer
 #     epoch; omitted (never 0) otherwise.
@@ -190,11 +192,18 @@ close_dev_tape_outcome() {
     has_duration=1
   fi
 
+  # Walk totals (#1616): PR_WALK_CI_RED / PR_WALK_REVIEW_ROUNDS are set by
+  # pr_walk_to_merge() when it ran; the ${...:-0} defaults yield 0 on the
+  # no-walk (early-exit) paths. duration_s logic is unchanged.
   if [ "$has_duration" = 1 ]; then
-    numbers="$(jq -cn --argjson n 0 --argjson d "$duration_s" \
-      '{review_rounds: $n, duration_s: $d}' 2>/dev/null)" || numbers=""
+    numbers="$(jq -cn --argjson ci_red "${PR_WALK_CI_RED:-0}" \
+      --argjson review_rounds "${PR_WALK_REVIEW_ROUNDS:-0}" \
+      --argjson d "$duration_s" \
+      '{ci_red: $ci_red, review_rounds: $review_rounds, duration_s: $d}' 2>/dev/null)" || numbers=""
   else
-    numbers="$(jq -cn --argjson n 0 '{review_rounds: $n}' 2>/dev/null)" || numbers=""
+    numbers="$(jq -cn --argjson ci_red "${PR_WALK_CI_RED:-0}" \
+      --argjson review_rounds "${PR_WALK_REVIEW_ROUNDS:-0}" \
+      '{ci_red: $ci_red, review_rounds: $review_rounds}' 2>/dev/null)" || numbers=""
   fi
   if [ -z "$numbers" ]; then
     log "WARNING: tape: could not build outcome numbers for #${ISSUE}"
