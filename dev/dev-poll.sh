@@ -35,6 +35,8 @@ source "$(dirname "$0")/../lib/guard.sh"
 source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 # shellcheck source=../lib/tape.sh
 source "$(dirname "$0")/../lib/tape.sh"
+# shellcheck source=../lib/signature.sh
+source "$(dirname "$0")/../lib/signature.sh"
 # shellcheck source=../lib/catalog-forecast.sh
 source "$(dirname "$0")/../lib/catalog-forecast.sh"
 check_active dev
@@ -237,6 +239,10 @@ handle_ci_exhaustion() {
     exhausted_first_time:*)
       CI_FIX_ATTEMPTS="${result#exhausted_first_time:}"
       log "PR #${pr_num} (issue #${issue_num}) CI exhausted (${CI_FIX_ATTEMPTS} attempts) — marking blocked"
+      # #1609: record the terminal outcome (CI never went green, nothing
+      # merged) with a reason so the proposal carries a signature on the
+      # tape, then block the issue.
+      emit_tape_outcome "$issue_num" "$pr_num" 0 0 ci_exhausted_poll
       issue_block "$issue_num" "ci_exhausted_poll (${CI_FIX_ATTEMPTS} attempts, PR #${pr_num})"
       ;;
     exhausted:*)
@@ -533,12 +539,20 @@ issue_is_ready() {
 # unchanged. Defined here (not with the other tape section below) because the
 # pre-lock merge scan runs before that point in the script.
 #
-# Args: issue_number pr_number merged(0|1) ci_green(0|1)
+# #1609: the CI-exhaustion and stale-branch abandonment paths additionally
+# pass a REASON as the 5th arg. When set, its rubric signature is resolved
+# (loop "dev", lib/signature.sh, signature_for) and, when non-empty, passed
+# to tape_outcome as the 6th arg (the signature field). An unknown reason
+# (empty resolution) leaves the record in its pre-#1607 shape — no signature
+# field. Merge paths pass no reason (4 args, unchanged).
+#
+# Args: issue_number pr_number merged(0|1) ci_green(0|1) [reason]
 # =============================================================================
 emit_tape_outcome() {
   local issue="$1" pr_num="$2" merged="$3" ci_green="$4"
+  local reason="${5:-}"
   local id_file id review_rounds bits numbers
-  local duration_s has_duration
+  local duration_s has_duration signature=""
 
   id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
   id="$(cat "$id_file" 2>/dev/null)" || id=""
@@ -570,7 +584,22 @@ emit_tape_outcome() {
     numbers="$(jq -cn --argjson n "$review_rounds" '{review_rounds: $n}')"
   fi
 
-  if ! tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1; then
+  # #1609: resolve an optional reason into a rubric signature. An unknown
+  # reason (empty resolution) leaves the record in its pre-#1607 shape —
+  # no signature field.
+  if [ -n "$reason" ]; then
+    signature="$(signature_for "$reason" dev)" || signature=""
+  fi
+
+  local rc
+  if [ -n "$signature" ]; then
+    rc=0
+    tape_outcome "$id" "$bits" "$numbers" '{}' '[]' "$signature" >/dev/null 2>&1 || rc=1
+  else
+    rc=0
+    tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1 || rc=1
+  fi
+  if [ "$rc" -ne 0 ]; then
     log "WARNING: tape: failed to append outcome record ${id} for #${issue} (PR #${pr_num})"
     return 0
   fi
@@ -860,7 +889,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
             -H "Content-Type: application/json" \
             "${API}/pulls/${HAS_PR}" \
             -d '{"state":"closed"}' >/dev/null 2>&1 || true
-          emit_tape_outcome "$ISSUE_NUM" "$HAS_PR" 0 0
+          emit_tape_outcome "$ISSUE_NUM" "$HAS_PR" 0 0 stale_branch
           # Delete the branch via git push
           git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
           # Reset to fresh start on primary branch
@@ -1169,7 +1198,7 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
         -H "Content-Type: application/json" \
         "${API}/pulls/${EXISTING_PR}" \
         -d '{"state":"closed"}' >/dev/null 2>&1 || true
-      emit_tape_outcome "$ISSUE_NUM" "$EXISTING_PR" 0 0
+      emit_tape_outcome "$ISSUE_NUM" "$EXISTING_PR" 0 0 stale_branch
       # Delete the branch via git push
       git -C "${PROJECT_REPO_ROOT:-}" push origin --delete "${BRANCH}" 2>/dev/null || true
       # Reset to fresh start on primary branch
