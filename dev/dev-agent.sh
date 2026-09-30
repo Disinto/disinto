@@ -32,6 +32,8 @@ source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
 source "$(dirname "$0")/../lib/tape.sh"
+# #1608: reason -> signature lookup, shared with dev-poll.sh (#1609)
+source "$(dirname "$0")/../lib/signature.sh"
 
 # Auto-pull factory code to pick up merged fixes before any logic runs
 git -C "$FACTORY_ROOT" pull --ff-only origin main 2>/dev/null || true
@@ -77,6 +79,9 @@ PR_NUMBER=""
 # flag, never from the process exit code. One outcome per process.
 PR_WALK_RC=1
 _DEV_TAPE_OUTCOME_WRITTEN=0
+# #1608: the recorded refusal status (set by handle_refusal) so the exit
+# trap can tell a disposition refusal from a failure walk. One per process.
+_DEV_REFUSAL_STATUS=""
 
 # kill_stale_claude — kill any claude process group left behind by
 # claude_run_with_watchdog (#1070: a session was observed outliving its
@@ -137,15 +142,10 @@ close_dev_tape_outcome() {
     return 0
   fi
 
-  local id_file id bits numbers merged
-  local duration_s has_duration
-
-  # merged/ci_green come from the walk result, not the process exit code.
-  if [ "$PR_WALK_RC" -eq 0 ]; then
-    merged=1
-  else
-    merged=0
-  fi
+  # Initialised to safe defaults: the function must be set -u safe (it is
+  # sourced-run in subshells by the acceptance tests and by dev-poll traps).
+  local id_file="" id="" bits="" numbers="" merged=0
+  local duration_s="" has_duration=0 reason="" signature=""
 
   id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}"
   id="$(cat "$id_file" 2>/dev/null)" || id=""
@@ -153,7 +153,31 @@ close_dev_tape_outcome() {
     return 0
   fi
 
-  bits="$(jq -cn --argjson m "$merged" '{merged: $m, ci_green: $m}' 2>/dev/null)" || bits=""
+  # merged/ci_green come from the walk result, not the process exit code.
+  # #1608: classify the exit so the record distinguishes a disposition
+  # refusal, a failure walk and a merge, and carries a reason for the rubric
+  # signature (loop "dev").
+  #   * A recorded disposition refusal (_DEV_REFUSAL_STATUS, set by
+  #     handle_refusal for too_large/already_done/needs_ops/design_conflict)
+  #     writes rejected: 1 with reason = the status.
+  #   * A failure walk (PR_WALK_RC != 0, no recorded refusal) keeps today's
+  #     bits and uses _PR_WALK_EXIT_REASON as the reason (possibly empty).
+  #   * A merged walk keeps today's bits, no reason.
+  #   * unmet_dependency is never recorded (it re-queues the issue), so it
+  #     falls through to the failure-walk shape: no rejected bit.
+  if [ -n "${_DEV_REFUSAL_STATUS:-}" ]; then
+    merged=0
+    reason="${_DEV_REFUSAL_STATUS}"
+    bits="$(jq -cn '{merged: 0, ci_green: 0, rejected: 1}' 2>/dev/null)" || bits=""
+  elif [ "$PR_WALK_RC" -eq 0 ]; then
+    merged=1
+    reason=""
+    bits="$(jq -cn --argjson m "$merged" '{merged: $m, ci_green: $m}' 2>/dev/null)" || bits=""
+  else
+    merged=0
+    reason="${_PR_WALK_EXIT_REASON:-}"
+    bits="$(jq -cn --argjson m "$merged" '{merged: $m, ci_green: $m}' 2>/dev/null)" || bits=""
+  fi
   if [ -z "$bits" ]; then
     log "WARNING: tape: could not build outcome bits for #${ISSUE}"
     return 0
@@ -179,7 +203,24 @@ close_dev_tape_outcome() {
 
   # Claim the write so a second invocation in the same process appends nothing.
   _DEV_TAPE_OUTCOME_WRITTEN=1
-  if ! tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1; then
+
+  # #1608: resolve the reason to a rubric signature (loop "dev", lib/
+  # signature.sh) and, when the result is non-empty, pass it to tape_outcome
+  # as the 6th arg (the record's "signature" field). An unknown reason (empty
+  # resolution) leaves the record in its pre-#1608 shape (no signature). A
+  # lookup never changes the exit code and never skips the write.
+  if [ -n "$reason" ]; then
+    signature="$(signature_for "$reason" dev)" || signature=""
+  fi
+  local rc=0
+  if [ -n "$signature" ]; then
+    rc=0
+    tape_outcome "$id" "$bits" "$numbers" '{}' '[]' "$signature" >/dev/null 2>&1 || rc=1
+  else
+    rc=0
+    tape_outcome "$id" "$bits" "$numbers" '{}' '[]' >/dev/null 2>&1 || rc=1
+  fi
+  if [ "$rc" -ne 0 ]; then
     log "WARNING: tape: failed to append outcome record ${id} for #${ISSUE}"
     return 0
   fi
@@ -641,6 +682,20 @@ _dev_refusal_relabel() {
 handle_refusal() {
   local status="$1" refusal_json="${2:-}"
   local reason blocked_by_msg suggestion comment_body
+
+  # #1608: record the disposition status so close_dev_tape_outcome() (run from
+  # the EXIT trap, same process) can write rejected: 1 + a reason. Only the
+  # four disposition statuses qualify: unmet_dependency releases the issue back
+  # to the backlog (not a disposition) and unknown statuses are a no-op, so
+  # neither is recorded — both then take the failure-walk shape in the outcome.
+  # (The pattern is one unspaced `a|b|c|d)` line so the first token is followed
+  # by `|` and correctly skipped by the CI function-resolver, which otherwise
+  # would treat a spaced `a | b)` first token as an undefined call.)
+  case "$status" in
+    too_large|already_done|needs_ops|design_conflict)
+      _DEV_REFUSAL_STATUS="$status"
+      ;;
+  esac
 
   case "$status" in
     unmet_dependency)
