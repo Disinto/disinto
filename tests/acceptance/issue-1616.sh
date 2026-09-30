@@ -37,6 +37,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../../tests/lib/acceptance-tape-helpers.sh
+source "$REPO_ROOT/tests/lib/acceptance-tape-helpers.sh"
 
 ac_require_cmd bash jq awk date flock wc
 WALK_SRC="$REPO_ROOT/lib/pr-lifecycle.sh"
@@ -172,23 +174,6 @@ ci_get_logs() { :; }
 # resolved signature would be inert either way.
 signature_for() { printf '\n'; }
 
-# --- tape-read helpers (JSONL, not a jq array) --------------------------------
-count_outcomes() {
-  local f="$1/tape.jsonl"
-  if [ -f "$f" ]; then
-    jq -c 'select(.type == "outcome")' "$f" 2>/dev/null | wc -l
-  else
-    echo 0
-  fi
-}
-
-# $1 TAPE_DIR   $2 jq path (e.g. .numbers.ci_red)
-first_outcome() {
-  local f="$1/tape.jsonl" p="$2"
-  if [ -f "$f" ]; then
-    jq -r "select(.type == \"outcome\") | $p" "$f" 2>/dev/null | head -n1
-  fi
-}
 
 # --- scenario 1: walk totals -------------------------------------------------
 ac_log "scenario 1: walk with one CI failure + one review round + merge"
