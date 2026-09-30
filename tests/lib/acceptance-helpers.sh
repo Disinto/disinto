@@ -370,6 +370,44 @@ EOF
   TOOL="$REPO_ROOT/tools/calibration.sh"
 }
 
+# ── Per-run pack calibration (issue-1605.sh, issue-1614.sh) ──────────────────
+# The per-pack tests (issue-1605.sh, issue-1614.sh) use their own fixture
+# packs and a per-run CALIBRATION_LOOPS_FILE seam, unlike the four tests that
+# use the fixed standard pack via ac_calibration_env. The shared TMP_DIR/trap,
+# TOOL, the exact 9-column table HEADER, the rc/out/err_out run state, and the
+# run_calib() runner below are the single definition of that boilerplate, so
+# the two tests do not duplicate it file-to-file (duplicate-detection).
+#
+# ac_calib_env — shared calibration acceptance environment for per-run pack
+# tests: TMP_DIR + EXIT trap, the calibration TOOL, the exact 9-column table
+# HEADER, and the global rc/out/err_out run state.
+ac_calib_env() {
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  # shellcheck disable=SC2034  # TOOL is consumed by the calling acceptance scripts
+  TOOL="$REPO_ROOT/tools/calibration.sh"
+  # shellcheck disable=SC2034  # HEADER is consumed by the calling acceptance scripts
+  HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+  rc=0
+  out=""
+  err_out=""
+}
+
+# run_calib <pack-path> <tape-dir> — run the calibration tool with
+# CALIBRATION_LOOPS_FILE and TAPE_DIR set per run, capturing stdout into out,
+# stderr into err_out, and the exit status into rc. Requires ac_calib_env (it
+# uses its TOOL/rc/out/err_out). Shared by issue-1605.sh and issue-1614.sh so
+# the identical runner body is not duplicated file-to-file (duplicate-detection).
+run_calib() {
+  local pack="$1" dir="$2" errfile
+  errfile="$(mktemp)"
+  rc=0
+  out="$(CALIBRATION_LOOPS_FILE="$pack" TAPE_DIR="$dir" bash "$TOOL" 2>"$errfile")" || rc=$?
+  # shellcheck disable=SC2034  # err_out is consumed by the calling acceptance scripts
+  err_out="$(cat "$errfile" 2>/dev/null || true)"
+  rm -f "$errfile"
+}
+
 # ── Edge-control ledger fixtures (edge-verb acceptance tests) ────────────────
 # The edge verbs read a throwaway $ACCOUNTS_FILE that each test sets up in an
 # mktemp dir (never /var/lib/disinto). These are the single definition of the
