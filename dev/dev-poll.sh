@@ -42,6 +42,7 @@ source "$(dirname "$0")/../lib/sprint-tape.sh"
 # shellcheck source=../lib/signature.sh
 source "$(dirname "$0")/../lib/signature.sh"
 # shellcheck source=../lib/catalog-forecast.sh
+# Kept (unused since #1632) so catalog_forecast can be re-enabled later.
 source "$(dirname "$0")/../lib/catalog-forecast.sh"
 check_active dev
 
