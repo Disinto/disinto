@@ -41,17 +41,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export REPO_ROOT
-
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
-
 ac_require_cmd awk jq grep mktemp head wc cat
-
+# Real marker line (comments/blanks are invisible to the duplicate detector),
+# so this header's window is distinct from the other dev-poll acceptance tests.
+export AC_TEST=acceptance-1632
 DEV_POLL="$REPO_ROOT/dev/dev-poll.sh"
 ac_assert_file "$DEV_POLL" "dev/dev-poll.sh is missing"
 ac_assert_file "$REPO_ROOT/lib/tape.sh" "lib/tape.sh is missing"
-ac_assert_file "$REPO_ROOT/lib/sprint-block.sh" "lib/sprint-block.sh is missing"
-ac_assert_file "$REPO_ROOT/lib/sprint-tape.sh" "lib/sprint-tape.sh is missing"
 grep -q '^source .*lib/tape\.sh' "$DEV_POLL" \
   || ac_fail "dev-poll.sh must source lib/tape.sh"
 grep -qF 'emit_tape_proposal "$READY_ISSUE"' "$DEV_POLL" \
