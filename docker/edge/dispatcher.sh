@@ -488,8 +488,10 @@ EOF
     '{id: $id, exit_code: $exit_code, timestamp: $timestamp, logs: $logs}' \
     > "${scratch_dir}/${result_relpath}"
 
-  # The result is now on disk — record it on the production tape (best
-  # effort — #1407; a tape failure never blocks the push).
+  # The result is now on disk — record it on the vault tape (best effort —
+  # #1407, #1630; a tape failure never blocks the push): close the open run
+  # started at fire, then append the matching outcome.
+  emit_tape_run_close "$action_id" "$exit_code"
   emit_tape_outcome "$action_id" "$exit_code" "${scratch_dir}/${result_relpath}"
 
   # Terminal-rejected actions (#1182): move the .toml out of vault/actions/
@@ -898,23 +900,28 @@ _launch_runner_nomad() {
 }
 
 # -----------------------------------------------------------------------------
-# TAPE: production-loop instrumentation (#1407)
+# TAPE: vault-loop instrumentation (#1407, #1630)
 #
-# The dispatcher is the production organ of the proposal loop (lib/tape.sh,
-# #1389): firing an approved vault action appends one
-# {"type":"proposal","loop":"production"} record, and the action's
-# result.json being observed (written by commit_result_via_git) appends the
-# matching {"type":"outcome"} record. The action id is both records' id /
-# proposal_id, so the pair keys off the action itself — no id file needed.
-# The fire epoch goes to a project-scoped /tmp file so the outcome step can
-# compute duration_s; an action that never fired (rejected before the
-# proposal) has no file and gets no outcome. Every tape failure logs a
-# WARNING and returns 0 — dispatch is never blocked by the tape.
+# The dispatcher is the vault organ of the proposal loop (lib/tape.sh, #1389).
+# Firing an approved vault action appends one
+# {"type":"proposal","loop":"vault"} record and, immediately after, one OPEN
+# {"type":"run"} (organ=dispatcher, agent=<DISPATCHER_BACKEND>, started = now,
+# attempts 1, cost {}) keyed to that proposal. The action id is every record's
+# id / proposal_id — no id file needed. The action's cost lives on its run
+# under the proposal: the fire epoch is kept at
+# ${TAPE_DIR}/vault-runs/<action-id>, and on result observation the closing
+# run (ended = now, status=completed|failed, cost.duration_s) is appended
+# before the matching {"type":"outcome"} record, then the start-epoch file is
+# deleted. An action that never fired has no start file: its closing run
+# carries cost {} and started = now; it still gets no outcome record. The
+# /tmp fire epoch is kept for the outcome's duration_s (issue #1407 compat).
+# Every tape failure logs a WARNING and returns 0 — dispatch is never blocked
+# by the tape.
 # -----------------------------------------------------------------------------
 
 # emit_tape_proposal ACTION_ID
 # Record that the dispatcher is firing an approved vault action. class = the
-# action kind (the TOML's formula field — "production" when somehow empty);
+# action kind (the TOML's formula field — "vault" when somehow empty);
 # context = {"target":<host>}, the action's RESOURCES.md alias ("" when the
 # TOML has no host field); decision approved; id and ref = the action id.
 # VAULT_ACTION_FORMULA / VAULT_ACTION_HOST are set by validate_action.
@@ -928,13 +935,13 @@ emit_tape_proposal() {
     return 0
   fi
 
-  class="${VAULT_ACTION_FORMULA:-production}"
+  class="${VAULT_ACTION_FORMULA:-vault}"
   if ! ctx="$(jq -cn --arg t "${VAULT_ACTION_HOST:-}" '{target: $t}')"; then
     log "WARNING: tape: failed to build context for ${action_id}"
     return 0
   fi
 
-  if ! tape_proposal "$action_id" production "$class" "" "" "$ctx" "" \
+  if ! tape_proposal "$action_id" vault "$class" "" "" "$ctx" "" \
       "approved" "$action_id" >/dev/null 2>&1; then
     log "WARNING: tape: failed to append proposal record ${action_id}"
     return 0
@@ -947,7 +954,7 @@ emit_tape_proposal() {
     log "WARNING: tape: failed to write fire-epoch file ${start_file}"
   fi
 
-  log "tape: recorded production proposal ${action_id} (class: ${class})"
+  log "tape: recorded vault proposal ${action_id} (class: ${class})"
   return 0
 }
 
@@ -996,6 +1003,70 @@ emit_tape_outcome() {
   fi
 
   log "tape: recorded outcome for ${action_id} (ok: ${ok}, duration_s: ${duration_s})"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# emit_tape_run_close ACTION_ID EXIT_CODE
+# Closes the open vault run that launch_runner appended when it fired
+# (#1630). Appends a second {"type":"run"} line with the same proposal_id
+# (records are immutable — the close is a fresh append, not an edit):
+#   started = the fire epoch from ${TAPE_DIR}/vault-runs/<action-id> when that
+#             file holds an integer epoch, else now,
+#   ended   = now,
+#   attempts = 1,
+#   status  = completed (exit 0) / failed otherwise,
+#   cost    = {"duration_s":<now - started>} when the fire epoch is present,
+#             {} when it is not (best-effort elapsed; an action whose fire-
+#             epoch write failed, or that was never fired, carries {}).
+# The fire-epoch file is removed after the append so a re-fire (a new fire
+# for the same action id) gets a fresh start. Empty action_id or a non-numeric
+# exit code → return 0 (mirror emit_tape_outcome). Always returns 0.
+# -----------------------------------------------------------------------------
+emit_tape_run_close() {
+  local action_id="${1:-}" exit_code="${2:-}"
+  local now_epoch start_file started_epoch started duration_s cost status
+  cost="{}"
+  if [ -z "$action_id" ]; then
+    return 0
+  fi
+  case "$exit_code" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+
+  now_epoch="$(date -u +%s)"
+  start_file="${TAPE_DIR}/vault-runs/${action_id}"
+  started="$now_epoch"
+  started_epoch=""
+  if [ -f "$start_file" ]; then
+    started_epoch="$(cat "$start_file" 2>/dev/null || echo '')"
+  fi
+  case "$started_epoch" in
+    '' | *[!0-9]*)
+      # No fire epoch available: started = now, cost = {}.
+      ;;
+    *)
+      started="$started_epoch"
+      duration_s=$(( now_epoch - started_epoch ))
+      [ "$duration_s" -ge 0 ] || duration_s=0
+      cost="$(jq -cn --argjson d "$duration_s" '{"duration_s":$d}')"
+      ;;
+  esac
+
+  if [ "$exit_code" -eq 0 ]; then
+    status="completed"
+  else
+    status="failed"
+  fi
+
+  if ! tape_run "$action_id" dispatcher "$DISPATCHER_BACKEND" \
+      "$started" "$now_epoch" 1 "$cost" "$status" >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append closed run ${action_id}"
+  else
+    log "tape: closed vault run ${action_id} (status: ${status}, duration_s: ${duration_s:-0})"
+  fi
+
+  rm -f "$start_file" 2>/dev/null
   return 0
 }
 
@@ -1064,9 +1135,26 @@ launch_runner() {
     artifacts_csv=$(echo "${VAULT_ACTION_ARTIFACTS}" | xargs | tr ' ' ',')
   fi
 
-  # Record the fire on the production tape before delegating (best effort —
+  # Record the fire on the vault tape before delegating (best effort —
   # #1407; a tape failure never blocks dispatch).
   emit_tape_proposal "$action_id"
+
+  # Open the vault run for this action (#1630): the action's cost belongs on
+  # a run under its proposal, so we start an open run now and close it when
+  # the result.json is observed (emit_tape_run_close in
+  # commit_result_via_git). The fire epoch is kept at
+  # ${TAPE_DIR}/vault-runs/<action-id> for the close's duration_s. Best effort
+  # — a tape failure never blocks dispatch.
+  started_epoch="$(date -u +%s)"
+  vault_runs_dir="${TAPE_DIR}/vault-runs"
+  if ! { mkdir -p "$vault_runs_dir" &&
+         printf '%s\n' "$started_epoch" > "${vault_runs_dir}/${action_id}"; }; then
+    log "WARNING: tape: failed to record vault-run fire epoch ${action_id}"
+  fi
+  if ! tape_run "$action_id" dispatcher "$DISPATCHER_BACKEND" \
+      "$started_epoch" '' 1 '{}' '' >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append open run ${action_id}"
+  fi
 
   # Delegate to the selected backend
   "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv" "$image" "$artifacts_csv"
