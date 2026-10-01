@@ -895,6 +895,37 @@ def main() -> int:
         "629fa80f55e9b1509e007547707ac21f": "issue-1608.sh + issue-1613.sh: CALLS+= DELETE / printf null / ;; (#1608)",
         "b4fe665dea93f1171ea7f438b4ffda6d": "issue-1608.sh + issue-1609.sh: } / last_json() { (#1608)",
         "80a21053da9907fa691a61b638cec77e": "issue-1608.sh + issue-1609.sh: } / last_json() / tail tape.jsonl (#1608)",
+    # --- issue-1475.sh <-> issue-1633.sh: shared proposal-driver boilerplate (#1633) ---
+    # Per-test-isolation convention: each acceptance test is a self-contained,
+    # standalone script.  issue-1475.sh and issue-1633.sh both drive
+    # lib/formula-session.sh through an identical prop_driver() (ac_require_cmd
+    # batch, mktemp TMP_DIR + trap, export/unset TAPE_PROPOSAL_ID, source
+    # formula-session.sh, formula_session_start/end) and an identical awk-based
+    # formula_session_start body extractor.  The shared 5-line windows are
+    # intentional per-test isolation, not copy-paste.
+    "5269fdde36af48c8d28be3daf3bf8ff0": "issue-1475.sh + issue-1633.sh: ac_require_cmd batch + TARGET + ac_assert_file (#1633)",
+    "2ceaaa825c00f745a27254bc212521c3": "issue-1475.sh + issue-1633.sh: TMP_DIR/mktemp + trap EXIT + prop_driver() { (#1633)",
+    "7b6b6b983a80c6ac196f2689c1677f45": "issue-1475.sh + issue-1633.sh: trap EXIT + prop_driver() { + local proposal (#1633)",
+    "04c6ee18e5ec76bca066401063134ea1": "issue-1475.sh + issue-1633.sh: prop_driver() { + local proposal + local driver (#1633)",
+    "0acaad08f26169d18c7d63aa600794bb": "issue-1475.sh + issue-1633.sh: local proposal + local driver + driver=mktemp (#1633)",
+    "eba09785bf03ec6adee39d6e1f03ce7b": "issue-1475.sh + issue-1633.sh: local driver + driver=mktemp + if [ -n '$proposal' ]; then (#1633)",
+    "08c0a0d7ddedfa73a52fcabe9de9080c": "issue-1475.sh + issue-1633.sh: driver=mktemp + if [ -n '$proposal' ] + prop_line=export (#1633)",
+    "27f3e6bdcabd3cf00c8e52716f8871c3": "issue-1475.sh + issue-1633.sh: if [ -n '$proposal' ] + prop_line=export + else (#1633)",
+    "1ea178413eb31b7fde8a228e77ede5a8": "issue-1475.sh + issue-1633.sh: prop_line=export + else + prop_line=unset (#1633)",
+    "1436d3701b99f87a886ce96d1f99efdd": "issue-1475.sh + issue-1633.sh: else + prop_line=unset + fi (#1633)",
+    "0b35372799b52dd60056a67b2d37fcf8": "issue-1475.sh + issue-1633.sh: prop_line=unset + fi + cat > '$driver' <<EOF (#1633)",
+    "a2da36a7cee71efdf83df0a943c38966": "issue-1475.sh + issue-1633.sh: fi + cat > '$driver' <<EOF + set -euo pipefail (#1633)",
+    "7aa62c232f7abab2eb9a69df21e735c4": "issue-1475.sh + issue-1633.sh: cat > '$driver' <<EOF + set -euo pipefail + log() { (#1633)",
+    "e97bc1583e1c1c508a111697ab9999d5": "issue-1475.sh + issue-1633.sh: set -euo pipefail + log() + unset TAPE_PROPOSAL_ID (#1633)",
+    "02630975b29ca655eb63189a249b853d": "issue-1475.sh + issue-1633.sh: log() + unset TAPE_PROPOSAL_ID + export AGENT_HARNESS (#1633)",
+    "e0470b52026df581a038af724ed310ad": "issue-1475.sh + issue-1633.sh: unset TAPE_PROPOSAL_ID + export AGENT_HARNESS + source formula-session.sh (#1633)",
+    "23b6e26272f16b4b110a594d82865f48": "issue-1475.sh + issue-1633.sh: export AGENT_HARNESS + source formula-session.sh + export TAPE_DIR (#1633)",
+    "1bedb20837ef2dbb52665d9a6f1808cd": "issue-1475.sh + issue-1633.sh: source formula-session.sh + export TAPE_DIR + $prop_line (#1633)",
+    "a60020d83ed5fbb72098ecc3a1ef0a67": "issue-1475.sh + issue-1633.sh: export TAPE_DIR + $prop_line + formula_session_start (#1633)",
+    "12eb8ce912fabb35b40047e28c310507": "issue-1475.sh + issue-1633.sh: $prop_line + formula_session_start + formula_session_end $rc (#1633)",
+    "68ef0281d4d380fba8d3e926899ea722": "issue-1475.sh + issue-1633.sh: formula_session_start + formula_session_end $rc + EOF (#1633)",
+    "4bbcf9ef9f014affb688e25b4bcd0809": "issue-1475.sh + issue-1633.sh: fn_body=awk ' + $0=='formula_session_start() {' { infn=1;next } + infn&&/^}$/ {exit} (#1633)",
+    "bdcd0c63dbf1a03c24bb8c67c6ea8a97": "issue-1475.sh + issue-1633.sh: $0=='formula_session_start() {' { infn=1;next } + infn&&/^}$/ {exit} + infn {print} (#1633)",
     }
 
     if not sh_files:
