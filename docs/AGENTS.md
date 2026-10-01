@@ -90,15 +90,10 @@ disinto/                 (code repo)
 │                  tests/acceptance/issue-1572.sh
 │                  run-acceptance.sh — acceptance test runner for CI
 │                  jev-scope.sh — factory-side Jev-scope reader (pipes an issue
-
 │                  text to the Porter door and records the three noul readings,
-
 │                  #1598); not called by the dev pick since #1632 (the Jev reading
-
 │                  was dropped from the tape context); pure calibration, never
-
 │                  changes the pick; see dev/AGENTS.md
-
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
