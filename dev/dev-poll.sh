@@ -35,6 +35,10 @@ source "$(dirname "$0")/../lib/guard.sh"
 source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 # shellcheck source=../lib/tape.sh
 source "$(dirname "$0")/../lib/tape.sh"
+# shellcheck source=../lib/sprint-block.sh
+source "$(dirname "$0")/../lib/sprint-block.sh"
+# shellcheck source=../lib/sprint-tape.sh
+source "$(dirname "$0")/../lib/sprint-tape.sh"
 # shellcheck source=../lib/signature.sh
 source "$(dirname "$0")/../lib/signature.sh"
 # shellcheck source=../lib/catalog-forecast.sh
@@ -1317,15 +1321,21 @@ fi
 #
 # dev-poll's proposal is "work this issue now"; the matching outcome record
 # lands when the dev PR reaches terminal state (#1399), keyed off the id file
-# written below. class = the issue's primary (first) label, or "dev" when it
-# has none; open_prs comes from one forge call and degrades to {} when it
-# fails. Any tape failure logs a warning — the pick proceeds unchanged.
+# written below. class = the issue's milestone sprint nature (#1619): the
+# milestone's sprint block "class:" ("deploy"/"experiment"/"internal" or
+# "unclassed") when its id is an integer, "backlog" when the issue is readable
+# but has no usable milestone, and the historical "dev" when the forge GET
+# fails. parent = that milestone's sprint proposal id (lib/sprint-tape.sh,
+# #1618), empty when there is no milestone or the mint failed. open_prs comes
+# from one forge call and degrades to {} when it fails. Any tape failure logs
+# a warning — the pick proceeds unchanged.
 #
 # Args: issue_number
 # =============================================================================
 emit_tape_proposal() {
   local issue="$1"
-  local id class ctx open_prs primary id_file issue_json api_ok size_class backend started_file
+  local id class ctx open_prs parent id_file issue_json api_ok size_class backend started_file \
+    milestone_id milestone_desc
   local forecast existing_id tmp_forecast
   local jev_state="" jev_out="" jev_rc=0 jev_nouls="" jev_tool=""
 
@@ -1357,16 +1367,19 @@ emit_tape_proposal() {
     return 0
   fi
 
-  # class: the issue's primary (first) label, or "dev" when it has none;
-  # size_class: S/M/L from a size label (case-insensitive, exact), else "M".
-  # One fetch supplies both — the same issue GET the stub answers for the
-  # primary label.
+  # class (#1619): the issue's milestone sprint nature, read from the
+  # milestone's sprint block "class:" line when the milestone id is an
+  # integer ("deploy"/"experiment"/"internal"), "unclassed" when that
+  # line is absent, "backlog" when the issue has no usable milestone, and
+  # the historical "dev" when the forge GET fails (empty JSON, so existing
+  # goldens on the API-failure path keep "dev"). size_class: S/M/L from a
+  # size label (case-insensitive, exact), else "M". One issue GET supplies
+  # both.
   class="dev"
+  parent=""
   size_class="M"
   issue_json="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${issue}" 2>/dev/null)" || true
-  primary="$(printf '%s' "$issue_json" | jq -r '.labels[0].name // empty' 2>/dev/null)" || true
-  [ -n "$primary" ] && class="$primary"
   size_class="$(printf '%s' "$issue_json" | jq -r '
     ([.labels[]?.name | select(type == "string") | ascii_downcase]
       | map(select(. == "s" or . == "m" or . == "l"))) as $s
@@ -1379,6 +1392,33 @@ emit_tape_proposal() {
     S | M | L) ;;
     *) size_class="M" ;;
   esac
+  # class + parent from the milestone's sprint (#1619), applied only when
+  # the issue GET succeeded. On the API-failure path (empty issue_json) we
+  # skip this whole block, so the initial class="dev" survives and the
+  # existing acceptance goldens on that path keep passing.
+  if [ -n "$issue_json" ]; then
+    milestone_id="$(printf '%s' "$issue_json" \
+      | jq -r '.milestone.id // empty' 2>/dev/null)" || true
+    milestone_desc="$(printf '%s' "$issue_json" \
+      | jq -r '.milestone.description // empty' 2>/dev/null)" || true
+    if [[ "$milestone_id" =~ ^[0-9]+$ ]]; then
+      # class: the sprint block's "class:" line. sprint_field always
+      # returns 0 (rc 0 with empty output when the line is absent), so
+      # this assignment never trips set -e; an empty result means "no class
+      # line" -> "unclassed".
+      class="$(sprint_field "$milestone_desc" class 2>/dev/null)" \
+      || class=""
+      [ -n "$class" ] || class="unclassed"
+      # parent: the milestone's sprint proposal id. A mint failure must
+      # never block the pick; parent simply stays empty and the pick
+      # proceeds.
+      parent="$(sprint_proposal_id "$milestone_id" "$class" 2>/dev/null)" \
+      || parent=""
+    else
+      # No usable (integer) milestone: dev proposals fall into the backlog.
+      class="backlog"
+    fi
+  fi
 
   # open_prs: count of open PRs from one forge call. limit=50 is the API's
   # max page size, so the count saturates at 50 (the factory never approaches
@@ -1500,7 +1540,7 @@ emit_tape_proposal() {
     fi
   fi
 
-  if ! tape_proposal "$id" dev "$class" "" "" "$ctx" "$forecast" "approved" "$issue" \
+  if ! tape_proposal "$id" dev "$class" "$parent" "" "$ctx" "$forecast" "approved" "$issue" \
       >/dev/null 2>&1; then
     log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
     return 0
@@ -1525,7 +1565,7 @@ emit_tape_proposal() {
     log "WARNING: tape: failed to write proposal id file ${id_file}"
   fi
 
-  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, open_prs: ${open_prs:-unknown}, size_class: ${size_class}, backend: ${backend:-none})"
+  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, parent: ${parent:-none}, open_prs: ${open_prs:-unknown}, size_class: ${size_class}, backend: ${backend:-none})"
   return 0
 }
 
