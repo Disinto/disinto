@@ -74,19 +74,16 @@ milestone's sprint block `class:` line (`deploy`/`experiment`/`internal`, parsed
 integer but that line is absent, `backlog` when there is no usable (missing/non-integer) milestone,
 and the historical `dev` when the forge GET fails; `parent` = the minted sprint proposal id
 (`lib/sprint-tape.sh` `sprint_proposal_id`), empty when there is no usable milestone or the mint
-failed — context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?", "jev"?}` (open_prs
+failed — context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?"}` (open_prs
 from one pull GET, size_class from the issue's size label — case-insensitive, default
-M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; `forecast_method`
-records the method used — `counts` (a measured catalog row) or `prior` (the flat 0.5 fallback) —
-so the #1453 calibration reader can tell a flat prior from measured data; `jev` = `{"method":"jev","pack":"scope","one_concept":<n>,
-"one_repo":<n>,"one_behavior":<n>}` (each noul in [0,1]) records the Jev-scope (#1597) reading of the issue — present only on a valid
-exit-0 read from `tools/jev-scope.sh` (`JEV_SCOPE_TOOL`), pure calibration that never changes the pick; omitted when the tool is
-missing/unconfigured/failed/invalid or the readings are out of range, and on the API-failure path, where the context degrades to `{}`),
-forecast = `{"p_success":<actual/100>,
-"est_cost":0,"est_dvision":<mean_duration_s-or-0>}` (measured: p_success is the catalog row's `actual` percent / 100 and `est_dvision` is the row's `mean duration_s` when that cell is a number, else 0, when that
-row's `n` is an integer >= CATALOG_FORECAST_MIN_N (default 5) AND its `actual` is an integer
-percent, or the flat prior `{"p_success":0.5,"est_cost":0,"est_dvision":0}` (= the planner's
-prior in planner-run.sh); written on every fresh pick), decision `approved`, ref
+M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; on the
+API-failure path the context degrades to `{}`). Per #1632 the proposal carries **no**
+forecast and **no** Jev-scope reading: the context is built from `open_prs` /
+`size_class` / `backend` only (no `jev` key), and the forecast argument of
+`tape_proposal` (`lib/tape.sh`) is an empty string, so no `forecast`, `forecast_method`,
+or `jev` keys are ever written — `lib/catalog-forecast.sh` and `tools/jev-scope.sh`
+stay in the repo, unused, to return later as named forecast methods; decision
+`approved`, ref
 the issue number — and stores the record's id in
 `/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id)
 so the #1399 outcome step can reference it, plus the pick's wall-clock epoch
