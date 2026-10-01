@@ -1,3 +1,0 @@
-{"action": "comment", "issue_number": 1620, "body": "Re-queued from `blocked` to `backlog` by the gardener (run 2026-10-01). Block cause: 3x resource-limit exits (no_push_after_3_attempts, branch fix/issue-1620 never pushed) \u2014 a transient compute limitation, not a dependency or design issue. This was the only open non-backlog dependency in the factory, so #1622 (backlog) was starved. All of #1620's own dependencies are closed (#1618); it passes the quality gate (## Affected files + ## Acceptance criteria present). Re-queued so dev-poll can retry. If it re-blocks, investigate compute availability."}
-{"action": "remove_label", "issue_number": 1620, "label": "blocked"}
-{"action": "add_label", "issue_number": 1620, "label": "backlog"}
