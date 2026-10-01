@@ -1334,8 +1334,8 @@ fi
 # =============================================================================
 emit_tape_proposal() {
   local issue="$1"
-  local id class ctx open_prs parent id_file issue_json api_ok size_class backend started_file \
-    milestone_id milestone_desc
+  local id class ctx open_prs parent id_file issue_json api_ok size_class backend started_file
+  local milestone_id milestone_desc
   local forecast existing_id tmp_forecast
   local jev_state="" jev_out="" jev_rc=0 jev_nouls="" jev_tool=""
 
