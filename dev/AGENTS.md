@@ -69,7 +69,12 @@ labels the issue `blocked`, drops `in-progress`, and callers stop retrying and s
 the dev-agent fallback (return code 2). **Tape proposal emission (#1398)**: when the
 pick resolves, `emit_tape_proposal()` appends one `{"type":"proposal","loop":"dev",...}`
 record to the tape (`lib/tape.sh`) before launching dev-agent — class = the issue's
-primary label (or `dev`), context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?", "jev"?}` (open_prs
+milestone's sprint block `class:` line (`deploy`/`experiment`/`internal`, parsed via
+`lib/sprint-block.sh` from `.milestone.description`), `unclassed` when the milestone id is an
+integer but that line is absent, `backlog` when there is no usable (missing/non-integer) milestone,
+and the historical `dev` when the forge GET fails; `parent` = the minted sprint proposal id
+(`lib/sprint-tape.sh` `sprint_proposal_id`), empty when there is no usable milestone or the mint
+failed — context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?", "jev"?}` (open_prs
 from one pull GET, size_class from the issue's size label — case-insensitive, default
 M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; `forecast_method`
 records the method used — `counts` (a measured catalog row) or `prior` (the flat 0.5 fallback) —

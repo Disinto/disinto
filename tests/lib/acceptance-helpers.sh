@@ -267,6 +267,36 @@ ac_run_tape_emit() {
   ) 2>&1
 }
 
+# ac_run_sprint_emit <STUB_BIN> <TAPE_DIR> <FN_SRC> <fail> <fn-name> <bare> [args...]
+#
+# Sprint-aware counterpart of ac_run_tape_emit (issue #1619). The milestone-sprint
+# tape emitter in dev-poll.sh calls sprint_field() and sprint_proposal_id(), which
+# live in lib/sprint-block.sh and lib/sprint-tape.sh; ac_run_tape_emit sources
+# lib/tape.sh alone, so this runner additionally sources those two libs so the
+# extracted emitter has them. <bare>=1 opens the subshell under set -euo pipefail
+# (a genuine top-level set -e context, used by the AC4 set-e regression) whereas
+# <bare>=0 mirrors ac_run_tape_emit's guarded subshell. fn-args (the issue number)
+# are passed through unchanged. Prints the subshell's combined output; the exit
+# status is the emitter's.
+ac_run_sprint_emit() {
+  local stub_bin="$1" tape_dir="$2" fn_src="$3" fail="$4" fn_name="$5" bare="$6"
+  shift 6
+  (
+    [ "$bare" = "1" ] && set -euo pipefail
+    ac_stub_env "$stub_bin" "$tape_dir"
+    export FORGE_API="https://forge.example/api/v1"
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/tape.sh"
+    source "$REPO_ROOT/lib/sprint-block.sh"
+    source "$REPO_ROOT/lib/sprint-tape.sh"
+    eval "$fn_src"
+    if [ "$fail" = "1" ]; then
+      export AC_STUB_FAIL=1
+    fi
+    "$fn_name" "$@"
+  ) 2>&1
+}
+
 # ac_tape_emitter_wiring <target-file> <fn-name> <call-text> — assert a tape
 # emitter is wired into a top-level executable: <target-file> exists, sources
 # lib/tape.sh, and contains the literal call <call-text> (e.g.
