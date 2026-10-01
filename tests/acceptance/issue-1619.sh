@@ -135,34 +135,16 @@ STUB_EOF
 chmod +x "$STUB_BIN/curl"
 export STUB_BIN
 
-# Runner for the milestone ACs: like the shared ac_run_tape_emit, but it also
-# sources the two sprint libs so sprint_field() and sprint_proposal_id() are
-# defined in the subshell. (The shared ac_run_tape_emit sources lib/tape.sh
-# alone, so it would not know the sprint helpers.)
-ac_run_sprint_emit() {
-  local stub_bin="$1" tape_dir="$2" fn_src="$3" fail="$4" fn_name="$5"
-  shift 5
-  (
-    ac_stub_env "$stub_bin" "$tape_dir"
-    export FORGE_API="https://forge.example/api/v1"
-    # shellcheck disable=SC1090,SC1091
-    source "$REPO_ROOT/lib/tape.sh"
-    source "$REPO_ROOT/lib/sprint-block.sh"
-    source "$REPO_ROOT/lib/sprint-tape.sh"
-    eval "$fn_src"
-    if [ "$fail" = "1" ]; then
-      export AC_STUB_FAIL=1
-    fi
-    "$fn_name" "$@"
-  ) 2>&1
-}
+# Runner for the milestone ACs: the shared ac_run_sprint_emit (tests/lib/
+# acceptance-helpers.sh) sources lib/sprint-block.sh + lib/sprint-tape.sh on top
+# of lib/tape.sh so the extracted emitter's sprint helpers are defined.
 
 # ── AC1: milestone id 7 "class: deploy" -> .class deploy, .parent = sprint id ──
 ac_log "AC1: milestone id 7 with 'class: deploy' -> dev .class deploy, .parent = the minted sprint id (sprints/7)"
 TAPE1="$TMP_DIR/tape1"
 mkdir -p "$TAPE1"
 rc=0
-out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE1" "$FN_SRC" "0" emit_tape_proposal 70)" || rc=$?
+out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE1" "$FN_SRC" "0" emit_tape_proposal 0 70)" || rc=$?
 ac_assert_eq "$rc" "0" "AC1: must exit 0 (got $rc): $out"
 ac_assert_file "$TAPE1/tape.jsonl" "AC1: no tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "2" \
@@ -186,7 +168,7 @@ ac_log "AC2: milestone id 8 WITHOUT a 'class:' line -> dev .class unclassed"
 TAPE2="$TMP_DIR/tape2"
 mkdir -p "$TAPE2"
 rc=0
-out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE2" "$FN_SRC" "0" emit_tape_proposal 71)" || rc=$?
+out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE2" "$FN_SRC" "0" emit_tape_proposal 0 71)" || rc=$?
 ac_assert_eq "$rc" "0" "AC2: must exit 0 (got $rc): $out"
 ac_assert_file "$TAPE2/tape.jsonl" "AC2: no tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE2/tape.jsonl")" "2" \
@@ -205,7 +187,7 @@ ac_log "AC3: no usable milestone -> dev .class backlog, no parent"
 TAPE3="$TMP_DIR/tape3"
 mkdir -p "$TAPE3"
 rc=0
-out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE3" "$FN_SRC" "0" emit_tape_proposal 72)" || rc=$?
+out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE3" "$FN_SRC" "0" emit_tape_proposal 0 72)" || rc=$?
 ac_assert_eq "$rc" "0" "AC3: must exit 0 (got $rc): $out"
 ac_assert_file "$TAPE3/tape.jsonl" "AC3: no tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE3/tape.jsonl")" "1" \
@@ -225,23 +207,11 @@ ac_log "AC4: mint failure (sprints is a file) -> proposal written with .class de
 TAPE4="$TMP_DIR/tape4"
 mkdir -p "$TAPE4"
 touch "$TAPE4/sprints"   # sprints is a regular file -> mkdir -p in the mint fails
-export TMP_DIR STUB_BIN JSON_DIR REPO_ROOT FN_SRC PROJECT_NAME MILESTONE_JSON_DIR TAPE4
-(
-  set -euo pipefail
-  export PATH="$STUB_BIN:$PATH"
-  export API="https://forge.example/api/v1"
-  export FORGE_API="https://forge.example/api/v1"
-  export FORGE_TOKEN="stub-token"
-  export TAPE_DIR="$TAPE4"
-  export PROJECT_NAME
-  export MILESTONE_JSON_DIR
-  # shellcheck disable=SC1090,SC1091
-  source "$REPO_ROOT/lib/tape.sh"
-  source "$REPO_ROOT/lib/sprint-block.sh"
-  source "$REPO_ROOT/lib/sprint-tape.sh"
-  eval "$FN_SRC"
-  emit_tape_proposal 73
-)
+# ac_run_sprint_emit's <bare>=1 opens a set -euo pipefail subshell; MILESTONE_JSON_DIR
+# is inherited from the top-level export.
+rc=0
+out="$(ac_run_sprint_emit "$STUB_BIN" "$TAPE4" "$FN_SRC" "0" emit_tape_proposal 1 73)" || rc=$?
+ac_assert_eq "$rc" "0" "AC4: must exit 0 under set -e (got $rc): $out"
 ac_assert_file "$TAPE4/tape.jsonl" "AC4: set-e kill or mint failure — no proposal line written"
 ac_assert_eq "$(wc -l < "$TAPE4/tape.jsonl")" "1" "AC4: exactly one proposal (the dev pick) under set -e"
 DEV_LINE="$(tail -n 1 "$TAPE4/tape.jsonl")"
