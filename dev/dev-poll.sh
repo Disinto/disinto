@@ -42,6 +42,7 @@ source "$(dirname "$0")/../lib/sprint-tape.sh"
 # shellcheck source=../lib/signature.sh
 source "$(dirname "$0")/../lib/signature.sh"
 # shellcheck source=../lib/catalog-forecast.sh
+# Kept (unused since #1632) so catalog_forecast can be re-enabled later.
 source "$(dirname "$0")/../lib/catalog-forecast.sh"
 check_active dev
 
@@ -1336,8 +1337,7 @@ emit_tape_proposal() {
   local issue="$1"
   local id class ctx open_prs parent id_file issue_json api_ok size_class backend started_file
   local milestone_id milestone_desc
-  local forecast existing_id tmp_forecast
-  local jev_state="" jev_out="" jev_rc=0 jev_nouls="" jev_tool=""
+  local existing_id
 
   # Re-pick guard (#1441): after the first pick the id file holds the proposal's
   # id. If it is present and contains a non-empty id, the proposal is already on
@@ -1433,26 +1433,6 @@ emit_tape_proposal() {
   backend="${DSH_MODEL:-}"
   [ -n "$backend" ] || backend="${CLAUDE_MODEL:-}"
   [ -n "$backend" ] || backend="${AGENT_HARNESS:-}"
-  # forecast (#1461): a fresh pick mints one proposal. Prefer the catalog
-  # forecast lib's measured prior when the lib is sourced; fall back to the
-  # flat prior when catalog_forecast is undefined (e.g. a test that sources
-  # lib/tape.sh alone) so the pick never fails. The lib always writes a forecast
-  # line and always exports CATALOG_FORECAST_METHOD ("counts" | "prior").
-  tmp_forecast="$(mktemp)"
-  if command -v catalog_forecast >/dev/null 2>&1; then
-    # stdout captured in a file (not $()) so CATALOG_FORECAST_METHOD is visible
-    # in this shell for the context build below.
-    catalog_forecast dev "$class" >"$tmp_forecast" 2>/dev/null
-    if [ -n "$(cat "$tmp_forecast" 2>/dev/null)" ]; then
-      forecast="$(cat "$tmp_forecast")"
-    else
-      forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
-    fi
-  else
-    forecast='{"p_success":0.5,"est_cost":0,"est_dvision":0}'
-  fi
-  rm -f "$tmp_forecast"
-
 
   # ctx is populated only when the forge answered both fetches (open_prs parses
   # as a count and the issue JSON is an object); otherwise it degrades to {}
@@ -1470,77 +1450,10 @@ emit_tape_proposal() {
     if [ -n "$backend" ]; then
       ctx="$(jq -cn --argjson c "$ctx" --arg b "$backend" '$c + {backend: $b}')"
     fi
-    # forecast_method records the method the forecast step actually used
-    # (#1461) so the #1453 calibration reader can tell a measured prior
-    # (catalog "counts") from the flat prior. Only when ctx carries real
-    # numbers (non-empty object) — on the API-failure path it degrades to
-    # {} and the method is omitted.
-    ctx="$(jq -cn --argjson c "$ctx" --arg fm "${CATALOG_FORECAST_METHOD:-prior}" '$c + {forecast_method: $fm}')"
 
-    # jev-scope (#1598): also record what Jev scoped this issue as — the
-    # three noul readings (one_concept / one_repo / one_behavior) — on the
-    # context. The pick is already fixed (READY_ISSUE is set; this block runs
-    # after the scan), so the reading is pure calibration: it must never
-    # change which issue is picked. State = title + blank line + body,
-    # byte-truncated to 32768 bytes; nothing else (no tokens, no env) is sent
-    # to the door. A missing / unconfigured / failed reading degrades to no
-    # jev field and never fails the pick.
-    # Best-effort state build (truncated to 32768 bytes); a jq error leaves it
-    # empty so the door degrades to "no jev field" instead of killing the tick.
-    jev_state="$(printf '%s' "$issue_json" \
-      | jq -r '(.title // "") + "\n\n" + (.body // "")' 2>/dev/null \
-      | head -c 32768)" || :
-    jev_tool="${JEV_SCOPE_TOOL:-${FACTORY_ROOT:-${SCRIPT_DIR:-.}}/tools/jev-scope.sh}"
-    if [ -n "$jev_tool" ] && [ -f "$jev_tool" ]; then
-      # Best-effort calibration: any non-zero tool exit must degrade to "no jev
-      # field", never abort the pick. The `||` on the left suppresses `set -e`
-      # for just this assignment and captures the tool's exit code (0 = valid
-      # reading, 1 = failure, 2 = unconfigured) — the old `; jev_rc=$?` form
-      # let a failed substitution (the unconfigured exit-2 default) kill the
-      # whole poll tick.
-      jev_out="$(printf '%s' "$jev_state" | bash "$jev_tool" 2>/dev/null)" || jev_rc=$?
-      case "$jev_rc" in
-        0)
-          # Only a full, valid set of three noul readings (each a number in
-          # [0, 1]) is written; a partial or out-of-range reading degrades to
-          # a warning, never a write. Exit 0 already implies the body is an
-          # object with an answers object (the tool's own validation, #1597),
-          # so only the noul values themselves are checked here.
-          jev_nouls="$(printf '%s' "$jev_out" | jq -c '
-            if ((.answers | type) == "object")
-               and ((.answers.one_concept | type) == "object")
-               and ((.answers.one_concept.noul | type) == "number")
-               and (.answers.one_concept.noul >= 0 and .answers.one_concept.noul <= 1)
-               and ((.answers.one_repo | type) == "object")
-               and ((.answers.one_repo.noul | type) == "number")
-               and (.answers.one_repo.noul >= 0 and .answers.one_repo.noul <= 1)
-               and ((.answers.one_behavior | type) == "object")
-               and ((.answers.one_behavior.noul | type) == "number")
-               and (.answers.one_behavior.noul >= 0 and .answers.one_behavior.noul <= 1)
-             then
-               [.answers.one_concept.noul, .answers.one_repo.noul,
-                .answers.one_behavior.noul]
-             else empty end' 2>/dev/null)" || jev_nouls=""
-          if [[ -n "$jev_nouls" ]]; then
-            ctx="$(jq -cn --argjson c "$ctx" --argjson v "$jev_nouls" \
-              '$c + {jev: {method: "jev", pack: "scope", one_concept: $v[0],
-                one_repo: $v[1], one_behavior: $v[2]}}')"
-          else
-            log "WARNING: tape: jev-scope #${issue} returned no valid noul readings — no jev field"
-          fi
-          ;;
-        2)
-          # Not configured (no PORTER_* env). Silent: most factory environments
-          # run unconfigured, and the pick is unaffected either way.
-          ;;
-        *)
-          log "WARNING: tape: jev-scope exit $jev_rc for #${issue} — no jev field"
-          ;;
-      esac
-    fi
   fi
 
-  if ! tape_proposal "$id" dev "$class" "$parent" "" "$ctx" "$forecast" "approved" "$issue" \
+  if ! tape_proposal "$id" dev "$class" "$parent" "" "$ctx" "" "approved" "$issue" \
       >/dev/null 2>&1; then
     log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
     return 0
