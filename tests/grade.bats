@@ -72,7 +72,7 @@ run_grading() {
   run_grading p-1 high
   [ "$RC" -eq 64 ]
   grep -q "usage:" "$ERR"
-  grep -q "<float>" "$ERR"
+  grep -q "<float -1..1>" "$ERR"
   [ -z "$(cat "$OUT")" ]
   [ "$(wc -l < "$TAPE_DIR/tape.jsonl")" -eq 1 ]
 
