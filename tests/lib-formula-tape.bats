@@ -22,8 +22,10 @@ setup() {
   export ROOT TAPE_DIR PAYLOAD_DIR
   # Control the environment: with no $TAPE_PROPOSAL_ID, a session is metrics,
   # not a run (start is a no-op, #1633). Tests that exercise the tape write
-  # export their own caller proposal inside the driver.
-  unset TAPE_PROPOSAL_ID
+  # export their own caller proposal inside the driver. The calling organ
+  # (dev-agent) sets TAPE_RUN_ATTEMPTS from its attempt ledger, so the default
+  # of 1 the shape assertions depend on is controlled here too.
+  unset TAPE_PROPOSAL_ID TAPE_RUN_ATTEMPTS
 }
 
 # write_driver — drop a driver script (inheriting ROOT/TAPE_DIR/PAYLOAD_DIR)

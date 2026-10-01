@@ -79,6 +79,11 @@ set -euo pipefail
 # warning a tape append would log.
 log() { printf 'AC %s\n' "\$*" >&2; }
 unset TAPE_PROPOSAL_ID
+# The driver owns the session shape: a parent organ (dev-agent) sets
+# TAPE_RUN_ATTEMPTS from its attempt ledger and the parent environment may
+# carry CLAUDE_MODEL. Neither may leak in — AC 2 asserts the default attempts
+# of 1, and AC 3 keys the run on the driver's own agent name.
+unset TAPE_RUN_ATTEMPTS CLAUDE_MODEL
 export AGENT_HARNESS=claude LOG_AGENT=acceptance
 source "$REPO_ROOT/lib/formula-session.sh"
 export TAPE_DIR="$tape_dir" PAYLOAD_DIR="$payload_dir"
