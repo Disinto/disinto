@@ -52,6 +52,13 @@ IMPL_SUMMARY_FILE="/tmp/dev-impl-summary-${PROJECT_NAME}-${ISSUE}.txt"
 # claude_run_with_watchdog records the claude process-group ID here so any
 # exit path (release, crash, signal) can kill leftover claude (#1070).
 CLAUDE_PGID_FILE="/tmp/dev-claude-pgid-${PROJECT_NAME:-default}-${ISSUE}"
+# #1677: carry-over when an attempt is stopped by a resource limit.
+# DEV_CARRY is set by no_push_outcome() to 1 when the run is re-queued for a
+# resource limit (work should be handed to the next attempt) and 0 on every
+# other path (including all blocking paths). CARRY_FILE records which branch
+# the carried work lives on.
+CARRY_FILE="/tmp/dev-carry-${PROJECT_NAME:-default}-${ISSUE}"
+DEV_CARRY=0
 
 LOGFILE="${DISINTO_LOG_DIR}/dev/dev-agent.log"
 
@@ -67,6 +74,53 @@ log "context: PROJECT_TOML=${PROJECT_TOML:-(unset)} PROJECT_NAME=${PROJECT_NAME:
 status() {
   printf '[%s] dev-agent #%s: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ISSUE" "$*" > "$STATUSFILE"
   log "$*"
+}
+
+# =============================================================================
+# CARRY OVER (#1677)
+# =============================================================================
+# When an attempt is stopped by a resource limit (no push) its uncommitted
+# work is carried to the next attempt instead of being thrown away. CARRY_FILE
+# records which branch the carried work lives on; the worktree and session are
+# kept across the requeue so the next run can resume where the last left off.
+
+# dev_carry_restore WORKTREE
+# If a carry file exists and WORKTREE is a git worktree on the branch it names,
+# echo that branch and return 0 (the caller adopts it and skips worktree_create).
+# Otherwise the carry is stale (missing/empty file, or worktree absent or off the
+# branch): remove the carry file and return 1.
+dev_carry_restore() {
+  local wt="$1"
+  local br current
+  br="$(cat "$CARRY_FILE" 2>/dev/null)" || br=""
+  if [ -n "$br" ]; then
+    current="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" || current=""
+    if [ "$current" = "$br" ]; then
+      printf '%s' "$br"
+      return 0
+    fi
+  fi
+  rm -f "$CARRY_FILE"
+  return 1
+}
+
+# dev_carry_save WORKTREE BRANCH
+# Commit any uncommitted work in WORKTREE as a local "wip" commit (never pushed)
+# so the next attempt can resume, and record BRANCH in CARRY_FILE so a following
+# run knows what to adopt. A clean worktree still gets the carry file (nothing to
+# commit, but the branch is recorded for resume).
+dev_carry_save() {
+  local wt="$1" br="$2"
+  if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+    log "dev_carry_save: committing uncommitted work in ${wt}"
+    git -C "$wt" add -A || log "WARNING: dev_carry_save: git add -A failed in ${wt}"
+    git -C "$wt" commit -m "wip(#${ISSUE}): attempt stopped by a resource limit" \
+      || log "WARNING: dev_carry_save: git commit failed in ${wt}"
+  else
+    log "dev_carry_save: worktree ${wt} is clean; nothing to commit"
+  fi
+  printf '%s' "$br" > "$CARRY_FILE"
+  log "dev_carry_save: recorded branch ${br} in ${CARRY_FILE}"
 }
 
 # =============================================================================
@@ -380,6 +434,9 @@ CLAIMED=true
 # =============================================================================
 RECOVERY_MODE=false
 PRIOR_ART_DIFF=""
+# #1677: true only when a carried worktree (from a re-queued resource-limit
+# attempt) was adopted at worktree setup.
+CARRY_MODE=false
 
 if pr_find_for_issue "$ISSUE" "$ISSUE_BODY_ORIGINAL" "$BRANCH"; then
   case "$_PR_FOUND_MODE" in
@@ -451,32 +508,44 @@ if [ "$RECOVERY_MODE" = true ]; then
     exit 1
   fi
 else
-  # Ensure repo is in clean state
-  if [ -d "$REPO_ROOT/.git/rebase-merge" ] || [ -d "$REPO_ROOT/.git/rebase-apply" ]; then
-    log "WARNING: stale rebase detected — aborting"
-    git rebase --abort 2>/dev/null || true
-  fi
-  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-  if [ "$CURRENT_BRANCH" != "${PRIMARY_BRANCH}" ]; then
-    git checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
-  fi
-
-  git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null
-  git pull --ff-only "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
-  if ! worktree_create "$WORKTREE" "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}"; then
-    log "ERROR: worktree creation failed"
-    issue_release "$ISSUE"
-    CLAIMED=false
-    exit 1
-  fi
-
-  # Symlink shared node_modules from main repo
-  for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
-    lib_name=$(basename "$lib_dir")
-    if [ -d "$lib_dir/node_modules" ] && [ ! -d "$WORKTREE/onchain/lib/$lib_name/node_modules" ]; then
-      ln -s "$lib_dir/node_modules" "$WORKTREE/onchain/lib/$lib_name/node_modules" 2>/dev/null || true
+  # #1677: a re-queued attempt stopped by a resource limit may have carried its
+  # work forward (dev_carry_save). If the worktree is a git worktree on the
+  # branch the carry file names, adopt it and skip the fresh-branch naming and
+  # worktree_create — the next run resumes from the saved state.
+  carry_branch=""
+  if carry_branch="$(dev_carry_restore "$WORKTREE")"; then
+    CARRY_MODE=true
+    BRANCH="$carry_branch"
+    log "carry: adopting carried work on branch ${BRANCH}"
+  else
+    # Fresh attempt: ensure a clean repo state, count existing attempt branches,
+    # and create a worktree on the named branch.
+    if [ -d "$REPO_ROOT/.git/rebase-merge" ] || [ -d "$REPO_ROOT/.git/rebase-apply" ]; then
+      log "WARNING: stale rebase detected — aborting"
+      git rebase --abort 2>/dev/null || true
     fi
-  done
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    if [ "$CURRENT_BRANCH" != "${PRIMARY_BRANCH}" ]; then
+      git checkout "${PRIMARY_BRANCH}" 2>/dev/null || true
+    fi
+
+    git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null
+    git pull --ff-only "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
+    if ! worktree_create "$WORKTREE" "$BRANCH" "${FORGE_REMOTE}/${PRIMARY_BRANCH}"; then
+      log "ERROR: worktree creation failed"
+      issue_release "$ISSUE"
+      CLAIMED=false
+      exit 1
+    fi
+
+    # Symlink shared node_modules from main repo
+    for lib_dir in "$REPO_ROOT"/onchain/lib/*/; do
+      lib_name=$(basename "$lib_dir")
+      if [ -d "$lib_dir/node_modules" ] && [ ! -d "$WORKTREE/onchain/lib/$lib_name/node_modules" ]; then
+        ln -s "$lib_dir/node_modules" "$WORKTREE/onchain/lib/$lib_name/node_modules" 2>/dev/null || true
+      fi
+    done
+  fi
 fi
 
 # =============================================================================
@@ -520,6 +589,40 @@ ${GIT_DIFF_STAT}
 2. Read AGENTS.md for project conventions.
 3. Address any pending review comments or CI failures.
 4. Commit and push to \`${BRANCH}\`.
+
+${LESSONS_INJECTION:+## Lessons learned
+${LESSONS_INJECTION}
+
+}
+${PUSH_INSTRUCTIONS}"
+elif [ "${CARRY_MODE:-false}" = true ]; then
+  GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null \
+    | head -20 || echo "(no diff)")
+
+  INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
+This is issue #${ISSUE} for the ${FORGE_REPO} project.
+
+## Issue: ${ISSUE_TITLE}
+
+${ISSUE_BODY}
+
+## CARRY OVER
+
+Your previous session for this issue was stopped by a resource limit before it
+could push. Its work was saved as a local commit on this branch. Resume from
+where you left off.
+
+### Work completed before the stop:
+\`\`\`
+${GIT_DIFF_STAT}
+\`\`\`
+
+### Next steps
+1. Run \`git log --oneline -5\` and \`git status\` to understand current state.
+2. Read AGENTS.md for project conventions.
+3. Continue implementing the issue.
+4. Commit and push to \`${BRANCH}\`.
+5. If CI fails or review is pending, address them.
 
 ${LESSONS_INJECTION:+## Lessons learned
 ${LESSONS_INJECTION}
@@ -613,13 +716,19 @@ no_push_outcome() {
 
   if [ -n "$requeue_reason" ]; then
     if [ "$attempt" -ge 2 ]; then
+      # Cap fires: the work is abandoned, so nothing to carry forward.
+      DEV_CARRY=0
       issue_block "$issue" "no_push_after_3_attempts" \
         "Resource limit (${requeue_reason}) on attempt $((attempt + 1)) — Claude did not push branch ${BRANCH}"
     else
+      # Transient resource limit: hand the in-progress work to the next attempt.
+      DEV_CARRY=1
       issue_requeue "$issue" "$requeue_reason" \
         "Resource limit (${requeue_reason}) — Claude did not push branch ${BRANCH}"
     fi
   else
+    # Non-resource-limit no-push (agent chose not to, etc.): not transient.
+    DEV_CARRY=0
     issue_block "$issue" "no_push" "$result_text"
   fi
 }
@@ -844,7 +953,7 @@ if [ -z "$REMOTE_SHA" ]; then
 
     handle_refusal "$REFUSAL_STATUS" "$REFUSAL_JSON"
     worktree_cleanup "$WORKTREE"
-    rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+    rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE" "$CARRY_FILE"
     exit 0
   fi
 
@@ -886,8 +995,15 @@ if [ -z "$REMOTE_SHA" ]; then
   no_push_outcome "$ISSUE" "$diag_file" "$AGENT_RUN_RC" "${DEV_FAILED_ATTEMPTS:-0}" \
     "Claude did not push branch ${BRANCH}"
   CLAIMED=false
-  worktree_cleanup "$WORKTREE"
-  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+  if [ "${DEV_CARRY:-0}" = "1" ]; then
+    # Hand the in-progress work to the next attempt: commit it as a local
+    # "wip" commit and keep both the worktree and the session.
+    dev_carry_save "$WORKTREE" "$BRANCH"
+    log "carry: keeping worktree ${WORKTREE} and session for the next attempt"
+  else
+    worktree_cleanup "$WORKTREE"
+    rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE" "$CARRY_FILE"
+  fi
   exit 1
 fi
 
@@ -912,6 +1028,7 @@ if [ -z "$PR_NUMBER" ]; then
   if [ -z "$PR_NUMBER" ]; then
     log "ERROR: failed to create PR"
     issue_block "$ISSUE" "pr_create_failed"
+    rm -f "$CARRY_FILE"
     CLAIMED=false
     exit 1
   fi
@@ -945,7 +1062,7 @@ if [ "$rc" -eq 0 ]; then
   mirror_push
 
   worktree_cleanup "$WORKTREE"
-  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE" "$CARRY_FILE"
   CLAIMED=false
 else
   # Exhausted or unrecoverable failure
@@ -962,7 +1079,7 @@ else
   # Cleanup on failure: preserve remote branch and PR for debugging, clean up local worktree
   # Remote state (PR and branch) stays open for inspection of CI logs and review comments
   worktree_cleanup "$WORKTREE"
-  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE"
+  rm -f "$SID_FILE" "$IMPL_SUMMARY_FILE" "$CARRY_FILE"
   CLAIMED=false
 fi
 
