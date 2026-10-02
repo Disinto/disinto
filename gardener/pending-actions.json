@@ -1,7 +1,1 @@
-[
-  {
-    "action": "comment",
-    "issue": 1620,
-    "body": "## Gardener status (run 2026-10-02)\n\nStarvation persists. #1620 remains `blocked` (no-push/compute since 2026-10-01 18:05, ~26h) and still blocks the two ready backlog issues #1622 and #1631 via `## Dependencies` — dev-poll cannot advance them.\n\nRoot cause is **not** an unmet dependency: #1618 and #1629 are both `closed`. It is the same persistent `no_push`/`timeout` compute failure (4x in 24h). Re-queueing does not resolve it.\n\n`vault` item **[#1667](http://10.10.10.132:3000/disinto-admin/disinto/issues/1667)** is open (label `action`, no PR, no comments) and unaddressed since 2026-10-01 — it is the sole path to unblocking the factory. **Escalation needed: diagnose the dev-role no-push root cause (compute/VRAM/harness) and unblock it.**\n"
-  }
-]
+[]
