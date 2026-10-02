@@ -471,13 +471,27 @@ escalate_merge_blocked_pr() {
 
 # =============================================================================
 # HELPER: extract issue number from PR branch/title/body
+#
+# #1671: housekeeping chore branches (gardener/planner/predictor) never name an
+# issue — a chore PR that merely mentions #N (e.g. "escalate #1620 starvation")
+# must not close it. Such a branch returns nothing so the merge sweeper's own
+# chore rule then merges it as issue 0 (closing nothing). The title fallback
+# accepts only a closing keyword (closes/fixes/resolves, case-insensitive),
+# same as the body — a bare #N in a title no longer names an issue. The
+# fix/issue-N branch rule and the body rule are unchanged.
 # =============================================================================
 extract_issue_from_pr() {
   local branch="$1" title="$2" body="$3"
   local issue
+  # Chore housekeeping branches return nothing even when the title or body
+  # mentions an issue (#1671) — the chore rule at the call sites then merges
+  # the PR as issue 0, closing nothing.
+  if [[ "$branch" =~ ^chore/(gardener|planner|predictor)- ]]; then
+    return 0
+  fi
   issue=$(echo "$branch" | grep -oP '(?<=fix/issue-)\d+' || true)
   if [ -z "$issue" ]; then
-    issue=$(echo "$title" | grep -oP '#\K\d+' | tail -1 || true)
+    issue=$(echo "$title" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
   fi
   if [ -z "$issue" ]; then
     issue=$(echo "$body" | grep -oiP '(?:closes|fixes|resolves)\s*#\K\d+' | head -1 || true)
