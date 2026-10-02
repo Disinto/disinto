@@ -15,10 +15,14 @@
 #                  payloads (under the /srv/disinto/tape host_volume, #1424)
 #
 # Functions:
-#   tape_proposal ID LOOP CLASS PARENT CAUSED_BY CONTEXT_JSON FORECAST_JSON DECISION REF
+#   tape_proposal ID LOOP CLASS PARENT CAUSED_BY CONTEXT_JSON FORECAST_JSON DECISION REF [PAYLOADS_JSON]
 #     -> {"type":"proposal","t":<iso>,"id","loop","class","parent","caused_by",
 #         "context":{...},"forecast":{...},"decision","ref"}
+#         ("payloads":[...] after ref when PAYLOADS_JSON is a non-empty array)
 #     PARENT/CAUSED_BY/FORECAST may be empty — the field is then omitted.
+#     PAYLOADS_JSON: optional JSON array of sha256 refs (64 lowercase hex),
+#     validated exactly like tape_outcome's payloads; when absent or [] the
+#     record is byte-identical to its pre-#1634 shape (no payloads field).
 #     FORECAST shape when present: {"p_success":f,"est_cost":f,"est_dvision":f}.
 #     CONTEXT must be a JSON object; DECISION and REF non-empty strings.
 #   tape_run PROPOSAL_ID ORGAN AGENT STARTED ENDED ATTEMPTS COST_JSON STATUS
@@ -91,14 +95,25 @@ _tape_append() {
   ) 9>"${TAPE_DIR}/.tape.lock"
 }
 
+# _tape_payloads_ok <payloads-json> — true iff <payloads-json> is a JSON
+# array of sha256 refs (64 lowercase hex): the single payload-ref shape,
+# shared by tape_outcome's required PAYLOADS_JSON and tape_proposal's
+# optional one (#1634). Callers never pass an empty string (they check
+# absence first).
+_tape_payloads_ok() {
+  printf '%s\n' "$1" | jq -e \
+    'type == "array" and (map(type == "string" and test("^[0-9a-f]{64}$")) | all)' \
+    >/dev/null 2>&1
+}
+
 tape_proposal() {
   local id="${1:-}" loop="${2:-}" class="${3:-}" parent="${4:-}"
   local caused_by="${5:-}" context_json="${6:-}" forecast_json="${7:-}"
-  local decision="${8:-}" ref="${9:-}"
+  local decision="${8:-}" ref="${9:-}" payloads_json="${10:-}"
 
   if [ -z "$id" ] || [ -z "$loop" ] || [ -z "$class" ] || [ -z "$context_json" ] \
     || [ -z "$decision" ] || [ -z "$ref" ]; then
-    echo "usage: tape_proposal ID LOOP CLASS PARENT CAUSED_BY CONTEXT_JSON FORECAST_JSON DECISION REF (PARENT/CAUSED_BY/FORECAST may be empty)" >&2
+    echo "usage: tape_proposal ID LOOP CLASS PARENT CAUSED_BY CONTEXT_JSON FORECAST_JSON DECISION REF [PAYLOADS_JSON] (PARENT/CAUSED_BY/FORECAST may be empty; PAYLOADS_JSON an optional JSON array of sha256 refs (64 lowercase hex), [] or absent leaves the record unchanged)" >&2
     return 2
   fi
   _tape_deps || return 2
@@ -117,6 +132,10 @@ tape_proposal() {
       return 1
     fi
   fi
+  if [ -n "$payloads_json" ] && ! _tape_payloads_ok "$payloads_json"; then
+    echo "tape_proposal: payloads must be an array of sha256 refs (64 lowercase hex)" >&2
+    return 1
+  fi
 
   local t record
   t="$(_tape_now)"
@@ -124,13 +143,14 @@ tape_proposal() {
     --arg t "$t" --arg id "$id" --arg loop "$loop" --arg class "$class" \
     --arg parent "$parent" --arg caused_by "$caused_by" \
     --arg context "$context_json" --arg forecast "$forecast_json" \
-    --arg decision "$decision" --arg ref "$ref" '
+    --arg decision "$decision" --arg ref "$ref" --arg payloads "$payloads_json" '
     {type: "proposal", t: $t, id: $id, loop: $loop, class: $class}
     + (if $parent != "" then {parent: $parent} else {} end)
     + (if $caused_by != "" then {caused_by: $caused_by} else {} end)
     + {context: ($context | fromjson)}
     + (if $forecast != "" then {forecast: ($forecast | fromjson)} else {} end)
-    + {decision: $decision, ref: $ref}')"
+    + {decision: $decision, ref: $ref}
+    + (if $payloads != "" and (($payloads | fromjson) | length > 0) then {payloads: ($payloads | fromjson)} else {} end)')"
   _tape_append "$record"
 }
 
@@ -208,9 +228,7 @@ tape_outcome() {
       return 1
     fi
   done
-  if ! printf '%s\n' "$payloads_json" | jq -e \
-    'type == "array" and (map(type == "string" and test("^[0-9a-f]{64}$")) | all)' \
-    >/dev/null 2>&1; then
+  if ! _tape_payloads_ok "$payloads_json"; then
     echo "tape_outcome: payloads must be an array of sha256 refs (64 lowercase hex)" >&2
     return 1
   fi

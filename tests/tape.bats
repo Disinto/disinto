@@ -62,6 +62,42 @@ last_record() {
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
 }
 
+@test "proposal: optional PAYLOADS_JSON appends payloads after ref" {
+  local hex1 hex2
+  hex1="$(printf 'payload-one' | sha256sum | cut -d' ' -f1)"
+  hex2="$(printf 'payload-two' | sha256sum | cut -d' ' -f1)"
+  tape_proposal p-5 dev fix "" '' '{"k":"v"}' '' approved 'r-1' "[\"$hex1\"]"
+  jq -e '.type == "proposal" and .id == "p-5" and .ref == "r-1"
+      and .payloads == ["'"$hex1"'"]' <(last_record) >/dev/null
+  # payloads must be the final field, right after ref
+  case "$(last_record)" in
+    *'"decision":"approved","ref":"r-1","payloads":["'$hex1'"]}'*) ;;
+    *) echo "payloads must be the final field after ref: $(last_record)"; return 1 ;;
+  esac
+  tape_proposal p-5b dev fix "" '' '{"k":"v"}' '' approved 'r-2' "[\"$hex1\",\"$hex2\"]"
+  jq -e --arg a "$hex1" --arg b "$hex2" '.id == "p-5b" and .payloads == [($a), ($b)]' \
+    <(last_record) >/dev/null
+}
+
+@test "proposal: no 10th argument or [] keeps the pre-#1634 shape" {
+  tape_proposal p-6 review fix "" '' '{"a":1}' '' rejected '!42'
+  jq -e 'keys == ["class","context","decision","id","loop","ref","t","type"]
+      and (has("payloads") | not)' <(last_record) >/dev/null
+  tape_proposal p-7 review fix "" '' '{"a":1}' '' rejected '!42' '[]'
+  jq -e 'keys == ["class","context","decision","id","loop","ref","t","type"]
+      and (has("payloads") | not)' <(last_record) >/dev/null
+}
+
+@test "proposal: refuses payloads that are not an array of sha256 refs" {
+  run tape_proposal p-8 dev fix "" '' '{"k":"v"}' '' approved 'r-1' '[\"nothex\"]'
+  [ "$status" -eq 1 ]
+  run tape_proposal p-8 dev fix "" '' '{"k":"v"}' '' approved 'r-1' '[\"ABCDEF\"]'
+  [ "$status" -eq 1 ]
+  run tape_proposal p-8 dev fix "" '' '{"k":"v"}' '' approved 'r-1' '"just a string"'
+  [ "$status" -eq 1 ]
+  [ ! -e "$TAPE_DIR/tape.jsonl" ]
+}
+
 # ── run ─────────────────────────────────────────────────────────────────
 
 @test "run round-trip" {
