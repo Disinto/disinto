@@ -15,8 +15,10 @@
 # orphan run.
 #
 # After: formula_session_start uses $TAPE_PROPOSAL_ID as the run's proposal
-# id when set (or the run ULID when unset), and only appends the OPEN
-# tape_run record. It never reads tape.jsonl and never calls tape_proposal.
+# id when set, and only appends the OPEN tape_run record. With
+# $TAPE_PROPOSAL_ID unset it is a no-op (a metric, not a run: no tape_run
+# is written, #1633). It never reads tape.jsonl and never calls
+# tape_proposal.
 # A missing proposal row is an orphan run, not a new proposal. The
 # sanctioned tape reader is calibration, which reads to report.
 #
