@@ -136,7 +136,7 @@ ac_log "unmet_dependency (no suggestion): +blocked, new paragraph, no release/cl
 
 # ── 3. too_large → pre-#1672 behavior preserved ──────────────────────────────
 CALLS=(); REFUSALS=(); BODIES=(); CLAIMED=true
-handle_refusal "too_large" '{"status":"too_large","reason":"too big for one session"}'
+handle_refusal "too_large" '{"status":"too_large","reason":"spans two modules and their tests"}'
 [ "${#REFUSALS[@]}" -eq 1 ] \
   || ac_fail "too_large: expected exactly one refusal, got ${#REFUSALS[@]}"
 [ "${REFUSALS[0]}" = "Too large for single session" ] \
