@@ -11,9 +11,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# CI-side filesystem snapshot: show lib/ state at smoke time (#600)
+# CI-side filesystem snapshot: show lib/ state at smoke time (#600).
+# Pipe `ls` to `sed` (reads to EOF) rather than `head` so `ls` never receives
+# SIGPIPE: under `set -o pipefail`, `head -50` closes the pipe after 50 lines
+# while `ls` is still writing when lib/ has >50 entries, causing a
+# non-deterministic exit 141 (same race the check_script here-string avoids #742).
 echo "=== smoke environment snapshot ==="
-ls -la lib/ 2>&1 | head -50
+ls -la lib/ 2>&1 | sed -n '1,50p'
 echo "=== "
 
 FAILED=0
