@@ -60,6 +60,18 @@ grep -qF '"$PL_PR_BRANCH" =~ ^chore/(gardener|planner|predictor)-' "$DEV_POLL" \
 grep -qF '"$PR_BRANCH" =~ ^chore/(gardener|planner|predictor)-' "$DEV_POLL" \
   || ac_fail "stuck-PR chore rule missing (it is what merges issue-less chore PRs)"
 
+# The merge sweeper (dev/merge-ready.sh) is the third linked-issue extraction
+# site — it is what closed #1620 when chore PR #1669 merged. It must reuse
+# extract_issue_from_pr (chore gate + closing-keyword title rule) rather than
+# carry its own over-eager inline extraction (bare #N, last match, no chore gate).
+MERGE_READY="$REPO_ROOT/dev/merge-ready.sh"
+ac_assert_file "$MERGE_READY" "dev/merge-ready.sh is missing (merge sweeper)"
+grep -qF 'extract_issue_from_pr' "$MERGE_READY" \
+  || ac_fail "merge sweeper must use extract_issue_from_pr so a chore PR it merges never closes the issue it mentions (#1671)"
+if grep -qF "grep -oP '#\K\d+' | tail -1" "$MERGE_READY"; then
+  ac_fail "merge-ready.sh must not keep its old over-eager title rule (any bare #N, last match) (#1671)"
+fi
+
 # ── Extract the function under test ───────────────────────────────────────────
 # ac_extract_fn() takes the column-0 `name() {` header to the next column-0
 # closing brace; dev-poll.sh is a top-level executable so we never source it.

@@ -68,15 +68,18 @@ merge_ready_sweep() {
       git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH:-}" 2>/dev/null || true
       git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
       mirror_push
-      # linked-issue cleanup (extract same way dev-poll does)
+      # linked-issue cleanup: reuse dev-poll's extract_issue_from_pr, which
+      # carries the #1671 chore gate (a housekeeping chore branch returns
+      # nothing, so its mention of #N closes no issue — the merge sweeper is
+      # exactly the path that closed the issue its PR merely mentioned) and the
+      # closing-keyword title rule (bare #N in a title no longer names an issue).
+      # This replaces the sweep's own over-eager inline extraction (bare #N,
+      # last match, no chore gate).
       local linked_issue
-      linked_issue=$(printf '%s' "$pr_json" | jq -r '.head.ref // ""' | grep -oP '(?<=fix/issue-)\d+' || true)
-      if [ -z "$linked_issue" ]; then
-        linked_issue=$(printf '%s' "$pr_json" | jq -r '.title // ""' | grep -oP '#\K\d+' | tail -1 || true)
-      fi
-      if [ -z "$linked_issue" ]; then
-        linked_issue=$(printf '%s' "$pr_json" | jq -r '.body // ""' | grep -oiP '(?:closes?d? |fixes? |resolves? )#\K\d+' | head -1 || true)
-      fi
+      linked_issue=$(extract_issue_from_pr \
+        "$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')" \
+        "$(printf '%s' "$pr_json" | jq -r '.title // empty')" \
+        "$(printf '%s' "$pr_json" | jq -r '.body // empty')" || true)
       if [ -n "$linked_issue" ] && [ "$linked_issue" != "0" ]; then
         issue_close "$linked_issue"
         # Remove in-progress label
