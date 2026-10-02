@@ -58,6 +58,7 @@ out="$(
     export AGENT_HARNESS=claude LOG_AGENT=acceptance
     source "$REPO_ROOT/lib/formula-session.sh"
     export TAPE_DIR="$T1" PAYLOAD_DIR="$P1"
+    export TAPE_PROPOSAL_ID=ac-1478
     export TAPE_RUN_ATTEMPTS=3
     formula_session_start "acceptance-organ"
     formula_session_end 0
@@ -94,6 +95,7 @@ for val in "" "junk" "0" "-3"; do
       export AGENT_HARNESS=claude LOG_AGENT=acceptance
       source "$REPO_ROOT/lib/formula-session.sh"
       export TAPE_DIR="$T2" PAYLOAD_DIR="$P2"
+      export TAPE_PROPOSAL_ID=ac-1478
       if [ -n "$val" ]; then
         export TAPE_RUN_ATTEMPTS=$val
       else

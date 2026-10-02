@@ -7,20 +7,25 @@
 # completed|failed, session cost on the run's cost object: duration_s +
 # tokens_in/tokens_out from the transcript's final usage row + transcript
 # payload ref) — records are immutable, so the close is a second append.
-# No tape_outcome is written (#1474): run status lives on the run record, not
-# on a separate outcome. The functions are total: every tape failure logs a
-# WARNING and returns 0, so an unwritable TAPE_DIR can never fail the organ.
+# Runs exist only under a proposal (#1633): with no $TAPE_PROPOSAL_ID,
+# start/end are no-ops and the session cost is recorded in
+# $DISINTO_LOG_DIR/metrics/agent-runs.jsonl (lib/agent-metrics.sh, #1101)
+# instead of as an orphan run. No tape_outcome is written (#1474): run
+# status lives on the run record, not on a separate outcome. The functions
+# are total: every tape failure logs a WARNING and returns 0, so an unwritable
+# TAPE_DIR can never fail the organ.
 
 setup() {
   ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   TAPE_DIR="$BATS_TEST_TMPDIR/tape"
   PAYLOAD_DIR="$BATS_TEST_TMPDIR/payloads"
   export ROOT TAPE_DIR PAYLOAD_DIR
-  # Control the environment: the default organs key on their own run ULID;
-  # an inherited TAPE_PROPOSAL_ID (a caller-supplied proposal) would make
-  # the run orphan (its proposal row absent). Tests that need a caller
-  # proposal export their own inside the driver.
-  unset TAPE_PROPOSAL_ID
+  # Control the environment: with no $TAPE_PROPOSAL_ID, a session is metrics,
+  # not a run (start is a no-op, #1633). Tests that exercise the tape write
+  # export their own caller proposal inside the driver. The calling organ
+  # (dev-agent) sets TAPE_RUN_ATTEMPTS from its attempt ledger, so the default
+  # of 1 the shape assertions depend on is controlled here too.
+  unset TAPE_PROPOSAL_ID TAPE_RUN_ATTEMPTS
 }
 
 # write_driver — drop a driver script (inheriting ROOT/TAPE_DIR/PAYLOAD_DIR)
@@ -61,6 +66,23 @@ EOF
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
 }
 
+@test "no TAPE_PROPOSAL_ID: start→end appends nothing (metrics, not runs)" {
+  # The orphan-run fallback (#1391) is gone (#1633): a proposal-free organ
+  # session must leave the tape untouched and the close must stay a no-op.
+  write_driver <<EOF
+set -euo pipefail
+log() { printf 'WARN %s\n' "\$*" >&2; }
+export AGENT_HARNESS=claude CLAUDE_MODEL=opus LOG_AGENT=testorgan
+source "\$ROOT/lib/formula-session.sh"
+formula_session_start "testorgan"
+formula_session_end 0
+echo OK
+EOF
+  [ "$status" -eq 0 ]
+  [ "$output" = "OK" ]
+  [ ! -e "$TAPE_DIR/tape.jsonl" ]
+}
+
 @test "start→end: open run, closing run with cost; payload + tokens from transcript" {
   local t="$BATS_TEST_TMPDIR/transcript.json"
   printf '%s\n' \
@@ -72,6 +94,7 @@ set -euo pipefail
 log() { printf 'WARN %s\n' "\$*" >&2; }
 export AGENT_HARNESS=claude CLAUDE_MODEL=opus LOG_AGENT=testorgan
 source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-cost
 formula_session_start "testorgan"
 sleep 1
 formula_session_end 0 "$t"
@@ -88,7 +111,7 @@ EOF
       and (.[0].agent == "claude/opus")
       and (.[0].attempts == 1)
       and (.[0].cost == {})
-      and (.[0].proposal_id | test("^[0-9A-HJKMNP-TV-Z]{26}$"))
+      and (.[0].proposal_id == "prop-cost")
       and (.[0].started | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
       and (.[1].type == "run")
       and (.[1].proposal_id == .[0].proposal_id)
@@ -109,10 +132,11 @@ EOF
 }
 
 @test "non-zero exit code → status failed, no outcome" {
-  write_driver <<'EOF'
+  write_driver <<EOF
 set -euo pipefail
-log() { :; }
-source "$ROOT/lib/formula-session.sh"
+log() { printf 'WARN %s\n' "\$*" >&2; }
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-fail
 formula_session_start "testorgan"
 formula_session_end 124
 EOF
@@ -121,6 +145,7 @@ EOF
       (length == 2)
       and ((map(select(.type == "outcome")) | length) == 0)
       and (.[1].status == "failed")
+      and (.[1].proposal_id == "prop-fail")
       and ((.[1].cost.duration_s | type) == "number")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
@@ -132,6 +157,7 @@ log() { printf 'WARN %s\n' "\$*" >&2; }
 export AGENT_HARNESS=claude LOG_AGENT=testorgan
 unset CLAUDE_MODEL
 source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-plain
 formula_session_start "testorgan"
 formula_session_end 0 "$BATS_TEST_TMPDIR/absent.json"
 EOF
@@ -143,6 +169,7 @@ EOF
       and ((.[1].cost | has("transcript")) | not)
       and ((.[1].cost.duration_s | type) == "number")
       and (.[1].status == "completed")
+      and (.[1].proposal_id == "prop-plain")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
@@ -191,10 +218,11 @@ EOF
 }
 
 @test "double end appends a single closing run (idempotent close)" {
-  write_driver <<'EOF'
+  write_driver <<EOF
 set -euo pipefail
-log() { :; }
-source "$ROOT/lib/formula-session.sh"
+log() { printf 'WARN %s\n' "\$*" >&2; }
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-double
 formula_session_start "testorgan"
 formula_session_end 0
 formula_session_end 0
@@ -204,6 +232,7 @@ EOF
       (length == 2)
       and ((map(select(.type == "outcome")) | length) == 0)
       and ((map(select(.type == "run")) | length) == 2)
+      and (.[0].proposal_id == "prop-double")
     ' "$TAPE_DIR/tape.jsonl" >/dev/null
 }
 
@@ -212,10 +241,11 @@ EOF
   touch "$BATS_TEST_TMPDIR/blocker"
   TAPE_DIR="$BATS_TEST_TMPDIR/blocker/tape"
   export TAPE_DIR
-  write_driver <<'EOF'
+  write_driver <<EOF
 set -euo pipefail
-log() { printf 'WARN %s\n' "$*" >&2; }
-source "$ROOT/lib/formula-session.sh"
+log() { printf 'WARN %s\n' "\$*" >&2; }
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-block
 formula_session_start "testorgan"
 formula_session_end 1
 EOF

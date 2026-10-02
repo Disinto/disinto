@@ -55,11 +55,10 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 # ── Driver: source lib/formula-session.sh in a throwaway subshell and drive
 # formula_session_start + formula_session_end against caller-owned
-# TAPE_DIR/PAYLOAD_DIR. TAPE_PROPOSAL_ID is unset so the session keys on its
-# own fresh ULID (the canonical open-run + closing-run pair, exactly two
-# records — a minimal proposal is only appended when a caller supplies its
-# own TAPE_PROPOSAL_ID, which the default organ runners do not). $1 = exit
-# code handed to formula_session_end, $4 = optional transcript file (empty →
+# TAPE_DIR/PAYLOAD_DIR. The driver exports a sentinel TAPE_PROPOSAL_ID so the
+# session is proposal-backed and a run is written (the proposal-less no-op,
+# #1633, is covered by tests/acceptance/issue-1633.sh). $1 = exit code
+# handed to formula_session_end, $4 = optional transcript file (empty →
 # harness diagnostics default, which we never populate here).
 # Prints the subshell's combined output (warnings); exit status is the driver's.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +72,9 @@ set -euo pipefail
 # first). The driver must not be a no-op or the unwritable-TAPE_DIR AC
 # (which checks the logged warning) would see nothing.
 log() { printf 'WARN %s\n' "\$*" >&2; }
-unset TAPE_PROPOSAL_ID
+# Proposal-backed session (per #1633 the no-proposal path writes no run;
+# this AC exercises the proposal path, where the run shape is unchanged).
+export TAPE_PROPOSAL_ID=ac-1474
 export AGENT_HARNESS=claude LOG_AGENT=acceptance
 source "$REPO_ROOT/lib/formula-session.sh"
 export TAPE_DIR="$tape_dir" PAYLOAD_DIR="$payload_dir"

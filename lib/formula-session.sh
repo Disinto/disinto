@@ -20,8 +20,8 @@
 #   cleanup_stale_crashed_worktrees [HOURS] — thin wrapper around worktree_cleanup_stale
 #   load_formula_or_profile [ROLE] [FORMULA_FILE] — load from .profile or fallback
 #   formula_tape_ulid                    — emit a 26-char Crockford-base32 ULID
-#   formula_session_start [ORGAN]        — open the tape run record for a session
-#   formula_session_end [RC] [TRANSCRIPT] — close it: closing run record with cost
+#   formula_session_start [ORGAN]        — open the tape run record for a proposal-backed session (no-op without a proposal, #1633)
+#   formula_session_end [RC] [TRANSCRIPT] — close it: closing run record with cost (no-op without a start)
 #
 # Subsystems (sourced):
 #   profile.sh  — agent .profile repository: lessons-learned digest + per-session journal
@@ -392,10 +392,14 @@ cleanup_stale_crashed_worktrees() {
 
 # ── Proposal-loop tape instrumentation (#1391) ────────────────────────────
 #
-# Every formula session is a "run" on the proposal-loop tape with an
-# "outcome" (#1389). The organ wrapper brackets its agent session with
-# formula_session_start / formula_session_end; all tape work happens here,
-# once, so every organ that runs formulas is covered.
+# Every formula session that serves a proposal is a "run" on the proposal-loop
+# tape with an "outcome" (#1389). Organ sessions that serve no proposal are
+# metrics, not runs: no tape run is written (runs exist only under a proposal,
+# #1633) and the cost is already recorded in
+# ${DISINTO_LOG_DIR}/metrics/agent-runs.jsonl by lib/agent-metrics.sh (#1101).
+# The organ wrapper brackets its agent session with formula_session_start /
+# formula_session_end; all tape work happens here, once, so every organ that
+# runs formulas is covered.
 #
 # These functions are TOTAL: they always return 0. A tape failure (unwritable
 # $TAPE_DIR, missing jq/flock, validation refusal) logs a WARNING and is
@@ -448,22 +452,33 @@ formula_tape_ulid() {
 }
 
 # formula_session_start [ORGAN]
-# Opens the tape run record for the current formula session:
-#   - run id = fresh ULID; proposal = $TAPE_PROPOSAL_ID when set
-#     (caller-supplied; this function never reads the tape and never appends
-#     a proposal — a missing proposal row is an orphan run, not a new
-#     proposal), else the run ULID
+# Opens the tape run record for the current formula session, when the session
+# serves a proposal:
+#   - run id = fresh ULID; proposal = $TAPE_PROPOSAL_ID (caller-supplied;
+#     this function never reads the tape and never appends a proposal — runs
+#     exist only under a proposal; a missing proposal row is an orphan run,
+#     not a new proposal)
 #   - organ = $1 (default "organ"), agent = <harness>/<model>
 #     (AGENT_HARNESS, default claude, + CLAUDE_MODEL when set)
-# Appends one OPEN tape_run line (started + attempts set, ended/status
-# omitted). Sets the _FORMULA_TAPE_* state consumed by formula_session_end.
+# With $TAPE_PROPOSAL_ID unset the session is a metric, not a run: nothing
+# is appended to the tape and _FORMULA_TAPE_ACTIVE is left at 0, so
+# formula_session_end is a no-op — the cost is already recorded in
+# ${DISINTO_LOG_DIR}/metrics/agent-runs.jsonl by lib/agent-metrics.sh (#1101).
+# With a proposal id, appends one OPEN tape_run line (started + attempts set,
+# ended/status omitted) and sets the _FORMULA_TAPE_* state consumed by
+# formula_session_end.
 # Always returns 0.
 formula_session_start() {
   local organ="${1:-organ}"
+  # No proposal to key the run on: this organ session is a metric, not a run
+  # (runs exist only under a proposal; the cost is already recorded in
+  # ${DISINTO_LOG_DIR}/metrics/agent-runs.jsonl by lib/agent-metrics.sh,
+  # #1101). Leave _FORMULA_TAPE_ACTIVE at 0 so formula_session_end is a no-op.
+  [ -n "${TAPE_PROPOSAL_ID:-}" ] || return 0
   local run_id proposal started agent
   run_id=$(formula_tape_ulid) || run_id=""
   [ -n "$run_id" ] || run_id="run-$$-$(date -u +%s)"
-  proposal="${TAPE_PROPOSAL_ID:-$run_id}"
+  proposal="$TAPE_PROPOSAL_ID"
   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   agent="${AGENT_HARNESS:-claude}"
   [ -n "${CLAUDE_MODEL:-}" ] && agent="${agent}/${CLAUDE_MODEL}"
