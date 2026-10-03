@@ -1,4 +1,6 @@
 #!/usr/bin/env bats
+# DSH_CONTEXT_WINDOW also appears in nomad/jobs/agents-*-grok.hcl (200000, set by hand
+# for Grok, 2026-10-03); hire-an-agent's default stays 100000.
 # =============================================================================
 # tests/hire-an-agent-harness.bats — #1107: `--harness` flag to hire either a
 #   Claude or a dsh agent.

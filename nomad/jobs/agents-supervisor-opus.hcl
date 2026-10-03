@@ -242,10 +242,14 @@ FORGE_VAULT_TOKEN=seed-me
 EOT
       }
 
-      # Supervisor needs CPU + memory headroom for inference sessions.
+      # Bash-only since #1681 (SUPERVISOR_LLM_ESCALATION = "off"): no
+      # inference session runs here, so 1 GiB is ample. Was 4096 for the Opus
+      # sessions; the node has 12 GiB and the Grok agents (2026-10-03) left
+      # no room for 4 GiB plus vault-runner's 1 GiB dispatches. Raise it again
+      # before switching escalation on.
       resources {
         cpu    = 2000
-        memory = 4096
+        memory = 1024
       }
     }
   }
