@@ -36,8 +36,7 @@ and executes the pending-actions manifest post-merge.
   PR detection helper (`detect_pr_number`). Loads engagement evidence from ops repo
   (`load_engagement_evidence`) for website addressable decisions. Refreshes the ops
   catalog after the session ends (`refresh_ops_calibration`, #1454): runs
-  `tools/calibration.sh` (#1453 — promised-vs-actual table over the proposal-loop
-  tape) and writes the report to `${OPS_REPO_ROOT}/catalog/calibration.md` via
+  `tools/calibration.sh` (#1453 — promised-vs-actual table over the proposal-loop tape; stuck proposals from `tools/tape-stuck.sh` count as failures, #1649) and writes the report to `${OPS_REPO_ROOT}/catalog/calibration.md` via
   `ops_commit_and_push`; never fatal — a failed `calibration.sh` (rc!=0) or an unset
   `OPS_REPO_ROOT` only logs a warning and leaves the file untouched.
   The same commit writes the output of `tools/claims-report.sh` (#1645) to
