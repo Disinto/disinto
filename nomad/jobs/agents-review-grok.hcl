@@ -339,10 +339,13 @@ WOODPECKER_TOKEN=seed-me
 EOT
       }
 
-      # Agents run Claude/llama sessions — need CPU + memory headroom.
+      # The model runs at xAI; this container holds dsh and the review
+      # worktree. Peak 167 MiB on its first review (agents-review-qwen peaked at
+      # 614 MiB), so 1 GiB, which keeps 1 GiB of the node free for
+      # vault-runner dispatches.
       resources {
         cpu    = 500
-        memory = 2048
+        memory = 1024
       }
     }
   }
