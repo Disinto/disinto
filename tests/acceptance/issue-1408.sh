@@ -3,20 +3,21 @@
 # tests/acceptance/issue-1408.sh
 #
 # Issue #1408: when a later preflight shows a condition cleared, the open
-# repair proposal is matched with one outcome:
-#
-#   tape_outcome <proposal-id> '{"regression_cleared":1}' '{}' '{}' '[]'
-#
-# and the condition drops out of the state file. Code-derived labels only
-# — no LLM. A tape failure warns and continues — the supervisor is never
-# blocked by the tape (the emitters are total: every failure path logs and
-# returns 0).
+# repair proposal is matched with one outcome and drops out of the state
+# file. Code-derived labels only — no LLM. A tape failure warns and
+# continues — the supervisor is never blocked by the tape (the emitters are
+# total: every failure path logs and returns 0).
 #
 # #1636: repair_tape_tick no longer creates proposals. A condition no remedy
 # acts on is a monitor — a CI incident and a fired recipe write no proposal
 # from the tick (proposals are written by repair_direct_dispatch when a
 # direct remedy runs; see issue-1636.sh). The tick still closes conditions
 # that already have a proposal in the state file.
+#
+# #1637: the outcome is the remedy's own check, not "the condition went
+# away". An entry without acted_at whose condition stops firing is dropped
+# with no outcome. An entry with acted_at whose window has passed still
+# tries to append {acted, cleared}; that append is what AC 4 blocks.
 #
 # Acceptance (read-only — no live services; the supervisor's emit path is
 # exercised in-process by extracting the repair-tape functions from
@@ -26,12 +27,10 @@
 #      no repair proposal and no state entry
 #   2. A fired recipe writes no proposal from the tick; re-ticking while
 #      the condition stays open still appends nothing
-#   3. A later preflight in which a condition that already has a proposal
-#      no longer fires appends one outcome with
-#      bits={"regression_cleared":1} and the condition drops out of the
-#      state file
-#   4. An unwritable TAPE_DIR while closing a recorded condition: the tick
-#      warns and returns 0 — no outcome record
+#   3. A later preflight in which a recorded condition with no acted_at
+#      no longer fires drops the condition with no outcome
+#   4. An unwritable TAPE_DIR while closing an acted condition whose window
+#      has passed: the tick warns and returns 0 — no outcome record
 # =============================================================================
 set -euo pipefail
 
@@ -136,7 +135,7 @@ ac_assert_eq "$rc" "0" "a repair tick while the recipe condition stays open must
 [ ! -f "$TAPE2/tape.jsonl" ] \
   || ac_fail "an already-open monitor must not get a proposal from a later tick"
 
-# ── 3. later preflight: recorded condition cleared → outcome, state drained ─
+# ── 3. later preflight: no acted_at → drop, no outcome (#1637) ──────────────
 TAPE3="$TMP_DIR/tape-cleared"
 STATE3="$TMP_DIR/state-cleared.json"
 mkdir -p "$TAPE3"
@@ -158,33 +157,25 @@ ac_assert_eq "$(jq -r --arg c disk-pressure '.[$c].proposal_id // empty' "$STATE
 rc=0
 out="$(run_tick "$TAPE3" "$STATE3" "false" "" '{"fired":[]}')" || rc=$?
 ac_assert_eq "$rc" "0" "a repair tick showing the recipe condition cleared must return 0 (got $rc): $out"
-ac_assert_eq "$(wc -l < "$TAPE3/tape.jsonl")" "1" \
-  "a cleared condition must append exactly one outcome line"
-ac_assert_jq "$(cat <<JQ
-.type == "outcome"
-  and .proposal_id == "$RECIPE_ID"
-  and .bits == {"regression_cleared": 1}
-  and .numbers == {}
-  and .children == {}
-  and .payloads == []
-JQ
-)" "$(head -n 1 "$TAPE3/tape.jsonl")" \
-  "the only line must be the outcome with regression_cleared bits for the recorded proposal"
+[ ! -f "$TAPE3/tape.jsonl" ] \
+  || ac_fail "a cleared condition with no acted_at must not write an outcome (#1637)"
 ac_assert_eq "$(jq -r 'keys | length' "$STATE3")" "0" \
   "the cleared condition must drop out of the state file"
 
 # ── 4. unwritable TAPE_DIR while closing: warn + continue, no record ────────
 # A directory can never be created under a plain file — mkdir -p must fail,
-# so no record can land. The condition is already recorded, so the tick
-# tries to append the cleared outcome and must warn rather than fail.
+# so no record can land. The condition already acted and the window has
+# passed while it is still firing, so the tick tries to append the repair
+# outcome and must warn rather than fail.
 touch "$TMP_DIR/blocker"
 TAPE4="$TMP_DIR/blocker/tape"
 STATE4="$TMP_DIR/state-blocked.json"
 jq -n --arg id "repair-seed-blocked" \
-  '{"disk-pressure": {proposal_id: $id, class: "disk-pressure", since: "2024-01-01T00:00:00Z"}}' \
+  '{"disk-pressure": {proposal_id: $id, class: "disk-pressure", since: "2024-01-01T00:00:00Z", acted: 1, acted_at: 1}}' \
   > "$STATE4"
+export SUPERVISOR_NOW=100000 SUPERVISOR_REPAIR_WINDOW_S=3600
 rc=0
-out="$(run_tick "$TAPE4" "$STATE4" "false" "" '{"fired":[]}')" || rc=$?
+out="$(run_tick "$TAPE4" "$STATE4" "false" "" "$RECIPE_FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "an unwritable TAPE_DIR must not fail the supervisor tick (got $rc): $out"
 case "$out" in
   *"WARNING: tape"*) ;;
