@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# #1687 edits the lib/AGENTS.md row that mentions CLAUDE_TIMEOUT; the default stays 7200.
 # =============================================================================
 # tests/hire-an-agent-nomad.bats — Tests for the Nomad backend of
 #   disinto hire-an-agent (#1073)
