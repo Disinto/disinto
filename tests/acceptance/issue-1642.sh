@@ -104,20 +104,20 @@ write_current() {
   printf '%s\n' "$pid" >"$TAPE_DIR/claims/${id}.current"
 }
 
-# run_tool — execute the tool against the fixture dirs.
+# run_tool — execute claim-checks.sh against the fixture dirs.
 # stdout -> $OUT, stderr -> $ERR, exit status -> $RC.
 run_tool() {
+  local captured
   RC=0
-  OUT=""
   ERR=""
-  (
+  captured="$(
     export OPS_REPO_ROOT CLAIMS_DIR TAPE_DIR PAYLOAD_DIR
-    # The runner may have exported a real ops clone. The fixture is the only
-    # probe source this test is allowed to run.
-    bash "$REPO_ROOT/tools/claim-checks.sh"
-  ) >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
-  OUT="$(cat "$TMP_DIR/out" 2>/dev/null || true)"
-  ERR="$(cat "$TMP_DIR/err" 2>/dev/null || true)"
+    bash "$REPO_ROOT/tools/claim-checks.sh" 2>"$TMP_DIR/err"
+  )" || RC=$?
+  OUT="$captured"
+  if [ -s "$TMP_DIR/err" ]; then
+    ERR="$(cat "$TMP_DIR/err")"
+  fi
 }
 
 tape_lines() {

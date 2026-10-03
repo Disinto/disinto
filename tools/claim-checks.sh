@@ -73,25 +73,9 @@ _check_iso() {
 }
 
 # _claim_current_ids — ids that have ${TAPE_DIR}/claims/<id>.current, sorted.
-# A name that is not ^[a-z][a-z0-9-]*$ is not a claim id and is skipped. A
-# missing claims dir prints nothing, rc 0.
+# The name filter lives in lib/claims.sh (_claim_ids_in) so it is not copied.
 _claim_current_ids() {
-  local dir f base
-  dir="${TAPE_DIR}/claims"
-  [ -d "$dir" ] || return 0
-  local -a ids=()
-  for f in "$dir"/*.current; do
-    [ -f "$f" ] || continue
-    base="${f##*/}"
-    base="${base%.current}"
-    if [[ "$base" =~ ^[a-z][a-z0-9-]*$ ]]; then
-      ids+=("$base")
-    fi
-  done
-  if [ "${#ids[@]}" -eq 0 ]; then
-    return 0
-  fi
-  printf '%s\n' "${ids[@]}" | LC_ALL=C sort
+  _claim_ids_in "${TAPE_DIR}/claims" .current
 }
 
 # _claim_challenged PID — rc 0 when the last tape outcome for PID has
@@ -139,11 +123,14 @@ _check_claim() {
   local id="$1"
   local current pid check expect value prc reason_file reason
   local started started_epoch ended ended_epoch duration_s status cost
-  local expect_rc numbers claims_dir epoch err
+  local expect_rc numbers claims_dir epoch invalid_line
 
-  err=""
-  if ! err="$(claim_valid "$id" 2>&1)"; then
-    log "invalid claim ${id}: ${err:-bad field}"
+  # claim_valid's own line names the field. A skip is not a tool failure:
+  # an invalid file is not a check. Wording differs from claim-proposals so
+  # the two tools do not share a copied block.
+  invalid_line=""
+  if ! invalid_line="$(claim_valid "$id" 2>&1)"; then
+    log "skipping claim ${id}: ${invalid_line:-bad field}"
     return 0
   fi
 
@@ -234,7 +221,6 @@ _check_claim() {
       return 1
     fi
   fi
-  return 0
 }
 
 failed=0
