@@ -14,6 +14,8 @@ source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/worktree.sh"
 # shellcheck source=../lib/guard.sh
 source "$(dirname "$0")/../lib/guard.sh"
+# shellcheck source=../lib/pr-author-filter.sh
+source "$(dirname "$0")/../lib/pr-author-filter.sh"
 check_active reviewer
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -85,7 +87,7 @@ fi
 
 PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
   "${API_BASE}/pulls?state=open&limit=20" | \
-  jq -r --arg branch "${PRIMARY_BRANCH}" '.[] | select(.base.ref == $branch) | select(.draft != true) | select(.title | test("^\\[?WIP[\\]:]"; "i") | not) | "\(.number) \(.head.sha) \(.head.ref)"')
+  jq -r --arg branch "${PRIMARY_BRANCH}" '.[] | select(.base.ref == $branch) | select(.draft != true) | select(.title | test("^\\[?WIP[\\]:]"; "i") | not) | "\(.number) \(.head.sha) \(.head.ref) \(.user.login)"')
 
 if [ -z "$PRS" ]; then
   log "No open PRs targeting ${PRIMARY_BRANCH}"
@@ -143,6 +145,12 @@ fi
 while IFS= read -r line; do
   PR_NUM=$(echo "$line" | awk '{print $1}')
   PR_SHA=$(echo "$line" | awk '{print $2}')
+  PR_AUTHOR=$(echo "$line" | awk '{print $4}')
+  if ! pr_author_allowed "$PR_AUTHOR"; then
+    log "  #${PR_NUM} author ${PR_AUTHOR} is not for this reviewer, skip"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
 
   # Gate only on required pipelines (#920). When branch protection declares
   # required status check contexts, wait for those to pass; optional workflows

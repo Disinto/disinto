@@ -206,6 +206,8 @@ job "agents-review-qwen" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "review"
+        # agents-review-grok reviews dev-grok-bot's PRs (REVIEW_ONLY_AUTHORS there).
+        REVIEW_SKIP_AUTHORS = "dev-grok-bot"
 
         # dsh harness (#1104-#1107, rolled out to dev in #1231): this job
         # and agents-dev-qwen both run the dsh harness — a dsh regression

@@ -1,5 +1,9 @@
 # .woodpecker/ci.yml — Disinto CI pipeline
-# Runs on every push and pull request.
+# Runs on every pull request and on pushes to main. A push to any other
+# branch is covered by its PR's pull_request pipeline, which runs every step
+# below plus the PR-only ones; running both put two full pipelines per push
+# on the single runner (2026-10-03). The required check on main is
+# ci/woodpecker/pr/ci (docs/branch-protection.md).
 #
 # Steps:
 #   1. shellcheck   — lint all .sh files (warnings+errors)
@@ -14,7 +18,9 @@
 #   Workflow-level default (10m) applies to all steps unless overridden.
 
 when:
-  event: [push, pull_request]
+  - event: pull_request
+  - event: push
+    branch: main
 
 # Workflow-level timeout default — propagates to all steps without their own timeout.
 timeout: 10m

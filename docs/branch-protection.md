@@ -24,6 +24,15 @@ is produced for every PR update including force-pushed ones. That is the route
 chosen in #1084; making force-pushes emit push pipelines would be Woodpecker/
 Forgejo webhook behavior this repo cannot control.
 
+## CI triggers
+
+`.woodpecker/ci.yml` runs on pull requests and on pushes to `main` only. A push
+to a PR branch is validated by the PR's `pull_request` pipeline, which runs
+the same steps plus the PR-only ones (stale-base check, defaults golden,
+agent smoke). Running a `push` pipeline as well put two full pipelines on the
+single runner for every push, 30–45 minutes before the head went green
+(2026-10-03).
+
 ## Applying the gate to a live forge
 
 The payload in `lib/branch-protection.sh` is the source of truth, but the
