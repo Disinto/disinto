@@ -97,6 +97,18 @@ roles:
     namespace: default
     job_id:    agents-gardener-qwen
 
+  # Grok 4.7 agents beside the qwen ones (2026-10-03): own forge identities,
+  # so their policy adds the dev-grok and review-grok bot paths.
+  - name:      agents-dev-grok
+    policy:    service-agents-grok
+    namespace: default
+    job_id:    agents-dev-grok
+
+  - name:      agents-review-grok
+    policy:    service-agents-grok
+    namespace: default
+    job_id:    agents-review-grok
+
   # ── Per-agent bots (nomad/jobs/bot-<role>.hcl — land in later steps) ───────
   # job_id placeholders match the policy name 1:1 until each bot's jobspec
   # lands. When a bot's jobspec is added under nomad/jobs/, update the
