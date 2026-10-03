@@ -57,7 +57,9 @@ GARDENER="$REPO_ROOT/gardener/gardener-run.sh"
 FN_SRC="$(ac_extract_fn refresh_ops_calibration "$GARDENER")"
 [ -n "$FN_SRC" ] || ac_fail "could not extract refresh_ops_calibration() from gardener-run.sh"
 case "$FN_SRC" in
-  *'out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" )" || rc=$?'*) ;;
+  # #1652 appends calibration-purpose.sh after this stage; the signatures
+  # pipe itself is what this issue pins.
+  *'"$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh"'*) ;;
   *) ac_fail "refresh_ops_calibration must pipe calibration.sh through calibration-signatures.sh" ;;
 esac
 ac_log "wiring OK: the report is piped through calibration-signatures.sh"

@@ -92,13 +92,18 @@ echo "calibration: broken — jq unavailable in this test" >&2
 exit 3
 SH
   chmod +x "${factory}/tools/calibration.sh"
-  # The refresh pipes through this tool (#1651). A pass-through so the
-  # pipeline's failure is calibration.sh's rc, not a missing script.
+  # The refresh pipes through these tools (#1651, #1652). Pass-throughs so
+  # the pipeline's failure is calibration.sh's rc, not a missing script.
   cat > "${factory}/tools/calibration-signatures.sh" <<'SH'
 #!/usr/bin/env bash
 cat
 SH
-  chmod +x "${factory}/tools/calibration-signatures.sh"
+  cat > "${factory}/tools/calibration-purpose.sh" <<'SH'
+#!/usr/bin/env bash
+cat
+SH
+  chmod +x "${factory}/tools/calibration-signatures.sh" \
+    "${factory}/tools/calibration-purpose.sh"
 }
 
 # ── Subshell runner: eval the extracted function with stub log/ops_commit_and_push ───
@@ -114,6 +119,7 @@ run_refresh() {
   # fixture does not create so a caller env cannot fail the refresh.
   FACTORY_ROOT="$factory" OPS_REPO_ROOT="$ops_root" TAPE_DIR="$tape_dir" PRIMARY_BRANCH="main" \
     CALIBRATION_STUCK_FILE="$ops_root/no-stuck.toml" \
+    CALIBRATION_GRADED_FILE="$ops_root/no-graded.toml" \
     PICK_FN="$FN_SRC" bash -c '
     set -uo pipefail
     log() { printf "gardener: %s\n" "$*"; }
@@ -131,9 +137,11 @@ run_refresh() {
 }
 
 # The refresh pipes the table through calibration-signatures.sh (#1651), which
-# appends a top signatures column. This fixture's outcome is unsigned and the
-# stuck pack is absent, so the new cell is `-`; the header is what this AC pins.
-HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures |'
+# appends a top signatures column, then calibration-purpose.sh (#1652), which
+# appends a purpose column. This fixture's outcome is unsigned, the stuck pack
+# is absent, and the graded pack is missing, so both new cells are `-`; the
+# header is what this AC pins.
+HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures | purpose |'
 # Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
 # competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
 # (tests/lib/acceptance-helpers.sh).

@@ -249,10 +249,14 @@ write_factory() {
 #!/usr/bin/env bash
 printf '%s\n' 'calibration-body'
 SH
-  # refresh_ops_calibration pipes calibration.sh through this tool (#1651).
-  # A pass-through keeps the stubbed calibration body; a missing script would
-  # fail the pipeline and skip the file.
+  # refresh_ops_calibration pipes calibration.sh through these tools
+  # (#1651, #1652). Pass-throughs keep the stubbed calibration body; a
+  # missing script would fail the pipeline and skip the file.
   cat >"${factory}/tools/calibration-signatures.sh" <<'SH'
+#!/usr/bin/env bash
+cat
+SH
+  cat >"${factory}/tools/calibration-purpose.sh" <<'SH'
 #!/usr/bin/env bash
 cat
 SH
@@ -265,7 +269,7 @@ fi
 printf '%s\n' 'claims-body'
 SH
   chmod +x "${factory}/tools/calibration.sh" "${factory}/tools/calibration-signatures.sh" \
-    "${factory}/tools/claims-report.sh"
+    "${factory}/tools/calibration-purpose.sh" "${factory}/tools/claims-report.sh"
 }
 
 # push_has OUT NEEDLE — rc 0 when the stubbed commit log contains NEEDLE.

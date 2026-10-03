@@ -43,6 +43,8 @@ and executes the pending-actions manifest post-merge.
   `${OPS_REPO_ROOT}/catalog/claims.md`; a failing claims report only logs a warning.
   The report passes through `tools/calibration-signatures.sh` (#1651), which
   appends a `top signatures` column.
+  Then through `tools/calibration-purpose.sh` (#1652), which appends a
+  `purpose` column from grades.
   Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.

@@ -6,7 +6,8 @@
 # that run after tools/calibration.sh. Those tools must not edit the jq
 # program inside calibration.sh (#1615); they append a column to the finished
 # table. This is the one shared way to do that. Called by
-# tools/calibration-signatures.sh (#1651); #1652 is the other planned caller.
+# tools/calibration-signatures.sh (#1651) and tools/calibration-purpose.sh
+# (#1652).
 #
 # Function (sourced):
 #   table_append_column NAME VALUES_JSON
