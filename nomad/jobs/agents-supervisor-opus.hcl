@@ -179,7 +179,10 @@ job "agents-supervisor-opus" {
         # live clone and per-env TOMLs from factory-projects are picked up
         # rather than the stale baked image copy (#794).
         FACTORY_REPO       = "disinto-admin/disinto"
-        CLAUDE_MODEL       = "claude-opus-4-6"
+        # #1681: run without LLM escalation unless it is switched on; this
+        # deployment runs no Anthropic models, so bash-only (direct remedies,
+        # journal, incident files) is the default.
+        SUPERVISOR_LLM_ESCALATION = "off"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "disinto"

@@ -444,6 +444,42 @@ repair_direct_dispatch() {
   return 0
 }
 
+# ── Bash-only escalation gate (#1681) ──────────────────────────────────────
+# escalation_off RECIPE_OUTPUT — when SUPERVISOR_LLM_ESCALATION is switched
+# on, the LLM escalation is kept: return 1 and do nothing, so the gate below
+# escalates. Otherwise the supervisor runs bash-only (default "off"; the env
+# var may also be unset, or set to "off"): one log line naming every fired
+# recipe that no direct script can handle — `action` other than "direct", or
+# `action_script` "__MISSING__" — then return 0 so the gate falls to the fast
+# path below. The naming rule mirrors the LLM_REQUIRED condition in that
+# gate: a recipe is left for a human iff its `action` is not "direct" or its
+# `action_script` is "__MISSING__" (the same set that would have been sent
+# to the LLM).
+escalation_off() {
+  local recipe_output="${1:-}"
+  # Explicitly switched on — keep the LLM escalation, do nothing.
+  if [ "${SUPERVISOR_LLM_ESCALATION:-off}" = "on" ]; then
+    return 1
+  fi
+  # Bash-only default: name the left-for-a-human recipes, return 0.
+  local input jq_filter names n
+  input="$recipe_output"
+  [ -n "$input" ] || input='{"fired":[]}'
+  # Left-for-a-human: a non-direct fire, or a direct fire missing a script
+  # (mirror of the LLM_REQUIRED condition above — the set that would have
+  # been sent to the LLM).
+  jq_filter='(.fired // []) | map(select(.action != "direct" or .action_script == "__MISSING__"))'
+  # jq 1.6 has no single-quoted string literals, so the space separator for
+  # join() is passed via --arg rather than a literal. A jq failure yields
+  # empty output; the `|| printf ''` keeps the substitution exiting 0 so the
+  # surrounding `set -e` never aborts a tick.
+  names="$(printf '%s\n' "$input" | jq -r --arg sep ' ' "$jq_filter | map(.name // empty) | join(\$sep)" 2>/dev/null || printf '')"
+  n="$(printf '%s\n' "$input" | jq -r "$jq_filter | length" 2>/dev/null || printf '')"
+  n="${n:-0}"
+  log "LLM escalation off: ${n} fired recipe(s) left for a human: ${names}"
+  return 0
+}
+
 # ── LLM escalation gate ───────────────────────────────────────────────────
 # Fast path: no abnormal signals → skip LLM entirely.
 # Only invoke claude -p when recipe evaluator fired at least one abnormal
@@ -478,6 +514,15 @@ if [ -n "$RECIPE_OUTPUT" ]; then
     # No recipes fired — healthy box, no LLM needed.
     LLM_REQUIRED=false
   fi
+fi
+
+# ── Bash-only switch (#1681) ────────────────────────────────────────────────
+# When the LLM escalation is explicitly switched on (escalation_off returns 1)
+# the gate escalates as today. Otherwise the supervisor runs bash-only: demote
+# the LLM to the fast path below and log the fired recipes that no direct
+# script can handle.
+if [ "$LLM_REQUIRED" = true ] && escalation_off "$RECIPE_OUTPUT"; then
+  LLM_REQUIRED=false
 fi
 
 if [ "$LLM_REQUIRED" = false ]; then
