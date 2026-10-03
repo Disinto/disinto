@@ -219,8 +219,9 @@ close_dev_tape_outcome() {
   #   * A failure walk (PR_WALK_RC != 0, no recorded refusal) keeps today's
   #     bits and uses _PR_WALK_EXIT_REASON as the reason (possibly empty).
   #   * A merged walk keeps today's bits, no reason.
-  #   * unmet_dependency is never recorded (it re-queues the issue), so it
-  #     falls through to the failure-walk shape: no rejected bit.
+  #   * unmet_dependency is never recorded (it blocks the issue instead of
+  #     re-queueing it, #1672), so it falls through to the failure-walk
+  #     shape: no rejected bit.
   if [ -n "${_DEV_REFUSAL_STATUS:-}" ]; then
     merged=0
     reason="${_DEV_REFUSAL_STATUS}"
@@ -761,9 +762,10 @@ dev_failed_attempts() {
 # =============================================================================
 #
 # _dev_refusal_relabel — the shared tail of the refusal paths that leave the
-# issue out of the dev queue (too_large, needs_ops, design_conflict): add the
-# given label and drop backlog + in-progress. Labels are looked up by name via
-# forge_api; every mutation is guarded so an API hiccup never aborts the run
+# issue out of the dev queue (too_large, needs_ops, design_conflict,
+# unmet_dependency): add the given label and drop backlog + in-progress. Labels
+# are looked up by name via forge_api; every mutation is guarded so an API
+# hiccup never aborts the run
 # (matching the pre-#1613 too_large block).
 _dev_refusal_relabel() {
   local issue="$1" label_name="$2"
@@ -795,7 +797,8 @@ _dev_refusal_relabel() {
 # Args: STATUS (the .status field) REFUSAL_JSON (the raw JSON object).
 #
 # Statuses and behavior:
-#   * unmet_dependency -> refusal comment, release the issue (pre-#1613).
+#   * unmet_dependency -> refusal comment (+ the "closed dep may not have
+#       landed" note); add `blocked`, drop backlog + in-progress (#1672).
 #   * too_large        -> refusal comment; add `underspecified`, drop
 #       backlog + in-progress (pre-#1613).
 #   * already_done     -> refusal comment, close the issue (pre-#1613).
@@ -814,9 +817,10 @@ handle_refusal() {
 
   # #1608: record the disposition status so close_dev_tape_outcome() (run from
   # the EXIT trap, same process) can write rejected: 1 + a reason. Only the
-  # four disposition statuses qualify: unmet_dependency releases the issue back
-  # to the backlog (not a disposition) and unknown statuses are a no-op, so
-  # neither is recorded — both then take the failure-walk shape in the outcome.
+  # four disposition statuses qualify: unmet_dependency blocks the issue instead
+  # of re-queueing it (not a disposition, #1672) and unknown statuses are a
+  # no-op, so neither is recorded — both then take the failure-walk shape in
+  # the outcome.
   # (The pattern is one unspaced `a|b|c|d)` line so the first token is followed
   # by `|` and correctly skipped by the CI function-resolver, which otherwise
   # would treat a spaced `a | b)` first token as an undefined call.)
@@ -837,8 +841,15 @@ handle_refusal() {
         comment_body="${comment_body}
 
   **Suggestion:** Work on #${suggestion} first."
+      # #1672: dev-poll only claims issues whose declared deps are all closed,
+      # so an unmet_dependency refusal means a closed dependency's work may
+      # never have landed. Block instead of re-queueing: a release would be
+      # picked, refused and re-queued at once by dev-poll (#1622).
+      comment_body="${comment_body}
+
+  dev-poll found every dependency closed, so a closed dependency may not have landed. Re-add backlog once it has."
       issue_post_refusal "$ISSUE" "🚧" "Unmet dependency" "$comment_body"
-      issue_release "$ISSUE"
+      _dev_refusal_relabel "$ISSUE" "blocked"
       CLAIMED=false
       ;;
     too_large)

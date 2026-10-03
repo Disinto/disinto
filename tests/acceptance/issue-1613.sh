@@ -24,7 +24,9 @@
 #   4. design_conflict -> "Design conflict", +`rejected`,  -backlog/in-progress.
 #   5. too_large     -> "Too large for single session", +`underspecified`,
 #       -backlog/in-progress (pre-#1613 preserved).
-#   6. unmet_dependency -> "Unmet dependency", release (pre-#1613).
+#   6. unmet_dependency -> "Unmet dependency" (+ #1672 "closed dep may not
+#       have landed" note) + add `blocked` / drop `backlog`+`in-progress`;
+#       no release, no close (#1672).
 #   7. already_done -> "Already implemented", close (pre-#1613).
 #   8. Unknown status -> no-op: no comment, no label mutation, CLAIMED untouched.
 #
@@ -50,16 +52,22 @@ CLAIMED=true
 # Fake label directory (a bare array, matching what a real
 # `forge_api GET "/labels"` returns — see lib/issue-lifecycle.sh _ilc_ensure_label_id):
 # rejected=100, backlog=200, in-progress=300, underspecified=400.
-LABELS_JSON='[{"id":100,"name":"rejected"},{"id":200,"name":"backlog"},{"id":300,"name":"in-progress"},{"id":400,"name":"underspecified"}]'
+LABELS_JSON='[{"id":100,"name":"rejected"},{"id":101,"name":"blocked"},{"id":200,"name":"backlog"},{"id":300,"name":"in-progress"},{"id":400,"name":"underspecified"}]'
+
+# #1672: the exact paragraph the unmet_dependency refusal body must append.
+NEW_PARAGRAPH="dev-poll found every dependency closed, so a closed dependency may not have landed. Re-add backlog once it has."
 
 # ── Stubs: serve the label directory, record every mutating call ─────────────
 CALLS=()
-REFUSALS=()
+REFUSALS=(); BODIES=()
 
 issue_post_refusal() {
   # $1 issue  $2 emoji  $3 title  $4 body
   REFUSALS+=("$3")
-  CALLS+=("issue_post_refusal $1 $3")
+  BODIES+=("$4")
+  # 1613-specific tag: keeps this stub's window distinct from issue-1672.sh's
+  # (per-test-isolation convention).
+  CALLS+=("issue-1613 post-refusal $ISSUE $3")
 }
 issue_release() { CALLS+=("issue_release $1"); }
 issue_close()   { CALLS+=("issue_close $1"); }
@@ -191,24 +199,48 @@ fi
   || ac_fail "too_large must set CLAIMED=false"
 ac_log "too_large: pre-#1613 behaviour preserved (+underspecified, -backlog/in-progress)"
 
-# ── 6. unmet_dependency → pre-#1613: release (no relabel) ─────────────────────
-CALLS=(); REFUSALS=(); CLAIMED=true
+# ── 6. unmet_dependency → #1672: blocked (no release, +`blocked`) ────────────
+CALLS=(); REFUSALS=(); BODIES=(); CLAIMED=true
 handle_refusal "unmet_dependency" '{"status":"unmet_dependency","blocked_by":"issue 123","suggestion":"123"}'
 [ "${#REFUSALS[@]}" -eq 1 ] \
-  || ac_fail "unmet_dependency: expected exactly one refusal, got ${#REFUSALS[@]}"
+  || ac_fail "case 6: unmet_dependency expected exactly one refusal, got ${#REFUSALS[@]}"
 [ "${REFUSALS[0]}" = "Unmet dependency" ] \
-  || ac_fail "unmet_dependency: refusal title expected 'Unmet dependency' got '${REFUSALS[0]}'"
-ac_has_call_matching 'issue_release 1613' \
-  || ac_fail "unmet_dependency must release the issue"
-if ac_has_call_matching 'forge POST /issues/1613/labels'; then
-  ac_fail "unmet_dependency must not relabel the issue"
+  || ac_fail "case 6: unmet_dependency title expected 'Unmet dependency' got '${REFUSALS[0]}'"
+# #1672: body must hold the pre-#1613 header + blocked_by + suggestion +
+# the appended "closed dep may not have landed" paragraph.
+case "${BODIES[0]}" in
+  *"$NEW_PARAGRAPH"*) ;;
+  *) ac_fail "case 6: unmet_dependency body must hold the #1672 paragraph" ;;
+esac
+if ! printf '%s' "${BODIES[0]}" | grep -qF '### Blocked by unmet dependency'; then
+  ac_fail "unmet_dependency: refusal body must hold the pre-#1613 header"
 fi
-if ac_has_call_matching 'forge DELETE /issues/1613/labels/'; then
-  ac_fail "unmet_dependency must not relabel the issue"
+if ! printf '%s' "${BODIES[0]}" | grep -qF 'issue 123'; then
+  ac_fail "unmet_dependency: refusal body must hold the blocked_by message"
+fi
+if ! printf '%s' "${BODIES[0]}" | grep -qF '**Suggestion:** Work on #123 first.'; then
+  ac_fail "unmet_dependency: refusal body must hold the suggestion line"
+fi
+# #1672: relabel to `blocked` (id 101) and drop backlog + in-progress, instead
+# of releasing the issue (pre-#1613 behavior, now wrong).
+ac_has_call_matching 'forge POST /issues/1613/labels {"labels":[101]}' \
+  || ac_fail "unmet_dependency must relabel the issue to blocked (id 101)"
+ac_has_call_matching 'forge DELETE /issues/1613/labels/200' \
+  || ac_fail "unmet_dependency must remove the backlog label (id 200)"
+ac_has_call_matching 'forge DELETE /issues/1613/labels/300' \
+  || ac_fail "unmet_dependency must remove the in-progress label (id 300)"
+if ac_has_call_matching 'forge POST /issues/1613/labels {"labels":[100]}'; then
+  ac_fail "unmet_dependency must not add the rejected label (id 100)"
+fi
+if ac_has_call_matching 'issue_release 1613'; then
+  ac_fail "unmet_dependency must not release the issue (#1672: it blocks it)"
+fi
+if ac_has_call_matching 'issue_close 1613'; then
+  ac_fail "unmet_dependency must not close the issue"
 fi
 [ "$CLAIMED" = "false" ] \
   || ac_fail "unmet_dependency must set CLAIMED=false"
-ac_log "unmet_dependency: pre-#1613 behaviour preserved (release, no relabel)"
+ac_log "unmet_dependency: #1672 behaviour (+blocked, #1672 paragraph, no release/close)"
 
 # ── 7. already_done → pre-#1613: close (no relabel) ───────────────────────────
 CLAIMED=true
