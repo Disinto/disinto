@@ -4,8 +4,8 @@
 #
 # Sprint effects and claim checks both run a probe from the ops repo and read
 # one number from it. This is the shared runner: the path rule, the timeout
-# and the number check live here, not in each caller. No callers yet —
-# tools/sprint-outcomes.sh and tools/claim-checks.sh will source it.
+# and the number check live here, not in each caller. tools/claim-checks.sh
+# (#1642) sources it; tools/sprint-outcomes.sh will too.
 #
 # Sourced from the caller:
 #   source "$(dirname "$0")/../lib/probe.sh"

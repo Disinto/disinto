@@ -43,6 +43,9 @@ and executes the pending-actions manifest post-merge.
   Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.
+  Then `tools/claim-checks.sh` (#1642) runs each proposed claim's check at most
+  once per `CLAIM_CHECK_INTERVAL_S` (default 86400); the first miss writes a
+  `contradicted` outcome. A failure only logs a warning.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.

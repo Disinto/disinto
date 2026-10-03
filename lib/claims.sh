@@ -5,7 +5,7 @@
 # The factory's world model is claims: one TOML file per claim in the ops
 # repo, `claims/<id>.toml`. Each file is a statement plus a check the factory
 # runs itself. This lib only reads those files. Called by
-# tools/claim-proposals.sh (#1641).
+# tools/claim-proposals.sh (#1641) and tools/claim-checks.sh (#1642).
 #
 # Sourced from the caller:
 #   source "$(dirname "$0")/claims.sh"
@@ -31,6 +31,7 @@
 #     -> ids in ${CLAIMS_DIR:-${OPS_REPO_ROOT}/claims}, sorted, one per line.
 #        Each `*.toml` file name without `.toml`, and only when the name
 #        matches `^[a-z][a-z0-9-]*$`. A missing dir prints nothing, rc 0.
+#        Implemented by _claim_ids_in (also used by tools/claim-checks.sh).
 #   claim_field ID KEY
 #     -> value of KEY, read with python3 tomllib (as lib/signature.sh does).
 #        An array prints its items space-separated. Missing file or key:
@@ -63,26 +64,32 @@ _claim_fail() {
   printf 'bad field: %s\n' "$1" >&2
 }
 
-# claim_ids — sorted claim ids, one per line. Names that are not
-# `^[a-z][a-z0-9-]*$` (Bad_Name.toml, underscores, a leading digit) are
-# skipped. A missing directory prints nothing and returns 0.
-claim_ids() {
-  local dir f base
-  dir="$(_claims_dir)"
+# _claim_ids_in DIR SUFFIX — sorted ids of regular files in DIR whose names
+# end in the literal SUFFIX (`.toml`, `.current`) and match
+# `^[a-z][a-z0-9-]*$` after that suffix is removed. A missing directory
+# prints nothing and returns 0. One listing, so claim_ids and
+# tools/claim-checks.sh do not each carry the filter.
+_claim_ids_in() {
+  local dir="$1" suffix="$2" f base
   [ -d "$dir" ] || return 0
   local -a ids=()
-  for f in "$dir"/*.toml; do
+  for f in "$dir"/*"$suffix"; do
     [ -f "$f" ] || continue
     base="${f##*/}"
-    base="${base%.toml}"
+    base="${base%"$suffix"}"
     if [[ "$base" =~ ^[a-z][a-z0-9-]*$ ]]; then
       ids+=("$base")
     fi
   done
-  if [ "${#ids[@]}" -eq 0 ]; then
-    return 0
-  fi
+  [ "${#ids[@]}" -eq 0 ] && return 0
   printf '%s\n' "${ids[@]}" | LC_ALL=C sort
+}
+
+# claim_ids — sorted claim ids, one per line. Names that are not
+# `^[a-z][a-z0-9-]*$` (Bad_Name.toml, underscores, a leading digit) are
+# skipped. A missing directory prints nothing and returns 0.
+claim_ids() {
+  _claim_ids_in "$(_claims_dir)" .toml
 }
 
 # claim_field ID KEY — print the value of KEY from <dir>/<ID>.toml.
