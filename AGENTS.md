@@ -65,7 +65,7 @@ Known default constants (`DSH_CONTEXT_WINDOW`, `CLAUDE_TIMEOUT`, `MAX_DIFF`,
 (e.g. `DSH_CONTEXT_WINDOW` by `tests/hire-an-agent-harness.bats`, the review
 `CLAUDE_TIMEOUT` cap by `tests/acceptance/issue-1171-review-env-overrides.sh`).
 A PR that moves one must update the goldens **in the same commit** — before
-pushing, grep `tests/` for the old value. CI enforces this (`.woodpecker/check-defaults-golden.sh`, #1261).
+pushing, grep `tests/` for the old value. CI enforces this (`.woodpecker/check-defaults-golden.sh`, #1261); Markdown files are not checked, since a doc can name a default without moving it.
 
 ## Agents
 
