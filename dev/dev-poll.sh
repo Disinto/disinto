@@ -791,11 +791,24 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         REVIEWS_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
           "${API}/pulls/${HAS_PR}/reviews") || true
         HAS_CHANGES=$(pr_live_review_count "$REVIEWS_JSON" "$HAS_PR_SHA" "REQUEST_CHANGES")
+        IP_CI_STATE=$(ci_commit_status "$HAS_PR_SHA") || IP_CI_STATE=""
 
         if [ "${HAS_CHANGES:-0}" -gt 0 ]; then
           log "issue #${ISSUE_NUM} has review feedback — spawning agent"
           ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
           log "started dev-agent PID $! for issue #${ISSUE_NUM} (review fix)"
+          BLOCKED_BY_INPROGRESS=true
+        elif ci_failed "$IP_CI_STATE"; then
+          # CI failed on a PR this agent owns. dev-agent's walk-failure path no
+          # longer blocks on a CI timeout (#1705), so dev-poll owns the CI-failed
+          # case here: spawn a fix, or declare the fix budget spent.
+          if handle_ci_exhaustion "$HAS_PR" "$ISSUE_NUM"; then
+            log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — no CI fix left"
+          else
+            log "issue #${ISSUE_NUM} PR #${HAS_PR} CI failed — spawning agent to fix (attempt ${CI_FIX_ATTEMPTS}/3)"
+            ("${SCRIPT_DIR}/dev-agent.sh" "$ISSUE_NUM" >> "$LOGFILE" 2>&1) &
+            log "started dev-agent PID $! for issue #${ISSUE_NUM} (CI fix)"
+          fi
           BLOCKED_BY_INPROGRESS=true
         else
           log "issue #${ISSUE_NUM} assigned to me — my thread is busy"

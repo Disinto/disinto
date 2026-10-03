@@ -48,10 +48,15 @@ ac_require_cmd bash jq awk date
 TARGET="$REPO_ROOT/dev/dev-agent.sh"
 ac_assert_file "$TARGET" "dev-agent.sh is present"
 
-# --- extract the function under test -----------------------------------------
+# --- extract the functions under test -----------------------------------------
 ac_log "Extracting close_dev_tape_outcome from $TARGET"
 FN_CLOSE="$(ac_extract_fn close_dev_tape_outcome "$TARGET")"
 [ -n "$FN_CLOSE" ] || ac_fail "close_dev_tape_outcome() is not defined in dev-agent.sh"
+# close_dev_tape_outcome's #1705 guard calls dev_walk_reason_terminal, so the
+# subshell must have it too (otherwise the guard flips a "command not found"
+# into a success and would skip a failure-walk outcome that these ACs pin).
+FN_REASON="$(ac_extract_fn dev_walk_reason_terminal "$TARGET")"
+[ -n "$FN_REASON" ] || ac_fail "dev_walk_reason_terminal() is not defined in dev-agent.sh"
 
 # --- wiring: EXIT trap calls close_dev_tape_outcome ---------------------------
 grep -q "trap.*close_dev_tape_outcome.*EXIT" "$TARGET" \
@@ -89,6 +94,7 @@ run_close() {
     # shellcheck disable=SC1091
     source "$REPO_ROOT/lib/tape.sh"
     eval "$FN_CLOSE"
+    eval "$FN_REASON"
     log() { printf 'agent: %s\n' "$*"; }
     i=0
     while [ "$i" -lt "$n" ]; do

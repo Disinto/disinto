@@ -95,7 +95,7 @@ ac_write_curl_stub "$STUB_BIN"
 log() { :; }   # silence extracted-code log() in subshells
 
 # ── Extract the functions under test ─────────────────────────────────────────
-for fn in close_dev_tape_outcome _dev_refusal_relabel handle_refusal; do
+for fn in close_dev_tape_outcome _dev_refusal_relabel handle_refusal dev_walk_reason_terminal; do
   fn_src="$(ac_extract_fn "$fn" "$TARGET")"
   [ -n "$fn_src" ] || ac_fail "could not locate ${fn}() in dev/dev-agent.sh"
   eval "$fn_src"
