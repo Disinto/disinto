@@ -17,14 +17,21 @@
 #
 #   | loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 #
-#   n               number of sample pairs in the group
+#   n               number of sample pairs in the group, counting stuck
+#                   proposals (tools/tape-stuck.sh, #1648) read at read time
+#                   — one failure sample each — in addition to the outcome
+#                   pairs
 #   promised        mean of the proposals' forecast.p_success (as an
 #                   integer percent) over the sample pairs that carry a
-#                   numeric one; "-" when no sample pair in the group
+#                   numeric one (a stuck sample carries the stuck proposal's
+#                   forecast, if any); "-" when no sample pair in the group
 #                   carries one (old-tape rows have no forecast, so a whole
 #                   group may be "-")
-#   actual          share of sample pairs whose last outcome carries at least
-#                   one of the loop's own competence bits true or 1, as an
+#   actual          share of sample pairs that are successes — i.e. whose
+#                   last outcome carries at least one of the loop's own
+#                   competence bits true or 1, with stuck samples (tools/
+#                   tape-stuck.sh, #1648) always counted as the failure
+#                   samples in this share — as an integer percentage
 #                   integer percentage. Each loop's competence bits are the
 #                   .bits keys named for it in the loops pack
 #                   ($CALIBRATION_LOOPS_FILE): either one `loop = "bit"`
@@ -55,15 +62,22 @@
 # A pair is a sample only when the loop is named in the loops pack AND the
 # LAST outcome carries at least one of that loop's competence bits
 # (true/false/1/0): a success when any carried bit is true/1, a failure when
-# all carried bits are false/0. A loop absent from the pack, or a last outcome
-# without any carried bit, is dropped from n, promised, actual, mean
+# all carried bits are false/0. A loop absent from the pack, or a last
+# outcome without any carried bit, is dropped from n, promised, actual, mean
 # duration_s, dur_promised, and dur_error — never counted as 0% or a
-# zero-duration forecast. Same last-outcome pairing and row format as before.
+# zero-duration forecast. In addition, a stuck proposal — a proposal past its
+# loop's horizon ($CALIBRATION_STUCK_FILE) whose last outcome carries none of
+# the loop's bits, or which has no outcome — is a sample read at read time
+# (tools/tape-stuck.sh, #1648) and is always counted as a failure; it carries
+# no duration or duration forecast, so only n, promised (via the stuck
+# proposal's forecast, when present), and actual see it. Same last-outcome
+# pairing and row format as before.
 #
-# Pure bash + jq. No git, no network, no writes: the tape and the loops pack
-# are only read. Malformed tape lines (e.g. a torn final line from a crashed
-# writer) are skipped with a stderr note, mirroring lib/stats.sh; they never
-# fail the report.
+# Pure bash + jq. No git, no network, no writes: the tape, the loops pack,
+# and the stuck pack (read via tools/tape-stuck.sh, #1648) are only read.
+# Malformed tape lines (e.g. a torn final line from a crashed writer) are
+# skipped with a stderr note, mirroring lib/stats.sh; they never fail the
+# report.
 #
 # Usage:
 #   tools/calibration.sh
@@ -77,11 +91,24 @@
 #                           "bit2"]` (#1614); a single string stays valid);
 #                           default
 #                           ${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/loops.toml.
+#   CALIBRATION_STUCK_FILE  path to the stuck pack (flat TOML, one
+#                           `loop = <positive-integer-hours>` assignment per
+#                           loop, read by tools/tape-stuck.sh, #1648) — the
+#                           horizon after which a proposal with no competence
+#                           outcome counts as one failure sample; default
+#                           ${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/stuck.toml.
+#                           A missing file means no horizon is named and
+#                           nothing is stuck.
+#   CALIBRATION_NOW   ISO-8601 UTC clock (defaults to now) used by tools/
+#                     tape-stuck.sh to decide stuckness: a proposal is stuck
+#                     when its `t` is more than its loop's horizon hours
+#                     before this clock.
 #
 # Exit codes:
 #   0  report printed; a missing or empty tape, or a tape with no sample
 #      pairs, prints the header row only
-#   1  jq missing, or the loops pack file is missing or unparsable
+#   1  jq missing, or the loops pack file is missing or unparsable, or the
+#      stuck pack is unparsable
 # =============================================================================
 set -euo pipefail
 
@@ -182,6 +209,18 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
+# Read stuck proposals (#1649): tools/tape-stuck.sh (#1648) lists proposals
+# past their loop's horizon with no competence outcome; each is one failure
+# sample, read at read time. It takes the parsed loops pack as LOOPS_JSON (so
+# it reads the same loop->bits shape we just built) and reads the stuck pack
+# from $CALIBRATION_STUCK_FILE and the clock from $CALIBRATION_NOW (documented
+# under Environment). A missing stuck pack means no horizon is named and
+# nothing is stuck (the tool prints []); an unparsable stuck pack fails the
+# whole report, so exit 1 here (see Exit codes).
+stuck_json="$(
+  "$(dirname "$0")/tape-stuck.sh" "$pack_json"
+)" || { echo "calibration: failed to read stuck pack" >&2; exit 1; }
+
 [ -f "$TAPE_FILE" ] || exit 0
 [ -s "$TAPE_FILE" ] || exit 0
 
@@ -204,7 +243,7 @@ skipped=$(( total_lines - valid_lines ))
 # est_dvision greater than 0). The reader derives error =
 # |promised - actual| (or "-") and dur_error = |est duration_s - mean
 # duration_s| (or "-") from the same values.
-jq -R -s -r --argjson loops "$pack_json" '
+jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
   [ split("\n")[]
     | (try fromjson catch null)
     | select(type == "object") ] as $recs
@@ -250,6 +289,13 @@ jq -R -s -r --argjson loops "$pack_json" '
                            else null end),
            duration: .duration })
   | map(select((.competence | type) == "array" and (.competence | length) > 0))
+  # Stuck proposals (tools/tape-stuck.sh, #1648) arrive already in sample
+  # shape — competence [false], duration/est_dvision null, signature "stuck"
+  # — so appending them (`. + $stuck`) adds one failure sample per stuck
+  # proposal without touching any other column. They count in n, pull `actual`
+  # below what the outcomes alone give, and contribute nothing to the mean
+  # duration or duration-forecast columns.
+  | . + $stuck
   | group_by([.loop, .class])
   | map({ loop: .[0].loop,
            class: .[0].class,

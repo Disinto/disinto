@@ -398,6 +398,14 @@ EOF
   export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
   # shellcheck disable=SC2034  # TOOL is consumed by the calling acceptance scripts
   TOOL="$REPO_ROOT/tools/calibration.sh"
+  # Stuck pack pinned to a non-existent file: no horizon named, so no stuck
+  # samples (#1649). This keeps the pre-#1649 goldens (the regression net for
+  # the original table + pairing) valid and deterministic regardless of whether
+  # the ops repo ships packs/stuck.toml. The stuck behavior itself is exercised
+  # separately by tests/acceptance/issue-1649.sh.
+  # shellcheck disable=SC2034  # CALIBRATION_STUCK_FILE is consumed by the calling acceptance scripts
+  CALIBRATION_STUCK_FILE="$TMP_DIR/stuck-none.toml"
+  export CALIBRATION_STUCK_FILE
 }
 
 # ── Per-run pack calibration (issue-1605.sh, issue-1614.sh) ──────────────────
@@ -418,6 +426,13 @@ ac_calib_env() {
   TOOL="$REPO_ROOT/tools/calibration.sh"
   # shellcheck disable=SC2034  # HEADER is consumed by the calling acceptance scripts
   HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+  # Stuck pack pinned to a non-existent file: no horizon named, so no stuck
+  # samples (#1649). Keeps the per-run pack goldens valid and deterministic
+  # regardless of whether the ops repo ships packs/stuck.toml. The stuck
+  # behavior is exercised separately by tests/acceptance/issue-1649.sh.
+  # shellcheck disable=SC2034  # CALIBRATION_STUCK_FILE is consumed by the calling acceptance scripts
+  CALIBRATION_STUCK_FILE="$TMP_DIR/stuck-none.toml"
+  export CALIBRATION_STUCK_FILE
   rc=0
   out=""
   err_out=""

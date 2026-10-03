@@ -953,6 +953,20 @@ def main() -> int:
         "3f58490aba80ed2a5f389bca422e77e7": "issue-1533.sh + issue-1636.sh: run subshell locals + set -euo pipefail (#1636)",
         "16ee31507d301d0d844061c711172bc9": "issue-1533.sh + issue-1636.sh: export FACTORY_ROOT + PROJECT_TOML + source tape.sh (#1636)",
         "b5a1b758cd6af653b59b03e0f09180df": "issue-1533.sh + issue-1636.sh: export PROJECT_TOML + source tape.sh + eval STATEFILE (#1636)",
+        # --- #1649: stuck-calibration acceptance tests share the #1648 fixture ---
+        # issue-1649.sh (#1649) and issue-1648.sh (#1648) are sibling per-issue
+        # acceptance tests for the same tape-stuck / calibration tooling. Each builds
+        # its own throwaway fixture (TMP_DIR + trap, PACKS dir, the stuck.toml and
+        # stuck-bad.toml packs) per the per-test-isolation convention; the shared
+        # 5-line windows are intentional isolation, not copy-paste. Hashes computed
+        # against CURRENT content of both tests; refresh if their shared boilerplate
+        # changes.
+        "0437e9cbb0787367214d1eee24f6da9d": "issue-1649.sh + issue-1648.sh: tape-stuck assert + TMP_DIR/mktemp + trap EXIT (#1649)",
+        "f27468e991763727f9293f98cd7d9c6d": "issue-1649.sh + issue-1648.sh: TMP_DIR/mktemp + trap EXIT + PACKS (#1649)",
+        "93e6f9f97b237e0dcc50cf9023cabcaf": "issue-1649.sh + issue-1648.sh: loops dev=merged + EOF + stuck.toml heredoc open (#1649)",
+        "7975b55bf8d172adbd4341f7300cb4e4": "issue-1649.sh + issue-1648.sh: EOF + stuck.toml heredoc open + dev=48 (#1649)",
+        "507128932ac5a55af890c89095029d7c": "issue-1649.sh + issue-1648.sh: stuck.toml heredoc open + dev=48 + EOF (#1649)",
+        "a1407105fe824e184b28d9ead5feb8e8": "issue-1649.sh + issue-1648.sh: stuck.toml dev=48 + EOF + stuck-bad heredoc open (#1649)",
     }
 
     if not sh_files:

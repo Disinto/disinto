@@ -56,6 +56,13 @@ repair = "regression_cleared"
 EOF
   CALIBRATION_LOOPS_FILE="$BATS_TEST_TMPDIR/loops.toml"
   export CALIBRATION_LOOPS_FILE
+  # Stuck pack pinned to a non-existent file: no horizon named, so no stuck
+  # samples (#1649). This keeps the pre-#1649 goldens (the regression net for
+  # the original table + pairing) valid and the suite deterministic regardless
+  # of whether the ops repo ships packs/stuck.toml. The stuck behavior itself
+  # is exercised separately by tests/acceptance/issue-1649.sh.
+  CALIBRATION_STUCK_FILE="$BATS_TEST_TMPDIR/stuck-none.toml"
+  export CALIBRATION_STUCK_FILE
 }
 
 # header_only — the whole output is the header row and its separator.
