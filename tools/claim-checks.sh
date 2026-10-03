@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tools/claim-checks.sh — run claim checks; one miss contradicts the claim (#1642)
+# tools/claim-checks.sh — run claim checks; a full window holds, one miss
+# contradicts (#1642, #1643)
 #
 # A claim is knowledge only if the factory checks it (proposal-loop design §6).
 # Each check is a closed run under the claim's current proposal. One check that
 # misses its expect challenges the claim at once; the outcome is written
-# immediately. A challenged claim waits for its revision (a new proposal id in
-# <id>.current) — this tool does not revise or retire a claim.
+# immediately. A claim whose checks meet expect for longer than its window is
+# held (#1643). Checks go on after held; a later miss still contradicts it.
+# The last outcome counts. A challenged claim waits for its revision (a new
+# proposal id in <id>.current) — this tool does not revise or retire a claim.
 #
 # For each id that has ${TAPE_DIR}/claims/<id>.current and passes claim_valid
 # (lib/claims.sh, #1640):
@@ -23,6 +26,11 @@
 #     "<value> <iso time>" to <id>.last.
 #   * When a value came back and sprint_expect_met "<value>" "<expect>" returns
 #     1: tape_outcome "$pid" '{"contradicted":1,"held":0}' '{"value":<value>}' '{}' '[]'.
+#   * When a value came back and the expect is met, the tape has no outcome yet
+#     for pid, and the proposal pid is older than sprint_duration_seconds of
+#     the claim's window (strictly greater): tape_outcome "$pid"
+#     '{"held":1,"contradicted":0}' '{"value":<value>}' '{}' '[]' (#1643).
+#     A missing proposal record is not old. Checks continue after held.
 #
 # A probe failure is a failed run, not a tool failure. A tape append that does
 # not land leaves <id>.checked unwritten (the next run retries) and makes this
@@ -42,8 +50,8 @@
 # Exit codes:
 #   0  every due claim was checked or skipped (invalid, challenged, interval,
 #      missing id)
-#   1  a run or a contradicted outcome could not be appended, or the check
-#      mark could not be written
+#   1  a run, a contradicted or held outcome, or the check mark could not
+#      be written
 #
 # Hermetic aside from the tape, claim dir, and probe it is pointed at. No
 # network, no agent, no secrets (AD-006). Does not source lib/env.sh: the
@@ -116,14 +124,44 @@ _claim_within_interval() {
   [ "$checked" -gt "$threshold" ]
 }
 
+# _claim_hold_due PID WINDOW_S — rc 0 when PID should be held (#1643).
+# The tape has no outcome yet for PID, and the proposal record's t is strictly
+# older than WINDOW_S seconds. No tape, any outcome, a missing or unparseable
+# proposal, a non-positive window: rc 1. "Last outcome" is not consulted here;
+# any outcome means the claim already came back, so a later pass must not
+# write held again. A torn line is skipped, same as _claim_challenged.
+_claim_hold_due() {
+  local pid="$1" window_s="$2" tape due now
+  tape="${TAPE_DIR}/tape.jsonl"
+  [ -s "$tape" ] || return 1
+  [[ "$window_s" =~ ^[0-9]+$ ]] || return 1
+  [ "$window_s" -gt 0 ] || return 1
+  now="$(date -u +%s)"
+  due="$(jq -sRr --arg pid "$pid" --argjson win "$window_s" --argjson now "$now" '
+    [ split("\n")[] | (try fromjson catch null) | select(type == "object") ] as $rows
+    | ($rows | map(select(.type == "outcome" and .proposal_id == $pid)) | length) as $n
+    | if $n > 0 then 0
+      else
+        ($rows | map(select(.type == "proposal" and .id == $pid)) | first | .t) as $t
+        | if ($t | type) != "string" then 0
+          else ($t | try fromdateiso8601 catch null) as $epoch
+            | if $epoch == null then 0
+              elif ($now - $epoch) > $win then 1
+              else 0 end
+          end
+      end
+  ' "$tape" 2>/dev/null)" || due=""
+  [ "$due" = "1" ]
+}
+
 # _check_claim ID — run one claim's check, or skip it.
 #   0  checked, or skipped (invalid, challenged, inside the interval, no pid)
-#   1  the run, the contradicted outcome, or the check mark did not land
+#   1  the run, a contradicted or held outcome, or the check mark did not land
 _check_claim() {
   local id="$1"
   local current pid check expect value prc reason_file reason
   local started started_epoch ended ended_epoch duration_s status cost
-  local expect_rc numbers claims_dir epoch invalid_line
+  local expect_rc numbers claims_dir epoch invalid_line window window_s
 
   # claim_valid's own line names the field. A skip is not a tool failure:
   # an invalid file is not a check. Wording differs from claim-proposals so
@@ -185,9 +223,10 @@ _check_claim() {
   fi
 
   # A value came back (probe rc 0). sprint_expect_met rc 1 is the miss that
-  # challenges the claim at once. rc 0 is met (no outcome). rc 2 is a
-  # malformed expect — claim_valid already rejected that shape; do not invent
-  # a contradiction from it.
+  # challenges the claim at once — age does not matter; one miss contradicts.
+  # rc 0 is met: held only when the proposal is already older than the claim's
+  # window and no outcome exists yet (#1643). rc 2 is a malformed expect —
+  # claim_valid already rejected that shape; do not invent an outcome from it.
   if [ "$prc" -eq 0 ]; then
     expect_rc=0
     sprint_expect_met "$value" "$expect" || expect_rc=$?
@@ -201,6 +240,20 @@ _check_claim() {
         return 1
       fi
       log "claim ${id}: contradicted (value ${value}, expect ${expect})"
+    elif [ "$expect_rc" -eq 0 ]; then
+      window="$(claim_field "$id" window)" || window=""
+      window_s="$(sprint_duration_seconds "$window")"
+      if _claim_hold_due "$pid" "$window_s"; then
+        numbers="$(jq -cn --arg v "$value" '{value: ($v | tonumber)}')" || {
+          log "WARNING: value for claim ${id} is not a JSON number — outcome not written"
+          return 1
+        }
+        if ! tape_outcome "$pid" '{"held":1,"contradicted":0}' "$numbers" '{}' '[]'; then
+          log "WARNING: tape outcome append failed for claim ${id}"
+          return 1
+        fi
+        log "claim ${id}: held (value ${value}, window ${window})"
+      fi
     fi
   fi
 
