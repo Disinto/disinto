@@ -40,7 +40,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash grep awk jq
+ac_require_cmd bash grep awk jq python3
 
 TARGET="$REPO_ROOT/gardener/gardener-run.sh"
 ac_assert_file "$TARGET" "gardener/gardener-run.sh must exist"
@@ -92,6 +92,13 @@ echo "calibration: broken — jq unavailable in this test" >&2
 exit 3
 SH
   chmod +x "${factory}/tools/calibration.sh"
+  # The refresh pipes through this tool (#1651). A pass-through so the
+  # pipeline's failure is calibration.sh's rc, not a missing script.
+  cat > "${factory}/tools/calibration-signatures.sh" <<'SH'
+#!/usr/bin/env bash
+cat
+SH
+  chmod +x "${factory}/tools/calibration-signatures.sh"
 }
 
 # ── Subshell runner: eval the extracted function with stub log/ops_commit_and_push ───
@@ -102,7 +109,11 @@ SH
 # to emit lines the test asserts on.
 run_refresh() {
   local factory="$1" ops_root="$2" tape_dir="$3"
+  # No stuck pack: the signatures column (#1651) still runs tape-stuck.sh, and a
+  # missing pack is "nothing stuck", not a failure. Point it at a file this
+  # fixture does not create so a caller env cannot fail the refresh.
   FACTORY_ROOT="$factory" OPS_REPO_ROOT="$ops_root" TAPE_DIR="$tape_dir" PRIMARY_BRANCH="main" \
+    CALIBRATION_STUCK_FILE="$ops_root/no-stuck.toml" \
     PICK_FN="$FN_SRC" bash -c '
     set -uo pipefail
     log() { printf "gardener: %s\n" "$*"; }
@@ -119,7 +130,10 @@ run_refresh() {
   '
 }
 
-HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
+# The refresh pipes the table through calibration-signatures.sh (#1651), which
+# appends a top signatures column. This fixture's outcome is unsigned and the
+# stuck pack is absent, so the new cell is `-`; the header is what this AC pins.
+HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures |'
 # Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
 # competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
 # (tests/lib/acceptance-helpers.sh).

@@ -369,10 +369,13 @@ _gardener_execute_manifest() {
 # ── Ops catalog: calibration.md (#1454) + claims.md (#1645) ───────────────
 # Writes the calibration tape report (tools/calibration.sh, #1453) into the
 # ops repo as catalog/calibration.md so organs and humans can read the
-# promised-vs-actual table out of the WAL. The same commit also writes
-# tools/claims-report.sh (#1645) to catalog/claims.md. Bash only, no LLM; runs
-# after formula_session_end so the session's own tape row is closed first.
-# Never fatal: a failed calibration.sh only logs a warning and skips the file,
+# promised-vs-actual table out of the WAL. The report passes through
+# tools/calibration-signatures.sh (#1651), which appends a top signatures
+# column. The same commit also writes tools/claims-report.sh (#1645) to
+# catalog/claims.md. Bash only, no LLM; runs after formula_session_end so the
+# session's own tape row is closed first. Never fatal: a failed calibration.sh
+# (or the signatures tool in the same pipeline — the script runs with
+# pipefail) only logs a warning and skips the file,
 # a failed claims-report.sh only logs a warning and leaves the calibration
 # refresh as it is (calibration.md still committed, claims.md untouched), and a
 # missing ops git leaves the file on disk (ops_commit_and_push is a no-op).
@@ -387,7 +390,8 @@ refresh_ops_calibration() {
     log "WARNING: mkdir ${ops_root}/catalog failed — skipping calibration.md refresh"
     return 0
   fi
-  out="$( "$FACTORY_ROOT/tools/calibration.sh" )" || rc=$?
+  # pipefail is on: either tool failing keeps the old calibration.md.
+  out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" )" || rc=$?
   if [ "$rc" -ne 0 ]; then
     log "WARNING: calibration.sh failed (rc=$rc) — calibration.md not refreshed"
     return 0
