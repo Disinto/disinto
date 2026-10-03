@@ -88,12 +88,13 @@ ac_assert_file "$TAPE1/tape.jsonl" "no tape record was appended to $TAPE1/tape.j
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" \
   "picking an issue must append exactly one tape line"
 LINE="$(head -n 1 "$TAPE1/tape.jsonl")"
-# #1443 relaxed the happy-path assertion: context may now also carry size_class
-# and backend. The shared stub (backlog+priority, no size label) still yields
-# size_class=M, and open_prs must remain exactly 3. area must not appear.
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1398" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not)' \
+# #1443 relaxed the happy-path assertion. Per #1635 the context no longer
+# carries the recomputable size_class — only open_prs (and backend when set).
+# The shared stub (backlog+priority, no size label) yields open_prs of exactly
+# 3. area must not appear.
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1398" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and (.context | has("area") | not) and (.parent | not) and (.caused_by | not)' \
   "$LINE" \
-  "record must be an approved dev-loop proposal: primary label as class, open-PR count 3, size_class M, no area/parent/caused_by"
+  "record must be an approved dev-loop proposal: primary label as class, open-PR count 3, no size_class/area/parent/caused_by"
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-1398"
 [ -f "$ID_FILE" ] || ac_fail "id file $ID_FILE missing after a successful pick"
 ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \
