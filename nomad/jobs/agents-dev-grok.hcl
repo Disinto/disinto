@@ -178,11 +178,10 @@ job "agents-dev-grok" {
         PORTER_JEV_KEY       = "/home/agent/data/porter/id_ed25519"
         PORTER_JEV_KNOWN_HOSTS = "/home/agent/data/porter/known_hosts"
 
-        # dsh harness migration: dev joins review on the dsh harness
-        # (llama.cpp Qwen3.8-27B via DSH_BASE_URL). Revert = remove this
-        # block (dispatcher default is claude). Known dsh gap: wall-clock
-        # timeouts write no metrics record (#1186). Env names mirror
-        # lib/hire-agent.sh dsh branch and agents-review-qwen.hcl.
+        # dsh harness. The model comes from this job's DSH_HOME settings.yaml
+        # (route xai, grok-4.7; see the header). DSH_BASE_URL only seeds a
+        # missing settings.yaml with the llama.cpp route, kept as a fallback.
+        # Known dsh gap: wall-clock timeouts write no metrics record (#1186).
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"

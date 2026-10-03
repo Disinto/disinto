@@ -9,8 +9,10 @@
 #     sign-in is an xAI OAuth grant (SuperGrok subscription) in
 #     $DSH_HOME/.credentials.yaml, refreshed by dsh itself. It is this
 #     agent's own grant: no other process refreshes it.
-#   - Identity: forge user review-grok-bot (Vault kv/disinto/bots/review-grok),
-#     so dev-poll's assignee checks keep the two review agents apart.
+#   - Identity: reviews post as review-grok-bot (FORGE_REVIEW_TOKEN from Vault
+#     kv/disinto/bots/review-grok); FORGE_TOKEN stays dev-bot's, as in
+#     agents-review-qwen. The two reviewers are kept apart by PR author
+#     (REVIEW_ONLY_AUTHORS here, REVIEW_SKIP_AUTHORS there, #1690).
 #   - Data: /srv/disinto/agent-data-grok/review is bind-mounted at /home/agent/data
 #     (docker volumes are enabled on this client; no host_volume, so adding
 #     the job needed no Nomad client restart).
@@ -175,12 +177,10 @@ job "agents-review-grok" {
         # Ignored until #1690 lands.
         REVIEW_ONLY_AUTHORS = "dev-grok-bot"
 
-        # dsh harness (#1104-#1107, rolled out to dev in #1231): this job
-        # and agents-dev-qwen both run the dsh harness — a dsh regression
-        # now idles reviews AND dev. Revert = remove this block (dispatcher
-        # default is claude). Known dsh gap: wall-clock timeouts write no
-        # metrics record (#1186). Env names mirror lib/hire-agent.sh's
-        # dsh branch.
+        # dsh harness. The model comes from this job's DSH_HOME settings.yaml
+        # (route xai, grok-4.7; see the header). DSH_BASE_URL only seeds a
+        # missing settings.yaml with the llama.cpp route, kept as a fallback.
+        # Known dsh gap: wall-clock timeouts write no metrics record (#1186).
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"
