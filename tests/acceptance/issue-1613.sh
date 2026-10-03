@@ -59,14 +59,15 @@ NEW_PARAGRAPH="dev-poll found every dependency closed, so a closed dependency ma
 
 # ── Stubs: serve the label directory, record every mutating call ─────────────
 CALLS=()
-REFUSALS=()
-BODIES=()
+REFUSALS=(); BODIES=()
 
 issue_post_refusal() {
   # $1 issue  $2 emoji  $3 title  $4 body
   REFUSALS+=("$3")
   BODIES+=("$4")
-  CALLS+=("issue_post_refusal $1 $3")
+  # 1613-specific tag: keeps this stub's window distinct from issue-1672.sh's
+  # (per-test-isolation convention).
+  CALLS+=("issue-1613 post-refusal $ISSUE $3")
 }
 issue_release() { CALLS+=("issue_release $1"); }
 issue_close()   { CALLS+=("issue_close $1"); }
@@ -202,14 +203,14 @@ ac_log "too_large: pre-#1613 behaviour preserved (+underspecified, -backlog/in-p
 CALLS=(); REFUSALS=(); BODIES=(); CLAIMED=true
 handle_refusal "unmet_dependency" '{"status":"unmet_dependency","blocked_by":"issue 123","suggestion":"123"}'
 [ "${#REFUSALS[@]}" -eq 1 ] \
-  || ac_fail "unmet_dependency: expected exactly one refusal, got ${#REFUSALS[@]}"
+  || ac_fail "case 6: unmet_dependency expected exactly one refusal, got ${#REFUSALS[@]}"
 [ "${REFUSALS[0]}" = "Unmet dependency" ] \
-  || ac_fail "unmet_dependency: refusal title expected 'Unmet dependency' got '${REFUSALS[0]}'"
+  || ac_fail "case 6: unmet_dependency title expected 'Unmet dependency' got '${REFUSALS[0]}'"
 # #1672: body must hold the pre-#1613 header + blocked_by + suggestion +
 # the appended "closed dep may not have landed" paragraph.
 case "${BODIES[0]}" in
   *"$NEW_PARAGRAPH"*) ;;
-  *) ac_fail "unmet_dependency: refusal body must hold the #1672 paragraph" ;;
+  *) ac_fail "case 6: unmet_dependency body must hold the #1672 paragraph" ;;
 esac
 if ! printf '%s' "${BODIES[0]}" | grep -qF '### Blocked by unmet dependency'; then
   ac_fail "unmet_dependency: refusal body must hold the pre-#1613 header"
