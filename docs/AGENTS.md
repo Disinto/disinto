@@ -99,6 +99,7 @@ disinto/                 (code repo)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
 │                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
 │                  claim-proposals.sh — a merged claim becomes a claim-loop proposal (#1641)
+│                  claim-checks.sh — run a proposed claim's check; one miss contradicts it (#1642)
 │                  grade.sh — one-command human grading of a proposal (#1410)
 │                  seed-research-labels.sh — idempotently seed research labels on an existing forge
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault

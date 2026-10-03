@@ -426,6 +426,15 @@ if [ "$claim_proposals_rc" -ne 0 ]; then
   log "WARNING: claim-proposals.sh failed (rc=${claim_proposals_rc})"
 fi
 
+# Claim checks (#1642), right after proposals. Each proposed claim's check
+# runs at most once per CLAIM_CHECK_INTERVAL_S; the first miss writes a
+# contradicted outcome. Never fatal: a non-zero exit only logs a warning.
+claim_checks_rc=0
+"$FACTORY_ROOT/tools/claim-checks.sh" || claim_checks_rc=$?
+if [ "$claim_checks_rc" -ne 0 ]; then
+  log "WARNING: claim-checks.sh failed (rc=${claim_checks_rc})"
+fi
+
 # ── Detect PR ─────────────────────────────────────────────────────────────
 detect_pr_number "chore/gardener-"
 
