@@ -104,7 +104,11 @@ job "woodpecker-agent" {
         WOODPECKER_GRPC_KEEPALIVE_TIME      = "10s"
         WOODPECKER_GRPC_KEEPALIVE_TIMEOUT   = "20s"
         WOODPECKER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS = "true"
-        WOODPECKER_MAX_WORKFLOWS            = "1"
+        # 3 workflows at once (2026-10-03, was 1). One CI step keeps about half
+        # a core busy on the shared host, so with one at a time the box's other
+        # CPUs sat idle while pipelines queued 1-2.5 h behind two dev agents.
+        # Steps stay capped at WOODPECKER_LIMIT_MEM each.
+        WOODPECKER_MAX_WORKFLOWS            = "3"
         WOODPECKER_HEALTHCHECK_ADDR         = ":3333"
         WOODPECKER_AGENT_LABELS             = "host=disinto-nomad-box"
 
