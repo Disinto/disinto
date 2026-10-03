@@ -46,6 +46,8 @@ and executes the pending-actions manifest post-merge.
   Then `tools/claim-checks.sh` (#1642) runs each proposed claim's check at most
   once per `CLAIM_CHECK_INTERVAL_S` (default 86400); the first miss writes a
   `contradicted` outcome. A failure only logs a warning.
+  A claim whose checks pass for its whole `window` gets a `held` outcome;
+  checks go on, and a later miss still contradicts it (#1643).
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.
