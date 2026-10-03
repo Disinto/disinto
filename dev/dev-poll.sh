@@ -1342,16 +1342,19 @@ fi
 # but has no usable milestone, and the historical "dev" when the forge GET
 # fails. parent = that milestone's sprint proposal id (lib/sprint-tape.sh,
 # #1618), empty when there is no milestone or the mint failed. open_prs comes
-# from one forge call and degrades to {} when it fails. Any tape failure logs
-# a warning — the pick proceeds unchanged.
+# from one forge call and degrades to {} when it fails. The issue text
+# ({title, body} at pick time) is stored content-addressed via tape_payload
+# (#1634) and referenced through the PAYLOADS_JSON slot — a store failure
+# omits the field and never blocks the pick. Any tape failure logs a warning
+# — the pick proceeds unchanged.
 #
 # Args: issue_number
 # =============================================================================
 emit_tape_proposal() {
   local issue="$1"
-  local id class ctx open_prs parent id_file issue_json api_ok size_class backend started_file
-  local milestone_id milestone_desc
-  local existing_id
+  local id class ctx open_prs parent id_file issue_json api_ok backend started_file
+  local milestone_id milestone_desc existing_id
+  local payload_ref payloads_json tmp_text
 
   # Re-pick guard (#1441): after the first pick the id file holds the proposal's
   # id. If it is present and contains a non-empty id, the proposal is already on
@@ -1386,26 +1389,11 @@ emit_tape_proposal() {
   # integer ("deploy"/"experiment"/"internal"), "unclassed" when that
   # line is absent, "backlog" when the issue has no usable milestone, and
   # the historical "dev" when the forge GET fails (empty JSON, so existing
-  # goldens on the API-failure path keep "dev"). size_class: S/M/L from a
-  # size label (case-insensitive, exact), else "M". One issue GET supplies
-  # both.
+  # goldens on the API-failure path keep "dev").
   class="dev"
   parent=""
-  size_class="M"
   issue_json="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${issue}" 2>/dev/null)" || true
-  size_class="$(printf '%s' "$issue_json" | jq -r '
-    ([.labels[]?.name | select(type == "string") | ascii_downcase]
-      | map(select(. == "s" or . == "m" or . == "l"))) as $s
-    | if ($s | any(. == "s")) then "S"
-      elif ($s | any(. == "m")) then "M"
-      elif ($s | any(. == "l")) then "L"
-      else "M"
-      end' 2>/dev/null)" || true
-  case "$size_class" in
-    S | M | L) ;;
-    *) size_class="M" ;;
-  esac
   # class + parent from the milestone's sprint (#1619), applied only when
   # the issue GET succeeded. On the API-failure path (empty issue_json) we
   # skip this whole block, so the initial class="dev" survives and the
@@ -1434,6 +1422,42 @@ emit_tape_proposal() {
     fi
   fi
 
+  # payload: the issue text as it stood at pick time — the one piece of state
+  # a proposal can carry that cannot be recomputed later (the issue may be
+  # reworded after the pick lands). It is the issue JSON this function already
+  # fetched, projected to {title, body}, written to a temp file and stored
+  # content-addressed via tape_payload (#1634); its sha256 ref becomes the
+  # 10th arg (PAYLOADS_JSON) of tape_proposal. The store is best effort: a
+  # failure just omits the payloads field and never blocks the pick.
+  payload_ref=""
+  payloads_json=""
+  if [ -n "$issue_json" ] \
+    && { printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; }; then
+    tmp_text="$(mktemp "${TMPDIR:-/tmp}/disinto-dev-issue.XXXXXX")" \
+      || tmp_text=""
+    if [ -n "$tmp_text" ]; then
+      if printf '%s' "$issue_json" \
+          | jq -c '{title: (.title // ""), body: (.body // "")}' > "$tmp_text"; then
+        payload_ref="$(tape_payload "$tmp_text" 2>/dev/null)"
+        # The store is best effort and its return code is unreliable here:
+        # with set -e inactive inside the command substitution, a failed
+        # mkdir/cp is swallowed and the hash is still echoed.  The ground
+        # truth is the destination file — keep the ref only if the
+        # content-addressed copy actually landed.
+        if [ -n "$payload_ref" ] && [ -f "${PAYLOAD_DIR}/${payload_ref}" ]; then
+          :
+        else
+          payload_ref=""
+          log "tape: failed to store payload for issue #${issue} (store unwritable?); pick continues without it"
+        fi
+      fi
+      rm -f "$tmp_text"
+    fi
+    if [ -n "$payload_ref" ]; then
+      payloads_json="[\"$payload_ref\"]"
+    fi
+  fi
+
   # open_prs: count of open PRs from one forge call. limit=50 is the API's
   # max page size, so the count saturates at 50 (the factory never approaches
   # that many open PRs — AD-002).
@@ -1459,8 +1483,8 @@ emit_tape_proposal() {
   { printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; } \
     || api_ok=0
   if [ "$api_ok" -eq 1 ]; then
-    ctx="$(jq -cn --argjson n "$open_prs" --arg sc "$size_class" \
-      '{open_prs: $n, size_class: $sc}')"
+    ctx="$(jq -cn --argjson n "$open_prs" \
+      '{open_prs: $n}')"
     if [ -n "$backend" ]; then
       ctx="$(jq -cn --argjson c "$ctx" --arg b "$backend" '$c + {backend: $b}')"
     fi
@@ -1468,7 +1492,7 @@ emit_tape_proposal() {
   fi
 
   if ! tape_proposal "$id" dev "$class" "$parent" "" "$ctx" "" "approved" "$issue" \
-      >/dev/null 2>&1; then
+      "$payloads_json" >/dev/null 2>&1; then
     log "WARNING: tape: failed to append proposal record ${id} for #${issue}"
     return 0
   fi
@@ -1492,7 +1516,7 @@ emit_tape_proposal() {
     log "WARNING: tape: failed to write proposal id file ${id_file}"
   fi
 
-  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, parent: ${parent:-none}, open_prs: ${open_prs:-unknown}, size_class: ${size_class}, backend: ${backend:-none})"
+  log "tape: recorded proposal ${id} for #${issue} (class: ${class}, parent: ${parent:-none}, open_prs: ${open_prs:-unknown}, payload: ${payloads_json:-none}, backend: ${backend:-none})"
   return 0
 }
 

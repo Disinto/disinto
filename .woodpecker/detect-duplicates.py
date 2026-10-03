@@ -498,6 +498,14 @@ def main() -> int:
         "b763b708e92c4a819fb26ca30cc7a499": "Fake-curl stub payload init issue-1469.sh + issue-1471.sh",
         "8f372ed5f3e253945a05fc6bcf4b4711": "Fake-curl stub auth init issue-1469.sh + issue-1471.sh",
         "d47cc6e003cdd6dd42c3c67d2fbf5a9f": "Fake-curl stub else issue-1469.sh + issue-1471.sh",
+        # issue-1635.sh: dev-proposal test with a custom fake-curl stub (it must
+        # return a specific issue title/body for the payload test). Like the
+        # 1469/1471 stubs above, each acceptance test embeds its own isolated
+        # stub; the shared header/footer windows match the existing issue-1443.sh
+        # stub and the shared ac_write_curl_stub() in acceptance-helpers.sh.
+        # Intentional duplication, not copy-paste.
+        "843d770640be4c8a26e94043c3574688": "Fake-curl stub header url=$*+AC_STUB_FAIL+exit22 (issue-1635.sh + acceptance-helpers.sh)",
+        "648b60705cf337225e5b864e695f2b08": "Fake-curl stub footer esac+STUB+chmod (issue-1635.sh + issue-1443.sh)",
         # issue-1536.sh: a self-contained *counting*, per-attempt stub plus its
         # throwaway ledger fixture. Like the 1469/1471 stubs above, each
         # acceptance test is deliberately isolated (no network, own tmp dir,

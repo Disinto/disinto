@@ -18,7 +18,7 @@
 # extract-and-stub approach as issue-1398/1399/1409):
 #   1. a pick appends exactly one proposal record (rc 0) with open_prs 3,
 #      a size_class, and (when a model is set) a backend; area is absent
-#   2. size_class maps size labels s/S, m/M, l/L to S/M/L (case-insensitive)
+#   2. since #1635 the context has no size_class, whatever the size label
 #      and defaults to M when no size label is present
 #   3. backend resolves by precedence DSH_MODEL > CLAUDE_MODEL >
 #      AGENT_HARNESS and is omitted when no model env is set
@@ -126,9 +126,9 @@ ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (no size label, DSH_MOD
 ac_assert_file "$TAPE1/tape.jsonl" "no tape record was appended to $TAPE1/tape.jsonl"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" "a pick must append exactly one tape line"
 LINE="$(head -n 1 "$TAPE1/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1443" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and .context.backend == "dsh-model-1443" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1443" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and .context.backend == "dsh-model-1443" and (.context | has("area") | not) and (.parent | not) and (.caused_by | not)' \
   "$LINE" \
-  "no size label yields size_class M, backend from DSH_MODEL, no area/parent/caused_by"
+  "no size label: no size_class (#1635), backend from DSH_MODEL, no area/parent/caused_by"
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-1443"
 [ -f "$ID_FILE" ] || ac_fail "id file $ID_FILE missing after a successful pick"
 ac_assert_eq "$(cat "$ID_FILE")" "$(jq -r '.id' <<<"$LINE")" \
@@ -140,9 +140,9 @@ rc=0
 out="$(run_emit "$TAPE2" 1444 0 "s" claude)" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (size label s, CLAUDE_MODEL): $out"
 LINE="$(head -n 1 "$TAPE2/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1444" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "S" and .context.backend == "claude-model-1443" and (.context | has("area") | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1444" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and .context.backend == "claude-model-1443" and (.context | has("area") | not)' \
   "$LINE" \
-  "size label s maps to size_class S, backend from CLAUDE_MODEL"
+  "size label s: no size_class (#1635), backend from CLAUDE_MODEL"
 
 # ── 2c. Size label "L" (uppercase) → L (case-insensitive); AGENT_HARNESS ────
 TAPE3="$TMP_DIR/tape-3"
@@ -150,9 +150,9 @@ rc=0
 out="$(run_emit "$TAPE3" 1445 0 "L" harness)" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (uppercase size label L, AGENT_HARNESS): $out"
 LINE="$(head -n 1 "$TAPE3/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1445" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "L" and .context.backend == "dsh-harness-1443" and (.context | has("area") | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1445" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and .context.backend == "dsh-harness-1443" and (.context | has("area") | not)' \
   "$LINE" \
-  "uppercase size label L maps to size_class L (case-insensitive), backend from AGENT_HARNESS"
+  "uppercase size label L: no size_class (#1635), backend from AGENT_HARNESS"
 
 # ── 2d. Size label "m" → M; DSH_MODEL+CLAUDE_MODEL → DSH wins precedence ────
 TAPE4="$TMP_DIR/tape-4"
@@ -160,9 +160,9 @@ rc=0
 out="$(run_emit "$TAPE4" 1446 0 "m" "dsh+claude")" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (size label m, DSH_MODEL+CLAUDE_MODEL): $out"
 LINE="$(head -n 1 "$TAPE4/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1446" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and .context.backend == "dsh-model-1443" and (.context | has("area") | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1446" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and .context.backend == "dsh-model-1443" and (.context | has("area") | not)' \
   "$LINE" \
-  "size label m maps to size_class M; with both DSH_MODEL and CLAUDE_MODEL set, backend must come from DSH_MODEL (precedence)"
+  "size label m: no size_class (#1635); with both DSH_MODEL and CLAUDE_MODEL set, backend must come from DSH_MODEL (precedence)"
 
 # ── 2e. No size label, no model → size_class M, backend omitted ─────────────
 TAPE5="$TMP_DIR/tape-5"
@@ -170,9 +170,9 @@ rc=0
 out="$(run_emit "$TAPE5" 1447 0 "" "")" || rc=$?
 ac_assert_eq "$rc" "0" "emit_tape_proposal must return 0 (no size label, no model): $out"
 LINE="$(head -n 1 "$TAPE5/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1447" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M" and (has("backend") | not) and (.context | has("area") | not)' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1447" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not) and (has("backend") | not) and (.context | has("area") | not)' \
   "$LINE" \
-  "no model env vars yields no backend key, size_class defaults to M"
+  "no model env vars yields no backend key and no size_class (#1635)"
 
 # ── 3. Forge API failure: degrades to class="dev" / context={}, rc 0 ─────────
 TAPE6="$TMP_DIR/tape-6"
