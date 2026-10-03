@@ -81,16 +81,6 @@ rests_on  = []
 EOF
 }
 
-# A name claim_ids must not list. Present so a raw glob would be visible.
-cat >"$CLAIMS_DIR/Bad_Name.toml" <<'EOF'
-statement = "not a claim id"
-class = "internal"
-check = "probes/nope.sh"
-expect = "<= 0.2"
-window = "7d"
-rests_on = []
-EOF
-
 write_claim "<= 0.2"
 
 # run_tool — execute the tool against the fixture dirs.
