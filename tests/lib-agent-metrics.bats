@@ -40,6 +40,9 @@ setup() {
 
   # agent-sdk.sh sources agent-metrics.sh itself; also defines
   # claude_run_with_watchdog() and log(), which tests stub out.
+  # These tests stub the Claude path (claude_run_with_watchdog). Pin it, so
+  # a container with AGENT_HARNESS=dsh never runs the real dsh.
+  export AGENT_HARNESS=claude
   # shellcheck disable=SC1091
   source "$REPO_ROOT/lib/agent-sdk.sh"
 }
