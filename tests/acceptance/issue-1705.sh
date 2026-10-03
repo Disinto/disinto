@@ -108,34 +108,13 @@ export PROJECT_NAME
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-${ISSUE_TEST}"
 STARTED_FILE="/tmp/dev-proposal-started-${PROJECT_NAME}-${ISSUE_TEST}"
 
-# Parent stand-ins (inherited by subshells): signature_for is only ever called
-# for a non-empty reason (the ci_exhausted AC) and resolves to nothing here, so
-# the outcome is written signature-free; log is a no-op so subshell noise is gone.
-log() { :; }
-signature_for() { :; }
-
-# Run close_dev_tape_outcome in a fresh subshell.
-# $1 TAPE_DIR   $2 PR_WALK_RC (0 merged, 1 not)   $3 walk reason (or "" for none)
-# All in one process (single call), against a hermetic TAPE_DIR.
+# Run close_dev_tape_outcome in a fresh subshell via the shared tape-helpers
+# runner. $1 TAPE_DIR  $2 PR_WALK_RC (0 merged, 1 not)  $3 walk reason (or ""
+# for none). Single call against a hermetic TAPE_DIR; the runner no-ops log()
+# / signature_for() in the subshell, so the ci_exhausted outcome is written
+# signature-free.
 run_close() {
-  local tape_dir="$1" walk_rc="$2" walk_reason="${3:-}"
-  (
-    export TAPE_DIR="$tape_dir"
-    export PROJECT_NAME="$PROJECT_NAME"
-    export ISSUE="$ISSUE_TEST"
-    export PR_WALK_RC="$walk_rc"
-    export LOGFILE="$TMP_DIR/close.log"
-    _DEV_REFUSAL_STATUS=""
-    _PR_WALK_EXIT_REASON="$walk_reason"
-    _DEV_TAPE_OUTCOME_WRITTEN=0
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/lib/tape.sh"
-    # log()/signature_for() inherited from the parent; shadow the log no-op again
-    # in case the subshell's PATH or tape.sh redefines it.
-    log() { :; }
-    signature_for() { :; }
-    close_dev_tape_outcome
-  ) 2>&1
+  ac_run_close_subshell "$1" "$2" "${3:-}" 1
 }
 
 # --- AC 1: ci_timeout is not terminal; everything else is --------------------

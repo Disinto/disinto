@@ -57,6 +57,11 @@ FN_CLOSE="$(ac_extract_fn close_dev_tape_outcome "$TARGET")"
 # into a success and would skip a failure-walk outcome that these ACs pin).
 FN_REASON="$(ac_extract_fn dev_walk_reason_terminal "$TARGET")"
 [ -n "$FN_REASON" ] || ac_fail "dev_walk_reason_terminal() is not defined in dev-agent.sh"
+# Define both once in the parent; run_close()'s subshell inherits them.
+# shellcheck disable=SC2086
+eval "$FN_CLOSE"
+# shellcheck disable=SC2086
+eval "$FN_REASON"
 
 # --- wiring: EXIT trap calls close_dev_tape_outcome ---------------------------
 grep -q "trap.*close_dev_tape_outcome.*EXIT" "$TARGET" \
@@ -76,32 +81,14 @@ export PROJECT_NAME
 ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME}-${ISSUE_TEST}"
 STARTED_FILE="/tmp/dev-proposal-started-${PROJECT_NAME}-${ISSUE_TEST}"
 
-# log() stand-in (inherited by subshells); shadowed again inside the subshell.
-log() { printf 'agent: %s\n' "$*"; }
-
-# Run the extracted close_dev_tape_outcome in a fresh subshell.
-# $1 TAPE_DIR   $2 PR_WALK_RC (0 merged, 1 not)   $3 number of calls (1|2)
-# All calls are in the same process (same subshell), so the "at most one
-# outcome per process" guard is exercised when $3 > 1.
+# Run the extracted close_dev_tape_outcome in a fresh subshell via the shared
+# tape-helpers runner. $1 TAPE_DIR  $2 PR_WALK_RC (0 merged, 1 not)
+# $3 number of calls (1|2). All calls are in the same subshell, so the
+# "at most one outcome per process" guard is exercised when $3 > 1. reason is
+# always empty for #1532 (no _PR_WALK_EXIT_REASON is set), so signature_for()
+# is never reached.
 run_close() {
-  local tape_dir="$1" walk_rc="$2" n="$3"
-  (
-    export TAPE_DIR="$tape_dir"
-    export PROJECT_NAME="$PROJECT_NAME"
-    export ISSUE="$ISSUE_TEST"
-    export PR_WALK_RC="$walk_rc"
-    export LOGFILE="$TMP_DIR/close.log"
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/lib/tape.sh"
-    eval "$FN_CLOSE"
-    eval "$FN_REASON"
-    log() { printf 'agent: %s\n' "$*"; }
-    i=0
-    while [ "$i" -lt "$n" ]; do
-      i=$(( i + 1 ))
-      close_dev_tape_outcome
-    done
-  ) 2>&1
+  ac_run_close_subshell "$1" "$2" "" "$3"
 }
 
 # --- scenario A: id present + flag set -> one outcome, merged/ci_green 1,
