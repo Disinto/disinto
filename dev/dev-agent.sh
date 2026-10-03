@@ -199,6 +199,12 @@ close_dev_tape_outcome() {
   if [ "${_DEV_TAPE_OUTCOME_WRITTEN:-0}" = 1 ]; then
     return 0
   fi
+  # #1705: a walk that ended in ci_timeout is not a terminal outcome — the
+  # PR is still open and dev-poll owns it (it merges, fixes or waits on it
+  # later, and emits the outcome there). No tape record from dev-agent.sh.
+  if [ "${PR_WALK_RC:-0}" != 0 ] && ! dev_walk_reason_terminal "${_PR_WALK_EXIT_REASON:-}"; then
+    return 0
+  fi
 
   # Initialised to safe defaults: the function must be set -u safe (it is
   # sourced-run in subshells by the acceptance tests and by dev-poll traps).
@@ -305,6 +311,17 @@ close_dev_tape_outcome() {
 # restores it: every command in the body is guarded so set -e cannot abort
 # mid-trap, and close_dev_tape_outcome() always returns 0, so a tape failure
 # logs a WARNING without changing the exit code.
+# dev_walk_reason_terminal REASON — return 1 iff REASON is ci_timeout
+# (#1705: a walk that ran out of CI-wait time did not fail; the PR is still
+# open and dev-poll owns it). Any other reason (ci_exhausted,
+# review_exhausted, merge_blocked, closed_externally, ... and the empty
+# default) is a real failure and returns 0.
+dev_walk_reason_terminal() {
+  case "$1" in
+    ci_timeout) return 1 ;;
+    *) return 0 ;;
+  esac
+}
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -1096,13 +1113,26 @@ if [ "$rc" -eq 0 ]; then
 else
   # Exhausted or unrecoverable failure
   log "PR walk failed: ${_PR_WALK_EXIT_REASON:-unknown}"
-  issue_block "$ISSUE" "${_PR_WALK_EXIT_REASON:-agent_failed}"
+  if dev_walk_reason_terminal "${_PR_WALK_EXIT_REASON:-}"; then
+    # Terminal reason (ci_exhausted, review_exhausted, merge_blocked,
+    # closed_externally, ...): the walk is truly over — block the issue and
+    # record the blocked outcome, as today.
+    issue_block "$ISSUE" "${_PR_WALK_EXIT_REASON:-agent_failed}"
+    outcome="blocked_${_PR_WALK_EXIT_REASON:-agent_failed}"
+  else
+    # ci_timeout: the walk ran out of CI-wait time while CI was still running.
+    # Nothing failed — the PR is still open. Do not block the issue and do not
+    # write a terminal tape outcome (the EXIT trap skips it, #1705); dev-poll's
+    # in-progress scan owns the PR from here (it merges, spawns a CI fix, or
+    # waits, and emits its own outcome when the PR lands).
+    log "CI still running on PR #${PR_NUMBER}: #${ISSUE} stays in progress; dev-poll takes it from here"
+    outcome="waiting_ci"
+  fi
 
   # Capture files changed for journal entry (after agent work)
   FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""
 
   # Write journal entry post-session (before cleanup)
-  outcome="blocked_${_PR_WALK_EXIT_REASON:-agent_failed}"
   profile_write_journal "$ISSUE" "$ISSUE_TITLE" "$outcome" "$FILES_CHANGED" || true
 
   # Cleanup on failure: preserve remote branch and PR for debugging, clean up local worktree

@@ -54,6 +54,11 @@ FN_WALK="$(ac_extract_fn pr_walk_to_merge "$WALK_SRC")"
 ac_log "Extracting close_dev_tape_outcome from $CLOSE_SRC"
 FN_CLOSE="$(ac_extract_fn close_dev_tape_outcome "$CLOSE_SRC")"
 [ -n "$FN_CLOSE" ] || ac_fail "close_dev_tape_outcome() is not defined in dev-agent.sh"
+# close_dev_tape_outcome's #1705 guard calls dev_walk_reason_terminal, so the
+# subshells that run a failure walk (PR_WALK_RC != 0) must have it too.
+ac_log "Extracting dev_walk_reason_terminal from $CLOSE_SRC"
+FN_REASON="$(ac_extract_fn dev_walk_reason_terminal "$CLOSE_SRC")"
+[ -n "$FN_REASON" ] || ac_fail "dev_walk_reason_terminal() is not defined in dev-agent.sh"
 
 # --- wiring checks -----------------------------------------------------------
 # dev-agent.sh must source lib/pr-lifecycle.sh (so the walk is available),
@@ -95,6 +100,8 @@ grep -qF 'duration_s' "$CLOSE_SRC" \
 eval "$FN_WALK"
 # shellcheck disable=SC2086
 eval "$FN_CLOSE"
+# shellcheck disable=SC2086
+eval "$FN_REASON"
 
 # --- runtime setup -----------------------------------------------------------
 TMP_DIR="$(mktemp -d /tmp/acceptance-1616.XXXXXX)"
