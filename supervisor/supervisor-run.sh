@@ -10,10 +10,12 @@
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
-#   4a. Repair tape (#1408, #1533, #1636): a direct remedy writes one
+#   4a. Repair tape (#1408, #1533, #1636, #1637): a direct remedy writes one
 #       repair proposal (empty caused_by) before its script unless one is
-#       open; incident recipes and the CI incident write none. A later
-#       preflight that shows the condition cleared earns bits {"regression_cleared":1}
+#       open; incident recipes and the CI incident write none. After the
+#       script the state entry keeps acted/acted_at, and a later tick writes
+#       {acted, cleared} once the condition clears inside the window or the
+#       window passes.
 #   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
 #   6. Load formula (formulas/run-supervisor.toml)
 #   7. Context: AGENTS.md, preflight metrics, structural graph
@@ -170,23 +172,27 @@ if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
   fi
 fi
 
-# ── Repair tape (#1408, #1533, #1636) ─────────────────────────────────────
+# ── Repair tape (#1408, #1533, #1636, #1637) ──────────────────────────────
 # A condition that no remedy acts on is a monitor, not a proposal. Repair
 # proposals are written only when a direct remedy runs: repair_direct_dispatch
 # calls emit_repair_proposal (class = recipe name, caused_by empty — the
 # condition stays in context.signature) right before the action_script,
 # unless that recipe already has an open proposal. Incident recipes and the
-# CI incident condition write none. repair_tape_tick does not create
-# proposals; it still closes conditions that already have one — when a later
-# preflight no longer shows the condition, the open proposal earns one
-# outcome with bits {"regression_cleared":1}. All labels are code-derived
-# (recipe names, condition identifiers) — no LLM input. Every emitter is
-# total: a tape failure logs a WARNING and returns 0, so the tape never
-# blocks the supervisor.
+# CI incident condition write none. After the script, that condition's state
+# entry keeps acted (1 when the script exited 0, else 0) and acted_at (epoch
+# of the first act). repair_tape_tick does not create proposals. For each
+# entry with acted_at it writes one outcome {acted, cleared} once the
+# condition stops firing within SUPERVISOR_REPAIR_WINDOW_S (default 3600) or
+# the window passes, then drops the entry. An entry without acted_at whose
+# condition stops firing is dropped with no outcome. All labels are
+# code-derived (recipe names, condition identifiers) — no LLM input. Every
+# emitter is total: a tape failure logs a WARNING and returns 0, so the tape
+# never blocks the supervisor.
 
 # repair_tape_state_file — per-project state file (JSON object:
-# condition → {proposal_id, class, since}) tracking which conditions
-# currently have an open repair proposal. Override with
+# condition → {proposal_id, class, since, acted?, acted_at?}) tracking which
+# conditions currently have an open repair proposal. acted/acted_at are set
+# by repair_direct_dispatch after the script runs (#1637). Override with
 # SUPERVISOR_REPAIR_STATE_FILE (tests).
 repair_tape_state_file() {
   if [ -n "${SUPERVISOR_REPAIR_STATE_FILE:-}" ]; then
@@ -303,13 +309,21 @@ emit_repair_proposal() {
 
 # repair_tape_tick — one repair-tape pass per supervisor tick, called after
 # recipe evaluation and before the LLM escalation gate. It does not create
-# proposals (#1636): a condition no remedy acts on is a monitor. It still
-# handles conditions that already have a proposal in the state file — a
-# recorded condition no longer firing (a later preflight shows it cleared)
-# gets one outcome with bits {"regression_cleared":1} and drops out of the
-# state file. Total: always returns 0 — the tape never blocks the supervisor.
+# proposals (#1636): a condition no remedy acts on is a monitor. The outcome
+# is the remedy's own check (#1637). Clock is ${SUPERVISOR_NOW:-now} (epoch
+# seconds); the window is ${SUPERVISOR_REPAIR_WINDOW_S:-3600}. For each state
+# entry that has acted_at:
+#   - condition no longer firing and (now - acted_at) <= window: outcome
+#     {acted, cleared: 1 if acted is 1 else 0}, drop the entry;
+#   - window passed (whether or not it is still firing): outcome
+#     {acted, cleared: 0}, drop the entry. A clearance observed only after
+#     the window is not a pass. A later firing opens a new proposal.
+# An entry without acted_at whose condition stops firing is dropped with no
+# outcome. A still-firing entry inside the window is left alone. Total:
+# always returns 0 — the tape never blocks the supervisor.
 repair_tape_tick() {
-  local state_file prev_json cur_json cleared_list
+  local state_file prev_json cur_json window now decisions
+  local cond action proposal_id acted cleared bits keys_json
   state_file="$(repair_tape_state_file)"
   cur_json="$(repair_conditions_current_json)" || cur_json="[]"
   [ -n "$cur_json" ] || cur_json="[]"
@@ -319,39 +333,85 @@ repair_tape_tick() {
     prev_json="{}"
   fi
 
-  cleared_list="$(jq -rn --argjson cur "$cur_json" --argjson prev "$prev_json" '
-      ($prev | keys[]) | select(. as $c | ($cur | index($c)) == null)')" \
-    || cleared_list=""
+  window="${SUPERVISOR_REPAIR_WINDOW_S:-3600}"
+  if ! [[ "$window" =~ ^[0-9]+$ ]]; then
+    window=3600
+  fi
+  if [[ "${SUPERVISOR_NOW:-}" =~ ^[0-9]+$ ]]; then
+    now="$SUPERVISOR_NOW"
+  else
+    now="$(date -u +%s)"
+  fi
 
-  local cond proposal_id
-  while IFS= read -r cond; do
+  # One row per entry to close: condition, action (clear|expire|drop),
+  # proposal id, acted. clear = gone inside the window; expire = window
+  # passed; drop = no acted_at and no longer firing (no outcome).
+  decisions="$(jq -rn \
+    --argjson cur "$cur_json" \
+    --argjson prev "$prev_json" \
+    --argjson now "$now" \
+    --argjson window "$window" '
+      $prev | to_entries[]
+      | .key as $c
+      | .value as $e
+      | ($cur | index($c) != null) as $firing
+      | (if (($e.acted_at // null) | type) == "number" then
+           ($now - $e.acted_at) as $elapsed
+           | if (($firing | not) and ($elapsed <= $window)) then "clear"
+             elif ($elapsed > $window) then "expire"
+             else "keep"
+             end
+         else
+           if ($firing | not) then "drop" else "keep" end
+         end) as $action
+      | select($action != "keep")
+      | [$c, $action, ($e.proposal_id // ""), (($e.acted // 0) | tostring)]
+      | @tsv
+    ')" || decisions=""
+
+  keys_json="[]"
+  while IFS=$'\t' read -r cond action proposal_id acted; do
     [ -n "$cond" ] || continue
-    proposal_id="$(printf '%s' "$prev_json" \
-      | jq -r --arg c "$cond" '.[$c].proposal_id // empty' 2>/dev/null)" \
-      || proposal_id=""
-    if [ -z "$proposal_id" ]; then
-      log "WARNING: tape: no proposal id recorded for cleared condition ${cond}"
-      continue
-    fi
-    if ! tape_outcome "$proposal_id" '{"regression_cleared":1}' '{}' '{}' '[]' \
-        >/dev/null 2>&1; then
-      log "WARNING: tape: failed to append cleared outcome for ${cond} (${proposal_id})"
-    else
-      log "tape: condition ${cond} cleared — outcome recorded for ${proposal_id}"
-    fi
-  done <<< "$cleared_list"
-
-  # Drop the cleared conditions from the state file (tape records are
-  # immutable; the state file only tracks open regressions).
-  local keys_json="[]" k
-  while IFS= read -r k; do
-    [ -n "$k" ] || continue
-    case "$k" in
+    case "$action" in
+      clear|expire)
+        if [ -z "$proposal_id" ]; then
+          log "WARNING: tape: no proposal id recorded for condition ${cond}"
+        else
+          case "$acted" in
+            1) ;;
+            *) acted=0 ;;
+          esac
+          if [ "$action" = "clear" ] && [ "$acted" = "1" ]; then
+            cleared=1
+          else
+            cleared=0
+          fi
+          bits="$(jq -cn --argjson a "$acted" --argjson c "$cleared" \
+            '{acted: $a, cleared: $c}')" || bits=""
+          if [ -z "$bits" ] || ! tape_outcome "$proposal_id" "$bits" '{}' '{}' '[]' \
+              >/dev/null 2>&1; then
+            log "WARNING: tape: failed to append repair outcome for ${cond} (${proposal_id})"
+          else
+            log "tape: condition ${cond} outcome recorded for ${proposal_id} (acted=${acted}, cleared=${cleared})"
+          fi
+        fi
+        ;;
+      drop)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    case "$cond" in
       *[!A-Za-z0-9._-]*) continue ;;
     esac
-    keys_json="$(jq -c --arg key "$k" '. + [$key]' <<< "$keys_json")" \
+    keys_json="$(jq -c --arg key "$cond" '. + [$key]' <<< "$keys_json")" \
       || keys_json="[]"
-  done <<< "$cleared_list"
+  done <<< "$decisions"
+
+  # Drop closed conditions (tape records are immutable; the state file only
+  # tracks open repairs). A failed outcome append still drops — the tape
+  # never blocks the next tick, and a later firing opens a new proposal.
   if [ "$keys_json" != "[]" ]; then
     _repair_state_update \
       "with_entries(select(.key as \$k | ${keys_json} | index(\$k) | not))"
@@ -372,14 +432,19 @@ repair_tape_tick
 # a closing tape_run (cost {"duration_s":N}, status=completed|failed). An id
 # that is still absent after the emit (tape failure) logs a warning, still
 # runs the script, and writes no tape line. Incident recipes never reach
-# this loop, so they write no repair proposal. No tape_outcome is written —
-# run status lives on the run record. A non-zero script exit never
-# interrupts the tick (the closing run is `failed`), and a failed tape
-# append logs a warning without aborting. Total: always returns 0.
+# this loop, so they write no repair proposal. After the script, the
+# condition's state entry keeps acted (1 when the script exited 0, else 0)
+# and acted_at (epoch; clock ${SUPERVISOR_NOW:-now}). acted_at is the first
+# act of this open proposal — a later run of the same proposal updates acted
+# but does not move the window, so a later tick can see it pass (#1637).
+# The outcome itself is written by repair_tape_tick, not here. A non-zero
+# script exit never interrupts the tick (the closing run is `failed`), and a
+# failed tape append logs a warning without aborting. Total: always returns 0.
 repair_direct_dispatch() {
   local recipe_output="${1:-}"
   local name script evidence started started_epoch tsv
   local ended ended_epoch rc duration_s status state_file proposal_id cost
+  local acted_flag acted_epoch
   if [ -z "$recipe_output" ]; then
     return 0
   fi
@@ -438,6 +503,27 @@ repair_direct_dispatch() {
         >/dev/null 2>&1; then
         log "WARNING: tape: failed to append closing run for ${name} (${proposal_id})"
       fi
+    fi
+    # #1637: the remedy's own check. acted is 1 only when this script exited
+    # 0. acted_at is recorded on the first act of the open proposal so the
+    # window can elapse across later ticks (a repeat run must not reset it).
+    if [ -n "$proposal_id" ]; then
+      acted_flag=0
+      [ "$rc" -eq 0 ] && acted_flag=1
+      if [[ "${SUPERVISOR_NOW:-}" =~ ^[0-9]+$ ]]; then
+        acted_epoch="$SUPERVISOR_NOW"
+      else
+        acted_epoch="$(date -u +%s)"
+      fi
+      case "$name" in
+        *[!A-Za-z0-9._-]*)
+          log "WARNING: tape: refusing unsafe condition identifier '${name}' (acted update skipped)"
+          ;;
+        *)
+          _repair_state_update \
+            "if .[\"${name}\"] == null then . else .[\"${name}\"] |= (if has(\"acted_at\") then .acted = ${acted_flag} else . + {acted: ${acted_flag}, acted_at: ${acted_epoch}} end) end"
+          ;;
+      esac
     fi
   done <<< "$tsv"
   return 0

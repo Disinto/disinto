@@ -20,7 +20,8 @@
 #     still run the script, write no tape line
 #   - an unwritable $TAPE_DIR -> warn, still run the script, return 0
 #   - a non-zero script exit -> closing run is `failed`, never aborts the tick
-#   - no tape_outcome is ever written (run status lives on the run record)
+#   - dispatch itself writes no tape_outcome (the tick writes {acted, cleared}
+#     later, #1637; run status still lives on the run record)
 #   - dispatch is wired only on the fast path (the LLM path is untouched)
 #
 # The dispatch is exercised in-process: extract repair_direct_dispatch() and
@@ -148,6 +149,7 @@ select_run() {
 }
 
 # ── 1. present proposal + script exits 0 -> two completed run lines, no outcome
+# (dispatch does not write the outcome; repair_tape_tick does, #1637)
 # ─────────────────────────────────────────────────────────────────────────────
 TAPE1="$TMP_DIR/tape-1"; mkdir -p "$TMP_DIR/tape-1"
 STATE1="$TMP_DIR/state-1.json"
