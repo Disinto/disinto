@@ -4,7 +4,8 @@
 #
 # The factory's world model is claims: one TOML file per claim in the ops
 # repo, `claims/<id>.toml`. Each file is a statement plus a check the factory
-# runs itself. This lib only reads those files. No callers yet.
+# runs itself. This lib only reads those files. Called by
+# tools/claim-proposals.sh (#1641).
 #
 # Sourced from the caller:
 #   source "$(dirname "$0")/claims.sh"

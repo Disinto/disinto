@@ -417,6 +417,15 @@ formula_session_end "$GARDENER_RUN_RC"
 # Write the calibration table to the ops repo catalog (#1454)
 refresh_ops_calibration
 
+# Claim-loop proposals (#1641), before any sprint tool. Each new or revised
+# claim file becomes one claim-loop proposal. Never fatal: a non-zero exit
+# only logs a warning.
+claim_proposals_rc=0
+"$FACTORY_ROOT/tools/claim-proposals.sh" || claim_proposals_rc=$?
+if [ "$claim_proposals_rc" -ne 0 ]; then
+  log "WARNING: claim-proposals.sh failed (rc=${claim_proposals_rc})"
+fi
+
 # ── Detect PR ─────────────────────────────────────────────────────────────
 detect_pr_number "chore/gardener-"
 

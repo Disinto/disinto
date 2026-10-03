@@ -40,6 +40,9 @@ and executes the pending-actions manifest post-merge.
   tape) and writes the report to `${OPS_REPO_ROOT}/catalog/calibration.md` via
   `ops_commit_and_push`; never fatal — a failed `calibration.sh` (rc!=0) or an unset
   `OPS_REPO_ROOT` only logs a warning and leaves the file untouched.
+  Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
+  revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
+  A failure only logs a warning.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.
