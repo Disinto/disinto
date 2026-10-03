@@ -113,8 +113,17 @@ _propose_claim() {
 
   # Store the claim text first. A failed store still appends the proposal,
   # but with no 10th argument (the record keeps its pre-#1634 shape).
-  payload_hash=""
-  if ! payload_hash="$(tape_payload "$file" 2>/dev/null)"; then
+  # tape_payload's return code is unreliable here: with set -e inactive
+  # inside the command substitution, a failed mkdir/cp is swallowed and the
+  # hash is still echoed (same note as emit_tape_proposal in dev/dev-poll.sh).
+  # Keep the ref only when the content-addressed copy actually landed.
+  payload_hash="$(tape_payload "$file" 2>/dev/null)" || payload_hash=""
+  if [ -n "$payload_hash" ] && [ -f "${PAYLOAD_DIR}/${payload_hash}" ]; then
+    :
+  else
+    if [ -n "$payload_hash" ]; then
+      log "WARNING: failed to store payload for claim ${id} — proposal continues without it"
+    fi
     payload_hash=""
   fi
 

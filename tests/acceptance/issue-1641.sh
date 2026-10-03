@@ -224,4 +224,32 @@ esac
 [ -z "$ERR" ] || ac_fail "invalid claim must not also print stderr (got: $ERR)"
 ac_log "AC4 OK: invalid claim appended nothing"
 
+# ── AC5: an unwritable payload store omits payloads ──────────────────────────
+# tape_payload echoes the hash and returns 0 when mkdir/cp fail (set -e is
+# inactive inside the command substitution). The proposal must not keep that
+# dangling hash. A regular file (not a mode-555 directory) is unwritable even
+# for root, which is what CI runs as.
+ac_log "AC5: unwritable PAYLOAD_DIR omits the payloads field"
+rm -rf "$TAPE_DIR" "$CLAIMS_DIR" "$PAYLOAD_DIR"
+mkdir -p "$TAPE_DIR" "$CLAIMS_DIR"
+PAYLOAD_DIR="$TMP_DIR/payloads-unwritable"
+: > "$PAYLOAD_DIR"
+write_claim "<= 0.2"
+run_tool
+ac_assert_eq "$RC" "0" \
+  "unwritable payload store must not fail the tool (got $RC): $OUT | $ERR"
+ac_assert_eq "$(tape_lines)" "1" \
+  "unwritable payload store must still append one proposal (got $(tape_lines))"
+LINE="$(head -n1 "$TAPE_DIR/tape.jsonl")"
+ac_assert_jq '.type == "proposal" and .loop == "claim" and .class == "internal"
+    and .decision == "approved" and .ref == "claims/dev-comes-back.toml"
+    and (has("payloads") | not)' "$LINE" \
+  "a failed payload store must append with no payloads field"
+SHA="$(sha256sum "$CLAIMS_DIR/dev-comes-back.toml" | cut -d' ' -f1)"
+[ ! -e "${PAYLOAD_DIR}/${SHA}" ] \
+  || ac_fail "payload file must not exist when the store is unwritable"
+ac_assert_file "$TAPE_DIR/claims/dev-comes-back.current" \
+  "the proposal must still be recorded in <id>.current"
+ac_log "AC5 OK: unwritable payload store appended a proposal with no payloads field"
+
 ac_pass "issue #1641: a merged claim becomes a claim-loop proposal"
