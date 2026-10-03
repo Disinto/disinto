@@ -1,0 +1,350 @@
+# =============================================================================
+# nomad/jobs/agents-dev-grok.hcl — a second dev agent on Grok 4.7 (xAI).
+#
+# Runs beside agents-dev-qwen, not instead of it. Same image and loop
+# (AGENT_ROLES = "dev", dsh harness); what differs:
+#
+#   - Model: dsh's settings.yaml in this job's own DSH_HOME routes to the
+#     `xai` provider (OpenAI Responses at api.x.ai/v1, model grok-4.7). The
+#     sign-in is an xAI OAuth grant (SuperGrok subscription) in
+#     $DSH_HOME/.credentials.yaml, refreshed by dsh itself. It is this
+#     agent's own grant: no other process refreshes it.
+#   - Identity: forge user dev-grok-bot (Vault kv/disinto/bots/dev-grok),
+#     so dev-poll's assignee checks keep the two dev agents apart.
+#   - Data: /srv/disinto/agent-data-grok/dev is bind-mounted at /home/agent/data
+#     (docker volumes are enabled on this client; no host_volume, so adding
+#     the job needed no Nomad client restart).
+#   - Vault role agents-dev-grok, policy service-agents-grok
+#     (service-agents plus the two grok bot paths).
+#
+# DSH_MODEL / CLAUDE_MODEL only label the tape (backend, run agent); the
+# model dsh calls is the one settings.yaml names.
+# =============================================================================
+
+job "agents-dev-grok" {
+  type        = "service"
+  datacenters = ["dc1"]
+
+  group "agents" {
+    count = 1
+
+    # ── Vault workload identity (S4.1, issue #955) ───────────────────────────
+    # Own role, agents-dev-grok (vault/roles.yaml), bound to nomad_job_id =
+    # "agents-dev-grok"; policy service-agents-grok
+    # (vault/policies/service-agents-grok.hcl): service-agents plus the
+    # dev-grok and review-grok bot paths.
+    vault {
+      role        = "agents-dev-grok"
+      # A Vault token renewal must not restart the task (#1091). The default
+      # change_mode is "restart", which SIGKILLed the container every 24h and
+      # destroyed whatever dev session was mid-flight. Verified on
+      # 2026-08-30T19:53:05Z: "Restart Signaled  Vault: new Vault token
+      # acquired" followed by exit 137.
+      change_mode = "noop"
+    }
+
+    # No network port — agents are outbound-only (poll forgejo, call llama).
+    # No service discovery block — nothing health-checks agents over HTTP.
+
+
+    volume "project-repos" {
+      type      = "host"
+      source    = "project-repos"
+      read_only = false
+    }
+
+    volume "ops-repo" {
+      type      = "host"
+      source    = "ops-repo"
+      read_only = true
+    }
+
+    # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
+    # lib/tape.sh default TAPE_DIR, so no env override is needed (#1405).
+    volume "tape" {
+      type      = "host"
+      source    = "tape"
+      read_only = false
+    }
+
+    # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
+    # the path bootstrap_factory_repo already reads from, so per-env config
+    # changes do not require an image rebuild. Backed by /srv/disinto/projects/
+    # on the host (see nomad/client.hcl).
+
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
+    # Conservative restart — fail fast to the scheduler.
+    restart {
+      attempts = 3
+      interval = "5m"
+      delay    = "15s"
+      mode     = "delay"
+    }
+
+    # ── Service registration ────────────────────────────────────────────────
+    # Agents are outbound-only (poll forgejo, call llama) — no HTTP/TCP
+    # endpoint to probe. The Nomad native provider only supports tcp/http
+    # checks, not script checks. Registering without a check block means
+    # Nomad tracks health via task lifecycle: task running = healthy,
+    # task dead = service deregistered. This matches the docker-compose
+    # pgrep healthcheck semantics (process alive = healthy).
+    service {
+      name     = "agents-dev-grok"
+      provider = "nomad"
+    }
+
+    task "agents" {
+      driver = "docker"
+
+      config {
+        image      = "disinto/agents:local"
+        force_pull = false
+
+        # apparmor=unconfined matches docker-compose — Claude Code needs
+        # ptrace for node.js inspector and /proc access.
+        security_opt = ["apparmor=unconfined"]
+
+        # This agent's own data dir (DSH_HOME, logs, sessions): see header.
+        volumes = ["/srv/disinto/agent-data-grok/dev:/home/agent/data"]
+      }
+
+
+      volume_mount {
+        volume      = "project-repos"
+        destination = "/home/agent/repos"
+        read_only   = false
+      }
+
+      volume_mount {
+        volume      = "ops-repo"
+        destination = "/home/agent/repos/_factory/disinto-ops"
+        read_only   = true
+      }
+
+      # factory-projects: surfaces /srv/disinto/projects/ inside the container
+      # at the path bootstrap_factory_repo / seed_projects_from_host_volume
+      # already reads from (#794).
+
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/project-repos/_factory/projects"
+        read_only   = true
+      }
+
+      # tape (#1405): mounted at the lib/tape.sh default path so TAPE_DIR
+      # needs no env override.
+      volume_mount {
+        volume      = "tape"
+        destination = "/srv/disinto/tape"
+        read_only   = false
+      }
+
+      # ── Non-secret env ─────────────────────────────────────────────────────
+      # FORGE_URL is rendered from Nomad service discovery in the template
+      # block below — the bridge-network netns cannot resolve the `forgejo`
+      # hostname (no Consul DNS). Same pattern as edge.hcl post-#1157 (issue
+      # #567).
+      env {
+        FORGE_REPO         = "disinto-admin/disinto"
+        # Activate bootstrap_factory_repo so DISINTO_DIR switches to the
+        # live clone and per-env TOMLs from factory-projects are picked up
+        # rather than the stale baked image copy (#794).
+        FACTORY_REPO       = "disinto-admin/disinto"
+        # CI log access (#1114). lib/ci-debug.sh reads pipeline status and
+        # step logs over the Woodpecker REST API so the dev agent can see why
+        # a PR's CI failed. The server is addressed by container IP because
+        # port 8000 bare serves the SPA -- the API lives under the /ci subpath
+        # that edge's Caddy strips. WOODPECKER_TOKEN comes from Vault below.
+        WOODPECKER_SERVER  = "http://10.10.10.132:8000/ci"
+        WOODPECKER_REPO_ID = "1"
+        ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
+        ANTHROPIC_API_KEY  = "sk-no-key-required"
+        # The alias llama-server actually serves (--alias). The old value named
+        # a model this box does not host; the server ignores the name, but
+        # Claude Code sizes its context window from it.
+        CLAUDE_MODEL       = "grok-4.7"
+        AGENT_ROLES        = "dev"
+
+        # Porter door — the dev role asks Jev for a scope reading on each pick
+        # (#1598 wiring). tools/jev-scope.sh fails closed when any of the three
+        # is unset; the key file lives on the agent-data volume mounted at
+        # /home/agent/data (no API key in the job, per AD-005).
+        PORTER_SSH_TARGET    = "porter@165.227.129.61"
+        PORTER_JEV_KEY       = "/home/agent/data/porter/id_ed25519"
+        PORTER_JEV_KNOWN_HOSTS = "/home/agent/data/porter/known_hosts"
+
+        # dsh harness. The model comes from this job's DSH_HOME settings.yaml
+        # (route xai, grok-4.7; see the header). DSH_BASE_URL only seeds a
+        # missing settings.yaml with the llama.cpp route, kept as a fallback.
+        # Known dsh gap: wall-clock timeouts write no metrics record (#1186).
+        AGENT_HARNESS       = "dsh"
+        DSH_HOME            = "/home/agent/data/dsh"
+        DSH_PERMISSION_MODE = "danger-full-access"
+        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
+        DSH_MODEL           = "grok-4.7"
+        DSH_CONTEXT_WINDOW  = "200000"
+        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
+        # the key but dsh requires the env to be set.
+        LLAMACPP_API_KEY    = "sk-no-key-required"
+        POLL_INTERVAL      = "300"
+        DISINTO_CONTAINER  = "1"
+        PROJECT_NAME       = "project"
+        PROJECT_REPO_ROOT  = "/home/agent/repos/project"
+        CLAUDE_TIMEOUT     = "7200"
+        # Raised 60 -> 100 on 2026-08-31. Telemetry (#1101) showed five of six
+        # consecutive sessions ending at exactly turns=61, i.e. at the ceiling,
+        # not at a natural stopping point. Durations were 34-104 min against a
+        # 7200s timeout, so wall-clock had headroom the turn budget did not.
+        # #1105 hit 61 twice even with a written spec for the work, so the
+        # constraint was steps, not information. CLAUDE_TIMEOUT still caps the
+        # session at 2h.
+        CLAUDE_MAX_TURNS   = "100"
+        # Per-organ cadence scheduler (#1388): the loop paces organs on their
+        # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
+        # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
+
+        # llama-specific Claude Code tuning
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
+        # The percentage is a percentage of the window Claude Code believes
+        # the model has. lP()/gF() in cli.js resolve that window from the
+        # model name; llama-server serves a name Claude Code does not know.
+        #
+        # CLAUDE_CODE_AUTO_COMPACT_WINDOW does NOT raise that window. gF does
+        # K = Math.min(K, z), so the variable can only clamp downwards. It was
+        # set to 327680 here, above the believed window, and was therefore a
+        # no-op. It is pinned to 200000 now to say so out loud.
+        #
+        # MEASURED on the #1073 session (2026-08-28): the result row reports
+        # contextWindow = 200000, and with the override at 32 the ten
+        # auto-compactions fired at pre_tokens 59,012-87,558, clustering on
+        # 64,000 = 32 per cent of 200,000. pre_tokens overshoots the
+        # threshold by the size of the last tool result, so treat the
+        # configured lane as a floor and expect peaks above it.
+        #
+        # 50 per cent puts the lane at 100,000 (#1069). That session spent
+        # about half its 61 turns re-reading files a 64k lane kept dropping.
+        # The KV cache is --kv-unified, so /slots reports the full 327,680 to
+        # every slot and the pool is shared rather than partitioned: two
+        # agents at a 100k lane leaves roughly a third of the pool for the
+        # other consumers on this host.
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW          = "200000"
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "50"
+
+        # Claude Code never sends reasoning_effort — the string does not
+        # appear in cli.js — so the server's --chat-template-kwargs decides
+        # the reasoning level and the client cannot lower it. What the
+        # client CAN do is stop asking for thinking at all (cli.js: b6 =
+        # type!=="disabled" && !CLAUDE_CODE_DISABLE_THINKING).
+        CLAUDE_CODE_DISABLE_THINKING             = "1"
+      }
+
+      # ── Nomad-discovered FORGE_URL (issue #567) ───────────────────────────
+      # Bridge netns cannot resolve `forgejo:3000`. Render from Nomad service
+      # discovery — matches edge.hcl (post-#1157) and keeps the job portable
+      # across boxes with different bridge IPs.
+      template {
+        destination = "secrets/forge-url.env"
+        env         = true
+        change_mode = "restart"
+        data        = <<EOT
+{{ range nomadService "forgejo" -}}
+FORGE_URL=http://{{ .Address }}:{{ .Port }}
+{{- end }}
+EOT
+      }
+
+      # ── Vault-templated bot tokens (S4.1, issue #955) ─────────────────────
+      # Renders per-bot FORGE_*_TOKEN + FORGE_PASS from Vault KV v2.
+      # Each `with secret ...` block reads one bot's KV path; the `else`
+      # branch emits short placeholders on fresh installs where the path
+      # is absent. Seed with tools/vault-seed-agents.sh.
+      #
+      # Placeholder values kept < 16 chars to avoid secret-scan CI failures.
+      # error_on_missing_key = false prevents template-pending hangs.
+      template {
+        destination          = "secrets/bots.env"
+        env                  = true
+        # noop: static Vault secrets - renewal must not restart the task
+        # (#1091 stabilization). Rotation = vault kv put + manual restart.
+        change_mode          = "noop"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/bots/dev-grok" -}}
+FORGE_TOKEN={{ .Data.data.token }}
+FORGE_PASS={{ .Data.data.pass }}
+{{- else -}}
+# WARNING: run tools/vault-seed-agents.sh
+FORGE_TOKEN=seed-me
+FORGE_PASS=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/review" -}}
+FORGE_REVIEW_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_REVIEW_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/gardener" -}}
+FORGE_GARDENER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_GARDENER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/architect" -}}
+FORGE_ARCHITECT_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_ARCHITECT_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/planner" -}}
+FORGE_PLANNER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_PLANNER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/predictor" -}}
+FORGE_PREDICTOR_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_PREDICTOR_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/supervisor" -}}
+FORGE_SUPERVISOR_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_SUPERVISOR_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/vault" -}}
+FORGE_VAULT_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_VAULT_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/bots/filer" -}}
+FORGE_FILER_TOKEN={{ .Data.data.token }}
+{{- else -}}
+FORGE_FILER_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/shared/ci" -}}
+WOODPECKER_TOKEN={{ .Data.data.woodpecker_token }}
+{{- else -}}
+WOODPECKER_TOKEN=seed-me
+{{- end }}
+EOT
+      }
+
+      # Agents run Claude/llama sessions — need CPU + memory headroom.
+      resources {
+        cpu    = 500
+        memory = 2048
+      }
+    }
+  }
+}

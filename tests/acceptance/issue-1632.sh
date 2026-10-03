@@ -9,7 +9,7 @@
 # catalog_forecast (lib/catalog-forecast.sh) nor the Jev scope door
 # (tools/jev-scope.sh). Those libraries remain in the repo, unused; they return
 # later as named forecast methods. Everything else on the proposal stays as
-# before (class/parent derivation, open_prs, size_class, backend, decision
+# before (class/parent derivation, open_prs, backend, decision
 # "approved", ref = the issue number, the re-pick guard, the started epoch).
 #
 # The test is hermetic (read-only, extract-and-stub, no live services, no agent
@@ -147,9 +147,9 @@ ac_assert_eq "$rc" "0" "AC1: emit_tape_proposal must exit 0 (got $rc): $out"
 ac_assert_file "$TAPE1/tape.jsonl" "AC1: no tape.jsonl was written"
 ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" "AC1: picking an issue must append exactly one proposal line"
 LINE="$(head -n 1 "$TAPE1/tape.jsonl")"
-ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1632" and .class == "backlog" and .context.open_prs == 3 and .context.size_class == "M"' \
+ac_assert_jq '.type == "proposal" and .loop == "dev" and .decision == "approved" and .ref == "1632" and .class == "backlog" and .context.open_prs == 3 and (.context | has("size_class") | not)' \
   "$LINE" \
-  "AC1: the proposal must be a valid approved dev proposal (ref 1632, class backlog, 3 open PRs, size M)"
+  "AC1: the proposal must be a valid approved dev proposal (ref 1632, class backlog, 3 open PRs, no size_class)"
 ac_assert_jq '.forecast == null' "$LINE" "AC1: the proposal must carry no forecast key"
 ac_assert_jq '.context.forecast_method == null' "$LINE" "AC1: context must have no forecast_method"
 ac_assert_jq '.context.jev == null' "$LINE" "AC1: context must have no jev"

@@ -28,6 +28,8 @@ source "$(dirname "$0")/../lib/ci-helpers.sh"
 source "$(dirname "$0")/../lib/issue-lifecycle.sh"
 source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/pr-lifecycle.sh"
+# #1688: review text for a restarted attempt's recovery prompt
+source "$(dirname "$0")/../lib/pr-review-feedback.sh"
 source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
@@ -564,6 +566,7 @@ LESSONS_INJECTION="${LESSONS_CONTEXT:-}"
 if [ "$RECOVERY_MODE" = true ]; then
   GIT_DIFF_STAT=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --stat 2>/dev/null \
     | head -20 || echo "(no diff)")
+  REVIEW_FEEDBACK="$(pr_review_feedback "$PR_NUMBER")" || REVIEW_FEEDBACK=""
 
   INITIAL_PROMPT="You are working in a git worktree at ${WORKTREE} on branch ${BRANCH}.
 This is issue #${ISSUE} for the ${FORGE_REPO} project.
@@ -584,6 +587,10 @@ ${GIT_DIFF_STAT}
 
 ### PR: #${PR_NUMBER} (${BRANCH})
 **IMPORTANT: PR #${PR_NUMBER} already exists — do NOT create a new PR.**
+${REVIEW_FEEDBACK:+
+### Review to address (the latest review of the current head)
+${REVIEW_FEEDBACK}
+}
 
 ### Next steps
 1. Run \`git log --oneline -5\` and \`git status\` to understand current state.

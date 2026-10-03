@@ -20,13 +20,16 @@
 #     `script -qfc` apparatus is not needed
 #   - locates the session directory dsh just wrote under
 #     $DSH_HOME/sessions/<cwd-slug>/ and takes the most recently modified
-#     one created AFTER a start timestamp recorded before the invocation —
-#     a stale directory from an earlier run can never be selected (the
-#     wrong directory yields a plausible but wrong diagnostics file, which
-#     then produces wrong metrics and wrong no-push decisions). A resumed
-#     session is instead resolved by name BEFORE the run: a resumed
-#     directory keeps its old mtime (only the log file inside is
-#     appended), so the mtime scan would miss it
+#     one created AFTER a start timestamp recorded before the invocation
+#     whose session log's first record names the run directory as its cwd
+#     (a log that cannot be read yet stays a candidate) — a stale directory
+#     from an earlier run can never be selected, and a dsh session another
+#     process starts during the run (such as a test the agent runs) is
+#     never taken (#1687). The wrong directory yields a plausible but wrong
+#     diagnostics file, which then produces wrong metrics and wrong no-push
+#     decisions. A resumed session is instead resolved by name BEFORE the
+#     run: a resumed directory keeps its old mtime (only the log file
+#     inside is appended), so the mtime scan would miss it
 #   - calls dsh_session_normalise (#1105) and writes its output to the
 #     same diagnostics path the Claude path uses, ${diag_dir}/agent-run-last.json
 #   - on a wall-clock timeout (rc 124) with no recoverable session log
@@ -79,7 +82,7 @@ _agent_run_dsh() {
   local limit="${CLAUDE_TIMEOUT:-7200}"
   local diag_dir="${DISINTO_LOG_DIR:-/tmp}/${LOG_AGENT:-dev}"
   local diag_file="${diag_dir}/agent-run-last.json"
-  local start_ts output rc session_dir="" resume_dir="" best_mtime=0 mtime dir slug_dir normalised
+  local start_ts output rc session_dir="" resume_dir="" best_mtime=0 mtime dir slug_dir normalised rec_cwd run_dir_p
   local has_pushed delivered
 
   log "agent_run(dsh): starting (resume=${resume_id:-(new)}, dir=${run_dir})"
@@ -138,14 +141,24 @@ _agent_run_dsh() {
 
   # The session directory dsh just wrote: the most recently modified
   # subdirectory of any $DSH_HOME/sessions/<cwd-slug>/ dir whose mtime is
-  # not older than the recorded start. Session dirs sit one level below
-  # the <cwd-slug> dir and dsh's slug scheme is internal, so scan every
-  # slug dir rather than deriving the name. A resumed run skips the scan:
-  # its directory was resolved by name before the run (its mtime predates
-  # the start, so the scan would miss it).
+  # not older than the recorded start and whose session log's first record
+  # names the run directory as its cwd (top-level `cwd` in dsh 0.1.1-rc.2,
+  # or `data.cwd` in the test stub). A log that cannot be read yet stays a
+  # candidate: a timeout kill can leave a truncated log (#1186). The
+  # first-record read keeps a cwd jq printed even when zstdcat dies with
+  # SIGPIPE — head closes the pipe after one line, and on a multi-line log
+  # pipefail would otherwise fail the assignment and wipe that cwd, so a
+  # newer foreign session would still be taken. A session another process
+  # starts during the run — a test the agent runs — is never taken
+  # (#1687). Session dirs sit one level below the <cwd-slug>
+  # dir and dsh's slug scheme is internal, so scan every slug dir rather
+  # than deriving the name. A resumed run skips the scan: its directory
+  # was resolved by name before the run (its mtime predates the start, so
+  # the scan would miss it).
   if [ -n "$resume_dir" ]; then
     [ -d "$resume_dir" ] && session_dir="$resume_dir"
   else
+    run_dir_p="$(cd "$run_dir" && pwd -P)" || run_dir_p="$run_dir"
     for slug_dir in "$dsh_home/sessions"/*/; do
       [ -d "$slug_dir" ] || continue
       for dir in "$slug_dir"*/; do
@@ -153,6 +166,16 @@ _agent_run_dsh() {
         mtime=$(stat -c %Y "$dir" 2>/dev/null) || continue
         case "$mtime" in '' | *[!0-9]*) continue ;; esac
         if [ "$mtime" -ge "$start_ts" ] && [ "$mtime" -gt "$best_mtime" ]; then
+          # || true is inside the substitution on purpose. A failing pipe
+          # (SIGPIPE once head has the first record, or a truncated log)
+          # must not trip set -e, and must not discard a cwd jq already
+          # printed — the old `|| rec_cwd=""` did, and a newer foreign
+          # session was still taken (#1687). Only an empty result (log
+          # not readable yet) stays a candidate (#1186).
+          rec_cwd="$(zstdcat "$dir/session.jsonl.zstd" 2>/dev/null | head -n 1 | jq -r '.cwd // .data.cwd // empty' 2>/dev/null || true)"
+          if [ -n "$rec_cwd" ] && [ "$rec_cwd" != "$run_dir" ] && [ "$rec_cwd" != "$run_dir_p" ]; then
+            continue
+          fi
           best_mtime=$mtime
           session_dir="${dir%/}"
         fi

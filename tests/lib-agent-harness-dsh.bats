@@ -43,6 +43,23 @@ dir="$DSH_HOME/sessions/fake-slug/sess-$(date +%s)-$$"
 mkdir -p "$dir"
 case "${DSH_STUB_MODE:-ok}" in
   corrupt) printf 'not a zstd stream' > "$dir/session.jsonl.zstd" ;;
+  # Own log (data.cwd = run dir) plus a newer foreign log. Both are
+  # multi-line so zstdcat is still writing when head -n 1 exits —
+  # pipefail+SIGPIPE must not wipe a printed cwd (#1687).
+  foreign-newer)
+    {
+      printf '%s\n' '{"type":"session","seq":0,"time":"2026-09-01T10:00:00.000Z","data":{"id":"stub","cwd":"'"$PWD"'"}}'
+      awk 'BEGIN { for (i = 0; i < 60000; i++) print "{\"type\":\"chunk\",\"seq\":" i "}" }'
+    } | zstd -q > "$dir/session.jsonl.zstd"
+    foreign="$DSH_HOME/sessions/fake-slug/session-foreign"
+    mkdir -p "$foreign"
+    {
+      printf '%s\n' '{"type":"session","seq":0,"time":"2026-09-01T10:00:00.000Z","data":{"id":"foreign","cwd":"/somewhere/else"}}'
+      awk 'BEGIN { for (i = 0; i < 60000; i++) print "{\"type\":\"chunk\",\"seq\":" i "}" }'
+    } | zstd -q > "$foreign/session.jsonl.zstd"
+    # -t, not -d: busybox touch (alpine CI) accepts -t.
+    touch -t 203001010000 "$foreign"
+    ;;
   hang-after-write)
     # A log the wall-clock kill leaves truncated: unreadable by zstdcat,
     # so dsh_session_normalise returns 1 with no stdout.
@@ -124,6 +141,22 @@ teardown() {
 }
 
 # ── Session directory selection: mtime-after-start ──────────────────────────
+
+@test "a newer session whose log cwd is not the run dir is not selected (#1687)" {
+  export AGENT_HARNESS=dsh
+  export DSH_STUB_MODE=foreign-newer
+  local wt="$TMP_DIR/wt" rc=0
+  mkdir -p "$wt"
+  agent_run --worktree "$wt" "go" || rc=$?
+  [ "$rc" -eq 0 ]
+  [ -n "$_AGENT_SESSION_ID" ]
+  [ "$_AGENT_SESSION_ID" != "session-foreign" ]
+  # Not a vacuous pass: the foreign dir really is newer.
+  local own_mtime foreign_mtime
+  own_mtime=$(stat -c %Y "$DSH_HOME/sessions/fake-slug/$_AGENT_SESSION_ID")
+  foreign_mtime=$(stat -c %Y "$DSH_HOME/sessions/fake-slug/session-foreign")
+  [ "$foreign_mtime" -gt "$own_mtime" ]
+}
 
 @test "a pre-existing session directory (older mtime) is not selected" {
   export AGENT_HARNESS=dsh
