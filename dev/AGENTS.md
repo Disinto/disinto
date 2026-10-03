@@ -107,7 +107,7 @@ rounds — both `0` when no walk ran), plus `{"duration_s":<s>}` (#1452:
 wall-clock pick→terminal seconds, now − start,
 integer, clamped ≥ 0; omitted — never 0 — when the started file is missing or
 not an integer), children `{}`, payloads `[]`; and, when the caller passes a
-`REASON` (#1609 — the CI-exhaustion and stale-branch paths; since #1647 also the no-push paths, through `no_push_outcome`: `timeout`, `error_max_turns`, `no_result`, `no_push_after_3_attempts` or `no_push`), the record may
+`REASON` (#1609 — the CI-exhaustion and stale-branch paths), the record may
 additionally carry a `signature` field: the reason is resolved via
 `signature_for "$reason" dev` (`lib/signature.sh`, #1607) and passed as the 6th arg
 to `tape_outcome`; an unknown or unresolved reason (empty resolution) leaves the
