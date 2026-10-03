@@ -1,54 +1,27 @@
 # =============================================================================
-# nomad/jobs/agents-review-qwen.hcl — one role, one agent, one llama slot.
+# nomad/jobs/agents-dev-grok.hcl — a second dev agent on Grok 4.7 (xAI).
 #
-# WHY THIS EXISTS
+# Runs beside agents-dev-qwen, not instead of it. Same image and loop
+# (AGENT_ROLES = "dev", dsh harness); what differs:
 #
-# agents.hcl runs six roles in one container, so review-poll and a dev
-# session can call claude at the same time. Two claude processes are two
-# llama slots, and the slot count then depends on what the loop happens to
-# be doing. One role for each job makes the count a property of the
-# deployment: three jobs are three slots, and llama-server holds four.
+#   - Model: dsh's settings.yaml in this job's own DSH_HOME routes to the
+#     `xai` provider (OpenAI Responses at api.x.ai/v1, model grok-4.7). The
+#     sign-in is an xAI OAuth grant (SuperGrok subscription) in
+#     $DSH_HOME/.credentials.yaml, refreshed by dsh itself. It is this
+#     agent's own grant: no other process refreshes it.
+#   - Identity: forge user dev-grok-bot (Vault kv/disinto/bots/dev-grok),
+#     so dev-poll's assignee checks keep the two dev agents apart.
+#   - Data: /srv/disinto/agent-data-grok/dev is bind-mounted at /home/agent/data
+#     (docker volumes are enabled on this client; no host_volume, so adding
+#     the job needed no Nomad client restart).
+#   - Vault role agents-dev-grok, policy service-agents-grok
+#     (service-agents plus the two grok bot paths).
 #
-# This job reuses the dev-bot identity and its Vault path, because
-# agents.hcl is stopped and nothing else holds them.
-#
-# THE CONTEXT BUDGET
-#
-# CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is 50, giving a lane of 100,000 (#1069).
-# The belief has now been measured: Claude Code thinks this model has a
-# 200,000-token window, and the percentage is taken of that. The pool is
-# 327,680 tokens of --kv-unified KV, which /slots reports in full to every
-# slot rather than partitioning it, so two agents at 100k leaves roughly a
-# third of the pool for the other consumers on this host.
-#
-# CLAUDE_CODE_AUTO_COMPACT_WINDOW cannot raise the believed window; gF()
-# clamps with Math.min. See the note at the env block.
-#
-# Part of the Nomad+Vault migration (S4.1, issue #955). Runs the main bot
-# polling loop with 6 agent roles (review, dev, gardener, architect,
-# planner, predictor) against the local llama server.
-# Supervisor runs as a standalone opus job (nomad/jobs/agents-supervisor-opus.hcl).
-#
-# Host_volume contract:
-#   This job mounts agent-data, project-repos, and ops-repo from
-#   nomad/client.hcl. Paths under /srv/disinto/* are created by
-#   lib/init/nomad/cluster-up.sh before any job references them.
-#
-# Vault integration (S4.1):
-#   - vault { role = "agents-review-qwen" } at group scope — workload-identity
-#     JWT exchanged for a Vault token carrying the composite service-agents
-#     policy (vault/policies/service-agents.hcl), which grants read access
-#     to the 6 bot KV namespaces (supervisor is separate) + vault bot + shared forge config.
-#   - template stanza renders per-bot FORGE_*_TOKEN + FORGE_PASS from Vault
-#     KV v2 at kv/disinto/bots/<role>.
-#   - Seeded on fresh boxes by tools/vault-seed-agents.sh.
-#
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S4.2 can wire
-# `disinto init --backend=nomad --with agents` to `nomad job run` it.
+# DSH_MODEL / CLAUDE_MODEL only label the tape (backend, run agent); the
+# model dsh calls is the one settings.yaml names.
 # =============================================================================
 
-job "agents-review-qwen" {
+job "agents-dev-grok" {
   type        = "service"
   datacenters = ["dc1"]
 
@@ -56,13 +29,12 @@ job "agents-review-qwen" {
     count = 1
 
     # ── Vault workload identity (S4.1, issue #955) ───────────────────────────
-    # Per-role identity (its own role since the split, #1083). Role defined
-    # in vault/roles.yaml — its bound claim pins nomad_job_id =
-    # "agents-review-qwen"; the policy is the composite service-agents policy
-    # (vault/policies/service-agents.hcl) covering all 7 bot identities +
-    # vault bot.
+    # Own role, agents-dev-grok (vault/roles.yaml), bound to nomad_job_id =
+    # "agents-dev-grok"; policy service-agents-grok
+    # (vault/policies/service-agents-grok.hcl): service-agents plus the
+    # dev-grok and review-grok bot paths.
     vault {
-      role        = "agents-review-qwen"
+      role        = "agents-dev-grok"
       # A Vault token renewal must not restart the task (#1091). The default
       # change_mode is "restart", which SIGKILLed the container every 24h and
       # destroyed whatever dev session was mid-flight. Verified on
@@ -74,13 +46,6 @@ job "agents-review-qwen" {
     # No network port — agents are outbound-only (poll forgejo, call llama).
     # No service discovery block — nothing health-checks agents over HTTP.
 
-    # This agent keeps its own data dir, so its logs and its locks do not
-    # collide with the dev agent's.
-    volume "agent-data" {
-      type      = "host"
-      source    = "agent-data-qwen-review"
-      read_only = false
-    }
 
     volume "project-repos" {
       type      = "host"
@@ -129,7 +94,7 @@ job "agents-review-qwen" {
     # task dead = service deregistered. This matches the docker-compose
     # pgrep healthcheck semantics (process alive = healthy).
     service {
-      name     = "agents-review-qwen"
+      name     = "agents-dev-grok"
       provider = "nomad"
     }
 
@@ -143,13 +108,11 @@ job "agents-review-qwen" {
         # apparmor=unconfined matches docker-compose — Claude Code needs
         # ptrace for node.js inspector and /proc access.
         security_opt = ["apparmor=unconfined"]
+
+        # This agent's own data dir (DSH_HOME, logs, sessions): see header.
+        volumes = ["/srv/disinto/agent-data-grok/dev:/home/agent/data"]
       }
 
-      volume_mount {
-        volume      = "agent-data"
-        destination = "/home/agent/data"
-        read_only   = false
-      }
 
       volume_mount {
         volume      = "project-repos"
@@ -204,23 +167,27 @@ job "agents-review-qwen" {
         # The alias llama-server actually serves (--alias). The old value named
         # a model this box does not host; the server ignores the name, but
         # Claude Code sizes its context window from it.
-        CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
-        AGENT_ROLES        = "review"
-        # agents-review-grok reviews dev-grok-bot's PRs (REVIEW_ONLY_AUTHORS there).
-        REVIEW_SKIP_AUTHORS = "dev-grok-bot"
+        CLAUDE_MODEL       = "grok-4.7"
+        AGENT_ROLES        = "dev"
 
-        # dsh harness (#1104-#1107, rolled out to dev in #1231): this job
-        # and agents-dev-qwen both run the dsh harness — a dsh regression
-        # now idles reviews AND dev. Revert = remove this block (dispatcher
-        # default is claude). Known dsh gap: wall-clock timeouts write no
-        # metrics record (#1186). Env names mirror lib/hire-agent.sh's
-        # dsh branch.
+        # Porter door — the dev role asks Jev for a scope reading on each pick
+        # (#1598 wiring). tools/jev-scope.sh fails closed when any of the three
+        # is unset; the key file lives on the agent-data volume mounted at
+        # /home/agent/data (no API key in the job, per AD-005).
+        PORTER_SSH_TARGET    = "porter@165.227.129.61"
+        PORTER_JEV_KEY       = "/home/agent/data/porter/id_ed25519"
+        PORTER_JEV_KNOWN_HOSTS = "/home/agent/data/porter/known_hosts"
+
+        # dsh harness. The model comes from this job's DSH_HOME settings.yaml
+        # (route xai, grok-4.7; see the header). DSH_BASE_URL only seeds a
+        # missing settings.yaml with the llama.cpp route, kept as a fallback.
+        # Known dsh gap: wall-clock timeouts write no metrics record (#1186).
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"
         DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
-        DSH_MODEL           = "unsloth/Qwen3.8-27B"
-        DSH_CONTEXT_WINDOW  = "100000"
+        DSH_MODEL           = "grok-4.7"
+        DSH_CONTEXT_WINDOW  = "200000"
         # settings.yaml uses apiKeyEnv indirection; llama-server ignores
         # the key but dsh requires the env to be set.
         LLAMACPP_API_KEY    = "sk-no-key-required"
@@ -308,7 +275,7 @@ EOT
         change_mode          = "noop"
         error_on_missing_key = false
         data                 = <<EOT
-{{- with secret "kv/data/disinto/bots/dev" -}}
+{{- with secret "kv/data/disinto/bots/dev-grok" -}}
 FORGE_TOKEN={{ .Data.data.token }}
 FORGE_PASS={{ .Data.data.pass }}
 {{- else -}}

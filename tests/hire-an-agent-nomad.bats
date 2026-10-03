@@ -1,4 +1,6 @@
 #!/usr/bin/env bats
+# CLAUDE_TIMEOUT 7200 also appears in nomad/jobs/agents-*-grok.hcl, copied from the qwen
+# jobs (2026-10-03); the default is unchanged.
 # #1687 edits the lib/AGENTS.md row that mentions CLAUDE_TIMEOUT; the default stays 7200.
 # =============================================================================
 # tests/hire-an-agent-nomad.bats — Tests for the Nomad backend of
