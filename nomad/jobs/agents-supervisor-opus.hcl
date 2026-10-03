@@ -2,13 +2,16 @@
 # nomad/jobs/agents-supervisor-opus.hcl — Supervisor agent (Nomad service job)
 #
 # Part of the opus agent split (issue #589, part of #275). Runs the supervisor
-# agent exclusively using Claude Opus via OAuth (claude CLI), with read-write
+# agent — bash-only by default (#1681), with Claude Opus escalation via OAuth
+# (claude CLI) when `SUPERVISOR_LLM_ESCALATION = "on"` — with read-write
 # docker.sock access for container management (docker restart, etc.).
 #
 # This job replaces the supervisor loop that previously ran inside the edge
 # caddy task (docker/edge/entrypoint.sh). The supervisor now runs as a
 # standalone Nomad job with:
-#   - Opus model (claude-opus-4-6) via OAuth, not llama API-key mode
+#   - bash-only by default (no Anthropic models on this deployment); the
+#     escalation path uses Claude Opus (claude-opus-4-6) via OAuth, not llama
+#     API-key mode
 #   - Read-write docker.sock for container management
 #   - Ops-repo volume for incident journal writes
 #   - Claude OAuth credentials via claude-creds host_volume
@@ -179,7 +182,10 @@ job "agents-supervisor-opus" {
         # live clone and per-env TOMLs from factory-projects are picked up
         # rather than the stale baked image copy (#794).
         FACTORY_REPO       = "disinto-admin/disinto"
-        CLAUDE_MODEL       = "claude-opus-4-6"
+        # #1681: run without LLM escalation unless it is switched on; this
+        # deployment runs no Anthropic models, so bash-only (direct remedies,
+        # journal, incident files) is the default.
+        SUPERVISOR_LLM_ESCALATION = "off"
         POLL_INTERVAL      = "300"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "disinto"

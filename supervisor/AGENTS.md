@@ -2,16 +2,20 @@
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
-Claude agent. Collects system and project metrics via a bash pre-flight script,
-then runs an interactive Claude session (sonnet) that assesses health, auto-fixes
-issues, and writes a daily journal. When blocked on external
-resources or human decisions, files vault items instead of escalating directly.
+bash agent (#1681). Collects system and project metrics via a bash pre-flight
+script and auto-fixes everything it can handle directly (direct remedies,
+incident files, daily journal). Abnormal signals that no direct script can
+handle are escalated to an interactive Claude session (sonnet) only when
+`SUPERVISOR_LLM_ESCALATION=on`; with the default `off` those recipes are named
+in a log line and left for a human, and the run exits on the fast path. When
+blocked on external resources or human decisions, files vault items instead of
+escalating directly.
 
 **Trigger**: `supervisor-run.sh` is invoked by two polling loops:
 - **Agents container** (`docker/agents/entrypoint.sh`): started by the polling loop on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
 - **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
 
-Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout.
+Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise the LLM escalation gate (#1681) decides: with `SUPERVISOR_LLM_ESCALATION=on`, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout; with `off` (default) or unset, names the left-for-a-human recipes in a log line and the run takes the fast path (direct remedies, journal, incidents, exit 0).
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
@@ -69,6 +73,8 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 **Environment variables consumed**:
 - `FORGE_TOKEN`, `FORGE_SUPERVISOR_TOKEN` (falls back to FORGE_TOKEN), `FORGE_REPO`, `FORGE_API`, `PROJECT_NAME`, `PROJECT_REPO_ROOT`, `OPS_REPO_ROOT`
 - `PRIMARY_BRANCH`, `CLAUDE_MODEL` (set to sonnet by supervisor-run.sh)
+- `SUPERVISOR_LLM_ESCALATION` (default `off`/unset: bash-only; `on`: the LLM
+  escalation path via `claude -p`)
 - `WOODPECKER_TOKEN`, `WOODPECKER_SERVER`, `WOODPECKER_DB_PASSWORD`, `WOODPECKER_DB_USER`, `WOODPECKER_DB_HOST`, `WOODPECKER_DB_NAME` — CI database queries
 
 **Degraded mode (Issue #544)**: When `OPS_REPO_ROOT` is not set or the directory doesn't exist, the supervisor runs in degraded mode:
@@ -81,7 +87,10 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 → lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
 (if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
-and none require LLM, skip to journal + exit (fast path); otherwise proceed → load formula + context
-→ run claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes,
+and none require LLM, skip to journal + exit (fast path); otherwise, **LLM escalation
+gate** (#1681): with `SUPERVISOR_LLM_ESCALATION=off` (default), name the
+left-for-a-human recipes in a log line and fall through to the fast path (direct
+remedies, journal, incidents, exit 0); with `on`, load formula + context → run
+claude -p via agent-sdk.sh → Claude assesses health, evaluates recipes, auto-fixes,
 writes journal → `incidents` step writes markdown files for fired P0–P2 recipes
 → `commit-incidents.sh` commits and pushes to ops repo → `PHASE:done`.
