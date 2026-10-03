@@ -8,9 +8,9 @@
 # identical on the tape. This issue adds:
 #   * _DEV_REFUSAL_STATUS — recorded by handle_refusal() for the four
 #     disposition statuses (too_large, already_done, needs_ops,
-#     design_conflict); unmet_dependency is excluded (it re-queues to the
-#     backlog, not a disposition) and unknown statuses are a no-op, so neither
-#     is recorded.
+#     design_conflict); unmet_dependency is excluded (it blocks the issue
+#     instead of re-queueing it, not a disposition, #1672) and unknown
+#     statuses are a no-op, so neither is recorded.
 #   * close_dev_tape_outcome() classifies the exit:
 #       - recorded disposition refusal -> {merged:0,ci_green:0,rejected:1},
 #         reason = the status;
