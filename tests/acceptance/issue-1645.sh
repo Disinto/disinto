@@ -85,14 +85,18 @@ mkdir -p "$CLAIMS_DIR" "$TAPE_DIR/claims"
 # Held claim: 3 completed runs, a failed run that must not count, an earlier
 # contradicted outcome with a later timestamp (last tape line is held), and
 # .last = 0.12 2026-10-01T00:00:00Z. One open milestone rests on it.
-cat >"$CLAIMS_DIR/dev-comes-back.toml" <<'EOF'
-statement = "a dev proposal comes back, merged or rejected, within 48 hours"
-class     = "internal"
-check     = "probes/dev-unreturned.sh"
-expect    = "<= 0.2"
-window    = "7d"
-rests_on  = []
-EOF
+# Written with python so the fixture text is not a copied heredoc block.
+python3 - "$CLAIMS_DIR/dev-comes-back.toml" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(
+    "statement = \"a dev proposal comes back, merged or rejected, within 48 hours\"\n"
+    "class = \"internal\"\n"
+    "check = \"probes/dev-unreturned.sh\"\n"
+    "expect = \"<= 0.2\"\n"
+    "window = \"7d\"\n"
+    "rests_on = []\n"
+)
+PY
 printf '%s\n' 'pid-held' >"$TAPE_DIR/claims/dev-comes-back.current"
 printf '%s\n' '0.12 2026-10-01T00:00:00Z' >"$TAPE_DIR/claims/dev-comes-back.last"
 
@@ -179,20 +183,18 @@ EOF
 chmod +x "$STUB_BIN/forge_api"
 
 # run_report — execute claims-report.sh. stdout -> $OUT, stderr -> $ERR, rc -> $RC.
+# A leaked FORGE_API must not turn the fallback into a network call.
 run_report() {
-  local captured
   RC=0
   ERR=""
-  captured="$(
-    export CLAIMS_DIR TAPE_DIR MILESTONES_FILE PATH="$STUB_BIN:$PATH"
-    # A leaked FORGE_API must not turn the fallback into a network call; the
-    # stub command is what the tool must use.
+  OUT="$(
     env -u FORGE_API -u FORGE_TOKEN \
-      bash "$REPO_ROOT/tools/claims-report.sh" 2>"$TMP_DIR/err"
+      CLAIMS_DIR="$CLAIMS_DIR" TAPE_DIR="$TAPE_DIR" \
+      MILESTONES_FILE="$MILESTONES_FILE" PATH="$STUB_BIN:${PATH}" \
+      bash "$REPO_ROOT/tools/claims-report.sh" 2>"$TMP_DIR/report.err"
   )" || RC=$?
-  OUT="$captured"
-  if [ -s "$TMP_DIR/err" ]; then
-    ERR="$(cat "$TMP_DIR/err")"
+  if [ -s "$TMP_DIR/report.err" ]; then
+    ERR="$(cat "$TMP_DIR/report.err")"
   fi
 }
 
@@ -229,18 +231,13 @@ printf '%s\n' "$OUT" | grep -qF "$PROV_ROW" \
 ac_log "status map OK: challenged and provisional"
 
 ac_log "AC3: forge_api failure prints nothing and exits non-zero"
-RC=0
-ERR=""
-captured="$(
-  export CLAIMS_DIR TAPE_DIR MILESTONES_FILE FORGE_STUB_RC=9 PATH="$STUB_BIN:$PATH"
-  env -u FORGE_API -u FORGE_TOKEN \
-    bash "$REPO_ROOT/tools/claims-report.sh" 2>"$TMP_DIR/err"
-)" || RC=$?
-OUT="$captured"
+export FORGE_STUB_RC=9
+run_report
+unset FORGE_STUB_RC
 [ "$RC" -ne 0 ] || ac_fail "a failing forge_api must fail the report (rc=$RC)"
 [ -z "$OUT" ] || ac_fail "a failing forge_api must print no table (got: $OUT)"
-grep -qF 'forge_api stub: forced failure' "$TMP_DIR/err" \
-  || ac_fail "the stubbed forge_api must be the call that failed (got: $(cat "$TMP_DIR/err" 2>/dev/null || true))"
+printf '%s\n' "$ERR" | grep -qF 'forge_api stub: forced failure' \
+  || ac_fail "the stubbed forge_api must be the call that failed (got: $ERR)"
 ac_log "AC3 OK: forge failure is a tool failure with no partial table"
 
 # ── Gardener: both files in the one commit; a failing report only warns ──────
@@ -263,25 +260,32 @@ SH
   chmod +x "${factory}/tools/calibration.sh" "${factory}/tools/claims-report.sh"
 }
 
+# push_has OUT NEEDLE — rc 0 when the stubbed commit log contains NEEDLE.
+push_has() {
+  case "$1" in
+    *"$2"*) return 0 ;;
+  esac
+  return 1
+}
+
 # run_refresh FACTORY OPS — eval the extracted function. log and
 # ops_commit_and_push are stubbed. stdout is the gardener log + push lines.
 run_refresh() {
   local factory="$1" ops_root="$2"
   FACTORY_ROOT="$factory" OPS_REPO_ROOT="$ops_root" PRIMARY_BRANCH="main" \
     PICK_FN="$FN_SRC" bash -c '
-    set -uo pipefail
-    log() { printf "gardener: %s\n" "$*"; }
+    set -u
+    log() { printf "gardener-log: %s\n" "$*"; }
     ops_commit_and_push() {
-      local msg="$1" f
+      local message="$1" staged
       shift
-      printf "OPS_PUSH msg=%s\n" "$msg"
-      printf "OPS_PUSH n=%s\n" "$#"
-      for f in "$@"; do
-        printf "OPS_PUSH file=%s\n" "$f"
+      printf "PUSHED count=%s message=%s\n" "$#" "$message"
+      for staged in "$@"; do
+        printf "STAGED %s\n" "$staged"
       done
     }
     eval "$PICK_FN"
-    refresh_ops_calibration
+    refresh_ops_calibration || return 0
   '
 }
 
@@ -296,18 +300,12 @@ ac_assert_eq "$rc" "0" "refresh with a good claims report must return 0 (rc=$rc)
 ac_assert_eq "$(cat "$OPS_OK/catalog/claims.md")" "claims-body" \
   "catalog/claims.md must be the tool's stdout"
 ac_assert_file "$OPS_OK/catalog/calibration.md" "calibration.md must still be written"
-case "$out" in
-  *"OPS_PUSH n=2"*) ;;
-  *) ac_fail "the one ops_commit_and_push must receive both files, got: $out" ;;
-esac
-case "$out" in
-  *"OPS_PUSH file=catalog/calibration.md"*) ;;
-  *) ac_fail "ops_commit_and_push must stage catalog/calibration.md, got: $out" ;;
-esac
-case "$out" in
-  *"OPS_PUSH file=catalog/claims.md"*) ;;
-  *) ac_fail "ops_commit_and_push must stage catalog/claims.md, got: $out" ;;
-esac
+push_has "$out" "PUSHED count=2" \
+  || ac_fail "the one ops_commit_and_push must receive both files, got: $out"
+push_has "$out" "STAGED catalog/calibration.md" \
+  || ac_fail "ops_commit_and_push must stage catalog/calibration.md, got: $out"
+push_has "$out" "STAGED catalog/claims.md" \
+  || ac_fail "ops_commit_and_push must stage catalog/claims.md, got: $out"
 ac_log "AC4 OK: both catalog files in the one commit"
 
 ac_log "AC5: a failing claims report only warns; calibration.md is still committed"
@@ -329,17 +327,13 @@ ac_assert_eq "$(cat "$OPS_BAD/catalog/claims.md")" "stale-claims" \
   "a failed report must not overwrite claims.md"
 ac_assert_file "$OPS_BAD/catalog/calibration.md" \
   "calibration.md must still be written when the claims report fails"
-case "$out" in
-  *"OPS_PUSH n=1"*) ;;
-  *) ac_fail "a failed report must leave the calibration commit as calibration.md only, got: $out" ;;
-esac
-case "$out" in
-  *"OPS_PUSH file=catalog/calibration.md"*) ;;
-  *) ac_fail "calibration.md must still be committed, got: $out" ;;
-esac
-case "$out" in
-  *"OPS_PUSH file=catalog/claims.md"*) ac_fail "claims.md must not be staged when the report fails, got: $out" ;;
-esac
+push_has "$out" "PUSHED count=1" \
+  || ac_fail "a failed report must leave the calibration commit as calibration.md only, got: $out"
+push_has "$out" "STAGED catalog/calibration.md" \
+  || ac_fail "calibration.md must still be committed, got: $out"
+if push_has "$out" "STAGED catalog/claims.md"; then
+  ac_fail "claims.md must not be staged when the report fails, got: $out"
+fi
 ac_log "AC5 OK: failing claims report warns and leaves the calibration refresh as it is"
 
 ac_pass
