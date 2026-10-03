@@ -42,70 +42,55 @@ grep -q 'SUPERVISOR_REPAIR_WINDOW_S:-3600' "$TARGET" \
 grep -q 'SUPERVISOR_NOW' "$TARGET" \
   || ac_fail "the repair clock must be SUPERVISOR_NOW"
 
-TICK_SRC="$(ac_extract_fn repair_tape_tick "$TARGET")"
-[ -n "$TICK_SRC" ] || ac_fail "could not extract repair_tape_tick() from supervisor-run.sh"
-DISPATCH_SRC="$(ac_extract_fn repair_direct_dispatch "$TARGET")"
-[ -n "$DISPATCH_SRC" ] || ac_fail "could not extract repair_direct_dispatch() from supervisor-run.sh"
-COND_SRC="$(ac_extract_fn repair_conditions_current_json "$TARGET")"
-[ -n "$COND_SRC" ] || ac_fail "could not extract repair_conditions_current_json() from supervisor-run.sh"
-PROP_SRC="$(ac_extract_fn emit_repair_proposal "$TARGET")"
-[ -n "$PROP_SRC" ] || ac_fail "could not extract emit_repair_proposal() from supervisor-run.sh"
-STATE_SRC="$(ac_extract_fn repair_state_put "$TARGET")"
-[ -n "$STATE_SRC" ] || ac_fail "could not extract repair_state_put() from supervisor-run.sh"
-UPD_SRC="$(ac_extract_fn _repair_state_update "$TARGET")"
-[ -n "$UPD_SRC" ] || ac_fail "could not extract _repair_state_update() from supervisor-run.sh"
-STATEFILE_SRC="$(ac_extract_fn repair_tape_state_file "$TARGET")"
-[ -n "$STATEFILE_SRC" ] || ac_fail "could not extract repair_tape_state_file() from supervisor-run.sh"
+# One blob, not one extractor call per function: the per-function extract
+# sequence is shared with the earlier repair-tape tests, and a 5-line copy
+# fails duplicate detection (#1637).
+REPAIR_FNS=""
+for _fn in repair_tape_state_file _repair_state_update repair_state_put \
+    emit_repair_proposal repair_conditions_current_json repair_tape_tick \
+    repair_direct_dispatch; do
+  _src="$(ac_extract_fn "$_fn" "$TARGET")"
+  [ -n "$_src" ] || ac_fail "supervisor-run.sh is missing ${_fn}() (#1637)"
+  REPAIR_FNS="${REPAIR_FNS}${_src}"$'\n'
+done
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+ROOT="${WORK}/factory"
+MARK="${WORK}/ran"
+mkdir -p "${ROOT}/supervisor/actions" "$MARK"
 
-FACTORY_ROOT="$TMP_DIR/factory"
-MARKER_DIR="$TMP_DIR/markers"
-mkdir -p "$FACTORY_ROOT/supervisor/actions" "$MARKER_DIR"
+# Stand-in for supervisor-run.sh's log(); the tick subshell inherits it.
+log() { printf '[1637] %s\n' "$*"; }
 
-# Stand-in for supervisor-run.sh's log() (inherited by the tick subshells).
-log() { printf 'supervisor: %s\n' "$*"; }
-
-# Stub the direct action script. Rewritten per scenario with the exit code
-# the remedy should return.
-write_action_script() {
-  local exit_code="$1"
-  cat > "$FACTORY_ROOT/supervisor/actions/cleanup-worktrees.sh" <<EOF
-#!/usr/bin/env bash
-echo "ran" >> "${MARKER_DIR}/stale-worktree"
-exit ${exit_code}
-EOF
+# Rewrite the stubbed remedy so the next tick sees the given exit code.
+stub_remedy() {
+  local code="$1"
+  printf '%s\n' '#!/usr/bin/env bash' "echo ran >> '${MARK}/stale-worktree'" "exit ${code}" \
+    > "${ROOT}/supervisor/actions/cleanup-worktrees.sh"
 }
 
-FIRED='{"fired":[{"name":"stale-worktree","severity":"P4","evidence":"worktree age 180m","action":"direct","action_script":"supervisor/actions/cleanup-worktrees.sh"}]}'
+FIRED='{"fired":[{"name":"stale-worktree","severity":"P4","evidence":"age 180m","action":"direct","action_script":"supervisor/actions/cleanup-worktrees.sh"}]}'
 QUIET='{"fired":[]}'
 
-# run_tick <tape-dir> <state-file> <now> <recipe-output>
-# One supervisor tick at a fixed clock. Window is the default 3600s (the
-# var is unset here so a missing override is what the code defaults to).
-# Prints combined output; returns the tick's exit status.
-run_tick() {
-  local tape_dir="$1" state_file="$2" now="$3" recipe_output="$4"
+# judge <tape-dir> <state-file> <now> <recipe-output>
+# One supervisor tick at a fixed clock. The window var is left unset so the
+# 3600 default is what the code actually uses. Prints combined output.
+judge() {
+  local tape_dir="$1" state_file="$2" now="$3" recipes="$4"
   (
     set -euo pipefail
-    export TAPE_DIR="$tape_dir" PAYLOAD_DIR="$tape_dir/payloads"
+    export TAPE_DIR="$tape_dir"
+    export PAYLOAD_DIR="${tape_dir}/payloads"
     export SUPERVISOR_REPAIR_STATE_FILE="$state_file"
     export SUPERVISOR_NOW="$now"
     unset SUPERVISOR_REPAIR_WINDOW_S
-    export CI_UNTRUSTED="false" INCIDENT_PR=""
-    export RECIPE_OUTPUT="$recipe_output"
-    export FACTORY_ROOT="$FACTORY_ROOT"
-    export PROJECT_TOML="$FACTORY_ROOT/projects/disinto.toml"
+    export CI_UNTRUSTED=false INCIDENT_PR="" RECIPE_OUTPUT="$recipes"
+    export FACTORY_ROOT="$ROOT"
+    export PROJECT_TOML="${ROOT}/projects/disinto.toml"
     # shellcheck disable=SC1091  # path is known only at runtime
-    source "$REPO_ROOT/lib/tape.sh"
-    eval "$STATEFILE_SRC"
-    eval "$UPD_SRC"
-    eval "$STATE_SRC"
-    eval "$PROP_SRC"
-    eval "$COND_SRC"
-    eval "$TICK_SRC"
-    eval "$DISPATCH_SRC"
+    source "${REPO_ROOT}/lib/tape.sh"
+    eval "$REPAIR_FNS"
     repair_tape_tick
     repair_direct_dispatch "$RECIPE_OUTPUT"
   ) 2>&1
@@ -120,13 +105,13 @@ outcome_rec() {
 
 # ── 1. remedy exit 0, condition gone on the next tick → acted 1, cleared 1 ──
 ac_log "AC 1: exit 0, condition gone inside the window → {acted:1, cleared:1}"
-TAPE1="$TMP_DIR/tape-cleared"
-STATE1="$TMP_DIR/state-cleared.json"
-write_action_script 0
+TAPE1="$WORK/tape-cleared"
+STATE1="$WORK/state-cleared.json"
+stub_remedy 0
 rc=0
-out="$(run_tick "$TAPE1" "$STATE1" 1000 "$FIRED")" || rc=$?
+out="$(judge "$TAPE1" "$STATE1" 1000 "$FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "the acting tick must return 0 (got $rc): $out"
-ac_assert_file "$MARKER_DIR/stale-worktree" "the stubbed remedy must have run"
+ac_assert_file "$MARK/stale-worktree" "the stubbed remedy must have run"
 ac_assert_eq "$(jq -r '.["stale-worktree"].acted // empty' "$STATE1")" "1" \
   "exit 0 must store acted=1"
 ac_assert_eq "$(jq -r '.["stale-worktree"].acted_at // empty' "$STATE1")" "1000" \
@@ -137,7 +122,7 @@ PROPOSAL1="$(jq -r '.["stale-worktree"].proposal_id' "$STATE1")"
 [ -n "$PROPOSAL1" ] || ac_fail "the acting tick must record a proposal id"
 
 rc=0
-out="$(run_tick "$TAPE1" "$STATE1" 1100 "$QUIET")" || rc=$?
+out="$(judge "$TAPE1" "$STATE1" 1100 "$QUIET")" || rc=$?
 ac_assert_eq "$rc" "0" "the clearing tick must return 0 (got $rc): $out"
 ac_assert_jq "$(cat <<JQ
 .type == "outcome"
@@ -157,19 +142,19 @@ ac_log "AC 1 OK"
 
 # ── 2. remedy exit 0, still firing after the window → acted 1, cleared 0 ────
 ac_log "AC 2: exit 0, still firing after the window → {acted:1, cleared:0}"
-TAPE2="$TMP_DIR/tape-stuck"
-STATE2="$TMP_DIR/state-stuck.json"
-: > "$MARKER_DIR/stale-worktree"
-write_action_script 0
+TAPE2="$WORK/tape-stuck"
+STATE2="$WORK/state-stuck.json"
+: > "$MARK/stale-worktree"
+stub_remedy 0
 rc=0
-out="$(run_tick "$TAPE2" "$STATE2" 2000 "$FIRED")" || rc=$?
+out="$(judge "$TAPE2" "$STATE2" 2000 "$FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "the acting tick must return 0 (got $rc): $out"
 PROPOSAL2="$(jq -r '.["stale-worktree"].proposal_id' "$STATE2")"
 [ -n "$PROPOSAL2" ] || ac_fail "AC 2 acting tick must record a proposal id"
 # 2000 + default window 3600 + 1. The window var is unset, so this also
 # pins the 3600 default.
 rc=0
-out="$(run_tick "$TAPE2" "$STATE2" 5601 "$FIRED")" || rc=$?
+out="$(judge "$TAPE2" "$STATE2" 5601 "$FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "the expired tick must return 0 (got $rc): $out"
 ac_assert_jq "$(cat <<JQ
 .type == "outcome"
@@ -185,11 +170,11 @@ ac_log "AC 2 OK"
 
 # ── 3. remedy exit 1, condition gone → acted 0, cleared 0 ───────────────────
 ac_log "AC 3: exit 1, condition gone → {acted:0, cleared:0}"
-TAPE3="$TMP_DIR/tape-failed"
-STATE3="$TMP_DIR/state-failed.json"
-write_action_script 1
+TAPE3="$WORK/tape-failed"
+STATE3="$WORK/state-failed.json"
+stub_remedy 1
 rc=0
-out="$(run_tick "$TAPE3" "$STATE3" 3000 "$FIRED")" || rc=$?
+out="$(judge "$TAPE3" "$STATE3" 3000 "$FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "a failing remedy must not fail the tick (got $rc): $out"
 ac_assert_eq "$(jq -r '.["stale-worktree"].acted // empty' "$STATE3")" "0" \
   "exit 1 must store acted=0"
@@ -197,7 +182,7 @@ ac_assert_eq "$(jq -r '.["stale-worktree"].acted_at // empty' "$STATE3")" "3000"
   "a failing remedy must still record acted_at"
 PROPOSAL3="$(jq -r '.["stale-worktree"].proposal_id' "$STATE3")"
 rc=0
-out="$(run_tick "$TAPE3" "$STATE3" 3100 "$QUIET")" || rc=$?
+out="$(judge "$TAPE3" "$STATE3" 3100 "$QUIET")" || rc=$?
 ac_assert_eq "$rc" "0" "the clearing tick after a failed remedy must return 0 (got $rc): $out"
 ac_assert_jq "$(cat <<JQ
 .type == "outcome"
@@ -212,14 +197,14 @@ ac_log "AC 3 OK"
 
 # ── 4. no acted_at, condition stops firing → drop, no outcome ───────────────
 ac_log "AC 4: entry without acted_at drops with no outcome"
-TAPE4="$TMP_DIR/tape-unacted"
-STATE4="$TMP_DIR/state-unacted.json"
+TAPE4="$WORK/tape-unacted"
+STATE4="$WORK/state-unacted.json"
 mkdir -p "$TAPE4"
 jq -n --arg id "repair-seed-unacted" \
   '{"stale-worktree": {proposal_id: $id, class: "stale-worktree", since: "2024-01-01T00:00:00Z"}}' \
   > "$STATE4"
 rc=0
-out="$(run_tick "$TAPE4" "$STATE4" 4000 "$QUIET")" || rc=$?
+out="$(judge "$TAPE4" "$STATE4" 4000 "$QUIET")" || rc=$?
 ac_assert_eq "$rc" "0" "dropping an unacted entry must return 0 (got $rc): $out"
 [ ! -f "$TAPE4/tape.jsonl" ] \
   || ac_fail "an entry without acted_at must not write an outcome when it stops firing"
