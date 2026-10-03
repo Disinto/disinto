@@ -10,12 +10,13 @@
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
-#   4a. Repair tape (#1408, #1533, #1636, #1637): a direct remedy writes one
-#       repair proposal (empty caused_by) before its script unless one is
-#       open; incident recipes and the CI incident write none. After the
-#       script the state entry keeps acted/acted_at, and a later tick writes
-#       {acted, cleared} once the condition clears inside the window or the
-#       window passes.
+#   4a. Repair tape (#1408, #1533, #1636, #1637, #1638): a direct remedy
+#       writes one repair proposal (empty caused_by) before its script unless
+#       one is open; incident recipes and the CI incident write none. After
+#       the script the state entry keeps acted/acted_at, and a later tick
+#       writes {acted, cleared} once the condition clears inside the window
+#       or the window passes. An LLM escalation writes one diagnose proposal
+#       for the fired conditions and exports its id before the session.
 #   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
 #   6. Load formula (formulas/run-supervisor.toml)
 #   7. Context: AGENTS.md, preflight metrics, structural graph
@@ -172,28 +173,32 @@ if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
   fi
 fi
 
-# ── Repair tape (#1408, #1533, #1636, #1637) ──────────────────────────────
+# ── Repair tape (#1408, #1533, #1636, #1637, #1638) ────────────────────────
 # A condition that no remedy acts on is a monitor, not a proposal. Repair
-# proposals are written only when a direct remedy runs: repair_direct_dispatch
-# calls emit_repair_proposal (class = recipe name, caused_by empty — the
-# condition stays in context.signature) right before the action_script,
-# unless that recipe already has an open proposal. Incident recipes and the
-# CI incident condition write none. After the script, that condition's state
-# entry keeps acted (1 when the script exited 0, else 0) and acted_at (epoch
-# of the first act). repair_tape_tick does not create proposals. For each
-# entry with acted_at it writes one outcome {acted, cleared} once the
-# condition stops firing within SUPERVISOR_REPAIR_WINDOW_S (default 3600) or
-# the window passes, then drops the entry. An entry without acted_at whose
-# condition stops firing is dropped with no outcome. All labels are
-# code-derived (recipe names, condition identifiers) — no LLM input. Every
-# emitter is total: a tape failure logs a WARNING and returns 0, so the tape
-# never blocks the supervisor.
+# proposals are written only when a remedy runs. A direct remedy:
+# repair_direct_dispatch calls emit_repair_proposal (class = recipe name,
+# caused_by empty — the condition stays in context.signature) right before
+# the action_script, unless that recipe already has an open proposal.
+# Incident recipes and the CI incident condition write none. After the
+# script, that condition's state entry keeps acted (1 when the script exited
+# 0, else 0) and acted_at (epoch of the first act). An LLM escalation
+# (#1638) writes one diagnose proposal for the fired conditions and exports
+# its id before the session; the state entry is diagnose-<id>. repair_tape_tick
+# does not create proposals. For each entry with acted_at it writes one
+# outcome {acted, cleared} once the condition stops firing within
+# SUPERVISOR_REPAIR_WINDOW_S (default 3600) or the window passes, then drops
+# the entry. An entry without acted_at whose condition stops firing is
+# dropped with no outcome. All labels are code-derived (recipe names,
+# condition identifiers) — no LLM input. Every emitter is total: a tape
+# failure logs a WARNING and returns 0, so the tape never blocks the
+# supervisor.
 
 # repair_tape_state_file — per-project state file (JSON object:
 # condition → {proposal_id, class, since, acted?, acted_at?}) tracking which
 # conditions currently have an open repair proposal. acted/acted_at are set
-# by repair_direct_dispatch after the script runs (#1637). Override with
-# SUPERVISOR_REPAIR_STATE_FILE (tests).
+# by repair_direct_dispatch after the script runs (#1637). A diagnose
+# escalation (#1638) adds diagnose-<id> → {proposal_id, class, conditions,
+# acted, acted_at}. Override with SUPERVISOR_REPAIR_STATE_FILE (tests).
 repair_tape_state_file() {
   if [ -n "${SUPERVISOR_REPAIR_STATE_FILE:-}" ]; then
     printf '%s\n' "$SUPERVISOR_REPAIR_STATE_FILE"
@@ -319,7 +324,9 @@ emit_repair_proposal() {
 #     {acted, cleared: 0}, drop the entry. A clearance observed only after
 #     the window is not a pass. A later firing opens a new proposal.
 # An entry without acted_at whose condition stops firing is dropped with no
-# outcome. A still-firing entry inside the window is left alone. Total:
+# outcome. A still-firing entry inside the window is left alone. A diagnose
+# entry (#1638) carries a conditions array: it is firing while any of those
+# names is firing, and "no longer firing" means none of them is. Total:
 # always returns 0 — the tape never blocks the supervisor.
 repair_tape_tick() {
   local state_file prev_json cur_json window now decisions
@@ -354,7 +361,11 @@ repair_tape_tick() {
       $prev | to_entries[]
       | .key as $c
       | .value as $e
-      | ($cur | index($c) != null) as $firing
+      | (if (($e.conditions // null) | type) == "array" then
+           (($e.conditions | map(select($cur | index(.) != null)) | length) > 0)
+         else
+           ($cur | index($c) != null)
+         end) as $firing
       | (if (($e.acted_at // null) | type) == "number" then
            ($now - $e.acted_at) as $elapsed
            | if (($firing | not) and ($elapsed <= $window)) then "clear"
@@ -529,6 +540,121 @@ repair_direct_dispatch() {
   return 0
 }
 
+# diagnose_conditions_json — JSON array of fired recipe names, the conditions
+# a diagnose proposal covers (#1638). Code-derived from RECIPE_OUTPUT only;
+# the CI incident identifier is not a fired recipe and is not included.
+diagnose_conditions_json() {
+  local names=""
+  if [ -n "${RECIPE_OUTPUT:-}" ]; then
+    names="$(printf '%s' "$RECIPE_OUTPUT" \
+      | jq -r '(.fired // [])[] | .name // empty' 2>/dev/null)" || names=""
+  fi
+  jq -cn --arg recipes "$names" \
+    '$recipes | split("\n") | map(select(length > 0))'
+}
+
+# emit_diagnose_proposal — one repair proposal for the fired conditions
+# (class diagnose, empty caused_by, context {organ, conditions}) and export
+# its id as TAPE_PROPOSAL_ID so the session run pairs with it (#1638).
+# Total: a tape failure logs a WARNING, leaves TAPE_PROPOSAL_ID unset, and
+# returns 0. Saves the conditions array in DIAGNOSE_CONDITIONS so the state
+# entry written after the session matches the proposal.
+emit_diagnose_proposal() {
+  local id="" ctx="" conditions=""
+  conditions="$(diagnose_conditions_json 2>/dev/null)" || conditions="[]"
+  [ -n "$conditions" ] || conditions="[]"
+  if ! printf '%s' "$conditions" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    log "WARNING: tape: diagnose conditions are not a JSON array — skipping proposal"
+    return 0
+  fi
+  DIAGNOSE_CONDITIONS="$conditions"
+
+  id="$(formula_tape_ulid 2>/dev/null)" || id=""
+  [ -n "$id" ] || id="diagnose-$(date -u +%Y%m%d%H%M%S)-$$"
+
+  if ! ctx="$(jq -cn --argjson conds "$conditions" \
+      '{organ: "supervisor", conditions: $conds}')" || [ -z "$ctx" ]; then
+    log "WARNING: tape: failed to build diagnose context"
+    return 0
+  fi
+
+  if ! tape_proposal "$id" repair diagnose "" "" "$ctx" "" \
+      "auto" "diagnose" >/dev/null 2>&1; then
+    log "WARNING: tape: failed to append diagnose proposal ${id}"
+    return 0
+  fi
+
+  export TAPE_PROPOSAL_ID="$id"
+  log "tape: recorded diagnose proposal ${id}"
+  return 0
+}
+
+# repair_diagnose_record EXIT_CODE — after the escalation session, add state
+# entry diagnose-<id> with the proposal id, the fired condition names, acted
+# (1 when the session exited 0) and acted_at (epoch; clock
+# ${SUPERVISOR_NOW:-now}). A later tick writes the outcome (#1637): the
+# entry is no longer firing when none of its conditions is firing. Total.
+repair_diagnose_record() {
+  local rc="${1:-0}" id="${TAPE_PROPOSAL_ID:-}" conditions="" acted_flag=0
+  local acted_epoch="" key="" entry=""
+  [ -n "$id" ] || return 0
+  conditions="${DIAGNOSE_CONDITIONS:-}"
+  if [ -z "$conditions" ]; then
+    conditions="$(diagnose_conditions_json 2>/dev/null)" || conditions="[]"
+  fi
+  [ -n "$conditions" ] || conditions="[]"
+  if ! printf '%s' "$conditions" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    log "WARNING: tape: diagnose conditions are not a JSON array — state update skipped"
+    return 0
+  fi
+  case "$rc" in
+    0) acted_flag=1 ;;
+    *) acted_flag=0 ;;
+  esac
+  if [[ "${SUPERVISOR_NOW:-}" =~ ^[0-9]+$ ]]; then
+    acted_epoch="$SUPERVISOR_NOW"
+  else
+    acted_epoch="$(date -u +%s)"
+  fi
+  key="diagnose-${id}"
+  case "$key" in
+    *[!A-Za-z0-9._-]*)
+      log "WARNING: tape: refusing unsafe diagnose key '${key}' (state update skipped)"
+      return 0
+      ;;
+  esac
+  if ! entry="$(jq -cn --arg p "$id" --argjson conds "$conditions" \
+      --argjson acted "$acted_flag" --argjson at "$acted_epoch" \
+      --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{proposal_id: $p, class: "diagnose", since: $t, conditions: $conds, acted: $acted, acted_at: $at}')" \
+      || [ -z "$entry" ]; then
+    log "WARNING: tape: failed to build diagnose state entry for ${id}"
+    return 0
+  fi
+  _repair_state_update ". + { \"${key}\": ${entry} }"
+  log "tape: diagnose ${id} recorded (acted=${acted_flag})"
+  return 0
+}
+
+# diagnose_escalation — the LLM escalation session is a diagnose repair
+# proposal (#1638). Writes the proposal and exports TAPE_PROPOSAL_ID before
+# formula_session_start so the session's run pairs with it, runs the
+# session, then records diagnose-<id> (acted/acted_at). The tick writes the
+# outcome. Total: always returns 0 — a tape failure never skips the session
+# and never fails the tick.
+diagnose_escalation() {
+  local rc=0
+  unset TAPE_PROPOSAL_ID
+  emit_diagnose_proposal
+  formula_session_start "supervisor"
+  agent_run --worktree "$WORKTREE" "$PROMPT" || rc=$?
+  [ "$rc" -eq 0 ] || log "supervisor agent_run exited ${rc} (124 = wall-clock timeout) — continuing"
+  log "agent_run complete"
+  formula_session_end "$rc"
+  repair_diagnose_record "$rc"
+  return 0
+}
+
 # ── Bash-only escalation gate (#1681) ──────────────────────────────────────
 # escalation_off RECIPE_OUTPUT — when SUPERVISOR_LLM_ESCALATION is switched
 # on, the LLM escalation is kept: return 1 and do nothing, so the gate below
@@ -697,18 +823,11 @@ ${SCRATCH_INSTRUCTION}
 ${PROMPT_FOOTER}"
 
 # ── Run agent ─────────────────────────────────────────────────────────────
-# Open the proposal-loop tape run record (#1391) — total, never fails us
-formula_session_start "supervisor"
-
-# Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not abort
-# the script under set -e — record the rc and continue (#1164).
-SUPERVISOR_RUN_RC=0
-agent_run --worktree "$WORKTREE" "$PROMPT" || SUPERVISOR_RUN_RC=$?
-[ "$SUPERVISOR_RUN_RC" -eq 0 ] || log "supervisor agent_run exited ${SUPERVISOR_RUN_RC} (124 = wall-clock timeout) — continuing"
-log "agent_run complete"
-
-# Close the tape run: outcome + closing run record (#1391)
-formula_session_end "$SUPERVISOR_RUN_RC"
+# The gate has decided to run the session. That session is a diagnose
+# repair proposal (#1638): one proposal for the fired conditions, its id
+# exported as TAPE_PROPOSAL_ID before formula_session_start, and a
+# diagnose-<id> state entry after. A later tick writes the outcome.
+diagnose_escalation
 
 # Write journal entry post-session
 profile_write_journal "supervisor-run" "Supervisor run $(date -u +%Y-%m-%d)" "complete" "" || true
