@@ -688,6 +688,14 @@ fi
 # so the issue is blocked with a distinct reason. Any other no-push reason
 # keeps the historical issue_block "no_push" behavior.
 #
+# #1647: before issue_block / issue_requeue, set _PR_WALK_EXIT_REASON to the
+# reason this path acts on (re-queue: the requeue_reason — timeout,
+# error_max_turns, or no_result; block: no_push_after_3_attempts or no_push).
+# no_push_outcome runs in the main shell, so the EXIT trap's
+# close_dev_tape_outcome sees the value and maps it through rubrics/dev.toml
+# the same way as any failed walk. Not local — a local would hide it from the
+# trap.
+#
 # Args: issue diag_file agent_run_rc attempt result_text
 no_push_outcome() {
   local issue="$1" diag_file="$2" agent_run_rc="$3" attempt="${4:-0}" result_text="${5:-}"
@@ -726,17 +734,20 @@ no_push_outcome() {
     if [ "$attempt" -ge 2 ]; then
       # Cap fires: the work is abandoned, so nothing to carry forward.
       DEV_CARRY=0
+      _PR_WALK_EXIT_REASON="no_push_after_3_attempts"
       issue_block "$issue" "no_push_after_3_attempts" \
         "Resource limit (${requeue_reason}) on attempt $((attempt + 1)) — Claude did not push branch ${BRANCH}"
     else
       # Transient resource limit: hand the in-progress work to the next attempt.
       DEV_CARRY=1
+      _PR_WALK_EXIT_REASON="$requeue_reason"
       issue_requeue "$issue" "$requeue_reason" \
         "Resource limit (${requeue_reason}) — Claude did not push branch ${BRANCH}"
     fi
   else
     # Non-resource-limit no-push (agent chose not to, etc.): not transient.
     DEV_CARRY=0
+    _PR_WALK_EXIT_REASON="no_push"
     issue_block "$issue" "no_push" "$result_text"
   fi
 }
