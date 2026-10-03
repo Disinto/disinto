@@ -397,15 +397,17 @@ refresh_ops_calibration() {
   # Claims catalog rides this one commit (#1645). A failing report only warns;
   # calibration.md is still committed and an existing claims.md is left as it is.
   local claims_out claims_rc=0
-  local -a catalog_files=(catalog/calibration.md)
+  # Name has no underscore: agent-smoke treats a statement-initial
+  # lowercase_name as a function call (#1645).
+  local -a files=(catalog/calibration.md)
   claims_out="$( "$FACTORY_ROOT/tools/claims-report.sh" )" || claims_rc=$?
   if [ "$claims_rc" -eq 0 ]; then
     printf '%s' "$claims_out" > "${ops_root}/catalog/claims.md"
-    catalog_files+=(catalog/claims.md)
+    files+=(catalog/claims.md)
   else
     log "WARNING: claims-report.sh failed (rc=$claims_rc) — claims.md not refreshed"
   fi
-  ops_commit_and_push "catalog: refresh calibration.md" "${catalog_files[@]}"
+  ops_commit_and_push "catalog: refresh calibration.md" "${files[@]}"
   log "catalog: calibration.md refreshed in ops repo"
 }
 
