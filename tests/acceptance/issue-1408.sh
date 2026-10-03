@@ -2,39 +2,36 @@
 # =============================================================================
 # tests/acceptance/issue-1408.sh
 #
-# Issue #1408: when the supervisor fires a recipe remedy or the CI circuit
-# breaker writes an incident, supervisor/supervisor-run.sh emits a repair
-# proposal record on the tape (lib/tape.sh):
-#
-#   tape_proposal <id> repair "<recipe name or incident>" "" \
-#     "<condition identifier>" \
-#     '{"signature":"<code-derived label>","organ":"supervisor"}' \
-#     "" "auto" "<ref>"
-#
-# when a later preflight shows the condition cleared, the open proposal is
-# matched with one outcome:
+# Issue #1408: when a later preflight shows a condition cleared, the open
+# repair proposal is matched with one outcome:
 #
 #   tape_outcome <proposal-id> '{"regression_cleared":1}' '{}' '{}' '[]'
 #
-# Code-derived labels only (recipe names, condition identifiers) — no LLM.
-# A tape failure warns and continues — the supervisor is never blocked by
-# the tape (the emitters are total: every failure path logs and returns 0).
+# and the condition drops out of the state file. Code-derived labels only
+# — no LLM. A tape failure warns and continues — the supervisor is never
+# blocked by the tape (the emitters are total: every failure path logs and
+# returns 0).
+#
+# #1636: repair_tape_tick no longer creates proposals. A condition no remedy
+# acts on is a monitor — a CI incident and a fired recipe write no proposal
+# from the tick (proposals are written by repair_direct_dispatch when a
+# direct remedy runs; see issue-1636.sh). The tick still closes conditions
+# that already have a proposal in the state file.
 #
 # Acceptance (read-only — no live services; the supervisor's emit path is
 # exercised in-process by extracting the repair-tape functions from
 # supervisor/supervisor-run.sh and running one tick against a synthetic
 # incident, per issue-1407):
-#   1. A synthetic CI incident (CI_UNTRUSTED=true, incident PR 42) lands one
-#      repair proposal line: loop=repair, class=incident,
-#      caused_by=ci-incident-pr, context={"signature":"ci-incident-pr",
-#      "organ":"supervisor"}, decision=auto, ref=incident-pr-42
-#   2. A fired recipe lands a proposal with class=caused_by=<recipe name>;
-#      re-ticking while the condition stays open appends nothing
-#   3. A later preflight in which the recipe no longer fires appends one
-#      outcome with bits={"regression_cleared":1} and the condition drops
-#      out of the state file
-#   4. An unwritable TAPE_DIR: the tick warns and returns 0 — no record, no
-#      state written (the next tick retries the proposal)
+#   1. A synthetic CI incident (CI_UNTRUSTED=true, incident PR 42) writes
+#      no repair proposal and no state entry
+#   2. A fired recipe writes no proposal from the tick; re-ticking while
+#      the condition stays open still appends nothing
+#   3. A later preflight in which a condition that already has a proposal
+#      no longer fires appends one outcome with
+#      bits={"regression_cleared":1} and the condition drops out of the
+#      state file
+#   4. An unwritable TAPE_DIR while closing a recorded condition: the tick
+#      warns and returns 0 — no outcome record
 # =============================================================================
 set -euo pipefail
 
@@ -109,69 +106,59 @@ run_tick() {
   ) 2>&1
 }
 
-# ── 1. synthetic incident: CI circuit breaker open (incident PR 42) ─────────
+# ── 1. synthetic incident: CI circuit breaker open writes no proposal ───────
 TAPE1="$TMP_DIR/tape-incident"
 STATE1="$TMP_DIR/state-incident.json"
 rc=0
 out="$(run_tick "$TAPE1" "$STATE1" "true" "42" '{"fired":[]}')" || rc=$?
 ac_assert_eq "$rc" "0" "a repair tick with an open CI incident must return 0 (got $rc): $out"
-ac_assert_file "$TAPE1/tape.jsonl" "no repair proposal record was appended"
-ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "1" \
-  "a newly fired CI incident must append exactly one repair proposal line"
-ac_assert_jq "$(cat <<JQ
-.type == "proposal"
-  and .loop == "repair"
-  and .class == "incident"
-  and .caused_by == "ci-incident-pr"
-  and .context == {"signature": "ci-incident-pr", "organ": "supervisor"}
-  and .decision == "auto"
-  and .ref == "incident-pr-42"
-  and (.id | length > 0)
-  and (.parent | not)
-  and (.forecast | not)
-JQ
-)" "$(head -n 1 "$TAPE1/tape.jsonl")" \
-  "line 1 must be the repair proposal for the CI incident"
-PROPOSAL_ID="$(jq -r '.id' "$TAPE1/tape.jsonl")"
-ac_assert_eq "$(jq -r --arg c ci-incident-pr '.[$c].proposal_id // empty' "$STATE1")" \
-  "$PROPOSAL_ID" \
-  "the state file must record the open repair condition for the later cleared-outcome pairing"
+[ ! -f "$TAPE1/tape.jsonl" ] \
+  || ac_fail "a CI incident must not write a repair proposal (#1636)"
+[ ! -f "$STATE1" ] \
+  || ac_fail "a CI incident must not record a repair condition (#1636)"
 
-# ── 2. fired recipe: one proposal per condition, no duplicates while open ───
+# ── 2. fired recipe: the tick writes no proposal, and a re-tick still none ──
 TAPE2="$TMP_DIR/tape-recipe"
 STATE2="$TMP_DIR/state-recipe.json"
 RECIPE_FIRED='{"fired":[{"name":"disk-pressure","severity":"P1","evidence":"Disk: 85% used","action":"direct","action_script":"supervisor/actions/fix-disk.sh"}]}'
 rc=0
 out="$(run_tick "$TAPE2" "$STATE2" "false" "" "$RECIPE_FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "a repair tick with a fired recipe must return 0 (got $rc): $out"
-ac_assert_eq "$(wc -l < "$TAPE2/tape.jsonl")" "1" \
-  "a newly fired recipe must append exactly one repair proposal line"
-ac_assert_jq "$(cat <<JQ
-.type == "proposal"
-  and .loop == "repair"
-  and .class == "disk-pressure"
-  and .caused_by == "disk-pressure"
-  and .context == {"signature": "disk-pressure", "organ": "supervisor"}
-  and .decision == "auto"
-  and .ref == "disk-pressure"
-JQ
-)" "$(head -n 1 "$TAPE2/tape.jsonl")" \
-  "line 1 must be the repair proposal for the fired recipe"
-RECIPE_ID="$(jq -r '.id' "$TAPE2/tape.jsonl")"
-[ -n "$RECIPE_ID" ] || ac_fail "the recipe repair proposal must carry an id"
+[ ! -f "$TAPE2/tape.jsonl" ] \
+  || ac_fail "repair_tape_tick must not write a proposal for a fired recipe (#1636)"
+[ ! -f "$STATE2" ] \
+  || ac_fail "repair_tape_tick must not record a fired recipe that has no open proposal"
 
-# A later tick while the condition stays open must append nothing.
+# A later tick while the condition stays open must still append nothing.
 rc=0
 out="$(run_tick "$TAPE2" "$STATE2" "false" "" "$RECIPE_FIRED")" || rc=$?
 ac_assert_eq "$rc" "0" "a repair tick while the recipe condition stays open must return 0 (got $rc): $out"
-ac_assert_eq "$(wc -l < "$TAPE2/tape.jsonl")" "1" \
-  "an already-open repair condition must not get a duplicate proposal"
+[ ! -f "$TAPE2/tape.jsonl" ] \
+  || ac_fail "an already-open monitor must not get a proposal from a later tick"
 
-# ── 3. later preflight: condition cleared → outcome, state drained ──────────
+# ── 3. later preflight: recorded condition cleared → outcome, state drained ─
+TAPE3="$TMP_DIR/tape-cleared"
+STATE3="$TMP_DIR/state-cleared.json"
+mkdir -p "$TAPE3"
+RECIPE_ID="repair-seed-1408"
+jq -n --arg id "$RECIPE_ID" \
+  '{"disk-pressure": {proposal_id: $id, class: "disk-pressure", since: "2024-01-01T00:00:00Z"}}' \
+  > "$STATE3"
+
+# Still firing: the recorded proposal stays open, no outcome, no new proposal.
 rc=0
-out="$(run_tick "$TAPE2" "$STATE2" "false" "" '{"fired":[]}')" || rc=$?
+out="$(run_tick "$TAPE3" "$STATE3" "false" "" "$RECIPE_FIRED")" || rc=$?
+ac_assert_eq "$rc" "0" "a tick while a recorded condition stays open must return 0 (got $rc): $out"
+[ ! -f "$TAPE3/tape.jsonl" ] \
+  || ac_fail "a still-open recorded condition must not append a tape line"
+ac_assert_eq "$(jq -r --arg c disk-pressure '.[$c].proposal_id // empty' "$STATE3")" \
+  "$RECIPE_ID" \
+  "a still-open recorded condition must keep its proposal id"
+
+rc=0
+out="$(run_tick "$TAPE3" "$STATE3" "false" "" '{"fired":[]}')" || rc=$?
 ac_assert_eq "$rc" "0" "a repair tick showing the recipe condition cleared must return 0 (got $rc): $out"
-ac_assert_eq "$(wc -l < "$TAPE2/tape.jsonl")" "2" \
+ac_assert_eq "$(wc -l < "$TAPE3/tape.jsonl")" "1" \
   "a cleared condition must append exactly one outcome line"
 ac_assert_jq "$(cat <<JQ
 .type == "outcome"
@@ -181,19 +168,23 @@ ac_assert_jq "$(cat <<JQ
   and .children == {}
   and .payloads == []
 JQ
-)" "$(sed -n '2p' "$TAPE2/tape.jsonl")" \
-  "line 2 must be the outcome with regression_cleared bits for the proposal the fired tick emitted"
-ac_assert_eq "$(jq -r 'keys | length' "$STATE2")" "0" \
+)" "$(head -n 1 "$TAPE3/tape.jsonl")" \
+  "the only line must be the outcome with regression_cleared bits for the recorded proposal"
+ac_assert_eq "$(jq -r 'keys | length' "$STATE3")" "0" \
   "the cleared condition must drop out of the state file"
 
-# ── 4. unwritable TAPE_DIR: warn + continue, no record, no state ────────────
+# ── 4. unwritable TAPE_DIR while closing: warn + continue, no record ────────
 # A directory can never be created under a plain file — mkdir -p must fail,
-# so no record can land.
+# so no record can land. The condition is already recorded, so the tick
+# tries to append the cleared outcome and must warn rather than fail.
 touch "$TMP_DIR/blocker"
 TAPE4="$TMP_DIR/blocker/tape"
 STATE4="$TMP_DIR/state-blocked.json"
+jq -n --arg id "repair-seed-blocked" \
+  '{"disk-pressure": {proposal_id: $id, class: "disk-pressure", since: "2024-01-01T00:00:00Z"}}' \
+  > "$STATE4"
 rc=0
-out="$(run_tick "$TAPE4" "$STATE4" "true" "7" '{"fired":[]}')" || rc=$?
+out="$(run_tick "$TAPE4" "$STATE4" "false" "" '{"fired":[]}')" || rc=$?
 ac_assert_eq "$rc" "0" "an unwritable TAPE_DIR must not fail the supervisor tick (got $rc): $out"
 case "$out" in
   *"WARNING: tape"*) ;;
@@ -201,7 +192,5 @@ case "$out" in
 esac
 [ ! -f "$TAPE4/tape.jsonl" ] \
   || ac_fail "no tape record may be written when TAPE_DIR is unwritable"
-[ ! -f "$STATE4" ] \
-  || ac_fail "the state file must not record the condition when the tape append failed (the next tick must retry the proposal)"
 
 ac_pass

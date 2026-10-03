@@ -14,8 +14,10 @@
 #   2. script = $FACTORY_ROOT/<action_script> "$PROJECT_TOML" "$evidence"
 #   3. close  tape_run  (cost {"duration_s":N}, status=completed|failed)
 #
-# Rules (per the issue):
-#   - a missing proposal id -> warn, still run the script, write no tape line
+# Rules (per the issue, updated for #1636):
+#   - a missing proposal id -> emit one (class = recipe name, empty
+#     caused_by) and pair the run with it; if the emit leaves no id, warn,
+#     still run the script, write no tape line
 #   - an unwritable $TAPE_DIR -> warn, still run the script, return 0
 #   - a non-zero script exit -> closing run is `failed`, never aborts the tick
 #   - no tape_outcome is ever written (run status lives on the run record)
@@ -54,6 +56,12 @@ DISPATCH_SRC="$(ac_extract_fn repair_direct_dispatch "$TARGET")"
 [ -n "$DISPATCH_SRC" ] || ac_fail "could not extract repair_direct_dispatch() from supervisor-run.sh"
 STATEFILE_SRC="$(ac_extract_fn repair_tape_state_file "$TARGET")"
 [ -n "$STATEFILE_SRC" ] || ac_fail "could not extract repair_tape_state_file() from supervisor-run.sh"
+PROP_SRC="$(ac_extract_fn emit_repair_proposal "$TARGET")"
+[ -n "$PROP_SRC" ] || ac_fail "could not extract emit_repair_proposal() from supervisor-run.sh"
+STATE_SRC="$(ac_extract_fn repair_state_put "$TARGET")"
+[ -n "$STATE_SRC" ] || ac_fail "could not extract repair_state_put() from supervisor-run.sh"
+UPD_SRC="$(ac_extract_fn _repair_state_update "$TARGET")"
+[ -n "$UPD_SRC" ] || ac_fail "could not extract _repair_state_update() from supervisor-run.sh"
 
 # ── harness: synthetic factory root; run the dispatch in an isolated subshell
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +114,9 @@ run_dispatch() {
     export PROJECT_TOML="$FACTORY_ROOT/projects/disinto.toml"
     source "$REPO_ROOT/lib/tape.sh"
     eval "$STATEFILE_SRC"
+    eval "$UPD_SRC"
+    eval "$STATE_SRC"
+    eval "$PROP_SRC"
     eval "$DISPATCH_SRC"
     repair_direct_dispatch "$recipe_output"
   ) 2>&1
@@ -190,11 +201,13 @@ ac_assert_jq '
   and (.cost.duration_s | type == "number") and (.cost.duration_s >= 0)
 ' "$closed_rec" "closing run must have status failed on exit 3"
 
-# ── 3. recipe name absent from state -> script ran, no run line, rc 0
+# ── 3. recipe name absent from state -> emit one proposal, pair the run
 # ─────────────────────────────────────────────────────────────────────────────
+# #1636: a direct remedy with no open proposal gets one (class = recipe
+# name, empty caused_by) right before the script, then the open and closing
+# runs land under it. The pre-seeded close-stuck-pr entry is left alone.
 TAPE3="$TMP_DIR/tape-3"; mkdir -p "$TMP_DIR/tape-3"
 STATE3="$TMP_DIR/state-3.json"
-# close-stuck-pr registered (PROP3), but the recipe that fires is ghost-recipe.
 write_state_file "$STATE3" close-stuck-pr PROP3
 RECIPE3="$(fired_recipe_json ghost-recipe "Ghost condition")"
 write_action_script c 0
@@ -203,11 +216,24 @@ rc=0
 out="$(run_dispatch "$TAPE3" "$STATE3" "$RECIPE3")" || rc=$?
 ac_assert_eq "$rc" "0" "absent proposal + exit 0 must return 0 (got $rc): $out"
 ac_assert_file "$MARKER_DIR/c" "the script must still run when no proposal is registered (marker c missing): $out"
-ac_assert_eq "$(run_count "$TAPE3/tape.jsonl" "ghost-recipe")" "0" \
-  "no tape run for a recipe absent from the repair state"
+pcount="$(jq -rs '[.[] | select(.type == "proposal")] | length' "$TAPE3/tape.jsonl" 2>/dev/null || echo 0)"
+ac_assert_eq "$pcount" "1" "a direct recipe with no open proposal must write exactly one repair proposal"
+prop_rec="$(jq -c 'select(.type == "proposal")' "$TAPE3/tape.jsonl" | head -n1)"
+ac_assert_jq '
+  .type == "proposal" and .loop == "repair" and .class == "ghost-recipe"
+  and (.caused_by | not)
+  and .context.signature == "ghost-recipe" and .context.organ == "supervisor"
+  and .decision == "auto" and .ref == "ghost-recipe"
+' "$prop_rec" "the emitted proposal must carry the recipe name and no caused_by"
+GHOST_ID="$(jq -r '.id' <<< "$prop_rec")"
+ac_assert_eq "$(run_count "$TAPE3/tape.jsonl" "$GHOST_ID")" "2" \
+  "the script run must be paired under the proposal just emitted"
+ac_assert_eq "$(jq -r --arg c ghost-recipe '.[$c].proposal_id // empty' "$STATE3")" \
+  "$GHOST_ID" "the state file must record the new open proposal"
+ac_assert_eq "$(jq -r '.["close-stuck-pr"].proposal_id // empty' "$STATE3")" \
+  "PROP3" "emitting for one recipe must not drop another open proposal"
 case "$out" in
-  *"no repair proposal"*) ;;
-  *) ac_fail "expected a 'no repair proposal' warning for the absent recipe: $out" ;;
+  *"no repair proposal"*) ac_fail "a successful emit must not warn that no repair proposal exists: $out" ;;
 esac
 
 # ── 4. unwritable TAPE_DIR -> script ran, return 0

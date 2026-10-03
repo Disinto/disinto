@@ -10,10 +10,10 @@
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
-#   4a. Repair tape (#1408): one repair proposal per newly fired condition
-#       (fired recipes, open CI incident PR); a condition that a later
-#       preflight shows cleared earns an outcome with
-#       bits {"regression_cleared":1}
+#   4a. Repair tape (#1408, #1533, #1636): a direct remedy writes one
+#       repair proposal (empty caused_by) before its script unless one is
+#       open; incident recipes and the CI incident write none. A later
+#       preflight that shows the condition cleared earns bits {"regression_cleared":1}
 #   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
 #   6. Load formula (formulas/run-supervisor.toml)
 #   7. Context: AGENTS.md, preflight metrics, structural graph
@@ -170,12 +170,14 @@ if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
   fi
 fi
 
-# ── Repair tape (#1408) ───────────────────────────────────────────────────
-# Every condition the supervisor fires on — a recipe whose action this run
-# is about to execute, or the CI circuit breaker (an incident PR is open) —
-# gets ONE repair proposal on the tape when it first fires (loop="repair",
-# class=<recipe name or "incident">, caused_by=<condition identifier>,
-# context={"signature":<label>,"organ":"supervisor"}). When a later
+# ── Repair tape (#1408, #1533, #1636) ─────────────────────────────────────
+# A condition that no remedy acts on is a monitor, not a proposal. Repair
+# proposals are written only when a direct remedy runs: repair_direct_dispatch
+# calls emit_repair_proposal (class = recipe name, caused_by empty — the
+# condition stays in context.signature) right before the action_script,
+# unless that recipe already has an open proposal. Incident recipes and the
+# CI incident condition write none. repair_tape_tick does not create
+# proposals; it still closes conditions that already have one — when a later
 # preflight no longer shows the condition, the open proposal earns one
 # outcome with bits {"regression_cleared":1}. All labels are code-derived
 # (recipe names, condition identifiers) — no LLM input. Every emitter is
@@ -265,10 +267,11 @@ repair_state_put() {
 }
 
 # emit_repair_proposal CONDITION [CLASS] [REF] — append one repair
-# proposal to the tape (loop="repair") and register the condition in the
-# state file for the cleared-outcome pairing. Total: warns and returns 0
-# on any failure — a failed tape append also skips the state write, so the
-# next tick retries the proposal.
+# proposal to the tape (loop="repair", caused_by empty — the condition
+# stays in context.signature, never in caused_by) and register the
+# condition in the state file for the cleared-outcome pairing. Total:
+# warns and returns 0 on any failure — a failed tape append also skips
+# the state write, so the next tick retries the proposal.
 emit_repair_proposal() {
   local condition="${1:-}" class="${2:-}" ref="${3:-}" id ctx
   if [ -z "$condition" ]; then
@@ -287,7 +290,7 @@ emit_repair_proposal() {
     return 0
   fi
 
-  if ! tape_proposal "$id" repair "$class" "" "$condition" "$ctx" "" \
+  if ! tape_proposal "$id" repair "$class" "" "" "$ctx" "" \
       "auto" "$ref" >/dev/null 2>&1; then
     log "WARNING: tape: failed to append repair proposal ${id} (${condition})"
     return 0
@@ -299,14 +302,14 @@ emit_repair_proposal() {
 }
 
 # repair_tape_tick — one repair-tape pass per supervisor tick, called after
-# recipe evaluation and before the LLM escalation gate so both the fast
-# path and the LLM path are covered: a condition firing this tick with no
-# open repair record gets one repair proposal; a recorded condition no
-# longer firing (a later preflight shows the condition cleared) gets one
-# outcome with bits {"regression_cleared":1} and drops out of the state
-# file. Total: always returns 0 — the tape never blocks the supervisor.
+# recipe evaluation and before the LLM escalation gate. It does not create
+# proposals (#1636): a condition no remedy acts on is a monitor. It still
+# handles conditions that already have a proposal in the state file — a
+# recorded condition no longer firing (a later preflight shows it cleared)
+# gets one outcome with bits {"regression_cleared":1} and drops out of the
+# state file. Total: always returns 0 — the tape never blocks the supervisor.
 repair_tape_tick() {
-  local state_file prev_json cur_json new_list cleared_list
+  local state_file prev_json cur_json cleared_list
   state_file="$(repair_tape_state_file)"
   cur_json="$(repair_conditions_current_json)" || cur_json="[]"
   [ -n "$cur_json" ] || cur_json="[]"
@@ -316,27 +319,11 @@ repair_tape_tick() {
     prev_json="{}"
   fi
 
-  new_list="$(jq -rn --argjson cur "$cur_json" --argjson prev "$prev_json" '
-      $cur[] | select(. as $c | ($prev | has($c)) | not)')" || new_list=""
   cleared_list="$(jq -rn --argjson cur "$cur_json" --argjson prev "$prev_json" '
       ($prev | keys[]) | select(. as $c | ($cur | index($c)) == null)')" \
     || cleared_list=""
 
-  local cond class
-  while IFS= read -r cond; do
-    [ -n "$cond" ] || continue
-    if [ "$cond" = "ci-incident-pr" ]; then
-      if [ -n "${INCIDENT_PR:-}" ]; then
-        emit_repair_proposal "ci-incident-pr" "incident" "incident-pr-${INCIDENT_PR}"
-      else
-        emit_repair_proposal "ci-incident-pr" "incident"
-      fi
-    else
-      emit_repair_proposal "$cond" "$cond"
-    fi
-  done <<< "$new_list"
-
-  local proposal_id
+  local cond proposal_id
   while IFS= read -r cond; do
     [ -n "$cond" ] || continue
     proposal_id="$(printf '%s' "$prev_json" \
@@ -376,17 +363,19 @@ repair_tape_tick() {
 repair_tape_tick
 
 # repair_direct_dispatch — run the direct-action scripts for the recipes that
-# fired this tick (fast path, #1533). For each real `action_script`, run the
-# script as today — `$FACTORY_ROOT/<action_script> "$PROJECT_TOML" "$evidence"`
-# — and pair it with the repair proposal registered by the repair tape (#1408):
-# the recipe name's entry in the repair state file (repair_tape_state_file)
-# yields the proposal id to run under. A present id gets an OPEN tape_run
+# fired this tick (fast path, #1533). For each real `action_script`, if the
+# state file has no open proposal for that recipe, write one first
+# (emit_repair_proposal, class = recipe name, empty caused_by, #1636), then
+# run the script as today — `$FACTORY_ROOT/<action_script> "$PROJECT_TOML"
+# "$evidence"` — and pair it with that proposal: an OPEN tape_run
 # (attempts=1, cost {}, organ=supervisor, agent=bash) and, after the script,
-# a closing tape_run (cost {"duration_s":N}, status=completed|failed). An
-# absent id logs a warning, still runs the script, and writes no tape line.
-# No tape_outcome is written — run status lives on the run record. A non-zero
-# script exit never interrupts the tick (the closing run is `failed`), and a
-# failed tape append logs a warning without aborting. Total: always returns 0.
+# a closing tape_run (cost {"duration_s":N}, status=completed|failed). An id
+# that is still absent after the emit (tape failure) logs a warning, still
+# runs the script, and writes no tape line. Incident recipes never reach
+# this loop, so they write no repair proposal. No tape_outcome is written —
+# run status lives on the run record. A non-zero script exit never
+# interrupts the tick (the closing run is `failed`), and a failed tape
+# append logs a warning without aborting. Total: always returns 0.
 repair_direct_dispatch() {
   local recipe_output="${1:-}"
   local name script evidence started started_epoch tsv
@@ -404,12 +393,22 @@ repair_direct_dispatch() {
     if [ -z "$script" ] || [ "$script" = "__MISSING__" ]; then
       continue
     fi
-    # Repair-tape pairing: recipe name -> proposal id in the state file.
+    # Repair-tape pairing (#1636): a direct remedy with no open proposal
+    # gets one now, so the run that follows pairs with it.
     proposal_id=""
     if [ -f "$state_file" ]; then
       proposal_id="$(printf '%s' "$(cat "$state_file" 2>/dev/null)" \
         | jq -r --arg c "$name" '.[$c].proposal_id // empty' 2>/dev/null)" \
         || proposal_id=""
+    fi
+    if [ -z "$proposal_id" ]; then
+      emit_repair_proposal "$name" "$name"
+      state_file="$(repair_tape_state_file)"
+      if [ -f "$state_file" ]; then
+        proposal_id="$(printf '%s' "$(cat "$state_file" 2>/dev/null)" \
+          | jq -r --arg c "$name" '.[$c].proposal_id // empty' 2>/dev/null)" \
+          || proposal_id=""
+      fi
     fi
     started_epoch="$(date -u +%s)"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -530,8 +529,8 @@ if [ "$LLM_REQUIRED" = false ]; then
 
   # ── Dispatch direct-action scripts for all fired direct recipes ───────
   # Fast path only (the LLM path never runs these, #594). Each real
-  # action_script is run and gets a paired tape run under the recipe's
-  # repair proposal id, if the repair state registered one (#1533).
+  # action_script gets a repair proposal if none is open (#1636), then a
+  # paired tape run under that proposal id (#1533).
   if [ -n "$RECIPE_OUTPUT" ]; then
     repair_direct_dispatch "$RECIPE_OUTPUT"
   fi
