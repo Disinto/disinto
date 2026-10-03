@@ -10,10 +10,10 @@
 #   2. Housekeeping: clean up stale crashed worktrees
 #   3. Collect pre-flight metrics (supervisor/preflight.sh)
 #   4. Evaluate recipes for abnormal signals (supervisor/evaluate-recipes.sh)
-#   4a. Repair tape (#1408): one repair proposal per newly fired condition
-#       (fired recipes, open CI incident PR); a condition that a later
-#       preflight shows cleared earns an outcome with
-#       bits {"regression_cleared":1}
+#   4a. Repair tape (#1408, #1533, #1636): a direct remedy writes one
+#       repair proposal (empty caused_by) before its script unless one is
+#       open; incident recipes and the CI incident write none. A later
+#       preflight that shows the condition cleared earns bits {"regression_cleared":1}
 #   5. LLM escalation gate: skip claude -p when no abnormal signal (fast path)
 #   6. Load formula (formulas/run-supervisor.toml)
 #   7. Context: AGENTS.md, preflight metrics, structural graph

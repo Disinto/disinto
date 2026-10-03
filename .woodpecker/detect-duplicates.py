@@ -926,6 +926,25 @@ def main() -> int:
     "68ef0281d4d380fba8d3e926899ea722": "issue-1475.sh + issue-1633.sh: formula_session_start + formula_session_end $rc + EOF (#1633)",
     "4bbcf9ef9f014affb688e25b4bcd0809": "issue-1475.sh + issue-1633.sh: fn_body=awk ' + $0=='formula_session_start() {' { infn=1;next } + infn&&/^}$/ {exit} (#1633)",
     "bdcd0c63dbf1a03c24bb8c67c6ea8a97": "issue-1475.sh + issue-1633.sh: $0=='formula_session_start() {' { infn=1;next } + infn&&/^}$/ {exit} + infn {print} (#1633)",
+        # --- #1636: repair-tape acceptance tests share the in-process harness ---
+        # issue-1408.sh, issue-1533.sh, and issue-1636.sh each extract the
+        # supervisor repair-tape functions and run them in an isolated subshell
+        # (ac_extract_fn + eval, temp factory root, source lib/tape.sh). The
+        # shared 5-line windows are per-test isolation, not copy-paste.
+        "cd99a638b034774b32590f226b50e7a1": "issue-1408.sh + issue-1533.sh + issue-1636.sh: source tape.sh + eval STATEFILE + eval UPD (#1636)",
+        "826f6f1b4d2ac9f9c61929411b8e7899": "issue-1408.sh + issue-1533.sh: extract emit_repair_proposal + repair_state_put (#1636)",
+        "05e9a558a1e90b7f65cb6c409845a447": "issue-1408.sh + issue-1533.sh: extract emit_repair_proposal fail + repair_state_put (#1636)",
+        "da0ae9d096def04c6aafce0c729f705a": "issue-1408.sh + issue-1636.sh: extract repair_state_put + _repair_state_update (#1636)",
+        "dac7e0b70e72a00673073e1c4bfbd0ae": "issue-1408.sh + issue-1636.sh: extract repair_state_put fail + _repair_state_update (#1636)",
+        "db0f1017b1095bd666a8370567b61ce6": "issue-1408.sh + issue-1636.sh: extract _repair_state_update + repair_tape_state_file (#1636)",
+        "394a1af5e4f8bf6718c23ed8762222b2": "issue-1408.sh + issue-1636.sh: extract _repair_state_update fail + repair_tape_state_file (#1636)",
+        "e80b7e7410795a0ea9c8e31aa768d404": "issue-1408.sh + issue-1636.sh: eval STATEFILE + UPD + STATE (#1636)",
+        "7e90b59b2ca7cca84ee79751f3daea44": "issue-1408.sh + issue-1636.sh: eval UPD + STATE + PROP (#1636)",
+        "00b6180908569f4f5082d6a0ff2fd28e": "issue-1533.sh + issue-1636.sh: TMP_DIR + trap + FACTORY_ROOT (#1636)",
+        "95f14d51016ab844f2c888f1771f4780": "issue-1533.sh + issue-1636.sh: trap + FACTORY_ROOT + MARKER_DIR (#1636)",
+        "3f58490aba80ed2a5f389bca422e77e7": "issue-1533.sh + issue-1636.sh: run subshell locals + set -euo pipefail (#1636)",
+        "16ee31507d301d0d844061c711172bc9": "issue-1533.sh + issue-1636.sh: export FACTORY_ROOT + PROJECT_TOML + source tape.sh (#1636)",
+        "b5a1b758cd6af653b59b03e0f09180df": "issue-1533.sh + issue-1636.sh: export PROJECT_TOML + source tape.sh + eval STATEFILE (#1636)",
     }
 
     if not sh_files:
