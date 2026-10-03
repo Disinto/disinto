@@ -366,12 +366,15 @@ _gardener_execute_manifest() {
   log "manifest: execution complete (${count} actions processed)"
 }
 
-# ── Ops catalog: calibration.md (#1454) ──────────────────────────────────
+# ── Ops catalog: calibration.md (#1454) + claims.md (#1645) ───────────────
 # Writes the calibration tape report (tools/calibration.sh, #1453) into the
 # ops repo as catalog/calibration.md so organs and humans can read the
-# promised-vs-actual table out of the WAL. Bash only, no LLM; runs after
-# formula_session_end so the session's own tape row is closed first. Never
-# fatal: a failed calibration.sh only logs a warning and skips the file, and a
+# promised-vs-actual table out of the WAL. The same commit also writes
+# tools/claims-report.sh (#1645) to catalog/claims.md. Bash only, no LLM; runs
+# after formula_session_end so the session's own tape row is closed first.
+# Never fatal: a failed calibration.sh only logs a warning and skips the file,
+# a failed claims-report.sh only logs a warning and leaves the calibration
+# refresh as it is (calibration.md still committed, claims.md untouched), and a
 # missing ops git leaves the file on disk (ops_commit_and_push is a no-op).
 refresh_ops_calibration() {
   local ops_root="${OPS_REPO_ROOT:-}"
@@ -385,13 +388,25 @@ refresh_ops_calibration() {
     return 0
   fi
   out="$( "$FACTORY_ROOT/tools/calibration.sh" )" || rc=$?
-  if [ $rc -eq 0 ]; then
-    printf '%s' "$out" > "${ops_root}/catalog/calibration.md"
-    ops_commit_and_push "catalog: refresh calibration.md" catalog/calibration.md
-    log "catalog: calibration.md refreshed in ops repo"
-  else
+  if [ "$rc" -ne 0 ]; then
     log "WARNING: calibration.sh failed (rc=$rc) — calibration.md not refreshed"
+    return 0
   fi
+  printf '%s' "$out" > "${ops_root}/catalog/calibration.md"
+
+  # Claims catalog rides this one commit (#1645). A failing report only warns;
+  # calibration.md is still committed and an existing claims.md is left as it is.
+  local claims_out claims_rc=0
+  local -a catalog_files=(catalog/calibration.md)
+  claims_out="$( "$FACTORY_ROOT/tools/claims-report.sh" )" || claims_rc=$?
+  if [ "$claims_rc" -eq 0 ]; then
+    printf '%s' "$claims_out" > "${ops_root}/catalog/claims.md"
+    catalog_files+=(catalog/claims.md)
+  else
+    log "WARNING: claims-report.sh failed (rc=$claims_rc) — claims.md not refreshed"
+  fi
+  ops_commit_and_push "catalog: refresh calibration.md" "${catalog_files[@]}"
+  log "catalog: calibration.md refreshed in ops repo"
 }
 
 # ── Reset result file ────────────────────────────────────────────────────
