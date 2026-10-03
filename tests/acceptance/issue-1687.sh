@@ -16,8 +16,14 @@
 #   1. Stub writes its own session (first record cwd = the run dir), then a
 #      second session dir with a newer mtime (touch -d) whose first record
 #      has cwd /somewhere/else: _AGENT_SESSION_ID is the first one.
+#      Both logs are multi-line (60000 trailing records). A one-line log
+#      never makes zstdcat die with SIGPIPE when head closes the pipe, so
+#      pipefail would not wipe a printed cwd and the filter would look like
+#      it works (#1687 review).
 #   2. A session whose first record has a top-level cwd equal to the run dir
 #      (the real dsh 0.1.1-rc.2 format) is taken over a newer foreign one.
+#      Same multi-line logs, so the top-level cwd path is also read under
+#      SIGPIPE.
 #   3. A session dir whose log is not valid zstd is still taken when it is
 #      the only candidate.
 #   4. This test exits 0 and calls ac_pass.
@@ -32,7 +38,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash jq zstd zstdcat touch stat
+ac_require_cmd bash jq zstd zstdcat touch stat awk
 
 # The review requires the session-selection sentence in the same PR.
 DOCS="$REPO_ROOT/lib/AGENTS.md"
@@ -59,10 +65,18 @@ set -euo pipefail
 slug="$DSH_HOME/sessions/fake-slug"
 mkdir -p "$slug"
 
+# PAD lines after the first record. A two-line log is racy under
+# pipefail+SIGPIPE (head closes zstdcat's pipe); tens of thousands of
+# lines fail every time if the harness discards a printed cwd.
+PAD_LINES=60000
+
 write_log() {
   local dest="$1" json="$2"
   mkdir -p "$dest"
-  printf '%s\n' "$json" | zstd -q > "$dest/session.jsonl.zstd"
+  {
+    printf '%s\n' "$json"
+    awk -v n="$PAD_LINES" 'BEGIN { for (i = 0; i < n; i++) print "{\"type\":\"chunk\",\"seq\":" i "}" }'
+  } | zstd -q > "$dest/session.jsonl.zstd"
 }
 
 case "${DSH_STUB_MODE:-own-plus-foreign}" in

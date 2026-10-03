@@ -144,9 +144,13 @@ _agent_run_dsh() {
   # not older than the recorded start and whose session log's first record
   # names the run directory as its cwd (top-level `cwd` in dsh 0.1.1-rc.2,
   # or `data.cwd` in the test stub). A log that cannot be read yet stays a
-  # candidate: a timeout kill can leave a truncated log (#1186). A session
-  # another process starts during the run — a test the agent runs — is
-  # never taken (#1687). Session dirs sit one level below the <cwd-slug>
+  # candidate: a timeout kill can leave a truncated log (#1186). The
+  # first-record read keeps a cwd jq printed even when zstdcat dies with
+  # SIGPIPE — head closes the pipe after one line, and on a multi-line log
+  # pipefail would otherwise fail the assignment and wipe that cwd, so a
+  # newer foreign session would still be taken. A session another process
+  # starts during the run — a test the agent runs — is never taken
+  # (#1687). Session dirs sit one level below the <cwd-slug>
   # dir and dsh's slug scheme is internal, so scan every slug dir rather
   # than deriving the name. A resumed run skips the scan: its directory
   # was resolved by name before the run (its mtime predates the start, so
@@ -162,9 +166,13 @@ _agent_run_dsh() {
         mtime=$(stat -c %Y "$dir" 2>/dev/null) || continue
         case "$mtime" in '' | *[!0-9]*) continue ;; esac
         if [ "$mtime" -ge "$start_ts" ] && [ "$mtime" -gt "$best_mtime" ]; then
-          # || rec_cwd="" keeps a failing pipe (unreadable/truncated log)
-          # from tripping set -e in callers. Empty rec_cwd stays a candidate.
-          rec_cwd="$(zstdcat "$dir/session.jsonl.zstd" 2>/dev/null | head -n 1 | jq -r '.cwd // .data.cwd // empty' 2>/dev/null)" || rec_cwd=""
+          # || true is inside the substitution on purpose. A failing pipe
+          # (SIGPIPE once head has the first record, or a truncated log)
+          # must not trip set -e, and must not discard a cwd jq already
+          # printed — the old `|| rec_cwd=""` did, and a newer foreign
+          # session was still taken (#1687). Only an empty result (log
+          # not readable yet) stays a candidate (#1186).
+          rec_cwd="$(zstdcat "$dir/session.jsonl.zstd" 2>/dev/null | head -n 1 | jq -r '.cwd // .data.cwd // empty' 2>/dev/null || true)"
           if [ -n "$rec_cwd" ] && [ "$rec_cwd" != "$run_dir" ] && [ "$rec_cwd" != "$run_dir_p" ]; then
             continue
           fi
