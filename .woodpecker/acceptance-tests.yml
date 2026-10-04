@@ -138,21 +138,19 @@ steps:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
+      - /opt/disinto:/opt/disinto
     commands:
       - |
         set -e
-        if [ "$(cat .ci/needs-redeploy 2>/dev/null || echo no)" != "yes" ]; then
-          echo "rebuild-and-deploy: skip (no runtime paths changed)"
-          exit 0
-        fi
-        apk add --no-cache util-linux jq curl bash
+        apk add --no-cache util-linux jq curl bash git
         NOMAD_IMAGE=hashicorp/nomad:1.9.5
+        OPT=/opt/disinto
         # No nomad binary in this image — run the CLI in a helper container
         # on the host network (Nomad listens on loopback only). The helper
-        # mounts a host directory the edge jobspec is staged into from this
-        # commit (below, under the lock) — not a host checkout, which drifts.
-        # The directory sits under the ci-locks volume, so the daemon sees
-        # the same path. Paths passed to nomad_api are relative to /jobspecs.
+        # mounts a host directory the edge jobspec is staged into from $OPT
+        # (below, under the lock). The directory sits under the ci-locks
+        # volume, so the daemon sees the same path. Paths passed to nomad_api
+        # are relative to /jobspecs.
         JOBSPECS=/var/lib/disinto/ci-locks/jobspecs-edge
         nomad_api() {
           docker run --rm --network host \
@@ -168,14 +166,32 @@ steps:
         exec 9>/var/lib/disinto/ci-locks/acceptance-deploy.lock
         flock -w 600 9 || { echo "could not acquire deploy lock"; exit 1; }
 
-        # Stage the edge jobspec of this commit for the helper. Under the
-        # lock, so a concurrent pipeline cannot swap it mid-deploy.
+        # Advance $OPT to this commit, on every merge. The edge runs the
+        # dispatcher and the snapshot daemon from that host checkout
+        # (entrypoint-edge.sh, edge.hcl), and edge-threads-gc and
+        # agent-logs-rotate run scripts from it; nothing else updated it, and
+        # it sat 416 commits behind main until 2026-10-04. Fast-forward only:
+        # it never moves backwards (a pipeline that runs late from the queue
+        # is a no-op), and a local edit or a diverged branch fails the step
+        # instead of being overwritten.
+        git -c safe.directory="$OPT" -C "$OPT" fetch -q forge "$CI_COMMIT_SHA"
+        git -c safe.directory="$OPT" -C "$OPT" merge -q --ff-only FETCH_HEAD
+        echo "rebuild-and-deploy: $OPT at $(git -c safe.directory="$OPT" -C "$OPT" rev-parse --short HEAD)"
+
+        if [ "$(cat .ci/needs-redeploy 2>/dev/null || echo no)" != "yes" ]; then
+          echo "rebuild-and-deploy: no edge restart (no runtime paths changed)"
+          exit 0
+        fi
+
+        # Build and stage from $OPT, not the workspace: $OPT is at this commit
+        # or a newer one, so a late pipeline never redeploys older code. Under
+        # the lock, so a concurrent pipeline cannot swap the jobspec mid-deploy.
         rm -rf "$JOBSPECS"
         mkdir -p "$JOBSPECS"
-        cp nomad/jobs/edge.hcl "$JOBSPECS"/
+        cp "$OPT/nomad/jobs/edge.hcl" "$JOBSPECS"/
 
-        echo "rebuild-and-deploy: docker build disinto/edge:local"
-        docker build -t disinto/edge:local -f docker/edge/Dockerfile .
+        echo "rebuild-and-deploy: docker build disinto/edge:local from $OPT"
+        docker build -t disinto/edge:local -f "$OPT/docker/edge/Dockerfile" "$OPT"
 
         echo "rebuild-and-deploy: nomad job run /jobspecs/edge.hcl"
         nomad_api job run /jobspecs/edge.hcl
