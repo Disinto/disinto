@@ -13,8 +13,9 @@
 #   - result subtype error_max_turns, or agent_run rc 124 (wall-clock
 #     timeout) → issue_requeue: back to the claimable backlog with a
 #     diagnostic "Re-queued" comment
-#   - third consecutive resource-limit exit (attempt >= 2, 0-indexed count
-#     of existing fix/issue-N* branches) → issue_block with reason
+#   - third consecutive resource-limit exit (attempt >= 2, 0-indexed
+#     count of this proposal's failed dev outcomes on the tape —
+#     `DEV_FAILED_ATTEMPTS`, #1646) → issue_block with reason
 #     no_push_after_3_attempts (a human decision is needed)
 #   - anything else → issue_block "no_push" exactly as before
 #
