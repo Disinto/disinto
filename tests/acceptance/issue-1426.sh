@@ -11,7 +11,7 @@
 # The fix (two files):
 #   1. nomad/client.hcl — host_volume "claude-shared" with
 #      path = "/var/lib/disinto/claude-shared", read_only = false, placed
-#      next to the claude-creds block.
+#      in the host_volume list.
 #   2. lib/init/nomad/cluster-up.sh — "/var/lib/disinto/claude-shared"
 #      appended to HOST_VOLUME_DIRS so the directory exists before Nomad
 #      fingerprints.

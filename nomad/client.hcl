@@ -109,13 +109,6 @@ client {
     read_only = false
   }
 
-  # Claude OAuth credentials for the Opus supervisor agent.
-  # Mounted at /home/agent/.claude inside the container.
-  host_volume "claude-creds" {
-    path      = "/srv/disinto/claude-creds"
-    read_only = true
-  }
-
   # Shared Claude OAuth session volume — the same volume the edge job and
   # the opus agents source for the refreshed OAuth session (#648).
   host_volume "claude-shared" {
