@@ -99,7 +99,6 @@ of the bootstrap sequence.
 | `site-content`                | `/srv/disinto/docker` (ro)             | `nomad/jobs/staging.hcl`           |
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
-| `claude-creds`                | `/srv/disinto/claude-creds` (ro)       | `nomad/jobs/agents-supervisor-opus.hcl` |
 | `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot daemon, caddy ro mount) |
 | `threads-state`               | `/srv/disinto/threads-state`           | `nomad/jobs/edge.hcl` (caddy ro mount), `nomad/jobs/edge-threads-gc.hcl` (rw) |
 
