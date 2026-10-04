@@ -17,7 +17,10 @@ set -euo pipefail
 # Standard header: directory resolution
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "${FACTORY_ROOT:-}" ]; then
-  FACTORY_ROOT="$(dirname "$SCRIPT_DIR")"
+  # actions/ sits two levels under the factory root. supervisor-run.sh sets
+  # FACTORY_ROOT but does not export it, so a direct fix sourced from bash
+  # must walk up itself (#1697).
+  FACTORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 export FACTORY_ROOT
 

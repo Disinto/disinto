@@ -114,13 +114,11 @@ For each finding from the health assessment, decide and execute an action.
 The supervisor-run.sh script automatically handles WP agent recovery:
 - Detects unhealthy state via preflight.sh health checks
 - Restarts container via `docker restart`
-- Scans for `blocked: ci_exhausted` issues updated in last 30 minutes
-- Unassigns and removes blocked label from affected issues
-- Posts recovery comment with infra-flake context
 - Avoids duplicate restarts via 5-minute cooldown in history file
 
 **P0 Memory crisis:**
-Action script: `supervisor/actions/memory-crisis.sh` — kills stale claude processes, drops caches.
+Files an incident. `free -m` in the agents container reports the host, not the
+disinto box, so there is no direct action script (#1697).
 
 **P1 Disk pressure:**
 Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log truncation.

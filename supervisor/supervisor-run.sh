@@ -449,12 +449,13 @@ repair_tape_tick
 # act of this open proposal — a later run of the same proposal updates acted
 # but does not move the window, so a later tick can see it pass (#1637).
 # The outcome itself is written by repair_tape_tick, not here. A non-zero
-# script exit never interrupts the tick (the closing run is `failed`), and a
-# failed tape append logs a warning without aborting. Total: always returns 0.
+# script exit never interrupts the tick (the closing run is `failed`); the
+# last stderr line is logged (#1697). A failed tape append logs a warning
+# without aborting. Total: always returns 0.
 repair_direct_dispatch() {
   local recipe_output="${1:-}"
   local name script evidence started started_epoch tsv
-  local ended ended_epoch rc duration_s status state_file proposal_id cost
+  local ended ended_epoch rc duration_s status state_file proposal_id cost errf
   local acted_flag acted_epoch
   if [ -z "$recipe_output" ]; then
     return 0
@@ -497,8 +498,14 @@ repair_direct_dispatch() {
       log "WARNING: tape: no repair proposal for direct recipe ${name} — running ${script} without a tape run"
     fi
     # Run the script as today; a non-zero exit must not interrupt the tick.
+    # Capture stderr so a failure logs its last line (#1697).
     rc=0
-    bash "$FACTORY_ROOT/$script" "$PROJECT_TOML" "$evidence" || rc=$?
+    errf="$(mktemp)"
+    bash "$FACTORY_ROOT/$script" "$PROJECT_TOML" "$evidence" 2>"$errf" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      log "direct action ${name} (${script}) failed, rc=${rc}: $(tail -n 1 "$errf")"
+    fi
+    rm -f "$errf"
     ended_epoch="$(date -u +%s)"
     ended="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     duration_s=$(( ended_epoch - started_epoch ))
