@@ -3,9 +3,10 @@
 #
 # Acceptance for #1295 (read-only against the repo + the live label list):
 #   1. .forgejo/ISSUE_TEMPLATE/experiment.yaml exists and is a Forgejo
-#      template that auto-labels `experiment` (never `backlog`), with the
-#      required fields image, argv/tool, host class, artifact glob, and a
-#      resource-class dropdown (cpu/gpu/meep/voxel).
+#      template that auto-labels `action` (never `experiment` or `backlog`;
+#      #1337 replaced the `experiment` label), with the required fields
+#      image, argv/tool, host class, artifact glob, and a resource-class
+#      dropdown (cpu/gpu/meep/voxel).
 #   2. The feature / bug / refactor templates are unchanged (same auto-labels).
 #   3. The research-label seed table (tools/seed-research-labels.sh --list)
 #      defines exactly experiment / run / artifact / judgment /
@@ -30,7 +31,7 @@ ac_require_cmd bash awk sed grep jq curl
 TPL="$REPO_ROOT/.forgejo/ISSUE_TEMPLATE/experiment.yaml"
 TPL_DIR="$REPO_ROOT/.forgejo/ISSUE_TEMPLATE"
 
-# ── 1. Experiment template: exists, Forgejo keys, auto-labels experiment ──
+# ── 1. Experiment template: exists, Forgejo keys, auto-labels action ──
 ac_assert_file "$TPL" "experiment issue template not found"
 grep -qE '^name:[[:space:]]*\S' "$TPL" || ac_fail "experiment.yaml: missing top-level 'name:'"
 grep -qE '^about:[[:space:]]*\S' "$TPL" || ac_fail "experiment.yaml: missing top-level 'about:'"
@@ -82,7 +83,7 @@ import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1]))
 assert isinstance(doc, dict) and doc.get("name") and doc.get("about"), "name/about"
 labels = doc.get("labels") or []
-assert "experiment" in labels and "backlog" not in labels, "auto-labels"
+assert "action" in labels and "experiment" not in labels and "backlog" not in labels, "auto-labels"
 req = {i.get("id") for i in doc.get("body", [])
        if isinstance(i, dict) and (i.get("validations") or {}).get("required")}
 need = {"image", "argv", "host-class", "artifact-glob", "resource-class"}
@@ -179,4 +180,4 @@ else
   ac_log "no live forge env (FORGE_URL + FACTORY_FORGE_PAT/FORGE_TOKEN + FORGE_REPO) — live checks skipped"
 fi
 
-ac_pass "experiment template auto-labels 'experiment' (5 required fields incl. resource-class dropdown); feature/bug/refactor templates unchanged; 5 distinct research labels seeded (idempotent)"
+ac_pass "experiment template auto-labels 'action' (5 required fields incl. resource-class dropdown); feature/bug/refactor templates unchanged; 5 distinct research labels seeded (idempotent)"
