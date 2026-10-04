@@ -8,8 +8,9 @@
 # command on PATH instead. When neither a function nor a command provides
 # forge_api, define a quiet curl fallback from FORGE_API / FORGE_TOKEN.
 #
-# Sourced by tools/sprint-due.sh (#1675), tools/claims-report.sh (#1645) and
-# tools/sprint-outcomes.sh (#1676) so the three do not each copy the same
+# Sourced by tools/sprint-due.sh (#1675), tools/claims-report.sh (#1645),
+# tools/sprint-outcomes.sh (#1676) and tools/tape-rejections.sh (#1631) so
+# they do not each copy the same
 # fallback. The fallback is quiet (returns 1 without printing) so the calling
 # tool logs its own single diagnostic line. The URL check is the part of
 # validate_url this call needs (http(s), no credential injection); sourcing

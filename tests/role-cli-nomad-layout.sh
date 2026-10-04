@@ -36,6 +36,12 @@ TMPROOT=$(mktemp -d -t role-cli-nomad-layout.XXXXXX)
 fail() { printf 'FAIL: %s\n' "$*" >&2; FAILED=1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
+# Match $out without a pipe. grep -q on a pipe under pipefail is a SIGPIPE
+# flake: grep exits at the first hit while printf is still writing, and the
+# pipeline's non-zero status reads a real match as a miss.
+out_fixed() { grep -qF -e "$1" <<< "$out"; }
+out_re() { grep -qE -e "$1" <<< "$out"; }
+
 cleanup() { rm -rf "$TMPROOT"; }
 trap cleanup EXIT
 
@@ -118,29 +124,29 @@ else
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qF "State dir: ${LIVE}/state"; then
+if out_fixed "State dir: ${LIVE}/state"; then
   pass "status names the live state dir"
 else
   fail "status did not name the live state dir (${LIVE}/state)"
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qE '^dev +enabled$'; then
+if out_re '^dev +enabled$'; then
   pass "status reports dev enabled (live flags visible)"
 else
   fail "status does not report live flags as enabled"
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qF "Nomad AGENT_ROLES gate" \
-   && printf '%s\n' "$out" | grep -qF "agents-dev-qwen: dev"; then
+if out_fixed "Nomad AGENT_ROLES gate" \
+   && out_fixed "agents-dev-qwen: dev"; then
   pass "status reports the AGENT_ROLES gate from the running job"
 else
   fail "status did not report the AGENT_ROLES gate"
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -q 'forgejo:'; then
+if out_re 'forgejo:'; then
   fail "status reported a non-agent job (forgejo) as an agent gate"
 else
   pass "status ignored jobs without AGENT_ROLES / stopped jobs"
@@ -148,15 +154,15 @@ fi
 
 # ── 2/6 disagreement between live and baked state dirs is reported ───────────
 echo "=== 2/6 status reports live-vs-baked disagreement, naming both ==="
-if printf '%s\n' "$out" | grep -q 'state dirs disagree'; then
+if out_re 'state dirs disagree'; then
   pass "status reports the disagreement"
 else
   fail "status did not report the disagreement"
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qF "live (runtime): ${LIVE}/state" \
-   && printf '%s\n' "$out" | grep -qF "baked (image):  ${BAKED}/state"; then
+if out_fixed "live (runtime): ${LIVE}/state" \
+   && out_fixed "baked (image):  ${BAKED}/state"; then
   pass "disagreement names both state dirs"
 else
   fail "disagreement does not name both state dirs"
@@ -177,8 +183,8 @@ else
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qF "State dir: ${LIVE}/state" \
-   && printf '%s\n' "$out" | grep -qE '^  nomad job stop agents-dev-qwen$'; then
+if out_fixed "State dir: ${LIVE}/state" \
+   && out_re '^  nomad job stop agents-dev-qwen$'; then
   pass "enable names the live state dir and a copy-pasteable nomad job stop command"
 else
   fail "enable output missing state dir or nomad job stop note"
@@ -205,14 +211,14 @@ echo "=== 4/6 no live clone falls back to the baked state dir ==="
 rc=0
 out=$(env DISINTO_PROJECT_REPOS="${TMPROOT}/no-such-project-repos" \
   "$DISINTO" role status 2>&1) || rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "State dir: ${BAKED}/state"; then
+if [ "$rc" -eq 0 ] && out_fixed "State dir: ${BAKED}/state"; then
   pass "status falls back to the baked state dir"
 else
   fail "status did not fall back to the baked state dir (rc=$rc)"
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -q 'state dirs disagree'; then
+if out_re 'state dirs disagree'; then
   fail "status reported a disagreement when only one dir is in use"
 else
   pass "no disagreement reported when live == baked"
@@ -222,7 +228,7 @@ fi
 echo "=== 5/6 no nomad CLI → no gate section, still exits 0 ==="
 rc=0
 out=$(env PATH="/usr/local/bin:/usr/bin:/bin" "$DISINTO" role status 2>&1) || rc=$?
-if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -q 'Nomad AGENT_ROLES gate'; then
+if [ "$rc" -eq 0 ] && ! out_re 'Nomad AGENT_ROLES gate'; then
   pass "status degrades gracefully without nomad"
 else
   fail "status with no nomad: rc=$rc"
@@ -240,7 +246,7 @@ else
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qi 'command not found'; then
+if grep -qi -e 'command not found' <<< "$out"; then
   fail "usage path emitted command-substitution noise (unescaped backticks?)"
   printf '%s\n' "$out" >&2
 else
@@ -249,14 +255,14 @@ fi
 
 # The backticked `status` must render literally — catches both a missing
 # `status` binary (word eaten) and one present on PATH (output spliced in).
-if printf '%s\n' "$out" | grep -qF '`status` and by enable/disable as "State dir:").'; then
+if out_fixed '`status` and by enable/disable as "State dir:").'; then
   pass "usage text renders the backticked status literally"
 else
   fail 'usage text did not render the backticked status line verbatim'
   printf '%s\n' "$out" >&2
 fi
 
-if printf '%s\n' "$out" | grep -qF 'Usage: disinto role <subcommand>'; then
+if out_fixed 'Usage: disinto role <subcommand>'; then
   pass "usage path prints the usage header"
 else
   fail "usage path missing the usage header"
