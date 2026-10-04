@@ -81,6 +81,7 @@ job "bot-labbot" {
       env {
         FORGE_REPO         = "disinto-admin/disinto"
         FACTORY_REPO       = "disinto-admin/disinto"
+        AGENT_HARNESS      = "claude"
         ANTHROPIC_BASE_URL = "http://10.0.0.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "qwen"

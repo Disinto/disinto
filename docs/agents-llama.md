@@ -91,9 +91,10 @@ disinto hire-an-agent dev-dsh dev \
 ```
 
 - **`claude`** (default): the agent runs the Claude Code CLI. The service
-  gets the `CLAUDE_*` tuning variables (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`,
-  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...). Omitting `--harness` produces
-  exactly the configuration `hire-an-agent` wrote before this flag existed.
+  gets `AGENT_HARNESS=claude` and the `CLAUDE_*` tuning variables
+  (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...).
+  Omitting `--harness` emits that same block. The variable is set
+  explicitly: with `AGENT_HARNESS` unset, an agent runs dsh (#1683).
 - **`dsh`**: the agent runs the dsh harness (`dsh --profile headless`, with
   `AGENT_HARNESS=dsh`). The service gets dsh's own settings-form variables —
   `DSH_HOME` (the agent's persistent config dir),
@@ -249,7 +250,7 @@ poll_interval = 60
 | `forge_user` | Forgejo bot username |
 | `compact_pct` | Context compaction threshold (lower = more aggressive) |
 | `poll_interval` | Seconds between polling cycles |
-| `harness` | Agent harness: `claude` (default) or `dsh`. Written only when the agent is hired with `--harness dsh` |
+| `harness` | Agent harness: `claude` (default) or `dsh`. The TOML key is written only for `--harness dsh`; a claude hire omits it, and the generated env still sets `AGENT_HARNESS=claude`. An unset `AGENT_HARNESS` runs dsh (#1683). |
 | `context_window` | Context window in tokens for a dsh agent (default `100000`). Written only alongside `harness = "dsh"` |
 
 ## Behaviour

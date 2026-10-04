@@ -19,7 +19,8 @@
 #   3. AGENT_HARNESS unset: the run formula_session_start writes has an
 #      agent starting with dsh.
 #   4. bats tests/lib-agent-harness-dsh.bats passes.
-#   5. this test exits 0 and calls ac_pass.
+#   5. a claude hire emits AGENT_HARNESS=claude (omission is dsh).
+#   6. this test exits 0 and calls ac_pass.
 #
 # Run via: tools/run-acceptance.sh 1683
 # =============================================================================
@@ -128,5 +129,13 @@ bats_out="$(bats "$SUITE" 2>&1)" || bats_rc=$?
 ac_assert_eq "$bats_rc" "0" \
   "bats tests/lib-agent-harness-dsh.bats must pass (rc=$bats_rc): $bats_out"
 ac_log "AC 4 OK: harness suite passed"
+
+# ── 5. A claude hire sets AGENT_HARNESS explicitly (omission is dsh) ─────────
+ac_log "AC 5: claude hire emits AGENT_HARNESS=claude"
+grep -qF 'AGENT_HARNESS      = "claude"' "$REPO_ROOT/lib/hire-agent.sh" \
+  || ac_fail "lib/hire-agent.sh claude jobspec must emit AGENT_HARNESS=claude"
+grep -qF 'AGENT_HARNESS: \"claude\"' "$REPO_ROOT/lib/generators.sh" \
+  || ac_fail "lib/generators.sh claude compose block must emit AGENT_HARNESS=claude"
+ac_log "AC 5 OK: claude hire sets AGENT_HARNESS explicitly"
 
 ac_pass
