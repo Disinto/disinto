@@ -28,7 +28,7 @@ disinto/                 (code repo)
 │                  write-incident.sh, commit-incidents.sh
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
 │                           cleanup-worktrees, disk-pressure,
-│                           git-rebase-fix, wp-agent-restart)
+│                           git-rebase-fix)
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation

@@ -60,9 +60,6 @@ SID_FILE="/tmp/supervisor-session-${PROJECT_NAME}.sid"
 SCRATCH_FILE="/tmp/supervisor-${PROJECT_NAME}-scratch.md"
 WORKTREE="/tmp/${PROJECT_NAME}-supervisor-run"
 
-# WP agent container name (configurable via env var)
-export WP_AGENT_CONTAINER_NAME="${WP_AGENT_CONTAINER_NAME:-disinto-woodpecker-agent}"
-
 # Override LOG_AGENT for consistent agent identification
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh and env.sh log()
 LOG_AGENT="supervisor"

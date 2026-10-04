@@ -18,6 +18,8 @@ export PROJECT_TOML="${1:-$FACTORY_ROOT/projects/disinto.toml}"
 source "$FACTORY_ROOT/lib/env.sh"
 # shellcheck source=../lib/ci-helpers.sh
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
+# shellcheck source=../lib/wp-agent-health.sh
+source "$FACTORY_ROOT/lib/wp-agent-health.sh"
 
 # ── Stale Phase Cleanup Function ──────────────────────────────────────────
 # Auto-remove PHASE:escalate files whose parent issue/PR is confirmed closed.
@@ -150,6 +152,32 @@ __preflight_research_runs() {
   fi
   echo ""
   return 0
+}
+
+# wp_agent_health_verdict AGE FAST_FAILURES — healthy | UNHEALTHY | unknown.
+# UNHEALTHY when AGE is above WP_AGENT_CONTACT_MAX_S (default 300) or
+# FAST_FAILURES is 3 or more. unknown when AGE is empty and fast failures
+# are below 3. Otherwise healthy. (#1698)
+wp_agent_health_verdict() {
+  local age="${1-}"
+  local fast="${2:-0}"
+  local max="${WP_AGENT_CONTACT_MAX_S:-300}"
+  if [ -z "$fast" ]; then
+    fast=0
+  fi
+  if [ -n "$age" ] && [ "$age" -gt "$max" ]; then
+    printf '%s\n' UNHEALTHY
+    return 0
+  fi
+  if [ "$fast" -ge 3 ]; then
+    printf '%s\n' UNHEALTHY
+    return 0
+  fi
+  if [ -z "$age" ]; then
+    printf '%s\n' unknown
+    return 0
+  fi
+  printf '%s\n' healthy
 }
 
 # ── Side-effect: preflight output (only when executed directly) ──────────
@@ -417,35 +445,14 @@ echo ""
 
 echo "## Woodpecker Agent Health"
 
-# Check WP agent container health status
-_wp_container="disinto-woodpecker-agent"
-_wp_health_status="unknown"
-_wp_health_start=""
-
-if command -v docker &>/dev/null; then
-  # Get health status via docker inspect
-  _wp_health_status=$(docker inspect "$_wp_container" --format '{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
-  if [ "$_wp_health_status" = "not_found" ] || [ -z "$_wp_health_status" ]; then
-    # Container may not exist or not have health check configured
-    _wp_health_status=$(docker inspect "$_wp_container" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
-  fi
-
-  # Get container start time for age calculation
-  _wp_start_time=$(docker inspect "$_wp_container" --format '{{.State.StartedAt}}' 2>/dev/null || echo "")
-  if [ -n "$_wp_start_time" ] && [ "$_wp_start_time" != "0001-01-01T00:00:00Z" ]; then
-    _wp_health_start=$(date -d "$_wp_start_time" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "$_wp_start_time")
-  fi
-fi
-
-echo "Container: $_wp_container"
-echo "Status: $_wp_health_status"
-[ -n "$_wp_health_start" ] && echo "Started: $_wp_health_start"
-
-# Check for gRPC errors in agent logs (last 20 minutes)
-_wp_grpc_errors=0
-if [ "$_wp_health_status" != "not_found" ] && [ -n "$_wp_health_status" ]; then
-  _wp_grpc_errors=$(docker logs --since 20m "$_wp_container" 2>&1 | grep -c 'grpc error' || echo "0")
-  echo "gRPC errors (last 20m): $_wp_grpc_errors"
+# The supervisor image has no docker CLI, and under Nomad the agent
+# container is not named disinto-woodpecker-agent. The server's agent
+# list is the health signal (#1698).
+age="$(wp_agent_last_contact_age)" || age=""
+if [ -n "$age" ]; then
+  echo "Last contact: ${age}s ago"
+else
+  echo "Last contact: unknown"
 fi
 
 # Fast-failure heuristic: check for pipelines completing in <60s
@@ -475,29 +482,25 @@ if [ -n "$_wp_recent_failures" ] && [ "$_wp_fast_failures" -gt 0 ]; then
   done
 fi
 
-# Determine overall WP agent health
-_wp_agent_healthy=true
+# UNHEALTHY when the newest contact is stale or fast failures pile up;
+# unknown when the API gave no age and fast failures are below 3 (#1698).
+_wp_verdict="$(wp_agent_health_verdict "$age" "$_wp_fast_failures")"
 _wp_health_reason=""
-
-if [ "$_wp_health_status" = "not_found" ]; then
-  _wp_agent_healthy=false
-  _wp_health_reason="Container not running"
-elif [ "$_wp_health_status" = "unhealthy" ]; then
-  _wp_agent_healthy=false
-  _wp_health_reason="Container health check failed"
-elif [ "$_wp_health_status" != "running" ]; then
-  _wp_agent_healthy=false
-  _wp_health_reason="Container not in running state: $_wp_health_status"
-elif [ "$_wp_grpc_errors" -ge 3 ]; then
-  _wp_agent_healthy=false
-  _wp_health_reason="High gRPC error count (>=3 in 20m)"
-elif [ "$_wp_fast_failures" -ge 3 ]; then
-  _wp_agent_healthy=false
-  _wp_health_reason="High fast-failure count (>=3 in 15m)"
+if [ "$_wp_verdict" = "UNHEALTHY" ]; then
+  if [ -n "$age" ] && [ "$age" -gt "${WP_AGENT_CONTACT_MAX_S:-300}" ]; then
+    _wp_health_reason="Last contact ${age}s ago (max ${WP_AGENT_CONTACT_MAX_S:-300}s)"
+  fi
+  if [ "${_wp_fast_failures:-0}" -ge 3 ]; then
+    if [ -n "$_wp_health_reason" ]; then
+      _wp_health_reason="${_wp_health_reason}; high fast-failure count (>=3 in 15m)"
+    else
+      _wp_health_reason="High fast-failure count (>=3 in 15m)"
+    fi
+  fi
 fi
 
 echo ""
-echo "WP Agent Health: $([ "$_wp_agent_healthy" = true ] && echo "healthy" || echo "UNHEALTHY")"
+echo "WP Agent Health: $_wp_verdict"
 [ -n "$_wp_health_reason" ] && echo "Reason: $_wp_health_reason"
 echo ""
 

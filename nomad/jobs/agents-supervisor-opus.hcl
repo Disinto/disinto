@@ -198,6 +198,12 @@ job "agents-supervisor-opus" {
         # or ANTHROPIC_API_KEY — their presence forces API-key mode and
         # bypasses OAuth.
         CLAUDE_CONFIG_DIR = "/home/agent/.claude"
+
+        # Agent health is the newest last_contact on the Woodpecker server
+        # (#1698). Port 8000 bare serves the SPA; the API lives under /ci.
+        # WOODPECKER_TOKEN comes from Vault below.
+        WOODPECKER_SERVER  = "http://10.10.10.132:8000/ci"
+        WOODPECKER_REPO_ID = "1"
       }
 
       # ── Nomad-discovered FORGE_URL (issue #567) ───────────────────────────
@@ -238,6 +244,12 @@ FORGE_PASS=seed-me
 FORGE_VAULT_TOKEN={{ .Data.data.token }}
 {{- else -}}
 FORGE_VAULT_TOKEN=seed-me
+{{- end }}
+
+{{ with secret "kv/data/disinto/shared/ci" -}}
+WOODPECKER_TOKEN={{ .Data.data.woodpecker_token }}
+{{- else -}}
+WOODPECKER_TOKEN=seed-me
 {{- end }}
 EOT
       }
