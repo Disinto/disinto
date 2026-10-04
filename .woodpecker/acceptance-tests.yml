@@ -72,7 +72,11 @@ clone:
         else
           git clone --depth 2 "$CI_REPO_CLONE_URL" .
         fi
-      - git fetch --depth 2 origin "$CI_COMMIT_REF"
+      # Fetch the commit this pipeline is for, not the branch tip: main moves
+      # on while a pipeline waits in the queue, and detect-changes then judged
+      # a later merge (pipeline 3626 ran for b882490, an edge.hcl change, but
+      # checked out d329e91, a docs merge, and skipped the redeploy).
+      - git fetch --depth 2 origin "$CI_COMMIT_SHA"
       - git checkout FETCH_HEAD
 
 steps:
@@ -175,6 +179,12 @@ steps:
 
         echo "rebuild-and-deploy: nomad job run /jobspecs/edge.hcl"
         nomad_api job run /jobspecs/edge.hcl
+        # The image tag (:local) does not change, so job run alone keeps the
+        # old image whenever the jobspec is unchanged; restart brings the
+        # allocation back on the rebuilt image (same as the agents redeploy
+        # in ci.yml). -on-error=fail: the default asks, and exits 1 with no TTY.
+        echo "rebuild-and-deploy: nomad job restart edge"
+        nomad_api job restart -on-error=fail edge
 
         # Poll until the new alloc is healthy, ≤120s.
         deadline=$(( $(date +%s) + 120 ))
