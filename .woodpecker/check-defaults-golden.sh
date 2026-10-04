@@ -21,15 +21,10 @@ set -euo pipefail
 
 [ "${CI_PIPELINE_EVENT:-}" = "pull_request" ] || { echo "skip: not a pull_request event (got ${CI_PIPELINE_EVENT:-unset})"; exit 0; }
 
-TARGET="${CI_COMMIT_TARGET_BRANCH:-main}"
-git fetch --no-tags origin "$TARGET" 2>/dev/null || true
-BASE="origin/${TARGET}"
-git rev-parse --verify "$BASE" >/dev/null 2>&1 || { echo "skip: ${BASE} unavailable"; exit 0; }
-
-# 3-dot (true PR diff) when history allows; the shallow CI clone has no
-# shared history, so fall back to a 2-dot tree comparison.
-MB="$(git merge-base "$BASE" HEAD 2>/dev/null || true)"
-SPEC="$MB...HEAD"; [ -n "$MB" ] || SPEC="$BASE..HEAD"
+# The PR's diff range (3-dot when history allows, else 2-dot): lib-pr-diff.sh.
+# shellcheck source=lib-pr-diff.sh
+. "$(dirname "$0")/lib-pr-diff.sh"
+SPEC="$(pr_diff_spec)" || { echo "skip: origin/${CI_COMMIT_TARGET_BRANCH:-main} unavailable"; exit 0; }
 
 CHANGED="$(git diff --name-only "$SPEC")"
 

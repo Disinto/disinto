@@ -33,7 +33,7 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **action-vault/** — vault item validation + examples
 - **docs/** — protocol docs
 - **vault/policies/** — vault HCL policies
-- **tests/** — golden + acceptance tests; pinned default-constant goldens (see "How to lint and test"), per-issue acceptance scripts (`tests/acceptance/issue-<n>.sh`) via `tools/run-acceptance.sh`; CI enforces `.woodpecker/check-defaults-golden.sh` (#1261)
+- **tests/** — golden + acceptance tests; pinned default-constant goldens (see "How to lint and test"), per-issue acceptance scripts (`tests/acceptance/issue-<n>.sh`) via `tools/run-acceptance.sh`; CI enforces `.woodpecker/check-defaults-golden.sh` (#1261) and, on PRs, runs the acceptance tests a PR can break (`.woodpecker/acceptance-affected.sh`)
 
 ## Tech stack
 

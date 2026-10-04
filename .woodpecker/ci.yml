@@ -13,6 +13,9 @@
 #      docker/agents/** changes on main (#1173)
 #   5. defaults-golden — PRs that move a known default must update its golden
 #      tests in the same commit (#1261)
+#   6. acceptance-affected — PRs run the acceptance tests they can break: the
+#      ones they add or change and the ones that name a path they change
+#      (.woodpecker/acceptance-affected.sh)
 #
 # Timeouts:
 #   Workflow-level default (10m) applies to all steps unless overridden.
@@ -95,6 +98,22 @@ steps:
     commands:
       - apk add --no-cache bash git grep
       - bash .woodpecker/check-defaults-golden.sh
+
+  # Acceptance tests (tests/acceptance/issue-<N>.sh) run once, after their own
+  # merge, and never again, so a later PR that changes the code a test reads
+  # breaks it unseen: a run of all 178 on main on 2026-10-04 found five such
+  # (#1750-#1753, #1757). On a PR this step runs the ones the PR adds or
+  # changes and the ones that name a path it changes (directly or through a
+  # tests/lib/ helper); a test marked "# acceptance-ci: skip" needs the live
+  # box and runs only after merge. Selection: .woodpecker/acceptance-affected.sh.
+  # Image: disinto/agents:local, the image the tests are written against,
+  # built on the box (rebuild-and-deploy-agents below refreshes it).
+  - name: acceptance-affected
+    image: disinto/agents:local
+    when:
+      event: pull_request
+    commands:
+      - bash .woodpecker/acceptance-affected.sh
 
   - name: duplicate-detection
     image: python:3-alpine

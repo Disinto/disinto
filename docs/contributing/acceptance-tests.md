@@ -125,6 +125,15 @@ automatically. On every push to `main`, the pipeline:
 5. **Summarizes** the per-issue outcomes as a single comment so a human can
    see at a glance whether the merge survived contact with the live box.
 
+**On pull requests**, the `acceptance-affected` step of `.woodpecker/ci.yml`
+runs the acceptance tests the PR can break: those it adds or changes, and
+those whose text names a path it changes, directly or through a
+`tests/lib/` helper (`.woodpecker/acceptance-affected.sh`). Without it a test
+ran only once, after its own merge, and a later change to the code it reads
+broke it unseen. A test that needs the live box (the forge, nomad, the
+daemon's env) carries a header line `# acceptance-ci: skip (<what it
+needs>)`; the PR step skips it and it still runs after merge.
+
 The pipeline reuses the existing `FACTORY_FORGE_PAT` Woodpecker secret for
 forge writes. The deploy step pins to the `disinto-nomad-box` runner via
 `labels` — the same host where the lock file lives.

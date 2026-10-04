@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# acceptance-ci: skip (needs the nomad CLI)
 set -euo pipefail
 source tests/lib/acceptance-helpers.sh
 
