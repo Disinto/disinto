@@ -49,10 +49,10 @@ ac_assert_file "$TARGET" "supervisor/supervisor-run.sh must exist"
 grep -q '^source .*lib/tape\.sh' "$TARGET" \
   || ac_fail "supervisor-run.sh must source lib/tape.sh"
 
-CALL_LINE="$(grep -n '^repair_tape_tick$' "$TARGET" | head -n1 | cut -d: -f1 || true)"
+CALL_LINE="$(grep -n '^[[:space:]]*repair_tape_tick$' "$TARGET" | head -n1 | cut -d: -f1 || true)"
 GATE_LINE="$(grep -n '^LLM_REQUIRED=true' "$TARGET" | head -n1 | cut -d: -f1 || true)"
 [ -n "$CALL_LINE" ] \
-  || ac_fail "supervisor-run.sh must run repair_tape_tick (top-level call)"
+  || ac_fail "supervisor-run.sh must call repair_tape_tick (at top level or under the RECIPE_EVAL_OK gate, #1713)"
 [ -n "$GATE_LINE" ] \
   || ac_fail "supervisor-run.sh must keep the LLM escalation gate"
 [ "$CALL_LINE" -lt "$GATE_LINE" ] \
