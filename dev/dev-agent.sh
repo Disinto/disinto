@@ -710,10 +710,11 @@ fi
 # server/harness death rather than "agent chose not to push") is a TRANSIENT
 # failure: the issue goes back to the claimable backlog (issue_requeue)
 # instead of "blocked", so a fresh run can retry it. On the third consecutive
-# resource-limit exit (attempt >= 2, 0-indexed count of existing
-# fix/issue-N* branches) the repeated limit means a human decision is needed,
-# so the issue is blocked with a distinct reason. Any other no-push reason
-# keeps the historical issue_block "no_push" behavior.
+# resource-limit exit (attempt >= 2, 0-indexed count of this proposal's failed
+# dev outcomes on the tape — `DEV_FAILED_ATTEMPTS`, #1646) the repeated limit
+# means a human decision is needed, so the issue is blocked with a distinct
+# reason. Any other no-push reason keeps the historical issue_block "no_push"
+# behavior.
 #
 # #1647: before issue_block / issue_requeue, set _PR_WALK_EXIT_REASON to the
 # reason this path acts on (re-queue: the requeue_reason — timeout,
