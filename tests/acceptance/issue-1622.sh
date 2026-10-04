@@ -53,18 +53,16 @@ NEXT_DOC=$(grep -n 'tools/claim-proposals.sh` (#1641)' "$REPO_ROOT/gardener/AGEN
   || ac_fail "return sentence (line $RET_DOC) must precede claim-proposals (line $NEXT_DOC)"
 ac_log "docs OK: design-conflict return follows the #1676 sentence"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-OPS_REPO_ROOT="$TMP_DIR/ops"
-export OPS_REPO_ROOT
-mkdir -p "$OPS_REPO_ROOT/probes"
-printf '%s\n' 'echo 5' >"$OPS_REPO_ROOT/probes/five.sh"
-
-STUB_BIN="$TMP_DIR/bin"
-FIXTURES="$TMP_DIR/fixtures"
-CALLS="$TMP_DIR/calls"
-mkdir -p "$STUB_BIN" "$FIXTURES"
+# Names differ from the #1676 fixture on purpose: a 5-line copy of that
+# setup is a duplicate-detection failure.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+export OPS_REPO_ROOT="${WORK}/ops"
+STUB_BIN="${WORK}/bin"
+FIXTURES="${WORK}/fixtures"
+CALLS="${WORK}/calls"
+mkdir -p "${OPS_REPO_ROOT}/probes" "$STUB_BIN" "$FIXTURES"
+printf '%s\n' 'echo 5' >"${OPS_REPO_ROOT}/probes/five.sh"
 : >"$CALLS"
 
 # Milestone 9 is due (closed, soak 0, a probe that would met) so a fall-through
@@ -133,7 +131,7 @@ append_outcome() {
   fi
 }
 
-TAPEDIR="$TMP_DIR/tape"
+TAPEDIR="${WORK}/tape"
 mkdir -p "$TAPEDIR/sprints"
 : >"$TAPEDIR/tape.jsonl"
 printf '%s\n' "s-9" >"$TAPEDIR/sprints/9"
@@ -159,12 +157,11 @@ COMMENT='Sprint returned: #10 reported a design conflict. Re-add backlog when th
 run() {
   RC=0
   env -u FORGE_API -u FORGE_TOKEN \
-    TAPE_DIR="$TAPEDIR" \
-    PATH="$STUB_BIN:${PATH}" \
     FORGE_CALLS="$CALLS" \
     FORGE_FIXTURES="$FIXTURES" \
-    bash "$REPO_ROOT/tools/sprint-outcomes.sh" \
-    >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
+    PATH="${STUB_BIN}:${PATH}" \
+    TAPE_DIR="$TAPEDIR" \
+    bash "$REPO_ROOT/tools/sprint-outcomes.sh" >"${WORK}/out" 2>"${WORK}/err" || RC=$?
 }
 
 outcome_of() {
@@ -184,7 +181,7 @@ count_outcomes() {
 # ── AC1: design-conflict returns the sprint; backlog sibling is pulled ──────
 ac_log "AC1: design-conflict child + backlog sibling -> {returned: 1}, label off, one comment"
 run
-ac_assert_eq "$RC" "0" "AC1: tool must exit 0 (rc=$RC): $(cat "$TMP_DIR/out" 2>/dev/null)"
+ac_assert_eq "$RC" "0" "AC1: tool must exit 0 (rc=$RC): $(cat "${WORK}/out" 2>/dev/null)"
 out="$(outcome_of s-9)"
 [ -n "$out" ] || ac_fail "AC1: no outcome for s-9"
 ac_assert_jq '.bits == {returned: 1}' "$out" \
