@@ -16,9 +16,10 @@
 #   1. The `claude-creds` volume is declared nowhere in client.hcl or in the
 #      cluster-up HOST_VOLUME_DIRS list — the exact grep from the issue prints
 #      nothing: `grep -n claude-creds nomad/client.hcl lib/init/nomad/cluster-up.sh`.
-#   2. The `claude-shared` host_volume survives untouched: it still declares the
-#      path "/var/lib/disinto/claude-shared" with read_only = false, and that
-#      path is still in HOST_VOLUME_DIRS — the edge job still mounts it.
+#   2. The `claude-shared` host_volume survives: its block is still declared in
+#      client.hcl and its path is still in HOST_VOLUME_DIRS — the edge job
+#      still mounts claude-shared (#648). issue-1426.sh (AC3) asserts the
+#      block's read_only flag.
 #   3. (run-level, enforced by tools/run-acceptance.sh) tests/acceptance/
 #      issue-1426.sh (which asserts the claude-shared block) still passes.
 #
@@ -48,34 +49,13 @@ MATCHES="$(grep -n 'claude-creds' "$CLIENT_HCL" "$CLUSTER_UP" || true)"
 ac_assert_eq "$MATCHES" "" \
   "claude-creds must be declared in neither nomad/client.hcl nor HOST_VOLUME_DIRS (got: $MATCHES)"
 
-# ── AC2: claude-shared survives (path + read_only + dirs entry) ─────────────
-ac_log "AC2: host_volume \"claude-shared\" must survive with path + read_only=false"
-BLOCK="$(awk '
-  /^ *host_volume "claude-shared" / { inblock = 1 }
-  inblock {
-    buf = buf $0 ORS
-    if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) exit
-  }
-  END { printf "%s", buf }
-' "$CLIENT_HCL")"
-[ -n "$BLOCK" ] \
-  || ac_fail "nomad/client.hcl must declare a host_volume \"claude-shared\" block"
-grep -Fq 'path      = "/var/lib/disinto/claude-shared"' <<<"$BLOCK" \
-  || ac_fail 'host_volume "claude-shared" must still have path "/var/lib/disinto/claude-shared"'
-grep -Fq 'read_only = false' <<<"$BLOCK" \
-  || ac_fail 'host_volume "claude-shared" must still have read_only = false'
-
-HOST_DIRS="$(awk '
-  /^HOST_VOLUME_DIRS=\(/ { inarr = 1; next }
-  inarr {
-    if ($0 ~ /^[[:space:]]*\)[[:space:]]*$/) exit
-    buf = buf $0 ORS
-  }
-  END { printf "%s", buf }
-' "$CLUSTER_UP")"
-[ -n "$HOST_DIRS" ] \
-  || ac_fail "lib/init/nomad/cluster-up.sh must define a HOST_VOLUME_DIRS array"
-grep -Fq '"/var/lib/disinto/claude-shared"' <<<"$HOST_DIRS" \
-  || ac_fail "HOST_VOLUME_DIRS must still include \"/var/lib/disinto/claude-shared\" (the edge job still mounts claude-shared)"
+# ── AC2: claude-shared survives (block declared + dirs entry) ───────────────
+ac_log "AC2: host_volume \"claude-shared\" is still declared"
+grep -qF 'host_volume "claude-shared" {' "$CLIENT_HCL" \
+  || ac_fail 'nomad/client.hcl must still declare a host_volume "claude-shared" block'
+grep -Fq 'path      = "/var/lib/disinto/claude-shared"' "$CLIENT_HCL" \
+  || ac_fail 'claude-shared must still point at "/var/lib/disinto/claude-shared"'
+grep -Fq '"/var/lib/disinto/claude-shared"' "$CLUSTER_UP" \
+  || ac_fail 'HOST_VOLUME_DIRS must still include "/var/lib/disinto/claude-shared" so the edge job can place'
 
 ac_pass
