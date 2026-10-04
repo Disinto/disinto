@@ -106,13 +106,14 @@ steps:
         fi
 
   # ── 2. Rebuild the edge image and re-launch the nomad job ─────────────────
-  # The step image (docker:24-cli) ships the docker CLI but NO nomad binary,
+  # The step image (docker:27-cli) ships the docker CLI but NO nomad binary,
   # so every `nomad` call runs in a helper container on the host network
   # namespace, spawned through the mounted docker socket (same idiom as
   # ci.yml's rebuild-and-deploy-agents, #1173). The box's Nomad API is
   # loopback-only (bind_addr 127.0.0.1 in nomad/server.hcl), hence
-  # --network host. The helper mounts the jobspecs from the host checkout
-  # (/opt/disinto), resolved by the host's docker daemon.
+  # --network host. The helper mounts the edge jobspec staged from this
+  # commit under /var/lib/disinto/ci-locks, resolved by the host's docker
+  # daemon (same staging as ci.yml's agents redeploy, #1735).
   #
   # The flock guarantees that two simultaneous merges to main do not stomp
   # on each other's deploy: the second pipeline blocks here until the first
@@ -127,7 +128,9 @@ steps:
   # This is intentionally simple — the script is short enough to read; a
   # more sophisticated check belongs in the nomad-cli wrapper (see #786 plan).
   - name: rebuild-and-deploy
-    image: docker:24-cli
+    # docker:27-cli or newer: the host daemon (Docker 29) refuses API < 1.44,
+    # and docker:24-cli speaks 1.43.
+    image: docker:27-cli
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
@@ -141,13 +144,16 @@ steps:
         apk add --no-cache util-linux jq curl bash
         NOMAD_IMAGE=hashicorp/nomad:1.9.5
         # No nomad binary in this image — run the CLI in a helper container
-        # on the host network (Nomad listens on loopback only). The jobspec
-        # is mounted from the host checkout into the helper; paths passed to
-        # nomad_api are relative to /jobspecs, not the CI workspace.
+        # on the host network (Nomad listens on loopback only). The helper
+        # mounts a host directory the edge jobspec is staged into from this
+        # commit (below, under the lock) — not a host checkout, which drifts.
+        # The directory sits under the ci-locks volume, so the daemon sees
+        # the same path. Paths passed to nomad_api are relative to /jobspecs.
+        JOBSPECS=/var/lib/disinto/ci-locks/jobspecs-edge
         nomad_api() {
           docker run --rm --network host \
             -e NOMAD_ADDR=http://127.0.0.1:4646 \
-            -v /opt/disinto/nomad/jobs:/jobspecs:ro \
+            -v "$JOBSPECS":/jobspecs:ro \
             "$NOMAD_IMAGE" "$@"
         }
 
@@ -157,6 +163,12 @@ steps:
         mkdir -p /var/lib/disinto/ci-locks
         exec 9>/var/lib/disinto/ci-locks/acceptance-deploy.lock
         flock -w 600 9 || { echo "could not acquire deploy lock"; exit 1; }
+
+        # Stage the edge jobspec of this commit for the helper. Under the
+        # lock, so a concurrent pipeline cannot swap it mid-deploy.
+        rm -rf "$JOBSPECS"
+        mkdir -p "$JOBSPECS"
+        cp nomad/jobs/edge.hcl "$JOBSPECS"/
 
         echo "rebuild-and-deploy: docker build disinto/edge:local"
         docker build -t disinto/edge:local -f docker/edge/Dockerfile .

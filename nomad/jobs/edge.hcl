@@ -550,10 +550,11 @@ FACTORY_ROOT=/opt/disinto
 EOT
       }
 
-      # Minimal resources — pure bash loop, negligible footprint.
+      # RSS is tiny, but cgroup v2 charges kernel slab to this task.
+      # 96 MiB filled up and every collector curl was memcg-OOM-killed.
       resources {
         cpu    = 50
-        memory = 96
+        memory = 256
       }
     }
 
