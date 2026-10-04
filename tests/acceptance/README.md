@@ -30,6 +30,11 @@ Every acceptance test:
 6. **Sources helpers** from `tests/lib/acceptance-helpers.sh` for curl
    wrappers, jq assertions, and logging — instead of hand-rolling the same
    plumbing per file.
+7. **Runs offline, or says it cannot.** CI runs a test on every PR that
+   changes a path it names (`.woodpecker/acceptance-affected.sh`), in
+   `disinto/agents:local` with no forge, nomad or daemon env. A test that
+   needs those carries a header line `# acceptance-ci: skip (<what it
+   needs>)` and runs only after merge.
 
 ## Running
 

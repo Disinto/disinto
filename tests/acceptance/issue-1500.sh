@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# acceptance-ci: skip (needs python3 yaml, which disinto/agents:local lacks)
 # =============================================================================
 # tests/acceptance/issue-1500.sh
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# acceptance-ci: skip (needs USER and the agent env that lib/env.sh requires)
 # =============================================================================
 # tests/acceptance/issue-852.sh — verify the inline-AC migration is complete
 #

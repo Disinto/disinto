@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# acceptance-ci: skip (needs FORGE_URL, the live forge)
 # =============================================================================
 # tests/acceptance/issue-1482.sh
 #

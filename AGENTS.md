@@ -33,7 +33,7 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **action-vault/** — vault item validation + examples
 - **docs/** — protocol docs
 - **vault/policies/** — vault HCL policies
-- **tests/** — golden + acceptance tests; pinned default-constant goldens (see "How to lint and test"), per-issue acceptance scripts (`tests/acceptance/issue-<n>.sh`) via `tools/run-acceptance.sh`; CI enforces `.woodpecker/check-defaults-golden.sh` (#1261)
+- **tests/** — golden + acceptance tests; pinned default-constant goldens (see "How to lint and test"), per-issue acceptance scripts (`tests/acceptance/issue-<n>.sh`) via `tools/run-acceptance.sh`; CI enforces `.woodpecker/check-defaults-golden.sh` (#1261) and, on PRs, runs the acceptance tests a PR can break (`.woodpecker/acceptance-affected.sh`)
 
 ## Tech stack
 
@@ -45,7 +45,7 @@ bash (all agents) · agent harnesses (dsh/Claude) · Woodpecker CI · Forgejo.
 - Source the shared environment: `source "$(dirname "$0")/../lib/env.sh"`
 - Log to `$LOGFILE` using the `log()` function
 - Never hardcode secrets — follow AD-005; reference as env vars (e.g. `$BASE_RPC_URL`), never in issue bodies, PR descriptions, or comments
-- ShellCheck must pass (CI runs it on all `.sh` files)
+- ShellCheck must pass (CI runs it on the `.sh` files a PR changes, and on all of them on a push to main: `.woodpecker/shellcheck-scope.sh`)
 - Avoid duplicate code — shared helpers go in `lib/`
 
 ## How to lint and test
