@@ -459,7 +459,7 @@ formula_tape_ulid() {
 #     exist only under a proposal; a missing proposal row is an orphan run,
 #     not a new proposal)
 #   - organ = $1 (default "organ"), agent = <harness>/<model>
-#     (AGENT_HARNESS, default claude, + CLAUDE_MODEL when set)
+#     (AGENT_HARNESS, default dsh, + CLAUDE_MODEL when set)
 # With $TAPE_PROPOSAL_ID unset the session is a metric, not a run: nothing
 # is appended to the tape and _FORMULA_TAPE_ACTIVE is left at 0, so
 # formula_session_end is a no-op — the cost is already recorded in
@@ -480,7 +480,7 @@ formula_session_start() {
   [ -n "$run_id" ] || run_id="run-$$-$(date -u +%s)"
   proposal="$TAPE_PROPOSAL_ID"
   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  agent="${AGENT_HARNESS:-claude}"
+  agent="${AGENT_HARNESS:-dsh}"
   [ -n "${CLAUDE_MODEL:-}" ] && agent="${agent}/${CLAUDE_MODEL}"
 
   _FORMULA_TAPE_ACTIVE=1

@@ -109,9 +109,7 @@ agents, which size their window from the model name (see
 
 The agents image ships dsh as a pinned npm global and seeds the `headless`
 profile into `DSH_HOME` on first start (also when `AGENT_HARNESS` is unset: dsh is the default, #1682), so a hired dsh agent boots without
-bootstrapping anything at session time. Claude Code stays installed as well —
-existing agents and the supervisor keep running under it; `--harness` only
-affects the agent being hired.
+bootstrapping anything at session time. Claude Code stays installed as well, for agents that set `AGENT_HARNESS=claude`; with the variable unset an agent runs dsh (#1683).
 
 ### Hiring on a Nomad box
 

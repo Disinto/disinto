@@ -2,7 +2,7 @@
 # agent-sdk.sh — Shared SDK for synchronous Claude agent invocations
 #
 # Provides agent_run(): harness dispatcher (AGENT_HARNESS: claude | dsh,
-# default claude) over one-shot `claude -p` / `dsh --profile headless`
+# default dsh) over one-shot `claude -p` / `dsh --profile headless`
 # invocations with session persistence (the dsh harness is
 # _agent_run_dsh in lib/agent-harness-dsh.sh, #1106).
 # Source this from any agent script after defining:
@@ -268,8 +268,9 @@ claude_run_with_watchdog() {
 
 # agent_run — harness dispatcher (#1104).
 #
-# Dispatches on AGENT_HARNESS (default: claude). An unknown value logs and
-# returns 2 rather than running anything.
+# Dispatches on AGENT_HARNESS (default: dsh, #1683). An unknown value logs
+# and returns 2 rather than running anything. `claude` runs only when
+# AGENT_HARNESS is set to it explicitly.
 #
 # Contract that every harness implementation must satisfy (this is already
 # what the Claude path does):
@@ -285,7 +286,7 @@ claude_run_with_watchdog() {
 # (`agent_run ... || RUN_RC=$?`) and inspect the rc (124 = wall-clock timeout).
 # `|| true` is not acceptable: it discards the signal.
 agent_run() {
-  case "${AGENT_HARNESS:-claude}" in
+  case "${AGENT_HARNESS:-dsh}" in
     claude) _agent_run_claude "$@" ;;
     dsh) _agent_run_dsh "$@" ;;
     *) log "agent_run: unknown AGENT_HARNESS='${AGENT_HARNESS}'" ; return 2 ;;
