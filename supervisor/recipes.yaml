@@ -53,8 +53,7 @@ recipes:
       rule: field_eq
       field: "WP Agent Health"
       value: "UNHEALTHY"
-    action: direct
-    action_script: supervisor/actions/wp-agent-restart.sh
+    action: incident
 
   - name: ci-stuck
     severity: P2

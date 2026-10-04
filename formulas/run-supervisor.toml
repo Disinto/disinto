@@ -78,9 +78,10 @@ Categorize every finding from the metrics into priority levels.
   (Note: PHASE:escalate files for closed issues are auto-cleaned by preflight;
   this check covers sessions where the issue is still open)
 - **Woodpecker agent unhealthy** — see "Woodpecker Agent Health" section in preflight:
-  - Container not running or in unhealthy state
-  - gRPC errors >= 3 in last 20 minutes
+  - Newest agent contact older than WP_AGENT_CONTACT_MAX_S (default 300s)
   - Fast-failure pipelines (duration < 60s) >= 3 in last 15 minutes
+  - An unhealthy verdict files an incident (#1698); the supervisor cannot
+    restart a Nomad allocation
 - In-flight research run older than 70 min (Research Runs section — heartbeat
   stale, #1322)
 
@@ -111,10 +112,8 @@ For each finding from the health assessment, decide and execute an action.
 ### Auto-fixable (executed procedurally by recipe action scripts)
 
 **P2 Woodpecker agent unhealthy:**
-The supervisor-run.sh script automatically handles WP agent recovery:
-- Detects unhealthy state via preflight.sh health checks
-- Restarts container via `docker restart`
-- Avoids duplicate restarts via 5-minute cooldown in history file
+Files an incident. The supervisor cannot restart a Nomad allocation, so
+there is no direct action script (#1698).
 
 **P0 Memory crisis:**
 Files an incident. `free -m` in the agents container reports the host, not the
@@ -275,10 +274,10 @@ Format:
   - <what was fixed>
   (or "No actions needed")
 
-  ### WP Agent Recovery (if applicable)
-  - WP agent restart: <time of restart or "none">
-  - Issues recovered: <count>
-  - Reason: <health check reason or "healthy">
+  ### WP Agent (if applicable)
+  - Health: <healthy|UNHEALTHY|unknown>
+  - Last contact: <seconds or unknown>
+  - Incident filed: <yes/no>
 
   ### Vault items filed
   - vault/pending/<id>.md — <reason>

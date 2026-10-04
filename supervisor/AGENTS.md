@@ -32,11 +32,8 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   is confirmed closed (24h grace period after closure to avoid races). Reports
   **stale crashed worktrees** (worktrees preserved after crash) — supervisor
   housekeeping removes them after 24h. Collects **Woodpecker agent health**
-  (added #933): container `disinto-woodpecker-agent` health/running status,
-  gRPC error count in last 20 min, fast-failure pipeline count (<60s, last 15 min),
-  and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
-  automatic container restart in
-  `supervisor-run.sh` before the Claude session starts. Reports
+  (added #933): the newest agent contact from the Woodpecker API (`wp_agent_last_contact_age`, healthy within `WP_AGENT_CONTACT_MAX_S`, default 300 s), fast-failure pipeline count (<60s, last 15 min),
+  and overall health verdict (healthy/unhealthy). An unhealthy verdict files an incident: the supervisor cannot restart a Nomad allocation (#1698). Reports
   **research runs** (added #1322): in-flight count + per-run ages (heartbeat)
   from the run ledger at `${OPS_REPO_ROOT}/runs`, artifacts disk %, and oldest
   open `judgment`-labeled issue age — the "Research Runs" section is omitted
@@ -45,8 +42,9 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   health-assessment, decide-actions, report, incidents, journal) with `needs`
   dependencies. Claude evaluates all metrics and takes actions in a single
   interactive session. Health-assessment now includes P2 **Woodpecker agent
-  unhealthy** classification (container not running, ≥3 gRPC errors/20m, or
-  ≥3 fast-failure pipelines/15m) and research-run findings from the preflight
+  unhealthy** classification (newest agent contact older than
+  `WP_AGENT_CONTACT_MAX_S`, default 300 s, or ≥3 fast-failure pipelines/15m)
+  and research-run findings from the preflight
   "Research Runs" section (added #1322): P1 artifacts disk > 80%, P2 in-flight
   run older than 70 min, P3 oldest open judgment issue older than 4 h;
   decide-actions documents the pre-session auto-recovery path
@@ -81,8 +79,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 - Logs a WARNING message at startup indicating degraded mode
 
 **Lifecycle**: supervisor-run.sh (started by the polling loop on the SUPERVISOR_INTERVAL cadence, #1388; `check_active supervisor`)
-→ lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
-(if unhealthy: restart container) → **recipe evaluation**
+→ lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
 and none require LLM, skip to journal + exit (fast path); otherwise, **LLM escalation
 gate** (#1681): with `SUPERVISOR_LLM_ESCALATION=off` (default), name the
