@@ -259,6 +259,9 @@ ac_run_tape_emit() {
     export FORGE_API="https://forge.example/api/v1"
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/tape.sh"
+    # #1737: emit_tape_outcome skips a second merged outcome via this guard.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/tape-outcome-guard.sh"
     eval "$fn_src"
     if [ "$fail" = "1" ]; then
       export AC_STUB_FAIL=1

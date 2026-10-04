@@ -73,6 +73,8 @@ export TAPE_DIR
 # shellcheck disable=SC1091
 source "$REPO_ROOT/lib/tape.sh"
 # shellcheck disable=SC1091
+source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+# shellcheck disable=SC1091
 source "$REPO_ROOT/lib/signature.sh"
 
 # Silence the extracted outcome writer. The harness does not define log().
@@ -82,6 +84,9 @@ log() { :; }
 ac_no_push_stub
 ac_load_decision_fn "$TARGET" "no_push_outcome"
 ac_load_decision_fn "$TARGET" "close_dev_tape_outcome"
+# #1705 guard calls dev_walk_reason_terminal. A missing function is non-zero,
+# and `!` of that skips the write this test pins for a failure walk.
+ac_load_decision_fn "$TARGET" "dev_walk_reason_terminal"
 
 DIAG="$TMP_DIR/timeout.json"
 printf '%s\n' \

@@ -163,6 +163,8 @@ run_close() {
     # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/tape.sh"
     # shellcheck disable=SC1091  # path only known at runtime
+    source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+    # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/signature.sh"
     _DEV_REFUSAL_STATUS=""
     _PR_WALK_EXIT_REASON=""

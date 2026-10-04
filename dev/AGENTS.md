@@ -112,7 +112,7 @@ additionally carry a `signature` field: the reason is resolved via
 `signature_for "$reason" dev` (`lib/signature.sh`, #1607) and passed as the 6th arg
 to `tape_outcome`; an unknown or unresolved reason (empty resolution) leaves the
 record in its pre-#1607 shape (no `signature` field). Merge paths pass no reason
-(4 args, signature-free). No id file (issue predates the proposal step) → skip
+(4 args, signature-free). A merged outcome is written once per proposal: `emit_tape_outcome` and `close_dev_tape_outcome` skip it when the tape already holds one (`tape_has_merged_outcome`, #1737). No id file (issue predates the proposal step) → skip
 silently; any tape failure logs a WARNING; the merge/close/block proceeds unchanged.
 - `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
 called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open
