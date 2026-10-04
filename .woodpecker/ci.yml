@@ -189,13 +189,15 @@ steps:
     timeout: 30m
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Also the host directory the jobspecs are staged in (see JOBSPECS
+      # below). The CI workspace lives inside this step container, so
+      # `-v "$PWD/..."` would resolve on the docker HOST (where the path does
+      # not exist) and docker would create an empty dir — the sibling helper
+      # container then saw an empty /jobspecs (pipeline 2237). The jobspecs
+      # used to come from the host checkout /opt/disinto, which nothing keeps
+      # current: on 2026-10-04 it was 381 commits behind main, had no
+      # agents-*-grok.hcl, and every agents job file in it differed from main.
       - /var/lib/disinto/ci-locks:/var/lib/disinto/ci-locks
-      # Host checkout for the jobspecs. The CI workspace lives inside this
-      # step container, so `-v "$PWD/..."` would resolve on the docker HOST
-      # (where the path does not exist) and docker would create an empty
-      # dir — the sibling helper container then saw an empty /jobspecs
-      # (pipeline 2237). Same host-mount pattern as acceptance-tests.yml.
-      - /opt/disinto/nomad/jobs:/opt/disinto/nomad/jobs:ro
     commands:
       # util-linux: non-busybox flock, same as the acceptance deploy step.
       - apk add --no-cache docker-cli jq util-linux
@@ -205,12 +207,15 @@ steps:
       - |
         set -e
         NOMAD_IMAGE=hashicorp/nomad:1.9.5
+        # The jobspecs of the commit under test, staged on a host path the
+        # helper container can mount (filled below, under the deploy lock).
+        JOBSPECS=/var/lib/disinto/ci-locks/jobspecs-agents
         # Nomad on the box listens on loopback only; run the CLI in a
         # host-network container so localhost:4646 is the box's Nomad.
         nomad_api() {
           docker run --rm --network host \
             -e NOMAD_ADDR=http://127.0.0.1:4646 \
-            -v /opt/disinto/nomad/jobs:/jobspecs:ro \
+            -v "$JOBSPECS":/jobspecs:ro \
             "$NOMAD_IMAGE" "$@"
         }
 
@@ -218,6 +223,12 @@ steps:
         mkdir -p /var/lib/disinto/ci-locks
         exec 9>/var/lib/disinto/ci-locks/acceptance-deploy.lock
         flock -w 600 9 || { echo "could not acquire deploy lock" >&2; exit 1; }
+
+        # Stage this commit's agent jobspecs for the helper (lock held, so a
+        # concurrent pipeline cannot swap them mid-deploy).
+        rm -rf "$JOBSPECS"
+        mkdir -p "$JOBSPECS"
+        cp nomad/jobs/agents*.hcl "$JOBSPECS"/
 
         # Rebuild the agents image the jobspecs reference (tag unchanged).
         docker build -t disinto/agents:local -f docker/agents/Dockerfile .
@@ -247,7 +258,7 @@ steps:
             continue
           fi
           # Paths are relative to the /jobspecs mount inside the helper
-          # container (see nomad_api), not the workspace.
+          # container (see nomad_api): this commit's files, staged above.
           nomad_api job validate "/jobspecs/$job.hcl"
           nomad_api job run "/jobspecs/$job.hcl"
           # Tag unchanged, so job run alone would keep the old image;
