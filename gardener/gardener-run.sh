@@ -440,6 +440,16 @@ formula_session_end "$GARDENER_RUN_RC"
 # Write the calibration table to the ops repo catalog (#1454)
 refresh_ops_calibration
 
+# Write sprint outcomes from their effect probes (#1676), right after the
+# calibration refresh. Sprints whose soak is over are scored — `effect` via
+# `lib/probe.sh`, or, with effect `none`, by whether a child failed. Never
+# fatal: a non-zero exit only logs a warning.
+sprint_outcomes_rc=0
+"$FACTORY_ROOT/tools/sprint-outcomes.sh" || sprint_outcomes_rc=$?
+if [ "$sprint_outcomes_rc" -ne 0 ]; then
+  log "WARNING: sprint-outcomes.sh failed (rc=${sprint_outcomes_rc})"
+fi
+
 # Claim-loop proposals (#1641), before any sprint tool. Each new or revised
 # claim file becomes one claim-loop proposal. Never fatal: a non-zero exit
 # only logs a warning.

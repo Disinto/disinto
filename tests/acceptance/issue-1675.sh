@@ -26,6 +26,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../../tests/lib/forge-stub.sh
+source "$REPO_ROOT/tests/lib/forge-stub.sh"
 
 ac_require_cmd bash jq date sort mktemp cmp
 ac_assert_file "$REPO_ROOT/tools/sprint-due.sh" "tools/sprint-due.sh is missing"
@@ -42,42 +44,8 @@ CALLS="$TMP_DIR/calls"
 mkdir -p "$TAPE_DIR/sprints" "$FIXTURES" "$FAIL_DIR" "$STUB_BIN"
 : >"$CALLS"
 
-cat >"$STUB_BIN/forge_api" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >> "${FORGE_CALLS:?}"
-method="${1:-}"
-path="${2:-}"
-if [ "$method" != "GET" ]; then
-  echo "stub: bad method ${method}" >&2
-  exit 1
-fi
-n="${path#/milestones/}"
-if [ "$path" != "/milestones/${n}" ] || ! [[ "$n" =~ ^[0-9]+$ ]]; then
-  echo "stub: bad path ${path}" >&2
-  exit 1
-fi
-if [ -f "${FORGE_FAIL_DIR:?}/${n}" ]; then
-  echo "stub: forced failure for ${n}" >&2
-  exit 1
-fi
-cat "${FORGE_FIXTURES:?}/${n}.json"
-EOF
-chmod +x "$STUB_BIN/forge_api"
-
-# write_milestone N STATE OPEN CLOSED DESC — fixture the stub returns.
-write_milestone() {
-  local n="$1" state="$2" open_n="$3" closed_n="$4" desc="$5"
-  jq -n \
-    --argjson id "$n" \
-    --arg state "$state" \
-    --argjson open_issues "$open_n" \
-    --argjson closed_issues "$closed_n" \
-    --arg description "$desc" \
-    '{id: $id, state: $state, open_issues: $open_issues,
-      closed_issues: $closed_issues, description: $description}' \
-    >"$FIXTURES/${n}.json"
-}
+# forge_api stub + write_milestone come from tests/lib/forge-stub.sh.
+stub_milestone_forge_api
 
 reset_sprints() {
   rm -rf "$TAPE_DIR/sprints"
