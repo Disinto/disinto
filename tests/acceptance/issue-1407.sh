@@ -6,7 +6,7 @@
 # the tape (lib/tape.sh):
 #
 #   fire (launch_runner):
-#     tape_proposal <action-id> production "<TOML formula>" "" "" \
+#     tape_proposal <action-id> vault "<TOML formula>" "" "" \
 #       '{"target":"<host>"}' "" "approved" "<action-id>"
 #
 #   result observed (commit_result_via_git, right after the result JSON is
@@ -21,7 +21,7 @@
 # dispatcher's emit path is exercised in-process against a fixture vault
 # action dir, per issue-1398):
 #   1. Firing an approved fixture action and observing its result.json
-#      appends exactly one proposal line (loop=production, class=formula,
+#      appends exactly one proposal line (loop=vault, class=formula,
 #      context={"target":<host>}, decision=approved, id=ref=<action id>, no
 #      parent/caused_by/forecast) and one outcome line (bits
 #      {"returned":1,"ok":1}, numbers.duration_s a number >= 0,
@@ -143,7 +143,7 @@ ac_assert_eq "$(wc -l < "$TAPE1/tape.jsonl")" "2" \
 LINE1="$(head -n 1 "$TAPE1/tape.jsonl")"
 ac_assert_jq "$(cat <<JQ
 .type == "proposal"
-  and .loop == "production"
+  and .loop == "vault"
   and .class == "clawhub-publish"
   and .context == {"target": "nomad-box-1"}
   and .decision == "approved"
@@ -154,7 +154,7 @@ ac_assert_jq "$(cat <<JQ
   and (.forecast | not)
 JQ
 )" "$LINE1" \
-  "line 1 must be the approved production proposal keyed by the action id"
+  "line 1 must be the approved vault proposal keyed by the action id"
 
 LINE2="$(sed -n '2p' "$TAPE1/tape.jsonl")"
 ac_assert_jq "$(cat <<JQ
