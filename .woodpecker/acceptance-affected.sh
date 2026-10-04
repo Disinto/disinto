@@ -67,7 +67,7 @@ run=0; failed=0; skipped=0
 while IFS= read -r t; do
   [ -f "$t" ] || continue
   if grep -q '^# acceptance-ci: skip' "$t"; then
-    echo "SKIP $t ($(grep -m1 '^# acceptance-ci: skip' "$t" | sed 's/^# acceptance-ci: skip *//'))"
+    echo "SKIP $t $(grep -m1 '^# acceptance-ci: skip' "$t" | sed 's/^# acceptance-ci: skip *//')"
     skipped=$((skipped + 1))
     continue
   fi
