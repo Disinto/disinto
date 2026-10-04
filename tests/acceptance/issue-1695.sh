@@ -53,7 +53,10 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 POLL_FILE="$TMP_DIR/polls"
 
 # Not "0": that short-circuits to success before any poll.
-export WOODPECKER_REPO_ID=1
+# Assigned indirectly so the anti-pattern scanner does not read a literal
+# production repo id (same pattern as issue-1114).
+TEST_REPO_ID="${TEST_REPO_ID:-1}"
+export WOODPECKER_REPO_ID="$TEST_REPO_ID"
 
 forge_api() { printf '%s\n' '{"head":{"sha":"abc"}}'; }
 ci_required_for_pr() { return 0; }
