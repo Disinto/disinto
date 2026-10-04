@@ -5,6 +5,7 @@
 # agent — bash-only by default (#1681), with Claude Opus escalation via OAuth
 # (claude CLI) when `SUPERVISOR_LLM_ESCALATION = "on"` — with read-write
 # docker.sock access for container management (docker restart, etc.).
+# Escalation needs Claude credentials, which this job does not mount.
 #
 # This job replaces the supervisor loop that previously ran inside the edge
 # caddy task (docker/edge/entrypoint.sh). The supervisor now runs as a
@@ -14,11 +15,9 @@
 #     API-key mode
 #   - Read-write docker.sock for container management
 #   - Ops-repo volume for incident journal writes
-#   - Claude OAuth credentials via claude-creds host_volume
 #
 # Host_volume contract:
 #   - agent-data-opus-supervisor: per-agent runtime data (logs, state)
-#   - claude-creds: OAuth credentials for Anthropic CLI
 #   Both declared in nomad/client.hcl.
 #
 # docker.sock mount:
@@ -75,15 +74,6 @@ job "agents-supervisor-opus" {
       type      = "host"
       source    = "ops-repo"
       read_only = false
-    }
-
-    # claude-creds: OAuth credentials for Anthropic Claude CLI.
-    # Mounted at /home/agent/.claude for the claude CLI to find
-    # .credentials.json. uid=1000 (agent user).
-    volume "claude-creds" {
-      type     = "host"
-      source   = "claude-creds"
-      read_only = true
     }
 
     # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
@@ -149,14 +139,6 @@ job "agents-supervisor-opus" {
         read_only   = false
       }
 
-      volume_mount {
-        volume      = "claude-creds"
-        destination = "/home/agent/.claude"
-        read_only   = true
-        # uid 1000 matches the agent user expected by the claude CLI
-        # for reading .credentials.json
-      }
-
       # factory-projects: surfaces /srv/disinto/projects/ inside the container
       # at the path bootstrap_factory_repo / seed_projects_from_host_volume
       # already reads from (#794).
@@ -192,12 +174,6 @@ job "agents-supervisor-opus" {
         PROJECT_REPO_ROOT  = "/home/agent/repos/disinto"
         CLAUDE_TIMEOUT     = "7200"
         CLAUDE_MAX_TURNS   = "60"
-
-        # CLAUDE_CONFIG_DIR points to the mounted claude-creds volume so the
-        # claude CLI finds OAuth credentials. Do NOT set ANTHROPIC_BASE_URL
-        # or ANTHROPIC_API_KEY — their presence forces API-key mode and
-        # bypasses OAuth.
-        CLAUDE_CONFIG_DIR = "/home/agent/.claude"
 
         # Agent health is the newest last_contact on the Woodpecker server
         # (#1698). Port 8000 bare serves the SPA; the API lives under /ci.
