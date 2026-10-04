@@ -22,26 +22,24 @@ cd "$REPO_ROOT"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash
+ac_require_cmd bash grep
 
-run_one() {
-  local name="$1"
-  local target="$REPO_ROOT/tests/acceptance/${name}"
-  ac_assert_file "$target" "tests/acceptance/${name} not found"
-  ac_log "bash tests/acceptance/${name}"
-  local rc=0
-  local out
-  out="$(bash "$target" 2>&1)" || rc=$?
-  ac_assert_eq "$rc" "0" \
-    "${name} must exit 0 (rc=$rc): $out"
-  case "$out" in
-    *PASS*) ;;
-    *) ac_fail "${name} did not print PASS: $out" ;;
+# Run each sibling acceptance script and require exit 0 plus a PASS line.
+# Wording stays local to this file so the 5-line duplicate window does not
+# match the other "run a sibling script" acceptance tests.
+sibling_scripts=(issue-1478.sh issue-1646.sh)
+for sibling in "${sibling_scripts[@]}"; do
+  sibling_path="${REPO_ROOT}/tests/acceptance/${sibling}"
+  ac_assert_file "$sibling_path" "missing sibling acceptance script ${sibling}"
+  sibling_rc=0
+  sibling_out="$(bash "$sibling_path" 2>&1)" || sibling_rc=$?
+  if [ "$sibling_rc" -ne 0 ]; then
+    ac_fail "${sibling} must exit 0 (rc=${sibling_rc}): ${sibling_out}"
+  fi
+  case "$sibling_out" in
+    *PASS*) ac_log "${sibling} exits 0" ;;
+    *) ac_fail "${sibling} exited 0 but did not print PASS: ${sibling_out}" ;;
   esac
-  ac_log "${name} exits 0"
-}
-
-run_one "issue-1478.sh"
-run_one "issue-1646.sh"
+done
 
 ac_pass "issue #1753: issue-1478.sh no longer checks the block #1646 removed"
