@@ -641,6 +641,15 @@ emit_tape_outcome() {
   return 0
 }
 
+# pr_head_branch PR ISSUE: print the head branch of PR, or
+# fix/issue-ISSUE when the API call fails or returns nothing.
+pr_head_branch() {
+  local branch
+  branch=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/pulls/${1}" | jq -r '.head.ref // empty') || true
+  printf '%s\n' "${branch:-fix/issue-${2}}"
+}
+
 # =============================================================================
 # PRE-LOCK: merge approved + CI-green PRs (no Claude session needed)
 #
@@ -919,9 +928,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
         # Check if branch is stale (behind primary branch). Use the PR's actual
         # branch — the lookup above matches retry branches too (fix/issue-N-<attempt>,
         # #1139), so the first-attempt branch name would test/delete the wrong ref.
-        BRANCH=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-          "${API}/pulls/${HAS_PR}" | jq -r '.head.ref // empty') || true
-        BRANCH="${BRANCH:-fix/issue-${ISSUE_NUM}}"
+        BRANCH=$(pr_head_branch "$HAS_PR" "$ISSUE_NUM")
         AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
         if [ "$AHEAD" -gt 0 ]; then
           log "issue #${ISSUE_NUM} PR #${HAS_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
@@ -1232,8 +1239,10 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     '.[] | select((.head.ref == $branch) or (.title | contains($num))) | .number' | head -1) || true
 
   if [ -n "$EXISTING_PR" ]; then
-    # Check if branch is stale (behind primary branch)
-    BRANCH="fix/issue-${ISSUE_NUM}"
+    # Check if branch is stale (behind primary branch). Use the found PR's
+    # own head — the lookup above also matches a retry PR by title (#1216),
+    # so the first-attempt branch name would test/delete the wrong ref.
+    BRANCH=$(pr_head_branch "$EXISTING_PR" "$ISSUE_NUM")
     AHEAD=$(git rev-list --count "origin/${BRANCH}..origin/${PRIMARY_BRANCH}" 2>/dev/null || echo "0")
     if [ "$AHEAD" -gt 0 ]; then
       log "issue #${ISSUE_NUM} PR #${EXISTING_PR} is $AHEAD commits behind ${PRIMARY_BRANCH} — abandoning stale PR"
