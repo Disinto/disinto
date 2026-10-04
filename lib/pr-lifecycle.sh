@@ -285,14 +285,14 @@ pr_live_review_count() {
 
 # ---------------------------------------------------------------------------
 # pr_poll_ci — Poll CI status until complete or timeout.
-# Args: pr_number [timeout_secs=1800] [poll_interval=30]
+# Args: pr_number [timeout_secs=${PR_CI_TIMEOUT_S:-3600}] [poll_interval=30]
 # Sets: _PR_CI_STATE _PR_CI_SHA _PR_CI_PIPELINE _PR_CI_FAILURE_TYPE _PR_CI_ERROR_LOG
 # Returns: 0=success, 1=failure, 2=timeout
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2034  # output vars read by callers
 pr_poll_ci() {
   local pr_num="$1"
-  local timeout="${2:-1800}" interval="${3:-30}"
+  local timeout="${2:-${PR_CI_TIMEOUT_S:-3600}}" interval="${3:-30}"
   local elapsed=0
 
   _PR_CI_STATE="" ; _PR_CI_SHA="" ; _PR_CI_PIPELINE=""
