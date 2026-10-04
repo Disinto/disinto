@@ -102,9 +102,9 @@ fi
 # from $DSH_HOME/settings.yaml; the DSH_BASE_URL env alone leaves it on the
 # deepseek-official default route, which fails with MISSING_CREDENTIAL.
 # Seed the baked llama.cpp template with DSH_BASE_URL substituted; never
-# overwrite an operator-customised file.
+# overwrite an operator-customised file. An unset harness means dsh.
 dsh_home="${DSH_HOME:-/home/agent/data/dsh}"
-if [ "${AGENT_HARNESS:-claude}" = "dsh" ] \
+if [ "${AGENT_HARNESS:-dsh}" = "dsh" ] \
   && [ -f /opt/dsh/settings-llamacpp.yaml ] \
   && [ ! -f "$dsh_home/settings.yaml" ]; then
   sed "s|__DSH_BASE_URL__|${DSH_BASE_URL:-http://10.10.10.1:8081/v1}|" \
@@ -117,7 +117,7 @@ fi
 # effective auto-compaction (0.8 x 163840 = 131k — runs die by wall-clock
 # first). Migrate ONLY the known-old default value in place; any operator-
 # customised value is left untouched. New seeds already carry 100000.
-if [ "${AGENT_HARNESS:-claude}" = "dsh" ]; then
+if [ "${AGENT_HARNESS:-dsh}" = "dsh" ]; then
   if [ -f "$dsh_home/settings.yaml" ] && grep -q "contextWindow: 163840" "$dsh_home/settings.yaml" 2>/dev/null; then
     sed -i "s/contextWindow: 163840/contextWindow: 100000/" "$dsh_home/settings.yaml" 2>/dev/null || true
   fi
