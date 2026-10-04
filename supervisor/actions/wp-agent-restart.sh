@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # supervisor/actions/wp-agent-restart.sh — P2 Woodpecker agent recovery
 #
-# Detects unhealthy WP agent, restarts container (5-min cooldown), then scans
-# for ci_exhausted issues updated in the last 30 minutes and recovers them.
+# Detects unhealthy WP agent and restarts the container (5-min cooldown).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -64,11 +63,7 @@ if [ -n "$_WP_HEALTH_REASON" ]; then
         } >> "$_journal_file"
       fi
 
-      # ── ci_exhausted issue recovery (delegated to action script) ────
-      log "Scanning for ci_exhausted issues updated in last 30 minutes..."
-      bash "$SCRIPT_DIR/sweep-ci-exhausted.sh" "${PROJECT_TOML:-}"
-
-      log "WP agent restart and issue recovery complete"
+      log "WP agent restart complete"
     else
       log "ERROR: Failed to restart WP agent container"
     fi

@@ -21,6 +21,7 @@ recipes:
 
   # ── P0: Memory crisis ──────────────────────────────────────────────────
 
+  # free -m in the agents container reports the host, not the disinto box.
   - name: memory-crisis-low-ram
     severity: P0
     detect:
@@ -28,18 +29,7 @@ recipes:
       section: "System Resources"
       rule: ram_available_mb_lt
       threshold: 500
-    action: direct
-    action_script: supervisor/actions/memory-crisis.sh
-
-  - name: memory-crisis-high-swap
-    severity: P0
-    detect:
-      source: preflight
-      section: "System Resources"
-      rule: swap_mb_gt
-      threshold: 3072
-    action: direct
-    action_script: supervisor/actions/memory-crisis.sh
+    action: incident
 
   # ── P1: Disk pressure ──────────────────────────────────────────────────
 
@@ -127,30 +117,6 @@ recipes:
       threshold: 0
     action: direct
     action_script: supervisor/actions/cleanup-locks.sh
-
-  # ── P2: ci_exhausted recovery ─────────────────────────────────────────
-
-  - name: ci-exhausted-sweep
-    severity: P2
-    detect:
-      source: preflight
-      section: "Blocked Issues"
-      rule: ci_exhausted_blocked_gt
-      threshold: 0
-    action: direct
-    action_script: supervisor/actions/sweep-ci-exhausted.sh
-
-  # ── P3: Stuck PR sweeper (#452) ───────────────────────────────────────
-
-  - name: close-stuck-pr
-    severity: P3
-    detect:
-      source: preflight
-      section: "Blocked Issues"
-      rule: stuck_pr_gt
-      threshold: 0
-    action: direct
-    action_script: supervisor/actions/close-stuck-pr.sh
 
   # ── P4: Housekeeping ──────────────────────────────────────────────────
 

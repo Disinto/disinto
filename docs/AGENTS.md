@@ -27,8 +27,8 @@ disinto/                 (code repo)
 │                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
 │                  write-incident.sh, commit-incidents.sh
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
-│                           cleanup-worktrees, close-stuck-pr, disk-pressure,
-│                           git-rebase-fix, memory-crisis, sweep-ci-exhausted, wp-agent-restart)
+│                           cleanup-worktrees, disk-pressure,
+│                           git-rebase-fix, wp-agent-restart)
 ├── architect/     architect-run.sh — strategic decomposition of vision into sprints
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation

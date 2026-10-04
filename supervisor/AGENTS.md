@@ -23,6 +23,7 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   injects formula prompt with metrics, handles crash recovery. **Repair tape (#1408, #1533, #1636, #1637, #1638)**: `repair_direct_dispatch()` writes a repair proposal (`emit_repair_proposal` → `repair_state_put`, empty `caused_by`) right before it runs a direct recipe's script, unless one is open (`incident` recipes write none), pairing each script run with a tape `tape_run`
   (open, then close with status completed/failed, organ=supervisor, agent=bash) under
   the recipe's repair proposal id; the condition's state entry keeps `acted` and `acted_at`, and `repair_tape_tick` writes the outcome `{acted, cleared}` once the condition stops firing within `SUPERVISOR_REPAIR_WINDOW_S` (default 3600) or the window passes (#1637). A non-zero script exit never interrupts the tick. When the LLM escalation gate runs a session (`SUPERVISOR_LLM_ESCALATION=on`, #1681), it first writes a `diagnose` repair proposal for the fired conditions and exports its id as `TAPE_PROPOSAL_ID`; the tick logic of #1637 writes its outcome (#1638).
+  A failing direct fix logs `direct action <name> (<script>) failed, rc=<n>: <last stderr line>` (#1697).
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
@@ -34,7 +35,7 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   (added #933): container `disinto-woodpecker-agent` health/running status,
   gRPC error count in last 20 min, fast-failure pipeline count (<60s, last 15 min),
   and overall health verdict (healthy/unhealthy). Unhealthy verdict triggers
-  automatic container restart + `blocked:ci_exhausted` issue recovery in
+  automatic container restart in
   `supervisor-run.sh` before the Claude session starts. Reports
   **research runs** (added #1322): in-flight count + per-run ages (heartbeat)
   from the run ledger at `${OPS_REPO_ROOT}/runs`, artifacts disk %, and oldest
@@ -81,7 +82,7 @@ P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Lifecycle**: supervisor-run.sh (started by the polling loop on the SUPERVISOR_INTERVAL cadence, #1388; `check_active supervisor`)
 → lock + memory guard → **CI circuit breaker** (issue #557): reconcile `.dev-active` against incident PR state — open incident PR removes `.dev-active` (pause dev agents); no incident + green canary restores `.dev-active` (resume) → run preflight.sh (collect metrics) → **WP agent health recovery**
-(if unhealthy: restart container + recover ci_exhausted issues) → **recipe evaluation**
+(if unhealthy: restart container) → **recipe evaluation**
 (`evaluate-recipes.sh`): if all fired recipes have `action: direct` with valid `action_script`
 and none require LLM, skip to journal + exit (fast path); otherwise, **LLM escalation
 gate** (#1681): with `SUPERVISOR_LLM_ESCALATION=off` (default), name the
