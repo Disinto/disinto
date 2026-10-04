@@ -37,9 +37,10 @@ grep -qE '^about:[[:space:]]*\S' "$TPL" || ac_fail "experiment.yaml: missing top
 grep -qE '^labels:' "$TPL" || ac_fail "experiment.yaml: missing top-level 'labels:'"
 
 # The labels: block (runs until the next top-level key).
+# #1337 replaced the `experiment` label with `action`.
 LABELS_BLOCK="$(awk '/^labels:/{f=1;next} f && /^[^[:space:]]/{f=0} f' "$TPL")"
-printf '%s\n' "$LABELS_BLOCK" | grep -qE '^[[:space:]]*-[[:space:]]*experiment[[:space:]]*$' \
-  || ac_fail "experiment.yaml does not auto-label 'experiment'"
+printf '%s\n' "$LABELS_BLOCK" | grep -qE '^[[:space:]]*-[[:space:]]*action[[:space:]]*$' \
+  || ac_fail "experiment.yaml does not auto-label 'action' (#1337)"
 if printf '%s\n' "$LABELS_BLOCK" | grep -qE '^[[:space:]]*-[[:space:]]*backlog[[:space:]]*$'; then
   ac_fail "experiment.yaml auto-labels 'backlog' — experiments are research tickets, not coding work"
 fi
