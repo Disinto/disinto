@@ -186,9 +186,13 @@ EOT
       # Baseline — tune once we have real usage numbers under nomad. The
       # docker-compose stack runs forgejo uncapped; these limits exist so
       # an unhealthy forgejo can't starve the rest of the node.
+      # 1024 MiB (2026-10-04, was 512). With six agents, the gardener, the
+      # supervisor and the edge collectors polling it, Forgejo sat at its
+      # 512 MiB limit: API calls took 15-50 s and SQL queries were logged
+      # as slow.
       resources {
         cpu    = 300
-        memory = 512
+        memory = 1024
       }
     }
   }
