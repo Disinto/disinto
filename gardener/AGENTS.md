@@ -52,6 +52,8 @@ and executes the pending-actions manifest post-merge.
   It also returns an open sprint at once when a child's last outcome is signed
   with one of `SPRINT_RETURN_SIGNATURES` (default `design-conflict`), and takes
   `backlog` off the milestone's open issues (#1622).
+  A sprint whose `rests_on` names a challenged claim returns the same way,
+  signed `claim-challenged` (#1644).
   Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.
