@@ -95,6 +95,8 @@ source "$REPO_ROOT/lib/sprint-block.sh"
 source "$REPO_ROOT/lib/probe.sh"
 # shellcheck source=../lib/tape.sh
 source "$REPO_ROOT/lib/tape.sh"
+# shellcheck source=../lib/signature.sh
+source "$REPO_ROOT/lib/signature.sh"
 # shellcheck source=../lib/forge-api-fallback.sh
 source "$REPO_ROOT/lib/forge-api-fallback.sh"
 
@@ -268,6 +270,77 @@ _return_child_issue() {
   return 0
 }
 
+# _rests_on_ids RESTS — print the claim ids named in RESTS (the value of
+# sprint_field's rests_on), one per line, in the order they appear. Both
+# commas and runs of whitespace separate tokens; empty runs are dropped.
+# Prints nothing (rc 0) when RESTS is empty.
+_rests_on_ids() {
+  local rests="${1-}"
+  [ -n "$rests" ] || return 0
+  printf '%s\n' "$rests" \
+    | tr ',' ' ' \
+    | tr -s '[:space:]' '\n' \
+    | sed '/^$/d'
+}
+
+# _claim_is_challenged PID — rc 0 when the last tape outcome for PID carries
+# bits.contradicted 1; rc 1 otherwise (no tape, no such outcome, or a
+# different last bit). A torn final line is skipped so one bad line cannot
+# hide a challenge or invent one.
+_claim_is_challenged() {
+  local pid="$1" tape last
+  tape="${TAPE_DIR}/tape.jsonl"
+  [[ -s "$tape" ]] || return 1
+  last=$(jq -rRs --arg pid "$pid" '
+    [ split("\n")[] | (try fromjson catch null)
+      | select(.type == "outcome" and .proposal_id == $pid) ] | last
+    | (.bits.contradicted // "") ' "$tape" 2>/dev/null) || return 1
+  [[ "$last" == "1" ]]
+}
+
+# _claim_return_claim N PID — return an open sprint when a claim it rests on
+# is challenged (#1644). Read the milestone's description, take its rests_on
+# field, split it, and for each claim id:
+#   * no ${TAPE_DIR}/claims/<id>.current — log one line, ignore it
+#   * an empty .current — log one line, ignore it
+#   * otherwise: when the last tape outcome for that proposal id has
+#     bits.contradicted 1 (_claim_is_challenged), the sprint returns
+# Set RETURN_CLAIM to the first id that triggers a return and rc 0. rc 0 with
+# RETURN_CLAIM empty when nothing returns (no rests_on, no .current, no
+# challenged claim). rc 1 when the return cannot be evaluated at all.
+_claim_return_claim() {
+  # N is the sprint's milestone number; $2 (the sprint proposal id) is passed
+  # for a uniform call shape but not needed to read the milestone.
+  local n="$1" raw rc desc rests id cur claim_id
+  RETURN_CLAIM=""
+  rc=0
+  raw="$(forge_api GET "/milestones/${n}" 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$raw" ]; then
+    log "WARNING: sprint ${n}: could not read milestone ${n} — no challenged-claim return this run"
+    return 0
+  fi
+  desc="$(jq -r '.description // empty' <<<"$raw" 2>/dev/null)" || desc=""
+  rests="$(sprint_field "$desc" rests_on)" || rests=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    cur="${TAPE_DIR}/claims/${id}.current"
+    if [ ! -f "$cur" ]; then
+      log "WARNING: sprint ${n}: claim ${id} has no current proposal — ignored"
+      continue
+    fi
+    claim_id="$(tr -d '[:space:]' < "$cur" 2>/dev/null || true)" || claim_id=""
+    if [ -z "$claim_id" ]; then
+      log "WARNING: sprint ${n}: claim ${id}'s current proposal is empty — ignored"
+      continue
+    fi
+    if _claim_is_challenged "$claim_id"; then
+      RETURN_CLAIM="$id"
+      return 0
+    fi
+  done < <(_rests_on_ids "$rests")
+  return 0
+}
+
 # _tape_has_outcome PID — 0 when the tape already holds an outcome for PID,
 # 1 when it does not, 2 when the tape cannot be read.
 _tape_has_outcome() {
@@ -321,17 +394,19 @@ _return_comment_state() {
   done
 }
 
-# _strip_backlog N CHILD_ISSUE — comment, then take backlog off, every open
-# page of the milestone. Issues without backlog are left alone.
+# _strip_backlog N COMMENT — comment, then take backlog off, every open page
+# of the milestone. Issues without backlog are left alone. COMMENT is the
+# single comment text posted to every backlog issue (the design-conflict return
+# and the challenged-claim return share this strip, each passing its own
+# comment, so the body never appears in two files).
 #   0  every backlog issue was commented and unlabelled (or there were none)
 #   1  a page, a comment read, a comment post, or a delete failed.
 #      .done must stay unwritten so the next run can finish the strip.
 _strip_backlog() {
-  local n="$1" child_issue="$2"
-  local reason_file body reason rc comment body_json issue_json num lid
+  local n="$1" comment="$2"
+  local reason_file body reason rc body_json issue_json num lid
   local page=1 prev="" count present
   reason_file="$(mktemp)"
-  comment="Sprint returned: #${child_issue} reported a design conflict. Re-add backlog when the design is fixed."
   body_json="$(jq -nc --arg b "$comment" '{body: $b}')" || {
     rm -f "$reason_file"
     log "WARNING: sprint ${n}: could not build the return comment"
@@ -433,12 +508,16 @@ _read_pid() {
   printf '%s' "$pid"
 }
 
-# _sprint_return_one N PID CHILD — write the return outcome, strip backlog,
-# touch .done. The caller has already marked N returned.
+# _sprint_return_one N PID SIGNATURE COMMENT — write the return outcome, strip
+# backlog, touch .done. The caller has already marked N returned. SIGNATURE is
+# the rubric signature (lib/signature.sh) when the return counts against a
+# challenged claim, else empty (the design-conflict return stays pre-#1607
+# shaped). COMMENT is the strip's comment text, passed in so the claim return
+# can reuse the strip without copying it.
 #   0  written (or the outcome was already on the tape) and backlog stripped
 #   1  append or strip failed; .done left unwritten so the next run retries
 _sprint_return_one() {
-  local n="$1" pid="$2" child_issue="$3"
+  local n="$1" pid="$2" signature="${3-}" comment="${4-}"
   local id_file duration_s numbers_json bits_json rc has=0
 
   _tape_has_outcome "$pid" || has=$?
@@ -461,20 +540,26 @@ _sprint_return_one() {
       return 1
     }
     rc=0
-    tape_outcome "$pid" "$bits_json" "$numbers_json" "$CHILDREN_JSON" '[]' || rc=$?
+    if [ -n "$signature" ]; then
+      tape_outcome "$pid" "$bits_json" "$numbers_json" "$CHILDREN_JSON" '[]' \
+        "$signature" || rc=$?
+    else
+      tape_outcome "$pid" "$bits_json" "$numbers_json" "$CHILDREN_JSON" '[]' \
+        || rc=$?
+    fi
     if [ "$rc" -ne 0 ]; then
       log "WARNING: tape outcome append for sprint ${n} failed — .done left unwritten"
       return 1
     fi
   fi
 
-  if ! _strip_backlog "$n" "$child_issue"; then
+  if ! _strip_backlog "$n" "$comment"; then
     return 1
   fi
   if ! _touch_done "$n"; then
     return 1
   fi
-  log "sprint ${n}: returned on child #${child_issue}"
+  log "sprint ${n}: returned (${comment})"
   return 0
 }
 
@@ -519,9 +604,30 @@ _return_open_sprints() {
       any_failed=1
       continue
     fi
-    [ -n "$RETURN_CHILD" ] || continue
+    if [ -n "$RETURN_CHILD" ]; then
+      _mark_returned "$n"
+      _sprint_return_one "$n" "$pid" "" \
+        "Sprint returned: #${RETURN_CHILD} reported a design conflict. Re-add backlog when the design is fixed." \
+        || any_failed=1
+      continue
+    fi
+    # No design-conflict child: a challenged claim the sprint rests on returns
+    # it too (#1644), signed claim_challenged. The return counts against the
+    # claim, not the proposer or the implementer.
+    RETURN_CLAIM=""
+    rc=0
+    _claim_return_claim "$n" "$pid" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      _mark_returned "$n"
+      any_failed=1
+      continue
+    fi
+    [ -n "$RETURN_CLAIM" ] || continue
     _mark_returned "$n"
-    _sprint_return_one "$n" "$pid" "$RETURN_CHILD" || any_failed=1
+    sig="$(signature_for claim_challenged sprint)" || sig=""
+    _sprint_return_one "$n" "$pid" "$sig" \
+      "Sprint returned: claim ${RETURN_CLAIM} was challenged. Re-add backlog when the claim is revised or the sprint no longer rests on it." \
+      || any_failed=1
   done < <(printf '%s\n' "${ids[@]}" | sort -n)
   return "$any_failed"
 }
