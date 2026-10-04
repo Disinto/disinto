@@ -49,6 +49,9 @@ and executes the pending-actions manifest post-merge.
   each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), or,
   with effect `none`, from whether a child failed. A failure only logs a
   warning.
+  It also returns an open sprint at once when a child's last outcome is signed
+  with one of `SPRINT_RETURN_SIGNATURES` (default `design-conflict`), and takes
+  `backlog` off the milestone's open issues (#1622).
   Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.
