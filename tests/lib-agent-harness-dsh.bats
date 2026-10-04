@@ -298,11 +298,18 @@ teardown() {
 
 # ── Dispatcher behaviour ────────────────────────────────────────────────────
 
-@test "AGENT_HARNESS unset: _agent_run_claude is still dispatched" {
-  # Replace the real implementation with a marker — the point is that the
-  # dispatcher's default branch is unchanged.
-  _agent_run_claude() { touch "$TMP_DIR/claude-dispatched"; return 0; }
+@test "AGENT_HARNESS unset: _agent_run_dsh is dispatched" {
+  # Replace the real implementation with a marker — the point is which
+  # branch the dispatcher takes when the variable is unset (#1683).
+  _agent_run_dsh() { touch "$TMP_DIR/dsh-dispatched"; return 0; }
   unset AGENT_HARNESS
+  agent_run "go"
+  [ -f "$TMP_DIR/dsh-dispatched" ]
+}
+
+@test "AGENT_HARNESS=claude dispatches to _agent_run_claude" {
+  _agent_run_claude() { touch "$TMP_DIR/claude-dispatched"; return 0; }
+  export AGENT_HARNESS=claude
   agent_run "go"
   [ -f "$TMP_DIR/claude-dispatched" ]
 }

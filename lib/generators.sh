@@ -155,9 +155,10 @@ _generate_local_model_services() {
             user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
             # The model/harness env block is the only part of the service that
             # depends on the harness (#1107). Claude (the default, and the only
-            # harness a pre-#1107 TOML can have) must render exactly the
-            # historical block; dsh emits its own settings-form variables and
-            # no CLAUDE_* tuning variables.
+            # harness a pre-#1107 TOML can have) emits AGENT_HARNESS=claude
+            # plus the CLAUDE_* block (#1683 — an omitted variable is dsh).
+            # dsh emits its own settings-form variables and no CLAUDE_* tuning
+            # variables.
             local model_env
             if [ "${harness:-claude}" = "dsh" ]; then
               model_env="      AGENT_HARNESS: \"dsh\"
@@ -168,7 +169,8 @@ _generate_local_model_services() {
       DSH_CONTEXT_WINDOW: \"${context_window:-100000}\"
       LLAMACPP_API_KEY: \"sk-no-key-required\""
             else
-              model_env="      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
+              model_env="      AGENT_HARNESS: \"claude\"
+      CLAUDE_TIMEOUT: \${CLAUDE_TIMEOUT:-7200}
       ANTHROPIC_BASE_URL: \"${base_url}\"
       ANTHROPIC_API_KEY: \"${api_key}\"
       CLAUDE_MODEL: \"${model}\"

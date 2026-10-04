@@ -91,9 +91,10 @@ disinto hire-an-agent dev-dsh dev \
 ```
 
 - **`claude`** (default): the agent runs the Claude Code CLI. The service
-  gets the `CLAUDE_*` tuning variables (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`,
-  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...). Omitting `--harness` produces
-  exactly the configuration `hire-an-agent` wrote before this flag existed.
+  gets `AGENT_HARNESS=claude` and the `CLAUDE_*` tuning variables
+  (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...).
+  Omitting `--harness` emits that same block. The variable is set
+  explicitly: with `AGENT_HARNESS` unset, an agent runs dsh (#1683).
 - **`dsh`**: the agent runs the dsh harness (`dsh --profile headless`, with
   `AGENT_HARNESS=dsh`). The service gets dsh's own settings-form variables —
   `DSH_HOME` (the agent's persistent config dir),
@@ -109,9 +110,7 @@ agents, which size their window from the model name (see
 
 The agents image ships dsh as a pinned npm global and seeds the `headless`
 profile into `DSH_HOME` on first start (also when `AGENT_HARNESS` is unset: dsh is the default, #1682), so a hired dsh agent boots without
-bootstrapping anything at session time. Claude Code stays installed as well —
-existing agents and the supervisor keep running under it; `--harness` only
-affects the agent being hired.
+bootstrapping anything at session time. Claude Code stays installed as well, for agents that set `AGENT_HARNESS=claude`; with the variable unset an agent runs dsh (#1683).
 
 ### Hiring on a Nomad box
 
@@ -251,7 +250,7 @@ poll_interval = 60
 | `forge_user` | Forgejo bot username |
 | `compact_pct` | Context compaction threshold (lower = more aggressive) |
 | `poll_interval` | Seconds between polling cycles |
-| `harness` | Agent harness: `claude` (default) or `dsh`. Written only when the agent is hired with `--harness dsh` |
+| `harness` | Agent harness: `claude` (default) or `dsh`. The TOML key is written only for `--harness dsh`; a claude hire omits it, and the generated env still sets `AGENT_HARNESS=claude`. An unset `AGENT_HARNESS` runs dsh (#1683). |
 | `context_window` | Context window in tokens for a dsh agent (default `100000`). Written only alongside `harness = "dsh"` |
 
 ## Behaviour

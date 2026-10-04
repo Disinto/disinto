@@ -7,8 +7,8 @@
 #
 # Covers:
 #   1. The default (no --harness) and an explicit `--harness claude` hire
-#      render byte-identical output to the pre-#1107 code, pinned by fixtures
-#      captured from the pre-change implementation.
+#      emit AGENT_HARNESS=claude plus the CLAUDE_* block, pinned by fixtures.
+#      They must not omit AGENT_HARNESS (#1683: omission means dsh).
 #   2. `--harness dsh` emits dsh's own settings-form variables (AGENT_HARNESS,
 #      DSH_HOME, DSH_PERMISSION_MODE, DSH_MODEL, DSH_BASE_URL,
 #      DSH_CONTEXT_WINDOW) and no CLAUDE_* / ANTHROPIC_* tuning variables —
@@ -139,7 +139,8 @@ _generate_compose() {
 }
 
 # The project TOML the compose fixtures were captured with: a default
-# (claude-harness) local-model agent, no harness keys at all.
+# (claude-harness) local-model agent, no harness keys in the TOML. The
+# generator must still emit AGENT_HARNESS=claude (#1683).
 _write_default_toml() {
   cat > "$FACTORY_ROOT/projects/test.toml" <<'EOF'
 [agents.llama]
@@ -155,12 +156,13 @@ EOF
 
 # ── byte-identical default (both backends) ───────────────────────────────────
 
-@test "default nomad hire renders the pre-#1107 jobspec byte for byte" {
+@test "default nomad hire emits AGENT_HARNESS=claude" {
   _stub_vault_ok
   unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render_nomad
   [ "$(cat "$TMP/rc")" = "0" ]
   cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
+  grep -Eq 'AGENT_HARNESS[[:space:]]*=[[:space:]]*"claude"' "$JOBSPEC_OUT"
 }
 
 @test "explicit claude harness renders the same jobspec as the default" {
@@ -171,10 +173,11 @@ EOF
   cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
 }
 
-@test "default compose hire renders the pre-#1107 service byte for byte" {
+@test "default compose hire emits AGENT_HARNESS=claude" {
   _write_default_toml
   _generate_compose
   cmp -s "$FACTORY_ROOT/docker-compose.yml" "$FIXTURES/compose-default.yml"
+  grep -q 'AGENT_HARNESS: "claude"' "$FACTORY_ROOT/docker-compose.yml"
 }
 
 # ── dsh harness (both backends) ──────────────────────────────────────────────

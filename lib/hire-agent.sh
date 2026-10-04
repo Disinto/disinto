@@ -192,9 +192,10 @@ POLICY
   compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
 
   # The env block is the only part of the jobspec that depends on the
-  # harness (#1107). Claude is the default and must render exactly the
-  # historical block; dsh emits its own settings-form variables and no
-  # CLAUDE_* tuning variables.
+  # harness (#1107). Claude is the default and emits AGENT_HARNESS=claude
+  # plus the CLAUDE_* tuning variables (#1683 — an omitted variable is dsh,
+  # so Claude is selected only by setting it). dsh emits its own
+  # settings-form variables and no CLAUDE_* tuning variables.
   local env_block_file
   env_block_file="$(mktemp)"
   if [ "$harness" = "dsh" ]; then
@@ -220,6 +221,7 @@ ENV
     cat > "$env_block_file" <<ENV
         FORGE_REPO         = "${forge_repo}"
         FACTORY_REPO       = "${factory_repo}"
+        AGENT_HARNESS      = "claude"
         ANTHROPIC_BASE_URL = "${local_model}"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "${model}"
@@ -1057,8 +1059,9 @@ if "agents" not in doc:
     doc.add("agents", tomlkit.table())
 
 # Step 4: Update the specific agent section. The harness and context_window
-# keys are only written for non-default (dsh) harnesses, so a default hire
-# leaves the TOML byte-identical to the pre-#1107 shape.
+# TOML keys are only written for non-default (dsh) harnesses, so a default
+# hire leaves those keys absent. The generated env still sets
+# AGENT_HARNESS=claude (#1683); an omitted variable means dsh.
 agent_section = {
     "base_url": base_url,
     "model": model,
