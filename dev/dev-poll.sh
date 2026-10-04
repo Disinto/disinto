@@ -1114,16 +1114,19 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     continue
   fi
 
+  # Check if issue is assigned to this agent — skip if assigned to another bot.
+  # Both review fixes and CI fixes (#1736): a foreign PR must not reach the
+  # CI-fix attempt counter, or each launch spends that agent's attempt budget.
+  ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+    "${API}/issues/${STUCK_ISSUE}") || true
+  assignee=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
+  if [ -n "$assignee" ] && [ "$assignee" != "$BOT_USER" ]; then
+    log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) assigned to ${assignee} — skipping (not mine)"
+    continue  # skip this PR, check next stuck PR or fall through to backlog
+  fi
+
   # Stuck: REQUEST_CHANGES or CI failure -> spawn agent
   if [ "${HAS_CHANGES:-0}" -gt 0 ] && { ci_passed "$CI_STATE" || [ "$CI_STATE" = "pending" ] || [ "$CI_STATE" = "unknown" ] || [ -z "$CI_STATE" ]; }; then
-    # Check if issue is assigned to this agent — skip if assigned to another bot
-    ISSUE_JSON=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-      "${API}/issues/${STUCK_ISSUE}") || true
-    assignee=$(echo "$ISSUE_JSON" | jq -r '.assignee.login // ""') || true
-    if [ -n "$assignee" ] && [ "$assignee" != "$BOT_USER" ]; then
-      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) REQUEST_CHANGES but assigned to ${assignee} — skipping"
-      continue  # skip this PR, check next stuck PR or fall through to backlog
-    fi
     log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has REQUEST_CHANGES — fixing first"
     ("${SCRIPT_DIR}/dev-agent.sh" "$STUCK_ISSUE" >> "$LOGFILE" 2>&1) &
     log "started dev-agent PID $! for stuck PR #${PR_NUM}"

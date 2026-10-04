@@ -55,7 +55,7 @@ and dev-agent is relaunched, which adopts any surviving state via `RECOVERY_MODE
 the process table, since a started session that has written neither lock nor branch
 yet is invisible to both of those checks, but not to `pgrep` (#1070).
 **Per-agent open-PR gate**: before starting new work,
-filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). Other agents'
+filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). The stuck-PR scan likewise skips a PR whose issue is assigned to another agent, for review fixes and CI fixes alike, so it never spends another agent's CI-fix attempts (#1736). Other agents'
 PRs do not block this agent's pipeline (#358, #369). **Wedged-PR escalation (#1089)**:
 an open PR that is CI green but has zero *live* reviews (Forgejo marks every review
 stale on close/reopen, including the one pinned to the head) can be neither picked up
