@@ -45,7 +45,7 @@ ac_load_review_fn() {
 # stubs for the calls the function makes. Requires $TMP_DIR to be set.
 #
 # Globals set: PR_NUMBER PR_SHA FORGE_TOKEN API WORKTREE PROMPT
-# IS_RE_REVIEW _AGENT_SESSION_ID OUTPUT_FILE CURL_ARGS CURL_BODY.
+# IS_RE_REVIEW _AGENT_SESSION_ID OUTPUT_FILE CURL_ARGS CURL_BODY CLAUDE_MODEL.
 # Stubs installed: agent_run, curl, log, status.
 #
 #   agent_run — emulates the real agent: before returning the configured
@@ -82,6 +82,12 @@ ac_setup_review_env() {
   _AGENT_SESSION_ID=""
   # shellcheck disable=SC2034
   OUTPUT_FILE="$TMP_DIR/review-output.json"
+  # review_run_and_parse exports CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}"
+  # under set -u. Jobspecs always set it; this harness must too, without
+  # clobbering a value the caller already exported (#1750).
+  # shellcheck disable=SC2034
+  CLAUDE_MODEL="${CLAUDE_MODEL:-test-model}"
+  export CLAUDE_MODEL
   CURL_ARGS="$TMP_DIR/curl-args.log"
   CURL_BODY="$TMP_DIR/curl-body.log"
   : > "$CURL_ARGS"
