@@ -51,6 +51,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # shellcheck source=../lib/sprint-block.sh
 source "$REPO_ROOT/lib/sprint-block.sh"
+# shellcheck source=../lib/forge-api-fallback.sh
+source "$REPO_ROOT/lib/forge-api-fallback.sh"
 
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 SPRINTS_DIR="${TAPE_DIR}/sprints"
@@ -60,43 +62,9 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-# _due_need_forge_fallback — rc 0 when this process has no forge_api yet.
-# The function lives in the gardener's shell (lib/env.sh) and is not inherited
-# by a subprocess. A hermetic test puts a stub command on PATH. Otherwise this
-# tool defines a quiet curl fallback from FORGE_API / FORGE_TOKEN (http(s), no
-# credential injection — the part of validate_url this call needs). Sourcing
-# env.sh would re-read .env. The fallback stays quiet: a failed call is one
-# log line from this tool, not two.
-_due_need_forge_fallback() {
-  if declare -F forge_api >/dev/null 2>&1; then
-    return 1
-  fi
-  if command -v forge_api >/dev/null 2>&1; then
-    return 1
-  fi
-  return 0
-}
-
-if _due_need_forge_fallback; then
-  forge_api() {
-    local method="$1"
-    local path="$2"
-    shift 2
-    case "${FORGE_API:-}" in
-      http://*|https://*) ;;
-      *) return 1 ;;
-    esac
-    if [[ "${FORGE_API}" =~ ^https?://[^@]+@ ]]; then
-      return 1
-    fi
-    if [ -z "${FORGE_TOKEN:-}" ]; then
-      return 1
-    fi
-    command -v curl >/dev/null 2>&1 || return 1
-    curl -sf -X "$method" -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" --url "${FORGE_API}${path}" "$@"
-  }
-fi
+# forge_api: a function or command (hermetic test stub) when present; otherwise
+# the quiet lib/forge-api-fallback.sh curl fallback from FORGE_API / FORGE_TOKEN.
+# The fallback stays quiet: a failed call is one log line from this tool, not two.
 
 # Same shape as lib/env.sh log(), on stderr so stdout stays the due list.
 log() {

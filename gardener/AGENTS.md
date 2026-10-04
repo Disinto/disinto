@@ -45,6 +45,10 @@ and executes the pending-actions manifest post-merge.
   appends a `top signatures` column.
   Then through `tools/calibration-purpose.sh` (#1652), which appends a
   `purpose` column from grades.
+  After the refresh, `tools/sprint-outcomes.sh` (#1676) writes the outcome of
+  each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), or,
+  with effect `none`, from whether a child failed. A failure only logs a
+  warning.
   Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.

@@ -59,6 +59,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # shellcheck source=../lib/claims.sh
 source "$REPO_ROOT/lib/claims.sh"
+# shellcheck source=../lib/forge-api-fallback.sh
+source "$REPO_ROOT/lib/forge-api-fallback.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "claims-report: required tool missing: jq" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "claims-report: required tool missing: python3" >&2; exit 1; }
@@ -67,40 +69,12 @@ TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 
 # forge_api is a function in the gardener's shell (lib/env.sh) but this tool
 # is a subprocess, so the function is not inherited. A hermetic test puts a
-# stub command on PATH. Otherwise fall back to the same curl shape as
-# lib/env.sh, using the FORGE_API / FORGE_TOKEN the gardener already exported.
-# The URL check is the part of validate_url this call needs (http(s), no
-# credential injection); sourcing env.sh would re-read .env.
-if ! declare -F forge_api >/dev/null 2>&1 && ! command -v forge_api >/dev/null 2>&1; then
-  forge_api() {
-    local method="$1" path="$2"
-    shift 2
-    case "${FORGE_API:-}" in
-      http://*|https://*) ;;
-      *)
-        echo "claims-report: FORGE_API unset or invalid" >&2
-        return 1
-        ;;
-    esac
-    if [[ "${FORGE_API}" =~ ^https?://[^@]+@ ]]; then
-      echo "claims-report: FORGE_API validation failed" >&2
-      return 1
-    fi
-    if [ -z "${FORGE_TOKEN:-}" ]; then
-      echo "claims-report: FORGE_TOKEN unset" >&2
-      return 1
-    fi
-    command -v curl >/dev/null 2>&1 || {
-      echo "claims-report: required tool missing: curl" >&2
-      return 1
-    }
-    curl -sf -X "$method" \
-      -H "Authorization: token ${FORGE_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${FORGE_API}${path}" "$@"
-  }
-fi
-
+# stub command on PATH; otherwise lib/forge-api-fallback.sh falls back to the
+# same curl shape from the FORGE_API / FORGE_TOKEN the gardener exported. The
+# URL check is the part of validate_url this call needs (http(s), no credential
+# injection); sourcing env.sh would re-read .env. A failed call is this tool's
+# diagnostic, not two.
+#
 # _md_cell TEXT — one markdown table cell. Newlines become spaces, pipes are
 # escaped, ends are trimmed. Empty becomes "-".
 _md_cell() {
