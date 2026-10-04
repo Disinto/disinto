@@ -40,6 +40,9 @@ ac_run_close_subshell() {
     _DEV_TAPE_OUTCOME_WRITTEN=0
     # shellcheck disable=SC1091
     source "$REPO_ROOT/lib/tape.sh"
+    # #1737: close_dev_tape_outcome skips a second merged outcome via this guard.
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/lib/tape-outcome-guard.sh"
     log() { :; }
     signature_for() { :; }
     i=1

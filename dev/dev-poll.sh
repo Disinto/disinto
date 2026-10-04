@@ -35,6 +35,8 @@ source "$(dirname "$0")/../lib/guard.sh"
 source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 # shellcheck source=../lib/tape.sh
 source "$(dirname "$0")/../lib/tape.sh"
+# shellcheck source=../lib/tape-outcome-guard.sh
+source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
 # shellcheck source=../lib/sprint-block.sh
 source "$(dirname "$0")/../lib/sprint-block.sh"
 # shellcheck source=../lib/sprint-tape.sh
@@ -563,7 +565,9 @@ issue_is_ready() {
 # (loop "dev", lib/signature.sh, signature_for) and, when non-empty, passed
 # to tape_outcome as the 6th arg (the signature field). An unknown reason
 # (empty resolution) leaves the record in its pre-#1607 shape — no signature
-# field. Merge paths pass no reason (4 args, unchanged).
+# field. Merge paths pass no reason (4 args, unchanged). A merged outcome
+# is written once per proposal (#1737): when merged is 1 and the tape
+# already holds one for this id, log and return 0 without appending.
 #
 # Args: issue_number pr_number merged(0|1) ci_green(0|1) [reason]
 # =============================================================================
@@ -577,6 +581,12 @@ emit_tape_outcome() {
   id="$(cat "$id_file" 2>/dev/null)" || id=""
   if [ -z "$id" ]; then
     # Issue predates the proposal step — nothing to key an outcome on
+    return 0
+  fi
+
+  # #1737: dev-agent (or an earlier poll) may already have recorded the merge.
+  if [ "$merged" = 1 ] && tape_has_merged_outcome "$id"; then
+    log "tape: merged outcome for #${issue} already recorded — skipping"
     return 0
   fi
 

@@ -111,6 +111,8 @@ run_outcome() {
     ac_stub_env "$STUB_BIN" "$tape_dir"
     # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/tape.sh"
+    # shellcheck disable=SC1091  # path only known at runtime
+    source "$REPO_ROOT/lib/tape-outcome-guard.sh"
     eval "$FN_OUT"
     if [ "$fail" = "1" ]; then
       export AC_STUB_FAIL=1

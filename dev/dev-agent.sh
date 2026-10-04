@@ -34,6 +34,9 @@ source "$(dirname "$0")/../lib/mirrors.sh"
 source "$(dirname "$0")/../lib/agent-sdk.sh"
 source "$(dirname "$0")/../lib/formula-session.sh"
 source "$(dirname "$0")/../lib/tape.sh"
+# #1737: one merged outcome per proposal, shared with dev-poll.sh
+# shellcheck source=../lib/tape-outcome-guard.sh
+source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
 # #1608: reason -> signature lookup, shared with dev-poll.sh (#1609)
 source "$(dirname "$0")/../lib/signature.sh"
 
@@ -226,7 +229,9 @@ close_dev_tape_outcome() {
   #     writes rejected: 1 with reason = the status.
   #   * A failure walk (PR_WALK_RC != 0, no recorded refusal) keeps today's
   #     bits and uses _PR_WALK_EXIT_REASON as the reason (possibly empty).
-  #   * A merged walk keeps today's bits, no reason.
+  #   * A merged walk keeps today's bits, no reason. If the tape already
+#     holds a merged outcome for this proposal, return 0 without writing
+#     (#1737) — dev-poll or a human merge may have recorded it first.
   #   * unmet_dependency is never recorded (it blocks the issue instead of
   #     re-queueing it, #1672), so it falls through to the failure-walk
   #     shape: no rejected bit.
@@ -242,6 +247,11 @@ close_dev_tape_outcome() {
     merged=0
     reason="${_PR_WALK_EXIT_REASON:-}"
     bits="$(jq -cn --argjson m "$merged" '{merged: $m, ci_green: $m}' 2>/dev/null)" || bits=""
+  fi
+  # #1737: a failure outcome is still written when a merged one exists.
+  if [ "$merged" = 1 ] && tape_has_merged_outcome "$id"; then
+    log "tape: merged outcome for #${ISSUE} already recorded — skipping"
+    return 0
   fi
   if [ -z "$bits" ]; then
     log "WARNING: tape: could not build outcome bits for #${ISSUE}"
