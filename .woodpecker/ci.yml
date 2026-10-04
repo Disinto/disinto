@@ -6,7 +6,8 @@
 # ci/woodpecker/pr/ci (docs/branch-protection.md).
 #
 # Steps:
-#   1. shellcheck   — lint all .sh files (warnings+errors)
+#   1. shellcheck   — lint .sh files (warnings+errors): on a PR the ones it
+#      changes, on a push to main all of them (.woodpecker/shellcheck-scope.sh)
 #   2. duplicate-detection — report copy-pasted code blocks (fails only on new duplicates for PRs)
 #   3. bats         — run every tests/*.bats suite by glob discovery (#1144)
 #   4. rebuild-and-deploy-agents — rebuild + redeploy disinto/agents:local when
@@ -65,7 +66,8 @@ steps:
   - name: shellcheck
     image: koalaman/shellcheck-alpine:stable
     commands:
-      - find . -name "*.sh" -not -path "./.git/*" -print0 | xargs -0 -r shellcheck --severity=warning
+      - apk add --no-cache bash git
+      - bash .woodpecker/shellcheck-scope.sh
 
   - name: agent-smoke
     image: alpine:3
