@@ -184,7 +184,8 @@ fi
 # does not create proposals. For each entry with acted_at it writes one
 # outcome {acted, cleared} once the condition stops firing within
 # SUPERVISOR_REPAIR_WINDOW_S (default 3600) or the window passes, then drops
-# the entry. An entry without acted_at whose condition stops firing is
+# the entry. A failed outcome append leaves the entry so the next tick
+# retries (#1702). An entry without acted_at whose condition stops firing is
 # dropped with no outcome. All labels are code-derived (recipe names,
 # condition identifiers) — no LLM input. Every emitter is total: a tape
 # failure logs a WARNING and returns 0, so the tape never blocks the
@@ -320,14 +321,16 @@ emit_repair_proposal() {
 #   - window passed (whether or not it is still firing): outcome
 #     {acted, cleared: 0}, drop the entry. A clearance observed only after
 #     the window is not a pass. A later firing opens a new proposal.
-# An entry without acted_at whose condition stops firing is dropped with no
-# outcome. A still-firing entry inside the window is left alone. A diagnose
-# entry (#1638) carries a conditions array: it is firing while any of those
-# names is firing, and "no longer firing" means none of them is. Total:
-# always returns 0 — the tape never blocks the supervisor.
+# A failed outcome append does not drop that entry — the next tick retries
+# (#1702), matching emit_repair_proposal. An entry without acted_at whose
+# condition stops firing is dropped with no outcome. A still-firing entry
+# inside the window is left alone. A diagnose entry (#1638) carries a
+# conditions array: it is firing while any of those names is firing, and
+# "no longer firing" means none of them is. Total: always returns 0 — the
+# tape never blocks the supervisor.
 repair_tape_tick() {
   local state_file prev_json cur_json window now decisions
-  local cond action proposal_id acted cleared bits keys_json
+  local cond action proposal_id acted cleared bits keys_json drop_entry
   state_file="$(repair_tape_state_file)"
   cur_json="$(repair_conditions_current_json)" || cur_json="[]"
   [ -n "$cur_json" ] || cur_json="[]"
@@ -380,6 +383,9 @@ repair_tape_tick() {
   keys_json="[]"
   while IFS=$'\t' read -r cond action proposal_id acted; do
     [ -n "$cond" ] || continue
+    # drop_entry=0 only when an outcome append was attempted and failed.
+    # An entry with no proposal id, and a drop (no outcome), still close.
+    drop_entry=1
     case "$action" in
       clear|expire)
         if [ -z "$proposal_id" ]; then
@@ -399,6 +405,9 @@ repair_tape_tick() {
           if [ -z "$bits" ] || ! tape_outcome "$proposal_id" "$bits" '{}' '{}' '[]' \
               >/dev/null 2>&1; then
             log "WARNING: tape: failed to append repair outcome for ${cond} (${proposal_id})"
+            # #1702: leave the entry so the next tick retries the outcome.
+            # Same rule as the proposal emit path: no tape line, no state change.
+            drop_entry=0
           else
             log "tape: condition ${cond} outcome recorded for ${proposal_id} (acted=${acted}, cleared=${cleared})"
           fi
@@ -410,6 +419,7 @@ repair_tape_tick() {
         continue
         ;;
     esac
+    [ "$drop_entry" = "1" ] || continue
     case "$cond" in
       *[!A-Za-z0-9._-]*) continue ;;
     esac
@@ -417,9 +427,9 @@ repair_tape_tick() {
       || keys_json="[]"
   done <<< "$decisions"
 
-  # Drop closed conditions (tape records are immutable; the state file only
-  # tracks open repairs). A failed outcome append still drops — the tape
-  # never blocks the next tick, and a later firing opens a new proposal.
+  # Drop only conditions whose outcome append succeeded (or that write no
+  # outcome). A failed append stays, so the next tick retries (#1702). The
+  # tape never blocks the supervisor — this function still returns 0.
   if [ "$keys_json" != "[]" ]; then
     _repair_state_update \
       "with_entries(select(.key as \$k | ${keys_json} | index(\$k) | not))"
