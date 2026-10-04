@@ -16,11 +16,17 @@
 #     (now minus the id file's mtime, clamped at 0) and the JSON from
 #     tools/sprint-children.sh. The comment names the first such child's
 #     proposal ref (the issue number).
-#   * Then forge_api GET "/issues?milestone=<N>&state=open&type=issues".
-#     Each issue whose labels include name "backlog" loses that label
-#     (DELETE "/issues/<issue>/labels/<id>", id from the issue's label
-#     object) and gets one comment:
+#   * Then list the milestone's open issues, every page (Forgejo's default
+#     page is not the full set): forge_api GET
+#     "/issues?milestone=<N>&state=open&type=issues&limit=50&page=<P>".
+#     Stop on a short page. A failed call, a non-array, or a repeated page
+#     leaves <N>.done unwritten so the next run retries.
+#     Each issue whose labels include name "backlog" gets one comment, then
+#     loses that label (DELETE "/issues/<issue>/labels/<id>", id from the
+#     issue's label object):
 #     "Sprint returned: #<child issue> reported a design conflict. Re-add backlog when the design is fixed."
+#     A retry skips the POST when that exact body is already on the issue,
+#     so a delete that fails after the comment still ends with one comment.
 #     Issues without backlog (for example in-progress) are not touched.
 #   * Touch <N>.done only after the append and the label pass both succeed,
 #     so a failed strip is retried next run without a second outcome.
@@ -280,66 +286,141 @@ _tape_has_outcome() {
   return 2
 }
 
-# _strip_backlog N CHILD_ISSUE — take backlog off the milestone's open issues
-# and post the return comment. Issues without backlog are left alone.
-#   0  every backlog issue was unlabelled and commented (or there were none)
-#   1  the list, a delete, or a comment failed
+# _return_comment_state NUM COMMENT REASON_FILE — print "yes" when NUM already
+# carries COMMENT, "no" when it does not. Returns 1 when a comments page
+# cannot be read (a repeated full page counts: the caller must not delete).
+_return_comment_state() {
+  local num="$1" want="$2" reason_file="$3"
+  local page=1 body count prev="" hit rc
+  while true; do
+    rc=0
+    body="$(forge_api GET "/issues/${num}/comments?limit=50&page=${page}" 2>"$reason_file")" || rc=$?
+    if [ "$rc" -ne 0 ] || [ -z "$body" ]; then
+      return 1
+    fi
+    if ! jq -e 'type == "array"' <<<"$body" >/dev/null 2>&1; then
+      return 1
+    fi
+    hit="$(jq -r --arg b "$want" 'if any(.[]; .body == $b) then "yes" else "no" end' <<<"$body")" || return 1
+    if [ "$hit" = "yes" ]; then
+      printf '%s' yes
+      return 0
+    fi
+    count="$(jq -r 'length' <<<"$body")" || return 1
+    [[ "$count" =~ ^[0-9]+$ ]] || return 1
+    # A short page is the end of the list. The comment is not there.
+    if [ "$count" -lt 50 ]; then
+      printf '%s' no
+      return 0
+    fi
+    if [ -n "$prev" ] && [ "$body" = "$prev" ]; then
+      return 1
+    fi
+    prev="$body"
+    page=$((page + 1))
+  done
+}
+
+# _strip_backlog N CHILD_ISSUE — comment, then take backlog off, every open
+# page of the milestone. Issues without backlog are left alone.
+#   0  every backlog issue was commented and unlabelled (or there were none)
+#   1  a page, a comment read, a comment post, or a delete failed.
+#      .done must stay unwritten so the next run can finish the strip.
 _strip_backlog() {
   local n="$1" child_issue="$2"
   local reason_file body reason rc comment body_json issue_json num lid
+  local page=1 prev="" count present
   reason_file="$(mktemp)"
-  rc=0
-  body="$(forge_api GET "/issues?milestone=${n}&state=open&type=issues" 2>"$reason_file")" || rc=$?
-  if [ "$rc" -ne 0 ] || [ -z "$body" ]; then
-    reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
-    rm -f "$reason_file"
-    log "WARNING: sprint ${n}: open issues unreadable${reason:+: ${reason}} — backlog left for retry"
-    return 1
-  fi
-  if ! printf '%s' "$body" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    rm -f "$reason_file"
-    log "WARNING: sprint ${n}: open issues list is not an array — backlog left for retry"
-    return 1
-  fi
   comment="Sprint returned: #${child_issue} reported a design conflict. Re-add backlog when the design is fixed."
   body_json="$(jq -nc --arg b "$comment" '{body: $b}')" || {
     rm -f "$reason_file"
     log "WARNING: sprint ${n}: could not build the return comment"
     return 1
   }
-  while IFS= read -r issue_json; do
-    [ -n "$issue_json" ] || continue
-    num="$(jq -r '.number // empty' <<<"$issue_json" 2>/dev/null || true)"
-    [[ "$num" =~ ^[0-9]+$ ]] || continue
-    # backlog's id comes from the issue object. No backlog name: leave it
-    # alone (in-progress, and anything else, is not a queue entry to pull).
-    lid="$(jq -r 'first(.labels[]? | select(.name == "backlog") | (.id | tostring)) // empty' \
-      <<<"$issue_json" 2>/dev/null || true)"
-    [ -n "$lid" ] || continue
-    if ! [[ "$lid" =~ ^[0-9]+$ ]]; then
-      rm -f "$reason_file"
-      log "WARNING: sprint ${n}: issue #${num} has backlog with no numeric id"
-      return 1
-    fi
+  while true; do
     rc=0
-    forge_api DELETE "/issues/${num}/labels/${lid}" >/dev/null 2>"$reason_file" || rc=$?
-    if [ "$rc" -ne 0 ]; then
+    body="$(forge_api GET \
+      "/issues?milestone=${n}&state=open&type=issues&limit=50&page=${page}" \
+      2>"$reason_file")" || rc=$?
+    if [ "$rc" -ne 0 ] || [ -z "$body" ]; then
       reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
       rm -f "$reason_file"
-      log "WARNING: sprint ${n}: could not remove backlog from #${num}${reason:+: ${reason}}"
+      log "WARNING: sprint ${n}: open issues page ${page} unreadable${reason:+: ${reason}} — .done left unwritten"
       return 1
     fi
-    rc=0
-    forge_api POST "/issues/${num}/comments" -d "$body_json" >/dev/null 2>"$reason_file" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-      reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
+    if ! jq -e 'type == "array"' <<<"$body" >/dev/null 2>&1; then
       rm -f "$reason_file"
-      log "WARNING: sprint ${n}: could not comment on #${num}${reason:+: ${reason}}"
+      log "WARNING: sprint ${n}: open issues page ${page} is not an array — .done left unwritten"
       return 1
     fi
-  done < <(printf '%s' "$body" | jq -c '.[]')
-  rm -f "$reason_file"
-  return 0
+    count="$(jq -r 'length' <<<"$body" 2>/dev/null || true)"
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+      rm -f "$reason_file"
+      log "WARNING: sprint ${n}: open issues page ${page} has no length — .done left unwritten"
+      return 1
+    fi
+    # Nothing left. A short page below is the same stop, after its issues.
+    if [ "$count" -eq 0 ]; then
+      rm -f "$reason_file"
+      return 0
+    fi
+    # A stub that ignores page and repeats a full page must not loop, and
+    # must not be treated as a finished strip.
+    if [ -n "$prev" ] && [ "$body" = "$prev" ]; then
+      rm -f "$reason_file"
+      log "WARNING: sprint ${n}: open issues page ${page} repeated — .done left unwritten"
+      return 1
+    fi
+    prev="$body"
+    while IFS= read -r issue_json || [ -n "${issue_json:-}" ]; do
+      [ -n "$issue_json" ] || continue
+      num="$(jq -r '.number // empty' <<<"$issue_json" 2>/dev/null || true)"
+      [[ "$num" =~ ^[0-9]+$ ]] || continue
+      # backlog's id comes from the issue object. No backlog name: leave it
+      # alone (in-progress, and anything else, is not a queue entry to pull).
+      lid="$(jq -r 'first(.labels[]? | select(.name == "backlog") | (.id | tostring)) // empty' \
+        <<<"$issue_json" 2>/dev/null || true)"
+      [ -n "$lid" ] || continue
+      if ! [[ "$lid" =~ ^[0-9]+$ ]]; then
+        rm -f "$reason_file"
+        log "WARNING: sprint ${n}: issue #${num} has backlog with no numeric id"
+        return 1
+      fi
+      # Comment first. A later delete failure leaves backlog on, so the next
+      # run still sees the issue and skips this POST when the body is there.
+      rc=0
+      present="$(_return_comment_state "$num" "$comment" "$reason_file")" || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
+        rm -f "$reason_file"
+        log "WARNING: sprint ${n}: comments for #${num} unreadable${reason:+: ${reason}} — .done left unwritten"
+        return 1
+      fi
+      if [ "$present" != "yes" ]; then
+        rc=0
+        forge_api POST "/issues/${num}/comments" -d "$body_json" >/dev/null 2>"$reason_file" || rc=$?
+        if [ "$rc" -ne 0 ]; then
+          reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
+          rm -f "$reason_file"
+          log "WARNING: sprint ${n}: could not comment on #${num}${reason:+: ${reason}}"
+          return 1
+        fi
+      fi
+      rc=0
+      forge_api DELETE "/issues/${num}/labels/${lid}" >/dev/null 2>"$reason_file" || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
+        rm -f "$reason_file"
+        log "WARNING: sprint ${n}: could not remove backlog from #${num}${reason:+: ${reason}}"
+        return 1
+      fi
+    done < <(jq -c '.[]' <<<"$body")
+    if [ "$count" -lt 50 ]; then
+      rm -f "$reason_file"
+      return 0
+    fi
+    page=$((page + 1))
+  done
 }
 
 # _read_pid N — print the sprint proposal id from the id file, or nothing.

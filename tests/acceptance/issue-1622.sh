@@ -77,10 +77,18 @@ jq -n '{id: 8, state: "open", open_issues: 1, closed_issues: 0,
 jq -n '{id: 7, state: "open", open_issues: 1, closed_issues: 0,
   description: "class: internal\neffect: none\nsoak: 48h"}' \
   >"$FIXTURES/milestone-7.json"
-jq -n '[
-  {number: 20, labels: [{id: 11, name: "backlog"}]},
-  {number: 21, labels: [{id: 12, name: "in-progress"}]}
-]' >"$FIXTURES/issues-9.json"
+# Page 1 is a full Forgejo page (50) with no backlog issue, so the strip
+# must request page 2, where the backlog sibling lives. #21 is in-progress.
+jq -n '[range(100;149) | {number: ., labels: []}]
+  + [{number: 21, labels: [{id: 12, name: "in-progress"}]}]' \
+  >"$FIXTURES/issues-9-p1.json"
+jq -n '[{number: 20, labels: [{id: 11, name: "backlog"}]}]' \
+  >"$FIXTURES/issues-9-p2.json"
+jq -n '{id: 6, state: "open", open_issues: 1, closed_issues: 0,
+  description: "class: internal\neffect: none\nsoak: 48h"}' \
+  >"$FIXTURES/milestone-6.json"
+jq -n '[{number: 60, labels: [{id: 15, name: "backlog"}]}]' \
+  >"$FIXTURES/issues-6.json"
 
 cat >"$STUB_BIN/forge_api" <<'EOF'
 #!/usr/bin/env bash
@@ -92,11 +100,38 @@ case "${method} ${path}" in
   "GET /milestones/9") cat "${FORGE_FIXTURES:?}/milestone-9.json" ;;
   "GET /milestones/8") cat "${FORGE_FIXTURES:?}/milestone-8.json" ;;
   "GET /milestones/7") cat "${FORGE_FIXTURES:?}/milestone-7.json" ;;
-  "GET /issues?milestone=9&state=open&type=issues")
-    cat "${FORGE_FIXTURES:?}/issues-9.json"
+  "GET /milestones/6") cat "${FORGE_FIXTURES:?}/milestone-6.json" ;;
+  "GET /issues?milestone=9&state=open&type=issues&limit=50&page=1")
+    cat "${FORGE_FIXTURES:?}/issues-9-p1.json"
     ;;
+  "GET /issues?milestone=9&state=open&type=issues&limit=50&page=2")
+    cat "${FORGE_FIXTURES:?}/issues-9-p2.json"
+    ;;
+  "GET /issues/20/comments?limit=50&page=1") printf '%s\n' '[]' ;;
   "DELETE /issues/20/labels/11") ;;
   "POST /issues/20/comments") ;;
+  "GET /issues?milestone=6&state=open&type=issues&limit=50&page=1")
+    cat "${FORGE_FIXTURES:?}/issues-6.json"
+    ;;
+  "GET /issues/60/comments?limit=50&page=1")
+    # jq 1.6 emits nothing for --slurpfile without -n, so wrap the saved
+    # object by reading it as input.
+    if [ -s "${FORGE_FIXTURES:?}/posted-60.json" ]; then
+      jq -c '[.]' "${FORGE_FIXTURES}/posted-60.json"
+    else
+      printf '%s\n' '[]'
+    fi
+    ;;
+  "POST /issues/60/comments")
+    printf '%s\n' "${4:-}" >"${FORGE_FIXTURES:?}/posted-60.json"
+    ;;
+  "DELETE /issues/60/labels/15")
+    if [ -f "${FORGE_FIXTURES:?}/fail-delete-60" ]; then
+      rm -f "${FORGE_FIXTURES}/fail-delete-60"
+      echo "stub: delete refused" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "stub: unexpected ${method} ${path}" >&2
     exit 1
@@ -192,10 +227,22 @@ ac_assert_jq '.children.n_children == 1 and .children.n_rejected == 1 and .child
   "$out" "AC1: children rollup must count the design-conflict child (got $out)"
 ac_assert_eq "$(count_outcomes s-9)" "1" "AC1: exactly one sprint outcome"
 [ -f "$TAPEDIR/sprints/9.done" ] || ac_fail "AC1: sprints/9.done must exist"
-grep -qF 'GET /issues?milestone=9&state=open&type=issues' "$CALLS" \
-  || ac_fail "AC1: must list the milestone's open issues"
-grep -qF 'DELETE /issues/20/labels/11' "$CALLS" \
-  || ac_fail "AC1: backlog sibling must lose the backlog label"
+grep -qF 'GET /issues?milestone=9&state=open&type=issues&limit=50&page=1' "$CALLS" \
+  || ac_fail "AC1: must list open-issue page 1"
+grep -qF 'GET /issues?milestone=9&state=open&type=issues&limit=50&page=2' "$CALLS" \
+  || ac_fail "AC1: a full page must be followed by page 2 (calls: $(cat "$CALLS"))"
+if grep -qF 'GET /issues?milestone=9&state=open&type=issues&limit=50&page=3' "$CALLS"; then
+  ac_fail "AC1: a short page 2 must stop the listing"
+fi
+cmt_line=$(grep -n 'GET /issues/20/comments?limit=50&page=1' "$CALLS" | head -n1 | cut -d: -f1)
+post_line=$(grep -n 'POST /issues/20/comments' "$CALLS" | head -n1 | cut -d: -f1)
+del_line=$(grep -n 'DELETE /issues/20/labels/11' "$CALLS" | head -n1 | cut -d: -f1)
+if [ -z "$cmt_line" ] || [ -z "$post_line" ] || [ -z "$del_line" ]; then
+  ac_fail "AC1: comment read, post, and label delete must all happen"
+fi
+if [ "$cmt_line" -ge "$post_line" ] || [ "$post_line" -ge "$del_line" ]; then
+  ac_fail "AC1: comment before delete (lines ${cmt_line} ${post_line} ${del_line})"
+fi
 grep -qF "POST /issues/20/comments -d {\"body\":\"${COMMENT}\"}" "$CALLS" \
   || ac_fail "AC1: backlog sibling must get the return comment (calls: $(cat "$CALLS"))"
 ac_assert_eq "$(grep -cF 'POST /issues/20/comments' "$CALLS")" "1" \
@@ -229,5 +276,30 @@ ac_assert_eq "$RC" "0" "second run must exit 0 (rc=$RC)"
 ac_assert_eq "$(count_outcomes s-9)" "1" "second run must not write another outcome"
 ac_assert_eq "$(grep -cF 'POST /issues/20/comments' "$CALLS")" "1" \
   "second run must not post another comment"
+
+# A delete that fails after the comment must be retried without a second
+# comment, and .done stays unwritten until that retry finishes.
+ac_log "retry: failed delete after the comment is finished once, still one comment"
+RETRY="$WORK/tape-retry"
+mkdir -p "$RETRY/sprints"
+: >"$RETRY/tape.jsonl"
+printf '%s\n' "s-6" >"$RETRY/sprints/6"
+append_proposal "$RETRY" c6 s-6 61
+append_outcome "$RETRY" c6 '{"rejected":1}' design-conflict
+: >"${FIXTURES}/fail-delete-60"
+: >"$CALLS"
+TAPEDIR="$RETRY"
+run
+ac_assert_eq "$RC" "1" "retry: first strip must fail the delete (rc=$RC): $(cat "${WORK}/out")"
+[ ! -f "$RETRY/sprints/6.done" ] || ac_fail "retry: .done must stay unwritten when the delete fails"
+ac_assert_eq "$(grep -cF 'POST /issues/60/comments' "$CALLS")" "1" \
+  "retry: the comment is posted before the failing delete"
+run
+ac_assert_eq "$RC" "0" "retry: second strip must finish (rc=$RC): $(cat "${WORK}/out")"
+[ -f "$RETRY/sprints/6.done" ] || ac_fail "retry: .done is touched only after the delete lands"
+ac_assert_eq "$(grep -cF 'POST /issues/60/comments' "$CALLS")" "1" \
+  "retry: the existing return comment is not posted again"
+ac_assert_eq "$(count_outcomes s-6)" "1" "retry: still one sprint outcome"
+# count_outcomes reads TAPEDIR, which is now the retry tape. Good.
 
 ac_pass "issue #1622: a design-conflict rejection returns the sprint"
