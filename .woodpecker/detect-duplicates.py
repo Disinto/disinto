@@ -967,6 +967,29 @@ def main() -> int:
         "7975b55bf8d172adbd4341f7300cb4e4": "issue-1649.sh + issue-1648.sh: EOF + stuck.toml heredoc open + dev=48 (#1649)",
         "507128932ac5a55af890c89095029d7c": "issue-1649.sh + issue-1648.sh: stuck.toml heredoc open + dev=48 + EOF (#1649)",
         "a1407105fe824e184b28d9ead5feb8e8": "issue-1649.sh + issue-1648.sh: stuck.toml dev=48 + EOF + stuck-bad heredoc open (#1649)",
+        # --- #1713: repair-tape (eval-gate) acceptance test shares the in-process harness ---
+        # issue-1713.sh (#1713) and issue-1637.sh (#1637) both extract the same set of
+        # supervisor repair-tape functions and run them in an isolated subshell (ac_extract_fn
+        # + eval, temp factory root, source lib/tape.sh, stub_remedy, judge/outcome_rec, and a
+        # jq outcome assertion). Each is kept deliberately isolated (own throwaway root, own
+        # stub) per the per-test-isolation convention; the shared 5-line windows are intentional
+        # isolation, not copy-paste. Hashes computed against CURRENT content of both tests;
+        # refresh if their shared boilerplate changes.
+        "7403f50e59a8caa631a8a2919f868f2c": "issue-1713.sh + issue-1637.sh: REPAIR_FNS init + for _fn extract list (#1713)",
+        "11f1bbc64340071173d679593e3bf039": "issue-1713.sh + issue-1637.sh: REPAIR_FNS append + done + WORK mktemp (#1713)",
+        "698a5baced3dd0f17fd29acb0fe80d9f": "issue-1713.sh + issue-1637.sh: WORK mktemp + trap EXIT (#1713)",
+        "82a46b4c10454fef748b7d2fcd3af691": "issue-1713.sh + issue-1637.sh: WORK mktemp + trap EXIT + ROOT factory (#1713)",
+        "0f86987a453aac16710855aa01b8bd5c": "issue-1713.sh + issue-1637.sh: stub_remedy open + local code + printf cleanup-worktrees (#1713)",
+        "fee5e4ece370219190785d07f555ffa9": "issue-1713.sh + issue-1637.sh: stub_remedy local code + printf + redirect cleanup-worktrees (#1713)",
+        "442ec4fc62a40bcc6120d09bac3a7971": "issue-1713.sh + issue-1637.sh: stub_remedy printf + redirect + close (#1713)",
+        "3247898e54a6b1ed3a3eb22ec92ff02b": "issue-1713.sh + issue-1637.sh: judge close + outcome_rec open (#1713)",
+        "01bfbab78fe27184c756183717f7d5ff": "issue-1713.sh + issue-1637.sh: outcome_rec open + local file (#1713)",
+        "edf02b1cc8fcf1afc596cbacbe9d7bcd": "issue-1713.sh + issue-1637.sh: outcome_rec open + local file + [ -f ] return (#1713)",
+        "b11d2ec2d1b152eb26b501189aad343c": "issue-1713.sh + issue-1637.sh: ac_assert_jq open + outcome type + proposal_id (#1713)",
+        "08fd3373d76fd68bb8c21b1f94cf7b55": "issue-1713.sh + issue-1637.sh: jq outcome type + proposal_id + acted/cleared (#1713)",
+        "7d7acc5bacebecfe7314259aa988c739": "issue-1713.sh + issue-1637.sh: jq proposal_id + acted/cleared + numbers (#1713)",
+        "21ee62dd6475f0deef5d10822920d61b": "issue-1713.sh + issue-1637.sh: jq acted/cleared + numbers + children (#1713)",
+        "db6546c36e21a9df0bdf331615ae375d": "issue-1713.sh + issue-1637.sh: jq numbers + children + payloads (#1713)",
     }
 
     if not sh_files:

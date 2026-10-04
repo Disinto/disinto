@@ -160,6 +160,11 @@ fi
 # Run evaluate-recipes.sh to detect P0-P2 conditions.
 # Output: {"fired":[{"name":"...","severity":"P1","evidence":"...","action":"direct|llm","action_script":"..."}]}
 RECIPE_OUTPUT=""
+RECIPE_EVAL_OK=0   # 1 only when the evaluator exits 0 AND prints a JSON object
+                   # with a "fired" array. A failed or non-JSON run stays 0,
+                   # which gates the repair tick below: we must not read "the
+                   # evaluator printed nothing / garbled JSON" as "no repair
+                   # condition is firing" and close open state entries (#1713).
 if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
   _eval_exit=0
   RECIPE_OUTPUT=$(bash "$SCRIPT_DIR/evaluate-recipes.sh" \
@@ -167,6 +172,16 @@ if [ -f "$FACTORY_ROOT/supervisor/recipes.yaml" ]; then
     <(echo "$PREFLIGHT_OUTPUT") 2>/dev/null) || _eval_exit=$?
   if [ "$_eval_exit" -ne 0 ]; then
     log "WARNING: recipe evaluator exited $_eval_exit — falling back to always-LLM gate"
+  fi
+  # An empty or unparseable RECIPE_OUTPUT is "unknown", not "nothing firing"
+  # — the abort path (non-zero exit) and the jq check both cover it, and
+  # [ -n ] covers the (broken) exit-0-but-no-output case (#1713).
+  if [ "$_eval_exit" -eq 0 ] \
+     && [ -n "$RECIPE_OUTPUT" ] \
+     && printf '%s' "$RECIPE_OUTPUT" \
+        | jq -e 'type == "object" and has("fired") and (.fired | type == "array")' \
+        >/dev/null 2>&1; then
+    RECIPE_EVAL_OK=1
   fi
 fi
 
@@ -438,7 +453,13 @@ repair_tape_tick() {
 }
 
 # One pass per tick — covers both the fast path and the LLM path (#1408).
-repair_tape_tick
+# A failed or non-JSON recipe evaluation is not "no conditions firing"; it
+# means the firing set is unknown. Skip the close/expire pass and leave state
+# entries open until a healthy evaluation can prove a condition truly cleared
+# (#1713).
+if [ "$RECIPE_EVAL_OK" = 1 ]; then
+  repair_tape_tick
+fi
 
 # repair_direct_dispatch — run the direct-action scripts for the recipes that
 # fired this tick (fast path, #1533). For each real `action_script`, if the
