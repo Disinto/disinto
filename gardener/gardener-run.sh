@@ -450,6 +450,16 @@ if [ "$sprint_outcomes_rc" -ne 0 ]; then
   log "WARNING: sprint-outcomes.sh failed (rc=${sprint_outcomes_rc})"
 fi
 
+# Rejected issues reach the tape (#1631), right after sprint outcomes. A
+# closed `rejected` or `prediction/dismissed` issue the tape does not hold
+# yet is written as a rejected dev proposal and never runs. Never fatal: a
+# non-zero exit only logs a warning.
+tape_rejections_rc=0
+"$FACTORY_ROOT/tools/tape-rejections.sh" || tape_rejections_rc=$?
+if [ "$tape_rejections_rc" -ne 0 ]; then
+  log "WARNING: tape-rejections.sh failed (rc=${tape_rejections_rc})"
+fi
+
 # Claim-loop proposals (#1641), before any sprint tool. Each new or revised
 # claim file becomes one claim-loop proposal. Never fatal: a non-zero exit
 # only logs a warning.

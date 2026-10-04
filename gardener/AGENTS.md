@@ -57,6 +57,9 @@ and executes the pending-actions manifest post-merge.
   `contradicted` outcome. A failure only logs a warning.
   A claim whose checks pass for its whole `window` gets a `held` outcome;
   checks go on, and a later miss still contradicts it (#1643).
+  Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or
+  `prediction/dismissed` issue the tape does not hold yet as a rejected dev
+  proposal. A failure only logs a warning.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.
