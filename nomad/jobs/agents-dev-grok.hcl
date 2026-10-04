@@ -340,10 +340,13 @@ WOODPECKER_TOKEN=seed-me
 EOT
       }
 
-      # Agents run Claude/llama sessions — need CPU + memory headroom.
+      # The model runs at xAI; this container holds dsh, the worktree and
+      # the test runs. Peak 418 MiB over 2026-10-03/04, so 1 GiB (was
+      # 2048), which pays for Forgejo's raise to 1024 and keeps 1 GiB of
+      # the node free for vault-runner dispatches.
       resources {
         cpu    = 500
-        memory = 2048
+        memory = 1024
       }
     }
   }
