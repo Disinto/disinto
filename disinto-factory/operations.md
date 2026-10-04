@@ -65,8 +65,9 @@ curl -sf -b "user_sess=$WOODPECKER_TOKEN" -H "X-CSRF-Token: $WP_CSRF" \
 # Nomad: tail a single task's stdout via its allocation
 nomad alloc logs <allocation-id>
 
-# Nomad: restart a misbehaving job (allocs come back fresh)
-nomad job restart agents
+# Nomad: restart a misbehaving job (allocs come back fresh).
+# There is no job named "agents"; restart the agent's own job.
+nomad job restart <the agent's job, e.g. agents-dev-qwen>
 
 # Compose (legacy):
 # docker logs --tail 100 disinto-agents-1
@@ -74,12 +75,12 @@ nomad job restart agents
 
 ### Unstick a blocked issue
 
-When a dev-agent run fails (CI timeout, implementation error), the issue gets labeled `blocked`:
+When a dev-agent walk ends on a terminal reason (CI fix budget exhausted, review rounds exhausted, merge blocked, no push), the issue is labeled `blocked`. A CI timeout is not terminal: the issue stays `in-progress`, dev-poll keeps polling its open PR, and there is nothing to unstick — do not close that PR.
 
 **Nomad:**
 1. Close stale PR and delete the branch
 2. Restart the agent job so the pollers rescan clean
-   `nomad job restart agents`
+   `nomad job restart <the agent's job, e.g. agents-dev-qwen>`
 3. Relabel the issue to `backlog`
 4. Update agent repo (host-side `project-repos` volume):
    `git -C /srv/disinto/project-repos/<name> fetch origin && git -C /srv/disinto/project-repos/<name> reset --hard origin/main`
