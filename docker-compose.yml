@@ -218,8 +218,6 @@ services:
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/root/.claude.json:ro
       - ${CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
-      # Chat history persistence (merged from chat container, #1083)
-      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     environment:
       - FORGE_SUPERVISOR_TOKEN=${FORGE_SUPERVISOR_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -231,25 +229,8 @@ services:
       - PRIMARY_BRANCH=main
       - DISINTO_CONTAINER=1
       - FORGE_ADMIN_USERS=disinto-admin,vault-bot,admin
-      # Chat env vars (merged from chat container into edge, #1083)
-      - CHAT_HOST=127.0.0.1
-      - CHAT_PORT=8080
-      - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
-      - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
-      - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
       - EDGE_TUNNEL_FQDN=${EDGE_TUNNEL_FQDN:-}
-      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
       - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
-      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
-      # GEMINI_API_KEY is intentionally NOT set here — the bridge reads
-      # it from ${GEMINI_API_KEY_FILE} (rendered by Vault in the Nomad
-      # path; local-compose dev can bind-mount a file or leave it unset
-      # and the bridge will decline to start, which is safe).
-      - VOICE_HOST=127.0.0.1
-      - VOICE_PORT=8090
-      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
-      # Rate limiting removed (#1084)
     ports:
       - "80:80"
       - "443:443"

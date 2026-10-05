@@ -5,11 +5,6 @@
 # Generates docker-compose.yml, Dockerfile, Caddyfile, staging index, and
 # deployment pipeline configs.
 #
-# Chat (#1237): the chat spec is generated here at init (the `chat` service
-# in generate_compose's output); the repo holds NO in-repo snapshot of the
-# chat jobspec — see nomad/AGENTS.md ("The `chat` job is init-generated").
-# Drift check on live boxes: `disinto doctor`.
-#
 # Globals expected (must be set before sourcing):
 #   FACTORY_ROOT   - Root of the disinto factory
 #   PROJECT_NAME   - Project name for the project repo (defaults to 'project')
@@ -686,23 +681,6 @@ COMPOSEEOF
       - EDGE_ROUTING_MODE=${EDGE_ROUTING_MODE:-subpath}
       - EDGE_TUNNEL_FQDN_FORGE=${EDGE_TUNNEL_FQDN_FORGE:-}
       - EDGE_TUNNEL_FQDN_CI=${EDGE_TUNNEL_FQDN_CI:-}
-      - EDGE_TUNNEL_FQDN_CHAT=${EDGE_TUNNEL_FQDN_CHAT:-}
-      # Shared secret for Caddy ↔ chat forward_auth (#709)
-      - FORWARD_AUTH_SECRET=${FORWARD_AUTH_SECRET:-}
-      # Chat env vars (merged from chat container into edge, #1083)
-      - CHAT_HOST=127.0.0.1
-      - CHAT_PORT=8080
-      - CHAT_OAUTH_CLIENT_ID=${CHAT_OAUTH_CLIENT_ID:-}
-      - CHAT_OAUTH_CLIENT_SECRET=${CHAT_OAUTH_CLIENT_SECRET:-}
-      - DISINTO_CHAT_ALLOWED_USERS=${DISINTO_CHAT_ALLOWED_USERS:-}
-      # Voice bridge (#662): loopback port for Caddy's /voice/ws handle.
-      # GEMINI_API_KEY is NOT set here — the bridge reads it from
-      # ${GEMINI_API_KEY_FILE} so it never lands in the task env where
-      # chat-server.py or its `claude -p` children could inherit it.
-      - VOICE_HOST=127.0.0.1
-      - VOICE_PORT=8090
-      - GEMINI_API_KEY_FILE=${GEMINI_API_KEY_FILE:-/secrets/gemini-api-key}
-      # Rate limiting removed (#1084)
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -710,8 +688,6 @@ COMPOSEEOF
       - ./secrets/tunnel_key:/run/secrets/tunnel_key:ro
       - ${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/home/agent/.claude.json:ro
-      # Chat history persistence (merged from chat container, #1083)
-      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:2019/config/"]
       interval: 30s
@@ -760,67 +736,12 @@ COMPOSEEOF
       - disinto-net
     command: ["echo", "staging slot — replace with project image"]
 
-  # Chat container — Claude chat UI backend (#705)
-  # Internal service only; edge proxy routes to chat:8080
-  # Sandbox hardened per #706 — no docker.sock, read-only rootfs, minimal caps
-  # Rate limiting removed (#1084)
-  chat:
-    build:
-      context: ./docker/chat
-      dockerfile: Dockerfile
-    container_name: disinto-chat
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    pids_limit: 128
-    mem_limit: 512m
-    memswap_limit: 512m
-    volumes:
-      # Mount claude binary from host (same as agents)
-      - ${CLAUDE_BIN_DIR}:/usr/local/bin/claude:ro
-      # Throwaway named volume for chat config (isolated from host ~/.claude)
-      - chat-config:/var/chat/config
-      # Chat history persistence: per-user NDJSON files on bind-mounted host volume
-      - ${CHAT_HISTORY_DIR:-./state/chat-history}:/var/lib/chat/history
-      # Workspace directory: bind-mounted project working tree for Claude access (#1027)
-      # Mounted when CHAT_WORKSPACE_DIR is set (defaults to ./workspace)
-      - ${CHAT_WORKSPACE_DIR:-./workspace}:/var/workspace
-    environment:
-      CHAT_HOST: "0.0.0.0"
-      CHAT_PORT: "8080"
-      FORGE_URL: http://forgejo:3000
-      CHAT_OAUTH_CLIENT_ID: ${CHAT_OAUTH_CLIENT_ID:-}
-      CHAT_OAUTH_CLIENT_SECRET: ${CHAT_OAUTH_CLIENT_SECRET:-}
-      EDGE_TUNNEL_FQDN: ${EDGE_TUNNEL_FQDN:-}
-      EDGE_TUNNEL_FQDN_CHAT: ${EDGE_TUNNEL_FQDN_CHAT:-}
-      EDGE_ROUTING_MODE: ${EDGE_ROUTING_MODE:-subpath}
-      DISINTO_CHAT_ALLOWED_USERS: ${DISINTO_CHAT_ALLOWED_USERS:-}
-      # Shared secret for Caddy forward_auth verify endpoint (#709)
-      FORWARD_AUTH_SECRET: ${FORWARD_AUTH_SECRET:-}
-      # Rate limiting removed (#1084)
-      # Workspace directory for Claude code access (#1027)
-      CHAT_WORKSPACE_DIR: ${CHAT_WORKSPACE_DIR:-./workspace}
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - disinto-net
-
 volumes:
   forgejo-data:
   woodpecker-data:
   agent-data:
   project-repos:
   caddy_data:
-  chat-config:
 
 networks:
   disinto-net:
@@ -898,8 +819,8 @@ _generate_agent_docker_impl() {
 # On a fresh clone, `disinto init` calls generate_caddyfile before first `disinto up`.
 #
 # Routing mode (EDGE_ROUTING_MODE env var):
-#   subpath   — (default) all services under <project>.disinto.ai/{forge,ci,chat,staging}
-#   subdomain — per-service subdomains: forge.<project>, ci.<project>, chat.<project>
+#   subpath   — (default) all services under <project>.disinto.ai/{forge,ci,staging}
+#   subdomain — per-service subdomains: forge.<project>, ci.<project>
 # See docs/edge-routing-fallback.md for the full pivot plan.
 _generate_caddyfile_impl() {
   local docker_dir="${FACTORY_ROOT}/docker"
@@ -950,30 +871,12 @@ _generate_caddyfile_subpath() {
         uri strip_prefix /staging
         reverse_proxy staging:80
     }
-
-    # Chat service — reverse proxy to in-process chat server (#705, #1083)
-    # OAuth routes bypass forward_auth — unauthenticated users need these (#709)
-    handle /chat/login {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle /chat/oauth/callback {
-        reverse_proxy 127.0.0.1:8080
-    }
-    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
-    handle /chat/* {
-        forward_auth 127.0.0.1:8080 {
-            uri /chat/auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        reverse_proxy 127.0.0.1:8080
-    }
 }
 CADDYFILEEOF
 }
 
-# Subdomain Caddyfile: four host blocks per docs/edge-routing-fallback.md.
-# Uses env vars EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI, EDGE_TUNNEL_FQDN_CHAT,
+# Subdomain Caddyfile: three host blocks per docs/edge-routing-fallback.md.
+# Uses env vars EDGE_TUNNEL_FQDN_FORGE, EDGE_TUNNEL_FQDN_CI,
 # and EDGE_TUNNEL_FQDN (main project domain → staging).
 _generate_caddyfile_subdomain() {
   local caddyfile="$1"
@@ -994,24 +897,6 @@ _generate_caddyfile_subdomain() {
 # Woodpecker CI — root path
 {$EDGE_TUNNEL_FQDN_CI} {
     reverse_proxy woodpecker:8000
-}
-
-# Chat — with forward_auth (#709, on its own host)
-{$EDGE_TUNNEL_FQDN_CHAT} {
-    handle /login {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle /oauth/callback {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle /* {
-        forward_auth 127.0.0.1:8080 {
-            uri /auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        reverse_proxy 127.0.0.1:8080
-    }
 }
 CADDYFILEEOF
 }
