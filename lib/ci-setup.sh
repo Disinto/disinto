@@ -6,7 +6,6 @@
 #   _install_cron_impl()              - Install crontab entries (bare-metal only; compose uses polling loop)
 #   _create_forgejo_oauth_app()       - Generic: create an OAuth2 app on Forgejo (shared helper)
 #   _create_woodpecker_oauth_impl()   - Create OAuth2 app on Forgejo for Woodpecker
-#   _create_chat_oauth_impl()         - Create OAuth2 app on Forgejo for disinto-chat
 #   _generate_woodpecker_token_impl() - Auto-generate WOODPECKER_TOKEN via OAuth2 flow
 #   _activate_woodpecker_repo_impl()  - Activate repo in Woodpecker
 #
@@ -96,7 +95,7 @@ _install_cron_impl() {
 }
 
 # Create an OAuth2 application on Forgejo.
-# Generic helper used by both Woodpecker and chat OAuth setup.
+# Generic helper used by the Woodpecker OAuth setup.
 # Sets _OAUTH_CLIENT_ID and _OAUTH_CLIENT_SECRET on success.
 # Usage: _create_forgejo_oauth_app <app_name> <redirect_uri>
 _create_forgejo_oauth_app() {
@@ -192,34 +191,6 @@ _create_woodpecker_oauth_impl() {
   echo "Config:  Woodpecker forge vars written to .env"
 }
 
-# Create OAuth2 app on Forgejo for disinto-chat.
-# Writes CHAT_OAUTH_CLIENT_ID / CHAT_OAUTH_CLIENT_SECRET to .env.
-# Usage: _create_chat_oauth_impl <redirect_uri>
-_create_chat_oauth_impl() {
-  local redirect_uri="$1"
-
-  echo ""
-  echo "── Chat OAuth2 setup ──────────────────────────────────"
-
-  _create_forgejo_oauth_app "disinto-chat" "$redirect_uri" || return 0
-  local client_id="${_OAUTH_CLIENT_ID}"
-  local client_secret="${_OAUTH_CLIENT_SECRET}"
-
-  local env_file="${FACTORY_ROOT}/.env"
-  local chat_vars=()
-  if [ -n "${client_id:-}" ]; then
-    chat_vars+=("CHAT_OAUTH_CLIENT_ID=${client_id}")
-  fi
-  if [ -n "${client_secret:-}" ]; then
-    chat_vars+=("CHAT_OAUTH_CLIENT_SECRET=${client_secret}")
-  fi
-
-  for var_line in "${chat_vars[@]}"; do
-    local var_name="${var_line%%=*}"
-    _env_set_idempotent "$var_name" "${var_line#*=}" "$env_file"
-  done
-  echo "Config:  Chat OAuth vars written to .env"
-}
 
 # Auto-generate WOODPECKER_TOKEN by driving the Forgejo OAuth2 login flow.
 # Requires _FORGE_ADMIN_PASS (set by setup_forge when admin user was just created).

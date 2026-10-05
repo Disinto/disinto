@@ -52,8 +52,8 @@ check_pipeline_stall = false
 # Edge routing mode (default: subpath)
 #
 # Controls how services are exposed through the edge proxy.
-#   subpath   — all services under <project>.disinto.ai/{forge,ci,chat,staging}
-#   subdomain — per-service subdomains: forge.<project>, ci.<project>, chat.<project>
+#   subpath   — all services under <project>.disinto.ai/{forge,ci,staging}
+#   subdomain — per-service subdomains: forge.<project>, ci.<project>
 #
 # Set to "subdomain" if subpath routing causes unfixable issues (redirect loops,
 # OAuth callback mismatches, cookie collisions). See docs/edge-routing-fallback.md.
@@ -64,7 +64,6 @@ check_pipeline_stall = false
 # In subdomain mode, `disinto edge register` also writes:
 #   EDGE_TUNNEL_FQDN_FORGE=forge.<project>.disinto.ai
 #   EDGE_TUNNEL_FQDN_CI=ci.<project>.disinto.ai
-#   EDGE_TUNNEL_FQDN_CHAT=chat.<project>.disinto.ai
 
 # [mirrors]  (optional read-only mirrors; NOT the repo field — repo points at
 #             the live Forgejo repo disinto-admin/disinto; the Codeberg URL is
