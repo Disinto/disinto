@@ -20,8 +20,3 @@ WOODPECKER_AGENT_SECRET=wp-agent-secret
 # WP_FORGEJO_CLIENT=wp-forgejo-client
 # WP_FORGEJO_SECRET=wp-forgejo-secret
 # WOODPECKER_TOKEN=wp-token
-
-# Chat secrets - missing some
-FORWARD_AUTH_SECRET=forward-auth-secret
-# CHAT_OAUTH_CLIENT_ID=chat-client-id
-# CHAT_OAUTH_CLIENT_SECRET=chat-client-secret

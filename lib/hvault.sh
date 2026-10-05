@@ -414,11 +414,11 @@ hvault_token_lookup() {
 # Reads existing data and merges to preserve sibling keys (KV v2 replaces
 # .data atomically). Returns 0=created, 1=unchanged, 2=API error.
 # Args:
-#   path:      KV v2 logical path (e.g. "disinto/shared/chat")
-#   key:       key name within the path (e.g. "chat_oauth_client_id")
+#   path:      KV v2 logical path (e.g. "disinto/shared/forgejo")
+#   key:       key name within the path (e.g. "secret_key")
 #   generator: shell command that outputs a random value (default: openssl rand -hex 32)
 # Usage:
-#   _hvault_seed_key "disinto/shared/chat" "chat_oauth_client_id"
+#   _hvault_seed_key "disinto/shared/forgejo" "secret_key"
 #   rc=$?  # 0=created, 1=unchanged
 _hvault_seed_key() {
   local path="$1" key="$2" generator="${3:-openssl rand -hex 32}"
