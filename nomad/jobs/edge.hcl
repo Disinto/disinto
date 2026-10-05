@@ -2,9 +2,10 @@
 # nomad/jobs/edge.hcl — Edge proxy (Caddy) (Nomad service job)
 #
 # Part of the Nomad+Vault migration (S5.1, issue #988). Caddy reverse proxy
-# routes traffic to Forgejo, Woodpecker, staging, and chat services. The
-# vault-action dispatcher runs as a background process inside the caddy
-# container (entrypoint-edge.sh -> docker/edge/dispatcher.sh), polling
+# routes traffic to Forgejo, Woodpecker, and staging. Chat and voice are
+# not routed (#1768). The vault-action dispatcher runs as a background
+# process inside the caddy container (entrypoint-edge.sh ->
+# docker/edge/dispatcher.sh), polling
 # disinto-ops for vault actions and dispatching them via Nomad batch jobs.
 #
 # All upstreams discovered via Nomad service discovery (issue #1156, S5-fix-7).

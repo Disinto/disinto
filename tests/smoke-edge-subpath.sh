@@ -43,7 +43,6 @@ STAGING_PATH="/staging/"
 # Track overall test status
 FAILED=0
 PASSED=0
-SKIPPED=0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging helpers
@@ -61,11 +60,6 @@ log_pass() {
 log_fail() {
   echo "[FAIL] $*"
   ((FAILED++)) || true
-}
-
-log_skip() {
-  echo "[SKIP] $*"
-  ((SKIPPED++)) || true
 }
 
 log_section() {
@@ -207,7 +201,6 @@ main() {
   log_section "Test Summary"
   log_info "Passed: $PASSED"
   log_info "Failed: $FAILED"
-  log_info "Skipped: $SKIPPED"
 
   if [ "$FAILED" -gt 0 ]; then
     log_fail "Some tests failed"
