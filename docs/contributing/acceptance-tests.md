@@ -106,9 +106,13 @@ automatically. On every push to `main`, the pipeline:
 1. **Detects** whether the merge touched runtime paths (`docker/edge/`,
    `docker/voice/`, `docker/chat/`, `bin/snapshot-*.sh`, `bin/threads.sh`,
    `nomad/jobs/edge.hcl`). Docs- or test-only merges skip the redeploy.
-2. **Rebuilds + redeploys** the affected images (`disinto/edge:local`) and
-   re-launches the nomad job, polling `nomad job status` until the new alloc
-   is healthy (≤120s). Failures abort the pipeline before the test step.
+2. **Advances `/opt/disinto`** to the merged commit (fast-forward only), on
+   every merge: the edge runs the dispatcher and the snapshot daemon from
+   that host checkout, and `edge-threads-gc` and `agent-logs-rotate` run
+   scripts from it. Then, when runtime paths changed, it **rebuilds +
+   redeploys** `disinto/edge:local` from `/opt/disinto`, re-launches and
+   restarts the nomad job, and polls `nomad job status` until the alloc is
+   healthy (≤120s). Failures abort the pipeline before the test step.
    Concurrent merges serialize via `flock` against
    `/var/lib/disinto/ci-locks/acceptance-deploy.lock` so two pipelines never
    race the deploy.
