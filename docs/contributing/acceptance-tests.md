@@ -31,9 +31,8 @@ The convention: **every acceptance test is a bash file under
 discovers tests by this exact path. A suffixed name,
 `tests/acceptance/issue-<N>-<slug>.sh` (e.g.
 `issue-1082-stale-worktree-registration.sh`), is also accepted: when the
-plain `issue-<N>.sh` is missing, the runner (and the post-merge CI
-pipeline) fall back to the suffixed form, provided it matches exactly one
-file.
+plain `issue-<N>.sh` is missing, the runner falls back to the suffixed
+form, provided it matches exactly one file.
 
 ### File shape
 
@@ -100,34 +99,25 @@ CI, from `tools/`, or by hand.
 
 ### CI pipeline integration
 
-`.woodpecker/acceptance-tests.yml` (added in #851) closes the post-merge loop
-automatically. On every push to `main`, the pipeline:
+**On pull requests**, CI runs the acceptance tests (see below). **After a
+merge**, `.woodpecker/acceptance-tests.yml` runs no tests: it keeps the edge
+deployed. On every push to `main` it:
 
-1. **Detects** whether the merge touched runtime paths (`docker/edge/`,
-   `docker/voice/`, `docker/chat/`, `bin/snapshot-*.sh`, `bin/threads.sh`,
-   `nomad/jobs/edge.hcl`). Docs- or test-only merges skip the redeploy.
+1. **Detects** whether the merge touched the edge runtime (`docker/edge/`,
+   `bin/snapshot-*.sh`, `nomad/jobs/edge.hcl`, and the paths that held chat,
+   voice and threads). Other merges skip the redeploy.
 2. **Advances `/opt/disinto`** to the merged commit (fast-forward only), on
    every merge: the edge runs the dispatcher and the snapshot daemon from
-   that host checkout, and `edge-threads-gc` and `agent-logs-rotate` run
-   scripts from it. Then, when runtime paths changed, it **rebuilds +
-   redeploys** `disinto/edge:local` from `/opt/disinto`, re-launches and
-   restarts the nomad job, and polls `nomad job status` until the alloc is
-   healthy (≤120s). Failures abort the pipeline before the test step.
-   Concurrent merges serialize via `flock` against
-   `/var/lib/disinto/ci-locks/acceptance-deploy.lock` so two pipelines never
-   race the deploy.
-3. **Discovers** the closed-issue numbers from the merge commit subject
-   (`(#NNN)`) and the PR body (`Closes #NNN` / `Resolves #NNN` / `Fixes
-   #NNN`) via `tools/discover-closed-issues.sh`.
-4. **Runs** `tools/run-acceptance.sh --format json <N>` for each closed
-   issue and posts the result back via `tools/comment-on-issue.sh`:
-   - PASS → success comment, clear `awaiting-live-verification`.
-   - FAIL → failure comment with truncated output, reopen the issue, set
-     `awaiting-live-verification`.
-   - missing test file → warning comment, set `awaiting-live-verification`
-     (manual fallback per #839).
-5. **Summarizes** the per-issue outcomes as a single comment so a human can
-   see at a glance whether the merge survived contact with the live box.
+   that host checkout, and `agent-logs-rotate` runs scripts from it. Then,
+   when the edge runtime changed, it **rebuilds + redeploys**
+   `disinto/edge:local` from `/opt/disinto`, re-launches and restarts the
+   nomad job, and polls `nomad job status` until the alloc is running
+   (≤120s). Concurrent merges serialize via `flock` against
+   `/var/lib/disinto/ci-locks/acceptance-deploy.lock`.
+
+Until 2026-10-05 the file also tried to run each closed issue's test after
+merge and comment the result. That never worked (Woodpecker pre-expanded the
+variables it needed), and pre-merge testing replaced it.
 
 **On pull requests**, the `acceptance-affected` step of `.woodpecker/ci.yml`
 runs the acceptance tests the PR can break: those it adds or changes, and
@@ -136,11 +126,11 @@ those whose text names a path it changes, directly or through a
 ran only once, after its own merge, and a later change to the code it reads
 broke it unseen. A test that needs the live box (the forge, nomad, the
 daemon's env) carries a header line `# acceptance-ci: skip (<what it
-needs>)`; the PR step skips it and it still runs after merge.
+needs>)`; CI skips it, and it is run by hand on the box with
+`tools/run-acceptance.sh <N>`.
 
-The pipeline reuses the existing `FACTORY_FORGE_PAT` Woodpecker secret for
-forge writes. The deploy step pins to the `disinto-nomad-box` runner via
-`labels` — the same host where the lock file lives.
+The deploy step pins to the `disinto-nomad-box` runner via `labels`, where
+the lock file lives.
 
 ### Issue-body reference
 
@@ -228,13 +218,7 @@ supervisor confirms behavior by other means.
 
 ## How the process works post-merge
 
-After a PR merges:
-
-1. The issue receives the `awaiting-live-verification` label.
-2. A human (or supervisor agent, when functional) runs
-   `tools/run-acceptance.sh <N>` on `disinto-nomad-box`.
-3. PASS → remove label, close issue.
-4. FAIL → reopen with the captured output; dev-agent reclaims.
-
-This replaces the old "merge → close" pattern where "closed" meant
-"the diff was merged" rather than "the behavior was proven."
+After a PR merges, its issue closes (the PR body says `Fixes #N`). The PR
+already ran the issue's acceptance test in CI, unless the test is marked
+`# acceptance-ci: skip`; such a test is run by hand on `disinto-nomad-box`
+with `tools/run-acceptance.sh <N>`, and a failure is filed as a new issue.
