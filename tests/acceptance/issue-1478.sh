@@ -25,9 +25,8 @@
 #   2. TAPE_RUN_ATTEMPTS unset, junk, 0, or negative → attempts 1, rc 0
 #   3. dev-agent.sh exports TAPE_RUN_ATTEMPTS before formula_session_start
 #      "dev" (and after the branch-count block that sets ATTEMPT)
-#   4. extracted ATTEMPT export block: non-negative ATTEMPT → export ATTEMPT+1;
-#      unset/empty/junk ATTEMPT → export 1, rc 0 (recovery mode / failed
-#      ls-remote never fail the pick)
+#   4. (removed in #1753) the ATTEMPT-derived export block went with #1646;
+#      tests/acceptance/issue-1646.sh covers the tape-driven count
 # =============================================================================
 set -euo pipefail
 
@@ -132,50 +131,8 @@ start_line="$(grep -nF 'formula_session_start "dev"' "$DEV_AGENT" | head -n 1 | 
   || ac_fail "TAPE_RUN_ATTEMPTS export (line $export_line) must precede formula_session_start \"dev\" (line $start_line)"
 ac_log "AC 3 OK: TAPE_RUN_ATTEMPTS export precedes formula_session_start \"dev\""
 
-# ── AC 4: extract the TAPE_RUN_ATTEMPTS export block from dev-agent.sh and
-# run it in a subshell; the block must map non-negative integer ATTEMPT to
-# ATTEMPT+1, else 1 (recovery mode / failed ls-remote never fail the pick).
-# ────────────────────────────────────────────────────────────────────────────
-ASSIGN_LINE="$(grep -nF 'ATTEMPT:0:0}' "$DEV_AGENT" | head -n 1 | cut -d: -f1)"
-[ -n "$ASSIGN_LINE" ] || ac_fail "could not find the TAPE_RUN_ATTEMPTS assignment line in dev-agent.sh"
-
-BLOCK="$(awk -v start="$ASSIGN_LINE" '
-  NR == start { grab = 1 }
-  grab { print }
-  grab && /^fi$/ { exit }
-' "$DEV_AGENT")"
-[ -n "$BLOCK" ] || ac_fail "could not extract the TAPE_RUN_ATTEMPTS export block from dev-agent.sh"
-
-run_export_block() {
-  local attempt="$1"
-  ATTEMPT="$attempt" bash -c '
-    set -euo pipefail
-    log() { :; }
-    eval "$(cat)"
-    printf "TAPE_RUN_ATTEMPTS=%s\n" "${TAPE_RUN_ATTEMPTS:-<unset>}"
-  ' <<< "$BLOCK" 2>&1
-}
-
-out="$(run_export_block 2)"
-case "$out" in
-  *"TAPE_RUN_ATTEMPTS=3"*) ;;
-  *) ac_fail "ATTEMPT=2 must export TAPE_RUN_ATTEMPTS=3, got: $out" ;;
-esac
-
-out="$(run_export_block "")"
-case "$out" in
-  *"TAPE_RUN_ATTEMPTS=1"*) ;;
-  *) ac_fail "unset ATTEMPT must export TAPE_RUN_ATTEMPTS=1, got: $out" ;;
-esac
-
-out="$(run_export_block junk)"
-case "$out" in
-  *"TAPE_RUN_ATTEMPTS=1"*) ;;
-  *) ac_fail "non-integer ATTEMPT must export TAPE_RUN_ATTEMPTS=1, got: $out" ;;
-esac
-
-ac_log "AC 4 OK: export block maps non-negative integer ATTEMPT to ATTEMPT+1,
-       else 1 (never fails the pick)"
+# AC 4 (the ATTEMPT-derived export block) went with the block in #1646;
+# tests/acceptance/issue-1646.sh covers the tape-driven count.
 
 # ── AC 5: the bats regression net passes ────────────────────────────────────
 bats "$REPO_ROOT/tests/lib-formula-tape.bats" 2>&1 \
