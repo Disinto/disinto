@@ -84,8 +84,21 @@ RUNTIME_REL="${RUNTIME_DEFAULT#/}"
 LEDGER="${ROOT}/${RUNTIME_REL}"
 ac_log "AC1: runtime ledger path = ${LEDGER} (ACCOUNTS_FILE default ${RUNTIME_DEFAULT})"
 
+# ── run_install: no token is present, so every run ends in the DNS refusal
+#    (porter-dns.sh "gandi token file missing") after the door, ledger and
+#    (with --admin-key) the admin row are in place. Accept only that one
+#    non-zero exit; any other non-zero exit ac_fail with the output. ─────────
 run_install() {
-  PORTER_ROOT="${ROOT}" bash "${PORTER_INSTALL}" "$@"
+  local out rc=0 oneline
+  out="$(PORTER_ROOT="${ROOT}" bash "${PORTER_INSTALL}" "$@" 2>&1)" || rc=$?
+  if (( rc != 0 )); then
+    if grep -qF 'porter-dns: gandi token file missing' <<<"${out}"; then
+      return 0
+    fi
+    oneline="$(printf '%s\n' "${out}" | sed 's/$/ /g; s/[[:space:]]\+/ /g; s/[[:space:]]\+$//')"
+    printf '%s\n' "${out}" >&2
+    ac_fail "install exit ${rc} (not the missing-token refusal): ${oneline}"
+  fi
 }
 
 # Fixture admin key (hardcoded ed25519; its fingerprint conforms to the
