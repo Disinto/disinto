@@ -300,15 +300,13 @@ usage leaves headroom in the pool for other consumers on the host.
 Under the Nomad backend, per-env factory project TOMLs live at
 `/srv/disinto/projects/` on the host, mounted RO into agent containers
 as the `factory-projects` host_volume. Edit the TOML on the host and
-restart the agent job — no image rebuild needed:
+restart every running agent job — no image rebuild needed. On the production box these are the per-role agents-* jobs; the stopped all-roles agents job is never restarted:
 
 ```bash
 sudo $EDITOR /srv/disinto/projects/disinto.toml
-nomad job restart agents
-nomad job restart agents-supervisor-opus
-nomad job restart agents-dev-qwen
-nomad job restart agents-review-qwen
-nomad job restart agents-gardener-qwen
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+  nomad job restart "$job"
+done
 ```
 
 If you are coming from a pre-#794 box that kept TOMLs at
