@@ -44,7 +44,8 @@ there is no `nomad/jobs/chat.hcl`, and that is by design. The chat spec is
 **generated at init** — `lib/generators.sh` emits it as part of
 `disinto init` (a `chat` service in the generated `docker-compose.yml` on
 the compose backend; on the Nomad backend init deploys the `edge` job,
-which serves chat in-process via `chat-server.py` since #1083). A
+which previously served chat in-process via `chat-server.py` since #1083 — the
+in-process chat path was removed across #1768-#1771 and no longer runs). A
 checked-in snapshot would rot (the last one referenced the `service-chat`
 Vault role and the `disinto/chat:local` image — both gone), so the
 generator, not a file, is the source of truth.
