@@ -107,25 +107,6 @@ steps:
           echo '    handle /staging/* {'
           echo '        reverse_proxy 127.0.0.1:8081'
           echo '    }'
-          echo ''
-          echo '    # Chat service — subprocess on 127.0.0.1:8080 (#1083)'
-          echo '    # Chat was folded into edge as a subprocess (#1083); no Nomad service named'
-          echo '    # "chat" exists. Use the host-local loopback address.'
-          echo '    handle /chat/login {'
-          echo '        reverse_proxy 127.0.0.1:8080'
-          echo '    }'
-          echo '    handle /chat/oauth/callback {'
-          echo '        reverse_proxy 127.0.0.1:8080'
-          echo '    }'
-          echo '    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)'
-          echo '    handle /chat/* {'
-          echo '        forward_auth 127.0.0.1:8080 {'
-          echo '            uri /chat/auth/verify'
-          echo '            copy_headers X-Forwarded-User'
-          echo '            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}'
-          echo '        }'
-          echo '        reverse_proxy 127.0.0.1:8080'
-          echo '    }'
           echo '}'
         } > edge-render/Caddyfile
         cp edge-render/Caddyfile edge-render/Caddyfile.rendered
@@ -136,7 +117,6 @@ steps:
   #   - /forge/ — Forgejo subpath
   #   - /ci/ — Woodpecker subpath
   #   - /staging/ — Staging subpath
-  #   - /chat/ — Chat subpath with forward_auth
   #
   # This is a unit test that validates the expected structure without
   # requiring a running Caddy instance.
@@ -154,7 +134,7 @@ steps:
         # Check that all required subpath handlers exist
         # POSIX-safe loop (alpine /bin/sh has no arrays)
         FAILED=0
-        for handler in "handle /forge/\*" "handle /ci/\*" "handle /staging/\*" "handle /chat/login" "handle /chat/oauth/callback" "handle /chat/\*"; do
+        for handler in "handle /forge/\*" "handle /ci/\*" "handle /staging/\*"; do
           if grep -q "$handler" "$CADDYFILE"; then
             echo "[PASS] Found handler: $handler"
           else
@@ -162,14 +142,6 @@ steps:
             FAILED=1
           fi
         done
-
-        # Check forward_auth block exists for /chat/*
-        if grep -A5 "handle /chat/\*" "$CADDYFILE" | grep -q "forward_auth"; then
-          echo "[PASS] forward_auth block found for /chat/*"
-        else
-          echo "[FAIL] forward_auth block missing for /chat/*"
-          FAILED=1
-        fi
 
         # Check reverse_proxy to Forgejo (port 3000)
         if grep -q "reverse_proxy 127.0.0.1:3000" "$CADDYFILE"; then
@@ -184,14 +156,6 @@ steps:
           echo "[PASS] Woodpecker reverse_proxy configured (port 8000)"
         else
           echo "[FAIL] Woodpecker reverse_proxy not configured"
-          FAILED=1
-        fi
-
-        # Check reverse_proxy to Chat (port 8080)
-        if grep -q "reverse_proxy 127.0.0.1:8080" "$CADDYFILE"; then
-          echo "[PASS] Chat reverse_proxy configured (port 8080)"
-        else
-          echo "[FAIL] Chat reverse_proxy not configured"
           FAILED=1
         fi
 
@@ -299,43 +263,6 @@ steps:
           echo "[PASS] Staging Nomad service discovery"
         else
           echo "[FAIL] Staging Nomad service discovery"
-          FAILED=1
-        fi
-
-        # Check Chat subpath
-        if echo "$CADDYFILE" | grep -q "handle /chat/login"; then
-          echo "[PASS] Chat login handle block"
-        else
-          echo "[FAIL] Chat login handle block"
-          FAILED=1
-        fi
-
-        if echo "$CADDYFILE" | grep -q "handle /chat/oauth/callback"; then
-          echo "[PASS] Chat OAuth callback handle block"
-        else
-          echo "[FAIL] Chat OAuth callback handle block"
-          FAILED=1
-        fi
-
-        if echo "$CADDYFILE" | grep -q "handle /chat/\*"; then
-          echo "[PASS] Chat catch-all handle block"
-        else
-          echo "[FAIL] Chat catch-all handle block"
-          FAILED=1
-        fi
-
-        if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "CHAT_PORT") "8080" }}'; then
-          echo "[PASS] Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
-        else
-          echo "[FAIL] Chat reverse_proxy not configured (expected 127.0.0.1:CHAT_PORT)"
-          FAILED=1
-        fi
-
-        # Check forward_auth for chat
-        if echo "$CADDYFILE" | grep -A10 "handle /chat/\*" | grep -q "forward_auth"; then
-          echo "[PASS] forward_auth block for /chat/*"
-        else
-          echo "[FAIL] forward_auth block for /chat/*"
           FAILED=1
         fi
 

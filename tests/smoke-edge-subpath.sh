@@ -2,10 +2,9 @@
 # =============================================================================
 # smoke-edge-subpath.sh — End-to-end subpath routing smoke test
 #
-# Verifies Forgejo, Woodpecker, and chat function correctly under subpaths:
+# Verifies Forgejo, Woodpecker, and staging function correctly under subpaths:
 #   - Forgejo at /forge/
 #   - Woodpecker at /ci/
-#   - Chat at /chat/
 #   - Staging at /staging/
 #
 # Usage:
@@ -39,7 +38,6 @@ EDGE_MAX_RETRIES="${EDGE_MAX_RETRIES:-3}"
 # Subpaths to test
 FORGE_PATH="/forge/"
 CI_PATH="/ci/"
-CHAT_PATH="/chat/"
 STAGING_PATH="/staging/"
 
 # Track overall test status
@@ -162,29 +160,6 @@ test_woodpecker_subpath() {
   fi
 }
 
-test_chat_subpath() {
-  log_section "Test 4: Chat at /chat/"
-
-  # Test chat login endpoint
-  local status
-  status=$(http_head "$BASE_URL${CHAT_PATH}login")
-
-  if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
-    log_pass "Chat login at ${BASE_URL}${CHAT_PATH}login returns status $status"
-  else
-    log_fail "Chat login at ${BASE_URL}${CHAT_PATH}login returned unexpected status $status"
-  fi
-
-  # Test chat OAuth callback endpoint
-  status=$(http_head "$BASE_URL${CHAT_PATH}oauth/callback")
-
-  if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
-    log_pass "Chat OAuth callback at ${BASE_URL}${CHAT_PATH}oauth/callback returns status $status"
-  else
-    log_fail "Chat OAuth callback at ${BASE_URL}${CHAT_PATH}oauth/callback returned unexpected status $status"
-  fi
-}
-
 test_staging_subpath() {
   log_section "Test 5: Staging at /staging/"
 
@@ -195,23 +170,6 @@ test_staging_subpath() {
     log_pass "Staging at ${BASE_URL}${STAGING_PATH} returns status $status"
   else
     log_fail "Staging at ${BASE_URL}${STAGING_PATH} returned unexpected status $status"
-  fi
-}
-
-test_forward_auth_rejection() {
-  log_section "Test 6: Forward auth on /chat/* rejects unauthenticated requests"
-
-  # Request a protected chat endpoint without auth header
-  # Should return 401 (Unauthorized) due to forward_auth
-  local status
-  status=$(http_head "$BASE_URL${CHAT_PATH}auth/verify")
-
-  if [ "$status" = "401" ]; then
-    log_pass "Unauthenticated /chat/auth/verify returns 401 (forward_auth working)"
-  elif [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
-    log_skip "Unauthenticated /chat/auth/verify returns $status (forward_auth may be disabled)"
-  else
-    log_fail "Expected 401 for unauthenticated /chat/auth/verify, got status $status"
   fi
 }
 
@@ -242,9 +200,7 @@ main() {
   test_root_redirect
   test_forgejo_subpath
   test_woodpecker_subpath
-  test_chat_subpath
   test_staging_subpath
-  test_forward_auth_rejection
   test_forgejo_oauth_callback
 
   # Summary

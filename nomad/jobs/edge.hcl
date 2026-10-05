@@ -260,98 +260,6 @@ EOT
 {{ range nomadService "staging" }}        reverse_proxy {{ .Address }}:{{ .Port }}
 {{ end }}    }
 
-    # Chat service — subprocess on 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} (#1083)
-    # Chat was folded into edge as a subprocess (#1083); no Nomad service named
-    # "chat" exists. Use the host-local loopback address instead of
-    # nomadService discovery.
-    # Bare /chat → /chat/ (Caddy has no implicit directory redirect)
-    handle /chat {
-        redir * /chat/ 302
-    }
-    handle /chat/login {
-        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
-    }
-    handle /chat/oauth/callback {
-        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
-    }
-    # WebSocket endpoint for streaming (#1026)
-    handle /chat/ws {
-        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
-            header_up Upgrade {http.request.header.Upgrade}
-            header_up Connection {http.request.header.Connection}
-        }
-    }
-    # Defense-in-depth: forward_auth stamps X-Forwarded-User from session (#709)
-    handle /chat/* {
-        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
-            uri /chat/auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        reverse_proxy 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }}
-    }
-
-    # Voice bridge WebSocket endpoint — Gemini Live ↔ `think` tool ↔
-    # `claude -r` (#662). Direct loopback to the voice-bridge.py
-    # subprocess (NOT nomadService discovery — the bridge is a
-    # sidecar process inside this task, same pattern as /chat/ws).
-    # Shared forward_auth with /chat/* above: a valid OAuth session
-    # cookie is required to upgrade, and X-Forwarded-User is stamped
-    # so the bridge can log and audit per-user voice sessions.
-    handle /voice/ws {
-        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
-            uri /chat/auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        reverse_proxy 127.0.0.1:{{ or (env "VOICE_PORT") "8090" }} {
-            header_up Upgrade {http.request.header.Upgrade}
-            header_up Connection {http.request.header.Connection}
-        }
-    }
-
-    # Voice UI static assets (#663). Served by Caddy out of the image at
-    # /var/voice/ui (Dockerfile COPY). Same OAuth gate as /chat/* — the
-    # forward_auth block stamps X-Forwarded-User and bounces unauthenticated
-    # requests to 401 (Caddy then surfaces a generic error; the page-level
-    # JS at /voice/ catches the WebSocket 4401 and redirects to /chat/login).
-    # /voice/static/* is matched before /voice/* by Caddy's longest-path
-    # precedence, so the index handler below never sees these requests.
-    handle /voice/static/* {
-        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
-            uri /chat/auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        uri strip_prefix /voice
-        root * /var/voice/ui
-        file_server
-    }
-
-    # Voice UI index — matches /voice and /voice/ (Caddy's path matcher
-    # treats a trailing-slash matcher as a prefix). Falls through to
-    # index.html via try_files so deep links like /voice/?conv=abc work.
-    # Same forward_auth gate as the static and ws handlers above.
-    handle /voice {
-        redir * /voice/ 302
-    }
-    handle /voice/ {
-        forward_auth 127.0.0.1:{{ or (env "CHAT_PORT") "8080" }} {
-            uri /chat/auth/verify
-            copy_headers X-Forwarded-User
-            header_up X-Forward-Auth-Secret {$FORWARD_AUTH_SECRET}
-        }
-        # Don't let mobile browsers cache index.html — it references
-        # voice-client.js with a versioned query string, and a stale
-        # index.html would point at an old version (#860 fix delivery).
-        header Cache-Control "no-cache, no-store, must-revalidate"
-        header Pragma "no-cache"
-        header Expires "0"
-        root * /var/voice/ui
-        try_files {path} /index.html
-        file_server
-    }
-
     # Engagement measurement — receives client-side beacons, proxies to
     # local engagement-server.py (issue #975). POST appends to log; GET
     # returns aggregated JSON snapshot for factory snapshot queries.
@@ -473,10 +381,8 @@ EOT
         # GEMINI_API_KEY to its own subprocess env only, so the chat
         # subprocess never sees the Gemini key.
         GEMINI_API_KEY_FILE    = "/secrets/gemini-api-key"
-        # Voice bridge listens on loopback; Caddy's /voice/ws handle
-        # reverse-proxies here. 8090 picked to avoid collision with
-        # CHAT_PORT=8080.
-        VOICE_PORT             = "8090"
+        # Voice bridge still listens on loopback (default 8090). Caddy no
+        # longer routes /voice here (#1768); the process stays up until #1769.
         VOICE_HOST             = "127.0.0.1"
 
         # OAuth callback FQDN — server.py builds redirect_uri from this.
