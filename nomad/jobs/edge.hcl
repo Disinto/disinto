@@ -27,9 +27,10 @@
 #   disinto/edge:local using the same pattern as disinto/agents:local.
 #   Command: docker build -t disinto/edge:local -f docker/edge/Dockerfile docker/edge
 #
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S5.2 can wire
-# `disinto init --backend=nomad --with edge` to `nomad job run` it.
+# This is the live edge: the production factory runs the Nomad+Vault
+# backend (docs/updating-factory.md), and `disinto init --backend=nomad
+# --with edge` deploys this job. Change edge routing here, not in the
+# compose backend (docker-compose.yml, the Caddyfile lib/generators.sh writes).
 # =============================================================================
 
 job "edge" {
