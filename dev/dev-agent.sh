@@ -1102,9 +1102,9 @@ pr_walk_to_merge "$PR_NUMBER" "$_AGENT_SESSION_ID" "$WORKTREE" 3 5 || rc=$?
 PR_WALK_RC="$rc"
 
 if [ "$rc" -eq 0 ]; then
-  # Merged successfully — keep open with awaiting-live-verification label
+  # Merged — close the issue (the PR body's "Fixes #N" closes it on merge too; this also clears the assignee).
   log "PR #${PR_NUMBER} merged"
-  issue_close_after_verification "$ISSUE"
+  issue_close "$ISSUE"
 
   # Capture files changed for journal entry (after agent work)
   FILES_CHANGED=$(git -C "$WORKTREE" diff "${FORGE_REMOTE}/${PRIMARY_BRANCH}..HEAD" --name-only 2>/dev/null | tr '\n' ',' | sed 's/,$//') || FILES_CHANGED=""

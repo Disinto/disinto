@@ -49,7 +49,6 @@ declare -gA _ILC_LABEL_IDS
 _ILC_LABEL_IDS["backlog"]=""
 _ILC_LABEL_IDS["in-progress"]=""
 _ILC_LABEL_IDS["blocked"]=""
-_ILC_LABEL_IDS["awaiting-live-verification"]=""
 
 # _ilc_ensure_label_id LABEL_NAME [COLOR]
 # Looks up label by name, creates if missing, caches in associative array.
@@ -80,7 +79,6 @@ _ilc_ensure_label_id() {
 _ilc_backlog_id()      { _ilc_ensure_label_id "backlog"     "#0075ca"; }
 _ilc_in_progress_id()  { _ilc_ensure_label_id "in-progress" "#1d76db"; }
 _ilc_blocked_id()      { _ilc_ensure_label_id "blocked"     "#e11d48"; }
-_ilc_awaiting_live_id() { _ilc_ensure_label_id "awaiting-live-verification" "#ff9100"; }
 
 # ---------------------------------------------------------------------------
 # Forge mutation helpers — single-purpose forge_api wrappers.
@@ -369,28 +367,6 @@ issue_close() {
     "${FORGE_API}/issues/${issue}" \
     -d '{"state":"closed"}' >/dev/null 2>&1 || true
   _ilc_log "closed issue #${issue}"
-}
-
-# ---------------------------------------------------------------------------
-# issue_close_after_verification — keep issue open with awaiting-live-verification label.
-# Used after merge: issue stays open so a human (or supervisor) can run
-# the acceptance test commands on the live box before closing.
-# Args: issue_number
-# ---------------------------------------------------------------------------
-issue_close_after_verification() {
-  local issue="$1"
-
-  # Clear assignee
-  _ilc_clear_assignee "$issue"
-
-  # Add awaiting-live-verification label (issue stays open)
-  local alv_id
-  alv_id=$(_ilc_awaiting_live_id)
-  if [ -n "$alv_id" ]; then
-    _ilc_add_label "$issue" "$alv_id"
-  fi
-
-  _ilc_log "marked issue #${issue} awaiting-live-verification (merged, not verified)"
 }
 
 # ---------------------------------------------------------------------------
