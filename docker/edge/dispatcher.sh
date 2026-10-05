@@ -600,9 +600,20 @@ _launch_runner_docker() {
     cmd+=(-e "CLAUDE_MODEL=${CLAUDE_MODEL}")
   fi
 
-  # Mount docker socket
+  # Mount docker socket and the shared Claude OAuth session.
+  # entrypoint-runner.sh still execs `claude -p` for .toml formulas and
+  # does not read AGENT_HARNESS. The agents image already has the CLI, so
+  # the binary is not mounted. Do not pass ANTHROPIC_API_KEY: the edge job
+  # authenticates via this OAuth mount (#1776).
   cmd+=(-v /var/run/docker.sock:/var/run/docker.sock)
   local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
 
   # Secrets: tokens become -e NAME=value. SSH_KEY / SSH_KNOWN_HOSTS are PEM
   # (newlines) — write a temp file and bind-mount under /secrets/ssh/ so the
@@ -1188,10 +1199,23 @@ _dispatch_sidecar_docker() {
     cmd+=(-e "DISINTO_FORMULA=${formula}")
   fi
 
-  # Mount ~/.ssh from the runtime user's home
+  # Mount the host Claude CLI, the shared OAuth session, and ~/.ssh.
+  # entrypoint-reproduce.sh fatals without the binary and then runs
+  # `claude -p`. Do not pass ANTHROPIC_API_KEY: the edge job authenticates
+  # via the OAuth mount (#1776).
   local runtime_home="${HOME:-/home/debian}"
+  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
+    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
+    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
+  fi
+  if [ -f "${runtime_home}/.claude.json" ]; then
+    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
+  fi
   if [ -d "${runtime_home}/.ssh" ]; then
     cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
+  fi
+  if [ -f /usr/local/bin/claude ]; then
+    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
   fi
 
   # Mount the project TOML into the container at a stable path
