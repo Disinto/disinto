@@ -168,11 +168,10 @@ roles:
     namespace: default
     job_id:    edge
 
-  # ── Edge chat-Claude control surface (#650) ────────────────────────────────
-  # Caddy task in nomad/jobs/edge.hcl binds this role so the chat subprocess
-  # can read the operator Forge PAT + scoped Nomad ACL token from Vault KV.
-  # Both remaining tasks in the edge job (caddy, snapshot) bind this role
-  # via per-task vault { role = ... } stanzas.
+  # ── Edge secrets (kv/disinto/chat; name kept from #650) ──────────────────
+  # Both tasks of nomad/jobs/edge.hcl (caddy, snapshot) bind this role: the
+  # caddy task for the forge PAT the dispatcher pushes with, the snapshot
+  # task for forge_pat + nomad_token.
   - name:      service-edge-chat
     policy:    service-edge-chat
     namespace: default
