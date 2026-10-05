@@ -170,12 +170,19 @@ steps:
         # dispatcher and the snapshot daemon from that host checkout
         # (entrypoint-edge.sh, edge.hcl), and edge-threads-gc and
         # agent-logs-rotate run scripts from it; nothing else updated it, and
-        # it sat 416 commits behind main until 2026-10-04. Fast-forward only:
-        # it never moves backwards (a pipeline that runs late from the queue
-        # is a no-op), and a local edit or a diverged branch fails the step
-        # instead of being overwritten.
-        git -c safe.directory="$OPT" -C "$OPT" fetch -q forge "$CI_COMMIT_SHA"
-        git -c safe.directory="$OPT" -C "$OPT" merge -q --ff-only FETCH_HEAD
+        # it sat 416 commits behind main until 2026-10-04. Fetch by this
+        # pipeline's clone URL, not a remote name (the checkout's remotes are
+        # whatever its installer made: "forge" on disinto-nomad-box, "origin"
+        # in the docs). Fast-forward only: a pipeline that runs late from the
+        # queue finds $OPT already past its commit and leaves it alone, and a
+        # local edit or a diverged branch fails the step instead of being
+        # overwritten.
+        git -c safe.directory="$OPT" -C "$OPT" fetch -q "$CI_REPO_CLONE_URL" "$CI_COMMIT_SHA"
+        if git -c safe.directory="$OPT" -C "$OPT" merge-base --is-ancestor FETCH_HEAD HEAD; then
+          echo "rebuild-and-deploy: $OPT already at or past this commit, not moved"
+        else
+          git -c safe.directory="$OPT" -C "$OPT" merge -q --ff-only FETCH_HEAD
+        fi
         echo "rebuild-and-deploy: $OPT at $(git -c safe.directory="$OPT" -C "$OPT" rev-parse --short HEAD)"
 
         if [ "$(cat .ci/needs-redeploy 2>/dev/null || echo no)" != "yes" ]; then
