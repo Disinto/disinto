@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tools/vault-seed-chat.sh — Seed chat secrets into Vault KV
+# tools/vault-seed-chat.sh — Seed kv/disinto/chat into Vault KV
 #
-# Part of issue #678 (automate chat OAuth + Vault bootstrap). Seeds
-# kv/disinto/chat with the secrets the edge.hcl caddy task template renders:
+# Part of issue #678. Seeds kv/disinto/chat with the secrets the edge
+# caddy and snapshot tasks render:
 #
-#   forge_pat          — admin PAT for the forge-api MCP
-#   nomad_token        — scoped ACL token (or placeholder when ACL disabled)
-#   oauth_client_id    — Forgejo OAuth2 app client ID for disinto-chat
-#   oauth_client_secret — Forgejo OAuth2 app client secret
-#   forward_auth_secret — random >=32-byte value for Caddy forward_auth
+#   forge_pat    — admin PAT (FORGE_PAT)
+#   nomad_token  — scoped ACL token (NOMAD_TOKEN), or left unset when absent
 #
 # Idempotency contract:
-#   - Reads from .env (FORGE_PAT, NOMAD_TOKEN, CHAT_OAUTH_CLIENT_ID,
-#     CHAT_OAUTH_CLIENT_SECRET) or from environment variables of the same
-#     names. Present keys overwrite existing KV values.
+#   - Reads from .env (FORGE_PAT, NOMAD_TOKEN) or from environment
+#     variables of the same names. Present keys overwrite existing KV values.
 #   - Missing keys are skipped with a warning (not a hard failure).
-#   - forward_auth_secret is generated fresh on first run (if not already
-#     in KV) and never overwritten on re-run.
 #   - Existing sibling fields in the KV document are preserved (merge, not
 #     clobber).
 #
@@ -64,12 +58,10 @@ case "$#:${1-}" in
     ;;
   1:-h|1:--help)
     printf 'Usage: %s [--dry-run]\n\n' "$(basename "$0")"
-    printf 'Seed chat secrets from .env into Vault KV at\n'
-    printf 'kv/disinto/chat. Idempotent: present keys overwrite\n'
-    printf 'existing values; missing keys are skipped. forward_auth\n'
-    printf 'secret is generated on first run only.\n\n'
-    printf 'Reads from .env (FORGE_PAT, NOMAD_TOKEN,\n'
-    printf 'CHAT_OAUTH_CLIENT_ID, CHAT_OAUTH_CLIENT_SECRET) or\n'
+    printf 'Seed kv/disinto/chat from .env into Vault KV.\n'
+    printf 'Idempotent: present keys overwrite existing values;\n'
+    printf 'missing keys are skipped. Sibling fields are preserved.\n\n'
+    printf 'Reads from .env (FORGE_PAT, NOMAD_TOKEN) or\n'
     printf 'environment variables of the same names.\n\n'
     printf '  --dry-run   Print planned actions without writing.\n'
     exit 0
@@ -127,24 +119,6 @@ _resolve_val() {
 
 forge_pat="$(_resolve_val "FORGE_PAT")"
 nomad_token="$(_resolve_val "NOMAD_TOKEN")"
-oauth_client_id="$(_resolve_val "CHAT_OAUTH_CLIENT_ID")"
-oauth_client_secret="$(_resolve_val "CHAT_OAUTH_CLIENT_SECRET")"
-
-# forward_auth_secret: generate if not already in KV (never overwrite).
-forward_auth_secret=""
-if [ -n "${FORWARD_AUTH_SECRET:-}" ]; then
-  forward_auth_secret="$FORWARD_AUTH_SECRET"
-elif [ -f "$env_file" ]; then
-  while IFS='=' read -r k v; do
-    [[ "$k" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "$k" ]] && continue
-    k="$(printf '%s' "$k" | xargs)"
-    if [ "$k" = "FORWARD_AUTH_SECRET" ]; then
-      forward_auth_secret="$(_strip_quote "$v")"
-      break
-    fi
-  done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" 2>/dev/null || true)
-fi
 
 # ── Step 3/3: merge into KV and write ────────────────────────────────────────
 log "── Step 3/3: write to ${KV_API_PATH} ──"
@@ -155,12 +129,6 @@ existing_raw="$(hvault_get_or_empty "${KV_API_PATH}")" || true
 existing_data="{}"
 [ -n "$existing_raw" ] && existing_data="$(printf '%s' "$existing_raw" | jq '.data.data // {}')"
 
-# Determine if forward_auth_secret already exists in KV (never overwrite).
-existing_fas="$(printf '%s' "$existing_data" | jq -r '.forward_auth_secret // ""')"
-if [ -z "$forward_auth_secret" ] && [ -n "$existing_fas" ]; then
-  forward_auth_secret="$existing_fas"
-fi
-
 # Build the merged payload.
 payload="$existing_data"
 if [ -n "$forge_pat" ]; then
@@ -169,32 +137,13 @@ fi
 if [ -n "$nomad_token" ]; then
   payload="$(printf '%s' "$payload" | jq --arg v "$nomad_token" '.nomad_token = $v')"
 fi
-if [ -n "$oauth_client_id" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$oauth_client_id" '.oauth_client_id = $v')"
-fi
-if [ -n "$oauth_client_secret" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$oauth_client_secret" '.oauth_client_secret = $v')"
-fi
-if [ -n "$forward_auth_secret" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$forward_auth_secret" '.forward_auth_secret = $v')"
-fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log "[dry-run] ${KV_API_PATH}: would write"
   if [ -n "$forge_pat" ]; then log "[dry-run]   forge_pat"; fi
   if [ -n "$nomad_token" ]; then log "[dry-run]   nomad_token"; fi
-  if [ -n "$oauth_client_id" ]; then log "[dry-run]   oauth_client_id"; fi
-  if [ -n "$oauth_client_secret" ]; then log "[dry-run]   oauth_client_secret"; fi
-  if [ -n "$forward_auth_secret" ]; then log "[dry-run]   forward_auth_secret"; fi
   log "done — 0 keys written, skipped (dry-run)"
   exit 0
-fi
-
-# Generate forward_auth_secret if still missing and we're doing a live run.
-if [ -z "$forward_auth_secret" ]; then
-  forward_auth_secret="$(openssl rand -base64 48 | tr -d '\n')"
-  payload="$(printf '%s' "$payload" | jq --arg v "$forward_auth_secret" '.forward_auth_secret = $v')"
-  log "generated forward_auth_secret (48 bytes, base64)"
 fi
 
 payload="$(printf '%s' "$payload" | jq '{data: .}')"
@@ -207,15 +156,10 @@ fi
 written=0
 [ -n "$forge_pat" ] && { log "${KV_API_PATH}: written (forge_pat)"; ((written++)) || true; }
 [ -n "$nomad_token" ] && { log "${KV_API_PATH}: written (nomad_token)"; ((written++)) || true; }
-[ -n "$oauth_client_id" ] && { log "${KV_API_PATH}: written (oauth_client_id)"; ((written++)) || true; }
-[ -n "$oauth_client_secret" ] && { log "${KV_API_PATH}: written (oauth_client_secret)"; ((written++)) || true; }
-[ -n "$forward_auth_secret" ] && { log "${KV_API_PATH}: written (forward_auth_secret)"; ((written++)) || true; }
 
 # Report skipped keys.
 skipped=0
 [ -z "$forge_pat" ] && { log "skip forge_pat (not set)"; ((skipped++)) || true; }
 [ -z "$nomad_token" ] && { log "skip nomad_token (not set)"; ((skipped++)) || true; }
-[ -z "$oauth_client_id" ] && { log "skip oauth_client_id (not set)"; ((skipped++)) || true; }
-[ -z "$oauth_client_secret" ] && { log "skip oauth_client_secret (not set)"; ((skipped++)) || true; }
 
 log "done — ${written} keys written, ${skipped} skipped"

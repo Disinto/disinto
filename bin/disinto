@@ -3676,7 +3676,7 @@ disinto_vault() {
       fi
 
       local vault_addr="${VAULT_ADDR:-http://127.0.0.1:8200}"
-      echo "── Reseeding Vault for chat OAuth + secrets ────────────"
+      echo "── Reseeding Vault for kv/disinto/chat ────────────"
       echo "[vault] VAULT_ADDR=${vault_addr}"
       if [ "$(id -u)" -eq 0 ]; then
         VAULT_ADDR="$vault_addr" "$seed_script" "$@"
@@ -3708,7 +3708,7 @@ Missing env vars produce warnings, not hard errors.
 Subcommands executed:
   vault reseed-ops-repo   Seed kv/disinto/shared/ops-repo (FORGE_TOKEN)
   vault reseed-runner     Seed kv/disinto/runner/* tokens from .env
-  vault reseed-chat-oauth Seed kv/disinto/chat OAuth + secrets from .env
+  vault reseed-chat-oauth Seed kv/disinto/chat forge_pat + nomad_token from .env
   wp reseed-secrets       Seed Woodpecker repo secrets (GHCR_TOKEN, FORGE_TOKEN)
 
 Options:
@@ -3779,9 +3779,9 @@ Subcommands:
   reseed-runner     Seed kv/disinto/runner/<NAME> tokens from .env for the
                     release formula's push-mirrors step (idempotent — skips
                     missing .env vars with warning; refs #634)
-  reseed-chat-oauth Seed kv/disinto/chat with OAuth credentials, forge PAT,
-                    forward_auth_secret, and nomad_token from .env or env
-                    vars (#678). Idempotent — merges with existing KV data.
+  reseed-chat-oauth Seed kv/disinto/chat with forge_pat and nomad_token from
+                    .env or env vars (#678). Idempotent — merges with existing
+                    KV data.
 
 Environment:
   VAULT_ADDR   Vault server address (default: http://127.0.0.1:8200)
