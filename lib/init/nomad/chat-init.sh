@@ -1,37 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/init/nomad/chat-init.sh — Forgejo OAuth + Vault KV seed for chat
+# lib/init/nomad/chat-init.sh — Vault KV seed for kv/disinto/chat
 #
-# Part of issue #678 (automate chat OAuth + Vault bootstrap). Runs as a
-# post-deploy step during `disinto init --backend=nomad --with edge`.
+# Part of issue #678. Runs as a post-deploy step during
+# `disinto init --backend=nomad --with edge`.
 #
 # What it does:
-#   1. Creates (or reuses) the Forgejo OAuth2 app "disinto-chat" with
-#      the correct redirect URI for the edge tunnel FQDN.
-#   2. Seeds kv/disinto/chat with:
-#        oauth_client_id / oauth_client_secret  — from the OAuth app
-#        forge_pat                               — admin PAT (from FORGE_TOKEN)
-#        nomad_token                             — placeholder (set when ACL enabled)
-#        forward_auth_secret                     — random 48-byte value
-#   3. If Nomad ACL is enabled: applies chat-ops.hcl policy, creates a
-#      client token, and stores it in Vault.
+#   1. Seeds kv/disinto/chat with:
+#        forge_pat    — admin PAT (from FORGE_TOKEN)
+#        nomad_token  — placeholder (set when ACL is enabled)
+#   2. If Nomad ACL is enabled: applies chat-ops.hcl, creates a client
+#      token, and stores it in Vault as nomad_token.
 #
 # Idempotency contract:
-#   - OAuth app: checks for existing "disinto-chat" app; reuses if present.
-#   - KV writes: merge-style (preserves sibling fields). forward_auth_secret
-#     is generated once and never overwritten.
+#   - KV writes: merge-style (preserves sibling fields).
 #   - Nomad ACL: policy apply is idempotent; token is created once (skipped
 #     on re-run if a token already exists in KV).
 #
 # Environment:
-#   FORGE_URL           — Forgejo base URL (required)
-#   FORGE_TOKEN         — Forgejo admin PAT (required)
-#   FORGE_ADMIN_PASS    — Forgejo admin password (for PAT creation)
-#   EDGE_TUNNEL_FQDN    — Edge tunnel FQDN (default: localhost)
-#   EDGE_TUNNEL_FQDN_CHAT — subdomain for chat (default: chat.<FQDN>)
-#   EDGE_ROUTING_MODE   — "subpath" or "subdomain" (default: subpath)
-#   VAULT_ADDR          — Vault address (default: http://127.0.0.1:8200)
-#   VAULT_TOKEN         — Vault token (env or /etc/vault.d/root.token)
+#   FORGE_TOKEN  — Forgejo admin PAT (required)
+#   VAULT_ADDR   — Vault address (default: http://127.0.0.1:8200)
+#   VAULT_TOKEN  — Vault token (env or /etc/vault.d/root.token)
 #
 # Usage:
 #   lib/init/nomad/chat-init.sh
@@ -49,12 +38,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 source "${REPO_ROOT}/lib/hvault.sh"
 
 # ── Configuration ────────────────────────────────────────────────────────────
-FORGE_URL="${FORGE_URL:-}"
 FORGE_TOKEN="${FORGE_TOKEN:-}"
-FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}"
-EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-localhost}"
-EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}"
-EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}"
 VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 export VAULT_ADDR
 
@@ -67,8 +51,6 @@ for bin in curl jq openssl; do
     || die "required binary not found: ${bin}"
 done
 
-[ -n "$FORGE_URL" ] \
-  || die "FORGE_URL is not set"
 [ -n "$FORGE_TOKEN" ] \
   || die "FORGE_TOKEN is not set"
 
@@ -76,59 +58,8 @@ _hvault_default_env
 hvault_token_lookup >/dev/null \
   || die "Vault auth probe failed — check VAULT_ADDR + VAULT_TOKEN"
 
-# ── Step 1/3: Create Forgejo OAuth2 app for disinto-chat ────────────────────
-log "── Step 1/3: Forgejo OAuth2 app for disinto-chat ──"
-
-# Build redirect URI.
-if [ "$EDGE_ROUTING_MODE" = "subdomain" ]; then
-  chat_redirect_uri="https://${EDGE_TUNNEL_FQDN_CHAT:-chat.${EDGE_TUNNEL_FQDN}}/oauth/callback"
-else
-  chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
-fi
-
-oauth_app_name="disinto-chat"
-
-# Check for existing app.
-existing_app_json="$(curl -sf --max-time 10 \
-  -H "Authorization: token ${FORGE_TOKEN}" \
-  "${FORGE_URL}/api/v1/user/applications/oauth2" 2>/dev/null)" || existing_app_json=""
-
-oauth_client_id=""
-oauth_client_secret=""
-
-if [ -n "$existing_app_json" ]; then
-  existing_id="$(printf '%s' "$existing_app_json" \
-    | jq -r --arg name "$oauth_app_name" \
-      '.[] | select(.name == $name) | .client_id // empty' 2>/dev/null)" || true
-  if [ -n "$existing_id" ]; then
-    oauth_client_id="$existing_id"
-    log "OAuth2 app '${oauth_app_name}' already exists (client_id=${oauth_client_id})"
-  fi
-fi
-
-# Create the app if it doesn't exist.
-if [ -z "$oauth_client_id" ]; then
-  log "creating OAuth2 app '${oauth_app_name}' (redirect=${chat_redirect_uri})"
-  create_resp="$(curl -sf --max-time 30 -X POST \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_URL}/api/v1/user/applications/oauth2" \
-    -d "{\"name\":\"${oauth_app_name}\",\"redirect_uris\":[\"${chat_redirect_uri}\"],\"confidential_client\":true}" \
-    2>/dev/null)" || die "failed to create OAuth2 app '${oauth_app_name}'"
-
-  oauth_client_id="$(printf '%s' "$create_resp" | jq -r '.client_id // empty')" || \
-    die "failed to extract client_id from OAuth2 app creation response"
-  oauth_client_secret="$(printf '%s' "$create_resp" | jq -r '.client_secret // empty')" || \
-    die "failed to extract client_secret from OAuth2 app creation response"
-
-  if [ -z "$oauth_client_id" ]; then
-    die "OAuth2 app created but no client_id returned"
-  fi
-  log "OAuth2 app '${oauth_app_name}' created (client_id=${oauth_client_id})"
-fi
-
-# ── Step 2/3: Seed kv/disinto/chat ──────────────────────────────────────────
-log "── Step 2/3: seed kv/disinto/chat ──"
+# ── Step 1/2: Seed kv/disinto/chat ──────────────────────────────────────────
+log "── Step 1/2: seed kv/disinto/chat ──"
 
 KV_API_PATH="kv/data/disinto/chat"
 
@@ -148,15 +79,6 @@ forge_pat="${FORGE_TOKEN:-}"
 # nomad_token: placeholder for now; set when Nomad ACL is enabled.
 nomad_token=""
 
-# forward_auth_secret: generate if not already in KV.
-existing_fas="$(printf '%s' "$existing_data" | jq -r '.forward_auth_secret // ""')"
-forward_auth_secret=""
-if [ -n "$existing_fas" ]; then
-  forward_auth_secret="$existing_fas"
-elif [ -n "${FORWARD_AUTH_SECRET:-}" ]; then
-  forward_auth_secret="$FORWARD_AUTH_SECRET"
-fi
-
 # Build merged payload.
 payload="$existing_data"
 if [ -n "$forge_pat" ]; then
@@ -165,22 +87,6 @@ fi
 if [ -n "$nomad_token" ]; then
   payload="$(printf '%s' "$payload" | jq --arg v "$nomad_token" '.nomad_token = $v')"
 fi
-if [ -n "$oauth_client_id" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$oauth_client_id" '.oauth_client_id = $v')"
-fi
-if [ -n "$oauth_client_secret" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$oauth_client_secret" '.oauth_client_secret = $v')"
-fi
-if [ -n "$forward_auth_secret" ]; then
-  payload="$(printf '%s' "$payload" | jq --arg v "$forward_auth_secret" '.forward_auth_secret = $v')"
-fi
-
-# Generate forward_auth_secret if still missing.
-if [ -z "$forward_auth_secret" ]; then
-  forward_auth_secret="$(openssl rand -base64 48 | tr -d '\n')"
-  payload="$(printf '%s' "$payload" | jq --arg v "$forward_auth_secret" '.forward_auth_secret = $v')"
-  log "generated forward_auth_secret (48 bytes, base64)"
-fi
 
 payload="$(printf '%s' "$payload" | jq '{data: .}')"
 
@@ -188,10 +94,10 @@ if ! _hvault_request POST "${KV_API_PATH}" "$payload" >/dev/null; then
   die "failed to write ${KV_API_PATH}"
 fi
 
-log "kv/disinto/chat: written (oauth_client_id, oauth_client_secret, forge_pat${forward_auth_secret:+, forward_auth_secret})"
+log "kv/disinto/chat: written (forge_pat)"
 
-# ── Step 3/3: Nomad ACL policy + token (conditional) ────────────────────────
-log "── Step 3/3: Nomad ACL for chat (conditional) ──"
+# ── Step 2/2: Nomad ACL policy + token (conditional) ────────────────────────
+log "── Step 2/2: Nomad ACL for chat (conditional) ──"
 
 ACL_POLICY_HCL="${REPO_ROOT}/nomad/acl-policies/chat-ops.hcl"
 ACL_POLICY_NAME="chat-ops"
@@ -259,4 +165,4 @@ else
   fi
 fi
 
-log "── done — chat OAuth + KV + ACL bootstrap complete ──"
+log "── done — kv/disinto/chat seeded ──"
