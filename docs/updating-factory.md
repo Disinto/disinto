@@ -29,9 +29,13 @@ rerun every jobspec (or just the ones that changed):
 ```bash
 nomad job run /opt/disinto/nomad/jobs/<job>.hcl
 # e.g.
-nomad job run /opt/disinto/nomad/jobs/agents.hcl
+nomad job run /opt/disinto/nomad/jobs/agents-dev-qwen.hcl
 nomad job run /opt/disinto/nomad/jobs/edge.hcl
 ```
+
+Never `nomad job run` `nomad/jobs/agents.hcl` here. It is the old all-roles
+job, stopped on this box, and running it starts a second polling loop beside
+the per-role `agents-*` jobs (#1522).
 
 If `vault/policies/*.hcl` changed, re-apply them too (idempotent):
 
@@ -50,8 +54,10 @@ changed, rebuild and restart:
 cd /opt/disinto
 docker build -t disinto/agents:local -f docker/agents/Dockerfile .
 for spec in nomad/jobs/agents*.hcl; do
+  job="$(basename "$spec" .hcl)"
+  [ "$job" = agents ] && continue   # stopped all-roles job (#1522)
   nomad job run "/opt/disinto/$spec"
-  nomad job restart "$(basename "$spec" .hcl)"   # force allocs onto the new image
+  nomad job restart "$job"   # force allocs onto the new image
 done
 ```
 
@@ -64,8 +70,10 @@ not run (offline boxes, manual pulls).
 
 ```bash
 # All jobs running?
-# Expected: agents, edge, forgejo, staging,
-#           vault-runner, woodpecker-agent, woodpecker-server
+# Expected: agents-dev-qwen, agents-review-qwen, agents-gardener-qwen,
+#           agents-supervisor-opus, agents-dev-grok, agents-review-grok,
+#           edge, forgejo, staging, vault-runner, woodpecker-agent,
+#           woodpecker-server
 nomad job status
 
 # Factory status summary?

@@ -163,9 +163,11 @@ sudo install -d -m 0775 -o ubuntu -g ubuntu /srv/disinto/projects
 sudo cp /opt/disinto/projects/*.toml /srv/disinto/projects/
 sudo chown ubuntu:ubuntu /srv/disinto/projects/*.toml
 
-# Restart agent jobs so they pick the new mount up
-nomad job restart agents
-nomad job restart agents-supervisor-opus
+# Restart every running agent job so it picks the new mount up
+# (never the stopped all-roles agents job)
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+  nomad job restart "$job"
+done
 ```
 
 If you skip this step on an existing box and the agents container has
