@@ -596,18 +596,16 @@ _launch_runner_docker() {
   )
 
   # Pass through optional env vars if set
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-  fi
   if [ -n "${CLAUDE_MODEL:-}" ]; then
     cmd+=(-e "CLAUDE_MODEL=${CLAUDE_MODEL}")
   fi
 
-  # Mount docker socket, claude binary, and claude config
+  # Mount docker socket and the shared Claude OAuth session.
+  # entrypoint-runner.sh still execs `claude -p` for .toml formulas and
+  # does not read AGENT_HARNESS. The agents image already has the CLI, so
+  # the binary is not mounted. Do not pass ANTHROPIC_API_KEY: the edge job
+  # authenticates via this OAuth mount (#1776).
   cmd+=(-v /var/run/docker.sock:/var/run/docker.sock)
-  if [ -f /usr/local/bin/claude ]; then
-    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
-  fi
   local runtime_home="${HOME:-/home/debian}"
   if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
     cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
@@ -1201,12 +1199,10 @@ _dispatch_sidecar_docker() {
     cmd+=(-e "DISINTO_FORMULA=${formula}")
   fi
 
-  # Pass through ANTHROPIC_API_KEY if set
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    cmd+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-  fi
-
-  # Mount shared Claude config dir and ~/.ssh from the runtime user's home
+  # Mount the host Claude CLI, the shared OAuth session, and ~/.ssh.
+  # entrypoint-reproduce.sh fatals without the binary and then runs
+  # `claude -p`. Do not pass ANTHROPIC_API_KEY: the edge job authenticates
+  # via the OAuth mount (#1776).
   local runtime_home="${HOME:-/home/debian}"
   if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
     cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
