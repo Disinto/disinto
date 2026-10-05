@@ -60,7 +60,7 @@ Rules:
 2. **Exit 0 on pass, non-zero on fail.**
 3. **Last stdout line is `PASS` or `FAIL: <reason>`.** stderr is for
    diagnostics; stdout drives the outcome.
-4. **Read-only.** Tests query forge, nomad, the snapshot, chat/voice — they
+4. **Read-only.** Tests query forge, nomad and the snapshot — they
    do not file issues, dispatch jobs, or mutate state. Reviewer-agent rejects
    mutating tests. (There is no sandbox; the rule is a convention.)
 5. **Source the helpers.** `tests/lib/acceptance-helpers.sh` provides curl
@@ -104,8 +104,7 @@ merge**, `.woodpecker/acceptance-tests.yml` runs no tests: it keeps the edge
 deployed. On every push to `main` it:
 
 1. **Detects** whether the merge touched the edge runtime (`docker/edge/`,
-   `bin/snapshot-*.sh`, `nomad/jobs/edge.hcl`, and the paths that held chat,
-   voice and threads). Other merges skip the redeploy.
+   `bin/snapshot-*.sh`, `nomad/jobs/edge.hcl`). Other merges skip the redeploy.
 2. **Advances `/opt/disinto`** to the merged commit (fast-forward only), on
    every merge: the edge runs the dispatcher and the snapshot daemon from
    that host checkout, and `agent-logs-rotate` runs scripts from it. Then,

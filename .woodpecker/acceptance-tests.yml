@@ -82,7 +82,7 @@ steps:
         fi
         echo "$changed" > .ci/changed-paths.txt
         if echo "$changed" | grep -E \
-             '^(docker/(edge|voice|chat)/|bin/snapshot-|bin/threads\.sh$|nomad/jobs/edge\.hcl$)' \
+             '^(docker/edge/|bin/snapshot-|nomad/jobs/edge\.hcl$)' \
              >/dev/null; then
           echo "yes" > .ci/needs-redeploy
           echo "detect-changes: redeploy required (matched runtime paths)"

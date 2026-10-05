@@ -2,10 +2,7 @@
 #
 # Triggered on push to main when any edge-related paths change:
 #   - docker/edge/**
-#   - docker/voice/**
-#   - docker/chat/**
 #   - bin/snapshot-*.sh
-#   - bin/threads.sh
 #
 # Builds and pushes:
 #   - ghcr.io/disinto/edge:main       (floating tag)
@@ -23,10 +20,7 @@ when:
     paths:
       include:
         - docker/edge/**
-        - docker/voice/**
-        - docker/chat/**
         - bin/snapshot-*.sh
-        - bin/threads.sh
 
 # Workflow-level timeout default — propagates to all steps without their own timeout.
 timeout: 20m
