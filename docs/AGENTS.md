@@ -71,9 +71,7 @@ disinto/                 (code repo)
 │                  deploy-drift.toml — deploy-drift check spec; run-experiment.sh —
 │                  experiment runner script (wave 2, #1293)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
-│                  edge/ (Caddy + dispatcher + engagement
-│                  + chat-skills/factory-state/factory-state.sh — snapshot state reader for chat operator
-│                  surface); agents/ (llama-server agents + dsh
+│                  edge/ (Caddy + dispatcher + engagement); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
 │                  dispatch.sh, key-command.sh, porter-install.sh, porter-front.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
@@ -122,7 +120,7 @@ disinto/                 (code repo)
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-chat-oauth)
-│                  agent-log-rotate.sh, inbox-ack.sh, factory-walk.sh, snapshot-agents.sh,
+│                  agent-log-rotate.sh, factory-walk.sh, snapshot-agents.sh,
 │                  snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, threads.sh,
 │                  uninstall.sh

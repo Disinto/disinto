@@ -13,8 +13,7 @@
 #   3. Lists are capped at 20 and sorted newest-first (sort_by + reverse).
 #   4. *_count fields are preserved.
 #   5. Vision items are NOT enumerated (no vision array).
-#   6. factory-state.sh surfaces the new lists in prose summary.
-#   7. shellcheck still passes on both scripts.
+#   6. shellcheck still passes on the forge-collector script.
 # =============================================================================
 set -euo pipefail
 
@@ -79,27 +78,13 @@ if grep -qE "vision:.*\\\$vision_items" "$forge_script"; then
   ac_fail "$forge_script: vision items should NOT be enumerated as an array"
 fi
 
-# ── 4. factory-state.sh must surface new lists ──────────────────────────────
+# ── 4. shellcheck must still pass ───────────────────────────────────────────
 
-ac_log "checking factory-state.sh surfaces per-label issue lists"
-
-state_script=docker/edge/chat-skills/factory-state/factory-state.sh
-[ -f "$state_script" ] || ac_fail "$state_script missing"
-
-# Must reference the new array keys in the summary
-for key in backlog in_progress blocked; do
-  if ! grep -q "$key" "$state_script"; then
-    ac_fail "$state_script: missing reference to '$key' array"
-  fi
-done
-
-# ── 5. shellcheck must still pass ───────────────────────────────────────────
-
-ac_log "running shellcheck on modified scripts"
+ac_log "running shellcheck on the forge-collector script"
 
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck "$forge_script" "$state_script" \
-    || ac_fail "shellcheck failed on modified scripts"
+  shellcheck "$forge_script" \
+    || ac_fail "shellcheck failed on $forge_script"
 fi
 
 echo PASS

@@ -2,8 +2,10 @@
 # =============================================================================
 # tests/acceptance/issue-859.sh — verifies state.json is world-readable (0644)
 #
-# Issue #859: mktemp produces 0600 files; atomic mv preserves that mode,
-# blocking chat-skills (uid 1000) from reading via RO mount.
+# Issue #859: mktemp produces 0600 files; atomic mv preserves that mode.
+# Each snapshot script chmod 644 before mv so state.json stays readable.
+# (The original reader, chat-skills, was removed with the chat/voice surface,
+#  #1788 — nothing in the repo reads it now.)
 #
 # Checks:
 #   1. All five snapshot scripts set chmod 644 on the tmpfile before mv.
@@ -50,7 +52,7 @@ if [ -f "$STATE_FILE" ]; then
   ac_log "checking $STATE_FILE permissions"
   mode="$(stat -c '%a' "$STATE_FILE")"
   ac_assert_eq "$mode" "644" \
-    "state.json mode is $mode, expected 644 (chat-skills need read access)"
+    "state.json mode is $mode, expected 644 (should stay world-readable)"
 else
   ac_warn "state.json not found at $STATE_FILE — skipping live check"
 fi
