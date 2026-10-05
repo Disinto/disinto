@@ -3,11 +3,10 @@
 # tests/acceptance/issue-1426.sh
 #
 # Issue #1426: restore the `claude-shared` host_volume in nomad/client.hcl.
-# The edge job used to declare volume "claude-shared" (chat OAuth, #648 /
-# #705) without a matching host_volume in client.hcl — a client.hcl taken
-# from the repo did not fingerprint the volume, so that job could not place.
-# #1770 dropped the mount from nomad/jobs/edge.hcl; this test still guards
-# the host_volume declaration and the cluster-up directory.
+# nomad/jobs/edge.hcl declares volume "claude-shared" (dispatcher OAuth
+# probe, #648 / #705 / #1770), but client.hcl had no matching host_volume
+# block — a client.hcl taken from the repo does not fingerprint the volume,
+# so the edge job cannot place.
 #
 # The fix (two files):
 #   1. nomad/client.hcl — host_volume "claude-shared" with
@@ -61,5 +60,12 @@ HOST_DIRS="$(awk '
   || ac_fail "lib/init/nomad/cluster-up.sh must define a HOST_VOLUME_DIRS array"
 grep -Fq '"/var/lib/disinto/claude-shared"' <<<"$HOST_DIRS" \
   || ac_fail "HOST_VOLUME_DIRS must include \"/var/lib/disinto/claude-shared\" so the dir exists before Nomad fingerprints"
+
+# ── 3. Jobspec still sources the same host_volume name ─────────────────────
+# The edge job still mounts claude-shared so the dispatcher can see the
+# OAuth dir (#1770 review). The source name must match the host_volume.
+EDGE_HCL="$REPO_ROOT/nomad/jobs/edge.hcl"
+grep -Fq 'source    = "claude-shared"' "$EDGE_HCL" \
+  || ac_fail "nomad/jobs/edge.hcl must still source \"claude-shared\" (the host_volume name must match the jobspec)"
 
 ac_pass

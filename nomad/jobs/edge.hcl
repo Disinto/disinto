@@ -3,8 +3,8 @@
 #
 # Part of the Nomad+Vault migration (S5.1, issue #988). Caddy reverse proxy
 # routes traffic to Forgejo, Woodpecker, and staging. Chat and voice are
-# not routed (#1768); the caddy task no longer renders their secrets, env,
-# or mounts (#1770). The vault-action dispatcher runs as a background
+# not routed (#1768); the caddy task no longer renders their secrets or
+# env (#1770). The vault-action dispatcher runs as a background
 # process inside the caddy container (entrypoint-edge.sh ->
 # docker/edge/dispatcher.sh), polling
 # disinto-ops for vault actions and dispatching them via Nomad batch jobs.
@@ -15,8 +15,8 @@
 # dynamic address:port for each backend.
 #
 # Host_volume contract:
-#   This job mounts caddy-data and tape from nomad/client.hcl. Paths
-#   /srv/disinto/caddy-data and /srv/disinto/tape are created by
+#   This job mounts caddy-data, tape, and claude-shared from nomad/client.hcl.
+#   Paths /srv/disinto/caddy-data and /srv/disinto/tape are created by
 #   lib/init/nomad/cluster-up.sh before any job references them. Keep the
 #   `source = "caddy-data"` and `source = "tape"` below in sync with the
 #   host_volume stanzas in client.hcl.
@@ -64,6 +64,15 @@ job "edge" {
       read_only = false
     }
 
+    # claude-shared: OAuth session the dispatcher probes before bind-mounting
+    # it into vault runners and reproduce/triage sidecars (dispatcher.sh,
+    # #1758 / #1776). The caddy mount is read-only: docker.sock resolves -v
+    # on the host. Not a chat mount (#1770).
+    volume "claude-shared" {
+      type      = "host"
+      source    = "claude-shared"
+      read_only = false
+    }
 
     # tape records (lib/tape.sh): mounted RW at /srv/disinto/tape, the
     # lib/tape.sh default TAPE_DIR, so no env override is needed (#1405).
@@ -143,6 +152,14 @@ job "edge" {
         volume      = "tape"
         destination = "/srv/disinto/tape"
         read_only   = false
+      }
+
+      # Dispatcher probe: the OAuth dir must exist inside this container
+      # or runner/sidecar launches skip the session mount (#1758 / #1776).
+      volume_mount {
+        volume      = "claude-shared"
+        destination = "/var/lib/disinto/claude-shared"
+        read_only   = true
       }
 
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──
@@ -259,10 +276,11 @@ EOT
       }
 
       # raw_exec runs on the host, not in a container — host_volume mounts
-      # don't apply. The daemon writes factory-state JSON directly to the
-      # host path below (#1770).
+      # don't apply. The daemon writes factory-state JSON and inbox
+      # sentinels directly to the host paths below.
       env {
         SNAPSHOT_PATH = "/srv/disinto/snapshot-state/state.json"
+        INBOX_ROOT    = "/srv/disinto/inbox-state"
       }
 
       # ── Collector secrets (env = true) ────────────────────────────────
