@@ -202,7 +202,9 @@ job "agents-gardener-qwen" {
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"
-        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
+        # The think-budget proxy on the host, not llama-server (:8081): it caps
+        # thinking per request and holds disinto to 2 of llama-server's 4 slots.
+        DSH_BASE_URL        = "http://10.10.10.1:8088/v1"
         DSH_MODEL           = "unsloth/Qwen3.8-27B"
         DSH_CONTEXT_WINDOW  = "100000"
         # settings.yaml uses apiKeyEnv indirection; llama-server ignores
