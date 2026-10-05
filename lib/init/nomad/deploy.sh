@@ -19,7 +19,6 @@
 #   JOB_READY_TIMEOUT_SECS — poll timeout in seconds (default: 360)
 #   JOB_READY_TIMEOUT_<JOBNAME> — per-job timeout override (e.g.,
 #                            JOB_READY_TIMEOUT_FORGEJO=300)
-#                            Built-in: JOB_READY_TIMEOUT_CHAT=600
 #
 # Exit codes:
 #   0  success (all jobs deployed and healthy, or dry-run completed)
@@ -36,9 +35,6 @@ set -euo pipefail
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_ROOT}/../../.." && pwd)}"
 JOB_READY_TIMEOUT_SECS="${JOB_READY_TIMEOUT_SECS:-360}"
-
-# Per-job built-in defaults (override with JOB_READY_TIMEOUT_<JOBNAME> env var)
-JOB_READY_TIMEOUT_CHAT="${JOB_READY_TIMEOUT_CHAT:-600}"
 
 DRY_RUN=0
 FAILED_JOBS=()  # jobs that timed out or failed deployment
