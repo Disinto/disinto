@@ -72,8 +72,8 @@ disinto/                 (code repo)
 │                  experiment runner script (wave 2, #1293)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
 │                  edge/ (Caddy + dispatcher + engagement
-│                  + chat-skills/factory-state/factory-state.sh — snapshot state reader for chat/voice operator
-│                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
+│                  + chat-skills/factory-state/factory-state.sh — snapshot state reader for chat operator
+│                  surface); agents/ (llama-server agents + dsh
 │                  headless patches)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
 │                  dispatch.sh, key-command.sh, porter-install.sh, porter-front.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
@@ -111,7 +111,7 @@ disinto/                 (code repo)
 │                  `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
 │                  branch-protection.md, stats.md);
-│                  voice/ (SOUL_VOICE.md — voice agent state machine); contributing/ (acceptance-tests.md, issues-for-bots.md)
+│                  contributing/ (acceptance-tests.md, issues-for-bots.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
 │                  vault-import.bats, disinto-init-nomad.bats)
@@ -121,7 +121,7 @@ disinto/                 (code repo)
 ├── templates/     Issue templates
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
-│                  reseed-runner, reseed-voice, reseed-chat-oauth)
+│                  reseed-runner, reseed-chat-oauth)
 │                  agent-log-rotate.sh, inbox-ack.sh, factory-walk.sh, snapshot-agents.sh,
 │                  snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh, threads.sh,
