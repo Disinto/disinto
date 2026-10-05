@@ -622,12 +622,6 @@ create_woodpecker_oauth() {
   _create_woodpecker_oauth_impl "$@"
 }
 
-# Create Chat OAuth2 app on Forgejo (implementation in lib/ci-setup.sh)
-create_chat_oauth() {
-  _load_ci_context
-  _create_chat_oauth_impl "$@"
-}
-
 # Generate WOODPECKER_TOKEN via Forgejo OAuth2 flow (implementation in lib/ci-setup.sh)
 generate_woodpecker_token() {
   _load_ci_context
@@ -930,7 +924,7 @@ _disinto_init_nomad() {
         if [ "$svc" = "agents" ]; then
           echo "[deploy] [dry-run] [seed] would generate default projects/${project_name}.toml"
         fi
-        # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
+        # Post-deploy: seed kv/disinto/chat (forge_pat) for the edge (#678).
         if [ "$svc" = "edge" ]; then
           local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
           if [ -x "$chat_init_sh" ]; then
@@ -1245,20 +1239,14 @@ _disinto_init_nomad() {
         fi
       fi
 
-      # Post-deploy: chat OAuth + Vault bootstrap for edge (#678)
-      # Initializes Forgejo OAuth2 app, seeds kv/disinto/chat, and
-      # conditionally applies Nomad ACL policy + token for the chat task.
+      # Post-deploy: seed kv/disinto/chat (forge_pat) for the edge (#678).
       if [ "$svc" = "edge" ]; then
         echo ""
-        echo "── Chat OAuth + Vault bootstrap ────────────────────────"
+        echo "── Vault bootstrap for edge ──────────────────────────────"
         local chat_init_sh="${FACTORY_ROOT}/lib/init/nomad/chat-init.sh"
         if [ -x "$chat_init_sh" ]; then
           if [ "$(id -u)" -eq 0 ]; then
-            FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
-              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
-              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
-              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
-              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
+            FORGE_TOKEN="${FORGE_TOKEN:-}" \
               VAULT_ADDR="$vault_addr" \
               "$chat_init_sh" || exit $?
           else
@@ -1266,12 +1254,8 @@ _disinto_init_nomad() {
               echo "Error: chat-init.sh must run as root and sudo is not installed" >&2
               exit 1
             fi
-            sudo -n --preserve-env=FORGE_URL,FORGE_TOKEN,FORGE_ADMIN_PASS,EDGE_TUNNEL_FQDN,EDGE_TUNNEL_FQDN_CHAT,EDGE_ROUTING_MODE,VAULT_ADDR -- \
-              FORGE_URL="$forge_url" FORGE_TOKEN="${FORGE_TOKEN:-}" \
-              FORGE_ADMIN_PASS="${FORGE_ADMIN_PASS:-}" \
-              EDGE_TUNNEL_FQDN="${EDGE_TUNNEL_FQDN:-}" \
-              EDGE_TUNNEL_FQDN_CHAT="${EDGE_TUNNEL_FQDN_CHAT:-}" \
-              EDGE_ROUTING_MODE="${EDGE_ROUTING_MODE:-subpath}" \
+            sudo -n --preserve-env=FORGE_TOKEN,VAULT_ADDR -- \
+              FORGE_TOKEN="${FORGE_TOKEN:-}" \
               VAULT_ADDR="$vault_addr" \
               "$chat_init_sh" || exit $?
           fi
@@ -1653,7 +1637,6 @@ p.write_text(text)
 
     if [ "$bare" = false ]; then
       echo "[ensure] Woodpecker OAuth2 app"
-      echo "[ensure] Chat OAuth2 app"
       echo "[ensure] WOODPECKER_AGENT_SECRET in .env"
     fi
 
@@ -1836,21 +1819,6 @@ p.write_text(text)
   # Create OAuth2 app on Forgejo for Woodpecker (before compose up)
   _WP_REPO_ID=""
   create_woodpecker_oauth "$forge_url" "$forge_repo"
-
-  # Create OAuth2 app on Forgejo for disinto-chat (#708)
-  # In subdomain mode, callback is at chat.<project> root instead of /chat/ subpath.
-  local chat_redirect_uri
-  if [ -n "${EDGE_TUNNEL_FQDN:-}" ]; then
-    local chat_routing_mode="${EDGE_ROUTING_MODE:-subpath}"
-    if [ "$chat_routing_mode" = "subdomain" ]; then
-      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN_CHAT:-chat.${EDGE_TUNNEL_FQDN}}/oauth/callback"
-    else
-      chat_redirect_uri="https://${EDGE_TUNNEL_FQDN}/chat/oauth/callback"
-    fi
-  else
-    chat_redirect_uri="http://localhost/chat/oauth/callback"
-  fi
-  create_chat_oauth "$chat_redirect_uri"
 
   # Generate WOODPECKER_AGENT_SECRET for server↔agent auth
   local env_file="${FACTORY_ROOT}/.env"
@@ -3348,7 +3316,7 @@ disinto_edge() {
       # Write to .env (replace existing entries to avoid duplicates)
       local tmp_env
       tmp_env=$(mktemp)
-      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN|FQDN_FORGE|FQDN_CI|FQDN_CHAT)=" "$env_file" > "$tmp_env" 2>/dev/null || true
+      grep -Ev "^EDGE_TUNNEL_(HOST|PORT|FQDN|FQDN_FORGE|FQDN_CI)=" "$env_file" > "$tmp_env" 2>/dev/null || true
       mv "$tmp_env" "$env_file"
       echo "EDGE_TUNNEL_HOST=${edge_host}" >> "$env_file"
       echo "EDGE_TUNNEL_PORT=${port}" >> "$env_file"
@@ -3359,7 +3327,6 @@ disinto_edge() {
       if [ "$reg_routing_mode" = "subdomain" ]; then
         echo "EDGE_TUNNEL_FQDN_FORGE=forge.${fqdn}" >> "$env_file"
         echo "EDGE_TUNNEL_FQDN_CI=ci.${fqdn}" >> "$env_file"
-        echo "EDGE_TUNNEL_FQDN_CHAT=chat.${fqdn}" >> "$env_file"
       fi
 
       echo "Registered: ${project}"
@@ -3369,7 +3336,6 @@ disinto_edge() {
         echo "  Mode:    subdomain"
         echo "  Forge:   forge.${fqdn}"
         echo "  CI:      ci.${fqdn}"
-        echo "  Chat:    chat.${fqdn}"
       fi
       echo "  Saved to: ${env_file}"
       ;;
