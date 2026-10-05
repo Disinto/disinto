@@ -168,7 +168,6 @@ grep dev-box /opt/disinto/.git/config && echo "FAIL: still points at old host" |
 
 - [ ] `curl https://self.disinto.ai` → Forgejo welcome page
 - [ ] Create a test PR → Woodpecker pipeline runs → agents assign and work
-- [ ] Claude chat login via Forgejo OAuth succeeds
 
 ---
 

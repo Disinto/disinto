@@ -23,8 +23,8 @@ Every acceptance test:
 3. **Exits 0 on pass, non-zero on fail.**
 4. **Prints `PASS` as its last stdout line on success, or `FAIL: <reason>` on
    failure.** stderr is for diagnostics; stdout drives the outcome.
-5. **Is read-only.** Tests query forge, nomad, the snapshot, and chat/voice
-   endpoints — they do not file issues, dispatch jobs, or otherwise mutate
+5. **Is read-only.** Tests query forge, nomad, and the snapshot — they
+   do not file issues, dispatch jobs, or otherwise mutate
    state. This is enforced by convention: reviewer-agent rejects mutating
    tests. (There is no sandbox.)
 6. **Sources helpers** from `tests/lib/acceptance-helpers.sh` for curl
