@@ -247,80 +247,6 @@ else
   echo "edge: collect-engagement cron skipped (EDGE_ENGAGEMENT_READY=0)" >&2
 fi
 
-# ── chat-Claude factory control surface (#650) ────────────────────────
-# Install settings.json + .mcp.json templates into $CHAT_WORKSPACE_DIR so
-# Claude Code auto-loads them when chat-server.py spawns `claude -p` with
-# cwd=$CHAT_WORKSPACE_DIR. The templates are baked into the image at
-# /var/chat/config-templates/ by the Dockerfile.
-#
-# Load Vault-templated secrets (if present) into env so the Bash allow-list
-# and the forge-api MCP header substitution can reach them:
-#   - FACTORY_FORGE_PAT  — Forge admin PAT (issue/PR CRUD via forge-api MCP)
-#   - NOMAD_TOKEN        — scoped ACL token (namespace default, submit/read/list/logs)
-#
-# Files are expected under /secrets/ inside the caddy task (Vault template
-# writes them there when the jobspec's `template` stanza is configured —
-# see nomad/jobs/edge.hcl).
-export CHAT_WORKSPACE_DIR="${CHAT_WORKSPACE_DIR:-/opt/disinto}"
-
-_chat_install_settings() {
-  local workspace="$1"
-  [ -d "$workspace" ] || return 0
-  mkdir -p "${workspace}/.claude"
-  if [ -f /var/chat/config-templates/settings.json ]; then
-    cp /var/chat/config-templates/settings.json "${workspace}/.claude/settings.json"
-    echo "edge: installed chat settings.json -> ${workspace}/.claude/settings.json" >&2
-  fi
-  if [ -f /var/chat/config-templates/mcp.json ]; then
-    cp /var/chat/config-templates/mcp.json "${workspace}/.mcp.json"
-    echo "edge: installed chat .mcp.json -> ${workspace}/.mcp.json" >&2
-  fi
-  # Skills (#727): copy each /var/chat/skill-templates/<name>/ into
-  # ${workspace}/.claude/skills/<name>/ so chat-Claude has its operator
-  # skill set discoverable under CWD. Done at container start (not baked
-  # into the image) so the workspace tree owns the installed copy.
-  if [ -d /var/chat/skill-templates ]; then
-    mkdir -p "${workspace}/.claude/skills"
-    cp -R /var/chat/skill-templates/. "${workspace}/.claude/skills/"
-    find "${workspace}/.claude/skills" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
-    echo "edge: installed chat skills -> ${workspace}/.claude/skills/" >&2
-  fi
-}
-
-_chat_load_secret_file() {
-  # $1 = env var name, $2 = file path
-  local var="$1" path="$2"
-  if [ -n "${!var:-}" ]; then
-    # Already set (dev override) — leave it.
-    return 0
-  fi
-  if [ -r "$path" ] && [ -s "$path" ]; then
-    # shellcheck disable=SC2046  # single line, no IFS weirdness
-    export "$var=$(tr -d '\r\n' < "$path")"
-    echo "edge: loaded $var from $path" >&2
-  fi
-}
-
-_chat_load_secret_file FACTORY_FORGE_PAT "${FACTORY_FORGE_PAT_FILE:-/secrets/forge-pat}"
-_chat_load_secret_file NOMAD_TOKEN       "${NOMAD_TOKEN_FILE:-/secrets/nomad-token}"
-export NOMAD_ADDR="${NOMAD_ADDR:-http://localhost:4646}"
-_chat_install_settings "$CHAT_WORKSPACE_DIR"
-
-# ── Ensure chat session dir ownership (issue #747) ───────────────────
-# claude-code persists session state to ${CLAUDE_CONFIG_DIR}/projects/<cwd>/
-# Historically chat spawned claude as root (pre-#743), leaving the session
-# dir root-owned. After #743 drop-priv to agent, claude cannot write new
-# sessions or resume existing ones — continuity is lost.
-_chat_ensure_session_dir() {
-  # Match _claude_session_flag's path encoding: cwd "/opt/disinto" -> "-opt-disinto"
-  local encoded="${CHAT_WORKSPACE_DIR//\//-}"
-  local dir="${CLAUDE_CONFIG_DIR:-}/projects/${encoded}"
-  install -d -m 0750 -o agent -g agent "$dir" 2>/dev/null || true
-  # Repair pre-existing root-owned files (idempotent, no-op once clean).
-  chown -R agent:agent "$dir" 2>/dev/null || true
-}
-_chat_ensure_session_dir
-
 # Start engagement beacon server in background (issue #975)
 # Listens on loopback, accepts POST beacons from engagement.js, appends to log.
 # GET /api/engagement returns a JSON snapshot of aggregated data.
@@ -328,43 +254,6 @@ _chat_ensure_session_dir
   ENGAGEMENT_LOG="${ENGAGEMENT_LOG:-/var/log/caddy/engagement.log}" \
   ENGAGEMENT_PORT="${ENGAGEMENT_PORT:-8095}" \
   python3 /usr/local/bin/engagement-server.py 2>&1 | tee -a /opt/disinto-logs/engagement.log
-) &
-
-# Start chat server in background (#1083 — merged from docker/chat into edge)
-(python3 /usr/local/bin/chat-server.py 2>&1 | tee -a /opt/disinto-logs/chat.log) &
-
-# ── Voice bridge (#662, parent #651) ──────────────────────────────────
-# Gemini Live WebSocket bridge on 127.0.0.1:$VOICE_PORT. Caddy forwards
-# /voice/ws here with X-Forwarded-User stamped by forward_auth (same
-# OAuth gate as /chat/*). GEMINI_API_KEY is scoped to this subprocess
-# only — we export it into the child env from the Vault-rendered file
-# at $GEMINI_API_KEY_FILE and then unset it again from our own env so
-# neither chat-server.py nor any `claude -p` child can inherit it.
-#
-# The key-from-file contract is documented in docs/voice/README.md and
-# enforced by the env stanza in nomad/jobs/edge.hcl (which sets
-# GEMINI_API_KEY_FILE but NEVER GEMINI_API_KEY on the task).
-export VOICE_PORT="${VOICE_PORT:-8090}"
-export VOICE_HOST="${VOICE_HOST:-127.0.0.1}"
-(
-  if [ -r "${GEMINI_API_KEY_FILE:-}" ] && [ -s "${GEMINI_API_KEY_FILE:-}" ]; then
-    GEMINI_API_KEY="$(tr -d '\r\n' < "$GEMINI_API_KEY_FILE")"
-    # Skip launch if the template has not been seeded yet — the file
-    # will contain the sentinel "seed-me" until `disinto vault
-    # reseed-voice` runs. Caddy will return 502 on /voice/ws which is
-    # the expected pre-seed behavior.
-    if [ -n "$GEMINI_API_KEY" ] && [ "$GEMINI_API_KEY" != "seed-me" ]; then
-      export GEMINI_API_KEY
-      exec /opt/voice-venv/bin/python3 /usr/local/bin/voice-bridge.py \
-        2>&1 | tee -a /opt/disinto-logs/voice-bridge.log
-    else
-      echo "edge: voice bridge skipped — $GEMINI_API_KEY_FILE is unseeded" >&2
-      sleep infinity
-    fi
-  else
-    echo "edge: voice bridge skipped — GEMINI_API_KEY_FILE not readable" >&2
-    sleep infinity
-  fi
 ) &
 
 # Nomad template renders Caddyfile to /local/Caddyfile via service discovery;

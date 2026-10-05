@@ -71,7 +71,7 @@ disinto/                 (code repo)
 │                  deploy-drift.toml — deploy-drift check spec; run-experiment.sh —
 │                  experiment runner script (wave 2, #1293)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
-│                  edge/ (Caddy + chat + voice + dispatcher
+│                  edge/ (Caddy + dispatcher + engagement
 │                  + chat-skills/factory-state/factory-state.sh — snapshot state reader for chat/voice operator
 │                  surface); voice/ (bridge.py, UI); agents/ (llama-server agents + dsh
 │                  headless patches)
