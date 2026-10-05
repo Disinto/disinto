@@ -146,8 +146,8 @@ check_allowlist() {
 
 # Register a new tunnel
 # Usage: do_register <project> <pubkey>
-# When EDGE_ROUTING_MODE=subdomain, also registers forge.<project>, ci.<project>,
-# and chat.<project> subdomain routes (see docs/edge-routing-fallback.md).
+# When EDGE_ROUTING_MODE=subdomain, also registers forge.<project> and ci.<project>
+# subdomain routes (see docs/edge-routing-fallback.md).
 do_register() {
   local project="$1"
   local pubkey="$2"
@@ -204,7 +204,7 @@ do_register() {
   local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
   if [ "$routing_mode" = "subdomain" ]; then
     local subdomain
-    for subdomain in forge ci chat; do
+    for subdomain in forge ci; do
       add_route "${subdomain}.${project}" "$port"
     done
   fi
@@ -224,7 +224,7 @@ do_register() {
   local response="{\"port\":${port},\"fqdn\":\"${project}.${DOMAIN_SUFFIX}\""
   if [ "$routing_mode" = "subdomain" ]; then
     response="${response},\"routing_mode\":\"subdomain\""
-    response="${response},\"subdomains\":{\"forge\":\"forge.${project}.${DOMAIN_SUFFIX}\",\"ci\":\"ci.${project}.${DOMAIN_SUFFIX}\",\"chat\":\"chat.${project}.${DOMAIN_SUFFIX}\"}"
+    response="${response},\"subdomains\":{\"forge\":\"forge.${project}.${DOMAIN_SUFFIX}\",\"ci\":\"ci.${project}.${DOMAIN_SUFFIX}\"}"
   fi
   response="${response}}"
   echo "$response"
@@ -272,6 +272,7 @@ do_deregister() {
   local routing_mode="${EDGE_ROUTING_MODE:-subpath}"
   if [ "$routing_mode" = "subdomain" ]; then
     local subdomain
+    # chat: only routes from registrations made before chat was removed
     for subdomain in forge ci chat; do
       remove_route "${subdomain}.${project}"
     done
