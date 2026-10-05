@@ -1,37 +1,57 @@
 [
   {
-    "action": "add_label",
-    "issue": 1676,
-    "label": "backlog"
-  },
-  {
-    "action": "remove_label",
-    "issue": 1676,
-    "label": "blocked"
-  },
-  {
     "action": "edit_body",
-    "issue": 1713,
-    "body": "Flagged by AI reviewer in PR #1712.\n\n## Problem\n\n`repair_tape_tick` decides a condition has stopped firing solely by its absence from `repair_conditions_current_json`. That helper treats a missing, empty, or unparseable `RECIPE_OUTPUT` as no fired recipes (`recipe_names=\"\"` on jq failure; the caller also does `cur_json=\"$(repair_conditions_current_json)\" || cur_json=\"[]\"`).\n\n`supervisor-run.sh` still runs the repair tick after `evaluate-recipes.sh` exits non-zero. On failure the evaluator usually prints nothing before aborting (`set -euo pipefail`), so `RECIPE_OUTPUT` is empty. Every state entry with `acted_at` inside `SUPERVISOR_REPAIR_WINDOW_S` is then closed as not firing. If `acted` is 1, the tape gets `{acted: 1, cleared: 1}` — a false pass — and the entry is dropped, so the next successful evaluation cannot correct it.\n\nThis is pre-existing (the close-on-absence path landed with #1408). #1637 makes the false pass the calibration bit `cleared` instead of `regression_cleared`.\n\n## Expected\n\nA failed or non-JSON recipe evaluation must not be treated as \"condition stopped firing\". Skip the close/expire pass for that tick (leave state entries open) unless the evaluator succeeded and produced a JSON object.\n\n---\n*Auto-created from AI review*\n\n\n## Affected files\n\n- `supervisor/supervisor-run.sh` (`repair_tape_tick`, `repair_conditions_current_json`)\n- `tests/acceptance/issue-1713.sh`\n\n## Acceptance criteria\n\n- [ ] A failed or non-JSON recipe evaluation (`RECIPE_OUTPUT` empty or unparseable) skips the close/expire pass for that tick, leaving open state entries unexpired\n- [ ] A successful JSON evaluation still closes expired conditions and records `{acted:1, cleared:1}`\n- [ ] No false `{acted:1, cleared:1}` pass is written when the evaluator aborts before printing output\n- [ ] `bash tests/acceptance/issue-1713.sh` exits 0 and calls `ac_pass`\n"
+    "issue": 1786,
+    "body": "Flagged by AI reviewer in PR #1783.\n\n## Problem\n\n`nomad/jobs/edge.hcl`'s snapshot task is `raw_exec`. It writes `SNAPSHOT_PATH` directly to `/srv/disinto/snapshot-state/state.json` because host_volume mounts do not apply. It has never set `THREADS_ROOT`.\n\n`bin/snapshot-inbox.sh` `scan_completed_threads` defaults `THREADS_ROOT` to `/var/lib/disinto/threads` and returns `[]` when that directory is missing. On the Nomad host, delegate thread state lives at `/srv/disinto/threads-state` (`nomad/client.hcl`, `lib/init/nomad/cluster-up.sh`). The GC job remaps that volume to `/var/lib/disinto/threads` inside its own container (`nomad/jobs/edge-threads-gc.hcl`); the snapshot daemon does not. Completed delegate threads therefore never enter `state.json` inbox from the live snapshot task.\n\nThis predates #1770 (that PR only removed `INBOX_ROOT`; `THREADS_ROOT` was already unset).\n\n## Expected\n\nSet `THREADS_ROOT=/srv/disinto/threads-state` on the snapshot task, matching how `SNAPSHOT_PATH` bypasses volume_mount.\n\n---\n*Auto-created from AI review*\n## Affected files\n- `nomad/jobs/edge.hcl` — snapshot task env block (sets `SNAPSHOT_PATH` but never `THREADS_ROOT`)\n- `bin/snapshot-inbox.sh` — `scan_completed_threads` defaults `THREADS_ROOT` to `/var/lib/disinto/threads` and returns `[]` when missing\n\n## Acceptance criteria\n- [ ] The snapshot task in `nomad/jobs/edge.hcl` sets `THREADS_ROOT=/srv/disinto/threads-state` in its env block, matching how `SNAPSHOT_PATH` bypasses volume_mount.\n- [ ] On the live Nomad host, `bin/snapshot-inbox.sh` `scan_completed_threads` reports completed delegate threads (state at `/srv/disinto/threads-state`) into the inbox instead of returning `[]`.\n- [ ] `SNAPSHOT_PATH` behavior is unchanged; no regression to existing snapshot state writes.\n"
   },
   {
     "action": "add_label",
-    "issue": 1713,
+    "issue": 1786,
     "label": "backlog"
   },
   {
     "action": "edit_body",
-    "issue": 1702,
-    "body": "Flagged by AI reviewer in PR #1701.\n\n## Problem\n\n`repair_tape_tick` in `supervisor/supervisor-run.sh` drops a cleared condition from the repair state file even when `tape_outcome` fails to append `{\"regression_cleared\":1}`.\n\nThe emit path is careful about this: `emit_repair_proposal` skips `repair_state_put` when the tape append fails, so the next tick retries. The close path is not. After the cleared-condition loop (which only logs `WARNING: tape: failed to append cleared outcome` on failure), the function always runs `_repair_state_update` to delete every key in `cleared_list`.\n\nConcrete failure: an unwritable `$TAPE_DIR` (or any transient append failure) while a recorded condition has cleared. The tick returns 0, no outcome line is written, and the state entry is removed. The next tick has nothing to retry against, so that repair proposal never receives its cleared outcome. Calibration then treats the proposal as still open.\n\nThis is pre-existing (the close/drop order was not introduced by #1636). #1636 retargeted `tests/acceptance/issue-1408.sh` case 4 onto this path and no longer asserts that a failed tape append leaves the state retryable.\n\n## Expected\n\nOn a failed cleared-outcome append, leave that condition in the state file so the next tick retries, matching the emit-path retry rule.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n\n- `supervisor/supervisor-run.sh` (`repair_tape_tick`, `_repair_state_update`)\n- `tests/acceptance/issue-1702.sh`\n\n## Acceptance criteria\n\n- [ ] On a failed cleared-outcome append, the cleared condition remains in the repair state file for retry on the next tick\n- [ ] On a successful cleared-outcome append, the state entry is removed as before\n- [ ] A transient `$TAPE_DIR` append failure does not permanently drop the recorded condition\n- [ ] `bash tests/acceptance/issue-1702.sh` exits 0 and calls `ac_pass`\n"
+    "issue": 1776,
+    "body": "Flagged by AI reviewer in PR #1775.\n\n## Problem\n\n#1758 removes the Claude binary and credential mounts from `docker/edge/dispatcher.sh` on the claim that runners and sidecars no longer need them because `AGENT_HARNESS` defaults to dsh (#1683). That default only covers `lib/agent-sdk.sh` `agent_run`. These callers do not use it:\n\n- `docker/reproduce/entrypoint-reproduce.sh` fatals if `claude` is not on `PATH` (expects a host mount of `/usr/local/bin/claude`) and then runs `claude -p`. `docker/reproduce/Dockerfile` does not install the CLI. `_dispatch_sidecar_docker` is the only implemented sidecar backend (`_dispatch_sidecar_nomad` returns 1) and is what `dispatch_reproduce`, `dispatch_triage`, and `dispatch_verify` launch (`disinto-reproduce:latest`).\n- `docker/runner/entrypoint-runner.sh` `exec`s `claude -p` for every `formulas/<name>.toml` vault action. It does not consult `AGENT_HARNESS`. On the edge job, auth is the `claude-shared` OAuth mount (`CLAUDE_CONFIG_DIR`), not `ANTHROPIC_API_KEY` (explicitly unset in `nomad/jobs/edge.hcl`).\n\nUntil those entrypoints move to the dsh harness (or stop calling Claude), the dispatcher mounts are load-bearing. Dropping them makes sidecar launches exit 1 and makes `.toml` vault formulas fail closed.\n\n---\n*Auto-created from AI review*\n## Affected files\n- `docker/reproduce/entrypoint-reproduce.sh` — fatals on missing `claude` and expects a host mount of `/usr/local/bin/claude`\n- `docker/runner/entrypoint-runner.sh` — `exec`s `claude -p` for every `formulas/<name>.toml` vault action\n- `docker/edge/dispatcher.sh` — currently drops the Claude binary/credential mounts that these entrypoints still depend on\n\n## Acceptance criteria\n- [ ] `docker/reproduce/entrypoint-reproduce.sh` no longer fatals when `claude` is absent and no longer requires a host mount of `/usr/local/bin/claude`.\n- [ ] Sidecar launches via `dispatch_reproduce`, `dispatch_triage`, and `dispatch_verify` succeed without Claude credentials or the CLI on PATH.\n- [ ] `docker/runner/entrypoint-runner.sh` runs `.toml` vault formulas through the dsh harness (`AGENT_HARNESS`) and no longer `exec`s `claude -p`.\n- [ ] `.toml` vault formulas execute on the edge job; the dispatcher's Claude mounts are no longer load-bearing.\n"
   },
   {
     "action": "add_label",
-    "issue": 1702,
+    "issue": 1776,
     "label": "backlog"
+  },
+  {
+    "action": "create_issue",
+    "title": "docs(nomad): fix stale edge-job docs bundled from tech-debt #1785, #1780, #1779",
+    "body": "Bundled from tech-debt dust items #1785, #1780, #1779 — stale documentation about the Nomad edge job left after the #1770/#1769/#1768/#1778 edge rework. Documentation-only; no behavior change.\n\n- #1785: `nomad/AGENTS.md` \"The chat job is init-generated\" section still says chat is served in-process via `chat-server.py`. Update to say chat is no longer served by the edge job (#1768/#1769) and align the drift/doctor wording with the current generated state.\n- #1780: `nomad/AGENTS.md` edge row still describes Caddyfile upstreams as `127.0.0.1` (forgejo :3000, woodpecker :8000) and a `/woodpecker` route. Update to match the jobspec's generated Caddyfile (`nomadService` upstreams, no loopback, no `/woodpecker`).\n- #1779: `nomad/jobs/edge.hcl` header (lines ~28-30) still says the `docker-compose.yml` stack is live until the cutover. Update to say the Nomad+Vault backend is the live stack (cutover is complete).\n\n## Affected files\n- `nomad/AGENTS.md`\n- `nomad/jobs/edge.hcl`\n\n## Acceptance criteria\n- [ ] `nomad/AGENTS.md` \"The chat job is init-generated\" section reflects that chat is no longer served by the edge job.\n- [ ] `nomad/AGENTS.md` edge row reflects the jobspec's Caddyfile (`nomadService` upstreams, no loopback, no `/woodpecker` route).\n- [ ] `nomad/jobs/edge.hcl` header reflects that the Nomad+Vault backend is the live stack (no docker-compose cutover note).\n- [ ] No behavioral or jobspec changes; documentation-only.\n",
+    "labels": [
+      "backlog"
+    ]
+  },
+  {
+    "action": "comment",
+    "issue": 1785,
+    "text": "Bundled into backlog dust-cleanup issue (nomad/edge group)."
   },
   {
     "action": "close",
-    "issue": 1692,
-    "reason": "fix applied to nomad/AGENTS.md in this run; doc row now reflects bash-only-by-default supervisor job"
+    "issue": 1785
+  },
+  {
+    "action": "comment",
+    "issue": 1780,
+    "text": "Bundled into backlog dust-cleanup issue (nomad/edge group)."
+  },
+  {
+    "action": "close",
+    "issue": 1780
+  },
+  {
+    "action": "comment",
+    "issue": 1779,
+    "text": "Bundled into backlog dust-cleanup issue (nomad/edge group)."
+  },
+  {
+    "action": "close",
+    "issue": 1779
   }
 ]
