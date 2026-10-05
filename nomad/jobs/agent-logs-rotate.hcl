@@ -1,7 +1,7 @@
 # =============================================================================
 # nomad/jobs/agent-logs-rotate.hcl — agent log rotation (periodic batch job)
 #
-# Runs daily at 03:30 UTC (staggered from edge-threads-gc's 03:00). Rotates
+# Runs daily at 03:30 UTC. Rotates
 # every *.log under /srv/disinto/agent-data*/ (agent-data, agent-data-qwen,
 # agent-data-gardener, agent-data-opus-*, …) when it exceeds 50MB, keeping
 # 5 gzip-compressed generations (<name>.1.gz … <name>.5.gz). The

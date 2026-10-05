@@ -100,14 +100,12 @@ of the bootstrap sequence.
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
 | `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot task only) |
-| `threads-state`               | `/srv/disinto/threads-state`           | none                               |
 
-The `snapshot-state` and `threads-state` host paths use `/srv/disinto/`
-(not `/var/lib/disinto/`) because the `raw_exec` snapshot daemon writes
-directly to the host path (`SNAPSHOT_PATH=/srv/disinto/snapshot-state/state.json`
-in `nomad/jobs/edge.hcl`), bypassing the Nomad volume_mount layer.
-The caddy task no longer mounts either volume (#1770). The host
-volumes themselves go in a later issue.
+The `snapshot-state` host path uses `/srv/disinto/` (not `/var/lib/disinto/`)
+because the `raw_exec` snapshot daemon writes directly to the host path
+(`SNAPSHOT_PATH=/srv/disinto/snapshot-state/state.json` in `nomad/jobs/edge.hcl`),
+bypassing the Nomad volume_mount layer. The caddy task no longer mounts it
+(#1770).
 
 ### Required plugin blocks
 

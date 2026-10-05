@@ -127,14 +127,6 @@ client {
     read_only = false
   }
 
-  # delegate thread state (meta.json + stream.jsonl per task-id). Host
-  # path is /srv/disinto/threads-state; container consumers see this
-  # remapped to /var/lib/disinto/threads via volume_mount destination.
-  host_volume "threads-state" {
-    path      = "/srv/disinto/threads-state"
-    read_only = false
-  }
-
   # inbox sentinel state (.acked, .shown, .snoozed per item). Host
   # path is /srv/disinto/inbox-state; RW for snapshot-daemon, RO for
   # caddy/consumers. Container consumers see this remapped to
