@@ -45,7 +45,7 @@ BLOCK="$(awk '
 grep -Fq 'path      = "/var/lib/disinto/claude-shared"' <<<"$BLOCK" \
   || ac_fail "host_volume \"claude-shared\" must have path \"/var/lib/disinto/claude-shared\""
 grep -Fq 'read_only = false' <<<"$BLOCK" \
-  || ac_fail "host_volume \"claude-shared\" must have read_only = false (the edge chat process refreshes the OAuth session in place)"
+  || ac_fail "host_volume \"claude-shared\" must have read_only = false (the OAuth session in it is refreshed in place)"
 
 # ── 2. HOST_VOLUME_DIRS includes the volume path ────────────────────────────
 HOST_DIRS="$(awk '

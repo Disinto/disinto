@@ -80,7 +80,7 @@ for the full runbook):
    forgejo,woodpecker,agents,staging,edge` you end up with the same job set
    as the production box: `forgejo`, `woodpecker-server`, `woodpecker-agent`,
    `agents`, `staging`, `edge`, plus `vault-runner` (deployed
-   unconditionally). `edge-threads-gc`, `agent-logs-rotate`, and the
+   unconditionally). `agent-logs-rotate` and the
    per-role qwen agent jobs (`agents-{dev,gardener,review}-qwen`,
    `agents-supervisor-opus`) are deployed later by the CI
    `rebuild-and-deploy-agents` step or manually via `nomad job run`.
