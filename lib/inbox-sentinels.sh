@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # inbox-sentinels.sh — Inbox sentinel helpers (acked / snoozed / shown)
 #
-# Shared across inbox-aware scripts (snapshot-inbox.sh, check-inbox.sh, etc.)
+# Shared across inbox-aware scripts (snapshot-inbox.sh)
 #
 # Required variables (set by caller):
 #   INBOX_ROOT  — root directory for inbox data (default: /var/lib/disinto/inbox)
