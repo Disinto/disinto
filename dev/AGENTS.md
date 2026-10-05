@@ -149,7 +149,7 @@ dev-poll) therefore never block the loop from launching the next iteration's
 polls.
 
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
-tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close_after_verification()` (keeps issue open with `awaiting-live-verification` label for human verification on live box); or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164).
+tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close()`; or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164).
 On respawn after `PHASE:escalate`, the stale phase file is cleared first so the session
 starts clean; the reinject prompt tells Claude not to re-escalate for the same reason.
 On respawn for any active PR, the prompt explicitly tells Claude the PR already exists

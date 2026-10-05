@@ -73,7 +73,7 @@ Per-agent `AGENTS.md`: [dev/](dev/AGENTS.md) (implementation), [review/](review/
 
 ## Issue lifecycle and labels
 
-Flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiting-live-verification` → `closed`.
+Flow: `backlog` → `in-progress` → PR → CI → review → merge → `closed`.
 
 | Label | Meaning | Set by |
 |---|---|---|
@@ -92,7 +92,7 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `awaiti
 | `prediction/dismissed` | Triaged DISMISS (planner disagreed). | Planner |
 | `prediction/actioned` | Promoted or dismissed. | Planner |
 | `formula` | Operational task; dev-poll skips, dispatcher handles. | Dispatcher |
-| `awaiting-live-verification` | Merged, AC unverified on live box; dev-poll skips. | dev-agent |
+| `awaiting-live-verification` | Set by hand when a change still needs a check on the live box; dev-poll skips it. | a human |
 
 ### Dependency conventions
 
