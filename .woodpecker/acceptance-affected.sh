@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # .woodpecker/acceptance-affected.sh — run the acceptance tests a PR can break.
 #
-# An acceptance test (tests/acceptance/issue-<N>.sh) runs once, after its own
-# merge (.woodpecker/acceptance-tests.yml), and never again. A later PR that
-# changes the code a test reads breaks it silently: on 2026-10-04 a run of
-# all 178 tests on main found five broken that way (#1750-#1753, #1757).
+# An acceptance test (tests/acceptance/issue-<N>.sh) used to run once, in
+# its own PR, and never again. A later PR that changes the code a test reads
+# broke it silently: on 2026-10-04 a run of all 178 tests on main found five
+# broken that way (#1750-#1753, #1757).
 #
 # On a pull request this step runs every acceptance test that
 #   1. the PR adds or changes,
@@ -14,7 +14,8 @@
 #      when the PR changes it),
 # and fails if any of them fails. A test whose header has a line starting
 # "# acceptance-ci: skip" needs what CI does not have (the live forge,
-# nomad, the daemon's env) and is skipped here; it still runs after merge.
+# nomad, the daemon's env) and is skipped here; it is run by hand on the
+# box with tools/run-acceptance.sh <N>.
 set -euo pipefail
 
 [ "${CI_PIPELINE_EVENT:-}" = "pull_request" ] || { echo "skip: not a pull_request event (got ${CI_PIPELINE_EVENT:-unset})"; exit 0; }

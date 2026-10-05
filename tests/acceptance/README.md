@@ -11,8 +11,8 @@ truth.
 
 A suffixed name, `tests/acceptance/issue-<N>-<slug>.sh` (e.g.
 `issue-1082-stale-worktree-registration.sh`), is also accepted: when the plain
-`issue-<N>.sh` is missing, the runner (and the post-merge CI pipeline) fall
-back to the suffixed form, provided it matches exactly one file.
+`issue-<N>.sh` is missing, the runner falls back to the suffixed form,
+provided it matches exactly one file.
 
 ## Contract
 
@@ -34,7 +34,8 @@ Every acceptance test:
    changes a path it names (`.woodpecker/acceptance-affected.sh`), in
    `disinto/agents:local` with no forge, nomad or daemon env. A test that
    needs those carries a header line `# acceptance-ci: skip (<what it
-   needs>)` and runs only after merge.
+   needs>)`; CI skips it, and it is run by hand on the box with
+   `tools/run-acceptance.sh <N>`.
 
 ## Running
 
