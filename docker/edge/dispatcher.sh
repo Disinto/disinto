@@ -599,21 +599,13 @@ _launch_runner_docker() {
   if [ -n "${CLAUDE_MODEL:-}" ]; then
     cmd+=(-e "CLAUDE_MODEL=${CLAUDE_MODEL}")
   fi
+  if [ -n "${DSH_BASE_URL:-}" ]; then
+    cmd+=(-e "DSH_BASE_URL=${DSH_BASE_URL}")
+  fi
 
-  # Mount docker socket and the shared Claude OAuth session.
-  # entrypoint-runner.sh still execs `claude -p` for .toml formulas and
-  # does not read AGENT_HARNESS. The agents image already has the CLI, so
-  # the binary is not mounted. Do not pass ANTHROPIC_API_KEY: the edge job
-  # authenticates via this OAuth mount (#1776).
+  # Mount docker socket. The runner runs .toml formulas with dsh (#1776) and gets no Claude session.
   cmd+=(-v /var/run/docker.sock:/var/run/docker.sock)
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
-    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
-    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
-  fi
-  if [ -f "${runtime_home}/.claude.json" ]; then
-    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
-  fi
 
   # Secrets: tokens become -e NAME=value. SSH_KEY / SSH_KNOWN_HOSTS are PEM
   # (newlines) — write a temp file and bind-mount under /secrets/ssh/ so the
