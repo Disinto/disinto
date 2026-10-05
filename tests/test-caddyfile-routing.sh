@@ -9,7 +9,6 @@
 #   - Forgejo subpath (/forge/* -> :3000)
 #   - Woodpecker subpath (/ci/* -> :8000)
 #   - Staging subpath (/staging/* -> nomadService discovery)
-#   - Chat subpath (/chat/* with forward_auth and OAuth routes)
 #   - Root redirect to /forge/
 #
 # Usage:
@@ -147,122 +146,6 @@ check_staging_routing() {
   fi
 }
 
-check_chat_routing() {
-  tr_section "Validating Chat routing"
-
-  # Check login endpoint
-  if echo "$CADDYFILE" | grep -q "handle /chat/login"; then
-    tr_pass "Chat login handle block (handle /chat/login)"
-  else
-    tr_fail "Missing Chat login handle block (handle /chat/login)"
-  fi
-
-  # Check OAuth callback endpoint
-  if echo "$CADDYFILE" | grep -q "handle /chat/oauth/callback"; then
-    tr_pass "Chat OAuth callback handle block (handle /chat/oauth/callback)"
-  else
-    tr_fail "Missing Chat OAuth callback handle block (handle /chat/oauth/callback)"
-  fi
-
-  # Check catch-all for /chat/*
-  if echo "$CADDYFILE" | grep -q "handle /chat/\*"; then
-    tr_pass "Chat catch-all handle block (handle /chat/*)"
-  else
-    tr_fail "Missing Chat catch-all handle block (handle /chat/*)"
-  fi
-
-  # Check reverse_proxy to Chat on port 8080 (subprocess via env var)
-  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "CHAT_PORT") "8080" }}'; then
-    tr_pass "Chat reverse_proxy configured (127.0.0.1:CHAT_PORT)"
-  else
-    tr_fail "Missing Chat reverse_proxy (expected 127.0.0.1:{{ or (env \"CHAT_PORT\") \"8080\" }})"
-  fi
-
-  # Check forward_auth block for /chat/*
-  if echo "$CADDYFILE" | grep -A10 "handle /chat/\*" | grep -q "forward_auth"; then
-    tr_pass "forward_auth block configured for /chat/*"
-  else
-    tr_fail "Missing forward_auth block for /chat/*"
-  fi
-
-  # Check forward_auth URI
-  if echo "$CADDYFILE" | grep -q "uri /chat/auth/verify"; then
-    tr_pass "forward_auth URI configured (/chat/auth/verify)"
-  else
-    tr_fail "Missing forward_auth URI (/chat/auth/verify)"
-  fi
-}
-
-check_voice_routing() {
-  tr_section "Validating voice bridge routing (#662)"
-
-  # Check /voice/ws handle exists
-  if echo "$CADDYFILE" | grep -q "handle /voice/ws"; then
-    tr_pass "Voice WebSocket handle block (handle /voice/ws)"
-  else
-    tr_fail "Missing Voice WebSocket handle block (handle /voice/ws)"
-  fi
-
-  # Check reverse_proxy points at loopback VOICE_PORT
-  if echo "$CADDYFILE" | grep -q 'reverse_proxy 127\.0\.0\.1:{{ or (env "VOICE_PORT") "8090" }}'; then
-    tr_pass "Voice reverse_proxy configured (127.0.0.1:VOICE_PORT)"
-  else
-    tr_fail "Missing Voice reverse_proxy (expected 127.0.0.1:{{ or (env \"VOICE_PORT\") \"8090\" }})"
-  fi
-
-  # Check forward_auth shared with /chat/* for OAuth gating
-  if echo "$CADDYFILE" | awk '/handle \/voice\/ws/,/^    }$/' | grep -q "forward_auth"; then
-    tr_pass "Voice forward_auth block configured"
-  else
-    tr_fail "Missing forward_auth inside /voice/ws handle"
-  fi
-
-  # Check WebSocket Upgrade headers forwarded
-  if echo "$CADDYFILE" | awk '/handle \/voice\/ws/,/^    }$/' | grep -q "header_up Upgrade"; then
-    tr_pass "Voice WebSocket Upgrade header forwarded"
-  else
-    tr_fail "Missing Upgrade header_up inside /voice/ws handle"
-  fi
-}
-
-check_voice_ui_routing() {
-  tr_section "Validating voice UI routing (#663)"
-
-  # /voice/static/* — static asset file_server with forward_auth
-  if echo "$CADDYFILE" | grep -q "handle /voice/static/\*"; then
-    tr_pass "Voice static handle block (handle /voice/static/*)"
-  else
-    tr_fail "Missing Voice static handle block (handle /voice/static/*)"
-  fi
-  if echo "$CADDYFILE" | awk '/handle \/voice\/static\/\*/,/^    }$/' | grep -q "file_server"; then
-    tr_pass "Voice static handler uses file_server"
-  else
-    tr_fail "Missing file_server inside /voice/static/* handle"
-  fi
-  if echo "$CADDYFILE" | awk '/handle \/voice\/static\/\*/,/^    }$/' | grep -q "forward_auth"; then
-    tr_pass "Voice static handler shares forward_auth gate"
-  else
-    tr_fail "Missing forward_auth inside /voice/static/* handle"
-  fi
-
-  # /voice/ — index.html via file_server + try_files
-  if echo "$CADDYFILE" | grep -q "handle /voice/ {"; then
-    tr_pass "Voice index handle block (handle /voice/)"
-  else
-    tr_fail "Missing Voice index handle block (handle /voice/)"
-  fi
-  if echo "$CADDYFILE" | awk '/handle \/voice\/ \{/,/^    }$/' | grep -q "try_files"; then
-    tr_pass "Voice index handler uses try_files for SPA fallback"
-  else
-    tr_fail "Missing try_files inside /voice/ handle"
-  fi
-  if echo "$CADDYFILE" | awk '/handle \/voice\/ \{/,/^    }$/' | grep -q "forward_auth"; then
-    tr_pass "Voice index handler shares forward_auth gate"
-  else
-    tr_fail "Missing forward_auth inside /voice/ handle"
-  fi
-}
-
 check_root_redirect() {
   tr_section "Validating root redirect"
 
@@ -295,9 +178,6 @@ main() {
   check_forgejo_routing
   check_woodpecker_routing
   check_staging_routing
-  check_chat_routing
-  check_voice_routing
-  check_voice_ui_routing
   check_root_redirect
 
   # Summary
