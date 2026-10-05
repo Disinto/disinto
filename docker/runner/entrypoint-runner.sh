@@ -4,7 +4,7 @@
 # Receives an action-id, reads the vault action TOML to get the formula name,
 # then dispatches to the appropriate executor:
 #   - formulas/<name>.sh  → bash (mechanical operations like release)
-#   - formulas/<name>.toml → claude -p (reasoning tasks like triage, architect)
+#   - formulas/<name>.toml → agent_run, dsh harness (lib/agent-sdk.sh; needs DSH_BASE_URL)
 #
 # Usage: entrypoint-runner.sh <action-id>
 #
@@ -75,7 +75,7 @@ log "Action: ${action_id}, formula: ${formula}, context: ${context:-<none>}"
 # Export action TOML path so formula scripts can use it directly
 export VAULT_ACTION_TOML="$action_toml"
 
-# ── Dispatch: .sh (mechanical) vs .toml (Claude reasoning) ──────────────
+# ── Dispatch: .sh (mechanical) vs .toml (agent_run, dsh) ──────────────
 
 formula_sh="${FACTORY_ROOT}/formulas/${formula}.sh"
 formula_toml="${FACTORY_ROOT}/formulas/${formula}.toml"
@@ -86,8 +86,41 @@ if [ -f "$formula_sh" ]; then
   exec bash "$formula_sh" "$action_id"
 
 elif [ -f "$formula_toml" ]; then
-  # Reasoning task — launch Claude with the formula as prompt
-  log "Dispatching to Claude with formula: ${formula_toml}"
+  # Reasoning task — run the formula as a prompt through agent_run (dsh)
+  if [ -z "${DSH_BASE_URL:-}" ]; then
+    log "ERROR: DSH_BASE_URL not set — cannot run formula ${formula}"
+    exit 1
+  fi
+
+  log "Dispatching to agent_run (dsh) with formula: ${formula_toml}"
+
+  # The runner uses only dsh, whatever AGENT_HARNESS says. The agents image
+  # bakes the seed at /opt/dsh, but this entrypoint is bash (not
+  # docker/agents/entrypoint.sh), so DSH_HOME is seeded here.
+  export AGENT_HARNESS=dsh
+  export LLAMACPP_API_KEY="${LLAMACPP_API_KEY:-sk-no-key-required}"
+  export DSH_HOME="${DSH_HOME:-/tmp/dsh-runner}"
+
+  seed="${DSH_SEED_DIR:-/opt/dsh}"
+  if [ ! -f "$DSH_HOME/profiles/headless.json" ]; then
+    mkdir -p "$DSH_HOME/profiles"
+    cp "$seed/profiles/headless.json" "$DSH_HOME/profiles/headless.json"
+  fi
+  if [ ! -f "$DSH_HOME/settings.yaml" ]; then
+    mkdir -p "$DSH_HOME"
+    sed "s|__DSH_BASE_URL__|${DSH_BASE_URL}|" \
+      "$seed/settings-llamacpp.yaml" > "$DSH_HOME/settings.yaml"
+  fi
+
+  # Consumed by agent_run (lib/agent-sdk.sh); this script does not read them.
+  # shellcheck disable=SC2034
+  LOGFILE=/dev/stderr
+  # shellcheck disable=SC2034
+  SID_FILE="/tmp/vault-runner-${action_id}.sid"
+  # shellcheck disable=SC2034
+  LOG_AGENT=vault-runner
+  # shellcheck source=lib/agent-sdk.sh
+  source "${FACTORY_ROOT}/lib/agent-sdk.sh"
 
   formula_content=$(cat "$formula_toml")
   action_context=$(cat "$action_toml")
@@ -113,9 +146,12 @@ FACTORY_ROOT=${FACTORY_ROOT}
 OPS_REPO_ROOT=${OPS_REPO_ROOT}
 "
 
-  exec claude -p "$prompt" \
-    --dangerously-skip-permissions \
-    ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"}
+  rc=0
+  agent_run "$prompt" || rc=$?
+  if [ -n "${_AGENT_LAST_OUTPUT:-}" ]; then
+    printf '%s\n' "$_AGENT_LAST_OUTPUT"
+  fi
+  exit "$rc"
 
 else
   log "ERROR: no formula found for '${formula}' — checked ${formula_sh} and ${formula_toml}"
