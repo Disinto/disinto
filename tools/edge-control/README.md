@@ -18,9 +18,10 @@ bash tools/edge-control/porter-install.sh --admin-key ~/.ssh/id_ed25519.pub
 
 `install.sh` is the optional Caddy half (routes, certs, DNS plugin) —
 it is **not** the door. `jev` never needs Caddy or a Gandi token.
-`porter-install.sh` copies the door, seeds the ledger, creates the
-`porter` user, writes the sshd drop-in, and never reloads sshd —
-`systemctl reload ssh` is operator work.
+`porter-install.sh` copies the door, seeds the ledger (and the admin row with
+`--admin-key`), creates the `porter` user, writes the sshd drop-in, reloads sshd only
+when `sshd -t` accepts it, and then runs the Caddy and DNS steps. Without a Gandi
+token the DNS step refuses, with a non-zero exit, after everything else is in place.
 
 ## sshd: a drop-in only
 

@@ -9,7 +9,8 @@
 # wires in the Caddy + DNS steps (porter-caddy.sh / porter-dns.sh) plus one
 # conditional sshd reload. It needs no Gandi token of its own: porter-dns.sh
 # reads the token from the existing gandi env file, and porter.env is never
-# given one.
+# given one. Without one, the DNS step refuses last, after the door and the
+# admin row are in place.
 #
 # Paths (if PORTER_ROOT is set and non-empty, every path is prefixed with it;
 # the script also skips useradd/chown, sshd -t, and the reload):
@@ -297,8 +298,11 @@ fi
 # prefix (test seam — never /etc).
 SUDOERS_FILE="${PREFIX}etc/sudoers.d/porter-tunnel"
 mkdir -p "$(dirname "${SUDOERS_FILE}")"
+tmp="${SUDOERS_FILE}.tmp"
 printf 'porter ALL=(root) NOPASSWD: %s/porter-tunnel-keys.sh\n' "${OPT_DIR}" \
-  > "${SUDOERS_FILE}"
+  > "${tmp}" \
+  || { rm -f "${tmp}"; die "cannot write sudoers drop-in ${SUDOERS_FILE}"; }
+mv "${tmp}" "${SUDOERS_FILE}"
 chmod 440 "${SUDOERS_FILE}"
 log "Sudo drop-in: ${SUDOERS_FILE} (porter -> ${OPT_DIR%/}/porter-tunnel-keys.sh NOPASSWD)"
 
@@ -333,15 +337,6 @@ if [[ -z "${PORTER_ROOT:-}" ]]; then
   fi
 fi
 
-# ── Caddy + DNS: called from the same directory; never --set-wildcard ─────────
-# porter-caddy.sh adopts/installs the Caddy admin listener (never rewrites
-# operator sites). porter-dns.sh ensures the wildcard * A record once and
-# never edits other names. A DNS refusal is a non-zero exit after the door
-# files are in place (the door is not rolled back; DNS is not edited).
-# These are library-style helpers (mode 100644), invoked via bash.
-bash "${SRC_DIR}/porter-caddy.sh"
-bash "${SRC_DIR}/porter-dns.sh"
-
 # ── --admin-key: ensure the row, set admin=true (credits/status untouched) ───
 if [[ -n "${ADMIN_KEY_FILE}" ]]; then
   [[ -f "${ADMIN_KEY_FILE}" ]] || die "admin-key file missing: ${ADMIN_KEY_FILE}"
@@ -368,6 +363,16 @@ if [[ -n "${ADMIN_KEY_FILE}" ]]; then
   chmod 640 "${LEDGER}"
   log "Ledger row ${fp} is admin"
 fi
+
+# ── Caddy + DNS: called from the same directory; never --set-wildcard ─────────
+# porter-caddy.sh adopts/installs the Caddy admin listener (never rewrites
+# operator sites). porter-dns.sh ensures the wildcard * A record once and
+# never edits other names. A DNS refusal is a non-zero exit after the door
+# files and the `--admin-key` row are in place (the door is not rolled back;
+# DNS is not edited).
+# These are library-style helpers (mode 100644), invoked via bash.
+bash "${SRC_DIR}/porter-caddy.sh"
+bash "${SRC_DIR}/porter-dns.sh"
 
 log "Porter door install complete"
 exit 0
