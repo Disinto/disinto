@@ -1,5 +1,15 @@
 # Chat-Claude Factory Control Surface
 
+> **Status — being retired (chat/voice removal, 2026-10):** The chat and voice
+> surfaces are being removed from disinto — #1768 dropped the Caddy `/chat` and
+> `/voice` routes, #1769 dropped the `chat-server.py`/voice-bridge startup from
+> the edge entrypoint, #1770 dropped the chat/voice secrets, env and mounts from
+> the edge job, and #1771 removed the chat/voice artifacts (the `disinto-mcp`
+> wrapper, the two config templates, `chat-server.py` + UI, and the voice bridge
+> + UI and venv) from the edge image. This doc is kept only as a design record
+> and will be deleted with the `docker/chat/` and `docker/voice/` code in the
+> code-deletion issues — do not treat it as a current operating guide.
+
 Scope: what the chat subprocess inside the edge container can do on behalf of
 the signed-in operator (currently `disinto-admin`). Design issue: **#650**
 (deliberate override of the sandbox posture stated in #326 while
@@ -20,7 +30,7 @@ bad actor holding the operator's OAuth cookie.
 | `docker/edge/chat-settings.json` | Claude Code `.claude/settings.json` — `permissions.defaultMode = acceptEdits`, Bash allow-list, Bash deny-list. |
 | `docker/edge/chat-mcp.json` | `.mcp.json` — `forge-api` (HTTP) + `disinto-cli` (stdio) MCP servers. |
 | `docker/edge/disinto-mcp` | stdio MCP wrapper around `/opt/disinto/bin/disinto`. |
-| `docker/edge/Dockerfile` | Installs `nomad` CLI, `disinto-mcp`, and the two config templates. |
+| `docker/edge/Dockerfile` | Installs the `nomad` CLI and the Claude Code CLI (host binary the reproduce/triage/verify sidecars mount); the `disinto-mcp` wrapper and the two config templates were removed in #1771 (see status banner). |
 | `docker/edge/entrypoint-edge.sh` | Copies templates into `$CHAT_WORKSPACE_DIR`; loads `FACTORY_FORGE_PAT` / `NOMAD_TOKEN` from `/secrets/*` file mounts. |
 | `nomad/jobs/edge.hcl` (caddy task) | Mounts `docker.sock` rw; renders Vault secrets to `/secrets/forge-pat` + `/secrets/nomad-token`; sets `CHAT_WORKSPACE_DIR=/opt/disinto`. |
 | `vault/policies/service-edge-chat.hcl` | Reads `kv/disinto/chat`. |
