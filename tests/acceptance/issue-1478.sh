@@ -10,10 +10,9 @@
 # the tape's attempts.
 #
 # After:
-#   - dev-agent.sh exports TAPE_RUN_ATTEMPTS from the branch-count block:
-#     a 1-based integer (ATTEMPT+1 when ATTEMPT is a non-negative integer;
-#     1 for recovery mode or a failed ls-remote that left no count). It never
-#     fails the pick. The export sits after the branch-count block and before
+#   - dev-agent.sh exports TAPE_RUN_ATTEMPTS as DEV_FAILED_ATTEMPTS + 1 (since
+#     #1646: the picked proposal's failed tape outcomes plus one), a 1-based
+#     integer. It never fails the pick. The export sits before
 #     formula_session_start "dev".
 #   - lib/formula-session.sh resolves _FORMULA_TAPE_ATTEMPTS as
 #     ${TAPE_RUN_ATTEMPTS:-1}, falling back to 1 when the value is not an
@@ -24,7 +23,7 @@
 #   1. TAPE_RUN_ATTEMPTS=3 → open and closing run attempts equal 3, rc 0
 #   2. TAPE_RUN_ATTEMPTS unset, junk, 0, or negative → attempts 1, rc 0
 #   3. dev-agent.sh exports TAPE_RUN_ATTEMPTS before formula_session_start
-#      "dev" (and after the branch-count block that sets ATTEMPT)
+#      "dev"
 #   4. (removed in #1753) the ATTEMPT-derived export block went with #1646;
 #      tests/acceptance/issue-1646.sh covers the tape-driven count
 # =============================================================================
