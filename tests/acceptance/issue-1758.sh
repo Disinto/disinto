@@ -15,9 +15,6 @@
 #
 # Acceptance (read-only; grep and bash -n):
 #   * no ANTHROPIC_API_KEY= passthrough remains in docker/edge/dispatcher.sh
-#   * _launch_runner_docker still mounts claude-shared, sets
-#     CLAUDE_CONFIG_DIR, and mounts .claude.json; it does not mount
-#     /usr/local/bin/claude
 #   * _dispatch_sidecar_docker still mounts the CLI, claude-shared,
 #     CLAUDE_CONFIG_DIR, and .claude.json
 #   * bash -n docker/edge/dispatcher.sh succeeds
@@ -46,12 +43,6 @@ api_key="$(grep -n -E 'ANTHROPIC_API_KEY=' "$DISPATCHER" || true)"
 FN_RUNNER="$(ac_extract_fn _launch_runner_docker "$DISPATCHER")"
 [ -n "$FN_RUNNER" ] \
   || ac_fail "could not extract _launch_runner_docker from docker/edge/dispatcher.sh"
-grep -q 'claude-shared' <<<"$FN_RUNNER" \
-  || ac_fail "_launch_runner_docker must still mount claude-shared (OAuth session)"
-grep -q 'CLAUDE_CONFIG_DIR' <<<"$FN_RUNNER" \
-  || ac_fail "_launch_runner_docker must still set CLAUDE_CONFIG_DIR"
-grep -qF '.claude.json' <<<"$FN_RUNNER" \
-  || ac_fail "_launch_runner_docker must still mount .claude.json"
 if grep -qF '/usr/local/bin/claude' <<<"$FN_RUNNER"; then
   ac_fail "_launch_runner_docker must not bind-mount /usr/local/bin/claude; the agents image has the CLI"
 fi

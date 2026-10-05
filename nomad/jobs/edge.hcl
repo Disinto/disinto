@@ -66,7 +66,7 @@ job "edge" {
     }
 
     # claude-shared: OAuth session the dispatcher probes before bind-mounting
-    # it into vault runners and reproduce/triage sidecars (dispatcher.sh,
+    # it into the reproduce/triage/verify sidecars (dispatcher.sh,
     # #1758 / #1776). The caddy mount is read-only: docker.sock resolves -v
     # on the host. Not a chat mount (#1770).
     volume "claude-shared" {
@@ -156,7 +156,7 @@ job "edge" {
       }
 
       # Dispatcher probe: the OAuth dir must exist inside this container
-      # or runner/sidecar launches skip the session mount (#1758 / #1776).
+      # or sidecar launches skip the session mount (#1758 / #1776).
       volume_mount {
         volume      = "claude-shared"
         destination = "/var/lib/disinto/claude-shared"
@@ -247,6 +247,7 @@ EOT
         PROJECT_NAME           = "disinto"
         FACTORY_FORGE_PAT_FILE = "/secrets/forge-pat"
         NOMAD_ADDR             = "http://localhost:4646"
+        DSH_BASE_URL           = "http://10.10.10.1:8088/v1"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
