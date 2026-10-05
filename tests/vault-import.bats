@@ -178,14 +178,6 @@ setup() {
   grep -q "wp-forgejo-secret" <<< "$output"
   grep -q "wp-token" <<< "$output"
 
-  # Check chat
-  run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-    "${VAULT_ADDR}/v1/kv/data/disinto/shared/chat"
-  [ "$status" -eq 0 ]
-  grep -q "forward-auth-secret" <<< "$output"
-  grep -q "chat-client-id" <<< "$output"
-  grep -q "chat-client-secret" <<< "$output"
-
   # Check runner tokens from sops
   run curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
     "${VAULT_ADDR}/v1/kv/data/disinto/runner/GITHUB_TOKEN"
@@ -333,7 +325,6 @@ setup() {
     "llama-token"
     "llama-pass"
     "wp-agent-secret"
-    "forward-auth-secret"
     "github-test-token"
     "codeberg-test-token"
     "clawhub-test-token"

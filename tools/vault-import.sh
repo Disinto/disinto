@@ -24,7 +24,6 @@
 #     - FORGE_TOKEN + FORGE_PASS → kv/disinto/shared/forge/{token,password}
 #     - FORGE_ADMIN_TOKEN → kv/disinto/shared/forge/admin_token
 #     - WOODPECKER_* → kv/disinto/shared/woodpecker/<lowercase_key>
-#     - FORWARD_AUTH_SECRET, CHAT_OAUTH_* → kv/disinto/shared/chat/<lowercase_key>
 #   From sops-decrypted .env.vault.enc:
 #     - GITHUB_TOKEN, CODEBERG_TOKEN, CLAWHUB_TOKEN, DEPLOY_KEY, NPM_TOKEN, DOCKER_HUB_TOKEN
 #       → kv/disinto/runner/<NAME>/value
@@ -260,7 +259,6 @@ Mapping:
     - FORGE_TOKEN + FORGE_PASS → kv/disinto/shared/forge/{token,password}
     - FORGE_ADMIN_TOKEN → kv/disinto/shared/forge/admin_token
     - WOODPECKER_* → kv/disinto/shared/woodpecker/<lowercase_key>
-    - FORWARD_AUTH_SECRET, CHAT_OAUTH_* → kv/disinto/shared/chat/<lowercase_key>
 
   From sops-decrypted .env.vault.enc:
     - GITHUB_TOKEN, CODEBERG_TOKEN, CLAWHUB_TOKEN, DEPLOY_KEY, NPM_TOKEN, DOCKER_HUB_TOKEN
@@ -401,15 +399,6 @@ EOF
     fi
   done
 
-  # Chat secrets: FORWARD_AUTH_SECRET, CHAT_OAUTH_CLIENT_ID, CHAT_OAUTH_CLIENT_SECRET
-  for key in FORWARD_AUTH_SECRET CHAT_OAUTH_CLIENT_ID CHAT_OAUTH_CLIENT_SECRET; do
-    local val="${!key:-}"
-    if [ -n "$val" ]; then
-      local lowercase_key="${key,,}"
-      operations+=("chat|$lowercase_key|$env_file|$key")
-    fi
-  done
-
   # --- From sops-decrypted .env.vault.enc ---
 
   # Runner tokens
@@ -467,7 +456,7 @@ EOF
 
   for op in "${operations[@]}"; do
     # Parse operation: category|field|subkey|file|envvar (5 fields for bots/runner)
-    # or category|field|file|envvar (4 fields for forge/woodpecker/chat).
+    # or category|field|file|envvar (4 fields for forge/woodpecker).
     # These metadata strings are built from safe identifiers (role names,
     # env-var names, file paths) and do not carry secret values, so '|' is
     # still fine as a separator here.
@@ -508,10 +497,6 @@ EOF
         ;;
       woodpecker)
         vault_path="disinto/shared/woodpecker"
-        vault_key="$field"
-        ;;
-      chat)
-        vault_path="disinto/shared/chat"
         vault_key="$field"
         ;;
       runner)
