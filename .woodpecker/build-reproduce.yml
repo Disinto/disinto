@@ -6,6 +6,7 @@
 #   - lib/**
 #   - formulas/reproduce.toml
 #   - formulas/triage.toml
+#   - .woodpecker/build-reproduce.yml (so the introducing merge builds the tag)
 #
 # Builds only:
 #   - disinto-reproduce:latest
@@ -30,9 +31,16 @@ when:
         - lib/**
         - formulas/reproduce.toml
         - formulas/triage.toml
+        - .woodpecker/build-reproduce.yml
 
 # Workflow-level timeout default — propagates to all steps without their own timeout.
 timeout: 30m
+
+# Pin to the live runner. The build talks to the host docker.sock, and the
+# edge dispatcher launches sidecars from that same daemon. A second agent
+# would otherwise tag :latest where the dispatcher cannot see it.
+labels:
+  host: disinto-nomad-box
 
 # Authenticated clone with PR-ref fetch retry. Mirrors .woodpecker/ci.yml —
 # Forgejo's REQUIRE_SIGN_IN blocks anonymous clones (exit 128).
