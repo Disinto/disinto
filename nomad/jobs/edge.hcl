@@ -15,7 +15,7 @@
 # dynamic address:port for each backend.
 #
 # Host_volume contract:
-#   This job mounts caddy-data, tape, and claude-shared from nomad/client.hcl.
+#   This job mounts caddy-data, tape, claude-shared and factory-projects (read-only) from nomad/client.hcl.
 #   Paths /srv/disinto/caddy-data and /srv/disinto/tape are created by
 #   lib/init/nomad/cluster-up.sh before any job references them. Keep the
 #   `source = "caddy-data"` and `source = "tape"` below in sync with the
@@ -83,6 +83,14 @@ job "edge" {
       read_only = false
     }
 
+    # factory-projects: the project TOMLs the dispatcher hands to the
+    # reproduce/triage/verify sidecars, read-only (#1843).
+    volume "factory-projects" {
+      type      = "host"
+      source    = "factory-projects"
+      read_only = true
+    }
+
 
     # ── Conservative restart policy ───────────────────────────────────────
     # Caddy should be stable.
@@ -145,6 +153,14 @@ job "edge" {
         volume      = "caddy-data"
         destination = "/data"
         read_only   = false
+      }
+
+      # factory-projects at its host path, so the dispatcher's
+      # `docker run -v <toml>` resolves on the host (#1843).
+      volume_mount {
+        volume      = "factory-projects"
+        destination = "/srv/disinto/projects"
+        read_only   = true
       }
 
       # tape (#1405): mounted at the lib/tape.sh default path so TAPE_DIR

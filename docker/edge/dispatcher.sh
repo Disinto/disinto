@@ -33,10 +33,14 @@ source "${SCRIPT_ROOT}/../lib/tape.sh"
 # shellcheck source=lib/stats.sh
 source "${SCRIPT_ROOT}/../lib/stats.sh"
 
-# Project TOML location: prefer mounted path, fall back to cloned path
-# Edge container mounts ./projects to /opt/disinto-projects;
-# the shallow clone only has .toml.example files.
-PROJECTS_DIR="${PROJECTS_DIR:-${FACTORY_ROOT:-/opt/disinto}-projects}"
+# Project TOMLs for the sidecars. The compose edge mounts ./projects at
+# /opt/disinto-projects; the Nomad edge mounts the factory-projects host volume
+# at its host path /srv/disinto/projects (nomad/jobs/edge.hcl), so the
+# `docker run -v <toml>` in _dispatch_sidecar_docker resolves on the host.
+if [ -z "${PROJECTS_DIR:-}" ]; then
+  PROJECTS_DIR="${FACTORY_ROOT:-/opt/disinto}-projects"
+  [ -d "$PROJECTS_DIR" ] || PROJECTS_DIR=/srv/disinto/projects
+fi
 
 # -----------------------------------------------------------------------------
 # Backend selection: DISPATCHER_BACKEND={docker,nomad}
