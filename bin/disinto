@@ -326,7 +326,6 @@ preflight_check() {
 
   # ── Required commands ──
   local -A hints=(
-    [claude]="Install: https://docs.anthropic.com/en/docs/claude-code/overview"
     [tmux]="Install: apt install tmux  /  brew install tmux"
     [git]="Install: apt install git  /  brew install git"
     [jq]="Install: apt install jq  /  brew install jq"
@@ -335,7 +334,7 @@ preflight_check() {
   )
 
   local cmd
-  for cmd in claude tmux git jq python3 curl; do
+  for cmd in tmux git jq python3 curl; do
     if ! command -v "$cmd" &>/dev/null; then
       echo "Error: ${cmd} not found" >&2
       echo "  ${hints[$cmd]}" >&2
@@ -343,8 +342,13 @@ preflight_check() {
     fi
   done
 
-  # ── Claude Code authentication ──
-  if command -v claude &>/dev/null && command -v jq &>/dev/null; then
+  # ── Claude Code: only for the opt-in claude harness (dsh is the default, #1683) ──
+  if [ "${AGENT_HARNESS:-}" = "claude" ] && ! command -v claude &>/dev/null; then
+    echo "Error: claude not found (AGENT_HARNESS=claude)" >&2
+    echo "  Install: https://docs.anthropic.com/en/docs/claude-code/overview" >&2
+    errors=$((errors + 1))
+  fi
+  if [ "${AGENT_HARNESS:-}" = "claude" ] && command -v claude &>/dev/null && command -v jq &>/dev/null; then
     local auth_json auth_stderr auth_rc=0
     auth_stderr=$(claude auth status 2>&1 >/dev/null) || auth_rc=$?
     auth_json=$(claude auth status 2>/dev/null) || auth_json=""

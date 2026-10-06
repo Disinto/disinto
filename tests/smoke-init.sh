@@ -3,7 +3,7 @@
 #
 # Validates the full init flow using mock Forgejo server:
 #   1. Verify mock Forgejo is ready
-#   2. Set up mock binaries (docker, claude, tmux)
+#   2. Set up mock binaries (docker, tmux)
 #   3. Run disinto init
 #   4. Verify Forgejo state (users, repo)
 #   5. Verify local state (TOML, .env, repo clone)
@@ -122,17 +122,6 @@ fi
 exit 1
 DOCKERMOCK
 chmod +x "$MOCK_BIN/docker"
-
-# ── Mock: claude ──
-cat > "$MOCK_BIN/claude" << 'CLAUDEMOCK'
-#!/usr/bin/env bash
-case "$*" in
-  *"auth status"*) printf '{"loggedIn":true}\n' ;;
-  *"--version"*)   printf 'claude 1.0.0 (mock)\n' ;;
-esac
-exit 0
-CLAUDEMOCK
-chmod +x "$MOCK_BIN/claude"
 
 # ── Mock: tmux ──
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/tmux"
