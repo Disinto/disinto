@@ -10,9 +10,13 @@ each section; the legacy docker-compose equivalents follow, marked **legacy**.
 # Nomad: all jobs and their allocations
 nomad job status
 
-# Nomad: one job in detail (alloc IDs, node, health)
-nomad job status agents
-nomad job inspect agents -json | jq '.Allocations[] | {ID, ClientStatus, DesiredStatus}'
+# Nomad: each running agent job in detail (alloc IDs, node, health).
+# Query the running agents* jobs — the stopped all-roles agents job
+# never shows up, and the live per-role jobs are named consistently
+# (fresh boxes: the all-roles agents job; production: the per-role jobs)
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $3 == "running" {print $1}'); do
+  nomad job status "$job"
+done
 
 # Compose (legacy):
 # docker ps --format "table {{.Names}}\t{{.Status}}"

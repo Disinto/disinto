@@ -93,8 +93,8 @@ of the bootstrap sequence.
 |-------------------------------|----------------------------------------|------------------------------------|
 | `forgejo-data`                | `/srv/disinto/forgejo-data`            | `nomad/jobs/forgejo.hcl`           |
 | `woodpecker-data`             | `/srv/disinto/woodpecker-data`         | `nomad/jobs/woodpecker-server.hcl` |
-| `agent-data`                  | `/srv/disinto/agent-data`              | `nomad/jobs/agents.hcl`            |
-| `project-repos`               | `/srv/disinto/project-repos`           | `nomad/jobs/agents.hcl`            |
+| `agent-data`                  | `/srv/disinto/agent-data`              | per-role jobs (`nomad/jobs/agents-*.hcl`) |
+| `project-repos`               | `/srv/disinto/project-repos`           | per-role jobs (`nomad/jobs/agents-*.hcl`) |
 | `caddy-data`                  | `/srv/disinto/caddy-data`              | `nomad/jobs/edge.hcl` (caddy)      |
 | `site-content`                | `/srv/disinto/docker` (ro)             | `nomad/jobs/staging.hcl`           |
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |

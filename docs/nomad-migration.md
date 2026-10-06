@@ -165,7 +165,7 @@ sudo chown ubuntu:ubuntu /srv/disinto/projects/*.toml
 
 # Restart every running agent job so it picks the new mount up
 # (never the stopped all-roles agents job)
-for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $3 == "running" {print $1}'); do
   nomad job restart "$job"
 done
 ```
