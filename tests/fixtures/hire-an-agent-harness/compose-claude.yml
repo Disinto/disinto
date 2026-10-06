@@ -28,13 +28,16 @@ services:
       FORGE_REVIEW_TOKEN: ${FORGE_REVIEW_TOKEN:-}
       FORGE_BOT_USERNAMES: ${FORGE_BOT_USERNAMES:-}
       AGENT_ROLES: "dev"
-      AGENT_HARNESS: "dsh"
-      DSH_HOME: /home/agent/data/dsh
-      DSH_PERMISSION_MODE: "danger-full-access"
-      DSH_MODEL: "qwen"
-      DSH_BASE_URL: "http://10.10.10.1:8081"
-      DSH_CONTEXT_WINDOW: "100000"
-      LLAMACPP_API_KEY: "sk-no-key-required"
+      AGENT_HARNESS: "claude"
+      CLAUDE_TIMEOUT: ${CLAUDE_TIMEOUT:-7200}
+      ANTHROPIC_BASE_URL: "http://10.10.10.1:8081"
+      ANTHROPIC_API_KEY: "sk-no-key-required"
+      CLAUDE_MODEL: "qwen"
+      CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}
+      CLAUDE_CREDENTIALS_DIR: ${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}/credentials
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "60"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
       DISINTO_CONTAINER: "1"
       PROJECT_NAME: project
       PROJECT_REPO_ROOT: /home/agent/repos/project

@@ -11,10 +11,10 @@
 #      same jobspec. An explicit `--harness claude` emits AGENT_HARNESS=claude
 #      plus the CLAUDE_* block, pinned by jobspec-claude.hcl. Neither omits
 #      AGENT_HARNESS (#1683: omission means dsh).
-#      Compose: the generator pin (a TOML with no harness key,
-#      `_write_default_toml`) still emits AGENT_HARNESS=claude, pinned by
-#      compose-default.yml. That is not the hire path: a default hire writes
-#      harness = "dsh". The absent-key generator fallback is #1854.
+#      Compose: the generator pin (a key-less TOML, `_write_default_toml`)
+#      now emits a dsh service (AGENT_HARNESS: "dsh"), pinned by
+#      compose-default.yml; an explicit harness = "claude" emits the claude
+#      service, pinned by compose-claude.yml (#1854).
 #   2. `--harness dsh` emits dsh's own settings-form variables (AGENT_HARNESS,
 #      DSH_HOME, DSH_PERMISSION_MODE, DSH_MODEL, DSH_BASE_URL,
 #      DSH_CONTEXT_WINDOW) and no CLAUDE_* / ANTHROPIC_* tuning variables —
@@ -148,9 +148,10 @@ _generate_compose() {
   [ "$status" -eq 0 ]
 }
 
-# The project TOML the compose fixtures were captured with: a default
-# (claude-harness) local-model agent, no harness keys in the TOML. The
-# generator must still emit AGENT_HARNESS=claude (#1683).
+# The key-less project TOML the compose fixtures are captured from: a
+# local-model agent with no harness key in the section. Since #1854 the
+# generator turns a key-less section into a dsh service, so the fixture
+# pins AGENT_HARNESS: "dsh" (unset AGENT_HARNESS is dsh, #1683).
 _write_default_toml() {
   cat > "$FACTORY_ROOT/projects/test.toml" <<'EOF'
 [agents.llama]
@@ -191,11 +192,112 @@ EOF
   cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-claude.hcl"
 }
 
-@test "default compose hire emits AGENT_HARNESS=claude" {
+@test "a section without a harness key generates a dsh service" {
   _write_default_toml
   _generate_compose
   cmp -s "$FACTORY_ROOT/docker-compose.yml" "$FIXTURES/compose-default.yml"
+  grep -q 'AGENT_HARNESS: "dsh"' "$FACTORY_ROOT/docker-compose.yml"
+}
+
+@test "harness = claude generates the claude service" {
+  cat > "$FACTORY_ROOT/projects/test.toml" <<'EOF'
+[agents.llama]
+base_url      = "http://10.10.10.1:8081"
+model         = "qwen"
+api_key       = "sk-no-key-required"
+roles         = ["dev"]
+forge_user    = "dev-qwen"
+compact_pct   = 60
+poll_interval = 60
+harness       = "claude"
+EOF
+  _generate_compose
+  cmp -s "$FACTORY_ROOT/docker-compose.yml" "$FIXTURES/compose-claude.yml"
   grep -q 'AGENT_HARNESS: "claude"' "$FACTORY_ROOT/docker-compose.yml"
+}
+
+@test "the hire writes the harness key for both harnesses" {
+  # The inline python the hire rewrites the TOML with: extract it (the lines
+  # between `    python3 -c '` and the line starting with `' "$toml_file"`)
+  # and drive it against two hand-made sections, harness dsh vs claude.
+  #
+  # That python imports tomlkit, a real dependency of every hire (lib/
+  # hire-agent.sh uses it to round-trip the project TOML), but the bats
+  # Alpine image does not ship it (apk list: bash bats jq curl git python3
+  # py3-yaml unzip age sops zstd — no py3-tomlkit). Rather than add a package
+  # to the apk list — which would risk failing the whole bats step if the
+  # community-repo package is absent or misnamed — this test supplies a
+  # minimal tomlkit implementing only the subset the hire python uses (parse /
+  # table / add / subscript / dumps) via PYTHONPATH. The conditional logic
+  # under test — "always write harness; write context_window only when
+  # harness == dsh" — lives in the extracted, unmodified python and is
+  # exercised verbatim; only the TOML round-trip is stand-in.
+  local prog stubdir
+  prog=$(awk '/^    python3 -c /{f=1; next} /^'"'"' "\$toml_file"/{exit} f' "$HIRE_LIB")
+  [ -n "$prog" ]
+  local t_dsh t_claude
+  t_dsh=$(mktemp)
+  t_claude=$(mktemp)
+  stubdir=$(mktemp -d)
+  trap 'rm -f "$t_dsh" "$t_claude"; rm -rf "$stubdir"' RETURN
+  # The parsed document only needs to be a nested dict the python can assign
+  # into (agents -> section -> keys); the section it replaces is what the
+  # assertions read, so the parser may ignore the input lines.
+  cat > "$stubdir/tomlkit.py" <<'STUB'
+class _Table(dict):
+    def add(self, name, value):
+        self[name] = value
+
+
+def _scalar(v):
+    if isinstance(v, list):
+        return "[" + ", ".join(_scalar(x) for x in v) + "]"
+    if isinstance(v, (int, float)) or v in (None, True, False):
+        return str(v)
+    return '"' + str(v).replace('"', '\\"') + '"'
+
+
+def _dump(obj, name=None):
+    lines = []
+    if name is not None:
+        lines.append("[" + name + "]")
+    for k, v in obj.items():
+        if isinstance(v, dict) and v:
+            lines.append(_dump(v, k))
+        else:
+            lines.append(k + " = " + _scalar(v))
+    return "\n".join(lines)
+
+
+def parse(text):
+    return _Table()
+
+
+def table():
+    return _Table()
+
+
+def dumps(obj):
+    return _dump(obj) + "\n"
+STUB
+  cat > "$t_dsh" <<'TOML'
+[agents.lab]
+base_url = "http://10.0.0.1:8081"
+model = "qwen"
+api_key = "sk-no-key-required"
+roles = ["dev"]
+forge_user = "labbot"
+compact_pct = 60
+poll_interval = 60
+TOML
+  cp "$t_dsh" "$t_claude"
+  PYTHONPATH="$stubdir" python3 -c "$prog" "$t_dsh" labbot "http://10.0.0.1:8081" qwen lab dev 60 dsh 100000
+  grep -q '^harness = "dsh"' "$t_dsh"
+  grep -q '^context_window = 100000$' "$t_dsh"
+  PYTHONPATH="$stubdir" python3 -c "$prog" "$t_claude" labbot "http://10.0.0.1:8081" qwen lab dev 60 claude 100000
+  grep -q '^harness = "claude"' "$t_claude"
+  # Final assertion: the claude path must not carry a context window.
+  ! grep -qE '^context_window = ' "$t_claude"
 }
 
 # ── dsh harness (both backends) ──────────────────────────────────────────────

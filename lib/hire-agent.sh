@@ -1059,13 +1059,13 @@ except Exception as e:
 if "agents" not in doc:
     doc.add("agents", tomlkit.table())
 
-# Step 4: Update the specific agent section. A dsh hire (the default, and
-# an explicit --harness dsh) takes the branch below and writes harness
-# and context_window, so a following compose regen emits the dsh block
-# because the key is present. Only --harness claude leaves those keys
-# absent. An absent key still generates AGENT_HARNESS=claude until #1854;
-# an omitted AGENT_HARNESS variable means dsh (#1683). Do not invert the
-# harness != "claude" test — #1854 owns the generator fallback.
+# Step 4: Update the specific agent section. The harness key is always
+# written, so the generator (which reads it with a dsh fallback, #1854)
+# never has to guess: a keyless section generates a dsh service, and a
+# Claude agent needs harness = "claude" in the TOML. context_window is
+# dsh-only — the dsh block is the only one that reads it, and it defaults
+# to 100000 when absent. An omitted AGENT_HARNESS variable runs dsh
+# (#1683).
 agent_section = {
     "base_url": base_url,
     "model": model,
@@ -1075,8 +1075,8 @@ agent_section = {
     "compact_pct": 60,
     "poll_interval": int(poll_interval),
 }
-if harness != "claude":
-    agent_section["harness"] = harness
+agent_section["harness"] = harness
+if harness == "dsh":
     agent_section["context_window"] = int(context_window)
 doc["agents"][section_name] = agent_section
 
