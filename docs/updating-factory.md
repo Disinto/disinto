@@ -64,7 +64,11 @@ done
 Note: on push to `main`, the `rebuild-and-deploy-agents` step in
 `.woodpecker/ci.yml` (#1173) already does this on the box when
 `docker/agents/**` changed — the manual rebuild is only needed when CI did
-not run (offline boxes, manual pulls).
+not run (offline boxes, manual pulls). The sidecar image
+`disinto-reproduce:latest` is rebuilt the same way by
+`.woodpecker/build-reproduce.yml` when `docker/reproduce/`, `lib/`,
+`docker/agents/dsh-settings-llamacpp.yaml`, or the reproduce/triage
+formulas change.
 
 ### Step 4: Verify
 

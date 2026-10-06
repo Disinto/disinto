@@ -1,0 +1,77 @@
+# .woodpecker/build-reproduce.yml — Build disinto-reproduce:latest on the box
+#
+# Triggered on push to main when the sidecar image inputs change:
+#   - docker/reproduce/**
+#   - docker/agents/dsh-settings-llamacpp.yaml
+#   - lib/**
+#   - formulas/reproduce.toml
+#   - formulas/triage.toml
+#   - .woodpecker/build-reproduce.yml (so the introducing merge builds the tag)
+#
+# Builds only:
+#   - disinto-reproduce:latest
+#
+# Sidecars are one-shot containers, so the next dispatch uses the new image
+# and nothing is restarted. This pipeline does not push the image and does
+# not restart a service. Release tags still publish
+# ghcr.io/disinto/reproduce via .woodpecker/publish-images.yml.
+#
+# Timeouts:
+#   Workflow-level default (30m) applies to all steps unless overridden.
+#
+# Use docker:27-cli or newer: the box's Docker rejects older API clients.
+
+when:
+  - branch: main
+    event: push
+    paths:
+      include:
+        - docker/reproduce/**
+        - docker/agents/dsh-settings-llamacpp.yaml
+        - lib/**
+        - formulas/reproduce.toml
+        - formulas/triage.toml
+        - .woodpecker/build-reproduce.yml
+
+# Workflow-level timeout default — propagates to all steps without their own timeout.
+timeout: 30m
+
+# Pin to the live runner. The build talks to the host docker.sock, and the
+# edge dispatcher launches sidecars from that same daemon. A second agent
+# would otherwise tag :latest where the dispatcher cannot see it.
+labels:
+  host: disinto-nomad-box
+
+# Authenticated clone with PR-ref fetch retry. Mirrors .woodpecker/ci.yml —
+# Forgejo's REQUIRE_SIGN_IN blocks anonymous clones (exit 128).
+clone:
+  git:
+    image: alpine/git
+    commands:
+      - |
+        if [ -n "${FORGE_TOKEN:-}" ]; then
+          AUTH_URL=$(printf '%s' "$CI_REPO_CLONE_URL" | sed "s|://|://token:${FORGE_TOKEN}@|")
+          git clone --depth 1 "$AUTH_URL" .
+        else
+          git clone --depth 1 "$CI_REPO_CLONE_URL" .
+        fi
+      - |
+        set -e
+        n=0
+        until git fetch --depth 1 origin "$CI_COMMIT_REF"; do
+          n=$((n + 1))
+          if [ "$n" -ge 5 ]; then
+            echo "git fetch '$CI_COMMIT_REF' failed after 5 attempts" >&2
+            exit 128
+          fi
+          sleep $((1 << (n - 1)))
+        done
+      - git checkout FETCH_HEAD
+
+steps:
+  - name: build-reproduce-image
+    image: docker:27-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - docker build -t disinto-reproduce:latest -f docker/reproduce/Dockerfile .
