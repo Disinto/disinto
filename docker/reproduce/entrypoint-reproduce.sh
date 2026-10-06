@@ -15,7 +15,7 @@
 #
 # Volumes expected:
 #   /home/agent/data          — agent-data volume (stack-lock files go here)
-#   /home/agent/repos         — project-repos volume
+#   /home/agent/repos         — project-repos volume (the sidecar's own clone, docker/reproduce/project-checkout.sh)
 #   /home/agent/.ssh          — host ~/.ssh (read-only)
 #   /var/run/docker.sock      — host docker socket
 
@@ -113,6 +113,9 @@ PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
 export PROJECT_REPO_ROOT
 export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/${PROJECT_NAME}-ops}"
 
+# shellcheck source=docker/reproduce/project-checkout.sh
+source "${DISINTO_DIR}/docker/reproduce/project-checkout.sh"
+
 if [ "$AGENT_TYPE" = "triage" ]; then
   log "Starting triage-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
 else
@@ -209,6 +212,13 @@ trap 'kill "$HEARTBEAT_PID" 2>/dev/null || true
   git -C "$PROJECT_REPO_ROOT" checkout "$PRIMARY_BRANCH" 2>/dev/null || true
   git -C "$PROJECT_REPO_ROOT" branch -D "$DEBUG_BRANCH" 2>/dev/null || true
   log "Cleanup completed (trap)"' EXIT
+
+# Checkout only while this sidecar holds the stack lock and the heartbeat is
+# running. Every sidecar shares one clone on the project-repos volume; a
+# reset --hard before the lock would wipe an in-flight triage, and a long
+# first clone must not let the lock go stale (10 minutes) and be stolen.
+sidecar_project_checkout \
+  || log "WARNING: could not check out ${FORGE_REPO} at ${PROJECT_REPO_ROOT}; continuing without it"
 
 # ---------------------------------------------------------------------------
 # Boot the project stack if formula declares stack_script
