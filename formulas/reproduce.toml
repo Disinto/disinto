@@ -7,9 +7,9 @@
 # restart/rebuild the project stack before reproduction.  Omit (or leave
 # blank) to connect to an existing staging environment instead.
 #
-# tools: MCP servers to pass to claude via --mcp-server flags.
+# tools: MCP servers for the sidecar's dsh session (playwright: docker/reproduce/dsh-playwright.patch.yml).
 #
-# timeout_minutes: hard upper bound on the Claude session.
+# timeout_minutes: hard upper bound on the agent session.
 #
 # Exit gate logic (standard mode):
 #   1. Can I reproduce it? → NO → rejected/blocked → EXIT
@@ -34,4 +34,4 @@ version         = 1
 stack_script    = ""
 
 tools           = ["playwright"]
-timeout_minutes = 15
+timeout_minutes = 60
