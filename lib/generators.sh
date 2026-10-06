@@ -776,21 +776,6 @@ COMPOSEEOF
     return 1
   fi
 
-  # Resolve the Claude CLI binary path and persist as CLAUDE_BIN_DIR in .env.
-  # Only used by reproduce and edge services which still use host-mounted CLI.
-  local claude_bin
-  claude_bin="$(command -v claude 2>/dev/null || true)"
-  if [ -n "$claude_bin" ]; then
-    claude_bin="$(readlink -f "$claude_bin")"
-  else
-    echo "Warning: claude CLI not found in PATH — reproduce/edge services will fail to start" >&2
-    claude_bin="/usr/local/bin/claude"
-  fi
-  # Persist CLAUDE_BIN_DIR into .env so docker-compose can resolve it.
-  # `>>` creates a missing .env identically to the old explicit branch.
-  local env_file="${FACTORY_ROOT}/.env"
-  _env_set_idempotent "CLAUDE_BIN_DIR" "$claude_bin" "$env_file"
-
   # In build mode, replace image: with build: for locally-built images
   if [ "$use_build" = true ]; then
     sed -i '/^    image: ghcr\.io\/disinto\/agents:/{s|image: ghcr\.io/disinto/agents:.*|build:\n      context: .\n      dockerfile: docker/agents/Dockerfile\n    pull_policy: build|}' "$compose_file"

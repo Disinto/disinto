@@ -735,26 +735,31 @@ disinto_hire_an_agent() {
     export "${pass_var}=${user_pass}"
   fi
 
-  # Step 1.7: Write backend credentials to .env (#847).
-  # Local-model agents need ANTHROPIC_BASE_URL; Anthropic-backend agents need ANTHROPIC_API_KEY.
-  # These must be persisted so the container can start with valid credentials.
+  # Step 1.7: Write backend credentials to .env (#847, #1855).
+  # Only the claude harness reads ANTHROPIC_BASE_URL. A dsh compose service
+  # gets DSH_BASE_URL from [agents.<name>].base_url, and a dsh jobspec sets
+  # it itself. Anthropic-backend agents still need ANTHROPIC_API_KEY.
   echo ""
   echo "Step 1.7: Writing backend credentials to .env..."
 
   if [ -n "$local_model" ]; then
-    # Local model agent: write ANTHROPIC_BASE_URL
-    local backend_var="ANTHROPIC_BASE_URL"
-    local backend_val="$local_model"
-    local escaped_val
-    escaped_val=$(printf '%s\n' "$backend_val" | sed 's/[&/\]/\\&/g')
-    if grep -q "^${backend_var}=" "$env_file" 2>/dev/null; then
-      sed -i "s|^${backend_var}=.*|${backend_var}=${escaped_val}|" "$env_file"
-      echo "  ${backend_var} updated"
+    if [ "$harness" = "claude" ]; then
+      # Local model + claude harness: write ANTHROPIC_BASE_URL.
+      local backend_var="ANTHROPIC_BASE_URL"
+      local backend_val="$local_model"
+      local escaped_val
+      escaped_val=$(printf '%s\n' "$backend_val" | sed 's/[&/\]/\\&/g')
+      if grep -q "^${backend_var}=" "$env_file" 2>/dev/null; then
+        sed -i "s|^${backend_var}=.*|${backend_var}=${escaped_val}|" "$env_file"
+        echo "  ${backend_var} updated"
+      else
+        printf '%s=%s\n' "$backend_var" "$backend_val" >> "$env_file"
+        echo "  ${backend_var} saved"
+      fi
+      export "${backend_var}=${backend_val}"
     else
-      printf '%s=%s\n' "$backend_var" "$backend_val" >> "$env_file"
-      echo "  ${backend_var} saved"
+      echo "  dsh harness: nothing to write (DSH_BASE_URL comes from [agents.<name>].base_url)"
     fi
-    export "${backend_var}=${backend_val}"
   else
     # Anthropic backend: check if ANTHROPIC_API_KEY is set, write it if present
     if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
