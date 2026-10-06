@@ -149,13 +149,14 @@ _generate_local_model_services() {
             local user_upper
             user_upper=$(echo "$forge_user" | tr 'a-z-' 'A-Z_')
             # The model/harness env block is the only part of the service that
-            # depends on the harness (#1107). Claude (the default, and the only
-            # harness a pre-#1107 TOML can have) emits AGENT_HARNESS=claude
-            # plus the CLAUDE_* block (#1683 — an omitted variable is dsh).
-            # dsh emits its own settings-form variables and no CLAUDE_* tuning
-            # variables.
+            # depends on the harness (#1107). A section without a harness key
+            # (and any non-claude value) generates a dsh service; dsh emits its
+            # own settings-form variables and no CLAUDE_* tuning variables.
+            # Claude is opt-in: the TOML must say harness = "claude" and it
+            # emits AGENT_HARNESS=claude plus the CLAUDE_* block. An omitted
+            # AGENT_HARNESS variable is dsh (#1683).
             local model_env
-            if [ "${harness:-claude}" = "dsh" ]; then
+            if [ "${harness:-dsh}" != "claude" ]; then
               model_env="      AGENT_HARNESS: \"dsh\"
       DSH_HOME: /home/agent/data/dsh
       DSH_PERMISSION_MODE: \"danger-full-access\"
@@ -262,7 +263,7 @@ for name, config in agents.items():
     forge_user = config.get("forge_user", f"{name}-bot")
     compact_pct = config.get("compact_pct", 60)
     poll_interval = config.get("poll_interval", 60)
-    harness = config.get("harness", "claude")
+    harness = config.get("harness", "dsh")
     context_window = config.get("context_window", "")
 
     safe_name = name.lower()
