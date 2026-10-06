@@ -1272,6 +1272,19 @@ for i in $(seq 0 $((BACKLOG_COUNT - 1))); do
     log "issue #${ISSUE_NUM} has '${SKIP_LABEL}' label — skipping in backlog scan"
     continue
   fi
+  # #1832: the grep above only covers other-track / readiness flags; the full
+  # _ILC_NON_DEV_LABELS ownership set was also a legitimate claim. A backlog
+  # issue still carrying awaiting-live-verification, vision, bug-report, action
+  # or in-triage used to be picked up as new work. issue_is_dev_claimable is
+  # the in-progress scan's gate and covers those. (waiting-on-compute is not
+  # in _ILC_NON_DEV_LABELS - it is a readiness flag, not ownership - so the
+  # grep above still handles it.)
+  ISSUE_LABELS_COMMA=$(printf '%s' "${ISSUE_LABELS:-}" | tr '\n' ',' | sed 's/,$//')
+  if ! issue_is_dev_claimable "${ISSUE_LABELS_COMMA:-}"; then
+    log "issue #${ISSUE_NUM} has non-dev label(s) [${ISSUE_LABELS_COMMA:-}] - skipping in backlog scan (#1832)"
+    continue
+  fi
+
 
   if ! issue_is_ready "$ISSUE_NUM" "$ISSUE_BODY"; then
     continue
