@@ -1106,6 +1106,20 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
     fi
   fi
 
+  # Non-dev labels (awaiting-live-verification and the rest of
+  # _ILC_NON_DEV_LABELS) are not dev work. The in-progress scan continues
+  # past them (#1825), and this tick then reaches stuck PRs — which used to
+  # relaunch a self-assigned issue on its open PR. Skip before any merge or
+  # spawn. Chore PRs (STUCK_ISSUE=0) have no issue to classify.
+  if [ "$STUCK_ISSUE" != 0 ]; then
+    stuck_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${STUCK_ISSUE}" | jq -r '[.labels[].name] | join(",")') || true
+    if ! issue_is_dev_claimable "${stuck_labels:-}"; then
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has non-dev label(s) [${stuck_labels:-}] — skipping (#1825)"
+      continue
+    fi
+  fi
+
   CI_STATE=$(ci_commit_status "$PR_SHA") || true
 
   # Non-code PRs (docs, formulas, evidence) may have no CI — treat as passed

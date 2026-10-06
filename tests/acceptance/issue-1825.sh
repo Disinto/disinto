@@ -34,9 +34,10 @@ ac_assert_file "$AGENTS_DOC" "dev/AGENTS.md missing for the #1825 skip check"
 ac_log "syntax-check dev/dev-poll.sh for the non-dev continue (#1825)"
 bash -n "$POLL_SH" || ac_fail "dev/dev-poll.sh failed bash -n while checking #1825"
 
-# Prove, inside the in-progress scan only:
+# Prove, inside the in-progress scan:
 #   * the non-dev check sits in a loop and continues before the assignee block
-#   * no dev-agent.sh spawn precedes that continue
+#   * spawn line numbers are compared to that continue in END (a forward
+#     guard that waits for cont to be set can never see an earlier spawn)
 #   * review-fix / CI-fix / stale-branch / post-crash recovery logs follow it
 #   * the unassigned stale sweep is still behind OTHER_AGENT_INPROGRESS=false
 #     and OPEN_PR=false
@@ -54,15 +55,12 @@ awk '
 awk '
   /checking for in-progress issues/ && !start { start = NR; next }
   /checking for stuck PRs/ && start && !end { end = NR; next }
-  NR <= start || (end && NR >= end) { next }
+  !start || NR <= start || (end && NR >= end) { next }
   /^([[:space:]]*)(for|while)[[:space:]]/ { loop = NR }
   $0 ~ /if ! issue_is_dev_claimable "\$issue_labels"; then/ { nondev = NR }
   /^[[:space:]]*continue[[:space:]]*$/ && nondev && !cont && NR > nondev { cont = NR }
   /if \[ -n "\$assignee" \]; then/ && !assign { assign = NR }
-  /dev-agent\.sh/ && /SCRIPT_DIR/ {
-    if (cont && NR <= cont) spawn_before++
-    if (nondev && cont && NR > nondev && NR < cont) spawn_inside++
-  }
+  /dev-agent\.sh/ && /SCRIPT_DIR/ { spawn_at[++spawn_n] = NR }
   /\(review fix\)/ { review = NR }
   /\(CI fix\)/ { ci = NR }
   /\(stale-branch recovery\)/ { stale_rec = NR }
@@ -85,7 +83,13 @@ awk '
       print "continue/assignee block are not inside the in-progress loop" > "/dev/stderr"
       fail = 1
     }
-    if (spawn_before+0 != 0 || spawn_inside+0 != 0) {
+    early = 0
+    inside = 0
+    for (i = 1; i <= spawn_n; i++) {
+      if (spawn_at[i] <= cont) early++
+      if (spawn_at[i] > nondev && spawn_at[i] < cont) inside++
+    }
+    if (early != 0 || inside != 0) {
       print "dev-agent.sh is spawned at or before the non-dev continue" > "/dev/stderr"
       fail = 1
     }
@@ -109,10 +113,62 @@ awk '
   }
 ' "$POLL_SH" || ac_fail "in-progress non-dev skip does not continue before dev-agent.sh, or the unassigned stale sweep moved"
 
+# The in-progress continue falls through to stuck PRs. That scan must skip a
+# non-dev label before try_direct_merge and before every dev-agent.sh spawn.
+# Spawn lines are stored and compared in END, same as the scan above.
+awk '
+  /checking for stuck PRs/ && !stuck_start { stuck_start = NR; next }
+  /scanning backlog for ready issues/ && stuck_start && !stuck_end { stuck_end = NR; next }
+  !stuck_start || NR <= stuck_start || (stuck_end && NR >= stuck_end) { next }
+  /issue_is_dev_claimable/ && !claim { claim = NR }
+  /^[[:space:]]*continue[[:space:]]*$/ && claim && !skip_cont && NR > claim { skip_cont = NR }
+  /try_direct_merge/ && !merge_at { merge_at = NR }
+  /dev-agent\.sh/ && /SCRIPT_DIR/ { stuck_spawn[++stuck_spawn_n] = NR }
+  /handle_ci_exhaustion/ { exhaust_at[++exhaust_n] = NR }
+  END {
+    bad = 0
+    if (!stuck_start || !stuck_end || stuck_start >= stuck_end) {
+      print "stuck-PR scan bounds missing" > "/dev/stderr"
+      bad = 1
+    }
+    if (!claim || !skip_cont || claim >= skip_cont) {
+      print "stuck-PR scan does not continue past a non-dev label" > "/dev/stderr"
+      bad = 1
+    }
+    if (!merge_at || skip_cont >= merge_at) {
+      print "stuck-PR non-dev continue is not before try_direct_merge" > "/dev/stderr"
+      bad = 1
+    }
+    if (stuck_spawn_n+0 < 1) {
+      print "stuck-PR scan has no dev-agent.sh spawn to guard" > "/dev/stderr"
+      bad = 1
+    }
+    for (i = 1; i <= stuck_spawn_n; i++) {
+      if (stuck_spawn[i] <= skip_cont) {
+        print "stuck-PR dev-agent.sh spawn at line " stuck_spawn[i] " is not after the non-dev continue" > "/dev/stderr"
+        bad = 1
+      }
+    }
+    if (exhaust_n+0 < 1) {
+      print "stuck-PR scan has no handle_ci_exhaustion to guard" > "/dev/stderr"
+      bad = 1
+    }
+    for (j = 1; j <= exhaust_n; j++) {
+      if (exhaust_at[j] <= skip_cont) {
+        print "handle_ci_exhaustion at line " exhaust_at[j] " is not after the non-dev continue" > "/dev/stderr"
+        bad = 1
+      }
+    }
+    exit bad
+  }
+' "$POLL_SH" || ac_fail "stuck-PR scan still merges or relaunches a non-dev-labeled issue"
+
 ac_log "dev/AGENTS.md names the #1825 continue"
-grep -qF 'the scan `continue`s past that issue (#1825)' "$AGENTS_DOC" \
+grep -qF 'the in-progress scan `continue`s past that issue (#1825)' "$AGENTS_DOC" \
   || ac_fail "dev/AGENTS.md must say the in-progress scan continues past a non-dev label (#1825)"
 grep -qF "awaiting-live-verification" "$AGENTS_DOC" \
   || ac_fail "dev/AGENTS.md must still name awaiting-live-verification as a skipped label"
+grep -qF "stuck-PR scan skips the same non-dev label" "$AGENTS_DOC" \
+  || ac_fail "dev/AGENTS.md must say the stuck-PR scan also skips a non-dev label (#1825)"
 
-ac_pass "issue #1825: non-dev in-progress skip continues before any dev-agent spawn; unassigned stale sweep unchanged"
+ac_pass "issue #1825: non-dev skip continues the in-progress scan and the stuck-PR scan before any merge or dev-agent spawn"

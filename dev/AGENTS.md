@@ -32,10 +32,12 @@ branches (`fix/issue-N-<attempt>`) are handled correctly (#1139).
 **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`.
 If the issue carries a non-dev label (`issue_is_dev_claimable` is false — `vision`,
 a hand-applied `awaiting-live-verification`, and the rest of `_ILC_NON_DEV_LABELS`,
-#608), the scan `continue`s past that issue (#1825) and does not spawn dev-agent
-for a review fix, a CI fix, or stale-branch/post-crash recovery, even when the
-issue is assigned to `$BOT_USER`. An unassigned claimable in-progress issue still
-reaches the stale sweep. If the issue is assigned to
+#608), the in-progress scan `continue`s past that issue (#1825) and does not run
+stale-branch or post-crash recovery, even when the issue is assigned to `$BOT_USER`.
+That continue is not the whole tick: the stuck-PR scan skips the same non-dev label
+before any direct merge, agent-merge, review fix, or CI fix, so leaving the
+in-progress iteration does not relaunch the issue on its open PR. An unassigned
+claimable in-progress issue still reaches the stale sweep. If the issue is assigned to
 `$BOT_USER` (this agent), checks for pending review feedback first — if an open PR has
 `REQUEST_CHANGES` (head-aware live reviews via `pr_live_review_count` in
 `lib/pr-lifecycle.sh` — a reopened PR has every review marked stale, so stale-only
@@ -60,7 +62,7 @@ the process table, since a started session that has written neither lock nor bra
 yet is invisible to both of those checks, but not to `pgrep` (#1070).
 **Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). The stuck-PR scan likewise skips a PR whose issue is assigned to another agent, for review fixes and CI fixes alike, so it never spends another agent's CI-fix attempts (#1736). Other agents'
-PRs do not block this agent's pipeline (#358, #369). **Wedged-PR escalation (#1089)**:
+PRs do not block this agent's pipeline (#358, #369). The same stuck-PR scan skips a linked issue whose labels are not dev-claimable (`issue_is_dev_claimable` false, including a hand-applied `awaiting-live-verification`) before direct merge, agent-merge, review fix, or CI fix (#1825). **Wedged-PR escalation (#1089)**:
 an open PR that is CI green but has zero *live* reviews (Forgejo marks every review
 stale on close/reopen, including the one pinned to the head) can be neither picked up
 (no live REQUEST_CHANGES) nor merged (no live APPROVE) — `escalate_wedged_pr()` posts a
