@@ -269,11 +269,11 @@ steps:
 
         for spec in $specs; do
           job=$(basename "$spec" .hcl)
-          # agents.hcl is the pre-cutover all-roles job (header: "Not the
-          # runtime yet"). job run would register a second polling loop
-          # beside the live per-role jobs. Keep the agents*.hcl glob so a
-          # future agents-<role>.hcl is still discovered (#1173), but do
-          # not submit or restart this basename.
+          # agents.hcl is the stopped all-roles job (docs/updating-factory.md,
+          # #1522). job run would register a second polling loop beside the
+          # live per-role jobs. Keep the agents*.hcl glob so a future
+          # agents-<role>.hcl is still discovered (#1173), but do not
+          # submit or restart this basename.
           if [ "$job" = "agents" ]; then
             echo "skip $job: not the live runtime"
             continue

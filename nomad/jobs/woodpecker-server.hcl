@@ -27,9 +27,10 @@
 #     stays inline below — not sensitive, not worth round-tripping through
 #     Vault.
 #
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S3.4 can wire
-# `disinto init --backend=nomad --with woodpecker` to `nomad job run` it.
+# This is the live Woodpecker server: the production factory runs the Nomad+Vault
+# backend (docs/updating-factory.md), and `disinto init --backend=nomad
+# --with woodpecker` deploys this job via lib/init/nomad/deploy.sh. Change
+# the CI server here, not in the generated docker-compose.yml.
 # =============================================================================
 
 job "woodpecker-server" {

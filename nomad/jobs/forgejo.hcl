@@ -27,9 +27,10 @@
 #     webhook allow-list) stays inline below — not sensitive, not worth
 #     round-tripping through Vault.
 #
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S1.3 can wire
-# `disinto init --backend=nomad --with forgejo` to `nomad job run` it.
+# This is the live Forgejo job: the production factory runs the Nomad+Vault
+# backend (docs/updating-factory.md), and `disinto init --backend=nomad
+# --with forgejo` deploys this job via lib/init/nomad/deploy.sh. Change
+# Forgejo here, not in the generated docker-compose.yml.
 # =============================================================================
 
 job "forgejo" {
