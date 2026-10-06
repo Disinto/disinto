@@ -41,15 +41,15 @@ command="$(yq '.[0].insert[0].config.command' "$PATCH")"
   || ac_fail "patch command must be playwright-mcp (got: ${command})"
 ac_log "AC 1 OK"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 
-SEED_DIR="$TMP_DIR/seed"
-mkdir -p "$SEED_DIR/profiles"
-printf '%s\n' '{"name":"headless"}' > "$SEED_DIR/profiles/headless.json"
-printf '%s\n' 'baseURL: __DSH_BASE_URL__' > "$SEED_DIR/settings-llamacpp.yaml"
+FAKE_SEED="$WORK/seed"
+mkdir -p "$FAKE_SEED/profiles"
+printf '%s\n' '{"name":"headless"}' > "$FAKE_SEED/profiles/headless.json"
+printf '%s\n' 'baseURL: __DSH_BASE_URL__' > "$FAKE_SEED/settings-llamacpp.yaml"
 
-BIN_DIR="$TMP_DIR/bin"
+BIN_DIR="$WORK/bin"
 mkdir -p "$BIN_DIR"
 # Stub dsh: logs argv (one argument per line) and either prints the final
 # answer or sleeps. DSH_STUB_SLEEP=1 selects the timeout case.
@@ -67,11 +67,11 @@ chmod +x "$BIN_DIR/dsh"
 # existing settings.yaml, so the default /tmp/dsh-sidecar must not leak in.
 export PATH="${BIN_DIR}:${PATH}"
 export DISINTO_DIR="$REPO_ROOT"
-export DSH_SEED_DIR="$SEED_DIR"
+export DSH_SEED_DIR="$FAKE_SEED"
 export DSH_BASE_URL="http://127.0.0.1:9/v1"
-export DSH_HOME="$TMP_DIR/dsh-home"
-export LOGFILE="$TMP_DIR/sidecar.log"
-export DSH_ARGV_LOG="$TMP_DIR/argv.log"
+export DSH_HOME="$WORK/dsh-home"
+export LOGFILE="$WORK/sidecar.log"
+export DSH_ARGV_LOG="$WORK/argv.log"
 : > "$LOGFILE"
 : > "$DSH_ARGV_LOG"
 unset DSH_STUB_SLEEP
@@ -88,7 +88,7 @@ run_sidecar() {
 
 # ── 2. One headless dsh run, answer captured, home seeded ────────────────────
 ac_log "AC 2: stub dsh returns 0, captures the answer, and seeds settings.yaml"
-OUT="$TMP_DIR/out.txt"
+OUT="$WORK/out.txt"
 rc="$(run_sidecar hi "$OUT" 30)"
 [ "$rc" = "0" ] \
   || ac_fail "sidecar_agent_run must return 0 (rc=$rc, log: $(cat "$LOGFILE"))"
@@ -111,7 +111,7 @@ ac_log "AC 2 OK"
 ac_log "AC 3: a 5s stub with TIMEOUT_S=1 returns 124"
 export DSH_STUB_SLEEP=1
 : > "$DSH_ARGV_LOG"
-OUT_TIMEOUT="$TMP_DIR/out-timeout.txt"
+OUT_TIMEOUT="$WORK/out-timeout.txt"
 rc="$(run_sidecar hi "$OUT_TIMEOUT" 1)"
 [ "$rc" = "124" ] \
   || ac_fail "sidecar_agent_run must return 124 when TIMEOUT_S is reached (rc=$rc)"
@@ -122,7 +122,7 @@ ac_log "AC 4: unset DSH_BASE_URL returns 1 without calling dsh"
 unset DSH_BASE_URL
 unset DSH_STUB_SLEEP
 : > "$DSH_ARGV_LOG"
-OUT_NOURL="$TMP_DIR/out-nourl.txt"
+OUT_NOURL="$WORK/out-nourl.txt"
 rc="$(run_sidecar hi "$OUT_NOURL" 30)"
 [ "$rc" = "1" ] \
   || ac_fail "sidecar_agent_run must return 1 when DSH_BASE_URL is unset (rc=$rc)"
