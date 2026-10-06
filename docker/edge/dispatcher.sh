@@ -1191,23 +1191,16 @@ _dispatch_sidecar_docker() {
     cmd+=(-e "DISINTO_FORMULA=${formula}")
   fi
 
-  # Mount the host Claude CLI, the shared OAuth session, and ~/.ssh.
-  # entrypoint-reproduce.sh fatals without the binary and then runs
-  # `claude -p`. Do not pass ANTHROPIC_API_KEY: the edge job authenticates
-  # via the OAuth mount (#1776).
+  # The sidecar agent runs dsh against the local model
+  # (docker/reproduce/sidecar-agent.sh); DSH_BASE_URL is its only model setting.
+  if [ -n "${DSH_BASE_URL:-}" ]; then
+    cmd+=(-e "DSH_BASE_URL=${DSH_BASE_URL}")
+  fi
+
+  # Mount ~/.ssh from the runtime user's home
   local runtime_home="${HOME:-/home/debian}"
-  if [ -d "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}" ]; then
-    cmd+=(-v "${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}:${CLAUDE_SHARED_DIR:-/var/lib/disinto/claude-shared}")
-    cmd+=(-e "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/var/lib/disinto/claude-shared/config}")
-  fi
-  if [ -f "${runtime_home}/.claude.json" ]; then
-    cmd+=(-v "${runtime_home}/.claude.json:/home/agent/.claude.json:ro")
-  fi
   if [ -d "${runtime_home}/.ssh" ]; then
     cmd+=(-v "${runtime_home}/.ssh:/home/agent/.ssh:ro")
-  fi
-  if [ -f /usr/local/bin/claude ]; then
-    cmd+=(-v /usr/local/bin/claude:/usr/local/bin/claude:ro)
   fi
 
   # Mount the project TOML into the container at a stable path

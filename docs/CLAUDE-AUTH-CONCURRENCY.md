@@ -59,7 +59,7 @@ everywhere.
 |------|-------|
 | Defaults for `CLAUDE_SHARED_DIR`, `CLAUDE_CONFIG_DIR` | `lib/env.sh:138-140` |
 | `.env` documentation | `.env.example:92-99` |
-| Container mounts + env passthrough (edge dispatcher) | `_dispatch_sidecar_docker` in `docker/edge/dispatcher.sh` (reproduce, triage, verify); the vault runner gets no Claude session (#1803) |
+| Container mounts + env passthrough (edge dispatcher) | none: the dispatcher gives neither the vault runner (#1803) nor the reproduce/triage/verify sidecars (#1841) a Claude session |
 | Auth detection using `CLAUDE_CONFIG_DIR` | `docker/agents/entrypoint.sh:101-102` |
 | Bootstrap / migration during `disinto init` | `lib/claude-config.sh:setup_claude_config_dir()`, `bin/disinto:952-962` |
 

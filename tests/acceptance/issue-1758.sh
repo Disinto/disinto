@@ -15,8 +15,6 @@
 #
 # Acceptance (read-only; grep and bash -n):
 #   * no ANTHROPIC_API_KEY= passthrough remains in docker/edge/dispatcher.sh
-#   * _dispatch_sidecar_docker still mounts the CLI, claude-shared,
-#     CLAUDE_CONFIG_DIR, and .claude.json
 #   * bash -n docker/edge/dispatcher.sh succeeds
 #
 # Run via: tools/run-acceptance.sh 1758
@@ -50,14 +48,6 @@ fi
 FN_SIDECAR="$(ac_extract_fn _dispatch_sidecar_docker "$DISPATCHER")"
 [ -n "$FN_SIDECAR" ] \
   || ac_fail "could not extract _dispatch_sidecar_docker from docker/edge/dispatcher.sh"
-grep -qF '/usr/local/bin/claude' <<<"$FN_SIDECAR" \
-  || ac_fail "_dispatch_sidecar_docker must still mount /usr/local/bin/claude"
-grep -q 'claude-shared' <<<"$FN_SIDECAR" \
-  || ac_fail "_dispatch_sidecar_docker must still mount claude-shared"
-grep -q 'CLAUDE_CONFIG_DIR' <<<"$FN_SIDECAR" \
-  || ac_fail "_dispatch_sidecar_docker must still set CLAUDE_CONFIG_DIR"
-grep -qF '.claude.json' <<<"$FN_SIDECAR" \
-  || ac_fail "_dispatch_sidecar_docker must still mount .claude.json"
 
 bash -n "$DISPATCHER" \
   || ac_fail "bash -n docker/edge/dispatcher.sh failed"
