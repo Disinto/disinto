@@ -37,6 +37,8 @@ source "$(dirname "$0")/../lib/tape.sh"
 # #1737: one merged outcome per proposal, shared with dev-poll.sh
 # shellcheck source=../lib/tape-outcome-guard.sh
 source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
+# shellcheck source=../lib/ci-first-green.sh
+source "$(dirname "$0")/../lib/ci-first-green.sh"
 # #1608: reason -> signature lookup, shared with dev-poll.sh (#1609)
 source "$(dirname "$0")/../lib/signature.sh"
 
@@ -186,7 +188,9 @@ cleanup() {
 #
 #   * bits.merged / bits.ci_green are 1 only when pr_walk_to_merge() returned 0
 #     (PR_WALK_RC); every other exit records 0/0. Never inferred from the process
-#     exit code.
+#     exit code. bits.ci_first_green (#1878) is 1/0 for PR_NUMBER's first
+#     pipeline when that result is known, and left out otherwise
+#     (ci_first_green_bits).
 #   * numbers.ci_red = ${PR_WALK_CI_RED:-0} (every CI failure the walk
 #     observed, 0 when no walk ran) and numbers.review_rounds =
 #     ${PR_WALK_REVIEW_ROUNDS:-0} (#1616).
@@ -257,6 +261,8 @@ close_dev_tape_outcome() {
     log "WARNING: tape: could not build outcome bits for #${ISSUE}"
     return 0
   fi
+  # First CI pipeline of the walk's PR; no PR or unknown leaves the bit out.
+  bits="$(ci_first_green_bits "${PR_NUMBER:-}" "$bits" 2>/dev/null || printf '%s' "$bits")"
 
   # duration_s (#1532): pick->terminal span via proposal_elapsed_s (#1452);
   # omitted (never 0) when the started file is missing or not an integer epoch.
