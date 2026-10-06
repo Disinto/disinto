@@ -349,8 +349,13 @@ volume (`/srv/disinto/agent-data/` mirrors the container's `/home/agent/data/`):
 # Watch the agent work
 tail -f /srv/disinto/agent-data/logs/dev/dev-agent.log
 
-# Is the agents job (and its allocations) healthy?
-nomad job status agents
+# Are the agent jobs (and their allocations) healthy?
+# Query the running agents* jobs — the stopped all-roles agents job
+# never shows up; on a fresh box this is the all-roles agents job, on
+# production the live per-role agents-* jobs.
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+  nomad job status "$job"
+done
 
 # Trigger a manual dev-poll cycle (host-side checkout of the factory)
 cd /opt/disinto && bash dev/dev-poll.sh /srv/disinto/projects/<name>.toml
