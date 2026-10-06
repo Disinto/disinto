@@ -1157,6 +1157,18 @@ launch_runner() {
   "_launch_runner_${DISPATCHER_BACKEND}" "$action_id" "$secrets_csv" "$mounts_csv" "$image" "$artifacts_csv"
 }
 
+# Forge token for the reproduce/triage/verify sidecars (#1842): FORGE_TOKEN
+# when set (compose .env), else SIDECAR_FORGE_TOKEN_FILE, which the Nomad edge
+# renders from kv/disinto/chat. Empty: no sidecar is fetched or launched.
+SIDECAR_FORGE_TOKEN_FILE="${SIDECAR_FORGE_TOKEN_FILE:-/secrets/sidecar-forge-token}"
+SIDECAR_FORGE_TOKEN=""
+_load_sidecar_forge_token() {
+  SIDECAR_FORGE_TOKEN="${FORGE_TOKEN:-}"
+  if [ -z "$SIDECAR_FORGE_TOKEN" ] && [ -s "$SIDECAR_FORGE_TOKEN_FILE" ]; then
+    SIDECAR_FORGE_TOKEN=$(tr -d '\r\n' < "$SIDECAR_FORGE_TOKEN_FILE")
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Pluggable sidecar launcher (reproduce / triage / verify)
 # -----------------------------------------------------------------------------
@@ -1180,7 +1192,7 @@ _dispatch_sidecar_docker() {
     -v agent-data:/home/agent/data
     -v project-repos:/home/agent/repos
     -e "FORGE_URL=${FORGE_URL}"
-    -e "FORGE_TOKEN=${FORGE_TOKEN}"
+    -e "FORGE_TOKEN=${SIDECAR_FORGE_TOKEN}"
     -e "FORGE_REPO=${FORGE_REPO}"
     -e "PRIMARY_BRANCH=${PRIMARY_BRANCH:-main}"
     -e DISINTO_CONTAINER=1
@@ -1246,8 +1258,8 @@ is_reproduce_running() {
 # Fetch open issues labelled bug-report that have no outcome label yet.
 # Returns a newline-separated list of "issue_number:project_toml" pairs.
 fetch_reproduce_candidates() {
-  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
-  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  # Require SIDECAR_FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${SIDECAR_FORGE_TOKEN:-}" ] || return 0
   [ -n "${FORGE_URL:-}" ]   || return 0
   [ -n "${FORGE_REPO:-}" ]  || return 0
 
@@ -1255,7 +1267,7 @@ fetch_reproduce_candidates() {
 
   local issues_json
   issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${SIDECAR_FORGE_TOKEN}" \
     "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
 
   # Filter out issues that already carry an outcome label.
@@ -1334,8 +1346,8 @@ is_triage_running() {
 # Fetch open issues labelled both bug-report and in-triage.
 # Returns a newline-separated list of issue numbers.
 fetch_triage_candidates() {
-  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
-  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  # Require SIDECAR_FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${SIDECAR_FORGE_TOKEN:-}" ] || return 0
   [ -n "${FORGE_URL:-}" ]   || return 0
   [ -n "${FORGE_REPO:-}" ]  || return 0
 
@@ -1343,7 +1355,7 @@ fetch_triage_candidates() {
 
   local issues_json
   issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${SIDECAR_FORGE_TOKEN}" \
     "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
 
   # Filter to issues that carry BOTH bug-report AND in-triage labels.
@@ -1427,7 +1439,7 @@ _are_all_sub_issues_closed() {
   local api="${FORGE_URL}/api/v1/repos/${FORGE_REPO}"
   local all_issues_json
   all_issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${SIDECAR_FORGE_TOKEN}" \
     "${api}/issues?type=issues&state=all&limit=50" 2>/dev/null) || return 1
 
   # Find issues whose body contains "Decomposed from #<parent_num>"
@@ -1450,7 +1462,7 @@ print(" ".join(sub_issues))
   for sub_num in $sub_issues; do
     local sub_state
     sub_state=$(curl -sf \
-      -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Authorization: token ${SIDECAR_FORGE_TOKEN}" \
       "${api}/issues/${sub_num}" 2>/dev/null | jq -r '.state // "unknown"') || return 1
     if [ "$sub_state" != "closed" ]; then
       return 1
@@ -1462,8 +1474,8 @@ print(" ".join(sub_issues))
 # Fetch open bug-report + in-progress issues whose sub-issues are all closed.
 # Returns a newline-separated list of issue numbers ready for verification.
 fetch_verification_candidates() {
-  # Require FORGE_TOKEN, FORGE_URL, FORGE_REPO
-  [ -n "${FORGE_TOKEN:-}" ] || return 0
+  # Require SIDECAR_FORGE_TOKEN, FORGE_URL, FORGE_REPO
+  [ -n "${SIDECAR_FORGE_TOKEN:-}" ] || return 0
   [ -n "${FORGE_URL:-}" ]   || return 0
   [ -n "${FORGE_REPO:-}" ]  || return 0
 
@@ -1472,14 +1484,14 @@ fetch_verification_candidates() {
   # Fetch open bug-report + in-progress issues
   local issues_json
   issues_json=$(curl -sf \
-    -H "Authorization: token ${FORGE_TOKEN}" \
+    -H "Authorization: token ${SIDECAR_FORGE_TOKEN}" \
     "${api}/issues?type=issues&state=open&labels=bug-report&limit=20" 2>/dev/null) || return 0
 
   # Filter to issues that also have in-progress label and have all sub-issues closed
   local tmpjson
   tmpjson=$(mktemp)
   echo "$issues_json" > "$tmpjson"
-  python3 - "$tmpjson" "$api" "${FORGE_TOKEN}" <<'PYEOF'
+  python3 - "$tmpjson" "$api" "${SIDECAR_FORGE_TOKEN}" <<'PYEOF'
 import sys, json
 api_base = sys.argv[2]
 token = sys.argv[3]
@@ -1564,9 +1576,13 @@ main() {
       ;;
   esac
 
+  _load_sidecar_forge_token
+  [ -n "$SIDECAR_FORGE_TOKEN" ] || log "No sidecar forge token (${SIDECAR_FORGE_TOKEN_FILE}): reproduce/triage/verify sidecars stay off"
+
   while true; do
     # Refresh ops repo at the start of each poll cycle
     ensure_ops_repo
+    _load_sidecar_forge_token
 
     # Check if actions directory exists
     if [ ! -d "${VAULT_ACTIONS_DIR}" ]; then

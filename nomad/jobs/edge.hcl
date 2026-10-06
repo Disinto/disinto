@@ -217,6 +217,21 @@ EOT
 EOT
       }
 
+      # Forge token for the reproduce/triage/verify sidecars (dispatcher.sh,
+      # SIDECAR_FORGE_TOKEN_FILE). Same Vault document as forge-pat below; a
+      # missing key renders an empty file, and the dispatcher starts no sidecars.
+      template {
+        destination          = "secrets/sidecar-forge-token"
+        # noop: static Vault secrets - renewal must not restart (#1091).
+        change_mode          = "noop"
+        error_on_missing_key = false
+        perms                = "0400"
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/chat" -}}
+{{- with .Data.data.sidecar_forge_token -}}{{ . }}{{- end -}}
+{{- end -}}
+EOT
+      }
       # Forge admin PAT — the dispatcher reads this file
       # (FACTORY_FORGE_PAT_FILE) to push vault results
       # (docker/edge/dispatcher.sh). File mount preferred over direct env so
