@@ -25,10 +25,10 @@
 #   volumes. Mirrors the edge.hcl caddy task pattern (edge.hcl:147-151) —
 #   both rw, since the supervisor must restart containers.
 #
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S4.2 can wire
-# `disinto init --backend=nomad --with agents-supervisor-opus` to
-# `nomad job run` it.
+# This is the live supervisor job: the production factory runs the Nomad+Vault
+# backend (docs/updating-factory.md) and submits this spec with
+# `nomad job run` (lib/init/nomad/deploy.sh). Change the supervisor here,
+# not in the generated docker-compose.yml.
 # =============================================================================
 
 job "agents-supervisor-opus" {

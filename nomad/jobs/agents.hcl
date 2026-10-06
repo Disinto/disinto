@@ -20,9 +20,11 @@
 #     KV v2 at kv/disinto/bots/<role>.
 #   - Seeded on fresh boxes by tools/vault-seed-agents.sh.
 #
-# Not the runtime yet: docker-compose.yml is still the factory's live stack
-# until cutover. This file exists so CI can validate it and S4.2 can wire
-# `disinto init --backend=nomad --with agents` to `nomad job run` it.
+# Stopped on the production factory (docs/updating-factory.md, #1522).
+# The live agent jobs are the per-role nomad/jobs/agents-*.hcl specs;
+# docker-compose.yml is only the legacy compose backend. `disinto init
+# --backend=nomad --with agents` still submits this all-roles job via
+# lib/init/nomad/deploy.sh — do not run it beside the per-role jobs.
 # =============================================================================
 
 job "agents" {
