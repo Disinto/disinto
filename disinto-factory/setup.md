@@ -353,7 +353,7 @@ tail -f /srv/disinto/agent-data/logs/dev/dev-agent.log
 # Query the running agents* jobs — the stopped all-roles agents job
 # never shows up; on a fresh box this is the all-roles agents job, on
 # production the live per-role agents-* jobs.
-for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $3 == "running" {print $1}'); do
   nomad job status "$job"
 done
 

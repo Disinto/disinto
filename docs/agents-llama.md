@@ -304,7 +304,7 @@ restart every running agent job — no image rebuild needed. On the production b
 
 ```bash
 sudo $EDITOR /srv/disinto/projects/disinto.toml
-for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $3 == "running" {print $1}'); do
   nomad job restart "$job"
 done
 ```

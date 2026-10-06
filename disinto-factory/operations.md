@@ -14,7 +14,7 @@ nomad job status
 # Query the running agents* jobs — the stopped all-roles agents job
 # never shows up, and the live per-role jobs are named consistently
 # (fresh boxes: the all-roles agents job; production: the per-role jobs)
-for job in $(nomad job status | awk '$1 ~ /^agents/ && $4 == "running" {print $1}'); do
+for job in $(nomad job status | awk '$1 ~ /^agents/ && $3 == "running" {print $1}'); do
   nomad job status "$job"
 done
 
