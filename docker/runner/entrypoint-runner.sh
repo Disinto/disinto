@@ -101,16 +101,9 @@ elif [ -f "$formula_toml" ]; then
   export LLAMACPP_API_KEY="${LLAMACPP_API_KEY:-sk-no-key-required}"
   export DSH_HOME="${DSH_HOME:-/tmp/dsh-runner}"
 
-  seed="${DSH_SEED_DIR:-/opt/dsh}"
-  if [ ! -f "$DSH_HOME/profiles/headless.json" ]; then
-    mkdir -p "$DSH_HOME/profiles"
-    cp "$seed/profiles/headless.json" "$DSH_HOME/profiles/headless.json"
-  fi
-  if [ ! -f "$DSH_HOME/settings.yaml" ]; then
-    mkdir -p "$DSH_HOME"
-    sed "s|__DSH_BASE_URL__|${DSH_BASE_URL}|" \
-      "$seed/settings-llamacpp.yaml" > "$DSH_HOME/settings.yaml"
-  fi
+  # shellcheck source=lib/dsh-seed.sh
+  source "${FACTORY_ROOT}/lib/dsh-seed.sh"
+  dsh_seed_home
 
   # Consumed by agent_run (lib/agent-sdk.sh); this script does not read them.
   # shellcheck disable=SC2034
