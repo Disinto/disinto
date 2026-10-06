@@ -13,7 +13,9 @@ then checks the agent lock and scans for ready issues using a
 two-tier priority queue: (1) `priority`+`backlog` issues first (FIFO within tier), then
 (2) plain `backlog` issues (FIFO). Orphaned in-progress issues are also picked up. The
 direct-merge scan runs before the lock check so approved PRs get merged even while a
-dev-agent session is active.
+dev-agent session is active. Before that merge it skips a linked issue that is not
+dev-claimable, including a hand-applied awaiting-live-verification (#1833); issue-less
+chore PRs still merge.
 
 **Key files**:
 - `dev/dev-poll.sh` — Polling loop participant: finds next ready issue, handles merge/rebase
@@ -62,7 +64,7 @@ the process table, since a started session that has written neither lock nor bra
 yet is invisible to both of those checks, but not to `pgrep` (#1070).
 **Per-agent open-PR gate**: before starting new work,
 filters open waiting PRs to only those assigned to this agent (`$BOT_USER`). The stuck-PR scan likewise skips a PR whose issue is assigned to another agent, for review fixes and CI fixes alike, so it never spends another agent's CI-fix attempts (#1736). Other agents'
-PRs do not block this agent's pipeline (#358, #369). The same stuck-PR scan skips a linked issue whose labels are not dev-claimable (`issue_is_dev_claimable` false, including a hand-applied `awaiting-live-verification`) before direct merge, agent-merge, review fix, or CI fix (#1825). **Wedged-PR escalation (#1089)**:
+PRs do not block this agent's pipeline (#358, #369). The same stuck-PR scan skips a linked issue whose labels are not dev-claimable (`issue_is_dev_claimable` false, including a hand-applied `awaiting-live-verification`) before direct merge, agent-merge, review fix, or CI fix (#1825). The pre-lock merge scan applies the same check before try_direct_merge (#1833), because that scan runs first and would otherwise merge the PR and close the issue. **Wedged-PR escalation (#1089)**:
 an open PR that is CI green but has zero *live* reviews (Forgejo marks every review
 stale on close/reopen, including the one pinned to the head) can be neither picked up
 (no live REQUEST_CHANGES) nor merged (no live APPROVE) — `escalate_wedged_pr()` posts a

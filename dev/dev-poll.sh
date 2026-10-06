@@ -656,6 +656,12 @@ pr_head_branch() {
 # Merging is a single API call — it doesn't need the dev-agent lock.
 # This ensures approved PRs get merged even while a dev-agent is running.
 # (See #531: direct merges should not be blocked by agent lock)
+#
+# This scan runs before the in-progress and stuck-PR skips (#1825). A linked
+# issue that is not dev-claimable (hand-applied awaiting-live-verification, or
+# any other _ILC_NON_DEV_LABELS label) must be skipped here, or try_direct_merge
+# merges the PR and closes the issue before those skips run (#1833). Issue-less
+# chore PRs (PL_ISSUE=0) have no issue to classify and still merge.
 # =============================================================================
 log "pre-lock: scanning for mergeable PRs"
 PL_PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
@@ -704,6 +710,14 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
       PR_ISSUE_ASSIGNEE=$(echo "$PR_ISSUE_JSON" | jq -r '.assignee.login // ""') || true
       if [ -n "$PR_ISSUE_ASSIGNEE" ] && [ "$PR_ISSUE_ASSIGNEE" != "$BOT_USER" ]; then
         log "PR #${PL_PR_NUM} (issue #${PL_ISSUE}) assigned to ${PR_ISSUE_ASSIGNEE} — skipping merge (not mine)"
+        continue
+      fi
+      # Own or unassigned, but not dev work. try_direct_merge closes the issue,
+      # and the #1825 skips have not run yet. Unreadable labels fail open, same
+      # as the stuck-PR scan: an API blip must not strand an approved own PR.
+      pl_labels=$(echo "$PR_ISSUE_JSON" | jq -r '[(.labels // [])[].name] | join(",")') || pl_labels=""
+      if ! issue_is_dev_claimable "${pl_labels:-}"; then
+        log "PR #${PL_PR_NUM} (issue #${PL_ISSUE}) has non-dev label(s) [${pl_labels:-}] — skipping pre-lock merge (#1833)"
         continue
       fi
     fi
