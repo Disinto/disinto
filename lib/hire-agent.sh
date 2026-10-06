@@ -56,7 +56,7 @@ set -euo pipefail
 #   $6 project_name - project TOML basename
 #   $7 agent_token - Forge PAT for the agent user (may be empty)
 #   $8 user_pass   - generated password for the agent user
-#   $9 harness     - agent harness: "claude" (default) or "dsh" (#1107)
+#   $9 harness     - agent harness: "dsh" (default) or "claude" (#1107)
 #   $10 context_window - dsh context window in tokens (default 100000;
 #       dsh harness only)
 disinto_hire_an_agent_nomad() {
@@ -68,7 +68,7 @@ disinto_hire_an_agent_nomad() {
   local project_name="$6"
   local agent_token="$7"
   local user_pass="$8"
-  local harness="${9:-claude}"
+  local harness="${9:-dsh}"
   local context_window="${10:-100000}"
 
   local vault_name="bot-${agent_name}"
@@ -192,10 +192,11 @@ POLICY
   compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-60}"
 
   # The env block is the only part of the jobspec that depends on the
-  # harness (#1107). Claude is the default and emits AGENT_HARNESS=claude
+  # harness (#1107). dsh is the default and emits AGENT_HARNESS=dsh plus
+  # its settings-form variables and no CLAUDE_* tuning variables. Only
+  # `--harness claude` selects Claude, which emits AGENT_HARNESS=claude
   # plus the CLAUDE_* tuning variables (#1683 — an omitted variable is dsh,
-  # so Claude is selected only by setting it). dsh emits its own
-  # settings-form variables and no CLAUDE_* tuning variables.
+  # so Claude is selected only by setting it).
   local env_block_file
   env_block_file="$(mktemp)"
   if [ "$harness" = "dsh" ]; then
@@ -437,7 +438,7 @@ disinto_hire_an_agent() {
   local model_name=""
   local poll_interval=""
   local admin_pat=""
-  local harness="claude"
+  local harness="dsh"
   local context_window="100000"
 
   if [ -z "$agent_name" ] || [ -z "$role" ]; then
@@ -513,7 +514,7 @@ disinto_hire_an_agent() {
     claude|dsh) ;;
     *)
       echo "Error: invalid --harness value '$harness'" >&2
-      echo "  The harness must be 'claude' (default) or 'dsh'." >&2
+      echo "  The harness must be 'dsh' (default) or 'claude'." >&2
       exit 1
       ;;
   esac

@@ -79,7 +79,7 @@ This writes `ANTHROPIC_API_KEY` to `.env` instead of `ANTHROPIC_BASE_URL`.
 ### Choosing a harness (Claude or dsh)
 
 The hired agent runs under one of two agent harnesses, selected with
-`--harness` (default `claude`):
+`--harness` (default `dsh`):
 
 ```bash
 # dsh-harness agent
@@ -90,18 +90,19 @@ disinto hire-an-agent dev-dsh dev \
   --context-window 100000
 ```
 
-- **`claude`** (default): the agent runs the Claude Code CLI. The service
+- **`claude`** (opt-in): the agent runs the Claude Code CLI. The service
   gets `AGENT_HARNESS=claude` and the `CLAUDE_*` tuning variables
   (`CLAUDE_TIMEOUT`, `CLAUDE_MODEL`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, ...).
-  Omitting `--harness` emits that same block. The variable is set
-  explicitly: with `AGENT_HARNESS` unset, an agent runs dsh (#1683).
-- **`dsh`**: the agent runs the dsh harness (`dsh --profile headless`, with
+  The variable is set explicitly: with `AGENT_HARNESS` unset, an agent runs
+  dsh (#1683).
+- **`dsh`** (default): the agent runs the dsh harness (`dsh --profile headless`, with
   `AGENT_HARNESS=dsh`). The service gets dsh's own settings-form variables —
   `DSH_HOME` (the agent's persistent config dir),
   `DSH_PERMISSION_MODE=danger-full-access`, `DSH_MODEL`, `DSH_BASE_URL`,
   `DSH_CONTEXT_WINDOW`, and `LLAMACPP_API_KEY` (settings.yaml uses
   apiKeyEnv indirection; llama-server ignores the value but dsh requires
   the env to be set) — and **no** `CLAUDE_*` tuning variables.
+  Omitting `--harness` emits this block.
 
 `--context-window <tokens>` (default `100000`) sets the context window a dsh
 agent is given (`DSH_CONTEXT_WINDOW`); it is ignored by `claude`-harness

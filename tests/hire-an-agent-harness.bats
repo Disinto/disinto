@@ -6,9 +6,13 @@
 #   Claude or a dsh agent.
 #
 # Covers:
-#   1. The default (no --harness) and an explicit `--harness claude` hire
-#      emit AGENT_HARNESS=claude plus the CLAUDE_* block, pinned by fixtures.
-#      They must not omit AGENT_HARNESS (#1683: omission means dsh).
+#   1. Nomad: the default (no harness argument) emits AGENT_HARNESS=dsh,
+#      pinned by jobspec-default.hcl; an explicit `--harness dsh` renders the
+#      same jobspec. An explicit `--harness claude` emits AGENT_HARNESS=claude
+#      plus the CLAUDE_* block, pinned by jobspec-claude.hcl. Neither omits
+#      AGENT_HARNESS (#1683: omission means dsh).
+#      Compose: the default compose hire still emits AGENT_HARNESS=claude,
+#      pinned by compose-default.yml.
 #   2. `--harness dsh` emits dsh's own settings-form variables (AGENT_HARNESS,
 #      DSH_HOME, DSH_PERMISSION_MODE, DSH_MODEL, DSH_BASE_URL,
 #      DSH_CONTEXT_WINDOW) and no CLAUDE_* / ANTHROPIC_* tuning variables —
@@ -30,6 +34,10 @@ setup_file() {
   [ -f "$HIRE_LIB" ] || { echo "hire-agent.sh not found: $HIRE_LIB" >&2; return 1; }
   [ -f "$FIXTURES/jobspec-default.hcl" ] || {
     echo "fixture missing: $FIXTURES/jobspec-default.hcl" >&2
+    return 1
+  }
+  [ -f "$FIXTURES/jobspec-claude.hcl" ] || {
+    echo "fixture missing: $FIXTURES/jobspec-claude.hcl" >&2
     return 1
   }
   [ -f "$FIXTURES/compose-default.yml" ] || {
@@ -156,21 +164,29 @@ EOF
 
 # ── byte-identical default (both backends) ───────────────────────────────────
 
-@test "default nomad hire emits AGENT_HARNESS=claude" {
+@test "default nomad hire emits AGENT_HARNESS=dsh" {
   _stub_vault_ok
   unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render_nomad
   [ "$(cat "$TMP/rc")" = "0" ]
   cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
-  grep -Eq 'AGENT_HARNESS[[:space:]]*=[[:space:]]*"claude"' "$JOBSPEC_OUT"
+  grep -Eq 'AGENT_HARNESS[[:space:]]*=[[:space:]]*"dsh"' "$JOBSPEC_OUT"
 }
 
-@test "explicit claude harness renders the same jobspec as the default" {
+@test "explicit dsh harness renders the same jobspec as the default" {
+  _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+  _render_nomad dsh
+  [ "$(cat "$TMP/rc")" = "0" ]
+  cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
+}
+
+@test "explicit claude harness renders the claude jobspec" {
   _stub_vault_ok
   unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
   _render_nomad claude
   [ "$(cat "$TMP/rc")" = "0" ]
-  cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
+  cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-claude.hcl"
 }
 
 @test "default compose hire emits AGENT_HARNESS=claude" {
@@ -281,7 +297,7 @@ EOF
     --local-model "http://10.0.0.1:8081" --model qwen --harness bogus
   [ "$(cat "$TMP/hire-rc")" != "0" ]
   grep -q "Error: invalid --harness value 'bogus'" "$TMP/hire-stderr"
-  grep -q "The harness must be 'claude' (default) or 'dsh'" "$TMP/hire-stderr"
+  grep -q "The harness must be 'dsh' (default) or 'claude'" "$TMP/hire-stderr"
   # ... and nothing was written to the projects dir.
   [ -z "$(ls -A "$FACTORY_ROOT/projects")" ]
 }
