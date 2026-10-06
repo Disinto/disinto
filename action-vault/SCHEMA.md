@@ -66,7 +66,9 @@ How the dispatcher consumes the optional research-run fields:
   omits it, the dispatcher applies the per-backend agents-image default:
   `disinto/agents:local` (Nomad backend — dispatch meta `image`, which
   the `vault-runner` jobspec interpolates into the task `image`) or
-  `disinto/agents:latest` (Docker backend). The dispatcher never picks a
+  `$VAULT_RUNNER_IMAGE` when the dispatcher has it set (the Nomad edge
+  sets `disinto/agents:local`), else `disinto/agents:latest` (Docker
+  backend). The dispatcher never picks a
   host — for the `run-experiment` formula, host resolution happens inside
   the formula (`formulas/run-experiment.sh`, #1308: `host` alias via
   `RESOURCES.md`, else first `resource_class` fit, else local); for other

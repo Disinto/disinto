@@ -279,6 +279,10 @@ EOT
         FACTORY_FORGE_PAT_FILE = "/secrets/forge-pat"
         NOMAD_ADDR             = "http://localhost:4646"
         DSH_BASE_URL           = "http://10.10.10.1:8088/v1"
+        # Vault runner image when an action names none: the image this box
+        # builds (ci.yml rebuild-and-deploy-agents). The nomad backend's
+        # vault-runner.hcl defaults to the same; compose keeps :latest.
+        VAULT_RUNNER_IMAGE     = "disinto/agents:local"
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
