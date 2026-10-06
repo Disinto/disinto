@@ -34,7 +34,7 @@
 #   - [project].stack_lock: stack lock configuration
 #   - Per-step description overrides with project-specific commands
 #
-# No hard timeout — runs until Claude hits its turn limit.
+# Timeout: timeout_minutes is unset here, so the sidecar default REPRODUCE_TIMEOUT_MINUTES (60) applies.
 # Stack lock held for full run (triage is rare; blocking CI is acceptable).
 
 name            = "triage"

@@ -2,7 +2,7 @@
 # entrypoint-reproduce.sh — Reproduce-agent sidecar entrypoint
 #
 # Acquires the stack lock, boots the project stack (if formula declares
-# stack_script), then drives Claude + Playwright MCP to follow the bug
+# stack_script), then drives agent + Playwright MCP to follow the bug
 # report's repro steps.  Labels the issue based on outcome and posts
 # findings + screenshots.
 #
@@ -11,13 +11,12 @@
 #
 # Environment (injected by dispatcher via docker run -e):
 #   FORGE_URL, FORGE_TOKEN, FORGE_REPO, PRIMARY_BRANCH, DISINTO_CONTAINER=1
+#   DSH_BASE_URL — local model endpoint for dsh (docker/reproduce/sidecar-agent.sh)
 #
 # Volumes expected:
 #   /home/agent/data          — agent-data volume (stack-lock files go here)
 #   /home/agent/repos         — project-repos volume
-#   $CLAUDE_CONFIG_DIR        — shared Claude config dir (OAuth credentials)
 #   /home/agent/.ssh          — host ~/.ssh (read-only)
-#   /usr/local/bin/claude     — host claude CLI binary (read-only)
 #   /var/run/docker.sock      — host docker socket
 
 set -euo pipefail
@@ -37,7 +36,7 @@ case "${DISINTO_FORMULA:-reproduce}" in
     ;;
 esac
 
-REPRODUCE_TIMEOUT="${REPRODUCE_TIMEOUT_MINUTES:-15}"
+REPRODUCE_TIMEOUT="${REPRODUCE_TIMEOUT_MINUTES:-60}"
 LOGFILE="/home/agent/data/logs/reproduce.log"
 SCREENSHOT_DIR="/home/agent/data/screenshots"
 
@@ -121,12 +120,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Verify claude CLI is available (mounted from host)
+# Agent harness: dsh against the local model (docker/reproduce/sidecar-agent.sh)
 # ---------------------------------------------------------------------------
-if ! command -v claude &>/dev/null; then
-  log "FATAL: claude CLI not found. Mount the host binary at /usr/local/bin/claude"
+if [ -z "${DSH_BASE_URL:-}" ]; then
+  log "FATAL: DSH_BASE_URL not set — the sidecar agent runs dsh against the local model"
   exit 1
 fi
+# shellcheck source=docker/reproduce/sidecar-agent.sh
+source "${DISINTO_DIR}/docker/reproduce/sidecar-agent.sh"
 
 # ---------------------------------------------------------------------------
 # Source stack-lock library
@@ -227,7 +228,7 @@ elif [ -n "$FORMULA_STACK_SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Build Claude prompt based on agent type
+# Build agent prompt based on agent type
 # ---------------------------------------------------------------------------
 TIMESTAMP=$(date -u '+%Y%m%d-%H%M%S')
 SCREENSHOT_PREFIX="${SCREENSHOT_DIR}/issue-${ISSUE_NUMBER}-${TIMESTAMP}"
@@ -487,24 +488,20 @@ PROMPT
 fi
 
 # ---------------------------------------------------------------------------
-# Run Claude with Playwright MCP
+# Run agent with Playwright MCP
 # ---------------------------------------------------------------------------
 if [ "$AGENT_TYPE" = "triage" ]; then
   log "Starting triage-agent session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
 else
-  log "Starting Claude reproduction session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+  log "Starting agent reproduction session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
 fi
 
 CLAUDE_EXIT=0
-timeout "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" \
-  claude -p "$CLAUDE_PROMPT" \
-    --mcp-server playwright \
-    --output-format text \
-    --max-turns 40 \
-  > "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>&1 || CLAUDE_EXIT=$?
+sidecar_agent_run "$CLAUDE_PROMPT" "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" \
+  "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" || CLAUDE_EXIT=$?
 
 if [ $CLAUDE_EXIT -eq 124 ]; then
-  log "WARNING: Claude session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
+  log "WARNING: agent session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
 fi
 
 # ---------------------------------------------------------------------------
@@ -638,12 +635,12 @@ _post_comment() {
 # Triage post-processing: enforce backlog label on created issues
 # ---------------------------------------------------------------------------
 # The triage agent may create sub-issues for root causes. Ensure they have
-# the backlog label so dev-agent picks them up. Parse Claude output for
+# the backlog label so dev-agent picks them up. Parse agent output for
 # newly created issue numbers and add the backlog label.
 if [ "$AGENT_TYPE" = "triage" ]; then
   log "Triage post-processing: checking for created issues to label..."
 
-  # Extract issue numbers from Claude output that were created during triage.
+  # Extract issue numbers from agent output that were created during triage.
   # Match unambiguous creation patterns: "Created issue #123", "Created #123",
   # or "harb#123". Do NOT match bare #123 which would capture references in
   # the triage summary (e.g., "Decomposed from #5", "cause 1 of 2", etc.).
@@ -696,7 +693,7 @@ if [ "$OUTCOME_FOUND" = true ]; then
       ;;
   esac
 else
-  # For triage agent, detect success by checking Claude output for:
+  # For triage agent, detect success by checking agent output for:
   # 1. Triage findings comment indicating root causes were found
   # 2. Sub-issues created during triage
   if [ "$AGENT_TYPE" = "triage" ]; then
@@ -741,7 +738,7 @@ if [ "$AGENT_TYPE" = "verify" ]; then
       # Re-run the reproduction to check if bug is fixed
       log "Running verification reproduction..."
 
-      # Build Claude prompt for verification mode
+      # Build agent prompt for verification mode
       SUB_ISSUE_LIST=$(_get_sub_issue_list)
       CLAUDE_PROMPT=$(cat <<PROMPT
 You are the reproduce-agent running in **verification mode**. Your task is to re-run the reproduction steps from the original bug report to verify that the bug has been fixed after all sub-issues were resolved.
@@ -785,19 +782,15 @@ Begin now.
 PROMPT
       )
 
-      # Run Claude for verification
-      log "Starting Claude verification session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
+      # Run agent for verification
+      log "Starting agent verification session (timeout: ${FORMULA_TIMEOUT_MINUTES}m)..."
 
       CLAUDE_EXIT=0
-      timeout "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" \
-        claude -p "$CLAUDE_PROMPT" \
-          --mcp-server playwright \
-          --output-format text \
-          --max-turns 40 \
-        > "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>&1 || CLAUDE_EXIT=$?
+      sidecar_agent_run "$CLAUDE_PROMPT" "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" \
+        "$(( FORMULA_TIMEOUT_MINUTES * 60 ))" || CLAUDE_EXIT=$?
 
       if [ $CLAUDE_EXIT -eq 124 ]; then
-        log "WARNING: Claude verification session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
+        log "WARNING: agent verification session timed out after ${FORMULA_TIMEOUT_MINUTES}m"
       fi
 
       # Read verification outcome
@@ -821,7 +814,7 @@ PROMPT
       if [ -f "/tmp/reproduce-findings-${ISSUE_NUMBER}.md" ]; then
         VERIFY_FINDINGS=$(cat "/tmp/reproduce-findings-${ISSUE_NUMBER}.md")
       else
-        VERIFY_FINDINGS="Verification-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+        VERIFY_FINDINGS="Verification-agent completed but did not write a findings report. agent output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
       fi
 
       # Collect screenshot paths
@@ -918,9 +911,9 @@ if [ -f "/tmp/reproduce-findings-${ISSUE_NUMBER}.md" ]; then
   FINDINGS=$(cat "/tmp/reproduce-findings-${ISSUE_NUMBER}.md")
 else
   if [ "$AGENT_TYPE" = "triage" ]; then
-    FINDINGS="Triage-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+    FINDINGS="Triage-agent completed but did not write a findings report. agent output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
   else
-    FINDINGS="Reproduce-agent completed but did not write a findings report. Claude output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
+    FINDINGS="Reproduce-agent completed but did not write a findings report. agent output:\n\`\`\`\n$(tail -100 "/tmp/reproduce-claude-output-${ISSUE_NUMBER}.txt" 2>/dev/null || echo '(no output)')\n\`\`\`"
   fi
 fi
 
