@@ -89,4 +89,15 @@ ac_assert_eq "$count" "1" \
 bash -n "$ENTRYPOINT" \
   || ac_fail "bash -n docker/reproduce/entrypoint-reproduce.sh failed"
 
+# The shared project-repos clone must be reset only after this sidecar holds
+# the stack lock and the heartbeat is running. A checkout before that races
+# every other sidecar on the same volume.
+acquire_line="$(grep -n 'stack_lock_acquire ' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
+heartbeat_line="$(grep -nF 'HEARTBEAT_PID=$!' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
+checkout_line="$(grep -n 'sidecar_project_checkout' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
+[ -n "$acquire_line" ] && [ -n "$heartbeat_line" ] && [ -n "$checkout_line" ] \
+  || ac_fail "could not locate lock, heartbeat, or checkout in the entrypoint"
+[ "$checkout_line" -gt "$acquire_line" ] && [ "$checkout_line" -gt "$heartbeat_line" ] \
+  || ac_fail "sidecar_project_checkout (line $checkout_line) must follow stack_lock_acquire (line $acquire_line) and the heartbeat (line $heartbeat_line)"
+
 ac_pass
