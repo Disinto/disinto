@@ -1,0 +1,1 @@
+{"issue":1869,"group":"nomad","title":"nomad/jobs/edge.hcl header claims the dispatcher uses Nomad batch jobs","reason":"Doc inconsistency (#1869): live edge runs the docker backend unless DISPATCHER_BACKEND=nomad; the edge.hcl header and docker/edge/dispatcher.sh comment describe the deprecated batch model. Doc/comment fix, no behavior change -> dust (dev to implement)."}

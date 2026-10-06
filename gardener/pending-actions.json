@@ -1,40 +1,7 @@
 [
   {
-    "action": "edit_body",
-    "issue": 1833,
-    "body": "\"Flagged by AI reviewer in PR #1831.\\n\\n## Problem\\n\\n`dev/dev-poll.sh` pre-lock merge scan (`pre-lock: scanning for mergeable PRs`, around the `PL_ISSUE` loop) calls `try_direct_merge` for an approved, CI-green PR assigned to `$BOT_USER` or unassigned. It never calls `issue_is_dev_claimable`. On success `try_direct_merge` merges the PR and `issue_close`s the linked issue.\\n\\nThis is a third path beside #1832 (`merge_ready_sweep` and the backlog `SKIP_LABEL` grep). It runs before the in-progress scan, so the #1825 stuck-PR skip never sees the PR. A hand-applied `awaiting-live-verification` (or any other `_ILC_NON_DEV_LABELS` label) does not stop it. Root `AGENTS.md` says dev-poll skips `awaiting-live-verification`.\\n\\nNot introduced by PR #1831. The stuck-PR scan now skips non-dev labels before merge and spawn; this pre-lock path predates that skip.\\n\\n## Failure mode\\n\\nHand-label a bot-assigned open issue `awaiting-live-verification` while its PR is approved and CI green. The next dev-poll tick can merge the PR and close the issue in the pre-lock scan, before the in-progress or stuck-PR skips run.\\n\\n---\\n*Auto-created from AI review*\\n\""
-  },
-  {
-    "action": "add_label",
-    "issue": 1833,
-    "label": "backlog"
-  },
-  {
-    "action": "edit_body",
-    "issue": 1832,
-    "body": "\"Flagged by AI reviewer in PR #1831.\\n\\n## Problem\\n\\n`issue_is_dev_claimable` (`lib/issue-lifecycle.sh`, `_ILC_NON_DEV_LABELS`, including a hand-applied `awaiting-live-verification`) is consulted only in the in-progress scan of `dev/dev-poll.sh`. Two other dev-poll paths still act on those issues. Root `AGENTS.md` says dev-poll skips `awaiting-live-verification`.\\n\\n1. `dev/merge-ready.sh` `merge_ready_sweep()` (sourced at the start of every dev-poll tick) merges any open PR that is mergeable, review-bot APPROVED on HEAD, CI green, and past `MERGE_COOLDOWN_MIN`. It checks PR labels `blocked` / `do-not-merge` only. It does not read the linked issue's labels. On success it calls `issue_close` on the linked issue. A bot-assigned open issue that a human labeled `awaiting-live-verification` (or `vision`, `bug-report`, etc.) can therefore be merged and closed before the live check.\\n\\n2. The backlog scan (`dev/dev-poll.sh`, around the `SKIP_LABEL` grep) skips `formula`, `prediction/dismissed`, `prediction/unreviewed`, `waiting-on-compute`, `experiment`, `run`, and `judgment` only. It does not call `issue_is_dev_claimable`. An issue that still carries `backlog` plus `awaiting-live-verification`, `vision`, `bug-report`, `action`, or `in-triage` can be claimed and spawned.\\n\\nThis is pre-existing. It is not the in-progress-scan fall-through into the stuck-PR scan (that hole is in scope for PR #1831 / #1825).\\n\\n## Failure mode\\n\\nHand-label an open issue `awaiting-live-verification` while its PR is approved, CI green, and mergeable. The next dev-poll tick's merge-ready sweep can merge the PR and close the issue. Separately, a `backlog` issue with that label can be picked up as new work.\\n\\n---\\n*Auto-created from AI review*\\n\""
-  },
-  {
-    "action": "add_label",
-    "issue": 1832,
-    "label": "backlog"
-  },
-  {
-    "action": "comment",
-    "issue": 1812,
-    "comment": "This doc fix is already in main: `nomad/AGENTS.md` woodpecker-server row reads \"bridge network with static ports (8000 http / 9000 grpc)\" \u2014 matching `nomad/jobs/woodpecker-server.hcl` (no `network_mode=host`; `static = 8000` / `static = 9000`). Verified current. Dust item resolved; closing."
-  },
-  {
     "action": "close",
-    "issue": 1812
-  },
-  {
-    "action": "comment",
-    "issue": 1818,
-    "comment": "Fixed in this housekeeping PR: `lib/AGENTS.md` `generate_caddyfile()` entry now documents the default `subpath` mode routing (`/ci/*` \u2192 woodpecker:8000, per `_generate_caddyfile_subpath()` in `lib/generators.sh`) plus the `subdomain` mode. The `/woodpecker/*` claim was a lie (the generated subpath Caddyfile uses `handle /ci/*`). Closing as resolved."
-  },
-  {
-    "action": "close",
-    "issue": 1818
+    "issue": 1880,
+    "reason": "Doc inconsistency corrected by gardener in this run (dev/AGENTS.md reference validation): the emit_tape_outcome() (dev-poll, #1399) paragraph no longer misdescribes its tape as writing ci_red=${PR_WALK_CI_RED:-0} / review_rounds=${PR_WALK_REVIEW_ROUNDS:-0}; those belong to the dev-agent close_dev_tape_outcome (#1616). Corrected to the real shape {review_rounds (REQUEST_CHANGES from one forge call), duration_s}. Fix lands in this PR; no behavior change. Closed by the gardener run."
   }
 ]

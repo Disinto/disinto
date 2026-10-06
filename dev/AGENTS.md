@@ -1,4 +1,4 @@
-<!-- last-reviewed: 9f52a6ed5f4c5886137f4daa1c1cfdaf19f75794 -->
+<!-- last-reviewed: 6eecb237066aacfcde6354661bd9a4bf21af195d -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
@@ -112,10 +112,7 @@ construction), closed by stale-branch abandonment, or its CI fixes exhausted (a
 single `ci_exhausted_poll` outcome emitted by `handle_ci_exhaustion()` **before**
 `issue_block` marks the issue blocked, #1609) — `emit_tape_outcome()` appends one
 `{"type":"outcome","proposal_id":...}` record to the tape keyed off the stored id:
-bits `{"merged":0|1,"ci_green":0|1}` plus `"ci_first_green":0|1` (the PR's first Woodpecker `pull_request` pipeline finished green 1 or red 0, `lib/ci-first-green.sh`; left out when unknown, e.g. Woodpecker unreachable or that pipeline not finished), numbers `{"ci_red":<c>,
-"review_rounds":<n>}` (#1616: `ci_red` = every CI failure the walk observed,
-`${PR_WALK_CI_RED:-0}`; `review_rounds` = `${PR_WALK_REVIEW_ROUNDS:-0}` REQUEST_CHANGES
-rounds — both `0` when no walk ran), plus `{"duration_s":<s>}` (#1452:
+bits `{"merged":0|1,"ci_green":0|1}` plus `"ci_first_green":0|1` (the PR's first Woodpecker `pull_request` pipeline finished green 1 or red 0, `lib/ci-first-green.sh`; left out when unknown, e.g. Woodpecker unreachable or that pipeline not finished), numbers `{"review_rounds":<n>}` (REQUEST_CHANGES reviews on the PR from one forge call, `${API}/pulls/<pr>/reviews`; `0` when the call fails or the response is not a review array), plus `{"duration_s":<s>}` (#1452:
 wall-clock pick→terminal seconds, now − start,
 integer, clamped ≥ 0; omitted — never 0 — when the started file is missing or
 not an integer), children `{}`, payloads `[]`; and, when the caller passes a
