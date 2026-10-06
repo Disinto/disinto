@@ -218,11 +218,9 @@ export HOME=/home/agent
 # shellcheck source=lib/env.sh
 source "${DISINTO_BAKED}/lib/env.sh"
 
-# Claude CLI auth gate (#733). Tasks that reuse this image but never invoke
-# claude (e.g. ops-repo pollers) would trip the check spuriously. Set
-# AGENT_REQUIRES_CLAUDE=0 in those task blocks to skip the gate; default
-# (unset / non-zero) preserves the behavior expected by review/architect/dev/etc.
-if [ "${AGENT_REQUIRES_CLAUDE:-1}" != "0" ]; then
+# Claude CLI auth gate (#733). Only an agent with AGENT_HARNESS=claude runs
+# the Claude CLI; dsh, the default (#1683), needs neither the CLI nor a login.
+if [ "${AGENT_HARNESS:-}" = "claude" ]; then
   # Verify Claude CLI is available (expected via volume mount from host).
   if ! command -v claude &>/dev/null; then
     log "FATAL: claude CLI not found in PATH."
@@ -257,7 +255,7 @@ if [ "${AGENT_REQUIRES_CLAUDE:-1}" != "0" ]; then
     log "Run 'claude auth login' on the host, or set ANTHROPIC_API_KEY in .env"
   fi
 else
-  log "Claude auth gate: skipped (AGENT_REQUIRES_CLAUDE=0)"
+  log "Claude auth gate: skipped (AGENT_HARNESS is not claude)"
 fi
 
 # Bootstrap ops repos for each project TOML (#586).
