@@ -1,4 +1,4 @@
-<!-- last-reviewed: 7cba4b55a738d370d85bc9a9973f8b78fea379b6 -->
+<!-- last-reviewed: 59ba3b9e3b543fcb12cbd515762401966ab8caac -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -16,7 +16,7 @@ see issues #821–#992 for the step breakdown.
 | `nomad/client.hcl` | /etc/nomad.d/client.hcl | Docker driver cfg + `host_volume` declarations (S0.2); `allow_privileged = true` for woodpecker-agent Docker-in-Docker (S3-fix-5, #961) |
 | `nomad/vault.hcl`  | /etc/vault.d/vault.hcl  | Vault storage, listener, UI, `disable_mlock` (S0.3; install-time capability check flips it to `true` when the host's bounding set lacks CAP_IPC_LOCK, #1285) |
 | `nomad/jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
-| `nomad/jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; host networking, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
+| `nomad/jobs/woodpecker-server.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI server; bridge network with static ports (8000 http / 9000 grpc) matching the compose setup, Vault KV for `WOODPECKER_AGENT_SECRET` + Forgejo OAuth creds (S3.1) |
 | `nomad/jobs/woodpecker-agent.hcl` | submitted via `lib/init/nomad/deploy.sh` | Woodpecker CI agent; host networking, `docker.sock` mount, Vault KV for `WOODPECKER_AGENT_SECRET`; `WOODPECKER_SERVER` uses `${attr.unique.network.ip-address}:9000` (Nomad interpolation) — port binds to LXC alloc IP, not localhost (S3.2, S3-fix-6, #964) |
 | `nomad/jobs/agents.hcl` | submitted via `lib/init/nomad/deploy.sh` | All 7 agent roles (dev, review, gardener, planner, predictor, supervisor, architect) + llama variant; Vault-templated bot tokens via `service-agents` policy; `force_pull = false` — image is built locally by `bin/disinto --with agents`, no registry (S4.1, S4-fix-2, S4-fix-5, #955, #972, #978); `FORGE_FILER_TOKEN` rendered via `service-filer` policy (#1114); the `dev` role sets the Porter-door env vars (`PORTER_SSH_TARGET`, `PORTER_JEV_KEY`, `PORTER_JEV_KNOWN_HOSTS`) — kept for `tools/jev-scope.sh`, but no longer called by `dev-poll.sh` since #1632 (Jev reading dropped from the tape context) — the key lives on the agent-data volume at `/home/agent/data`, no API key in the job (AD-005) |
 | `nomad/jobs/staging.hcl` | submitted via `lib/init/nomad/deploy.sh` | Caddy file-server mounting `docker/` as `/srv/site:ro`; no Vault integration; **dynamic host port** (no static 80 — edge owns 80/443, collision fixed in S5-fix-7 #1018); edge discovers via Nomad service registration (S5.2, #989) |
