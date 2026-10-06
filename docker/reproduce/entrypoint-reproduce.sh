@@ -15,7 +15,7 @@
 #
 # Volumes expected:
 #   /home/agent/data          — agent-data volume (stack-lock files go here)
-#   /home/agent/repos         — project-repos volume
+#   /home/agent/repos         — project-repos volume (the sidecar's own clone, docker/reproduce/project-checkout.sh)
 #   /home/agent/.ssh          — host ~/.ssh (read-only)
 #   /var/run/docker.sock      — host docker socket
 
@@ -112,6 +112,11 @@ export PROJECT_NAME
 PROJECT_REPO_ROOT="/home/agent/repos/${PROJECT_NAME}"
 export PROJECT_REPO_ROOT
 export OPS_REPO_ROOT="${OPS_REPO_ROOT:-/home/agent/repos/${PROJECT_NAME}-ops}"
+
+# shellcheck source=docker/reproduce/project-checkout.sh
+source "${DISINTO_DIR}/docker/reproduce/project-checkout.sh"
+sidecar_project_checkout \
+  || log "WARNING: could not check out ${FORGE_REPO} at ${PROJECT_REPO_ROOT}; continuing without it"
 
 if [ "$AGENT_TYPE" = "triage" ]; then
   log "Starting triage-agent for issue #${ISSUE_NUMBER} (project: ${PROJECT_NAME})"
