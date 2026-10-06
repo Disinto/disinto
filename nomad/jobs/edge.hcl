@@ -15,7 +15,7 @@
 # dynamic address:port for each backend.
 #
 # Host_volume contract:
-#   This job mounts caddy-data, tape, claude-shared and factory-projects (read-only) from nomad/client.hcl.
+#   This job mounts caddy-data, tape and factory-projects (read-only) from nomad/client.hcl.
 #   Paths /srv/disinto/caddy-data and /srv/disinto/tape are created by
 #   lib/init/nomad/cluster-up.sh before any job references them. Keep the
 #   `source = "caddy-data"` and `source = "tape"` below in sync with the
@@ -62,16 +62,6 @@ job "edge" {
     volume "caddy-data" {
       type      = "host"
       source    = "caddy-data"
-      read_only = false
-    }
-
-    # claude-shared: OAuth session the dispatcher probes before bind-mounting
-    # it into the reproduce/triage/verify sidecars (dispatcher.sh,
-    # #1758 / #1776). The caddy mount is read-only: docker.sock resolves -v
-    # on the host. Not a chat mount (#1770).
-    volume "claude-shared" {
-      type      = "host"
-      source    = "claude-shared"
       read_only = false
     }
 
@@ -169,14 +159,6 @@ job "edge" {
         volume      = "tape"
         destination = "/srv/disinto/tape"
         read_only   = false
-      }
-
-      # Dispatcher probe: the OAuth dir must exist inside this container
-      # or sidecar launches skip the session mount (#1758 / #1776).
-      volume_mount {
-        volume      = "claude-shared"
-        destination = "/var/lib/disinto/claude-shared"
-        read_only   = true
       }
 
       # ── Caddyfile via Nomad service discovery (S5-fix-7, issue #1018/1156) ──

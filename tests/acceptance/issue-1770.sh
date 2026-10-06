@@ -7,10 +7,10 @@
 # (threads-state, snapshot-state, inbox-state) are gone. The forge PAT
 # template, FACTORY_FORGE_PAT_FILE, and the snapshot task stay.
 #
-# The dispatcher still probes the OAuth dir inside the caddy container, so
-# the claude-shared volume mount stays (read-only). The snapshot task is
-# raw_exec and still sets INBOX_ROOT to the host sentinel path. A whole-file
-# ban on those two strings would lock in that break.
+# #1846 removed the claude-shared OAuth probe mount — the sidecars now run
+# dsh against DSH_BASE_URL and never `claude -p`. The snapshot task is
+# raw_exec and still sets INBOX_ROOT to the host sentinel path; a whole-file
+# ban on "inbox-state" would lock in that break.
 #
 # Read-only: greps nomad/jobs/edge.hcl. Does not submit a job or open a socket.
 #
@@ -33,12 +33,6 @@ ac_log "checking edge.hcl has no chat/voice secrets or env"
 if grep -nE 'gemini-api-key|chat-oauth|nomad-token|CHAT_|VOICE_|GEMINI|EDGE_TUNNEL_FQDN|EDGE_ROUTING_MODE|FORGE_PUBLIC_URL|CLAUDE_CONFIG_DIR|threads-state' "$SPEC"; then
   ac_fail "edge.hcl still references chat/voice secrets, env, or the threads-state mount"
 fi
-
-ac_log "checking the dispatcher OAuth volume stays mounted read-only"
-grep -Fq 'source    = "claude-shared"' "$SPEC" \
-  || ac_fail "edge.hcl must still declare volume source claude-shared"
-grep -A2 -F 'volume      = "claude-shared"' "$SPEC" | grep -Fq 'read_only   = true' \
-  || ac_fail "caddy must mount claude-shared read-only so the dispatcher can probe it"
 
 ac_log "checking the snapshot task still writes inbox sentinels on the host path"
 grep -Fq 'INBOX_ROOT    = "/srv/disinto/inbox-state"' "$SPEC" \
