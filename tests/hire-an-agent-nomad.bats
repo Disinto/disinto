@@ -82,6 +82,7 @@ _render() {
     source "$HIRE_LIB" 2>/dev/null
     disinto_hire_an_agent_nomad \
       "labbot" "dev" "http://10.0.0.1:8081" "qwen" "300" "lab" "tok" "pw" \
+      "claude" \
       >"$TMP/stdout" 2>"$TMP/stderr"
   ) || rc=$?
   echo "${rc:-0}" > "$TMP/rc"

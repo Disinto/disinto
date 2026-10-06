@@ -79,22 +79,22 @@ job "bot-labbot" {
       }
 
       env {
-        FORGE_REPO          = "disinto-admin/disinto"
-        FACTORY_REPO        = "disinto-admin/disinto"
-        AGENT_HARNESS       = "dsh"
-        DSH_HOME            = "/home/agent/data/dsh"
-        DSH_PERMISSION_MODE = "danger-full-access"
-        DSH_MODEL           = "qwen"
-        DSH_BASE_URL        = "http://10.0.0.1:8081"
-        DSH_CONTEXT_WINDOW  = "100000"
-        # settings.yaml uses apiKeyEnv indirection; llama-server ignores
-        # the key but dsh requires the env to be set (#1234).
-        LLAMACPP_API_KEY    = "sk-no-key-required"
-        AGENT_ROLES         = "dev"
-        POLL_INTERVAL       = "300"
-        DISINTO_CONTAINER   = "1"
-        PROJECT_NAME        = "lab"
-        PROJECT_REPO_ROOT   = "/home/agent/repos/lab"
+        FORGE_REPO         = "disinto-admin/disinto"
+        FACTORY_REPO       = "disinto-admin/disinto"
+        AGENT_HARNESS      = "claude"
+        ANTHROPIC_BASE_URL = "http://10.0.0.1:8081"
+        ANTHROPIC_API_KEY  = "sk-no-key-required"
+        CLAUDE_MODEL       = "qwen"
+        AGENT_ROLES        = "dev"
+        POLL_INTERVAL      = "300"
+        DISINTO_CONTAINER  = "1"
+        PROJECT_NAME       = "lab"
+        PROJECT_REPO_ROOT  = "/home/agent/repos/lab"
+        CLAUDE_TIMEOUT     = "7200"
+        CLAUDE_MAX_TURNS   = "60"
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS   = "1"
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE          = "60"
       }
 
       template {
