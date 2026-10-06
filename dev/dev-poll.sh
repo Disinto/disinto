@@ -37,6 +37,8 @@ source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 source "$(dirname "$0")/../lib/tape.sh"
 # shellcheck source=../lib/tape-outcome-guard.sh
 source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
+# shellcheck source=../lib/ci-first-green.sh
+source "$(dirname "$0")/../lib/ci-first-green.sh"
 # shellcheck source=../lib/sprint-block.sh
 source "$(dirname "$0")/../lib/sprint-block.sh"
 # shellcheck source=../lib/sprint-tape.sh
@@ -549,7 +551,9 @@ issue_is_ready() {
 # (stale-branch abandonment), append one outcome record to the tape keyed
 # off the proposal id file written at pick time:
 #
-#   bits    = {"merged":0|1,"ci_green":0|1}  (code-derived 0|1, never prose)
+#   bits    = {"merged":0|1,"ci_green":0|1} plus ci_first_green 0|1 when the
+#             PR's first pull_request pipeline is known (#1877, lib/ci-first-green.sh);
+#             omitted when unknown. Code-derived 0|1, never prose.
 #   numbers = {"review_rounds":<n>}          (REQUEST_CHANGES reviews, one call)
 #           + {"duration_s":<s>} (#1452)     wall-clock pick→terminal seconds,
 #             now - start, integer, clamped ≥ 0; omitted (never 0) when the
@@ -606,6 +610,8 @@ emit_tape_outcome() {
 
   bits="$(jq -cn --argjson m "$merged" --argjson c "$ci_green" \
     '{merged: $m, ci_green: $c}')"
+  # The PR's first CI pipeline; the bit is left out when unknown.
+  bits="$(ci_first_green_bits "$pr_num" "$bits" 2>/dev/null || printf '%s' "$bits")"
   if [ "$has_duration" = 1 ]; then
     numbers="$(jq -cn --argjson n "$review_rounds" --argjson d "$duration_s" \
       '{review_rounds: $n, duration_s: $d}')"
