@@ -6,12 +6,9 @@
 # chat/voice surface — chat-server.py + UI, chat-skills/templates, disinto-mcp,
 # the voice bridge + UI, or the voice venv (google-genai / websockets).
 #
-# The Claude Code CLI install is KEPT, not dropped: it is a shared runtime
-# dependency of the live reproduce/triage/verify sidecars, which run on
-# docker/reproduce (no CLI installed) and mount /usr/local/bin/claude (ro)
-# from this image; entrypoint-reproduce.sh:126 FATALs without it and
-# dispatcher.sh:1217 skips the mount when it is absent. Dropping the CLI here
-# would break the live bug-report lifecycle.
+# The Claude Code CLI is not part of this check. #1845 dropped it from the
+# edge image: reproduce/triage/verify sidecars run dsh against the local model
+# and no longer mount /usr/local/bin/claude.
 #
 # Read-only: greps docker/edge/Dockerfile. The image build itself is verified
 # in CI by .woodpecker/build-edge.yml after merge.
@@ -35,10 +32,6 @@ ac_log "checking the chat/voice surface is gone from the image"
 if grep -nE 'chat-server|chat/ui|chat-skills|chat-settings|chat-mcp|disinto-mcp|voice-bridge|voice/ui|voice-venv|google-genai|websockets' "$SPEC"; then
   ac_fail "docker/edge/Dockerfile still bakes in the chat/voice surface"
 fi
-
-ac_log "checking the CLI remains for the reproduce/triage/verify sidecars"
-grep -q 'claude-code' "$SPEC" \
-  || ac_fail "claude-code missing from docker/edge/Dockerfile — the reproduce/triage/verify sidecars FATAL without it (dispatcher.sh:1217, entrypoint-reproduce.sh:126)"
 
 ac_log "checking engagement-server.py, nomad, and entrypoint-edge.sh remain"
 grep -q 'engagement-server.py' "$SPEC" \
