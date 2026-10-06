@@ -11,8 +11,10 @@
 #      same jobspec. An explicit `--harness claude` emits AGENT_HARNESS=claude
 #      plus the CLAUDE_* block, pinned by jobspec-claude.hcl. Neither omits
 #      AGENT_HARNESS (#1683: omission means dsh).
-#      Compose: the default compose hire still emits AGENT_HARNESS=claude,
-#      pinned by compose-default.yml.
+#      Compose: the generator pin (a TOML with no harness key,
+#      `_write_default_toml`) still emits AGENT_HARNESS=claude, pinned by
+#      compose-default.yml. That is not the hire path: a default hire writes
+#      harness = "dsh". The absent-key generator fallback is #1854.
 #   2. `--harness dsh` emits dsh's own settings-form variables (AGENT_HARNESS,
 #      DSH_HOME, DSH_PERMISSION_MODE, DSH_MODEL, DSH_BASE_URL,
 #      DSH_CONTEXT_WINDOW) and no CLAUDE_* / ANTHROPIC_* tuning variables —

@@ -48,7 +48,7 @@ The command performs these steps:
    - `forge_user = "dev-qwen"`
    - `compact_pct = 60`
    - `poll_interval = 60`
-   - `harness` and `context_window` (written only with `--harness dsh`)
+   - `harness` and `context_window` (a dsh hire — the default, and an explicit `--harness dsh` — writes both; only `--harness claude` omits them)
 5. **Brings the agent up per backend**:
    - **Compose boxes** (no `nomad` CLI, or no live projects dir): the TOML is
      written to `${FACTORY_ROOT}/projects/` and `docker-compose.yml` is
@@ -251,7 +251,7 @@ poll_interval = 60
 | `forge_user` | Forgejo bot username |
 | `compact_pct` | Context compaction threshold (lower = more aggressive) |
 | `poll_interval` | Seconds between polling cycles |
-| `harness` | Agent harness: `claude` (default) or `dsh`. The TOML key is written only for `--harness dsh`; a claude hire omits it, and the generated env still sets `AGENT_HARNESS=claude`. An unset `AGENT_HARNESS` runs dsh (#1683). |
+| `harness` | Agent harness: `dsh` (default) or `claude`. A dsh hire (the default, and an explicit `--harness dsh`) writes the TOML key; only `--harness claude` omits it. An absent key still generates `AGENT_HARNESS=claude` until #1854. An unset `AGENT_HARNESS` runs dsh (#1683). |
 | `context_window` | Context window in tokens for a dsh agent (default `100000`). Written only alongside `harness = "dsh"` |
 
 ## Behaviour
