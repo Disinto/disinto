@@ -61,7 +61,8 @@ and executes the pending-actions manifest post-merge.
   once per `CLAIM_CHECK_INTERVAL_S` (default 86400); the first miss writes a
   `contradicted` outcome. A failure only logs a warning.
   A claim whose checks pass for its whole `window` gets a `held` outcome;
-  checks go on, and a later miss still contradicts it (#1643).
+  checks go on, and a later miss still contradicts it (#1643). The check's
+  probe reads the same window (`PROBE_WINDOW_DAYS`, `PROBE_WINDOW_S`).
   Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or
   `prediction/dismissed` issue the tape does not hold yet as a rejected dev
   proposal. A failure only logs a warning.

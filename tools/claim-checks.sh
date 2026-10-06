@@ -46,6 +46,7 @@
 #   TAPE_DIR                 tape directory (default /srv/disinto/tape)
 #   CLAIM_CHECK_INTERVAL_S   minimum seconds between checks (default 86400)
 #   PROBE_TIMEOUT_S          probe wall clock (default 300, lib/probe.sh)
+#   PROBE_WINDOW_DAYS, PROBE_WINDOW_S  set for the probe from the claim's window (days rounded up, seconds exact).
 #
 # Exit codes:
 #   0  every due claim was checked or skipped (invalid, challenged, interval,
@@ -191,12 +192,18 @@ _check_claim() {
 
   check="$(claim_field "$id" check)" || check=""
   expect="$(claim_field "$id" expect)" || expect=""
+  window="$(claim_field "$id" window)" || window=""
+  window_s="$(sprint_duration_seconds "$window")"
 
   started_epoch="$(date -u +%s)"
   started="$(_check_iso)"
   reason_file="$(mktemp)"
   prc=0
-  value="$(probe_value "$check" 2>"$reason_file")" || prc=$?
+  if [[ "$window_s" =~ ^[0-9]+$ ]] && [ "$window_s" -gt 0 ]; then
+    value="$(export PROBE_WINDOW_S="$window_s" PROBE_WINDOW_DAYS="$(( (window_s + 86399) / 86400 ))"; probe_value "$check" 2>"$reason_file")" || prc=$?
+  else
+    value="$(probe_value "$check" 2>"$reason_file")" || prc=$?
+  fi
   ended_epoch="$(date -u +%s)"
   ended="$(_check_iso)"
   duration_s=$(( ended_epoch - started_epoch ))
@@ -241,8 +248,6 @@ _check_claim() {
       fi
       log "claim ${id}: contradicted (value ${value}, expect ${expect})"
     elif [ "$expect_rc" -eq 0 ]; then
-      window="$(claim_field "$id" window)" || window=""
-      window_s="$(sprint_duration_seconds "$window")"
       if _claim_hold_due "$pid" "$window_s"; then
         numbers="$(jq -cn --arg v "$value" '{value: ($v | tonumber)}')" || {
           log "WARNING: value for claim ${id} is not a JSON number — outcome not written"
