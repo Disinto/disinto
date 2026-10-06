@@ -109,8 +109,7 @@ client {
     read_only = false
   }
 
-  # Shared Claude OAuth session volume — the same volume the edge job and
-  # the opus agents source for the refreshed OAuth session (#648).
+  # Shared Claude OAuth session volume (#648). No job mounts it since #1846; still declared, and created by cluster-up.sh.
   host_volume "claude-shared" {
     path      = "/var/lib/disinto/claude-shared"
     read_only = false
