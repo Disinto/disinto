@@ -2,6 +2,7 @@
 # CLAUDE_TIMEOUT 7200 also appears in nomad/jobs/agents-*-grok.hcl, copied from the qwen
 # jobs (2026-10-03); the default is unchanged.
 # #1687 edits the lib/AGENTS.md row that mentions CLAUDE_TIMEOUT; the default stays 7200.
+# #1847 lib/dsh-oneshot.sh falls back via ${CLAUDE_TIMEOUT:-7200}; the default stays 7200.
 # =============================================================================
 # tests/hire-an-agent-nomad.bats — Tests for the Nomad backend of
 #   disinto hire-an-agent (#1073)
@@ -128,10 +129,11 @@ _render() {
   _render
   grep -q 'FORGE_REPO *= *"disinto-admin/disinto"' "$JOBSPEC_OUT"
   # CLAUDE_TIMEOUT pins the 7200s wall-clock default shared by the agent
-  # harnesses (lib/agent-sdk.sh watchdog and lib/agent-harness-dsh.sh, both
-  # falling back via ${CLAUDE_TIMEOUT:-7200} — the dsh harness gains a
-  # timeout fallback metrics record in #1186): moving that default must
-  # move this pin in the same PR (defaults-golden check, #1261).
+  # harnesses (lib/agent-sdk.sh watchdog, lib/agent-harness-dsh.sh, and
+  # lib/dsh-oneshot.sh, each falling back via ${CLAUDE_TIMEOUT:-7200} —
+  # the dsh harness gains a timeout fallback metrics record in #1186;
+  # #1847 reuses the same default, it does not move it): moving that
+  # default must move this pin in the same PR (defaults-golden check, #1261).
   grep -q 'CLAUDE_TIMEOUT *= *"7200"' "$JOBSPEC_OUT"
   grep -q 'CLAUDE_MAX_TURNS *= *"60"' "$JOBSPEC_OUT"
   grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE *= *"60"' "$JOBSPEC_OUT"
