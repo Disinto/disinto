@@ -26,7 +26,11 @@ all assignee checks. Guard skips issues labeled `formula`, `prediction/dismissed
 `prediction/unreviewed`, `waiting-on-compute` (readiness flag: work waiting on an
 external run — see root AGENTS.md label table, #1072), or `experiment` / `run` /
 `judgment` (research-template issues, #1295 — skipped even when queued with backlog,
-#1306). **Race prevention**: checks issue assignee before claiming —
+#1306). The backlog scan additionally calls `issue_is_dev_claimable` on the
+issue's labels, so an issue still carrying `awaiting-live-verification`,
+`vision`, `bug-report`, `action`, or `in-triage` (the rest of
+`_ILC_NON_DEV_LABELS`) is skipped as non-dev work rather than claimed and spawned
+(#1832). **Race prevention**: checks issue assignee before claiming —
 skips if assigned to a different bot user. **Stale branch abandonment**: closes PRs and
 deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fresh
 start); the branch tested/deleted is the found PR's actual `head.ref`, so retry
@@ -127,7 +131,7 @@ called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY 
 PR that is mergeable, has no `blocked`/`do-not-merge` label, has a review-bot
 APPROVED pinned to the current HEAD, no review-bot REQUEST_CHANGES on the HEAD,
 CI success on the HEAD, and an approval older than `MERGE_COOLDOWN_MIN` (default
-30 min — human veto window), regardless of issue assignee. Runs as dev-bot (the
+30 min — human veto window), regardless of issue assignee; and, when it links an issue (via `extract_issue_from_pr`'s #1671 chore gate plus the closing-keyword title rule), that issue must be dev-claimable - no non-dev label (`awaiting-live-verification`, `vision`, `bug-report`, etc.) - or the PR is skipped rather than merged and closed before a human's live check runs (#1832). Runs as dev-bot (the
 review identity never merges what it approved). This lands ops/gardener PRs (no
 linked issue) and clears orphaned APPROVED PRs that the author's own-PR scan would
 skip (#1250/#1259). Post-merge housekeeping (mirror_push, linked-issue close via

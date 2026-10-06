@@ -11,11 +11,16 @@
 #   - no review-bot REQUEST_CHANGES on the current HEAD
 #   - CI success on HEAD (ci_commit_status)
 #   - approval older than MERGE_COOLDOWN_MIN (default 30) — human veto window
+ #   - if it links an issue (via extract_issue_from_pr's #1671 chore gate +
+ #     closing-keyword title rule), that issue is dev-claimable - no non-dev
+ #     label (awaiting-live-verification, vision, bug-report, ...); the sweep
+ #     must not land code a human held behind a live check (#1832)
 #
 # Runs as dev-bot (merge identity); review stays independent (review-bot
 # never merges what it approves). Called from dev-poll.sh each tick.
 # Expects: forge_api, ci_commit_status, pr_merge, pr_merge_block_clear,
 #          pr_live_reviews, pr_live_review_count, mirror_push, issue_close,
+#          extract_issue_from_pr, issue_is_dev_claimable,
 #          log, FORGE_API, FORGE_TOKEN, PROJECT_NAME.
 # shellcheck disable=SC2154  # sourced context provides API/helpers
 
@@ -59,6 +64,32 @@ merge_ready_sweep() {
     ci_state=$(ci_commit_status "$sha" 2>/dev/null) || ci_state="unknown"
     [ "$ci_state" = "success" ] || { log "merge-ready: PR #${num} approved but CI=${ci_state} — skipping"; continue; }
 
+    # --- linked-issue non-dev label gate (#1832) ---
+    # The sweep merges PRs it never claimed, so the linked issue's labels —
+    # not just the PR's blocked/do-not-merge labels — decide whether the code
+    # may land. A human hand-labeled the issue awaiting-live-verification (or
+    # vision, bug-report, etc.) to hold the code behind a live check; the pre-fix
+    # sweep merged and issue_closed that issue before the check ran.
+    # extract_issue_from_pr carries the #1671 chore gate (a housekeeping chore
+    # branch returns nothing — such a PR has no issue and stays mergeable) and
+    # the closing-keyword title rule (bare #N in a title/body never names an
+    # issue), so only a genuinely linked issue is gated; a real linked issue
+    # must be dev-claimable or the PR is skipped.
+    local linked_issue
+    linked_issue=$(extract_issue_from_pr \
+      "$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')" \
+      "$(printf '%s' "$pr_json" | jq -r '.title // empty')" \
+      "$(printf '%s' "$pr_json" | jq -r '.body // empty')" || true)
+    if [ -n "$linked_issue" ] && [ "$linked_issue" != "0" ]; then
+      local linked_labels
+      linked_labels=$(forge_api GET "/issues/${linked_issue}" 2>/dev/null \
+        | jq -r '[.labels[].name] | join(",")' 2>/dev/null || true)
+      if ! issue_is_dev_claimable "${linked_labels:-}"; then
+        log "merge-ready: PR #${num} linked issue #${linked_issue} has non-dev label(s) [${linked_labels:-}] — skipping (#1832)"
+        continue
+      fi
+    fi
+
     log "merge-ready: merging PR #${num} (approved, CI green, mergeable)"
     if pr_merge "$num" 2>/dev/null; then
       log "merge-ready: PR #${num} merged"
@@ -68,18 +99,10 @@ merge_ready_sweep() {
       git -C "${PROJECT_REPO_ROOT:-}" checkout "${PRIMARY_BRANCH:-}" 2>/dev/null || true
       git -C "${PROJECT_REPO_ROOT:-}" pull --ff-only origin "${PRIMARY_BRANCH:-}" 2>/dev/null || true
       mirror_push
-      # linked-issue cleanup: reuse dev-poll's extract_issue_from_pr, which
-      # carries the #1671 chore gate (a housekeeping chore branch returns
-      # nothing, so its mention of #N closes no issue — the merge sweeper is
-      # exactly the path that closed the issue its PR merely mentioned) and the
-      # closing-keyword title rule (bare #N in a title no longer names an issue).
-      # This replaces the sweep's own over-eager inline extraction (bare #N,
-      # last match, no chore gate).
-      local linked_issue
-      linked_issue=$(extract_issue_from_pr \
-        "$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')" \
-        "$(printf '%s' "$pr_json" | jq -r '.title // empty')" \
-        "$(printf '%s' "$pr_json" | jq -r '.body // empty')" || true)
+      # linked-issue cleanup (extracted before the merge, reusing dev-poll's
+      # extract_issue_from_pr — #1671 chore gate + closing-keyword title rule:
+      # this replaces the sweep's own over-eager inline extraction (bare #N,
+      # last match, no chore gate))
       if [ -n "$linked_issue" ] && [ "$linked_issue" != "0" ]; then
         issue_close "$linked_issue"
         # Remove in-progress label
