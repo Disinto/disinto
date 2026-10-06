@@ -44,9 +44,11 @@
 #   - Seeded on fresh boxes by tools/vault-seed-agents.sh.
 #
 # This is a live dev job: the production factory runs the Nomad+Vault
-# backend (docs/updating-factory.md) and submits this spec with
-# `nomad job run` (lib/init/nomad/deploy.sh). Change the dev role here,
-# not in the generated docker-compose.yml.
+# backend (docs/updating-factory.md). Register it with a direct
+# `nomad job run` or the CI rebuild-and-deploy-agents step
+# (.woodpecker/ci.yml), not lib/init/nomad/deploy.sh. `--with agents`
+# submits the stopped all-roles agents.hcl, not this spec (#1522).
+# Change the dev role here, not in the generated docker-compose.yml.
 # =============================================================================
 
 job "agents-dev-qwen" {

@@ -58,4 +58,26 @@ if ! grep -q 'Stopped on the production factory' "$JOBS_DIR/agents.hcl"; then
   ac_fail "agents.hcl must say it is stopped on the production factory, not pending cutover"
 fi
 
+# Init's DEPLOY_ORDER never passes these names to deploy.sh. `--with agents`
+# submits agents.hcl. Claiming deploy.sh registers them invites a second
+# polling loop beside the live per-role jobs (#1522).
+per_role_specs=(
+  agents-dev-qwen.hcl
+  agents-review-qwen.hcl
+  agents-supervisor-opus.hcl
+)
+ac_log "checking per-role jobs are not claimed to be submitted by deploy.sh"
+for spec in "${per_role_specs[@]}"; do
+  path="$JOBS_DIR/$spec"
+  if grep -q 'submits this spec with' "$path" || grep -q 'deploy.sh).' "$path"; then
+    ac_fail "$spec must not claim lib/init/nomad/deploy.sh submits it"
+  fi
+  if ! grep -q 'not lib/init/nomad/deploy.sh' "$path"; then
+    ac_fail "$spec must say deploy.sh does not register it"
+  fi
+  if ! grep -q -- '--with agents`' "$path" || ! grep -q 'not this spec' "$path"; then
+    ac_fail "$spec must say --with agents submits agents.hcl, not this spec"
+  fi
+done
+
 echo PASS
