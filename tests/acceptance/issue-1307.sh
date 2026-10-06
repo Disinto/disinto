@@ -8,7 +8,7 @@
 # meta (image + artifacts_csv) against a parameterized vault-runner jobspec
 # whose task image is ${NOMAD_META_image} and which mounts a WRITEABLE
 # host-volume artifacts dir at /artifacts; the Docker backend runs the
-# action's image (default disinto/agents:latest) with a per-action bind
+# action's image (default $VAULT_RUNNER_IMAGE, else disinto/agents:latest) with a per-action bind
 # under /artifacts. An action without `image` must still run the default
 # agents image. Unknown action fields must still fail validation.
 #
@@ -25,7 +25,7 @@
 #      image=<action image> when set, image=disinto/agents:local when the
 #      action omits it; artifacts_csv is always passed.
 #   4. _launch_runner_docker uses the action image with a
-#      disinto/agents:latest default and mounts /artifacts.
+#      $VAULT_RUNNER_IMAGE else disinto/agents:latest default and mounts /artifacts.
 #   5. Regression: a TOML with an unknown field still fails validation with
 #      an 'Unknown fields' error.
 #   6. SCHEMA.md documents the dispatch behaviour (image default, /artifacts,
@@ -198,15 +198,15 @@ ac_log "dry-run: empty action image defaults to disinto/agents:local"
 FN_DOCKER=$(ac_extract_fn _launch_runner_docker "$DISPATCHER")
 [ -n "$FN_DOCKER" ] \
   || ac_fail "could not extract _launch_runner_docker from docker/edge/dispatcher.sh"
-grep -qF 'local image_name="${image:-disinto/agents:latest}"' <<<"$FN_DOCKER" \
-  || ac_fail "_launch_runner_docker: missing disinto/agents:latest default for the action image"
+grep -qF 'local image_name="${image:-${VAULT_RUNNER_IMAGE:-disinto/agents:latest}}"' <<<"$FN_DOCKER" \
+  || ac_fail "_launch_runner_docker: missing VAULT_RUNNER_IMAGE / disinto/agents:latest default for the action image"
 grep -qF 'cmd+=("$image_name"' <<<"$FN_DOCKER" \
   || ac_fail "_launch_runner_docker: docker run does not use the action image"
 grep -qF '/artifacts' <<<"$FN_DOCKER" \
   || ac_fail "_launch_runner_docker: no /artifacts mount"
 grep -q 'ARTIFACTS_GLOB' <<<"$FN_DOCKER" \
   || ac_fail "_launch_runner_docker: ARTIFACTS_GLOB env not passed to the container"
-ac_log "docker: action image honored (default disinto/agents:latest), /artifacts mounted"
+ac_log 'docker: action image honored (default $VAULT_RUNNER_IMAGE else disinto/agents:latest), /artifacts mounted'
 
 # launch_runner itself must read the validated fields and forward 5 args.
 FN_LAUNCH=$(ac_extract_fn launch_runner "$DISPATCHER")

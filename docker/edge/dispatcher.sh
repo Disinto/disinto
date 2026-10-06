@@ -573,7 +573,7 @@ write_result() {
 #
 # Builds and executes a `docker run` command for the vault runner.
 # Secrets are resolved via load_secret (lib/env.sh).
-# IMAGE may be empty — the disinto/agents:latest default applies then
+# IMAGE may be empty — then $VAULT_RUNNER_IMAGE applies, else disinto/agents:latest
 # (the action TOML's optional image field, #1307). ARTIFACTS_CSV is the
 # comma-joined action artifact globs (may be empty).
 # Returns: exit code of the docker run.  Stdout/stderr are captured to a temp
@@ -585,7 +585,7 @@ _launch_runner_docker() {
   local image="$4"
   local artifacts_csv="$5"
 
-  local image_name="${image:-disinto/agents:latest}"
+  local image_name="${image:-${VAULT_RUNNER_IMAGE:-disinto/agents:latest}}"
 
   local -a cmd=(docker run --rm
     --name "vault-runner-${action_id}"
