@@ -41,7 +41,7 @@ The command performs these steps:
 3. **Writes credentials to `.env`**:
    - `FORGE_TOKEN_DEV_QWEN` — the API token
    - `FORGE_PASS_DEV_QWEN` — the password
-   - `ANTHROPIC_BASE_URL` — the llama endpoint (required by the agent)
+   - `ANTHROPIC_BASE_URL` — the llama endpoint (claude harness only)
 4. **Writes `[agents.dev-qwen]` to the project TOML** with:
    - `base_url`, `model`, `api_key`
    - `roles = ["dev"]`
@@ -226,7 +226,7 @@ If you need to manually rotate credentials:
 |----------|-------------|---------|
 | `FORGE_TOKEN_<USER_UPPER>` | Forgejo API token for the bot user | `FORGE_TOKEN_DEV_QWEN` |
 | `FORGE_PASS_<USER_UPPER>` | Forgejo password for the bot user | `FORGE_PASS_DEV_QWEN` |
-| `ANTHROPIC_BASE_URL` | Local llama endpoint (local model agents) | `http://host.docker.internal:8081` |
+| `ANTHROPIC_BASE_URL` | Local llama endpoint for claude-harness local-model agents (dsh agents use `[agents.<name>].base_url`) | `http://host.docker.internal:8081` |
 | `ANTHROPIC_API_KEY` | Anthropic API key (Anthropic backend agents) | `sk-...` |
 
 ### Project TOML (`[agents.<name>]` section)

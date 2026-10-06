@@ -199,7 +199,6 @@ services:
       - agent-data:/home/agent/data
       - project-repos:/home/agent/repos
       - ${CLAUDE_DIR:-${HOME}/.claude}:/home/agent/.claude
-      - ${CLAUDE_BIN_DIR:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
       - ${AGENT_SSH_DIR:-${HOME}/.ssh}:/home/agent/.ssh:ro
     env_file:
       - .env
@@ -214,7 +213,6 @@ services:
       - apparmor=unconfined
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${CLAUDE_BIN_DIR:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
       - ${CLAUDE_CONFIG_FILE:-${HOME}/.claude.json}:/root/.claude.json:ro
       - ${CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       - disinto-logs:/opt/disinto-logs
