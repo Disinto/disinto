@@ -10,17 +10,11 @@ COPY --from=caddy-src /usr/bin/caddy         /usr/bin/caddy
 COPY --from=caddy-src /etc/caddy/Caddyfile   /etc/caddy/Caddyfile
 COPY --from=caddy-src /usr/share/caddy/      /usr/share/caddy/
 RUN apk add --no-cache bash jq curl git docker-cli python3 py3-pip openssh-client autossh \
-    nodejs npm unzip shadow
+    unzip shadow
 
 # Non-root agent user (uid 1000) — /home/agent is the HOME for
 # entrypoint-edge.sh, the dispatcher, and Caddy.
 RUN groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 -s /bin/bash agent
-# Claude Code CLI — required by the reproduce/triage/verify sidecars, which
-# run on docker/reproduce (no CLI installed) and mount /usr/local/bin/claude
-# (ro) from this image; entrypoint-reproduce.sh:126 FATALs without it. Kept
-# even though the in-app surface it originally backed is removed — the live
-# bug-report lifecycle still needs the host binary.
-RUN npm install -g @anthropic-ai/claude-code@2.1.84
 # Nomad CLI — factory control surface (#650). Pinned nomad binary for
 # `nomad job ...` / `nomad alloc ...` calls via the dispatcher's Bash
 # allow-list. Version should track the nomad server version deployed
