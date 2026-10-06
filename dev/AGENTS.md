@@ -30,8 +30,12 @@ deletes branches that are behind `$PRIMARY_BRANCH` (restarts poll cycle for a fr
 start); the branch tested/deleted is the found PR's actual `head.ref`, so retry
 branches (`fix/issue-N-<attempt>`) are handled correctly (#1139).
 **Stale in-progress recovery**: on each poll cycle, scans for issues labeled `in-progress`.
-If the issue has a `vision` label, sets `BLOCKED_BY_INPROGRESS=true` and skips further
-stale checks (vision issues are managed by the architect). If the issue is assigned to
+If the issue carries a non-dev label (`issue_is_dev_claimable` is false — `vision`,
+a hand-applied `awaiting-live-verification`, and the rest of `_ILC_NON_DEV_LABELS`,
+#608), the scan `continue`s past that issue (#1825) and does not spawn dev-agent
+for a review fix, a CI fix, or stale-branch/post-crash recovery, even when the
+issue is assigned to `$BOT_USER`. An unassigned claimable in-progress issue still
+reaches the stale sweep. If the issue is assigned to
 `$BOT_USER` (this agent), checks for pending review feedback first — if an open PR has
 `REQUEST_CHANGES` (head-aware live reviews via `pr_live_review_count` in
 `lib/pr-lifecycle.sh` — a reopened PR has every review marked stale, so stale-only
