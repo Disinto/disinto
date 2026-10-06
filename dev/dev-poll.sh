@@ -769,7 +769,15 @@ ORPHAN_COUNT=$(echo "$ORPHANS_JSON" | jq 'length')
 BLOCKED_BY_INPROGRESS=false
 OTHER_AGENT_INPROGRESS=false
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
-  ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r '.[0].number')
+  # One iteration per open in-progress issue so a non-dev label can continue
+  # past that issue (#1825) instead of falling into the assignee spawn below.
+  # Flags reset per issue: a later unassigned claimable issue still reaches
+  # the stale sweep. A claimable issue breaks after it is handled, so this
+  # tick still acts on only one claimable in-progress issue.
+  for _ip_idx in $(seq 0 $((ORPHAN_COUNT - 1))); do
+  BLOCKED_BY_INPROGRESS=false
+  OTHER_AGENT_INPROGRESS=false
+  ISSUE_NUM=$(echo "$ORPHANS_JSON" | jq -r --argjson idx "$_ip_idx" '.[$idx].number')
 
   # Staleness check: if no assignee, no open PR, and no agent lock, the issue is stale
   # Match retry branches too (fix/issue-N-<attempt>) — same anchored pattern as
@@ -782,14 +790,19 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
     OPEN_PR=true
   fi
 
-  # Skip issues owned by non-dev agents (bug-report, vision, prediction, etc.)
-  # See issue #608: dev-poll must only touch issues it could actually claim.
+  # Skip issues owned by non-dev agents (bug-report, vision, prediction,
+  # awaiting-live-verification, etc.). See issue #608: dev-poll must only
+  # touch issues it could actually claim. continue — not just the flag —
+  # leaves this iteration (#1825). The flag alone does not stop the assignee
+  # block below from spawning dev-agent on a self-assigned issue (review fix,
+  # CI fix, or stale-branch / post-crash recovery).
   issue_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${API}/issues/${ISSUE_NUM}" | jq -r '[.labels[].name] | join(",")')
   if ! issue_is_dev_claimable "$issue_labels"; then
     log "issue #${ISSUE_NUM} has non-dev label(s) [${issue_labels}] — skipping (owned by another agent)"
     BLOCKED_BY_INPROGRESS=false
     OTHER_AGENT_INPROGRESS=true
+    continue
   fi
 
   # Check if issue has an assignee — only block on issues assigned to this agent
@@ -1062,6 +1075,10 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   if [ "$BLOCKED_BY_INPROGRESS" = true ]; then
     exit 0
   fi
+  # Claimable issue handled (or left for the backlog scan). Do not walk
+  # further in-progress issues this tick. Non-dev issues continued above.
+  break
+  done
 fi
 
 # =============================================================================
@@ -1085,6 +1102,20 @@ for i in $(seq 0 $(($(echo "$OPEN_PRS" | jq 'length') - 1))); do
       STUCK_ISSUE=0
     else
       log "PR #${PR_NUM} has no issue ref — cannot spawn dev-agent, skipping"
+      continue
+    fi
+  fi
+
+  # Non-dev labels (awaiting-live-verification and the rest of
+  # _ILC_NON_DEV_LABELS) are not dev work. The in-progress scan continues
+  # past them (#1825), and this tick then reaches stuck PRs — which used to
+  # relaunch a self-assigned issue on its open PR. Skip before any merge or
+  # spawn. Chore PRs (STUCK_ISSUE=0) have no issue to classify.
+  if [ "$STUCK_ISSUE" != 0 ]; then
+    stuck_labels=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${API}/issues/${STUCK_ISSUE}" | jq -r '[.labels[].name] | join(",")') || true
+    if ! issue_is_dev_claimable "${stuck_labels:-}"; then
+      log "PR #${PR_NUM} (issue #${STUCK_ISSUE}) has non-dev label(s) [${stuck_labels:-}] — skipping (#1825)"
       continue
     fi
   fi
