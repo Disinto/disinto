@@ -19,7 +19,10 @@
 #   _profile_commit_and_push                         — commit/push to .profile repo
 #
 # Requires: lib/env.sh, lib/agent-sdk.sh sourced first for shared helpers
-#           (forge_whoami, claude_run_with_watchdog, log).
+#           (forge_whoami, redact_log_secrets, log).
+
+# One-shot runner for the journal and the lessons digest (#1848).
+source "$(dirname "${BASH_SOURCE[0]}")/dsh-oneshot.sh"
 
 # ── .profile repo existence check ──────────────────────────────────────────
 
@@ -123,13 +126,12 @@ _profile_count_undigested_journals() {
 # ── Journal digestion ─────────────────────────────────────────────────────
 
 # _profile_digest_journals
-# Runs a claude -p one-shot to digest undigested journals into lessons-learned.md
+# Runs a dsh one-shot (dsh_oneshot) to digest undigested journals into lessons-learned.md
 # Respects PROFILE_DIGEST_TIMEOUT (default 300s) and PROFILE_DIGEST_MAX_BATCH (default 5).
 # On failure/timeout, preserves the previous lessons-learned.md and does not archive journals.
 # Returns 0 on success, 1 on failure.
 _profile_digest_journals() {
   local agent_identity="${AGENT_IDENTITY:-}"
-  local model="${CLAUDE_MODEL:-opus}"
   local digest_timeout="${PROFILE_DIGEST_TIMEOUT:-300}"
   local max_batch="${PROFILE_DIGEST_MAX_BATCH:-5}"
 
@@ -211,16 +213,9 @@ Update the lessons-learned file at this exact absolute path:
 ## Journal entries to digest
 ${journal_entries}"
 
-  # Run claude -p one-shot with digest-specific timeout
+  # Run a dsh one-shot (dsh_oneshot) with digest-specific timeout
   local output digest_rc
-  local saved_timeout="${CLAUDE_TIMEOUT:-7200}"
-  CLAUDE_TIMEOUT="$digest_timeout"
-  output=$(claude_run_with_watchdog claude -p "$digest_prompt" \
-    --output-format json \
-    --dangerously-skip-permissions \
-    ${model:+--model "$model"} \
-    2>>"$LOGFILE") && digest_rc=0 || digest_rc=$?
-  CLAUDE_TIMEOUT="$saved_timeout"
+  output=$(cd "$PROFILE_REPO_PATH" && dsh_oneshot --timeout "$digest_timeout" "$digest_prompt") && digest_rc=0 || digest_rc=$?
 
   if [ "$digest_rc" -eq 124 ]; then
     log "profile: digest timed out after ${digest_timeout}s — preserving previous lessons, skipping archive"
@@ -248,19 +243,19 @@ ${journal_entries}"
     fi
     log "profile: lessons-learned.md written by model via Write tool (${file_size} bytes)"
   else
-    # Fallback: model didn't use Write tool — capture .result and strip any markdown code fence
+    # Fallback: model didn't use Write tool — take the one-shot text and strip any markdown code fence
     local lessons_content
-    lessons_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+    lessons_content="$output"
     lessons_content=$(printf '%s' "$lessons_content" | sed -E '1{/^```(markdown|md)?[[:space:]]*$/d;};${/^```[[:space:]]*$/d;}')
 
     if [ -z "$lessons_content" ] || [ "${#lessons_content}" -le 16 ]; then
-      log "profile: failed to digest journals (no Write tool call, empty or tiny .result) — preserving previous lessons, skipping archive"
+      log "profile: failed to digest journals (no Write tool call, empty or tiny one-shot text) — preserving previous lessons, skipping archive"
       _profile_restore_lessons "$lessons_file" "$lessons_backup"
       return 1
     fi
 
     printf '%s\n' "$lessons_content" > "$lessons_file"
-    log "profile: lessons-learned.md written from .result fallback (${#lessons_content} bytes)"
+    log "profile: lessons-learned.md written from one-shot text fallback (${#lessons_content} bytes)"
   fi
 
   # Clean up backup on success
@@ -344,9 +339,9 @@ _profile_commit_and_push() {
 # profile_load_lessons
 # Pre-session: loads lessons-learned.md into LESSONS_CONTEXT for prompt injection.
 # Lazy digestion: if undigested journals exceed PROFILE_DIGEST_THRESHOLD (default 10),
-# runs claude -p to digest them (bounded by PROFILE_DIGEST_MAX_BATCH and PROFILE_DIGEST_TIMEOUT).
+# runs a dsh one-shot (dsh_oneshot) to digest them (bounded by PROFILE_DIGEST_MAX_BATCH and PROFILE_DIGEST_TIMEOUT).
 # Returns 0 on success, 1 if agent has no .profile repo (silent no-op).
-# Requires: profile_ensure_repo() called, AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL, CLAUDE_MODEL.
+# Requires: profile_ensure_repo() called, AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL.
 # Exports: LESSONS_CONTEXT (the lessons file content, hard-capped at 2KB).
 profile_load_lessons() {
   # Check if agent has .profile repo
@@ -416,7 +411,7 @@ profile_lessons_block() {
 # profile_write_journal ISSUE_NUM ISSUE_TITLE OUTCOME [FILES_CHANGED]
 # Post-session: writes a reflection journal entry after work completes.
 # Returns 0 on success, 1 on failure.
-# Requires: AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL, CLAUDE_MODEL.
+# Requires: AGENT_IDENTITY, FORGE_TOKEN, FORGE_URL.
 # Args:
 #   $1 - ISSUE_NUM: The issue number worked on
 #   $2 - ISSUE_TITLE: The issue title
@@ -467,17 +462,13 @@ Write a journal entry focused on what you learned that would help you do similar
 ## Output
 Write the journal entry below. Use markdown format."
 
-  # Run claude -p one-shot with same model as agent
+  # Run a dsh one-shot (dsh_oneshot) with same model as agent
   local output
-  output=$(claude_run_with_watchdog claude -p "$reflection_prompt" \
-    --output-format json \
-    --dangerously-skip-permissions \
-    ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
-    2>>"$LOGFILE" || echo '{"result":"error"}')
+  output=$(cd "$PROFILE_REPO_PATH" && dsh_oneshot "$reflection_prompt") || output=""
 
-  # Extract content from JSON response
+  # The one-shot prints the journal text. Empty (including a failed call) writes no file.
   local journal_content
-  journal_content=$(printf '%s' "$output" | jq -r '.result // empty' 2>/dev/null || echo "")
+  journal_content="$output"
 
   if [ -z "$journal_content" ]; then
     log "profile: failed to write journal entry"
