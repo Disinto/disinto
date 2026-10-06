@@ -53,7 +53,6 @@ entrypoint-edge.sh (edge container)
 
 **Required:**
 
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) — `claude` in PATH, authenticated
 - [Docker](https://docker.com/) — for provisioning a local Forgejo instance (or a running Forgejo/Gitea instance)
 - [Woodpecker CI](https://woodpecker-ci.org/) — local instance connected to your forge; disinto monitors pipelines, retries failures, and queries the Woodpecker Postgres DB directly
 - PostgreSQL client (`psql`) — for Woodpecker DB queries (pipeline status, build counts)
@@ -61,6 +60,7 @@ entrypoint-edge.sh (edge container)
 
 **Optional:**
 
+- [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) — only for agents run with `AGENT_HARNESS=claude`; `disinto init` then also checks `claude auth status`. Agents default to dsh, which ships in the agents image.
 - [Foundry](https://getfoundry.sh/) (`forge`, `cast`, `anvil`) — only needed if your target project uses Solidity
 - [Node.js](https://nodejs.org/) — only needed if your target project uses Node
 
