@@ -220,13 +220,66 @@ EOF
   # The inline python the hire rewrites the TOML with: extract it (the lines
   # between `    python3 -c '` and the line starting with `' "$toml_file"`)
   # and drive it against two hand-made sections, harness dsh vs claude.
-  local prog
+  #
+  # That python imports tomlkit, a real dependency of every hire (lib/
+  # hire-agent.sh uses it to round-trip the project TOML), but the bats
+  # Alpine image does not ship it (apk list: bash bats jq curl git python3
+  # py3-yaml unzip age sops zstd — no py3-tomlkit). Rather than add a package
+  # to the apk list — which would risk failing the whole bats step if the
+  # community-repo package is absent or misnamed — this test supplies a
+  # minimal tomlkit implementing only the subset the hire python uses (parse /
+  # table / add / subscript / dumps) via PYTHONPATH. The conditional logic
+  # under test — "always write harness; write context_window only when
+  # harness == dsh" — lives in the extracted, unmodified python and is
+  # exercised verbatim; only the TOML round-trip is stand-in.
+  local prog stubdir
   prog=$(awk '/^    python3 -c /{f=1; next} /^'"'"' "\$toml_file"/{exit} f' "$HIRE_LIB")
   [ -n "$prog" ]
   local t_dsh t_claude
   t_dsh=$(mktemp)
   t_claude=$(mktemp)
-  trap 'rm -f "$t_dsh" "$t_claude"' RETURN
+  stubdir=$(mktemp -d)
+  trap 'rm -f "$t_dsh" "$t_claude"; rm -rf "$stubdir"' RETURN
+  # The parsed document only needs to be a nested dict the python can assign
+  # into (agents -> section -> keys); the section it replaces is what the
+  # assertions read, so the parser may ignore the input lines.
+  cat > "$stubdir/tomlkit.py" <<'STUB'
+class _Table(dict):
+    def add(self, name, value):
+        self[name] = value
+
+
+def _scalar(v):
+    if isinstance(v, list):
+        return "[" + ", ".join(_scalar(x) for x in v) + "]"
+    if isinstance(v, (int, float)) or v in (None, True, False):
+        return str(v)
+    return '"' + str(v).replace('"', '\\"') + '"'
+
+
+def _dump(obj, name=None):
+    lines = []
+    if name is not None:
+        lines.append("[" + name + "]")
+    for k, v in obj.items():
+        if isinstance(v, dict) and v:
+            lines.append(_dump(v, k))
+        else:
+            lines.append(k + " = " + _scalar(v))
+    return "\n".join(lines)
+
+
+def parse(text):
+    return _Table()
+
+
+def table():
+    return _Table()
+
+
+def dumps(obj):
+    return _dump(obj) + "\n"
+STUB
   cat > "$t_dsh" <<'TOML'
 [agents.lab]
 base_url = "http://10.0.0.1:8081"
@@ -238,10 +291,10 @@ compact_pct = 60
 poll_interval = 60
 TOML
   cp "$t_dsh" "$t_claude"
-  python3 -c "$prog" "$t_dsh" labbot "http://10.0.0.1:8081" qwen lab dev 60 dsh 100000
+  PYTHONPATH="$stubdir" python3 -c "$prog" "$t_dsh" labbot "http://10.0.0.1:8081" qwen lab dev 60 dsh 100000
   grep -q '^harness = "dsh"' "$t_dsh"
   grep -q '^context_window = 100000$' "$t_dsh"
-  python3 -c "$prog" "$t_claude" labbot "http://10.0.0.1:8081" qwen lab dev 60 claude 100000
+  PYTHONPATH="$stubdir" python3 -c "$prog" "$t_claude" labbot "http://10.0.0.1:8081" qwen lab dev 60 claude 100000
   grep -q '^harness = "claude"' "$t_claude"
   # Final assertion: the claude path must not carry a context window.
   ! grep -qE '^context_window = ' "$t_claude"
