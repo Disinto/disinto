@@ -6,22 +6,18 @@
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Lifecycle states:
-#   [q_and_a]       — PR open, no APPROVED review, new operator comments
-#   [approved_idle] — PR APPROVED, no ## Filed: marker yet
-#   [tracking]      — ## Filed: marker present, sub-issues not all green
-#   [mergeable]     — ## Filed: marker present, all sub-issues green
+#   [q_and_a] — PR open, new operator comment since last-seen marker
 #
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
 # head of queue is picked each iteration. last-seen advances every iteration.
 #
 # Write-permission contract:
-#   ops repo: PATCH PR body, POST comments, close PR, merge PR
+#   ops repo: PATCH PR body, POST comments, close PR
 #   project repo: NONE (only reads — issues, acceptance scripts, vision)
 #
 # Formula (#1335): the architect always uses formulas/run-architect.toml —
 # oak instances differ by pack, not kind, so research boxes run the
-# software formula. Tracking green gate (check_subissue_green): closed +
-# deployed label + acceptance test rc=0.
+# software formula.
 #
 # Usage:
 #   architect-run.sh [projects/disinto.toml]
@@ -72,7 +68,7 @@ fi
 git fetch "${FORGE_REMOTE}" "${PRIMARY_BRANCH}" 2>/dev/null || true
 worktree_cleanup "$WORKTREE" 2>/dev/null || true
 git worktree add "$WORKTREE" "${FORGE_REMOTE}/${PRIMARY_BRANCH}" --detach 2>/dev/null || {
-  log "WARNING: worktree add failed — q_and_a/tracking opus dispatch will fail"
+  log "WARNING: worktree add failed — q_and_a opus dispatch will fail"
 }
 
 # ── Resolve agent identity ──────────────────────────────────────────────
@@ -83,16 +79,11 @@ fi
 # ── Formula (#1335) ──────────────────────────────────────────────────────
 # The architect always uses formulas/run-architect.toml — the kind
 # selection from #1315 is gone: oak instances differ by pack, not kind,
-# so research boxes run the software formula. The tracking green gate
-# (check_subissue_green below) is likewise the software gate: closed +
-# deployed + acceptance rc=0.
+# so research boxes run the software formula.
 architect_formula_file() {
   echo "$FACTORY_ROOT/formulas/run-architect.toml"
 }
 ARCHITECT_FORMULA="$(architect_formula_file)"
-
-# "Green" definition for the tracking text (the tracking digest prompt).
-TRACKING_GREEN_DEF="closed AND has deployed label AND acceptance test rc=0"
 
 # Role text for the opus prompts: the decomposition target is development
 # sprints and the filed sub-issues are backlog sub-issues.
@@ -119,24 +110,6 @@ get_pr_body() {
   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}" 2>/dev/null \
     | jq -r '.body // empty' 2>/dev/null || echo ""
-}
-
-# get_pr_reviews <pr_number> — JSON array of review objects
-get_pr_reviews() {
-  local pr="$1"
-  curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}/reviews" 2>/dev/null || echo '[]'
-}
-
-# has_approved_review <pr_number> — 0 if APPROVED review exists
-has_approved_review() {
-  local pr="$1"
-  local reviews
-  reviews=$(get_pr_reviews "$pr")
-  if printf '%s' "$reviews" | jq -e '.[] | select(.state == "APPROVED")' >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
 }
 
 # get_pr_comments <pr_number> — JSON array of comment objects
@@ -209,16 +182,6 @@ close_pr() {
     -d '{"state":"closed"}' 2>/dev/null || true
 }
 
-# merge_pr <pr_number> — merge the PR
-merge_pr() {
-  local pr="$1"
-  curl -sf -X PUT \
-    -H "Authorization: token ${FORGE_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/pulls/${pr}/merge" \
-    -d '{}' 2>/dev/null || true
-}
-
 # ── PR body marker helpers ──────────────────────────────────────────────
 
 # extract_last_seen <pr_body> — extract <!-- architect-last-seen: ... -->
@@ -236,72 +199,6 @@ update_last_seen() {
   fi
 }
 
-# extract_filed_issues <pr_body> — extract issue numbers from ## Filed: #N1 #N2 ...
-extract_filed_issues() {
-  printf '%s' "$1" | grep -oP '## Filed:\s*\K#([0-9]+)(\s+#([0-9]+))*' 2>/dev/null | grep -oP '#[0-9]+' || echo ""
-}
-
-# has_filed_marker <pr_body> — 0 if ## Filed: marker present
-has_filed_marker() {
-  printf '%s' "$1" | grep -q '## Filed:' 2>/dev/null
-}
-
-# extract_last_digest <pr_body> — extract <!-- architect-digest: ... -->
-extract_last_digest() {
-  printf '%s' "$1" | grep -zoP '<!-- architect-digest: \K[\s\S]*?(?= -->)' 2>/dev/null | tr -d '\0' | head -1 || echo ""
-}
-
-# ── Project repo read helpers ───────────────────────────────────────────
-
-# check_subissue_green <issue> — green gate (#1335): closed + deployed
-# label + acceptance test rc=0. Returns 0 if the issue is green.
-check_subissue_green() {
-  local issue="$1"
-  local issue_num="${issue#\#}"
-
-  # Check if issue is closed
-  local issue_state
-  issue_state=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_REPO}/issues/${issue_num}" 2>/dev/null \
-    | jq -r '.state // empty' 2>/dev/null) || return 1
-  if [ "$issue_state" != "closed" ]; then
-    return 1
-  fi
-
-  # Check for deployed label
-  local has_deployed
-  has_deployed=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
-    "${FORGE_API_BASE}/repos/${FORGE_REPO}/issues/${issue_num}/labels" 2>/dev/null \
-    | jq -r '.[].name // empty' 2>/dev/null | grep -q '^deployed$' && echo yes || echo no) || return 1
-  if [ "$has_deployed" != "yes" ]; then
-    return 1
-  fi
-
-  # Run acceptance test
-  local test_script="${PROJECT_REPO_ROOT}/tests/acceptance/issue-${issue_num}.sh"
-  if [ -f "$test_script" ] && bash "$test_script" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # No acceptance test or it failed — not green
-  return 1
-}
-
-# get_last_digest_state <pr_body> — extract issue states from last digest marker
-# Returns space-separated "issueN:state" pairs (normalized, no space after colon)
-get_last_digest_state() {
-  local body="$1"
-  local digest
-  digest=$(extract_last_digest "$body")
-  if [ -z "$digest" ]; then
-    echo ""
-    return
-  fi
-  # Extract issue states from the marker content (format: #N:state)
-  printf '%s' "$digest" | grep -oP '#[0-9]+:\s*(open|closed|green|pending)' 2>/dev/null \
-    | sed 's/: */:/' | tr '\n' ' ' | sed 's/ *$//' | sed 's/$/ /' || echo ""
-}
-
 # ── Round-robin: list and sort PRs by last-seen marker ─────────────────
 
 list_architect_prs_sorted() {
@@ -314,7 +211,7 @@ list_architect_prs_sorted() {
 }
 
 # ── State: q_and_a ──────────────────────────────────────────────────────
-# PR open, no APPROVED review, new operator comments since last-seen.
+# PR open, new operator comments since last-seen.
 # Reject branch: bash-only (close PR). Otherwise: opus session.
 
 dispatch_q_and_a() {
@@ -393,148 +290,6 @@ _PROMPT_EOF_
   log "opus q_and_a session complete"
 }
 
-# ── State: approved_idle ────────────────────────────────────────────────
-# PR has APPROVED review, no ## Filed: marker.
-# Bash-only: post one "awaiting filer" comment per rotation.
-
-dispatch_approved_idle() {
-  local pr="$1" body="$2"
-
-  # Check if we already posted an "awaiting filer" comment by looking at
-  # recent PR comments (avoid spamming on each rotation pass)
-  local comments
-  comments=$(get_pr_comments "$pr")
-  if printf '%s' "$comments" | jq -r '.[].body // empty' 2>/dev/null \
-    | grep -q 'awaiting filer' 2>/dev/null; then
-    log "PR #${pr}: already awaiting filer — no new comment needed"
-    return
-  fi
-
-  log "PR #${pr}: approved, awaiting filer — posting comment"
-  post_pr_comment "$pr" "Approved — awaiting filer. Sub-issues will be filed by the filer-bot after this PR merges." 2>/dev/null || true
-}
-
-# ── State: tracking ─────────────────────────────────────────────────────
-# ## Filed: marker present, not all sub-issues green.
-# Opus-only when sub-issue state has changed since last digest.
-
-dispatch_tracking() {
-  local pr="$1" body="$2"
-
-  # Extract filed issue numbers
-  local filed_issues
-  filed_issues=$(extract_filed_issues "$body")
-  if [ -z "$filed_issues" ]; then
-    log "PR #${pr}: tracked but no filed issues — skipping"
-    return
-  fi
-
-  # Check if all are green
-  local all_green=true
-  local current_states=""
-  while IFS= read -r issue; do
-    [ -z "$issue" ] && continue
-    if check_subissue_green "$issue"; then
-      current_states="${current_states}${issue}:green "
-    else
-      all_green=false
-      current_states="${current_states}${issue}:pending "
-    fi
-  done <<< "$filed_issues"
-
-  if [ "$all_green" = true ]; then
-    log "PR #${pr}: all filed issues green — ready for merge"
-    return
-  fi
-
-  # Check if state changed since last digest
-  local last_digest last_digest_state needs_opus=false
-  last_digest=$(extract_last_digest "$body")
-  if [ -n "$last_digest" ]; then
-    last_digest_state=$(get_last_digest_state "$body")
-    if [ -n "$last_digest_state" ] && [ "$last_digest_state" != "$current_states" ]; then
-      needs_opus=true
-    fi
-  else
-    # No previous digest — always opus on first tracking pass
-    needs_opus=true
-  fi
-
-  if [ "$needs_opus" = true ]; then
-    log "PR #${pr}: state changed since last digest — dispatching opus digest"
-    _dispatch_opus_tracking_digest "$pr" "$current_states"
-  else
-    log "PR #${pr}: no state change since last digest — skipping opus"
-  fi
-}
-
-_dispatch_opus_tracking_digest() {
-  local pr="$1" states="$2"
-
-  load_formula_or_profile "architect" "$ARCHITECT_FORMULA" || return 1
-  build_context_block VISION.md AGENTS.md ops:prerequisites.md
-  formula_prepare_profile_context
-  build_graph_section
-  build_sdk_prompt_footer
-
-  local prompt
-  prompt=$(cat <<_PROMPT_EOF_
-You are the architect agent for ${FORGE_REPO}.
-
-## CURRENT STATE: Tracking filed sub-issues
-
-A ${PITCH_NOUN} PR has been approved and ${SUBISSUE_TERM} have been filed. You are
-tracking their progress. The current state of each filed issue:
-
-${states}
-
-"green" = ${TRACKING_GREEN_DEF}
-"pending" = not yet green
-
-Your task:
-1. Write a digest comment summarizing the current state
-2. Update the PR body with a <!-- architect-digest: TIMESTAMP #N:state ... --> marker
-   (TIMESTAMP is ISO-8601 UTC; include each issue as #N:state where state is green/pending)
-3. Post the digest as a PR comment
-
-## Project context
-${CONTEXT_BLOCK}
-${GRAPH_SECTION}
-$(formula_lessons_block)
-## Formula
-${FORMULA_CONTENT}
-
-${PROMPT_FOOTER}
-_PROMPT_EOF_
-  )
-
-  agent_run --worktree "$WORKTREE" "$prompt" || {
-    log "PR #${pr}: opus tracking digest FAILED (exit $?)"
-    _OPUS_DISPATCH_FAILED=true
-    return 1
-  }
-  log "opus tracking digest complete"
-}
-
-# ── State: mergeable ────────────────────────────────────────────────────
-# ## Filed: marker present, all sub-issues green.
-# Bash-only: merge PR, post closure summary.
-
-dispatch_mergeable() {
-  local pr="$1" body="$2"
-
-  log "PR #${pr}: all sub-issues green — merging"
-
-  # Post closure summary
-  local filed_issues
-  filed_issues=$(extract_filed_issues "$body")
-  post_pr_comment "$pr" "All sub-issues verified green. Merging sprint PR." 2>/dev/null || true
-
-  # Merge the PR
-  merge_pr "$pr"
-  log "PR #${pr}: merged"
-}
-
 # ── Regression guard ───────────────────────────────────────────────────
 check_architect_issue_filing() {
   local project_repo_path
@@ -588,31 +343,6 @@ if has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
   log "PR #${PR_NUMBER}: reject detected → closing"
   REASON=$(get_reject_reason "$PR_NUMBER" "$LAST_SEEN")
   close_pr "$PR_NUMBER" "$REASON"
-elif has_approved_review "$PR_NUMBER"; then
-  # [approved_idle] or [mergeable] — check for filed marker
-  if has_filed_marker "$PR_BODY"; then
-    # Check if mergeable
-    filed_issues=$(extract_filed_issues "$PR_BODY")
-    all_green=true
-    while IFS= read -r issue; do
-      [ -z "$issue" ] && continue
-      if ! check_subissue_green "$issue"; then
-        all_green=false
-        break
-      fi
-    done <<< "$filed_issues"
-
-    if [ "$all_green" = true ]; then
-      log "PR #${PR_NUMBER}: approved + all green → mergeable"
-      dispatch_mergeable "$PR_NUMBER" "$PR_BODY"
-    else
-      log "PR #${PR_NUMBER}: approved + some pending → tracking"
-      dispatch_tracking "$PR_NUMBER" "$PR_BODY" || true
-    fi
-  else
-    log "PR #${PR_NUMBER}: approved, no filed marker → approved_idle"
-    dispatch_approved_idle "$PR_NUMBER" "$PR_BODY"
-  fi
 else
   # [q_and_a] — check for engagement
   log "PR #${PR_NUMBER}: q_and_a state"
