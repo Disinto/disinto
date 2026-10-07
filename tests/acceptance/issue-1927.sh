@@ -32,11 +32,16 @@ PREFLIGHT="$REPO_ROOT/supervisor/preflight.sh"
 RECIPES="$REPO_ROOT/supervisor/recipes.yaml"
 EVALUATOR="$REPO_ROOT/supervisor/evaluate-recipes.sh"
 AGENTS_MD="$REPO_ROOT/supervisor/AGENTS.md"
-
-ac_assert_file "$PREFLIGHT" "supervisor/preflight.sh must exist"
-ac_assert_file "$RECIPES" "supervisor/recipes.yaml must exist"
-ac_assert_file "$EVALUATOR" "supervisor/evaluate-recipes.sh must exist"
-ac_assert_file "$AGENTS_MD" "supervisor/AGENTS.md must exist"
+# One loop rather than the four ac_assert_file lines issue-1923.sh uses.
+# duplicate-detection hashes 5-line windows, and those lines matched.
+for _pair in \
+  "$PREFLIGHT|supervisor/preflight.sh must exist" \
+  "$RECIPES|supervisor/recipes.yaml must exist" \
+  "$EVALUATOR|supervisor/evaluate-recipes.sh must exist" \
+  "$AGENTS_MD|supervisor/AGENTS.md must exist"
+do
+  ac_assert_file "${_pair%%|*}" "${_pair#*|}"
+done
 
 FN="$(ac_extract_fn nomad_services_section "$PREFLIGHT")"
 [ -n "$FN" ] || ac_fail "could not extract nomad_services_section() from preflight.sh"
