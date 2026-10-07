@@ -181,11 +181,15 @@ parse_subissue_entries() {
     # Replace newlines with \n for JSON
     gsub(/\n/, "\\n", body)
     # Remove trailing \n
-    sub(/\\n$/, "", body)
+    while (sub(/\\n$/, "", body)) {}
 
-    # Clean up title (remove surrounding quotes)
+    # Clean up title (remove surrounding quotes), then escape \ and ".
+    # && repeats the matched backslash. The body replacement "\\\\"
+    # doubles on busybox awk but not on mawk (the agents image).
     gsub(/^"/, "", title)
     gsub(/"$/, "", title)
+    gsub(/\\/, "&&", title)
+    gsub(/"/, "\\\"", title)
 
     printf "{\"id\":\"%s\",\"title\":\"%s\",\"labels\":%s,\"depends_on\":%s,\"body\":\"%s\"}", id, title, labels, depends, body
 
@@ -259,6 +263,8 @@ parse_subissue_entries() {
     body = body $0 "\n"
     next
   }
+
+  inbody && /^$/ { body = body "\n"; next }
 
   inbody && !/^    / && !/^$/ {
     inbody = 0
