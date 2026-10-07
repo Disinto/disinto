@@ -6,8 +6,12 @@
 # not routed (#1768); the caddy task no longer renders their secrets or
 # env (#1770). The vault-action dispatcher runs as a background
 # process inside the caddy container (entrypoint-edge.sh ->
-# docker/edge/dispatcher.sh), polling
-# disinto-ops for vault actions and dispatching them via Nomad batch jobs.
+# docker/edge/dispatcher.sh), polling disinto-ops for vault actions.
+# The live edge dispatcher dispatches via the docker backend (`docker run`
+# from the caddy task) unless DISPATCHER_BACKEND=nomad is set. The Nomad
+# vault-runner jobspec is not what an action with no image field hits.
+# VAULT_RUNNER_IMAGE (set on the caddy task below) is how the docker path
+# picks disinto/agents:local.
 #
 # All upstreams discovered via Nomad service discovery (issue #1156, S5-fix-7).
 # Caddy uses network_mode = "host" but upstreams run in separate alloc netns,
