@@ -26,22 +26,21 @@ DOC_SENTENCE='Files the entries in dependency order and writes each `depends_on`
 grep -qF "$DOC_SENTENCE" "$REPO_ROOT/lib/AGENTS.md" \
   || ac_fail "lib/AGENTS.md must describe dependency filing (#1893)"
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-STUB_BIN="$WORK/bin"
-mkdir -p "$STUB_BIN"
-POSTS="$WORK/posts"
-SEQ="$WORK/seq"
-: >"$POSTS"
+CHAIN_DIR="$(mktemp -d)"
+trap 'rm -rf "$CHAIN_DIR"' EXIT
+POSTS="${CHAIN_DIR}/recorded-posts.json"
+SEQ="${CHAIN_DIR}/next-number"
 printf '11' >"$SEQ"
+: >"$POSTS"
+RECORDER_BIN="${CHAIN_DIR}/recorder"
+mkdir -p "$RECORDER_BIN"
 
 # Shared stub first (issue-1216 shape). Its joined-argument URL cannot see
 # a payload passed after the URL, so the recorder below replaces that body.
-ac_write_curl_stub "$STUB_BIN"
-[ -x "$STUB_BIN/curl" ] || ac_fail "ac_write_curl_stub did not write an executable curl"
+ac_write_curl_stub "$RECORDER_BIN"
+[ -x "$RECORDER_BIN/curl" ] || ac_fail "ac_write_curl_stub did not write an executable curl"
 
-cat > "$STUB_BIN/curl" <<'RECORDER'
+cat > "$RECORDER_BIN/curl" <<'RECORDER'
 #!/usr/bin/env bash
 # Issue 1893 recorder. Numbers start at CURL_SEQ (11) and climb by one.
 set -euo pipefail
@@ -80,9 +79,9 @@ if [[ "$target" == */labels ]]; then
 fi
 printf '%s' '[]'
 RECORDER
-chmod +x "$STUB_BIN/curl"
+chmod +x "$RECORDER_BIN/curl"
 
-export PATH="$STUB_BIN:$PATH"
+export PATH="$RECORDER_BIN:$PATH"
 export CURL_POSTS="$POSTS"
 export CURL_SEQ="$SEQ"
 export FACTORY_ROOT="$REPO_ROOT"
@@ -132,9 +131,9 @@ ISSUES_JSON='[]'
   ac_pitch_entry c "a, b" lib/sprint-filer.sh
   ac_pitch_entry b a lib/sprint-filer.sh
   ac_pitch_entry a "" lib/sprint-filer.sh
-} | ac_pitch_file "$WORK" chain
+} | ac_pitch_file "$CHAIN_DIR" chain
 rc=0
-file_subissues "$WORK/sprints/chain.md" 7 || rc=$?
+file_subissues "$CHAIN_DIR/sprints/chain.md" 7 || rc=$?
 ac_assert_eq "$rc" "0" "chained filing must return 0 (got $rc)"
 ac_assert_eq "$(recorded)" "3" "chained filing must POST exactly three issues"
 filed_ids="$(jq -sr 'map(.body | capture("id: (?<id>[^ ]+) -->").id) | join(" ")' "$POSTS")"
@@ -168,7 +167,7 @@ ISSUES_JSON="$(jq -s '
 ' "$POSTS")"
 reset_recorder
 rc=0
-file_subissues "$WORK/sprints/chain.md" 7 || rc=$?
+file_subissues "$CHAIN_DIR/sprints/chain.md" 7 || rc=$?
 ac_assert_eq "$rc" "0" "idempotent chain filing must return 0 (got $rc)"
 ac_assert_eq "$(recorded)" "0" "a second run must make no POST"
 # The issues that already exist still carry the numbers from the first filing.
@@ -181,9 +180,9 @@ ac_log "AC2 OK"
 ac_log "AC3: unknown depends_on id files nothing"
 reset_recorder
 ISSUES_JSON='[]'
-ac_pitch_entry a zz lib/only-unknown.sh | ac_pitch_file "$WORK" unknown
+ac_pitch_entry a zz lib/only-unknown.sh | ac_pitch_file "$CHAIN_DIR" unknown
 rc=0
-file_subissues "$WORK/sprints/unknown.md" 7 || rc=$?
+file_subissues "$CHAIN_DIR/sprints/unknown.md" 7 || rc=$?
 ac_assert_eq "$rc" "1" "an unknown depends_on id must return 1 (got $rc)"
 ac_assert_eq "$(recorded)" "0" "an unknown id must make no POST"
 ac_log "AC3 OK"
@@ -194,9 +193,9 @@ ISSUES_JSON='[]'
 {
   ac_pitch_entry a b lib/cycle-left.sh
   ac_pitch_entry b a lib/cycle-right.sh
-} | ac_pitch_file "$WORK" cycle
+} | ac_pitch_file "$CHAIN_DIR" cycle
 rc=0
-file_subissues "$WORK/sprints/cycle.md" 7 || rc=$?
+file_subissues "$CHAIN_DIR/sprints/cycle.md" 7 || rc=$?
 ac_assert_eq "$rc" "1" "a depends_on cycle must return 1 (got $rc)"
 ac_assert_eq "$(recorded)" "0" "a cycle must make no POST"
 ac_log "AC4 OK"
