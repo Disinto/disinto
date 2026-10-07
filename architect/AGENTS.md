@@ -45,9 +45,10 @@ last-seen marker.
 **Actions**:
 - If comment starts with `Reject:` → close PR with a closure comment quoting the
   reason. **Bash-only — no model call.**
-- Otherwise → opus session: read pitch + new comment + transcript, refine the
-  `<!-- filer:begin -->` ... `<!-- filer:end -->` block inline, post a reply
-  comment.
+- Otherwise → a session reads the pitch file from the PR branch, the new
+  comments and the open backlog, and revises the sub-issue block (or drafts
+  it). Bash commits a changed file to the PR branch as `architect-bot` and
+  posts the session's reply with the lint report, as in decompose (#1911).
 
 **Exit conditions**:
 - Reject: → PR closed (terminal)
