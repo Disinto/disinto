@@ -171,6 +171,10 @@ job "agents-supervisor-opus" {
         # journal, incident files) is the default.
         SUPERVISOR_LLM_ESCALATION = "off"
         POLL_INTERVAL      = "300"
+        # Public endpoints the supervisor checks each tick (#1923); an incident
+        # after 2 failing ticks in a row. The outage of 2026-10-07 went
+        # unnoticed for 2 hours.
+        PUBLIC_URLS        = "https://self.disinto.ai/forge/ https://self.disinto.ai/ci/"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "disinto"
         PROJECT_REPO_ROOT  = "/home/agent/repos/disinto"
