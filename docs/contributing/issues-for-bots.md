@@ -37,3 +37,9 @@ comment threads. Therefore:
   something, it belongs in the body where the next claimant will see it.
 - **Comments are for the review trail only** (bot verdicts, CI links), never
   for carrying the task state.
+
+## See also
+
+`docs/design/notes/issue-writing.md`: scope discipline (one organ, one
+behaviour, at most two files), the headings the implementer relies on,
+and how to chain issues that edit the same lines.
