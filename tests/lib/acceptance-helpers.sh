@@ -215,6 +215,47 @@ AC_CURL_STUB
   chmod +x "${stub_bin}/curl"
 }
 
+# ac_write_pitch_stub <STUB_BIN> — write a hermetic curl at <STUB_BIN>/curl
+# for decided pitches (#1891). #1892 should add merged-pitch responses to
+# this stub rather than copying it.
+#
+# The last argument is the URL. Closed ops pulls, page 1:
+#   22 — unmerged, body "class: deploy", files add sprints/b.md
+#   23 — unmerged, files add probes/x.sh only
+# A later page of the same listing is []. Unknown URLs exit 22.
+# AC_PITCH_STUB_FAIL=1 makes every call exit 22 (the listing-failure seam).
+ac_write_pitch_stub() {
+  local stub_bin="$1"
+  mkdir -p "$stub_bin"
+  cat > "${stub_bin}/curl" <<'PITCH_STUB'
+#!/usr/bin/env bash
+# Fake ops-repo pulls. Last arg is the URL. AC_PITCH_STUB_FAIL=1 exits 22.
+# #1892: add merged-pitch arms here (do not copy this stub).
+if [ "${AC_PITCH_STUB_FAIL:-}" = "1" ]; then
+  exit 22
+fi
+url="${*: -1}"
+case "$url" in
+  *'/pulls?state=closed'*'page=1')
+    printf '%s\n' '[{"number":22,"merged":false,"body":"class: deploy"},{"number":23,"merged":false,"body":"probe only"}]'
+    ;;
+  *'/pulls?state=closed'*)
+    printf '%s\n' '[]'
+    ;;
+  *'/pulls/22/files'*)
+    printf '%s\n' '[{"filename":"sprints/b.md","status":"added"}]'
+    ;;
+  *'/pulls/23/files'*)
+    printf '%s\n' '[{"filename":"probes/x.sh","status":"added"}]'
+    ;;
+  *)
+    exit 22
+    ;;
+esac
+PITCH_STUB
+  chmod +x "${stub_bin}/curl"
+}
+
 # ac_stub_env <STUB_BIN> <TAPE_DIR> — configure the calling subshell to run
 # an extracted tape emitter against the ac_write_curl_stub fake: stub curl
 # first on PATH, sentinel API/FORGE_TOKEN, the caller's TAPE_DIR, and the

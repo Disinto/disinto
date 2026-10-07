@@ -79,6 +79,14 @@ cd "$PROJECT_REPO_ROOT"
 
 resolve_forge_remote
 
+# Decided ops-repo pitches (#1891) reach the tape. Never fatal: a non-zero
+# exit only logs a warning.
+pitch_decisions_rc=0
+"$FACTORY_ROOT/tools/pitch-decisions.sh" || pitch_decisions_rc=$?
+if [ "$pitch_decisions_rc" -ne 0 ]; then
+  log "WARNING: pitch-decisions.sh failed (rc=${pitch_decisions_rc})"
+fi
+
 # ── Precondition checks: skip if nothing to do ────────────────────────────
 # Check for new commits since last run
 CURRENT_SHA=$(git -C "$FACTORY_ROOT" rev-parse HEAD 2>/dev/null || echo "")
