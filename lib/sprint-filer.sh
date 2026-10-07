@@ -174,18 +174,21 @@ parse_subissue_entries() {
     if (!first) printf ","
     first = 0
 
-    # Escape JSON special characters in body
-    gsub(/\\/, "\\\\", body)
+    # Strip real trailing newlines before any JSON escaping. Stripping the
+    # two-character \n sequence afterwards also eats a literal backslash-n,
+    # and on mawk that sequence is not distinct until \ is doubled.
+    while (sub(/\n$/, "", body)) {}
+
+    # Escape \ with && (repeats the match). "\\\\" doubles on busybox awk
+    # but not on mawk, so C:\temp would be emitted as a tab (#1934).
+    gsub(/\\/, "&&", body)
     gsub(/"/, "\\\"", body)
     gsub(/\t/, "\\t", body)
-    # Replace newlines with \n for JSON
+    # Replace remaining newlines with \n for JSON
     gsub(/\n/, "\\n", body)
-    # Remove trailing \n
-    while (sub(/\\n$/, "", body)) {}
 
-    # Clean up title (remove surrounding quotes), then escape \ and ".
-    # && repeats the matched backslash. The body replacement "\\\\"
-    # doubles on busybox awk but not on mawk (the agents image).
+    # Clean up title (remove surrounding quotes), then escape \ and "
+    # the same way the body does.
     gsub(/^"/, "", title)
     gsub(/"$/, "", title)
     gsub(/\\/, "&&", title)

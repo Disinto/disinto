@@ -3,8 +3,8 @@
 # tests/acceptance/issue-1914.sh
 #
 # Issue #1914: parse_subissue_entries keeps blank lines inside a sub-issue
-# body, strips every trailing newline, and escapes " and \ in the title so
-# the filed JSON stays valid.
+# body, strips every trailing newline, and escapes " and \ in titles and
+# bodies so the filed JSON stays valid. A literal trailing \n is kept.
 #
 # Hermetic: no network, no forge. The parser is the copy ac_extract_fn
 # returns.
@@ -62,6 +62,18 @@ parse_entries() {
   depends_on: []
   body: |
     done
+- id: escapes
+  title: "body escapes"
+  labels: [backlog]
+  depends_on: []
+  body: |
+    path is C:\temp and a "quote"
+- id: slashn
+  title: "literal slash-n"
+  labels: [backlog]
+  depends_on: []
+  body: |
+    ends with slash-n \n
 EOF
 }
 
@@ -91,5 +103,22 @@ case "$got_trailing" in
   *$'\n') ac_fail "parsed body must not end with a newline" ;;
 esac
 ac_log "AC3 OK"
+
+ac_log "AC4: a body backslash and a quote round-trip"
+want_escapes='path is C:\temp and a "quote"'
+got_escapes="$(printf '%s\n' "$json" | jq -er '.[4].body')"
+ac_assert_eq "$got_escapes" "$want_escapes" \
+  "body must keep C:\\temp and the quote (got $(printf '%s' "$got_escapes" | jq -Rs .))"
+ac_log "AC4 OK"
+
+ac_log "AC5: a body ending in a literal backslash-n keeps those characters"
+want_slashn='ends with slash-n \n'
+got_slashn="$(printf '%s\n' "$json" | jq -er '.[5].body')"
+ac_assert_eq "$got_slashn" "$want_slashn" \
+  "literal trailing backslash-n must be kept (got $(printf '%s' "$got_slashn" | jq -Rs .))"
+case "$got_slashn" in
+  *$'\n') ac_fail "literal backslash-n must not be a trailing newline" ;;
+esac
+ac_log "AC5 OK"
 
 ac_pass
