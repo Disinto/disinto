@@ -103,6 +103,7 @@ disinto/                 (code repo)
 │                  claim-checks.sh — run a proposed claim's check; one miss contradicts it (#1642)
 │                  claims-report.sh — catalog table of each claim's status (#1645)
 │                  grade.sh — one-command human grading of a proposal (#1410)
+│                  pitch-lint.sh — lints a pitch's sub-issue block against notes/issue-writing.md; markdown report (#1903)
 │                  seed-research-labels.sh — idempotently seed research labels on an existing forge
 │                  vault-apply-policies.sh, vault-apply-roles.sh, vault-import.sh — Vault
 │                  provisioning (S2.1/S2.2)
