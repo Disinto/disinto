@@ -11,7 +11,7 @@
 #     * otherwise return 0 (both unset: every author allowed)
 # review-poll.sh sources the filter, prints .user.login as the 4th PR field,
 # and skips a head whose author this reviewer does not handle.
-# agents-review-qwen sets REVIEW_SKIP_AUTHORS = "dev-grok-bot".
+# agents-review-qwen sets REVIEW_SKIP_AUTHORS = "dev-grok-bot disinto-admin".
 #
 # Hermetic: no network, no forge, no agent. Sources the lib and greps wiring.
 #
@@ -99,8 +99,8 @@ ac_assert_eq "$HITS" "1" \
 
 # ── AC5: qwen reviewer skips dev-grok-bot ───────────────────────────────────
 ac_log "AC5: agents-review-qwen.hcl sets REVIEW_SKIP_AUTHORS"
-grep -q 'REVIEW_SKIP_AUTHORS = "dev-grok-bot"' \
+grep -q 'REVIEW_SKIP_AUTHORS = "dev-grok-bot disinto-admin"' \
   "$REPO_ROOT/nomad/jobs/agents-review-qwen.hcl" \
-  || ac_fail "agents-review-qwen.hcl must set REVIEW_SKIP_AUTHORS = \"dev-grok-bot\""
+  || ac_fail "agents-review-qwen.hcl must set REVIEW_SKIP_AUTHORS = \"dev-grok-bot disinto-admin\""
 
 ac_pass "issue #1690: a reviewer can be limited to PRs by some authors"

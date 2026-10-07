@@ -12,7 +12,7 @@
 #   - Identity: reviews post as review-grok-bot (FORGE_REVIEW_TOKEN from Vault
 #     kv/disinto/bots/review-grok); FORGE_TOKEN stays dev-bot's, as in
 #     agents-review-qwen. The two reviewers are kept apart by PR author
-#     (REVIEW_ONLY_AUTHORS here, REVIEW_SKIP_AUTHORS there, #1690).
+#     (REVIEW_ONLY_AUTHORS here, REVIEW_SKIP_AUTHORS there, #1690): dev-grok-bot and disinto-admin come here.
 #   - Data: /srv/disinto/agent-data-grok/review is bind-mounted at /home/agent/data
 #     (docker volumes are enabled on this client; no host_volume, so adding
 #     the job needed no Nomad client restart).
@@ -173,9 +173,8 @@ job "agents-review-grok" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "grok-4.7"
         AGENT_ROLES        = "review"
-        # Review only dev-grok-bot's PRs; agents-review-qwen skips them (#1690).
-        # Ignored until #1690 lands.
-        REVIEW_ONLY_AUTHORS = "dev-grok-bot"
+        # Review dev-grok-bot's and disinto-admin's PRs; agents-review-qwen skips them (#1690).
+        REVIEW_ONLY_AUTHORS = "dev-grok-bot disinto-admin"
 
         # dsh harness. The model comes from this job's DSH_HOME settings.yaml
         # (route xai, grok-4.7; see the header). DSH_BASE_URL only seeds a
