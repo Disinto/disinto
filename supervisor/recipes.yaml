@@ -31,7 +31,7 @@ recipes:
       threshold: 500
     action: incident
 
-  # ── P1: Disk pressure ──────────────────────────────────────────────────
+  # ── P1: Disk pressure / public endpoint down ───────────────────────────
 
   - name: disk-pressure
     severity: P1
@@ -42,6 +42,17 @@ recipes:
       threshold: 80
     action: direct
     action_script: supervisor/actions/disk-pressure.sh
+
+  # Monitor: a public URL failed on two ticks in a row. No remedy (#1923).
+  - name: public-endpoint-down
+    severity: P1
+    detect:
+      source: preflight
+      section: "Public Endpoints"
+      rule: field_eq
+      field: "Public Endpoints"
+      value: "DOWN"
+    action: incident
 
   # ── P2: Factory stopped / stalled ──────────────────────────────────────
 

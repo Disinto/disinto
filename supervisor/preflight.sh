@@ -180,6 +180,84 @@ wp_agent_health_verdict() {
   printf '%s\n' healthy
 }
 
+# public_endpoints_section — probe PUBLIC_URLS from outside the factory (#1923).
+#
+# Space-separated URLs in PUBLIC_URLS. Unset or empty: print only
+# "Public Endpoints: unconfigured" (no section header, no state change).
+# Otherwise print "## Public Endpoints", one "<url>: <code> (failing ticks: <n>)"
+# line per URL, then "Public Endpoints: DOWN" if any URL has failed on 2 or
+# more consecutive ticks, else "Public Endpoints: OK".
+#
+# A URL is up on 2xx or 3xx (curl -s -o /dev/null -w '%{http_code}' -m 10).
+# Consecutive failing ticks live in
+# ${SUPERVISOR_STATE_DIR:-/home/agent/data/supervisor}/public-endpoints.state
+# as "<count> <url>" lines. A failure increments; an up resets to 0.
+# Monitor only: the recipe files an incident and attempts no remedy.
+public_endpoints_section() {
+  local urls="${PUBLIC_URLS-}"
+  if [ -z "$urls" ]; then
+    echo "Public Endpoints: unconfigured"
+    return 0
+  fi
+
+  local state_dir="${SUPERVISOR_STATE_DIR:-/home/agent/data/supervisor}"
+  local state_file="${state_dir}/public-endpoints.state"
+  mkdir -p "$state_dir"
+
+  echo "## Public Endpoints"
+
+  local -a url_list=()
+  local url code old n line count rest new_state="" tmp_file
+  local any_down=0
+  read -r -a url_list <<< "$urls"
+
+  for url in "${url_list[@]}"; do
+    code=""
+    # Network errors print 000 (or nothing) and exit non-zero; that is a failure,
+    # not a reason to abort the rest of preflight.
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$url" 2>/dev/null)" || code="${code:-000}"
+    case "$code" in
+      ''|*[!0-9]*) code=000 ;;
+    esac
+
+    old=0
+    if [ -f "$state_file" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        count="${line%% *}"
+        rest="${line#* }"
+        if [ "$rest" = "$url" ]; then
+          case "$count" in
+            ''|*[!0-9]*) old=0 ;;
+            *) old="$count" ;;
+          esac
+          break
+        fi
+      done < "$state_file"
+    fi
+
+    case "$code" in
+      2[0-9][0-9]|3[0-9][0-9]) n=0 ;;
+      *) n=$((old + 1)) ;;
+    esac
+    if [ "$n" -ge 2 ]; then
+      any_down=1
+    fi
+    printf '%s: %s (failing ticks: %s)\n' "$url" "$code" "$n"
+    new_state="${new_state}${n} ${url}"$'\n'
+  done
+
+  tmp_file="${state_file}.tmp"
+  printf '%s' "$new_state" > "$tmp_file"
+  mv -f "$tmp_file" "$state_file"
+
+  if [ "$any_down" -eq 1 ]; then
+    echo "Public Endpoints: DOWN"
+  else
+    echo "Public Endpoints: OK"
+  fi
+}
+
 # ── Side-effect: preflight output (only when executed directly) ──────────
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
@@ -519,6 +597,17 @@ if [ -f "$_WP_HEALTH_HISTORY_FILE" ]; then
   fi
 fi
 echo "Last restart: $_wp_last_restart"
+echo ""
+
+# ── Public Endpoints (#1923) ──────────────────────────────────────────────
+# The function prints "## Public Endpoints" when PUBLIC_URLS is set. When it
+# is unset or empty the function prints only the unconfigured line — open the
+# section here so that line is not folded into the previous section.
+
+if [ -z "${PUBLIC_URLS-}" ]; then
+  echo "## Public Endpoints"
+fi
+public_endpoints_section
 echo ""
 
 fi
