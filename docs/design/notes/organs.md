@@ -208,7 +208,8 @@ experiments.
    unused (`EDGE_TUNNEL_HOST` unset); public traffic reaches the host
    through cloudflared. So rung 3 begins with the access request.
 3. **Approval:** reuse the vault gate the architect's pitches already go
-   through, an approving review on the ops PR (The planner).
+   through: merging the pitch PR is the decision, as for every vault
+   action, and closing it unmerged rejects the pitch (The planner).
 4. **Move:** undecided, "depends on what works". The requirement is that
    the factory can test new versions of itself (rung 5).
 5. **Predictor budget:** one experiment every 2 days. The owner asked
