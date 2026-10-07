@@ -216,37 +216,50 @@ AC_CURL_STUB
 }
 
 # ac_write_pitch_stub <STUB_BIN> — write a hermetic curl at <STUB_BIN>/curl
-# for decided pitches (#1891). #1892 should add merged-pitch responses to
-# this stub rather than copying it.
+# for decided pitches (#1891, #1892).
 #
 # The last argument is the URL. Closed ops pulls, page 1:
 #   22 — unmerged, body "class: deploy", files add sprints/b.md
 #   23 — unmerged, files add probes/x.sh only
 # A later page of the same listing is []. Unknown URLs exit 22.
 # AC_PITCH_STUB_FAIL=1 makes every call exit 22 (the listing-failure seam).
+# AC_PITCH_STUB_MERGED=1 (#1892) also lists closed PR 21, merged, adding
+# sprints/a.md. The milestone arm is always present so that listing can
+# resolve; #1891 does not request it.
+#   …/repos/o/p/milestones?… → [{"id":9,"description":"<!-- pitch: sprints/a.md -->"}]
 ac_write_pitch_stub() {
   local stub_bin="$1"
   mkdir -p "$stub_bin"
   cat > "${stub_bin}/curl" <<'PITCH_STUB'
 #!/usr/bin/env bash
 # Fake ops-repo pulls. Last arg is the URL. AC_PITCH_STUB_FAIL=1 exits 22.
-# #1892: add merged-pitch arms here (do not copy this stub).
+# AC_PITCH_STUB_MERGED=1 adds merged pitch 21 (#1892). Do not copy this stub.
 if [ "${AC_PITCH_STUB_FAIL:-}" = "1" ]; then
   exit 22
 fi
 url="${*: -1}"
 case "$url" in
   *'/pulls?state=closed'*'page=1')
-    printf '%s\n' '[{"number":22,"merged":false,"body":"class: deploy"},{"number":23,"merged":false,"body":"probe only"}]'
+    if [ "${AC_PITCH_STUB_MERGED:-}" = "1" ]; then
+      printf '%s\n' '[{"number":21,"merged":true,"body":""},{"number":22,"merged":false,"body":"class: deploy"},{"number":23,"merged":false,"body":"probe only"}]'
+    else
+      printf '%s\n' '[{"number":22,"merged":false,"body":"class: deploy"},{"number":23,"merged":false,"body":"probe only"}]'
+    fi
     ;;
   *'/pulls?state=closed'*)
     printf '%s\n' '[]'
+    ;;
+  *'/pulls/21/files'*)
+    printf '%s\n' '[{"filename":"sprints/a.md","status":"added"}]'
     ;;
   *'/pulls/22/files'*)
     printf '%s\n' '[{"filename":"sprints/b.md","status":"added"}]'
     ;;
   *'/pulls/23/files'*)
     printf '%s\n' '[{"filename":"probes/x.sh","status":"added"}]'
+    ;;
+  *'/repos/o/p/milestones?'*)
+    printf '%s\n' '[{"id":9,"description":"<!-- pitch: sprints/a.md -->"}]'
     ;;
   *)
     exit 22

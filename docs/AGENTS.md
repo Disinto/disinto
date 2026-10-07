@@ -99,7 +99,7 @@ disinto/                 (code repo)
 │                  claim-proposals.sh — a merged claim becomes a claim-loop proposal (#1641)
 │                  tape-rejections.sh — a closed rejected issue the tape does not hold
 │                  yet becomes a rejected dev proposal (#1631)
-│                  pitch-decisions.sh — a decided pitch reaches the tape (#1891)
+│                  pitch-decisions.sh — a decided pitch reaches the tape; a merged one becomes its milestone and sub-issues (#1891, #1892)
 │                  claim-checks.sh — run a proposed claim's check; one miss contradicts it (#1642)
 │                  claims-report.sh — catalog table of each claim's status (#1645)
 │                  grade.sh — one-command human grading of a proposal (#1410)

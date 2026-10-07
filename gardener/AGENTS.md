@@ -28,7 +28,7 @@ and executes the pending-actions manifest post-merge.
   bare-metal mode, `lib/ci-setup.sh:63`): lock, memory guard, syncs the ops clone at the
   start of every run via `ensure_ops_repo()` (#1653) — before the precondition checks, so
   even early-exit runs read fresh operational data (non-fatal, warnings only),
-  then runs `tools/pitch-decisions.sh` (#1891), also before the precondition checks: a pitch (an ops-repo PR adding `sprints/<slug>.md`) closed unmerged becomes a rejected `sprint` proposal with `context.pitch` (non-fatal),
+  then runs `tools/pitch-decisions.sh` (#1891), also before the precondition checks: a pitch (an ops-repo PR adding `sprints/<slug>.md`) closed unmerged becomes a rejected `sprint` proposal with `context.pitch`; a merged one gets its milestone (`lib/sprint-milestone.sh`) and an approved `sprint` proposal with `context.pitch` and `ref` `milestone:<id>`, then filer-bot files its sub-issues into the milestone (`lib/sprint-filer.sh`) (non-fatal),
   sources disinto project config, loads formula via `load_formula_or_profile`,
   builds context block via `build_context_block`, invokes `agent_run` from
   `lib/agent-sdk.sh`. Walks PR to merge via `pr_walk_to_merge` from

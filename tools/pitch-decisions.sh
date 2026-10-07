@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tools/pitch-decisions.sh — a pitch closed unmerged reaches the tape (#1891)
+# tools/pitch-decisions.sh — a decided pitch reaches the tape (#1891, #1892)
 #
 # A pitch is an ops-repo PR that adds sprints/<slug>.md. When the owner closes
-# it unmerged, the tape gets a rejected sprint proposal. Merged pitches are
-# left unmarked; #1892 turns those into the sprint.
+# it unmerged, the tape gets a rejected sprint proposal. When the owner merges
+# it, the project gets the sprint's milestone and its sub-issues, and the tape
+# gets an approved sprint proposal (#1892).
 #
 # List closed ops-repo PRs:
 #   curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
@@ -24,6 +25,26 @@
 # is empty. The id is uuidgen, then the kernel uuid. The marker is written
 # only after the append; a failed append logs a warning and writes no marker.
 #
+# A merged pitch (merged == true) whose added file is sprints/<slug>.md, in
+# order:
+#   1. file="${OPS_REPO_ROOT}/sprints/<slug>.md". Missing: warning, no marker,
+#      the run exits 1 after the remaining PRs.
+#   2. pitch_sprint_block. Failure: log "pitch #P has no sprint block", touch
+#      the marker, record nothing.
+#   3. N=$(sprint_milestone_ensure "$file"). Failure: warning, no marker.
+#   4. class from sprint_field of the block, then
+#      sprint_proposal_id "$N" "$class" '{"pitch":<P>}'. Failure: warning, no
+#      marker. The proposal is approved, ref milestone:<N>; the id file is
+#      ${TAPE_DIR}/sprints/<N>.
+#   5. If the file contains <!-- filer:begin -->, run
+#      bash "$SPRINT_FILER" "$file" "$N" as a separate process. It sources
+#      lib/env.sh itself; FACTORY_ROOT is not set. Failure: warning, no
+#      marker. The next run finds the milestone and the id file again, and
+#      the filer skips issues it already filed.
+#   6. Touch ${TAPE_DIR}/pitches/pr-P.
+# The proposal is written before the sub-issues are filed, so dev-poll's
+# sprint_proposal_id finds the id file and never mints a second proposal.
+#
 # The gardener calls this right after resolve_forge_remote, before the
 # precondition checks, so an early exit still records the decision. A
 # non-zero exit only logs a warning; it never fails the gardener run.
@@ -32,15 +53,21 @@
 #   tools/pitch-decisions.sh
 #
 # Environment:
-#   TAPE_DIR        tape directory (default /srv/disinto/tape)
-#   FORGE_API_BASE  forge API base (no trailing path)
-#   FORGE_OPS_REPO  owner/name of the ops repo
-#   FORGE_TOKEN     token for the Authorization header
+#   TAPE_DIR           tape directory (default /srv/disinto/tape)
+#   FORGE_API_BASE     forge API base (no trailing path)
+#   FORGE_OPS_REPO     owner/name of the ops repo
+#   FORGE_TOKEN        token for the Authorization header
+#   OPS_REPO_ROOT      ops clone (ensure_ops_repo syncs it at run start)
+#   FORGE_API          project-repo API (milestone ensure and the filer)
+#   FORGE_FILER_TOKEN  filer-bot token (milestone ensure and the filer)
+#   SPRINT_FILER       sub-issue filer (default $REPO_ROOT/lib/sprint-filer.sh;
+#                      a test seam)
 #
 # Exit codes:
 #   0  every closed PR was recorded, marked, or skipped
 #   1  a page could not be listed, or a pitch could not be read, appended,
-#      or marked — nothing was marked for a decision that is not on the tape
+#      filed, or marked — nothing was marked for a decision that is not on
+#      the tape
 #
 # Hermetic aside from the tape and the forge it is pointed at. No agent, no
 # secrets (AD-006). Does not source lib/env.sh: the gardener already loaded
@@ -54,8 +81,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/sprint-block.sh"
 # shellcheck source=../lib/tape.sh
 source "$REPO_ROOT/lib/tape.sh"
+# shellcheck source=../lib/pitch.sh
+source "$REPO_ROOT/lib/pitch.sh"
+# shellcheck source=../lib/sprint-milestone.sh
+source "$REPO_ROOT/lib/sprint-milestone.sh"
+# shellcheck source=../lib/sprint-tape.sh
+source "$REPO_ROOT/lib/sprint-tape.sh"
 
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
+SPRINT_FILER="${SPRINT_FILER:-$REPO_ROOT/lib/sprint-filer.sh}"
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'pitch-decisions: jq is required\n' >&2
@@ -114,12 +148,71 @@ reject_unmerged() {
   return 0
 }
 
+# approve_merged P RELPATH — a merged pitch becomes its sprint (#1892).
+# Order: file, sprint block, milestone, approved proposal, sub-issues, marker.
+# A missing file, or a failed milestone, proposal, or filer, writes no marker.
+# A file with no sprint block is marked and nothing is recorded.
+#   0  marked (sprint filed, or no sprint block)
+#   1  a step failed and the marker was not written
+approve_merged() {
+  local number="$1" relpath="$2"
+  local file="${OPS_REPO_ROOT:-}/${relpath}"
+  local block="" class="" ctx="" n=""
+
+  if [ ! -f "$file" ]; then
+    log "pitch file missing for pitch ${number} (${file}); no marker written"
+    return 1
+  fi
+
+  if ! block="$(pitch_sprint_block "$file")"; then
+    log "pitch #${number} has no sprint block"
+    if ! mark_seen "$number"; then
+      log "pitch #${number} has no sprint block, and its marker could not be written"
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! n="$(sprint_milestone_ensure "$file")" || [ -z "$n" ]; then
+    log "milestone ensure failed for pitch ${number}; no marker written"
+    return 1
+  fi
+
+  class="$(sprint_field "$block" class)"
+  if ! ctx="$(jq -cn --argjson p "$number" '{pitch: $p}')"; then
+    log "could not build context for pitch ${number}; no marker written"
+    return 1
+  fi
+  # The id is on the tape and in the id file. stdout stays empty (warnings only).
+  if ! sprint_proposal_id "$n" "$class" "$ctx" >/dev/null; then
+    log "proposal failed for pitch ${number}; no marker written"
+    return 1
+  fi
+
+  # Separate process: the filer sources lib/env.sh itself. Do not set
+  # FACTORY_ROOT — an exported one from the gardener must not leak in.
+  if grep -qF '<!-- filer:begin -->' "$file"; then
+    if ! env -u FACTORY_ROOT bash "$SPRINT_FILER" "$file" "$n"; then
+      log "filer failed for pitch ${number}; no marker written"
+      return 1
+    fi
+  fi
+
+  if ! mark_seen "$number"; then
+    log "pitch ${number} was filed but its marker could not be written"
+    return 1
+  fi
+  return 0
+}
+
 # handle_pr PR_JSON — record, mark, or skip one closed PR.
-#   0  recorded, marked as not a pitch, skipped (marker or merged pitch)
-#   1  files, append, or marker failed; no marker for a decision not on the tape
+#   0  recorded, marked as not a pitch, skipped (marker), or a merged pitch
+#      with no sprint block was marked
+#   1  files, append, milestone, proposal, filer, or marker failed; no marker
+#      for a decision not on the tape
 handle_pr() {
   local pr_json="$1"
-  local number="" files_body="" files_rc=0 pitch="" marker=""
+  local number="" files_body="" files_rc=0 added="" added_rc=0 marker=""
   number="$(printf '%s' "$pr_json" | jq -r '.number // empty' 2>/dev/null || true)"
   if ! [[ "$number" =~ ^[0-9]+$ ]]; then
     log "skipped a closed PR with no numeric number"
@@ -140,22 +233,27 @@ handle_pr() {
     log "files listing for PR ${number} was not a JSON array; no marker written"
     return 1
   fi
-  pitch="$(printf '%s' "$files_body" | jq -r --arg re '^sprints/[^/]+\.md$' \
-    'if any(.[]; .status == "added" and ((.filename // "") | test($re))) then "yes" else "no" end')" \
-    || pitch=""
-  if [ -z "$pitch" ]; then
+  added_rc=0
+  added="$(printf '%s' "$files_body" | jq -r --arg re '^sprints/[^/]+\.md$' \
+    '[.[] | select(.status == "added" and ((.filename // "") | test($re))) | .filename] | first // empty')" \
+    || added_rc=$?
+  if [ "$added_rc" -ne 0 ]; then
     log "could not read the file list for PR ${number}; no marker written"
     return 1
   fi
-  if [ "$pitch" != "yes" ]; then
+  if [ -z "$added" ]; then
     mark_seen "$number"
     return $?
   fi
-  # Merged pitches stay unmarked so #1892 can still see them.
   if printf '%s' "$pr_json" | jq -e '.merged == false' >/dev/null 2>&1; then
     reject_unmerged "$pr_json" "$number"
     return $?
   fi
+  if printf '%s' "$pr_json" | jq -e '.merged == true' >/dev/null 2>&1; then
+    approve_merged "$number" "$added"
+    return $?
+  fi
+  # Closed, but neither merged nor unmerged: leave unmarked.
   return 0
 }
 
