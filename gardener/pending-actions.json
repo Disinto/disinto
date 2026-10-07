@@ -1,32 +1,85 @@
 [
   {
-    "action": "edit_body",
-    "issue": 1880,
-    "body": "Flagged by AI reviewer in PR #1879.\n\n## Problem\n\n`dev/AGENTS.md` describes `emit_tape_outcome()` (dev-poll, #1399) as appending `numbers.ci_red` from `${PR_WALK_CI_RED:-0}` and `review_rounds` from `${PR_WALK_REVIEW_ROUNDS:-0}`.\n\nThat is the dev-agent writer (`close_dev_tape_outcome` in `dev/dev-agent.sh`, #1616). `dev/dev-poll.sh` `emit_tape_outcome()` does not write `ci_red`. Its `review_rounds` is a count of `REQUEST_CHANGES` reviews from one forge call, not `PR_WALK_REVIEW_ROUNDS`.\n\nA reader implementing a probe against that paragraph will look for a field dev-poll outcomes do not have, and will mis-attribute `review_rounds`.\n\nNot introduced by #1879 (that PR only added `bits.ci_first_green` to the same sentence).\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] `dev/AGENTS.md` no longer attributes `ci_red` / `${PR_WALK_CI_RED:-0}` / `${PR_WALK_REVIEW_ROUNDS:-0}` to `emit_tape_outcome()` (dev-poll).\n- [ ] `dev/AGENTS.md` states that dev-poll `emit_tape_outcome()` writes `review_rounds` = REQUEST_CHANGES reviews on the PR from one forge call (not `${PR_WALK_REVIEW_ROUNDS:-0}`) plus `duration_s`, and does not write `ci_red`.\n- [ ] `dev/AGENTS.md` attributes `ci_red` = `${PR_WALK_CI_RED:-0}` and `review_rounds` = `${PR_WALK_REVIEW_ROUNDS:-0}` to `close_dev_tape_outcome()` (dev-agent, #1616), not to dev-poll.\n\n## Affected files\n\n- `dev/AGENTS.md`\n"
+    "action": "create_issue",
+    "title": "fix: bundled dust cleanup — docs",
+    "body": "## Bundled dust\n\nSingle-file documentation / comment fixes with no behavior change, grouped under the `docs` subsystem (stale or contradictory statements in AGENTS.md / jobspec headers maintained by the gardener's agents-update).\n\n- #1942 - `architect/AGENTS.md`: Round-robin step 5 says the last-seen marker is PATCHed every iteration; `architect-run.sh` only updates it when the opus dispatch succeeds (`_OPUS_DISPATCH_FAILED` false).\n- #1941 - `architect/AGENTS.md`: Write-permission contract lists only PATCH body / POST comments / close; `publish_draft` also commits the pitch file via the contents API (`pitch_pr_put`) on decompose and, since #1940, on q_and_a.\n- #1937 - `supervisor/AGENTS.md`: claims the edge entrypoint runs a supervisor loop; `docker/edge/entrypoint-edge.sh` never calls `supervisor-run.sh` - only `docker/agents/entrypoint.sh` does.\n- #1928 - `lib/AGENTS.md`: says `sprint-filer.sh` is invoked by `.woodpecker/ops-filer.yml`; that pipeline was removed in #779. The script requires only `FORGE_FILER_TOKEN`.\n\n## Affected files\n\n- architect/AGENTS.md\n- architect/architect-run.sh\n- supervisor/AGENTS.md\n- lib/AGENTS.md\n\n## Acceptance criteria\n\n- [ ] `architect/AGENTS.md` round-robin step 5 states the last-seen marker is updated only on a successful opus dispatch.\n- [ ] `architect/AGENTS.md` write-permission contract and `architect/architect-run.sh` header include the contents-API pitch commit.\n- [ ] `supervisor/AGENTS.md` no longer attributes a supervisor loop to the edge entrypoint.\n- [ ] `lib/AGENTS.md` sprint-filer row reflects the post-#779 invocation and env vars.",
+    "labels": [
+      "backlog"
+    ]
   },
   {
-    "action": "edit_body",
-    "issue": 1869,
-    "body": "Flagged by AI reviewer in PR #1868.\n\n## Problem\n\n`nomad/jobs/edge.hcl` (header, around line 10) says the vault-action dispatcher polls disinto-ops and dispatches actions via Nomad batch jobs. That is not the live path. `docker/edge/dispatcher.sh` defaults `DISPATCHER_BACKEND` to `docker`, and the edge job never sets it, so vault runners are `docker run` from the caddy task (`entrypoint-edge.sh` starts `dispatcher.sh`). The Nomad `vault-runner` jobspec is not what an action with no `image` field hits.\n\nThat mismatch is why #1849's failure lived in `_launch_runner_docker` while `vault-runner.hcl` already defaulted to `disinto/agents:local`. The header is still wrong after #1868, so the next image/dispatch fix can land on the jobspec that production does not use.\n\n`docker/edge/dispatcher.sh` still comments that the nomad backend \"lands as a pure addition during migration Step 5\" (the backend exists; it is just not selected).\n\n## Expected\n\nThe edge job header (and the dispatcher backend comment) should say the live edge uses the docker backend unless `DISPATCHER_BACKEND=nomad` is set, and that `VAULT_RUNNER_IMAGE` is how that path picks `disinto/agents:local`.\n\n---\n*Auto-created from AI review*\n\n## Acceptance criteria\n\n- [ ] `nomad/jobs/edge.hcl` header states the live edge dispatcher dispatches via the docker backend unless `DISPATCHER_BACKEND=nomad` is set (not \"via Nomad batch jobs\").\n- [ ] The header notes that `VAULT_RUNNER_IMAGE` is how the docker path picks `disinto/agents:local`.\n- [ ] `docker/edge/dispatcher.sh`'s backend comment reflects that the nomad backend already exists (it is just not the default).\n\n## Affected files\n\n- `nomad/jobs/edge.hcl`\n- `docker/edge/dispatcher.sh`\n"
+    "action": "comment",
+    "issue": 1942,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1942,
+    "reason": "bundled into dust cleanup for docs"
+  },
+  {
+    "action": "comment",
+    "issue": 1941,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1941,
+    "reason": "bundled into dust cleanup for docs"
+  },
+  {
+    "action": "comment",
+    "issue": 1937,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1937,
+    "reason": "bundled into dust cleanup for docs"
+  },
+  {
+    "action": "comment",
+    "issue": 1928,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1928,
+    "reason": "bundled into dust cleanup for docs"
+  },
+  {
+    "action": "comment",
+    "issue": 1900,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1900,
+    "reason": "bundled into dust cleanup for docs"
+  },
+  {
+    "action": "comment",
+    "issue": 1885,
+    "body": "Bundled into dust cleanup issue for docs"
+  },
+  {
+    "action": "close",
+    "issue": 1885,
+    "reason": "bundled into dust cleanup for docs"
   },
   {
     "action": "add_label",
-    "issue": 1880,
-    "label": "backlog"
-  },
-  {
-    "action": "add_label",
-    "issue": 1869,
+    "issue": 1902,
     "label": "backlog"
   },
   {
     "action": "remove_label",
-    "issue": 1880,
+    "issue": 1902,
     "label": "tech-debt"
   },
   {
-    "action": "remove_label",
-    "issue": 1869,
-    "label": "tech-debt"
+    "action": "add_label",
+    "issue": 1912,
+    "label": "backlog"
   }
 ]

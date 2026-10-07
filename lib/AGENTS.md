@@ -1,4 +1,4 @@
-<!-- last-reviewed: 6eecb2370 -->
+<!-- last-reviewed: b5884e28b6016ce03ed6195e276bf6b24e046354 -->
 # Shared Helpers (`lib/`)
 
 All agents source `lib/env.sh` as their first action. Additional helpers are
