@@ -54,9 +54,9 @@ esac
 grep -qF 'then runs `tools/pitch-decisions.sh` (#1891), also before the precondition checks:' \
   "$REPO_ROOT/gardener/AGENTS.md" \
   || ac_fail "gardener/AGENTS.md must describe pitch-decisions.sh (#1891)"
-grep -qF 'pitch-decisions.sh — a decided pitch reaches the tape (#1891)' \
+grep -qF 'pitch-decisions.sh — a decided pitch reaches the tape; a merged one becomes its milestone and sub-issues (#1891, #1892)' \
   "$REPO_ROOT/docs/AGENTS.md" \
-  || ac_fail "docs/AGENTS.md must name pitch-decisions.sh (#1891)"
+  || ac_fail "docs/AGENTS.md must name pitch-decisions.sh (#1891, #1892)"
 
 TOOL="$REPO_ROOT/tools/pitch-decisions.sh"
 WORK="$(mktemp -d)"
