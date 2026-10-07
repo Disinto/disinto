@@ -77,8 +77,7 @@ differ by `ops/pack.toml`, not by a project kind, so research boxes run the
 same formula.
 
 `formulas/run-architect.toml` defines the steps for:
-- Design Q&A: refining the sprint via PR comments after human engagement
-- Sub-issue finalization: writing the `## Sub-issues` block once forks are resolved
+- `ground`, `draft`, `lint`, `reply`: draft the sub-issues of a pitch that has none, or revise them on the owner's comments, by `docs/design/notes/issue-writing.md`; bash commits the pitch file and posts the reply (#1909)
 
 Vision pitching is owned by the gardener (`formulas/pitch-vision.toml` —
 #871, #877, #897), not by the formula.
