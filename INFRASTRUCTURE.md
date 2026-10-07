@@ -100,13 +100,14 @@ of the bootstrap sequence.
 | `site-content`                | `/srv/disinto/docker` (ro)             | `nomad/jobs/staging.hcl`           |
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
-| `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot task only) |
+| `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot task); `nomad/jobs/agents-supervisor-opus.hcl` (ro) |
 
 The `snapshot-state` host path uses `/srv/disinto/` (not `/var/lib/disinto/`)
 because the `raw_exec` snapshot daemon writes directly to the host path
 (`SNAPSHOT_PATH=/srv/disinto/snapshot-state/state.json` in `nomad/jobs/edge.hcl`),
 bypassing the Nomad volume_mount layer. The caddy task no longer mounts it
-(#1770).
+(#1770). The supervisor job mounts the same volume read-only at
+`/var/lib/disinto/snapshot` (#1926) so it can read Nomad alerts (#1927).
 
 ### Required plugin blocks
 
