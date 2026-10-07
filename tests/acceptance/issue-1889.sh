@@ -57,8 +57,10 @@ printf '%s\n' "$MILESTONE_ROW" | grep -qF '<!-- pitch: sprints/<slug>.md -->' \
   || ac_fail "lib/AGENTS.md: the sprint-milestone.sh row must name the marker line"
 PITCH_ROW="$(sed -n "${PITCH_LINE}p" "$AGENTS")"
 # shellcheck disable=SC2016  # backticks are literal markdown in the required row
+# #1892 appends another caller after this one. The cell must still name
+# sprint-milestone.sh; it need not be the only caller.
 case "$PITCH_ROW" in
-  *'| `lib/sprint-milestone.sh` (#1889) |'*) ;;
+  *'| `lib/sprint-milestone.sh` (#1889)'*) ;;
   *) ac_fail "lib/AGENTS.md: the pitch.sh row must now be sourced by lib/sprint-milestone.sh (#1889)" ;;
 esac
 ac_log "docs OK"
