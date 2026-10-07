@@ -21,10 +21,6 @@
 #   3. tests/acceptance/issue-1315.sh is gone.
 #   4. architect_formula_file() extracted from architect/architect-run.sh
 #      returns the run-architect.toml path (the kind switch is gone, #1338).
-#   5. The tracking green gate is the software gate: the
-#      check_research_subissue_green function is gone and
-#      check_subissue_green still requires the deployed label and the
-#      acceptance test rc=0.
 #   6. The session lifecycle is unchanged: architect-run.sh still loads the
 #      formula via load_formula_or_profile and still runs agent_run.
 #
@@ -87,18 +83,6 @@ OUT="$(ac_pick_in_subshell "$FN" architect_formula_file)"
 ac_assert_eq "$OUT" "$SOFTWARE_PATH" \
   "expected $SOFTWARE_PATH, got $OUT"
 ac_log "selection: architect_formula_file -> run-architect.toml"
-
-# 5. The tracking green gate is the software gate.
-ac_log "checking the tracking green gate is the software gate"
-! grep -q "check_research_subissue_green" "$ARCHITECT_RUN" \
-  || ac_fail "architect-run.sh still defines check_research_subissue_green"
-# shellcheck disable=SC2016
-grep -qF "grep -q '^deployed\$'" "$ARCHITECT_RUN" \
-  || ac_fail "check_subissue_green no longer requires the deployed label"
-grep -q "tests/acceptance/issue-" "$ARCHITECT_RUN" \
-  || ac_fail "check_subissue_green no longer runs the acceptance test"
-grep -q "TRACKING_GREEN_DEF=\"closed AND has deployed label AND acceptance test rc=0\"" "$ARCHITECT_RUN" \
-  || ac_fail "TRACKING_GREEN_DEF is no longer the software definition"
 
 # 6. Session lifecycle unchanged: formula loading + agent_run.
 ac_log "checking the session lifecycle is unchanged"

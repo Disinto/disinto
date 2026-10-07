@@ -20,13 +20,14 @@ architect no longer generates pitches.
 
 ## Lifecycle states
 
-The architect operates on the ops repo PRs through four states. Each iteration
+The architect operates on the ops repo PRs through one state, q_and_a; the owner
+merges the PR (the decision) or closes it. Each iteration
 picks the head of a round-robin queue (sorted by `<!-- architect-last-seen: -->`
 marker ascending), detects the state, and dispatches the appropriate action.
 
 ### [q_and_a] — Design Q&A
 
-**Entry conditions**: PR is open, no APPROVED review on Forgejo, new operator
+**Entry conditions**: PR is open, new operator
 comment since last-seen marker.
 
 **Actions**:
@@ -39,40 +40,6 @@ comment since last-seen marker.
 **Exit conditions**:
 - Reject: → PR closed (terminal)
 - New engagement → stay in q_and_a
-- APPROVED review → transitions to approved_idle
-
-### [approved_idle] — Awaiting filer
-
-**Entry conditions**: Forgejo review state == APPROVED, no `## Filed:` marker
-in PR body.
-
-**Actions**: Post one "Approved — awaiting filer" comment per rotation pass.
-**Bash-only — no model call.**
-
-**Exit conditions**: `## Filed: #N1 #N2 ...` marker injected by filer-bot →
-transitions to tracking
-
-### [tracking] — Sub-issue progress
-
-**Entry conditions**: `## Filed: #N1 #N2 ...` marker present, not all listed
-sub-issues are green.
-
-**Actions**:
-- For each sub-issue: read state (open/closed), check for `deployed` label,
-  run `tests/acceptance/issue-<n>.sh` and capture rc.
-- "Green" = closed AND has `deployed` label AND acceptance test rc=0.
-- If state changed since last digest comment → opus session writes one digest
-  comment.
-- If no state change → skip opus call.
-
-**Exit conditions**: All listed sub-issues green → transitions to mergeable
-
-### [mergeable] — Auto-merge
-
-**Entry conditions**: `## Filed:` marker present, all listed sub-issues green.
-
-**Actions**: Merge ops PR. Post closure summary comment. **Bash-only — no model
-call.**
 
 ## Round-robin scheduling
 
@@ -84,25 +51,18 @@ Each polling iteration:
 5. PATCH PR body to update the last-seen marker — cursor advances every iteration
    whether work happened or not
 
-`approved_idle` PRs DO consume a slot and re-enter the back of the queue. This
-prevents the architect from idling on a single waiting PR while others have new
-state.
-
 ## Signal model
 
 | Signal | Source | Effect |
 |---|---|---|
 | Operator comment without `Reject:` prefix | ops PR comment thread | q_and_a engagement, opus session |
 | Operator comment starting `Reject:` | ops PR comment thread | close PR, no opus |
-| Forgejo APPROVED review state | ops PR review | enters approved_idle |
-| `## Filed: #N1 #N2 ...` marker in PR body | filer-bot writes (companion issue) | enters tracking |
-| `deployed` label on sub-issue | external deploy script | tracking gate |
-| `tests/acceptance/issue-<n>.sh` rc=0 | acceptance test | tracking gate |
 
 ## Write-permission contract
 
 Architect remains read-only on the project repo. Architect's writes:
-- **ops repo**: PATCH PR body, POST comments, close PR, merge PR
+- **ops repo**: PATCH PR body, POST comments, close PR. It never merges: merging
+  a pitch is the owner's decision (#1907)
 - **project repo**: NONE (only reads — issue states, acceptance scripts, vision
   titles/bodies for grounding)
 
@@ -114,13 +74,11 @@ any POST to the project repo's `/issues` endpoint and fails loudly on detection.
 **Formula (#1335)**: `architect-run.sh` always loads `formulas/run-architect.toml`,
 before any dispatch — the kind selection from #1315 is gone: oak instances
 differ by `ops/pack.toml`, not by a project kind, so research boxes run the
-same formula. The tracking green gate (`check_subissue_green`) is likewise
-always the software gate: closed + `deployed` + acceptance rc=0.
+same formula.
 
 `formulas/run-architect.toml` defines the steps for:
 - Design Q&A: refining the sprint via PR comments after human engagement
 - Sub-issue finalization: writing the `## Sub-issues` block once forks are resolved
-- Tracking digests: summarizing sub-issue progress
 
 Vision pitching is owned by the gardener (`formulas/pitch-vision.toml` —
 #871, #877, #897), not by the formula.
@@ -129,27 +87,21 @@ Vision pitching is owned by the gardener (`formulas/pitch-vision.toml` —
 
 Bash in `architect/architect-run.sh` handles state detection and orchestration:
 
-- **Deterministic state machine**: Bash reads the Forgejo reviews API to detect
-  APPROVED state — the review state, not comment text, drives lifecycle transitions
+- **Deterministic state machine**: bash reads the PR's comments; the owner's merge or close ends the lifecycle
 - **Reject detection**: `Reject:`-prefixed comments trigger PR close (bash-only)
 - **Round-robin**: PRs sorted by last-seen marker; head of queue processed per tick
 - **Last-seen cursor**: `<!-- architect-last-seen: ... -->` updated every iteration
 - **Opus gating**: Model only called when actual engagement or state change detected
-- **Bash-only paths**: Reject handling, approved_idle, mergeable — no model overhead
+- **Bash-only paths**: Reject handling — no model overhead
 
 ### State transitions
 
 ```
-Sprint PR created by gardener (formulas/pitch-vision.toml — #871, #877, #897)
+Sprint PR on the ops repo (adds sprints/<slug>.md)
   ↓
 q_and_a ←→ q_and_a (operator engagement, design conversation)
-  ↓ APPROVED review
-approved_idle ←→ approved_idle (bash: "awaiting filer" comment per rotation)
-  ↓ filer-bot injects ## Filed: #N1 #N2 ...
-tracking ←→ tracking (opus: digest when state changes; bash: check green)
-  ↓ all sub-issues green
-mergeable → PR merged (bash-only)
   ↓
+the owner merges it (the gardener files the sprint, #1892) or closes it
 Reject: comment at any point → PR closed (bash-only)
 ```
 
