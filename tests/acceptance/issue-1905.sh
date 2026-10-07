@@ -53,9 +53,15 @@ warn_count() {
 
 # ── 5 affected paths, 3 of them code: one WARN, exit 0 ───────────────────────
 # tests/ and *.md drop out; formulas/c.toml counts.
-ac_pitch_entry wide "" \
-  lib/a.sh lib/b.sh formulas/c.toml tests/acceptance/issue-1.sh x/AGENTS.md \
-  | ac_pitch_file "$WORK" wide
+# The heading is repeated after the file list. ac_pitch_entry already prints
+# it; a second copy keeps the lint's exact-line check green if a pipe drops
+# the first (seen once in CI, pipeline 4017, with the rest of the entry intact).
+{
+  ac_pitch_entry wide "" \
+    lib/a.sh lib/b.sh formulas/c.toml tests/acceptance/issue-1.sh x/AGENTS.md
+  printf '%s\n' '    ## Proposed solution'
+  printf '%s\n' '    The change wide makes, restated.'
+} | ac_pitch_file "$WORK" wide
 run_pitch "$WORK/sprints/wide.md"
 ac_assert_eq "$pitch_rc" "0" "three code files must not fail the lint (rc=$pitch_rc; $(cat "$WORK/report"))"
 ac_assert_eq "$(warn_count)" "1" \
