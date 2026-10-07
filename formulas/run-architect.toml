@@ -1,44 +1,19 @@
-# formulas/run-architect.toml — Architect formula
+# formulas/run-architect.toml — the architect session's instructions
 #
-# Executed by architect-run.sh via polling loop — strategic decomposition of vision
-# issues into development sprints.
+# A pitch is an ops-repo PR that adds sprints/<slug>.md. When it carries
+# its goal and its sprint block, this formula is how the session drafts
+# the sub-issues, or revises them on the owner's comments. Bash commits
+# the pitch file as architect-bot and posts the reply with the lint
+# report. The session never merges and never files: the owner's merge
+# is the decision.
 #
-# This formula orchestrates the architect agent's workflow:
-#   Step 1: Preflight — bash handles state management:
-#            - Fetch open vision issues from Forgejo API
-#            - Fetch open architect PRs on ops repo
-#            - Fetch merged architect PRs (already pitched visions)
-#            - Filter: remove visions with open PRs, merged sprints, or sub-issues
-#            - Select up to 3 remaining vision issues for pitching
-#   Step 2: Stateless pitch generation — for each selected issue:
-#            - Invoke claude -p with: vision issue body + codebase context
-#            - Model NEVER calls Forgejo API — only generates pitch markdown
-#            - Bash creates the ops PR with pitch content
-#            - Bash posts the ACCEPT/REJECT footer comment
-#   Step 3: Sprint PR creation with questions (issue #101) (one PR per pitch)
-#   Step 4: Post-merge sub-issue filing via filer-bot (#764)
-#
-# Permission model (#764):
-#   architect-bot: READ-ONLY on project repo (GET issues/PRs/labels for context).
-#     Cannot POST/PUT/PATCH/DELETE any project-repo resource.
-#     Write access ONLY on ops repo (branches, PRs, comments).
-#     DO NOT create issues on the project repo. Sub-issues are filed by
-#     filer-bot after sprint PR merge via the ops-filer pipeline.
-#   filer-bot: issues:write on project repo. Files sub-issues from merged sprint
-#     PRs via ops-filer pipeline. Adds in-progress label to vision issues.
-#
-# Architecture:
-# - Bash script (architect-run.sh) handles ALL state management
-# - Model calls are stateless — no Forgejo API access, no memory between calls
-# - Dedup is automatic via bash filters (no journal-based memory needed)
-# - Max 3 open architect PRs at any time
-#
-# AGENTS.md maintenance is handled by the gardener (#246).
+# Steps: ground, draft, lint, reply.
+# The worktree is the project repo at main. Read it. Never edit, commit
+# or push there, and never call the forge API.
 
 name        = "run-architect"
-description = "Architect: strategic decomposition of vision into sprints"
-version     = 2
-model       = "opus"
+description = "Architect: draft and revise the sub-issues of a pitch"
+version     = 3
 
 [context]
 files = ["VISION.md", "AGENTS.md"]
@@ -46,241 +21,131 @@ files = ["VISION.md", "AGENTS.md"]
 # Sprints directory tracked in ops repo
 
 [[steps]]
-id    = "preflight"
-title = "Preflight: bash-driven state management and issue selection"
+id    = "ground"
+title = "Read the pitch, the note, and the code the entries will touch"
 description = """
-This step performs preflight checks and selects up to 3 vision issues for pitching.
-IMPORTANT: All state management is handled by bash (architect-run.sh), NOT the model.
+The prompt gives three paths:
 
-Architecture Decision: Bash-driven orchestration with stateless model calls
-- The model NEVER calls Forgejo API during pitching
-- Bash fetches all data from Forgejo API (vision issues, open PRs, merged PRs)
-- Bash filters and deduplicates (no model-level dedup or journal-based memory)
-- For each selected issue, bash invokes stateless claude -p (model only generates pitch)
-- Bash creates PRs and posts footer comments (no model API access)
+- PITCH_FILE — the pitch as it stands on the PR branch
+- BACKLOG_FILE — the open backlog issues, JSON (an array of objects with
+  .number and .body, the same shape tools/pitch-lint.sh reads)
+- COMMENT_FILE — the reply. Read it before you write it: if it already
+  holds text, that text is the owner's comment. The comment may also be
+  in the prompt. Either way, that comment is what a revision answers.
 
-Bash Actions (in architect-run.sh):
-1. Fetch open vision issues from Forgejo API: GET /repos/{owner}/{repo}/issues?labels=vision&state=open
-2. Fetch open architect PRs from ops repo: GET /repos/{owner}/{repo}/pulls?state=open
-3. Fetch merged sprint PRs: GET /repos/{owner}/{repo}/pulls?state=closed (filter merged=true)
-4. Filter out visions that:
-   - Already have open architect PRs (check PR body for issue number reference)
-   - Have in-progress label
-   - Have open sub-issues (check for 'Decomposed from #N' pattern)
-   - Have merged sprint PRs (decomposition already done)
-5. Select up to (3 - open_architect_pr_count) remaining vision issues
-6. If no issues remain AND no responses to process, signal PHASE:done
+Read the pitch's goal, the first paragraph under `## What this enables`,
+and its sprint block, the lines between `<!-- sprint:begin -->` and
+`<!-- sprint:end -->`. Read `docs/design/notes/issue-writing.md`. Read
+the `AGENTS.md` of each directory an entry will touch.
 
-If open architect PRs exist, handle accept/reject responses FIRST (see Capability B below).
-After handling existing PRs, count remaining open architect PRs and calculate pitch_budget.
+The worktree is the project repo at main. Read it. Never edit, commit
+or push there. Never call the forge API. Bash already fetched the pitch
+and the backlog; you only read and write the three paths.
 
-## Multi-pitch selection (up to 3 per run)
+Check every claim before you write it:
 
-After handling existing PRs, determine how many new pitches can be created:
+- the path exists (`ls`)
+- the function or line is where you say (`grep -n`)
+- the tests that cover it are named (`grep -rl <name> tests/`)
 
-  pitch_budget = 3 - <number of open architect PRs remaining after handling>
-
-For each available pitch slot:
-1. From the vision issues list, skip any issue that already has an open architect PR
-2. Skip any issue that already has the `in-progress` label
-3. Check for existing sub-issues filed from this vision issue
-4. Check for merged sprint PRs referencing this vision issue
-5. From remaining candidates, pick the most unblocking issue first
-6. Add to ARCHITECT_TARGET_ISSUES array
-
-Skip conditions:
-- If no vision issues are found, signal PHASE:done
-- If pitch_budget <= 0 (already 3 open architect PRs), skip pitching
-- If all vision issues already have open architect PRs, signal PHASE:done
-- If all vision issues have open sub-issues, skip pitching
-- If all vision issues have merged sprint PRs, skip pitching
-
-Output:
-- Sets ARCHITECT_TARGET_ISSUES as a JSON array of issue numbers to pitch (up to 3)
+Do not invent a path, a function, a line, or a test name.
 """
 
 [[steps]]
-id    = "research_pitch"
-title = "Stateless pitch generation: model generates content, bash creates PRs"
+id    = "draft"
+title = "Write or revise the sub-issue entries in the pitch file"
 description = """
-IMPORTANT: This step is executed by bash (architect-run.sh) via stateless claude -p calls.
-The model NEVER calls Forgejo API — it only reads context and generates pitch markdown.
-
-Architecture:
-- Bash orchestrates the loop over ARCHITECT_TARGET_ISSUES
-- For each issue: bash fetches issue body from Forgejo API, then invokes stateless claude -p
-- Model receives: vision issue body + codebase context (VISION.md, AGENTS.md, prerequisites.md)
-- Model outputs: sprint pitch markdown ONLY (no API calls, no side effects)
-- Bash creates the PR and posts the ACCEPT/REJECT footer comment
-
-For each issue in ARCHITECT_TARGET_ISSUES, bash performs:
-
-1. Fetch vision issue details from Forgejo API:
-   - GET /repos/{owner}/{repo}/issues/{issue_number}
-   - Extract: title, body
-
-2. Invoke stateless claude -p with prompt:
-   "Write a sprint pitch for this vision issue. Output only the pitch markdown."
-   Context provided:
-   - Vision issue #N: <title>
-   - Vision issue body
-   - Project context (VISION.md, AGENTS.md)
-   - Codebase context (prerequisites.md, graph section)
-   - Formula content
-
-3. Model generates pitch markdown (NO API CALLS):
-
-# Sprint: <sprint-name>
-
-## Vision issues
-- #N — <title>
-
-## What this enables
-<what the project can do after this sprint that it can't do now>
-
-## What exists today
-<current state — infrastructure, interfaces, code that can be reused>
-
-## Complexity
-<number of files/subsystems, estimated sub-issues>
-<gluecode vs greenfield ratio>
-
-## Risks
-<what could go wrong, what breaks if this is done badly>
-
-## Cost — new infra to maintain
-<what ongoing maintenance burden does this sprint add>
-<new services, scheduled tasks, formulas, agent roles>
-
-## Recommendation
-<architect's assessment: worth it / defer / alternative approach>
+Write the entries into PITCH_FILE between `<!-- filer:begin -->` and
+`<!-- filer:end -->`, under `## Sub-issues`. When those markers are not
+in the file, append this at the end, then write the entries between the
+markers:
 
 ## Sub-issues
 
 <!-- filer:begin -->
-- id: <kebab-case-id>
-  title: "vision(#N): <concise sub-issue title>"
-  labels: [backlog]
-  depends_on: []
-  body: |
-    ## Goal
-    <what this sub-issue accomplishes>
-    ## Acceptance criteria
-    - [ ] <criterion>
 <!-- filer:end -->
 
-IMPORTANT: Do NOT include design forks or questions yet. The pitch is a go/no-go
-decision for the human. Questions come only after acceptance.
-The ## Sub-issues block is parsed by the filer-bot pipeline after sprint PR merge.
-Each sub-issue between filer:begin/end markers becomes a Forgejo issue on the
-project repo. The filer appends a decomposed-from marker to each body automatically.
+Change nothing else. The goal and the sprint block are the owner's.
+Do not edit `## What this enables`, the sprint block, or any other
+section. When revising, change only the entries the comment asks for.
 
-CRITICAL: You DO NOT have access to the project repo API. Sub-issues are filed
-by filer-bot from the sprint file after merge. Do NOT attempt to create issues
-via API calls — the token will 403 and the run will fail.
+The entry format is what `parse_subissue_entries` in `lib/sprint-filer.sh`
+reads. One entry:
 
-4. Bash creates PR:
-   - Create branch: architect/sprint-{pitch-number}
-   - Write sprint spec to sprints/{sprint-slug}.md
-   - Create PR with pitch content as body
-   - Post footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
-   - NOTE: in-progress label is added by filer-bot after sprint PR merge (#764)
+- id: <kebab-id>
+  title: "<type>(<area>): <behaviour>"
+  labels: [backlog]
+  depends_on: [<ids>]
+  body: |
+    <body, every line indented by four spaces>
 
-Output:
-- One PR per vision issue (up to 3 per run)
-- Each PR contains the pitch markdown
-- If ARCHITECT_TARGET_ISSUES is empty, skip this step
+`depends_on` names other entries in this block, or is `[]`. A blank
+line inside the body is four spaces, not an empty line, so the parser
+keeps it inside the entry.
+
+Each body follows `docs/design/notes/issue-writing.md`:
+
+- An opening paragraph that names the sprint (the pitch file's slug)
+  and the step, written "Step N of M".
+- The headings: `## Problem`, `## Proposed solution`,
+  `## Affected files`, `## Documentation`, `## Existing tests`,
+  `## Acceptance criteria`, `## Acceptance test`. Add `## Dependencies`
+  or `## Related` only when the rules below need them.
+- At most 100 lines. At most two code files. A formula TOML counts as
+  a code file; a path under `tests/` and a path ending in `.md` do not.
+  List each path in backticks on its own `- ` line under
+  `## Affected files`, so the lint can see it.
+- One behaviour. "And" in the title is two entries.
+- No deploy or ops steps. A backlog issue is code into the repo.
+- Under `## Documentation`, the exact old wording and the exact new
+  wording. When nothing documents the code yet, write "None" and why.
+- Under `## Acceptance criteria`, runnable checks with stubs (at least
+  one line that is `- [ ]`).
+- Under `## Acceptance test`, the line `tests/acceptance/issue-<N>.sh`,
+  with `<N>` written literally. The number does not exist until filing.
+
+Chain. When two entries change the same file, the later one lists the
+earlier id in `depends_on`. A dependency on an existing issue is not a
+`depends_on` id. It is a `- #N` line under that body's own
+`## Dependencies`.
+
+Overlap. Read BACKLOG_FILE. Never duplicate an open issue: if an open
+issue already asks for the behaviour, do not write an entry for it.
+An entry that changes a file an open issue names under
+`## Affected files` depends on that issue (`- #N` under
+`## Dependencies`), or says under `## Related` why it does not.
 """
 
 [[steps]]
-id    = "sprint_pr_creation"
-title = "Sprint PR creation with questions (issue #101) — handled by bash"
+id    = "lint"
+title = "Run pitch-lint and fix every ERROR"
 description = """
-IMPORTANT: PR creation is handled by bash (architect-run.sh) during the pitch step.
-This step is for documentation only — the actual PR creation happens in research_pitch.
+Run:
 
-## Approved PR → Initial design questions (issue #570)
+  tools/pitch-lint.sh "$PITCH_FILE" "$BACKLOG_FILE"
 
-When a sprint pitch PR receives an APPROVED review but has no `## Design forks`
-section and no Q1:, Q2: comments yet, the architect enters a new state:
+Fix every ERROR and run it again, until the report has no ERROR.
+Keep a WARN only when you can say why, and say that why in the reply.
+A WARN you cannot justify is an entry to fix, then lint again.
+Warnings do not change the tool's exit code; an ERROR does. Do not
+leave an ERROR for bash to post.
+"""
 
-1. detect_approved_pending_questions() identifies this state
-2. A fresh agent session starts with a special prompt
-3. The agent reads the approved pitch, posts initial design questions (Q1:, Q2:, etc.)
-4. The agent adds a `## Design forks` section to the PR body
-5. The PR transitions into the questions phase, where the existing Q&A loop takes over
+[[steps]]
+id    = "reply"
+title = "Write the summary the owner will read"
+description = """
+Write COMMENT_FILE in markdown. Overwrite whatever was in it.
 
-This ensures approved PRs don't sit indefinitely without design conversation.
+One line per entry: its id, its title, the files it changes, and its
+`depends_on`. Then a heading `### Open questions`, numbered: the design
+forks the owner must decide, or the single line "None". Do not bury an
+undecided fork inside an entry.
 
-Architecture:
-- Bash creates PRs during stateless pitch generation (step 2)
-- Model has no role in PR creation — no Forgejo API access
-- architect-bot is READ-ONLY on the project repo (#764) — all project-repo
-  writes (sub-issue filing, in-progress label) are handled by filer-bot
-  via the ops-filer pipeline after sprint PR merge
-- This step describes the PR format for reference
+When revising, start the file with what changed and which comment asked
+for it. When drafting, do not invent a comment.
 
-PR Format (created by bash):
-
-1. Branch: architect/sprint-{pitch-number}
-
-2. Sprint spec file: sprints/{sprint-slug}.md
-   Contains the pitch markdown from the model.
-
-3. PR via Forgejo API:
-   - Title: architect: <sprint summary>
-   - Body: plain markdown text from model output
-   - Base: main (or PRIMARY_BRANCH)
-   - Head: architect/sprint-{pitch-number}
-   - Footer comment: "Reply ACCEPT to proceed with design questions, or REJECT: <reason> to decline."
-
-After creating all PRs, signal PHASE:done.
-NOTE: in-progress label on the vision issue is added by filer-bot after sprint PR merge (#764).
-
-## Forgejo API Reference (ops repo only)
-
-All operations use the ops repo Forgejo API with `Authorization: token ${FORGE_TOKEN}` header.
-architect-bot is READ-ONLY on the project repo — cannot POST/PUT/PATCH/DELETE project-repo resources (#764).
-
-### Create branch (ops repo)
-```
-POST /repos/{owner}/{repo-ops}/branches
-Body: {"new_branch_name": "architect/<sprint-slug>", "old_branch_name": "main"}
-```
-
-### Create/update file (ops repo)
-```
-PUT /repos/{owner}/{repo-ops}/contents/<path>
-Body: {"message": "sprint: add <sprint-slug>.md", "content": "<base64-encoded-content>", "branch": "architect/<sprint-slug>"}
-```
-
-### Create PR (ops repo)
-```
-POST /repos/{owner}/{repo-ops}/pulls
-Body: {"title": "architect: <sprint summary>", "body": "<markdown-text>", "head": "architect/<sprint-slug>", "base": "main"}
-```
-
-**Important: PR body format**
-- The `body` field must contain **plain markdown text** (the raw content from the scratch file)
-- Do NOT JSON-encode or escape the body — pass it as a JSON string value
-- Newlines and markdown formatting (headings, lists, etc.) must be preserved as-is
-
-### Close PR (ops repo)
-```
-PATCH /repos/{owner}/{repo-ops}/pulls/{index}
-Body: {"state": "closed"}
-```
-
-### Delete branch (ops repo)
-```
-DELETE /repos/{owner}/{repo-ops}/git/branches/<branch-name>
-```
-
-### Read-only on project repo (context gathering)
-```
-GET /repos/{owner}/{repo}/issues          — list issues
-GET /repos/{owner}/{repo}/issues/{number} — read issue details
-GET /repos/{owner}/{repo}/labels          — list labels
-GET /repos/{owner}/{repo}/pulls           — list PRs
-```
+Bash commits PITCH_FILE and posts COMMENT_FILE with the lint report.
+You never post, merge, close or file anything. The owner's merge is
+the decision.
 """
