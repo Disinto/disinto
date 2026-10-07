@@ -77,7 +77,8 @@ steps:
   - name: render-caddyfile
     image: alpine:3.19
     commands:
-      - apk add --no-cache coreutils
+      # mkdir, echo, and cp are in busybox. Do not apk add: the runner cannot
+      # reach the Alpine CDN (permission denied), and this step needs nothing else.
       - |
         set -e
         mkdir -p edge-render
@@ -123,7 +124,8 @@ steps:
   - name: caddyfile-routing-test
     image: alpine:3.19
     commands:
-      - apk add --no-cache grep coreutils
+      # grep -q is busybox grep. Do not apk add: the runner cannot reach the
+      # Alpine CDN (permission denied), and this step needs nothing else.
       - |
         set -e
 
@@ -201,7 +203,8 @@ steps:
   - name: test-caddyfile-routing
     image: alpine:3.19
     commands:
-      - apk add --no-cache grep coreutils
+      # sed and grep -q are busybox. Do not apk add: the runner cannot reach
+      # the Alpine CDN (permission denied), and this step needs nothing else.
       - |
         set -e
         EDGE_TEMPLATE="nomad/jobs/edge.hcl"
