@@ -16,6 +16,10 @@
 #   sprint-filer.sh <sprint-file.md> [MILESTONE] — file sub-issues from one sprint
 #   sprint-filer.sh --all <sprints-dir>          — scan all sprint files in dir
 #
+# Entries are filed in depends_on order. Each depends_on is written as a
+# blocking ## Dependencies line (lib/parse-deps.sh). An unknown id or a cycle
+# files nothing (#1893).
+#
 # Environment:
 #   FORGE_FILER_TOKEN   — filer-bot API token (issues:write on project repo)
 #   FORGE_API           — project repo API base (e.g. http://forgejo:3000/api/v1/repos/org/repo)
@@ -280,20 +284,113 @@ parse_subissue_entries() {
 # Searches for the decomposed-from marker in existing issues.
 # The marker is built once by file_subissues and passed in.
 # Args: marker
-# Returns: 0 if already exists, 1 if not
+# Returns: 0 if already exists (prints that issue's number), 1 if not
 subissue_exists() {
   local marker="$1"
 
-  # Search all issues (paginated) for the exact marker
-  local issues_json
+  # Search all issues (paginated) for the exact marker.
+  local issues_json number
   issues_json=$(filer_api_all "/issues?state=all&type=issues")
 
-  if printf '%s' "$issues_json" | jq -e --arg marker "$marker" \
-    '[.[] | select(.body // "" | contains($marker))] | length > 0' >/dev/null 2>&1; then
-    return 0  # Already exists
+  number=$(printf '%s' "$issues_json" | jq -r --arg marker "$marker" \
+    '[.[] | select((.body // "") | contains($marker))] | .[0].number // empty' 2>/dev/null) || number=""
+
+  if [ -n "$number" ] && [ "$number" != "null" ]; then
+    printf '%s' "$number"
+    return 0
   fi
 
-  return 1  # Does not exist
+  return 1
+}
+
+# ── Order entries so each follows its depends_on ────────────────────────
+# Stable: an entry stays in block order unless a dependency must precede it.
+# Args: entries JSON array
+# Output: reordered JSON array
+# Returns: 1 (and logs ERROR) when an id is unknown or the graph cycles.
+#          Nothing is printed on failure, so the caller files nothing.
+order_subissue_entries() {
+  local entries="$1"
+  local verdict
+
+  verdict=$(jq -c '
+    def dep_ids:
+      (.depends_on // []) | if type == "array" then . else [] end;
+    . as $e
+    | ([$e[].id]) as $ids
+    | [ $e[] | dep_ids[] | select(. as $d | ($ids | index($d)) == null) ] as $unknown
+    | if ($unknown | length) > 0 then
+        {ok: false, error: ("depends_on names unknown id " + $unknown[0])}
+      else
+        [range($e | length)] as $allidx
+        | {placed: [], guard: 0}
+        | until(
+            (.placed | length) == ($e | length) or .guard > ($e | length);
+            . as $st
+            | ([ $allidx[]
+                 | select(. as $i | ($st.placed | index($i)) == null)
+                 | select(. as $i | all(
+                     ($e[$i] | dep_ids)[];
+                     . as $d | any($st.placed[]; $e[.].id == $d)
+                   ))
+              ]) as $ready
+            | if ($ready | length) == 0 then
+                .guard = ($e | length) + 1
+              else
+                .placed += [$ready[0]] | .guard += 1
+              end
+          )
+        | if (.placed | length) != ($e | length) then
+            {ok: false, error: "depends_on cycle"}
+          else
+            {ok: true, entries: [.placed[] | $e[.]]}
+          end
+      end
+  ' <<<"$entries") || {
+    filer_log "ERROR: failed to order sub-issues"
+    return 1
+  }
+
+  if [ "$(jq -r '.ok' <<<"$verdict")" != "true" ]; then
+    filer_log "ERROR: $(jq -r '.error' <<<"$verdict")"
+    return 1
+  fi
+  jq -c '.entries' <<<"$verdict"
+}
+
+# ── Blocking dependency section for one entry ────────────────────────────
+# Args: depends_on JSON array, id→number JSON object, marker
+# Output: "## Dependencies" plus one "- #<N>" line per dependency, or nothing
+#          when depends_on is empty. A vision marker carries #N, so the
+#          section is closed with ## Related before that marker — otherwise
+#          lib/parse-deps.sh would treat the parent vision issue as blocking.
+# Returns: 1 when a dependency has no issue number yet.
+subissue_dependency_block() {
+  local depends="$1" nums="$2" marker="$3"
+  local count missing text
+
+  count=$(jq 'if type == "array" then length else 0 end' <<<"$depends")
+  if [ "$count" -eq 0 ]; then
+    return 0
+  fi
+
+  missing=$(jq -r --argjson nums "$nums" \
+    '[.[] | select($nums[.] == null)] | .[0] // empty' <<<"$depends")
+  if [ -n "$missing" ]; then
+    filer_log "ERROR: no issue number for dependency '${missing}'"
+    return 1
+  fi
+
+  text=$(jq -r --argjson nums "$nums" \
+    '["## Dependencies"] + map("- #" + ($nums[.] | tostring)) | join("\n")' \
+    <<<"$depends")
+  # Close the section before a marker that itself contains #N.
+  # The pattern is a variable so '#' is not a comment (shellcheck SC1073).
+  local hash_digit='#[0-9]'
+  if [[ "$marker" =~ $hash_digit ]]; then
+    text+=$'\n\n## Related'
+  fi
+  printf '%s' "$text"
 }
 
 # ── Resolve label names to IDs ───────────────────────────────────────────
@@ -353,6 +450,9 @@ add_inprogress_label() {
 # milestone. No vision issue is read or labelled (#1890). Without it, the
 # vision path is unchanged.
 # Returns: 0 on success, 1 on any error (fail-fast)
+# Entries are filed after everything they depend on. depends_on is written
+# as blocking ## Dependencies lines before the marker (#1893). An unknown
+# id or a cycle returns 1 before any issue is created.
 file_subissues() {
   local sprint_file="$1"
   local milestone="${2:-}"
@@ -400,18 +500,30 @@ file_subissues() {
 
   filer_log "Found ${entry_count} sub-issue(s) to file"
 
-  # File each sub-issue (fail-fast on first error)
+  # Order before any POST. Unknown id or a cycle files nothing (#1893).
+  local ordered_json
+  if ! ordered_json=$(order_subissue_entries "$entries_json"); then
+    return 1
+  fi
+  entries_json="$ordered_json"
+  entry_count=$(printf '%s' "$entries_json" | jq 'length')
+
+  # File each sub-issue (fail-fast on first error). issue_nums maps an
+  # entry id to the forge issue number, from a create response or from
+  # subissue_exists when the issue is already filed.
   local filed_count=0
+  local issue_nums='{}'
   local i=0
   while [ "$i" -lt "$entry_count" ]; do
     local entry
     entry=$(printf '%s' "$entries_json" | jq ".[$i]")
 
-    local subissue_id subissue_title subissue_body labels_json
+    local subissue_id subissue_title subissue_body labels_json depends_json
     subissue_id=$(printf '%s' "$entry" | jq -r '.id')
     subissue_title=$(printf '%s' "$entry" | jq -r '.title')
     subissue_body=$(printf '%s' "$entry" | jq -r '.body')
     labels_json=$(printf '%s' "$entry" | jq -c '.labels')
+    depends_json=$(printf '%s' "$entry" | jq -c '(.depends_on // []) | if type == "array" then . else [] end')
 
     if [ -z "$subissue_id" ] || [ "$subissue_id" = "null" ]; then
       filer_log "ERROR: sub-issue entry at index ${i} has no id — aborting"
@@ -431,17 +543,32 @@ file_subissues() {
       marker="<!-- decomposed-from: #${vision_issue}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
     fi
 
-    # Idempotency check
-    if subissue_exists "$marker"; then
+    # Idempotency check. An existing issue is not patched (#1893).
+    local existing_num=""
+    if existing_num=$(subissue_exists "$marker"); then
+      issue_nums=$(jq -cn --argjson nums "$issue_nums" --arg id "$subissue_id" --arg num "$existing_num" \
+        '$nums + {($id): $num}')
       filer_log "Sub-issue '${subissue_id}' already exists — skipping"
       i=$((i + 1))
       continue
     fi
 
-    # Append decomposed-from marker to body
-    local full_body="${subissue_body}
+    # Blocking deps, then the marker. Empty depends_on adds no section.
+    local dep_block="" full_body
+    if ! dep_block=$(subissue_dependency_block "$depends_json" "$issue_nums" "$marker"); then
+      return 1
+    fi
+    if [ -n "$dep_block" ]; then
+      full_body="${subissue_body}
+
+${dep_block}
 
 ${marker}"
+    else
+      full_body="${subissue_body}
+
+${marker}"
+    fi
 
     # Resolve label names to IDs
     local label_ids
@@ -478,6 +605,12 @@ ${marker}"
 
     local new_issue_num
     new_issue_num=$(printf '%s' "$response" | jq -r '.number // empty')
+    if [ -z "$new_issue_num" ]; then
+      filer_log "ERROR: create response for '${subissue_id}' has no issue number — aborting"
+      return 1
+    fi
+    issue_nums=$(jq -cn --argjson nums "$issue_nums" --arg id "$subissue_id" --arg num "$new_issue_num" \
+      '$nums + {($id): $num}')
     filer_log "Filed sub-issue '${subissue_id}' as #${new_issue_num}: ${subissue_title}"
 
     filed_count=$((filed_count + 1))
