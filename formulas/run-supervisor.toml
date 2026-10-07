@@ -31,7 +31,7 @@ and injected into your prompt above. Review them now.
    Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
    CI Pipelines, **Research Runs** (absent when no run ledger), Open PRs,
    Issue Status, Stale Worktrees, **Woodpecker Agent Health**,
-   **Public Endpoints**).
+   **Public Endpoints**, **Nomad Services**).
    Note: preflight.sh auto-removes PHASE:escalate files for closed issues
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
@@ -50,6 +50,7 @@ and injected into your prompt above. Review them now.
    - RAM available < 500MB or swap > 3GB → P0 (memory crisis)
    - Disk > 80% → P1 (disk pressure)
    - Public Endpoints: DOWN (a URL failing 2 ticks in a row) → P1 (public endpoint down)
+   - Nomad Services: MISSING (a running job's service is not registered) → P1 (unregistered Nomad service)
    - Agent sessions dead, CI stuck/pending, git in bad state → P2 (factory stopped)
    - PRs stale >20min (CI done, no push since) → P3 (factory degraded)
    - Stale worktrees, old lock files → P4 (housekeeping)
@@ -65,11 +66,14 @@ Categorize every finding from the metrics into priority levels.
 - RAM available < 500MB
 - Swap used > 3GB AND RAM available < 2000MB
 
-### P1 — Disk pressure / public endpoint down
+### P1 — Disk pressure / public endpoint down / unregistered Nomad service
 - Disk usage > 80%
 - Artifacts disk > 80% (Research Runs section — research-run payloads, #1322)
 - Public Endpoints: DOWN — a URL in `PUBLIC_URLS` failed on two ticks in a row
   (`## Public Endpoints`). Monitor only: file an incident, no remedy (#1923).
+- Nomad Services: MISSING — an alert `service <name> of job <ID> not registered`
+  in `## Nomad Services`. Monitor only: file an incident, no remedy (#1927).
+  Restarting the allocation (`nomad alloc restart`) stays with the operator.
 
 ### P2 — Factory stopped / stalled
 - CI pipelines stuck running > 20min or pending > 30min
@@ -129,6 +133,10 @@ Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log trun
 **P1 Public endpoint down:**
 Files an incident (`public-endpoint-down`). No action script — a monitor, not
 a remedy (#1923). Do not run `disk-pressure.sh` for this finding.
+
+**P1 Unregistered Nomad service:**
+Files an incident (`nomad-service-unregistered`). No action script — a monitor, not
+a remedy (#1927). Do not restart the allocation; that stays with the operator.
 
 **P4 Stale worktrees:**
 Action script: `supervisor/actions/cleanup-worktrees.sh` — no-op by design since

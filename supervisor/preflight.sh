@@ -258,6 +258,62 @@ public_endpoints_section() {
   fi
 }
 
+# nomad_services_section — unregistered Nomad services from the snapshot (#1927).
+#
+# Reads ${SNAPSHOT_PATH:-/var/lib/disinto/snapshot/state.json}. Always prints
+# "## Nomad Services". Missing file, missing or unparseable .collectors.nomad.ts,
+# or ts older than 15 minutes: "Nomad Services: unknown". Otherwise each alert
+# matching ^service .* not registered$ on its own line, then
+# "Nomad Services: MISSING" if there is at least one, else "Nomad Services: OK".
+# Monitor only: the recipe files an incident. Restarting the allocation stays
+# with the operator.
+nomad_services_section() {
+  local path ts ts_epoch now age alerts
+  path="${SNAPSHOT_PATH:-/var/lib/disinto/snapshot/state.json}"
+
+  echo "## Nomad Services"
+
+  if [ ! -f "$path" ]; then
+    echo "Nomad Services: unknown"
+    return 0
+  fi
+
+  ts="$(jq -r '.collectors.nomad.ts // empty' "$path" 2>/dev/null || true)"
+  if [ -z "$ts" ]; then
+    echo "Nomad Services: unknown"
+    return 0
+  fi
+
+  ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null || true)"
+  case "$ts_epoch" in
+    ''|*[!0-9]*)
+      echo "Nomad Services: unknown"
+      return 0
+      ;;
+  esac
+
+  now="$(date -u +%s)"
+  age=$((now - ts_epoch))
+  # Older than 15 minutes. A clock-skewed future ts is not stale.
+  if [ "$age" -gt 900 ]; then
+    echo "Nomad Services: unknown"
+    return 0
+  fi
+
+  alerts="$(jq -r '
+    (.collectors.nomad.alerts // [])
+    | if type == "array" then .[] else empty end
+    | select(type == "string" and test("^service .* not registered$"))
+  ' "$path" 2>/dev/null || true)"
+
+  if [ -n "$alerts" ]; then
+    printf '%s\n' "$alerts"
+    echo "Nomad Services: MISSING"
+  else
+    echo "Nomad Services: OK"
+  fi
+}
+
 # ── Side-effect: preflight output (only when executed directly) ──────────
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
@@ -608,6 +664,13 @@ if [ -z "${PUBLIC_URLS-}" ]; then
   echo "## Public Endpoints"
 fi
 public_endpoints_section
+echo ""
+
+# ── Nomad Services (#1927) ────────────────────────────────────────────────
+# Unregistered native services from the snapshot. A missing or stale collector
+# prints unknown so a dead snapshot cannot look like a clean registration.
+
+nomad_services_section
 echo ""
 
 fi

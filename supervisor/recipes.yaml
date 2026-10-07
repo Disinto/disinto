@@ -31,7 +31,7 @@ recipes:
       threshold: 500
     action: incident
 
-  # ── P1: Disk pressure / public endpoint down ───────────────────────────
+  # ── P1: Disk pressure / public endpoint down / unregistered service ────
 
   - name: disk-pressure
     severity: P1
@@ -52,6 +52,17 @@ recipes:
       rule: field_eq
       field: "Public Endpoints"
       value: "DOWN"
+    action: incident
+
+  # Monitor: snapshot reports an unregistered Nomad service. No remedy (#1927).
+  - name: nomad-service-unregistered
+    severity: P1
+    detect:
+      source: preflight
+      section: "Nomad Services"
+      rule: field_eq
+      field: "Nomad Services"
+      value: "MISSING"
     action: incident
 
   # ── P2: Factory stopped / stalled ──────────────────────────────────────
