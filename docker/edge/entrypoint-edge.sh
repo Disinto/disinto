@@ -5,6 +5,14 @@ set -euo pipefail
 export USER="${USER:-agent}"
 export HOME="${HOME:-/home/agent}"
 
+# Under Nomad, FORGE_URL comes only from local/forge.env (nomadService
+# "forgejo" in edge.hcl). Empty means the service is not registered, and the
+# compose default below never resolves there (outage 2026-10-07).
+if [ -n "${NOMAD_ALLOC_ID:-}" ] && [ -z "${FORGE_URL:-}" ]; then
+  echo "FATAL: FORGE_URL is empty: the Nomad service \"forgejo\" is not registered (local/forge.env rendered nothing). Check 'nomad service list'; restarting the forgejo allocation re-registers it." >&2
+  exit 1
+fi
+
 FORGE_URL="${FORGE_URL:-http://forgejo:3000}"
 
 # Derive FORGE_REPO from PROJECT_TOML if available, otherwise require explicit env var
