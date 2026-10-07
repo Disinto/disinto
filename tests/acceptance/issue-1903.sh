@@ -23,7 +23,7 @@ TOOL="$REPO_ROOT/tools/pitch-lint.sh"
 ac_assert_file "$TOOL" "tools/pitch-lint.sh is missing"
 
 # The docs line the issue names, so a later edit cannot drop the sentence.
-grep -qF "pitch-lint.sh — lints a pitch's sub-issue block against notes/issue-writing.md; markdown report (#1903)" \
+grep -qF "pitch-lint.sh — lints a pitch's sub-issue block against notes/issue-writing.md; markdown report; warns on overlap with a backlog list (#1903)" \
   "$REPO_ROOT/docs/AGENTS.md" \
   || ac_fail "docs/AGENTS.md must name pitch-lint.sh (#1903)"
 
@@ -147,7 +147,7 @@ ac_log "no markers OK"
 run_lint "$WORK/sprints/missing.md"
 ac_assert_eq "$lint_rc" "2" "a missing FILE must exit 2 (rc=$lint_rc)"
 [ ! -s "$WORK/lint-out" ] || ac_fail "a missing FILE must produce empty stdout: $(cat "$WORK/lint-out")"
-ac_assert_eq "$(cat "$WORK/lint-err")" "usage: pitch-lint.sh FILE" \
+ac_assert_eq "$(cat "$WORK/lint-err")" "usage: pitch-lint.sh FILE [BACKLOG_JSON]" \
   "a missing FILE must print a usage line on stderr"
 run_lint
 ac_assert_eq "$lint_rc" "2" "a missing argument must exit 2 (rc=$lint_rc)"

@@ -13,18 +13,25 @@
 #   depends_on names an unknown id (#1904)
 #   a depends_on cycle (#1904)
 #   two entries change the same file and neither reaches the other (#1904)
+#   more than 2 code files under ## Affected files (WARN, #1905)
+#   a path also listed by an open backlog issue (WARN, #1905)
 #
 # Usage:
-#   tools/pitch-lint.sh FILE
+#   tools/pitch-lint.sh FILE [BACKLOG_JSON]
+#
+# BACKLOG_JSON, when given, is a file holding a JSON array of issues as the
+# forge lists them (.number, .body). A missing file or a value that is not a
+# JSON array is one WARN and overlap is not checked. Warnings never change
+# the exit code.
 #
 # Exit:
 #   0  no ERROR
 #   1  at least one ERROR (including a missing, empty or unparseable block)
-#   2  FILE not given or missing (usage on stderr, nothing on stdout)
+#   2  FILE not given or missing, or an extra argument (usage on stderr,
+#      nothing on stdout)
 #
-# Later checks (#1905) call lint_err / lint_warn. They do not add a
-# second parser: entries come from lib/sprint-filer.sh. lint_affected is
-# the path list those checks reuse.
+# #1905 reuses lint_affected. It does not add a second parser: entries come
+# from lib/sprint-filer.sh.
 # =============================================================================
 set -euo pipefail
 
@@ -218,6 +225,73 @@ lint_graph() {
   done
 }
 
+# lint_code_count PATHS — how many paths are code files. A path that starts
+# with tests/ or ends in .md is not code (the acceptance test does not count;
+# a formula TOML does).
+lint_code_count() {
+  local paths="$1"
+  local path n=0
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      tests/*|*.md) continue ;;
+    esac
+    n=$((n + 1))
+  done <<<"$paths"
+  printf '%s\n' "$n"
+}
+
+# lint_files ENTRIES [BACKLOG_JSON] — the two judgement warnings (#1905).
+# Code-file ceiling first, then overlap with the open backlog. The backlog
+# pass runs only when BACKLOG_JSON was passed. A missing file, or a file
+# whose top-level value is not a JSON array, is one WARN without an id.
+# Warnings never change the exit code: this function only calls lint_warn.
+lint_files() {
+  local entries="$1"
+  local backlog_json="${2-}"
+  local n i id body path code_n bn j bnum bfiles
+  local -a ids=() affected=()
+
+  n="$(jq 'length' <<<"$entries")"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    id="$(jq -r --argjson i "$i" '.[$i].id // ""' <<<"$entries")"
+    body="$(jq -r --argjson i "$i" '.[$i].body // ""' <<<"$entries")"
+    ids+=("$id")
+    affected+=("$(lint_affected "$body")")
+    code_n="$(lint_code_count "${affected[$i]}")"
+    if [ "$code_n" -gt 2 ]; then
+      lint_warn "$id" "${code_n} code files under ## Affected files (ceiling 2)"
+    fi
+    i=$((i + 1))
+  done
+
+  # Overlap with the open backlog, only when a list was given.
+  [ "$#" -ge 2 ] || return 0
+  if [ ! -f "$backlog_json" ] || ! jq -e 'type == "array"' "$backlog_json" >/dev/null 2>&1; then
+    lint_warn "" "backlog list unreadable; overlap not checked"
+    return 0
+  fi
+
+  bn="$(jq 'length' "$backlog_json")"
+  j=0
+  while [ "$j" -lt "$bn" ]; do
+    bnum="$(jq -r --argjson j "$j" '.[$j].number // ""' "$backlog_json")"
+    bfiles="$(lint_affected "$(jq -r --argjson j "$j" '.[$j].body // ""' "$backlog_json")")"
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        if lint_line_has "$bfiles" "$path"; then
+          lint_warn "${ids[$i]}" "${path} is also in open issue #${bnum}"
+        fi
+      done <<<"${affected[$i]}"
+      i=$((i + 1))
+    done
+    j=$((j + 1))
+  done
+}
+
 # lint_entries JSON — one pass, block order, over the filer's JSON array.
 lint_entries() {
   local entries="$1"
@@ -284,8 +358,8 @@ lint_report() {
 }
 
 pitch_lint_main() {
-  if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-    echo "usage: pitch-lint.sh FILE" >&2
+  if [ "$#" -lt 1 ] || [ "$#" -gt 2 ] || [ ! -f "$1" ]; then
+    echo "usage: pitch-lint.sh FILE [BACKLOG_JSON]" >&2
     exit 2
   fi
 
@@ -322,6 +396,11 @@ pitch_lint_main() {
 
   lint_entries "$entries"
   lint_graph "$entries"
+  if [ "$#" -eq 2 ]; then
+    lint_files "$entries" "$2"
+  else
+    lint_files "$entries"
+  fi
   lint_report "$file"
   if [ "$LINT_ERRORS" -gt 0 ]; then
     exit 1
