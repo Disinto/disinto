@@ -141,6 +141,21 @@ _render() {
   grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE *= *"60"' "$JOBSPEC_OUT"
 }
 
+@test "stock grok jobspecs pin CLAUDE_TIMEOUT to the shared 7200" {
+  # The per-role grok jobspecs (Grok 4.7) copy CLAUDE_TIMEOUT = 7200 from the
+  # qwen jobs; it is the wall-clock cap the agent harnesses share
+  # (lib/agent-sdk.sh watchdog, lib/agent-harness-dsh.sh, and lib/dsh-oneshot.sh
+  # each fall back via ${CLAUDE_TIMEOUT:-7200}). Pin each grok jobspec so a move
+  # breaks here and in CI in the same PR (defaults-golden contract, #1261).
+  for f in nomad/jobs/agents-dev-grok.hcl \
+           nomad/jobs/agents-review-grok.hcl \
+           nomad/jobs/agents-architect-grok.hcl; do
+   [ -f "$DISINTO_ROOT/$f" ] || { echo "missing $f" >&2; return 1; }
+   grep -Eq 'CLAUDE_TIMEOUT[[:space:]]*=[[:space:]]*"7200"' "$DISINTO_ROOT/$f" \
+     || { echo "$f does not pin CLAUDE_TIMEOUT 7200" >&2; return 1; }
+  done
+}
+
 # ── jobspec shape ─────────────────────────────────────────────────────────────
 
 @test "jobspec carries the bot identifiers, role and project paths" {
