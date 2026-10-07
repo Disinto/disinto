@@ -31,7 +31,7 @@ recipes:
       threshold: 500
     action: incident
 
-  # ── P1: Disk pressure ──────────────────────────────────────────────────
+  # ── P1: Disk pressure / public endpoint down ───────────────────────────
 
   - name: disk-pressure
     severity: P1

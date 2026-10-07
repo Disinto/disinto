@@ -30,7 +30,8 @@ and injected into your prompt above. Review them now.
 1. Read the injected metrics data carefully (System Resources, Docker,
    Active Sessions, Phase Files, Stale Phase Cleanup, Lock Files, Agent Logs,
    CI Pipelines, **Research Runs** (absent when no run ledger), Open PRs,
-   Issue Status, Stale Worktrees, **Woodpecker Agent Health**).
+   Issue Status, Stale Worktrees, **Woodpecker Agent Health**,
+   **Public Endpoints**).
    Note: preflight.sh auto-removes PHASE:escalate files for closed issues
    (24h grace period). Check the "Stale Phase Cleanup" section for any
    files cleaned or in grace period this run.
@@ -48,6 +49,7 @@ and injected into your prompt above. Review them now.
 4. Note any values that cross these thresholds:
    - RAM available < 500MB or swap > 3GB → P0 (memory crisis)
    - Disk > 80% → P1 (disk pressure)
+   - Public Endpoints: DOWN (a URL failing 2 ticks in a row) → P1 (public endpoint down)
    - Agent sessions dead, CI stuck/pending, git in bad state → P2 (factory stopped)
    - PRs stale >20min (CI done, no push since) → P3 (factory degraded)
    - Stale worktrees, old lock files → P4 (housekeeping)
@@ -63,9 +65,11 @@ Categorize every finding from the metrics into priority levels.
 - RAM available < 500MB
 - Swap used > 3GB AND RAM available < 2000MB
 
-### P1 — Disk pressure
+### P1 — Disk pressure / public endpoint down
 - Disk usage > 80%
 - Artifacts disk > 80% (Research Runs section — research-run payloads, #1322)
+- Public Endpoints: DOWN — a URL in `PUBLIC_URLS` failed on two ticks in a row
+  (`## Public Endpoints`). Monitor only: file an incident, no remedy (#1923).
 
 ### P2 — Factory stopped / stalled
 - CI pipelines stuck running > 20min or pending > 30min
@@ -121,6 +125,10 @@ disinto box, so there is no direct action script (#1697).
 
 **P1 Disk pressure:**
 Action script: `supervisor/actions/disk-pressure.sh` — docker prune + log truncation.
+
+**P1 Public endpoint down:**
+Files an incident (`public-endpoint-down`). No action script — a monitor, not
+a remedy (#1923). Do not run `disk-pressure.sh` for this finding.
 
 **P4 Stale worktrees:**
 Action script: `supervisor/actions/cleanup-worktrees.sh` — no-op by design since

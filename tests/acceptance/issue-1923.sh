@@ -46,6 +46,17 @@ grep -q '^public_endpoints_section$' "$PREFLIGHT" \
 # shellcheck disable=SC2016
 grep -qF 'public endpoints (`PUBLIC_URLS`; DOWN after 2 failing ticks in a row)' "$AGENTS_MD" \
   || ac_fail "supervisor/AGENTS.md must mention public endpoints after blocked issues"
+grep -qF 'P1 (disk, public endpoint down)' "$AGENTS_MD" \
+  || ac_fail "supervisor/AGENTS.md alert priorities must list public endpoint down under P1"
+
+FORMULA="$REPO_ROOT/formulas/run-supervisor.toml"
+ac_assert_file "$FORMULA" "formulas/run-supervisor.toml must exist"
+grep -qF '**Public Endpoints**' "$FORMULA" \
+  || ac_fail "run-supervisor.toml preflight checklist must name Public Endpoints"
+grep -qF '### P1 — Disk pressure / public endpoint down' "$FORMULA" \
+  || ac_fail "run-supervisor.toml P1 heading must not be disk-only"
+grep -qF 'Public Endpoints: DOWN' "$FORMULA" \
+  || ac_fail "run-supervisor.toml must classify Public Endpoints: DOWN as P1"
 
 URL="https://self.disinto.ai/"
 TMP="$(mktemp -d)"
