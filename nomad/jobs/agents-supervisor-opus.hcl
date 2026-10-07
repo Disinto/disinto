@@ -18,7 +18,8 @@
 #
 # Host_volume contract:
 #   - agent-data-opus-supervisor: per-agent runtime data (logs, state)
-#   Both declared in nomad/client.hcl.
+#   - snapshot-state: snapshot daemon state, read-only (#1927)
+#   Declared in nomad/client.hcl.
 #
 # docker.sock mount:
 #   Inline bind-mount (not a host_volume) — socket files cannot be host
@@ -66,6 +67,13 @@ job "agents-supervisor-opus" {
       type     = "host"
       source   = "agent-data-opus-supervisor"
       read_only = false
+    }
+
+    # Snapshot daemon state, read-only, so #1927 can see Nomad service alerts.
+    volume "snapshot-state" {
+      type      = "host"
+      source    = "snapshot-state"
+      read_only = true
     }
 
     # ops-repo: disinto-ops clone for incident journal writes.
@@ -136,6 +144,12 @@ job "agents-supervisor-opus" {
       }
 
       volume_mount {
+        volume      = "snapshot-state"
+        destination = "/var/lib/disinto/snapshot"
+        read_only   = true
+      }
+
+      volume_mount {
         volume      = "ops-repo"
         destination = "/home/agent/repos/disinto-ops"
         read_only   = false
@@ -175,6 +189,7 @@ job "agents-supervisor-opus" {
         # after 2 failing ticks in a row. The outage of 2026-10-07 went
         # unnoticed for 2 hours.
         PUBLIC_URLS        = "https://self.disinto.ai/forge/ https://self.disinto.ai/ci/"
+        SNAPSHOT_PATH      = "/var/lib/disinto/snapshot/state.json"
         DISINTO_CONTAINER  = "1"
         PROJECT_NAME       = "disinto"
         PROJECT_REPO_ROOT  = "/home/agent/repos/disinto"
