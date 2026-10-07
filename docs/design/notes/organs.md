@@ -93,7 +93,9 @@ the gardener's `pitch-vision` pitches use today:
 
 1. The organ opens an ops-repo PR (`architect: <title>`) carrying the
    pitch and its sprint block.
-2. The architect answers your questions in PR comments. A comment
+2. When the pitch carries no sub-issues, the architect drafts them and
+   commits them to the PR branch as `architect-bot`; it answers your
+   questions in PR comments and revises the draft. A comment
    starting `Reject:` closes the PR.
 3. **Merging the pitch PR is the decision**, as for every vault action;
    closing it unmerged rejects the pitch.

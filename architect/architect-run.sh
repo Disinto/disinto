@@ -6,6 +6,9 @@
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Lifecycle states:
+#   [decompose] — the PR adds sprints/<slug>.md; on its branch the file has a
+#     sprint block and no sub-issue entries and architect-bot has not yet
+#     commented. The architect drafts the sub-issues once (#1910).
 #   [q_and_a] — PR open, new non-architect comment since last-seen marker
 #
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
@@ -37,6 +40,8 @@ source "$FACTORY_ROOT/lib/formula-session.sh"
 source "$FACTORY_ROOT/lib/worktree.sh"
 source "$FACTORY_ROOT/lib/guard.sh"
 source "$FACTORY_ROOT/lib/agent-sdk.sh"
+source "$FACTORY_ROOT/lib/pitch.sh"
+source "$FACTORY_ROOT/lib/pitch-pr.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/architect/architect.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -95,10 +100,7 @@ ARCHITECT_FORMULA="$(architect_formula_file)"
 # sprints and the filed sub-issues are backlog sub-issues.
 PITCH_NOUN="sprint"
 SUBISSUE_TERM="sub-issues"
-QA_ROLE_TEXT="Your role: strategic decomposition of vision issues into development sprints.
-Propose sprints via PRs on the ops repo, converse with humans through PR comments.
-You are READ-ONLY on the project repo — sub-issues are filed by filer-bot after sprint PR merge (#764).
-Any sub-issue specification must go only into the filer:begin/filer:end block of the sprint pitch."
+QA_ROLE_TEXT="Your role: draft and revise the sub-issues of sprint pitches (ops-repo PRs that add sprints/<slug>.md). You never file, merge or close: the owner's merge is the decision."
 log "architect formula: ${ARCHITECT_FORMULA##*/}"
 
 # ── Forgejo API helpers ─────────────────────────────────────────────────
@@ -318,6 +320,171 @@ _PROMPT_EOF_
   log "opus q_and_a session complete"
 }
 
+# ── Decompose (#1910) ───────────────────────────────────────────────────
+#
+# A pitch that carries only its goal and its sprint block (#1887) still has no
+# sub-issue entries. This state decomposes the pitch: a session (formula steps
+# ground, draft, lint, reply) writes the `## Sub-issues` block into a local copy,
+# bash commits the changed file to the PR branch through the contents API as
+# architect-bot, and posts the reply with the pitch-lint report. It never merges
+# or files: the owner's merge is the decision (#1907). There is no tape record:
+# an undecided pitch serves no proposal (docs/design/proposal-loop.md §3).
+
+# prepare_pitch PR — stage the decompose state for PR: fetch the pitch file as
+# it stands on the PR branch to PITCH_FILE, keep a pristine copy in
+# $PITCH_DIR/orig, and write the (empty) backlog JSON and reply file. Returns
+# 1 when the pitch path or the fetch is missing.
+prepare_pitch() {
+  local pr="$1"
+  PITCH_PATH="$(pitch_pr_path "$pr" 2>/dev/null)" || return 1
+  [ -n "$PITCH_PATH" ] || return 1
+  PITCH_DIR="/tmp/architect-pitch-${pr}"
+  rm -rf "$PITCH_DIR"
+  mkdir -p "$PITCH_DIR" || return 1
+  PITCH_FILE="$PITCH_DIR/$(basename -- "$PITCH_PATH")"
+  if ! read -r PITCH_BRANCH PITCH_SHA < <(pitch_pr_fetch "$pr" "$PITCH_PATH" "$PITCH_FILE" 2>/dev/null); then
+    return 1
+  fi
+  [ -n "$PITCH_BRANCH" ] || return 1
+  cp "$PITCH_FILE" "$PITCH_DIR/orig" || return 1
+  BACKLOG_FILE="$PITCH_DIR/backlog.json"
+  forge_api_all "/issues?state=open&type=issues&labels=backlog" >"$BACKLOG_FILE" 2>/dev/null
+  jq -e 'type == "array"' "$BACKLOG_FILE" >/dev/null 2>&1 || printf '[]' >"$BACKLOG_FILE"
+  COMMENT_FILE="$PITCH_DIR/comment.md"
+  printf '' >"$COMMENT_FILE"
+  log "PR #${pr}: prepared pitch $PITCH_PATH at $PITCH_FILE"
+  return 0
+}
+
+# pitch_has_entries FILE — 0 when a line starting "- id:" lies between the
+# <!-- filer:begin --> and <!-- filer:end --> markers in FILE. This is the
+# decompose gate: a pitch with only its goal and sprint block carries no
+# sub-issue entries, and this gate fires the decompose branch once on such a
+# pitch (the owner's comments then drive the revisions, #1911).
+pitch_has_entries() {
+  local file="$1"
+  local in_block=0 line seen=0
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    return 1
+  fi
+  while IFS= read -r line || [ -n "${line:-}" ]; do
+    if [ "$in_block" = 1 ]; then
+      if [[ "$line" == *'<!-- filer:end -->'* ]]; then
+        break
+      fi
+      if [[ "$line" == '- id:'* ]]; then
+        seen=1
+      fi
+    else
+      if [[ "$line" == *'<!-- filer:begin -->'* ]]; then
+        in_block=1
+      fi
+    fi
+  done < "$file"
+  [ "$seen" = 1 ]
+}
+
+# publish_draft PR MESSAGE — commit the session's pitch edit and post the reply,
+# or refuse to commit when the session changed the owner's sprint block.
+#
+#   * PITCH_FILE differs from $PITCH_DIR/orig AND its pitch_sprint_block differs
+#     from orig's: the session edited the owner's sprint block. Post a "Draft
+#     not committed: the session changed the sprint block." comment and return
+#     0 (no commit, no lint report).
+#   * PITCH_FILE differs (sprint block unchanged): commit it via pitch_pr_put
+#     (contents API — the token's user, architect-bot, is the commit author). On
+#     failure, log, set _OPUS_DISPATCH_FAILED, and return 1 so the next run
+#     retries.
+#   * Always post one comment: the text of COMMENT_FILE (or "The session wrote
+#     no reply."), a blank line, and the pitch-lint report.
+publish_draft() {
+  local pr="$1" message="$2"
+  local orig="$PITCH_DIR/orig"
+  local file_changed=0
+  local block_file block_orig report reply
+  # content comparison, not path — the two files are always at different names.
+  if ! diff -q "$PITCH_FILE" "$orig" >/dev/null 2>&1; then
+    file_changed=1
+  fi
+  block_file="$(pitch_sprint_block "$PITCH_FILE" 2>/dev/null || true)"
+  block_orig="$(pitch_sprint_block "$orig" 2>/dev/null || true)"
+  if [ "$file_changed" = 1 ] && [ "$block_file" != "$block_orig" ]; then
+    post_pr_comment "$pr" "Draft not committed: the session changed the sprint block."
+    return 0
+  fi
+  if [ "$file_changed" = 1 ]; then
+    if pitch_pr_put "$PITCH_BRANCH" "$PITCH_PATH" "$PITCH_SHA" "$PITCH_FILE" "$message"; then
+      log "PR #${pr}: committed the drafted pitch to $PITCH_BRANCH"
+    else
+      log "PR #${pr}: pitch_pr_put failed — no commit; the next run retries"
+      _OPUS_DISPATCH_FAILED=true
+      return 1
+    fi
+  fi
+  report="$("$FACTORY_ROOT/tools/pitch-lint.sh" "$PITCH_FILE" "$BACKLOG_FILE" || true)"
+  reply="$(cat "$COMMENT_FILE" 2>/dev/null)"
+  [ -n "$reply" ] || reply="The session wrote no reply."
+  post_pr_comment "$pr" "$(printf '%s\n\n%s' "$reply" "$report")"
+  return 0
+}
+
+# dispatch_decompose PR — the decompose state: a session drafts the sub-issues
+# of a pitch that has its goal and sprint block but no entries. Mirrors
+# _dispatch_opus_qa (formula, context, footer) but points the session at the
+# three pitch paths and the Draft state. Bash commits the file and posts the
+# reply via publish_draft.
+dispatch_decompose() {
+  local pr="$1"
+
+  load_formula_or_profile "architect" "$ARCHITECT_FORMULA" || return 1
+  build_context_block VISION.md AGENTS.md ops:prerequisites.md
+  formula_prepare_profile_context
+  build_graph_section
+
+  SCRATCH_CONTEXT=$(read_scratch_context "/tmp/architect-${PROJECT_NAME}-scratch.md")
+  SCRATCH_INSTRUCTION=$(build_scratch_instruction "/tmp/architect-${PROJECT_NAME}-scratch.md")
+  build_sdk_prompt_footer
+
+  local prompt
+  prompt=$(cat <<_PROMPT_EOF_
+You are the architect agent for ${FORGE_REPO}. Work through the formula below.
+
+${QA_ROLE_TEXT}
+
+## CURRENT STATE: Draft the sub-issues
+
+PITCH_FILE=${PITCH_FILE}
+BACKLOG_FILE=${BACKLOG_FILE}
+COMMENT_FILE=${COMMENT_FILE}
+
+This is a fresh draft: the pitch carries its goal and its sprint block but has
+no sub-issue entries. Draft the entries (docs/design/notes/issue-writing.md),
+run tools/pitch-lint.sh "$PITCH_FILE" "$BACKLOG_FILE", and fix every ERROR.
+Write the summary to COMMENT_FILE. Change only the entries between the filer
+markers; the goal and the sprint block are the owner's.
+
+## Project context
+${CONTEXT_BLOCK}
+${GRAPH_SECTION}
+${SCRATCH_CONTEXT}
+$(formula_lessons_block)
+## Formula
+${FORMULA_CONTENT}
+
+${SCRATCH_INSTRUCTION}
+${PROMPT_FOOTER}
+_PROMPT_EOF_
+  )
+
+  agent_run --worktree "$WORKTREE" "$prompt" || {
+    log "PR #${pr}: decompose dispatch FAILED (exit $?)"
+    _OPUS_DISPATCH_FAILED=true
+    return 1
+  }
+  log "opus decompose session complete"
+  publish_draft "$pr" "architect: draft sub-issues"
+}
+
 # ── Regression guard ───────────────────────────────────────────────────
 check_architect_issue_filing() {
   local project_repo_path
@@ -371,6 +538,10 @@ if has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
   log "PR #${PR_NUMBER}: reject detected → closing"
   REASON=$(get_reject_reason "$PR_NUMBER" "$LAST_SEEN")
   close_pr "$PR_NUMBER" "$REASON"
+elif prepare_pitch "$PR_NUMBER" && pitch_sprint_block "$PITCH_FILE" >/dev/null && ! pitch_has_entries "$PITCH_FILE" && ! architect_has_commented "$PR_NUMBER"; then
+  # [decompose] — a pitch with goal and sprint block but no sub-issue entries
+  log "PR #${PR_NUMBER}: decompose state — drafting sub-issues"
+  dispatch_decompose "$PR_NUMBER" || true
 else
   # [q_and_a] — check for engagement
   log "PR #${PR_NUMBER}: q_and_a state"
