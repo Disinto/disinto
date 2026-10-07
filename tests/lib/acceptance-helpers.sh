@@ -538,3 +538,67 @@ seed_row() {
     || ac_fail "seed_row: cannot seed row for $fp"
   mv "$tmpfile" "$ACCOUNTS_FILE"
 }
+
+# ── Pitch fixtures (issue-1903; reused by #1904, #1905, #1910) ───────────────
+# A pitch is sprints/<slug>.md. Its sub-issues live between the filer markers
+# in the shape lib/sprint-filer.sh already parses. These two helpers are the
+# single definition of a valid entry and a pitch file, so later checks do not
+# copy the block (duplicate-detection, 5-line windows).
+
+# ac_pitch_entry ID DEPENDS [FILE...] — one valid filer entry on stdout.
+# depends_on is [DEPENDS] (empty DEPENDS is []). The body has every heading
+# notes/issue-writing.md names, one unchecked criterion, the acceptance-test
+# path, and one `- \`FILE\`` line per FILE under ## Affected files.
+ac_pitch_entry() {
+  local id="${1:?ac_pitch_entry requires ID}"
+  local depends="${2-}"
+  local file
+  [ "$#" -ge 2 ] || ac_fail "ac_pitch_entry requires ID and DEPENDS"
+  shift 2
+  printf '%s\n' "- id: ${id}"
+  printf '%s\n' "  title: \"entry ${id}\""
+  printf '%s\n' "  labels: [backlog]"
+  printf '%s\n' "  depends_on: [${depends}]"
+  printf '%s\n' "  body: |"
+  printf '%s\n' "    ## Problem"
+  printf '%s\n' "    The problem ${id} closes."
+  printf '%s\n' "    ## Proposed solution"
+  printf '%s\n' "    The change ${id} makes."
+  printf '%s\n' "    ## Affected files"
+  for file in "$@"; do
+    printf '%s\n' "    - \`${file}\`"
+  done
+  printf '%s\n' "    ## Documentation"
+  printf '%s\n' "    The doc sentence ${id} rewrites."
+  printf '%s\n' "    ## Existing tests"
+  printf '%s\n' "    None. ${id} is new."
+  printf '%s\n' "    ## Acceptance criteria"
+  printf '%s\n' "    - [ ] ${id} meets its criterion"
+  printf '%s\n' "    ## Acceptance test"
+  printf '%s\n' "    \`tests/acceptance/issue-${id}.sh\`"
+}
+
+# ac_pitch_file DIR SLUG — write DIR/sprints/SLUG.md. Stdin is the filer
+# block, placed between the two markers. The pitch carries a Sprint heading,
+# a What this enables paragraph, and a sprint block (class: internal).
+ac_pitch_file() {
+  local dir="$1"
+  local slug="$2"
+  local entries dest
+  [ "$#" -eq 2 ] || ac_fail "ac_pitch_file requires DIR and SLUG"
+  entries="$(cat)"
+  dest="${dir}/sprints/${slug}.md"
+  mkdir -p "${dir}/sprints"
+  {
+    printf '%s\n' "# Sprint: ${slug}"
+    printf '\n%s\n' "## What this enables"
+    printf '\n%s\n' "This sprint enables the work named ${slug}."
+    printf '\n%s\n' "class: internal"
+    printf '%s\n' "effect: none"
+    printf '%s\n' "soak: 0d"
+    printf '\n%s\n' "## Sub-issues"
+    printf '\n%s\n' "<!-- filer:begin -->"
+    printf '%s\n' "$entries"
+    printf '%s\n' "<!-- filer:end -->"
+  } >"$dest"
+}
