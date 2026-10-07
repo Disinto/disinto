@@ -168,6 +168,7 @@ reads both.
 
 Each filer-created sub-issue carries a `<!-- decomposed-from: #<vision>, sprint: <slug>, id: <id> -->`
 marker in its body for idempotency and traceability.
+A sub-issue filed with the sprint's milestone carries `<!-- decomposed-from: milestone:<id>, sprint: <slug>, id: <id> -->` instead, and the vision steps below do not apply to it.
 
 The filer-bot (via `lib/sprint-filer.sh`) handles vision lifecycle:
 1. After filing sub-issues, adds `in-progress` label to the vision issue

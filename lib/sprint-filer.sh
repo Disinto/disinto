@@ -2,18 +2,19 @@
 # =============================================================================
 # sprint-filer.sh — Parse merged sprint PRs and file sub-issues via filer-bot
 #
-# Invoked by the ops-filer Woodpecker pipeline after a sprint PR merges on the
-# ops repo main branch.  Parses each sprints/*.md file for a structured
-# ## Sub-issues block (filer:begin/end markers), then creates idempotent
-# Forgejo issues on the project repo using FORGE_FILER_TOKEN.
+# Run once per merged pitch, with the sprint's milestone id.
+# No CI pipeline runs it: #779 removed the ops-filer pipeline.
+# Parses each sprints/*.md file for a structured ## Sub-issues block
+# (filer:begin/end markers), then creates idempotent Forgejo issues on the
+# project repo using FORGE_FILER_TOKEN.
 #
 # Permission model (#764):
 #   filer-bot has issues:write on the project repo.
 #   architect-bot is read-only on the project repo.
 #
 # Usage:
-#   sprint-filer.sh <sprint-file.md>          — file sub-issues from one sprint
-#   sprint-filer.sh --all <sprints-dir>       — scan all sprint files in dir
+#   sprint-filer.sh <sprint-file.md> [MILESTONE] — file sub-issues from one sprint
+#   sprint-filer.sh --all <sprints-dir>          — scan all sprint files in dir
 #
 # Environment:
 #   FORGE_FILER_TOKEN   — filer-bot API token (issues:write on project repo)
@@ -277,14 +278,11 @@ parse_subissue_entries() {
 
 # ── Check if sub-issue already exists (idempotency) ─────────────────────
 # Searches for the decomposed-from marker in existing issues.
-# Args: vision_issue_number sprint_slug subissue_id
+# The marker is built once by file_subissues and passed in.
+# Args: marker
 # Returns: 0 if already exists, 1 if not
 subissue_exists() {
-  local vision_issue="$1"
-  local sprint_slug="$2"
-  local subissue_id="$3"
-
-  local marker="<!-- decomposed-from: #${vision_issue}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
+  local marker="$1"
 
   # Search all issues (paginated) for the exact marker
   local issues_json
@@ -350,24 +348,33 @@ add_inprogress_label() {
 # ── File sub-issues from a sprint file ───────────────────────────────────
 # This is the main entry point. Parses the sprint file, extracts sub-issues,
 # and creates them idempotently via the Forgejo API.
-# Args: sprint_file_path
+# Args: sprint_file_path [milestone]
+# When milestone (an integer) is given, each new issue is filed into that
+# milestone. No vision issue is read or labelled (#1890). Without it, the
+# vision path is unchanged.
 # Returns: 0 on success, 1 on any error (fail-fast)
 file_subissues() {
   local sprint_file="$1"
+  local milestone="${2:-}"
 
   filer_log "Processing sprint file: ${sprint_file}"
 
-  # Extract metadata
-  local vision_issue sprint_slug
-  vision_issue=$(extract_vision_issue "$sprint_file")
+  # Extract metadata. A milestone parent replaces the vision issue.
+  local vision_issue="" sprint_slug
   sprint_slug=$(extract_sprint_slug "$sprint_file")
 
-  if [ -z "$vision_issue" ]; then
-    filer_log "ERROR: could not extract vision issue number from ${sprint_file}"
-    return 1
-  fi
+  if [ -n "$milestone" ]; then
+    filer_log "Milestone: ${milestone}, sprint slug: ${sprint_slug}"
+  else
+    vision_issue=$(extract_vision_issue "$sprint_file")
 
-  filer_log "Vision issue: #${vision_issue}, sprint slug: ${sprint_slug}"
+    if [ -z "$vision_issue" ]; then
+      filer_log "ERROR: could not extract vision issue number from ${sprint_file}"
+      return 1
+    fi
+
+    filer_log "Vision issue: #${vision_issue}, sprint slug: ${sprint_slug}"
+  fi
 
   # Parse the sub-issues block
   local raw_block
@@ -416,15 +423,22 @@ file_subissues() {
       return 1
     fi
 
+    # Marker built once here; subissue_exists only searches for it.
+    local marker
+    if [ -n "$milestone" ]; then
+      marker="<!-- decomposed-from: milestone:${milestone}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
+    else
+      marker="<!-- decomposed-from: #${vision_issue}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
+    fi
+
     # Idempotency check
-    if subissue_exists "$vision_issue" "$sprint_slug" "$subissue_id"; then
+    if subissue_exists "$marker"; then
       filer_log "Sub-issue '${subissue_id}' already exists — skipping"
       i=$((i + 1))
       continue
     fi
 
     # Append decomposed-from marker to body
-    local marker="<!-- decomposed-from: #${vision_issue}, sprint: ${sprint_slug}, id: ${subissue_id} -->"
     local full_body="${subissue_body}
 
 ${marker}"
@@ -433,13 +447,23 @@ ${marker}"
     local label_ids
     label_ids=$(resolve_label_ids "$labels_json")
 
-    # Build issue payload using jq for safe JSON construction
+    # Build issue payload using jq for safe JSON construction.
+    # A milestone id is an integer, so --argjson keeps it numeric.
     local payload
-    payload=$(jq -n \
-      --arg title "$subissue_title" \
-      --arg body "$full_body" \
-      --argjson labels "$label_ids" \
-      '{title: $title, body: $body, labels: $labels}')
+    if [ -n "$milestone" ]; then
+      payload=$(jq -n \
+        --arg title "$subissue_title" \
+        --arg body "$full_body" \
+        --argjson labels "$label_ids" \
+        --argjson milestone "$milestone" \
+        '{title: $title, body: $body, labels: $labels, milestone: $milestone}')
+    else
+      payload=$(jq -n \
+        --arg title "$subissue_title" \
+        --arg body "$full_body" \
+        --argjson labels "$label_ids" \
+        '{title: $title, body: $body, labels: $labels}')
+    fi
 
     # Create the issue
     local response
@@ -460,8 +484,11 @@ ${marker}"
     i=$((i + 1))
   done
 
-  # Add in-progress label to the vision issue
-  add_inprogress_label "$vision_issue" || true
+  # Add in-progress label to the vision issue. A milestone filing has no
+  # vision issue, so this step does not apply (#1890).
+  if [ -z "$milestone" ]; then
+    add_inprogress_label "$vision_issue" || true
+  fi
 
   filer_log "Successfully filed ${filed_count}/${entry_count} sub-issue(s) for sprint ${sprint_slug}"
   return 0
@@ -569,11 +596,11 @@ main() {
 
     return "$exit_code"
   elif [ -n "${1:-}" ]; then
-    file_subissues "$1"
+    file_subissues "$1" "${2:-}"
     # Run vision lifecycle check after filing
     check_and_close_completed_visions || true
   else
-    echo "Usage: sprint-filer.sh <sprint-file.md>" >&2
+    echo "Usage: sprint-filer.sh <sprint-file.md> [MILESTONE]" >&2
     echo "       sprint-filer.sh --all <sprints-dir>" >&2
     return 1
   fi
