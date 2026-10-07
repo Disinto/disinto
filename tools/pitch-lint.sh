@@ -8,6 +8,12 @@
 # the filer's own parsers and reports each entry against
 # docs/design/notes/issue-writing.md.
 #
+# Checks:
+#   entry shape against docs/design/notes/issue-writing.md (#1903)
+#   depends_on names an unknown id (#1904)
+#   a depends_on cycle (#1904)
+#   two entries change the same file and neither reaches the other (#1904)
+#
 # Usage:
 #   tools/pitch-lint.sh FILE
 #
@@ -16,8 +22,9 @@
 #   1  at least one ERROR (including a missing, empty or unparseable block)
 #   2  FILE not given or missing (usage on stderr, nothing on stdout)
 #
-# Later checks (#1904, #1905) call lint_err / lint_warn. They do not add a
-# second parser: entries come from lib/sprint-filer.sh.
+# Later checks (#1905) call lint_err / lint_warn. They do not add a
+# second parser: entries come from lib/sprint-filer.sh. lint_affected is
+# the path list those checks reuse.
 # =============================================================================
 set -euo pipefail
 
@@ -72,6 +79,143 @@ body_names_acceptance_test() {
     in_sec && index($0, "tests/acceptance/issue-") { found = 1 }
     END { exit (found ? 0 : 1) }
   ' <<<"$body"
+}
+
+# lint_affected BODY — paths an entry changes, one per line, no repeats.
+# Every backtick-quoted token on the lines that start with `- ` between
+# `## Affected files` and the next line starting `## `. #1905 reuses it.
+lint_affected() {
+  local body="$1"
+  awk '
+    $0 == "## Affected files" { in_sec = 1; next }
+    in_sec && /^## / { in_sec = 0 }
+    in_sec && /^- / {
+      rest = $0
+      while (match(rest, /`[^`]*`/)) {
+        tok = substr(rest, RSTART + 1, RLENGTH - 2)
+        rest = substr(rest, RSTART + RLENGTH)
+        if (tok == "" || (tok in seen)) {
+          continue
+        }
+        seen[tok] = 1
+        print tok
+      }
+    }
+  ' <<<"$body"
+}
+
+# lint_line_has LIST ITEM — 0 when ITEM is one whole line of LIST.
+lint_line_has() {
+  local list="$1"
+  local item="$2"
+  local line
+  [ -n "$item" ] || return 1
+  while IFS= read -r line; do
+    if [ "$line" = "$item" ]; then
+      return 0
+    fi
+  done <<<"$list"
+  return 1
+}
+
+# lint_graph JSON — the chain between entries of one block (#1904).
+# Unknown depends_on ids, a cycle, and an unchained same-file pair are
+# ERRORs. Reach is a breadth-first walk of depends_on that skips unknown
+# ids; blocks have fewer than 20 entries, so the walk is a bash loop.
+lint_graph() {
+  local entries="$1"
+  local n i j id dep path next qi src reached walk_gen
+  local -a ids=() deps=() affected=() reach_of=() queue=()
+  local -A known=() id_index=() unk_seen=() walk_seen=()
+
+  n="$(jq 'length' <<<"$entries")"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    id="$(jq -r --argjson i "$i" '.[$i].id // ""' <<<"$entries")"
+    ids+=("$id")
+    if [ -n "$id" ] && [ -z "${id_index[$id]+x}" ]; then
+      id_index["$id"]="$i"
+      known["$id"]=1
+    fi
+    deps+=("$(jq -r --argjson i "$i" '
+      (.[$i].depends_on // []) | if type == "array" then .[] else empty end
+    ' <<<"$entries")")
+    affected+=("$(lint_affected "$(jq -r --argjson i "$i" '.[$i].body // ""' <<<"$entries")")")
+    reach_of+=("")
+    i=$((i + 1))
+  done
+
+  # Unknown id: a depends_on name that is not an entry of this block.
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    id="${ids[$i]}"
+    walk_gen=$((i + 1))
+    while IFS= read -r dep; do
+      [ -z "$dep" ] && continue
+      [ "${unk_seen[$dep]:-0}" = "$walk_gen" ] && continue
+      unk_seen["$dep"]="$walk_gen"
+      if [ -z "${known[$dep]+x}" ]; then
+        lint_err "$id" "depends_on names unknown id ${dep}"
+      fi
+    done <<<"${deps[$i]}"
+    i=$((i + 1))
+  done
+
+  # Reach: ids each entry reaches through depends_on, transitively.
+  # Unknown ids are not enqueued and not followed.
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    id="${ids[$i]}"
+    walk_gen=$((i + 1))
+    queue=()
+    reached=""
+    while IFS= read -r dep; do
+      [ -z "$dep" ] && continue
+      [ -n "${known[$dep]+x}" ] || continue
+      queue+=("$dep")
+    done <<<"${deps[$i]}"
+    qi=0
+    while [ "$qi" -lt "${#queue[@]}" ]; do
+      dep="${queue[$qi]}"
+      qi=$((qi + 1))
+      [ "${walk_seen[$dep]:-0}" = "$walk_gen" ] && continue
+      walk_seen["$dep"]="$walk_gen"
+      reached+="${dep}"$'\n'
+      src="${id_index[$dep]}"
+      while IFS= read -r next; do
+        [ -z "$next" ] && continue
+        [ -n "${known[$next]+x}" ] || continue
+        queue+=("$next")
+      done <<<"${deps[$src]}"
+    done
+    reach_of[i]="$reached"
+    # Cycle: the entry is among the ids its own depends_on reach.
+    if lint_line_has "$reached" "$id"; then
+      lint_err "$id" "depends_on cycle through ${id}"
+    fi
+    i=$((i + 1))
+  done
+
+  # Same file: a before b, a shared path, and neither reaches the other.
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    j=$((i + 1))
+    while [ "$j" -lt "$n" ]; do
+      if lint_line_has "${reach_of[$i]}" "${ids[$j]}" \
+        || lint_line_has "${reach_of[$j]}" "${ids[$i]}"; then
+        j=$((j + 1))
+        continue
+      fi
+      while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        if lint_line_has "${affected[$j]}" "$path"; then
+          lint_err "${ids[$j]}" "changes ${path} like ${ids[$i]}; chain them with depends_on"
+        fi
+      done <<<"${affected[$i]}"
+      j=$((j + 1))
+    done
+    i=$((i + 1))
+  done
 }
 
 # lint_entries JSON — one pass, block order, over the filer's JSON array.
@@ -177,6 +321,7 @@ pitch_lint_main() {
   fi
 
   lint_entries "$entries"
+  lint_graph "$entries"
   lint_report "$file"
   if [ "$LINT_ERRORS" -gt 0 ]; then
     exit 1
