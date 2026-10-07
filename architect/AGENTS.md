@@ -160,6 +160,12 @@ Vision issues decompose into sprint sub-issues. Sub-issues are defined in the
 `<!-- filer:end -->` markers) and filed by `filer-bot` after the sprint PR merges
 on the ops repo (#764).
 
+The sprint spec also carries its sprint block between `<!-- sprint:begin -->`
+and `<!-- sprint:end -->`: the `class`, `effect`, `expect`, `soak` and optional
+`rests_on` lines of a sprint milestone's description (`lib/sprint-block.sh`).
+Its purpose is the first paragraph under `## What this enables`. `lib/pitch.sh`
+reads both.
+
 Each filer-created sub-issue carries a `<!-- decomposed-from: #<vision>, sprint: <slug>, id: <id> -->`
 marker in its body for idempotency and traceability.
 

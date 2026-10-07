@@ -164,6 +164,15 @@ exact shape — one markdown document, no JSON, no nested objects:
   ## Recommendation
   <one paragraph: worth it / defer / alternative approach>
 
+  ## Sprint
+
+  <!-- sprint:begin -->
+  class: <deploy | experiment | internal>
+  effect: <probes/<name>.sh, or none>
+  expect: <operator and number, e.g. >= 1>
+  soak: <integer + d or h, e.g. 7d>
+  <!-- sprint:end -->
+
   ## Sub-issues
 
   <!-- filer:begin -->
@@ -192,6 +201,10 @@ Hard constraints:
     /tmp/pitch-vision-${ISSUE}.paths. Do not invent paths.
   - The filer:begin/filer:end block is parsed by filer-bot after the
     sprint PR merges (#764). Each entry becomes one project-repo issue.
+  - The sprint:begin/sprint:end block is read when the pitch merges:
+    `class` is deploy, experiment or internal; `effect` is a probe in the
+    ops repo's `probes/`, or `none`; an optional `rests_on: <claim ids>`
+    line may follow `soak`.
   - Do NOT POST to the project repo. You are READ-ONLY there. Any
     direct API call to the project repo will return 403.
 

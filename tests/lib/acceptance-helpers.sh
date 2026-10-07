@@ -421,6 +421,30 @@ ac_run_bats_suite() {
   bats_out="$(bats "$suite" 2>&1)" || bats_rc=$?
 }
 
+# ac_run_block <lib-file> <fn-name> [args...]
+# — source <lib-file> in a throwaway subshell and call <fn-name> with the
+# remaining args. stdout -> $OUT, stderr -> $ERR, exit status -> $RC.
+# Shared by the lib/sprint-block.sh (issue-1629.sh) and lib/pitch.sh
+# (issue-1887.sh) acceptance ACs so the source/subshell/run/rc-capture lines
+# are not duplicated file-to-file (duplicate-detection).
+ac_run_block() {
+  local lib="$1" fn="$2" tmp
+  shift 2
+  tmp="$(mktemp -d)"
+  RC=0 OUT="" ERR=""
+  # shellcheck disable=SC2034  # RC is consumed by the calling acceptance scripts
+  (
+    # shellcheck disable=SC1091
+    source "$lib"
+    "$fn" "$@"
+  ) >"$tmp/out" 2>"$tmp/err" || RC=$?
+  # shellcheck disable=SC2034  # OUT is consumed by the calling acceptance scripts
+  OUT="$(cat "$tmp/out" 2>/dev/null)"
+  # shellcheck disable=SC2034  # ERR is consumed by the calling acceptance scripts
+  ERR="$(cat "$tmp/err" 2>/dev/null)"
+  rm -rf "$tmp"
+}
+
 # ac_calibration_env — set up the shared calibration acceptance environment:
 #   TMP_DIR="$(mktemp -d)" + an EXIT trap that removes it,
 #   the standard loop->competence-bit pack (dev -> merged,
