@@ -20,10 +20,21 @@ architect no longer generates pitches.
 
 ## Lifecycle states
 
-The architect operates on the ops repo PRs through one state, q_and_a; the owner
-merges the PR (the decision) or closes it. Each iteration
+The architect operates on the ops repo PRs through two states, decompose and
+q_and_a; the owner merges the PR (the decision) or closes it. Each iteration
 picks the head of a round-robin queue (sorted by `<!-- architect-last-seen: -->`
 marker ascending), detects the state, and dispatches the appropriate action.
+
+### [decompose] — First draft (#1910)
+
+**Entry**: the PR adds `sprints/<slug>.md`; on the PR branch, that file has a
+sprint block and no sub-issue entries; `architect-bot` has not commented yet.
+
+**Action**: a session (formula steps `ground`, `draft`, `lint`, `reply`) writes
+the `## Sub-issues` block into a local copy. Bash commits the changed file to the
+PR branch through the contents API, as `architect-bot`, and posts the reply with
+the `tools/pitch-lint.sh` report. No tape record: an undecided pitch serves no
+proposal.
 
 ### [q_and_a] — Design Q&A
 
@@ -99,7 +110,7 @@ Bash in `architect/architect-run.sh` handles state detection and orchestration:
 ```
 Sprint PR on the ops repo (adds sprints/<slug>.md)
   ↓
-q_and_a ←→ q_and_a (operator engagement, design conversation)
+decompose (first draft) → q_and_a (operator engagement, design conversation)
   ↓
 the owner merges it (the gardener files the sprint, #1892) or closes it
 Reject: comment at any point → PR closed (bash-only)

@@ -29,7 +29,7 @@ disinto/                 (code repo)
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
 │                           cleanup-worktrees, disk-pressure,
 │                           git-rebase-fix)
-├── architect/     architect-run.sh — strategic decomposition of vision into sprints
+├── architect/     architect-run.sh — drafts and revises the sub-issues of ops-repo pitches
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
