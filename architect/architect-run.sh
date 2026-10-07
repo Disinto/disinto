@@ -6,7 +6,7 @@
 # No tmux sessions, no phase files — the bash script IS the state machine.
 #
 # Lifecycle states:
-#   [q_and_a] — PR open, new operator comment since last-seen marker
+#   [q_and_a] — PR open, new non-architect comment since last-seen marker
 #
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
 # head of queue is picked each iteration. last-seen advances every iteration.
@@ -76,6 +76,12 @@ if [ -z "${AGENT_IDENTITY:-}" ] && [ -n "${FORGE_ARCHITECT_TOKEN:-}" ]; then
   AGENT_IDENTITY=$(forge_whoami)
 fi
 
+# ARCHITECT_LOGIN — the Forgejo identity that posts the architect's own
+# comments. Engagement checks exclude it, so a posted reply does not re-wake
+# the agent (reply loop, once per ARCHITECT_INTERVAL). #1910 uses
+# architect_has_commented to detect it.
+ARCHITECT_LOGIN="${AGENT_IDENTITY:-architect-bot}"
+
 # ── Formula (#1335) ──────────────────────────────────────────────────────
 # The architect always uses formulas/run-architect.toml — the kind
 # selection from #1315 is gone: oak instances differ by pack, not kind,
@@ -119,36 +125,58 @@ get_pr_comments() {
     "${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}/issues/${pr}/comments" 2>/dev/null || echo '[]'
 }
 
+# others_comments_since <pr_number> <since_iso> — JSON array of the comments
+# from get_pr_comments newer than SINCE and not by the architect
+# ((.user.login // "") != ARCHITECT_LOGIN). The since-filter + architect
+# exclusion live here so the state predicates read the filtered array instead
+# of re-filtering get_pr_comments themselves.
+others_comments_since() {
+  local pr="$1" since="$2"
+  printf '%s' "$(get_pr_comments "$pr")" | jq -c \
+    --arg since "$since" \
+    --arg me "$ARCHITECT_LOGIN" \
+    '[(.[]
+      | select(.updated_at > $since)
+      | select((.user.login // "") != $me))]'
+}
+
 # has_reject_comment <pr_number> <since_iso> — 0 if Reject: comment since marker
+# (by anyone other than the architect, via others_comments_since)
 has_reject_comment() {
   local pr="$1" since="$2"
-  local comments
-  comments=$(get_pr_comments "$pr")
-  # Extract comments newer than last-seen marker and check for Reject: prefix
-  printf '%s' "$comments" | jq -r --arg since "$since" '
-    [.[] | select(.updated_at > $since) | .body] | .[]
+  # Extract the non-architect comments since the marker and check for Reject: prefix
+  printf '%s' "$(others_comments_since "$pr" "$since")" | jq -r '
+    [.[] | .body] | .[]
   ' 2>/dev/null | grep -q '^Reject:' 2>/dev/null
 }
 
 # get_reject_reason <pr_number> <since_iso> — the reason after "Reject: "
+# (from a non-architect comment since the marker, via others_comments_since)
 get_reject_reason() {
   local pr="$1" since="$2"
-  local comments
-  comments=$(get_pr_comments "$pr")
-  printf '%s' "$comments" | jq -r --arg since "$since" '
-    [.[] | select(.updated_at > $since) | .body] | .[] | select(startswith("Reject:"))
+  printf '%s' "$(others_comments_since "$pr" "$since")" | jq -r '
+    [.[] | .body] | .[] | select(startswith("Reject:"))
   ' 2>/dev/null | head -1 | sed 's/^Reject: *//' 2>/dev/null || echo "rejected"
 }
 
 # has_new_comment_since <pr_number> <since_iso> — 0 if non-reject comment exists
+# (by anyone other than the architect since the marker, via others_comments_since)
 has_new_comment_since() {
   local pr="$1" since="$2"
-  local comments
-  comments=$(get_pr_comments "$pr")
-  # Check for any comment newer than last-seen that is NOT a Reject:
-  printf '%s' "$comments" | jq -r --arg since "$since" '
-    [.[] | select(.updated_at > $since) | .body] | .[] | select(test("^Reject:") | not)
+  # Check for any non-architect comment newer than last-seen that is NOT a Reject:
+  printf '%s' "$(others_comments_since "$pr" "$since")" | jq -r '
+    [.[] | .body] | .[] | select(test("^Reject:") | not)
   ' 2>/dev/null | head -1 | grep -q . 2>/dev/null
+}
+
+# architect_has_commented <pr_number> — 0 if a comment of get_pr_comments
+# carries .user.login == ARCHITECT_LOGIN, 1 otherwise. #1910 uses it to
+# decide whether a pitch already has an architect reply on the thread.
+architect_has_commented() {
+  local pr="$1"
+  printf '%s' "$(get_pr_comments "$pr")" | jq -e \
+    --arg me "$ARCHITECT_LOGIN" \
+    'any(.[]; (.user.login // "") == $me)' >/dev/null 2>&1
 }
 
 # post_pr_comment <pr_number> <body> — POST a comment
@@ -211,7 +239,7 @@ list_architect_prs_sorted() {
 }
 
 # ── State: q_and_a ──────────────────────────────────────────────────────
-# PR open, new operator comments since last-seen.
+# PR open, new non-architect comments since last-seen.
 # Reject branch: bash-only (close PR). Otherwise: opus session.
 
 dispatch_q_and_a() {

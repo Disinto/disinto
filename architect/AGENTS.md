@@ -27,8 +27,9 @@ marker ascending), detects the state, and dispatches the appropriate action.
 
 ### [q_and_a] — Design Q&A
 
-**Entry conditions**: PR is open, new operator
-comment since last-seen marker.
+**Entry conditions**: PR is open, a new comment by
+anyone but the architect (`architect-bot`) since the
+last-seen marker.
 
 **Actions**:
 - If comment starts with `Reject:` → close PR with a closure comment quoting the
@@ -55,8 +56,8 @@ Each polling iteration:
 
 | Signal | Source | Effect |
 |---|---|---|
-| Operator comment without `Reject:` prefix | ops PR comment thread | q_and_a engagement, opus session |
-| Operator comment starting `Reject:` | ops PR comment thread | close PR, no opus |
+| Comment without `Reject:` prefix, not by `architect-bot` | ops PR comment thread | q_and_a engagement, opus session |
+| Comment starting `Reject:`, not by `architect-bot` | ops PR comment thread | close PR, no opus |
 
 ## Write-permission contract
 
