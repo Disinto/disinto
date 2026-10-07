@@ -9,7 +9,9 @@
 #   [decompose] — the PR adds sprints/<slug>.md; on its branch the file has a
 #     sprint block and no sub-issue entries and architect-bot has not yet
 #     commented. The architect drafts the sub-issues once (#1910).
-#   [q_and_a] — PR open, new non-architect comment since last-seen marker
+#   [q_and_a] — PR open, new non-architect comment since last-seen marker.
+#     The session revises the committed sub-issue draft; bash commits and
+#     posts the reply (#1911).
 #
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
 # head of queue is picked each iteration. last-seen advances every iteration.
@@ -242,7 +244,8 @@ list_architect_prs_sorted() {
 
 # ── State: q_and_a ──────────────────────────────────────────────────────
 # PR open, new non-architect comments since last-seen.
-# Reject branch: bash-only (close PR). Otherwise: opus session.
+# Reject branch: bash-only (close PR). Otherwise: a session revises the
+# committed sub-issue draft; bash commits and posts the reply (#1911).
 
 dispatch_q_and_a() {
   local pr="$1" body="$2" last_seen="$3"
@@ -259,15 +262,29 @@ dispatch_q_and_a() {
   # Check for new non-reject comments (engagement signal)
   if has_new_comment_since "$pr" "$last_seen"; then
     log "PR #${pr}: new engagement detected — dispatching opus session"
-    _dispatch_opus_qa "$pr" "$body"
+    _dispatch_opus_qa "$pr" "$body" "$last_seen"
     return
   fi
 
   log "PR #${pr}: no new engagement — idle"
 }
 
+# _dispatch_opus_qa PR BODY SINCE — revise the committed draft on the owner's
+# comments. prepare_pitch stages the pitch file, the open backlog and the reply
+# file; the session rewrites the filer block (or drafts it) and writes the reply
+# to COMMENT_FILE. Bash commits a changed file and posts the reply with the lint
+# report via publish_draft, as in decompose. A PR that is not a pitch is logged
+# and skipped (return 0) — the session never posts or merges.
 _dispatch_opus_qa() {
-  local pr="$1" body="$2"
+  local pr="$1" body="$2" since="$3"
+  # BODY stays in the signature (dispatch_q_and_a passes the PR body) but the
+  # session reads the pitch file on the PR branch, not the PR body.
+  : "$body"
+
+  if ! prepare_pitch "$pr"; then
+    log "PR #${pr} is not a pitch"
+    return 0
+  fi
 
   # Load formula + context for the opus session
   load_formula_or_profile "architect" "$ARCHITECT_FORMULA" || return 1
@@ -279,6 +296,9 @@ _dispatch_opus_qa() {
   SCRATCH_INSTRUCTION=$(build_scratch_instruction "/tmp/architect-${PROJECT_NAME}-scratch.md")
   build_sdk_prompt_footer
 
+  local new_comments
+  new_comments="$(others_comments_since "$pr" "$since" | jq -r '.[] | "**\(.user.login)**: \(.body)"')"
+
   local prompt
   prompt=$(cat <<_PROMPT_EOF_
 You are the architect agent for ${FORGE_REPO}. Work through the formula below.
@@ -289,14 +309,16 @@ If you think ${SUBISSUE_TERM} should be filed, write them into the ${PITCH_NOUN}
 filer:begin block only. You do not have permission to POST to the project repo and
 any such call will return 403 and fail this run.
 
-## CURRENT STATE: Design Q&A in progress
+## CURRENT STATE: Design Q&A: revise the sub-issues
 
-An architect PR has received new operator engagement (a non-reject comment).
-Your task:
-1. Read the PR body and new comments
-2. Refine the <!-- filer:begin --> ... <!-- filer:end --> block inline
-3. Post a reply comment with your response
-4. Do NOT close the PR — the operator drives the lifecycle
+PITCH_FILE=${PITCH_FILE}
+BACKLOG_FILE=${BACKLOG_FILE}
+COMMENT_FILE=${COMMENT_FILE}
+
+### New comments
+${new_comments}
+
+1. Read the new comments. 2. Revise the sub-issue block in PITCH_FILE as they ask, or draft it if there is none (formula steps ground, draft, lint). 3. Write your reply to COMMENT_FILE (formula step reply). Do not post it, and do not close or merge the PR.
 
 ## Project context
 ${CONTEXT_BLOCK}
@@ -318,6 +340,7 @@ _PROMPT_EOF_
     return 1
   }
   log "opus q_and_a session complete"
+  publish_draft "$pr" "architect: revise sub-issues"
 }
 
 # ── Decompose (#1910) ───────────────────────────────────────────────────
