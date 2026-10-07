@@ -850,7 +850,7 @@ ${CONTEXT_BLOCK}$(formula_lessons_block)
 ${SCRATCH_CONTEXT:+${SCRATCH_CONTEXT}
 }
 ${OPS_STATUS}
-Priority order: P0 memory > P1 disk / public endpoint > P2 stopped > P3 degraded > P4 housekeeping
+Priority order: P0 memory > P1 disk / public endpoint / unregistered Nomad service > P2 stopped > P3 degraded > P4 housekeeping
 
 ${FORMULA_CONTENT}
 

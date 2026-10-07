@@ -60,6 +60,24 @@ grep -qF '/var/lib/disinto/snapshot/state.json' "$PREFLIGHT" \
 # shellcheck disable=SC2016
 grep -qF 'public endpoints (`PUBLIC_URLS`; DOWN after 2 failing ticks in a row), unregistered Nomad services (from the snapshot state)' "$AGENTS_MD" \
   || ac_fail "supervisor/AGENTS.md preflight entry must mention unregistered Nomad services after public endpoints"
+grep -qF 'P1 (disk, public endpoint down), P1 (unregistered Nomad service)' "$AGENTS_MD" \
+  || ac_fail "supervisor/AGENTS.md alert priorities must list unregistered Nomad service under P1"
+grep -qF 'P1 unregistered Nomad service' "$AGENTS_MD" \
+  || ac_fail "supervisor/AGENTS.md formula entry must classify unregistered Nomad service as P1"
+
+FORMULA="$REPO_ROOT/formulas/run-supervisor.toml"
+ac_assert_file "$FORMULA" "formulas/run-supervisor.toml must exist"
+grep -qF '**Public Endpoints**, **Nomad Services**' "$FORMULA" \
+  || ac_fail "run-supervisor.toml preflight checklist must name Nomad Services"
+grep -qF 'Nomad Services: MISSING' "$FORMULA" \
+  || ac_fail "run-supervisor.toml must classify Nomad Services: MISSING as P1"
+grep -qF 'nomad-service-unregistered' "$FORMULA" \
+  || ac_fail "run-supervisor.toml decide-actions must name nomad-service-unregistered as monitor-only"
+grep -qF 'Do not restart the allocation; that stays with the operator.' "$FORMULA" \
+  || ac_fail "run-supervisor.toml must keep alloc restart with the operator"
+grep -qF 'P1 disk / public endpoint / unregistered Nomad service' \
+  "$REPO_ROOT/supervisor/supervisor-run.sh" \
+  || ac_fail "supervisor-run.sh priority order must name the unregistered Nomad service"
 
 recipe="$(awk '
   $0 ~ /^  - name: nomad-service-unregistered$/ { p = 1; print; next }

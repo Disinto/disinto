@@ -48,6 +48,7 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
   "Research Runs" section (added #1322): P1 artifacts disk > 80%, P2 in-flight
   run older than 70 min, P3 oldest open judgment issue older than 4 h;
   P1 public endpoint DOWN after 2 failing ticks (`## Public Endpoints`, #1923);
+  P1 unregistered Nomad service (`## Nomad Services`: MISSING, #1927);
   decide-actions documents the pre-session auto-recovery path
 - `supervisor/write-incident.sh` — Writes one markdown incident file per fired
   recipe (P0–P2 only) under `${OPS_REPO_ROOT}/incidents/`. Sources
@@ -63,7 +64,7 @@ writes the invocation's stdout/stderr to the same `data/logs/supervisor/supervis
 #1150 unified the *internal* logging on the `supervisor/` path after the
 dual-sink incident — do not introduce a second internal path.
 
-**Alert priorities**: P0 (memory crisis), P1 (disk, public endpoint down), P2 (factory stopped/stalled),
+**Alert priorities**: P0 (memory crisis), P1 (disk, public endpoint down), P1 (unregistered Nomad service), P2 (factory stopped/stalled),
 P3 (degraded PRs, circular deps, stale deps), P4 (housekeeping).
 
 **Environment variables consumed**:
