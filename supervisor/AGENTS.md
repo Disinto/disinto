@@ -27,7 +27,7 @@ Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `chec
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
   load), Docker status, active sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
-  issues, public endpoints (`PUBLIC_URLS`; DOWN after 2 failing ticks in a row). Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
+  issues, public endpoints (`PUBLIC_URLS`; DOWN after 2 failing ticks in a row), unregistered Nomad services (from the snapshot state). Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
   is confirmed closed (24h grace period after closure to avoid races). Reports
   **stale crashed worktrees** (worktrees preserved after crash) — supervisor
