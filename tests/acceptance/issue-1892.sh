@@ -24,12 +24,10 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 ac_require_cmd bash jq flock git grep
 ac_assert_file "$REPO_ROOT/tools/pitch-decisions.sh" "tools/pitch-decisions.sh is missing"
 
-TOOL="$REPO_ROOT/tools/pitch-decisions.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-
-STUB_BIN="$WORK/bin"
-ac_write_pitch_stub "$STUB_BIN"
+TOOL="$REPO_ROOT/tools/pitch-decisions.sh"
+ac_write_pitch_stub "$WORK/bin"
 
 OPS_REPO_ROOT="$WORK/ops"
 mkdir -p "$OPS_REPO_ROOT/sprints"
@@ -49,7 +47,7 @@ exit "${AC_FILER_RC:-0}"
 FILER
 chmod +x "$WORK/filer.sh"
 
-export PATH="$STUB_BIN:$PATH"
+export PATH="$WORK/bin:$PATH"
 export FORGE_API_BASE="https://forge.example/api/v1"
 export FORGE_OPS_REPO="o/ops"
 export FORGE_TOKEN="stub"
@@ -106,12 +104,6 @@ PITCH
   esac
 }
 
-run_decisions() {
-  local rc=0
-  bash "$TOOL" >"$WORK/out" 2>"$WORK/err" || rc=$?
-  printf '%s' "$rc"
-}
-
 approved_line() {
   jq -c 'select(.type == "proposal" and .ref == "milestone:9")' "$1/tape.jsonl"
 }
@@ -123,7 +115,8 @@ mkdir -p "$TAPE_DIR"
 export TAPE_DIR
 : >"$FILER_LOG"
 
-rc="$(run_decisions)"
+rc=0
+bash "$TOOL" >"$WORK/out" 2>"$WORK/err" || rc=$?
 ac_assert_eq "$rc" "0" "first run must return 0 (rc=$rc; stderr: $(cat "$WORK/err"))"
 [ -f "$TAPE_DIR/tape.jsonl" ] || ac_fail "first run must write a tape line"
 
