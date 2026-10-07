@@ -44,7 +44,10 @@ fi
 
 # -----------------------------------------------------------------------------
 # Backend selection: DISPATCHER_BACKEND={docker,nomad}
-# Default: docker.  nomad lands as a pure addition during migration Step 5.
+# Default: docker. The nomad backend already exists (_launch_runner_nomad);
+# it is just not selected unless DISPATCHER_BACKEND=nomad is set. The live
+# edge job never sets that, so vault runners are `docker run` and
+# VAULT_RUNNER_IMAGE is how that path picks disinto/agents:local.
 # -----------------------------------------------------------------------------
 DISPATCHER_BACKEND="${DISPATCHER_BACKEND:-docker}"
 
