@@ -121,6 +121,16 @@ if [ -n "$REVIEW_SIDS" ]; then
     pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "unknown"')
     [ "$pr_state" = "open" ] || continue
 
+    # Author filter applies to re-reviews too (#1902). After an author-list
+    # change, an in-flight sid for an author this reviewer no longer handles
+    # must not post a second verdict. Leave the sid; cleanup removes it when
+    # the PR closes or idles past 4h.
+    pr_author=$(printf '%s' "$pr_json" | jq -r '.user.login // ""')
+    if ! pr_author_allowed "$pr_author"; then
+      log "  #${pr_num} re-review: author ${pr_author} is not for this reviewer, skip"
+      continue
+    fi
+
     current_sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')
     if [ -z "$current_sha" ] || [ "$current_sha" = "$reviewed_sha" ]; then continue; fi
 
