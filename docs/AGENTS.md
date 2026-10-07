@@ -109,7 +109,9 @@ disinto/                 (code repo)
 │                  `bin/disinto --with <svc>`
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
 │                  branch-protection.md, stats.md);
-│                  contributing/ (acceptance-tests.md, issues-for-bots.md)
+│                  contributing/ (acceptance-tests.md, issues-for-bots.md);
+│                  design/ (proposal-loop.md — how the factory proposes, records
+│                  and learns; notes/ incl. organs.md, issue-writing.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
 │                  vault-import.bats, disinto-init-nomad.bats)
