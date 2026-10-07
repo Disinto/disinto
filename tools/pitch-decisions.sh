@@ -163,8 +163,10 @@ handle_pr() {
 #   0  each PR was recorded, marked, or skipped
 #   1  a page could not be listed, or a PR's decision failed
 walk_closed() {
-  local page=1 list_body="" list_rc=0 count="" kind="" pr_json="" any_failed=0
-  while true; do
+  local page=0 list_body="" list_rc=0 count=50 kind="" pr_json="" any_failed=0
+  # A full page (50) means another may follow. A short page ends the walk.
+  while [ "$count" -ge 50 ]; do
+    page=$((page + 1))
     list_rc=0
     list_body="$(ops_get "/pulls?state=closed&limit=50&page=${page}")" || list_rc=$?
     if [ "$list_rc" -ne 0 ]; then
@@ -181,19 +183,13 @@ walk_closed() {
       log "listing closed ops-repo PRs had no length (page ${page})"
       exit 1
     fi
-    if [ "$count" -gt 0 ]; then
-      while IFS= read -r pr_json || [ -n "${pr_json:-}" ]; do
-        [ -n "${pr_json:-}" ] || continue
-        if ! handle_pr "$pr_json"; then
-          any_failed=1
-        fi
-      done < <(printf '%s\n' "$list_body" | jq -c '.[]')
-    fi
-    # Stop once a page is short. A full page means another may follow.
-    if [ "$count" -lt 50 ]; then
-      break
-    fi
-    page=$((page + 1))
+    [ "$count" -eq 0 ] && continue
+    while IFS= read -r pr_json || [ -n "${pr_json:-}" ]; do
+      [ -n "${pr_json:-}" ] || continue
+      if ! handle_pr "$pr_json"; then
+        any_failed=1
+      fi
+    done < <(printf '%s\n' "$list_body" | jq -c '.[]')
   done
   return "$any_failed"
 }
