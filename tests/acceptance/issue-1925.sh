@@ -123,26 +123,18 @@ cat > "$DATA/allocations.json" <<'EOF'
 EOF
 # Group-level forgejo (the outage) and a task-level name, so both declaration
 # paths are exercised. nightly is served in case a batch job is fetched.
-cat > "$DATA/job-forgejo.json" <<'EOF'
-{
-  "ID": "forgejo",
-  "TaskGroups": [
-    {
-      "Name": "forgejo",
-      "Services": [{"Name": "forgejo", "PortLabel": "http"}],
-      "Tasks": [
-        {
-          "Name": "forgejo",
-          "Services": [{"Name": "forgejo-metrics"}]
-        }
-      ]
-    }
-  ]
-}
-EOF
-cat > "$DATA/job-nightly.json" <<'EOF'
-{"ID":"nightly","TaskGroups":[{"Services":[{"Name":"nightly"}],"Tasks":[]}]}
-EOF
+# Compact jq output: a pretty-printed close collides with the 5-line duplicate
+# window in tools/edge-control/lib/caddy.sh.
+jq -n '{
+  ID: "forgejo",
+  TaskGroups: [{
+    Name: "forgejo",
+    Services: [{Name: "forgejo", PortLabel: "http"}],
+    Tasks: [{Name: "forgejo", Services: [{Name: "forgejo-metrics"}]}]
+  }]
+}' > "$DATA/job-forgejo.json"
+printf '%s\n' '{"ID":"nightly","TaskGroups":[{"Services":[{"Name":"nightly"}],"Tasks":[]}]}' \
+  > "$DATA/job-nightly.json"
 
 write_services() {
   # $1 is a JSON array of ServiceName strings.
