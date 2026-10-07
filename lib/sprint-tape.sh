@@ -10,7 +10,7 @@
 # through here.
 #
 # Function (sourced; no callers yet):
-#   sprint_proposal_id MILESTONE_ID CLASS
+#   sprint_proposal_id MILESTONE_ID CLASS [CONTEXT_JSON]
 #     -> <proposal-id>
 #       * Id file ${TAPE_DIR}/sprints/<MILESTONE_ID>: if it holds an id, print
 #         it and return 0 (no append). An empty file counts as absent (same
@@ -20,10 +20,11 @@
 #         the first check), mint a fresh id the same way
 #         emit_tape_proposal (dev/dev-poll.sh) does (uuidgen -> kernel uuid),
 #         and call:
-#             tape_proposal "$id" sprint "$class" "" "" '{}' '' "approved"
+#             tape_proposal "$id" sprint "$class" "" "" "$context" '' "approved"
 #             "milestone:<MILESTONE_ID>"
 #         — no forecast (there is nothing to predict yet).
 #       * class: CLASS when it matches ^[a-z][a-z0-9-]*$, otherwise "unclassed".
+#       * CONTEXT_JSON: the proposal's context, a JSON object; default {}. Ignored when the id file already holds an id.
 #       * The id file is written only after tape_proposal succeeds, then the
 #         id is printed and 0 returned.
 #       * Non-integer MILESTONE_ID or append failure: print nothing, return 1,
@@ -37,13 +38,19 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/tape.sh"
 
-# sprint_proposal_id MILESTONE_ID CLASS — idempotent mint of the proposal id
-# for the milestone's sprint. Returns 0 printing the id on success (fresh
-# mint or reuse of the persisted id); returns 1 (no output, no id file) when
-# the milestone id is non-integer or the tape append fails.
+# sprint_proposal_id MILESTONE_ID CLASS [CONTEXT_JSON] — idempotent mint of the
+# proposal id for the milestone's sprint. CONTEXT_JSON (default {}) is the
+# proposal's context; ignored when the id file already holds an id. Returns 0
+# printing the id on success (fresh mint or reuse of the persisted id);
+# returns 1 (no output, no id file) when the milestone id is non-integer or
+# the tape append fails.
 sprint_proposal_id() {
-  local milestone_id="${1:-}" class="${2:-}" rc=0
+  local milestone_id="${1:-}" class="${2:-}" context="${3:-}" rc=0
   local id_dir id_file lock_file existing
+
+  # CONTEXT_JSON defaults to {}. An id file that already holds an id ignores
+  # it (the fast path and the locked re-check return before the append).
+  [ -n "$context" ] || context='{}'
 
   # Non-integer milestone id: nothing to mint, nothing to write.
   if ! [[ "$milestone_id" =~ ^[0-9]+$ ]]; then
@@ -108,7 +115,7 @@ sprint_proposal_id() {
     # One sprint proposal per milestone, no forecast. The id file is written
     # only after a successful append so a failed append never persists an
     # id for a proposal that is not on the tape.
-    if tape_proposal "$id" sprint "$effective_class" "" "" '{}' '' \
+    if tape_proposal "$id" sprint "$effective_class" "" "" "$context" '' \
         "approved" "milestone:${milestone_id}"; then
       printf '%s\n' "$id" > "$id_file"
       printf '%s\n' "$id"
