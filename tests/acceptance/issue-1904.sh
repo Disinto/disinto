@@ -33,7 +33,7 @@ printf '%s\n' "$hdr" | grep -q 'same file' \
   || ac_fail "header must list the same-file check"
 
 # docs/AGENTS.md line from #1903 stays true.
-grep -qF "pitch-lint.sh — lints a pitch's sub-issue block against notes/issue-writing.md; markdown report (#1903)" \
+grep -qF "pitch-lint.sh — lints a pitch's sub-issue block against notes/issue-writing.md; markdown report; warns on overlap with a backlog list (#1903)" \
   "$REPO_ROOT/docs/AGENTS.md" \
   || ac_fail "docs/AGENTS.md pitch-lint line from #1903 must stay"
 
