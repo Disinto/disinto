@@ -79,7 +79,7 @@ Eliminate complexity *before* filing:
 - Acceptance tests are bash, `set -euo pipefail`, source
   `tests/lib/acceptance-helpers.sh`, end with `ac_pass`. Stub forge
   calls with `ac_write_curl_stub` / `ac_extract_fn`;
-  `tests/acceptance/issue-1598.sh` is the model. CI rejects new
+  `tests/acceptance/issue-1216.sh` is the model (107 lines; it uses both). CI rejects new
   duplicate 5-line windows, so reuse helpers instead of copying.
   Since PR #1763, CI runs a test on every PR that changes a path the
   test names, inside `disinto/agents:local`, which has no forge, no
