@@ -5,8 +5,9 @@
 # Issue #1950: a host-side healer re-registers a lost Nomad service by
 # restarting the running allocation.
 #
-# Hermetic: curl and nomad stubs on PATH, temp HEALER_STATE_DIR and
-# TAPE_DIR. No Nomad, no network. Each scenario is one `healer.sh --once`.
+# Hermetic: shared curl/nomad stubs (tests/lib/healer-stubs.sh) on PATH,
+# temp HEALER_STATE_DIR and TAPE_DIR. No Nomad, no network. Each scenario is
+# one `healer.sh --once`.
 #
 #   1. forgejo declares forgejo, /v1/services lacks it: the stub records
 #      `alloc restart <forgejo alloc>`, and the tape has one repair
@@ -27,6 +28,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../lib/healer-stubs.sh
+source "$REPO_ROOT/tests/lib/healer-stubs.sh"
+# Service-reregister pass (issue #1950): stubs + one `--once` per scenario.
 
 ac_require_cmd bash jq flock grep mktemp date
 
@@ -61,84 +65,8 @@ STUB_LOG="$WORK/nomad-invocations.log"
 mkdir -p "$DATA" "$BIN" "$STATE" "$TAPE"
 : > "$STUB_LOG"
 
-# ── Curl stub ────────────────────────────────────────────────────────────────
-# Serves the paths healer.sh GETs. Bodies live in $FAKE_NOMAD_DATA.
-# v1/agent/health exits 22 when health.fail is present.
-cat > "$BIN/curl" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-url=""
-for a in "$@"; do
-  case "$a" in
-    http://*|https://*) url="$a" ;;
-  esac
-done
-[ -n "$url" ] || { echo "healer-curl-stub: no URL" >&2; exit 64; }
-path="${url#*://}"
-path="${path#*/}"
-path="${path%%\?*}"
-data="${FAKE_NOMAD_DATA:?FAKE_NOMAD_DATA unset}"
-printf '%s\n' "$url" >> "$data/urls.log"
-file=""
-case "$path" in
-  v1/agent/health)
-    if [ -f "$data/health.fail" ]; then
-      exit 22
-    fi
-    printf '%s\n' '{"client":{"ok":true},"server":{"ok":true}}'
-    exit 0
-    ;;
-  v1/jobs) file="$data/jobs.json" ;;
-  v1/services) file="$data/services.json" ;;
-  v1/job/*/allocations)
-    rest="${path#v1/job/}"
-    job="${rest%%/*}"
-    file="$data/allocs-$job.json"
-    ;;
-  v1/job/*)
-    job="${path#v1/job/}"
-    file="$data/job-$job.json"
-    ;;
-  *)
-    echo "healer-curl-stub: unexpected path: $path" >&2
-    exit 9
-    ;;
-esac
-[ -f "$file" ] || { echo "healer-curl-stub: no fixture for $path" >&2; exit 22; }
-cat "$file"
-EOF
-chmod +x "$BIN/curl"
-
-# ── Nomad stub ───────────────────────────────────────────────────────────────
-# Records every invocation. `alloc restart <id>` is the remedy.
-# `alloc exec` prints $FAKE_NOMAD_DATA/ps-<alloc> when that file exists.
-cat > "$BIN/nomad" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-log="${NOMAD_STUB_LOG:?NOMAD_STUB_LOG unset}"
-printf '%s\n' "$*" >> "$log"
-if [ "${1:-}" = "alloc" ] && [ "${2:-}" = "restart" ]; then
-  exit 0
-fi
-if [ "${1:-}" = "alloc" ] && [ "${2:-}" = "exec" ]; then
-  alloc=""
-  shift 2
-  for a in "$@"; do
-    case "$a" in
-      -*|sh) ;;
-      *) alloc="$a"; break ;;
-    esac
-  done
-  data="${FAKE_NOMAD_DATA:?FAKE_NOMAD_DATA unset}"
-  if [ -n "$alloc" ] && [ -f "$data/ps-$alloc" ]; then
-    cat "$data/ps-$alloc"
-  fi
-  exit 0
-fi
-echo "healer-nomad-stub: unexpected: $*" >&2
-exit 9
-EOF
-chmod +x "$BIN/nomad"
+# Shared fake curl/nomad from tests/lib/healer-stubs.sh.
+ac_healer_stubs
 
 # forgejo declares a group-level service of the same name (the outage).
 # nightly-batch is running but batch — the healer must not fetch it.
@@ -184,23 +112,6 @@ write_services() {
 write_jobs '[]'
 write_services '["edge"]'
 
-run_healer() {
-  PATH="$BIN:$PATH" \
-  NOMAD_ADDR="http://127.0.0.1:4646" \
-  NOMAD_TIMEOUT=2 \
-  HEALER_STATE_DIR="$STATE" \
-  HEALER_INTERVAL_SECS=60 \
-  HEALER_COOLDOWN_SECS=1800 \
-  TAPE_DIR="$TAPE" \
-  FAKE_NOMAD_DATA="$DATA" \
-  NOMAD_STUB_LOG="$STUB_LOG" \
-    bash "$HEALER" --once
-}
-
-restart_lines() {
-  grep -c '^alloc restart ' "$STUB_LOG" || true
-}
-
 proposal_count() {
   jq -s '[.[] | select(.type == "proposal" and .class == "service-reregister" and .loop == "repair")] | length' \
     "$TAPE/tape.jsonl"
@@ -211,9 +122,9 @@ ac_log "AC 1: unregistered forgejo restarts its alloc and writes a repair propos
 
 : > "$DATA/urls.log"
 rc=0
-out="$(run_healer)" || rc=$?
+out="$(healer_run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "healer --once must exit 0, got $rc: $out"
-ac_assert_eq "$(restart_lines)" "1" "exactly one alloc restart, stub log: $(cat "$STUB_LOG")"
+ac_assert_eq "$(healer_restart_lines)" "1" "exactly one alloc restart, stub log: $(cat "$STUB_LOG")"
 grep -qx 'alloc restart alloc-forgejo' "$STUB_LOG" \
   || ac_fail "stub must record 'alloc restart alloc-forgejo', got: $(cat "$STUB_LOG")"
 grep -q '127.0.0.1:4646/v1/agent/health' "$DATA/urls.log" \
@@ -250,11 +161,11 @@ fi
 # ── 2. Second tick inside the cooldown restarts nothing ─────────────────────
 ac_log "AC 2: a second --once within the cooldown restarts nothing"
 
-before="$(restart_lines)"
+before="$(healer_restart_lines)"
 rc=0
-out="$(run_healer)" || rc=$?
+out="$(healer_run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "second --once must exit 0, got $rc: $out"
-ac_assert_eq "$(restart_lines)" "$before" "cooldown tick must not restart, stub log: $(cat "$STUB_LOG")"
+ac_assert_eq "$(healer_restart_lines)" "$before" "cooldown tick must not restart, stub log: $(cat "$STUB_LOG")"
 ac_assert_eq "$(proposal_count)" "1" "cooldown tick must not write a second proposal"
 
 # ── 3. agents-* with work in flight, then idle ──────────────────────────────
@@ -262,11 +173,11 @@ ac_log "AC 3: agents-dev-qwen with dev-agent.sh running is not restarted"
 
 write_jobs '[{"ID":"agents-dev-qwen","Status":"running","Type":"service"}]'
 printf '%s\n' 'dev-agent.sh --issue 1950' > "$DATA/ps-alloc-agents-dev-qwen"
-before="$(restart_lines)"
+before="$(healer_restart_lines)"
 rc=0
-out="$(run_healer)" || rc=$?
+out="$(healer_run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "in-flight tick must exit 0, got $rc: $out"
-ac_assert_eq "$(restart_lines)" "$before" "work in flight must not restart, stub log: $(cat "$STUB_LOG")"
+ac_assert_eq "$(healer_restart_lines)" "$before" "work in flight must not restart, stub log: $(cat "$STUB_LOG")"
 grep -q 'alloc exec' "$STUB_LOG" \
   || ac_fail "in-flight check must call nomad alloc exec, stub log: $(cat "$STUB_LOG")"
 
@@ -274,11 +185,11 @@ ac_log "AC 3b: agents-dev-qwen with nothing running is restarted"
 
 printf '%s\n' 'sleep 30' > "$DATA/ps-alloc-agents-dev-qwen"
 rc=0
-out="$(run_healer)" || rc=$?
+out="$(healer_run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "idle agents tick must exit 0, got $rc: $out"
 grep -qx 'alloc restart alloc-agents-dev-qwen' "$STUB_LOG" \
   || ac_fail "idle agents alloc must be restarted, stub log: $(cat "$STUB_LOG")"
-ac_assert_eq "$(restart_lines)" "$((before + 1))" \
+ac_assert_eq "$(healer_restart_lines)" "$((before + 1))" \
   "idle tick must add exactly one restart, stub log: $(cat "$STUB_LOG")"
 
 # ── 4. Registered on the next tick → outcome cleared 1 ──────────────────────
@@ -286,7 +197,7 @@ ac_log "AC 4: service registered on the next tick writes {acted:1,cleared:1}"
 
 write_services '["edge","forgejo"]'
 rc=0
-out="$(run_healer)" || rc=$?
+out="$(healer_run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "clearance tick must exit 0, got $rc: $out"
 jq -s -e --arg pid "$FORGEJO_PID" '
   [.[] | select(.type == "outcome" and .proposal_id == $pid)]
@@ -301,23 +212,14 @@ ac_log "AC 5: HEALER_DRY_RUN=1 restarts nothing and logs would restart"
 DRY_STATE="$WORK/state-dry"
 mkdir -p "$DRY_STATE"
 write_services '["edge"]'
-before="$(restart_lines)"
+before="$(healer_restart_lines)"
 proposals_before="$(proposal_count)"
+export HEALER_DRY_RUN=1
 rc=0
-out="$(
-  HEALER_DRY_RUN=1 \
-  HEALER_STATE_DIR="$DRY_STATE" \
-  PATH="$BIN:$PATH" \
-  NOMAD_ADDR="http://127.0.0.1:4646" \
-  NOMAD_TIMEOUT=2 \
-  HEALER_COOLDOWN_SECS=1800 \
-  TAPE_DIR="$TAPE" \
-  FAKE_NOMAD_DATA="$DATA" \
-  NOMAD_STUB_LOG="$STUB_LOG" \
-    bash "$HEALER" --once
-)" || rc=$?
+out="$(healer_run_once "$DRY_STATE" "$TAPE")" || rc=$?
+unset HEALER_DRY_RUN
 ac_assert_eq "$rc" "0" "dry-run --once must exit 0, got $rc: $out"
-ac_assert_eq "$(restart_lines)" "$before" "dry run must not restart, stub log: $(cat "$STUB_LOG")"
+ac_assert_eq "$(healer_restart_lines)" "$before" "dry run must not restart, stub log: $(cat "$STUB_LOG")"
 ac_assert_eq "$(proposal_count)" "$proposals_before" "dry run must not write a proposal"
 printf '%s\n' "$out" | grep -Eq '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] healer: would restart forgejo$' \
   || ac_fail "dry run must log 'would restart forgejo', got: $out"
