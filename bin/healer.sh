@@ -531,21 +531,19 @@ service_address() {
         | map(select(length > 0)) | unique | (.[0] // empty))'
 }
 
-# endpoint_alloc <jobs-json> <svc> — running allocation of the job that declares
-# service <svc>, else empty.
+# endpoint_alloc <jobs-json> <job> — the running allocation of <job>, else
+# empty. <job> is looked up by ID, not service name: endpoint_backend()
+# already knows the job that declares the service (which can differ, e.g.
+# service woodpecker in job woodpecker-server), so a service-name search would
+# miss it. The running-service-job guard keeps us away from jobs that are no
+# longer running service jobs.
 endpoint_alloc() {
-  local jobs_json="$1" svc="$2" ids id spec declared alloc
+  local jobs_json="$1" job="$2" ids alloc
+  job_id_ok "$job" || return 1
   ids="$(running_service_job_ids "$jobs_json")" || return 1
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    job_id_ok "$id" || continue
-    spec="$(nomad_get "/v1/job/${id}")"
-    json_object "$spec" || continue
-    declared="$(declared_names "$spec")" || continue
-    printf '%s' "$declared" | jq -e --arg s "$svc" 'index($s) != null' >/dev/null 2>&1 || continue
-    alloc="$(running_alloc "$(nomad_get "/v1/job/${id}/allocations")")"
-    [ -n "$alloc" ] && { printf '%s' "$alloc"; return 0; }
-  done <<< "$ids"
+  grep -Fxq -- "$job" <<<"$ids" || return 1
+  alloc="$(running_alloc "$(nomad_get "/v1/job/${job}/allocations")")"
+  [ -n "$alloc" ] && { printf '%s' "$alloc"; return 0; }
   return 1
 }
 
@@ -586,7 +584,7 @@ record_endpoint_restart() {
     --argjson state "$state" --arg job "$job" --arg pid "$pid" \
     --arg url "$url" --argjson now "$now" '
       ($state // {}) as $s
-      | .cooldown = (($s.cooldown // {}) + {($job): $now})
+      | ($s + {cooldown: (($s.cooldown // {}) + {($job): $now})})
       | if $pid == "" then .
         else .endpoint_open = ((.endpoint_open // {})
           + {($url): {proposal_id: $pid, restarted_at: $now, job: $job}})

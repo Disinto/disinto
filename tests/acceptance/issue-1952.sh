@@ -210,8 +210,8 @@ set_code forgejo 200
 clear_code ci; clear_code woodpecker
 rc=0; run_ticks 3 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
 ac_assert_eq "$rc" "0" "AC1 exit 0, got $rc"
-ac_assert_eq "$(restart_lines)" "1" "AC1 exactly one restart: $(cat $STUB_LOG)"
-ac_assert_eq "$(restarts_of edge)" "1" "AC1 restart is alloc-edge: $(cat $STUB_LOG)"
+ac_assert_eq "$(restart_lines)" "1" "AC1 exactly one restart: $(cat "$STUB_LOG")"
+ac_assert_eq "$(restarts_of edge)" "1" "AC1 restart is alloc-edge: $(cat "$STUB_LOG")"
 ac_assert_eq "$(restarts_of forgejo)" "0" "AC1 must not restart forgejo (backend healthy)"
 ac_assert_eq "$(restarts_of woodpecker-server)" "0" "AC1 must not restart woodpecker"
 
@@ -223,8 +223,8 @@ set_code forgejo 503
 clear_code ci; clear_code woodpecker
 rc=0; run_ticks 3 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
 ac_assert_eq "$rc" "0" "AC2 exit 0, got $rc"
-ac_assert_eq "$(restart_lines)" "1" "AC2 exactly one restart: $(cat $STUB_LOG)"
-ac_assert_eq "$(restarts_of forgejo)" "1" "AC2 restart is alloc-forgejo: $(cat $STUB_LOG)"
+ac_assert_eq "$(restart_lines)" "1" "AC2 exactly one restart: $(cat "$STUB_LOG")"
+ac_assert_eq "$(restarts_of forgejo)" "1" "AC2 restart is alloc-forgejo: $(cat "$STUB_LOG")"
 ac_assert_eq "$(restarts_of edge)" "0" "AC2 must not restart edge (backend unhealthy)"
 ac_assert_eq "$(restarts_of woodpecker-server)" "0" "AC2 must not restart woodpecker"
 
@@ -236,13 +236,10 @@ set_code ci 502
 set_code forgejo 200
 set_code woodpecker 503
 rc=0; run_ticks 3 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
-echo "DEBUG AC3 state: $(cat "$STATE_DIR/state.json" 2>/dev/null)"
-echo "DEBUG AC3 urls.log:"
-tail -8 "$DATA/urls.log"
 ac_assert_eq "$rc" "0" "AC3 exit 0, got $rc"
-ac_assert_eq "$(restarts_of edge)" "1" "AC3 restarts alloc-edge (forge healthy): $(cat $STUB_LOG)"
-ac_assert_eq "$(restarts_of woodpecker-server)" "1" "AC3 restarts alloc-woodpecker-server (ci unhealthy): $(cat $STUB_LOG)"
-ac_assert_eq "$(restart_lines)" "2" "AC3 exactly two restarts (<= 3 budget): $(cat $STUB_LOG)"
+ac_assert_eq "$(restarts_of edge)" "1" "AC3 restarts alloc-edge (forge healthy): $(cat "$STUB_LOG")"
+ac_assert_eq "$(restarts_of woodpecker-server)" "1" "AC3 restarts alloc-woodpecker-server (ci unhealthy): $(cat "$STUB_LOG")"
+ac_assert_eq "$(restart_lines)" "2" "AC3 exactly two restarts (<= 3 budget): $(cat "$STUB_LOG")"
 ac_assert_eq "$(restarts_of forgejo)" "0" "AC3 must not restart forgejo (healthy)"
 
 # ── AC 4: edge in cooldown, backend healthy -> unfixable, no edge re-restart ─
@@ -256,10 +253,10 @@ clear_code ci; clear_code woodpecker
 # is recorded once (tick 4) and no further restart is attempted.
 rc=0; run_ticks 6 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
 ac_assert_eq "$rc" "0" "AC4 exit 0, got $rc"
-ac_assert_eq "$(restart_lines)" "1" "AC4 exactly one restart (edge), no re-restart: $(cat $STUB_LOG)"
-ac_assert_eq "$(restarts_of edge)" "1" "AC4 only alloc-edge was restarted: $(cat $STUB_LOG)"
+ac_assert_eq "$(restart_lines)" "1" "AC4 exactly one restart (edge), no re-restart: $(cat "$STUB_LOG")"
+ac_assert_eq "$(restarts_of edge)" "1" "AC4 only alloc-edge was restarted: $(cat "$STUB_LOG")"
 # state.json must contain the unfixable record for the forge URL
 jq -e '(.unfixable // {}) | has("https://self.disinto.ai/forge/")' \
   "$STATE_DIR/state.json" >/dev/null 2>&1 \
-  || ac_fail "AC4 state.json must record unfixable for /forge/, got: $(cat $STATE_DIR/state.json)"
+  || ac_fail "AC4 state.json must record unfixable for /forge/, got: $(cat "$STATE_DIR/state.json")"
 ac_pass
