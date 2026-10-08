@@ -1,16 +1,17 @@
 <!-- last-reviewed: 6eecb2370 -->
 # Planner Agent
 
-**Role**: Strategic planning using a Prerequisite Tree (Theory of Constraints),
-invoked by the polling loop in `docker/agents/entrypoint.sh` every 12 hours
+**Role**: Pitches one sprint toward the vision, or writes nothing. Invoked
+by the polling loop in `docker/agents/entrypoint.sh` every 12 hours
 (`PLANNER_INTERVAL`, default 43200s; #1388). The planning session is a one-shot
 `claude -p` run via `agent_run` (`lib/agent-sdk.sh`) with model opus — no
 tmux, no phase file.
 The formula (`formulas/run-planner.toml`) has one step, **propose**: write at most one pitch file, or nothing. It does not triage predictions, does not write prerequisites.md, does not file issues, and does not pitch an access request.
 AGENTS.md maintenance is handled by the Gardener.
 
-**Artifacts use `$OPS_REPO_ROOT`**: All planner artifacts (journal,
-prerequisite tree, memory, vault state) live under `$OPS_REPO_ROOT/`.
+**Artifacts use `$OPS_REPO_ROOT`**: Planner journal entries live under
+`$OPS_REPO_ROOT/`. The prerequisite tree is retired; the planner does not
+read or write it, and it does not write vault state.
 Each project manages its own planner state in a separate ops repo.
 
 **Trigger**: `planner-run.sh` is invoked by the polling loop in
@@ -64,7 +65,7 @@ planner formula.
   the pull is posted. Returns 0 when `planner-bot` already has an open
   `architect:` PR. No caller yet.
 - `$OPS_REPO_ROOT/prerequisites.md` — Retired. The planner does not read or write it.
-- `$OPS_REPO_ROOT/knowledge/planner-memory.md` — Persistent memory across runs (in ops repo)
+- `$OPS_REPO_ROOT/knowledge/planner-memory.md` — Retired (#1477). The planner does not read or write it.
 
 
 **Constraint focus**: The planner pitches one sprint or writes nothing. It does not file issues and does not pitch an access request.

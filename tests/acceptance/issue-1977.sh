@@ -60,5 +60,28 @@ grep -qF 'Retired. The planner does not read or write it.' "$DOC" \
   || ac_fail "planner/AGENTS.md must retire the prerequisite tree"
 grep -qF 'The planner pitches one sprint or writes nothing.' "$DOC" \
   || ac_fail "planner/AGENTS.md must say the planner pitches one sprint or writes nothing"
+grep -qF 'Pitches one sprint toward the vision, or writes nothing.' "$DOC" \
+  || ac_fail "planner/AGENTS.md Role must pitch one sprint or write nothing"
+if grep -qF 'Prerequisite Tree' "$DOC"; then
+  ac_fail "planner/AGENTS.md still claims a prerequisite tree"
+fi
+
+ROOT_DOC="$REPO_ROOT/AGENTS.md"
+ac_log "root AGENTS.md no longer says the planner sets filing or prediction labels"
+if awk -F'|' '
+  $2 ~ /(backlog|priority|vision|prediction\/dismissed|prediction\/actioned)/ && $4 ~ /Planner/ { bad=1 }
+  END { exit bad ? 0 : 1 }
+' "$ROOT_DOC"; then
+  ac_fail "AGENTS.md still lists Planner as Set by for filing or prediction labels"
+fi
+grep -qF 'Open prediction issues stay open until the predictor sprint.' "$ROOT_DOC" \
+  || ac_fail "AGENTS.md must say open predictions stay open until the predictor sprint"
+
+PRED="$REPO_ROOT/predictor/AGENTS.md"
+if grep -qF 'for the planner to triage' "$PRED" || grep -qF 'Phase 1 later triages' "$PRED"; then
+  ac_fail "predictor/AGENTS.md still hands predictions to the planner to triage"
+fi
+grep -qF 'Open prediction issues stay open until the predictor sprint.' "$PRED" \
+  || ac_fail "predictor/AGENTS.md must say open predictions stay open until the predictor sprint"
 
 ac_pass
