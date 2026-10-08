@@ -1,4 +1,4 @@
-<!-- last-reviewed: 3fdf66ca16a7d52268d90dffdc246e63b0c11eb0 -->
+<!-- last-reviewed: 5bcdcc174a7ae95c1bbcf019e644c36264f37973 -->
 # Architect — Agent Instructions
 
 ## What this agent is
@@ -101,6 +101,7 @@ Bash in `architect/architect-run.sh` handles state detection and orchestration:
 - **Reject detection**: `Reject:`-prefixed comments trigger PR close (bash-only)
 - **Round-robin**: PRs sorted by last-seen marker; head of queue processed per tick. The last-seen marker is not advanced after a failed dispatch (`_OPUS_DISPATCH_FAILED`); a failed dispatch leaves the marker, so the same PR is retried next cycle
 - **Last-seen cursor**: `<!-- architect-last-seen: ... -->` is not advanced after a failed dispatch (`_OPUS_DISPATCH_FAILED`); a failed dispatch leaves the marker, so the same PR is retried next cycle
+- **Failed-reply repost (#1962)**: a reply whose POST failed is stashed under `/tmp/architect-pending-reply-<project>-<pr>` (first line = the failed cycle's timestamp, rest = the comment body); `pending_reply_path`/`read_pending_seen`/`read_pending_reply`/`clear_pending_reply` manage it. A failed formula-load or a failed reply POST also sets `_OPUS_DISPATCH_FAILED`, so the marker is not advanced and the owner's comment stays visible. The next cycle reposts the stashed body *before* any new session and without a PR-body patch (a patch would bump `updated_at` and send the PR to the back of the queue). It is confirmed against the live thread via `pending_reply_already_posted` — a *different* architect comment does not count, so a later revision's failed POST is not swallowed by the first draft's — then the stash is cleared. On success the marker moves to the failed cycle's timestamp, not now, so an owner comment that arrived during the retry stays visible.
 - **Opus gating**: Model only called when actual engagement or state change detected
 - **Bash-only paths**: Reject handling — no model overhead
 
