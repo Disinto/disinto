@@ -58,6 +58,15 @@ if grep -n 'CLAUDE_MODEL=' "$RUN"; then
 fi
 grep -qF 'ladder: none' "$RUN" \
   || ac_fail "planner-run.sh must append ladder: none on the session path"
+grep -qF 'export PLANNER_PITCH_FILE="${PLANNER_PITCH_FILE:-/tmp/planner-pitch.md}"' "$RUN" \
+  || ac_fail "planner-run.sh must export PLANNER_PITCH_FILE before the session"
+grep -qF 'export PLANNER_PROBE_FILE="${PLANNER_PROBE_FILE:-/tmp/planner-probe.sh}"' "$RUN" \
+  || ac_fail "planner-run.sh must export PLANNER_PROBE_FILE before the session"
+ac_assert_eq "$(grep -cF 'rm -f "$PLANNER_PITCH_FILE" "$PLANNER_PROBE_FILE"' "$RUN")" "2" \
+  "planner-run.sh must clear the pitch and probe before the session and after a successful publish"
+if grep -q 'files issues itself' "$RUN"; then
+  ac_fail "planner-run.sh must not say the session files issues"
+fi
 
 ac_log "docs: the run calls planner_pitch_or_idle and does not hardcode opus"
 DOC="$REPO_ROOT/planner/AGENTS.md"

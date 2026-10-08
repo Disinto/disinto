@@ -63,19 +63,20 @@ log() {
 
 # ── Tape: dev-loop proposal records (pick-owned; #1476) ─────────────────────
 #
-# The planning session files issues itself (tea/curl inside agent_run). The
-# dev-loop proposal for a backlog issue is written by the *pick* (dev-poll
-# claims the issue and appends its own "approved" proposal) — the pick is the
-# sample. #1409's planner-side emission pre-approved work the factory had not
-# yet run (a second approved row); #1476 removes that emission. The planner
-# run's tape lifecycle (run open/close via formula_session_start/end) is
-# unchanged and still comes from lib/tape.sh below.
+# The planning session does not file issues (#1977). It writes at most one
+# pitch file. The dev-loop proposal for a backlog issue is written by the
+# *pick* (dev-poll claims the issue and appends its own "approved" proposal)
+# — the pick is the sample. #1409's planner-side emission pre-approved work
+# the factory had not yet run (a second approved row); #1476 removes that
+# emission. The planner run's tape lifecycle (run open/close via
+# formula_session_start/end) is unchanged and still comes from lib/tape.sh.
 
 # planner_tape_tick — called after the planning session closes (#1476).
 #
-# The planner no longer appends a dev-loop proposal for the backlog issue it
-# files: the pick (dev-poll) writes the "approved" proposal when it claims the
-# issue (the pick is the sample). A second planner-side "approved" record
+# The planner no longer appends a dev-loop proposal for a backlog issue:
+# the pick (dev-poll) writes the "approved" proposal when it claims the
+# issue (the pick is the sample). The session does not file issues. A second
+# planner-side "approved" record
 # pre-approved work the factory had not run — the very duplicate #1476 removes
 # (it would also have re-fired #1462's counts forecast on that extra row).
 # The open-issue diff that fed this emission is gone with it, so the tick is an
@@ -166,6 +167,13 @@ case "$PITCH_LINE" in
 ladder: none"
     formula_worktree_setup "$WORKTREE"
     formula_session_start "planner"
+    # Same defaults planner_publish_session_pitch reads. Export them so a
+    # shell write to $PLANNER_PITCH_FILE / $PLANNER_PROBE_FILE hits that path.
+    # Clear both before the session: a long-lived container must not republish
+    # a previous run's pitch, or attach a leftover probe to a new effect.
+    export PLANNER_PITCH_FILE="${PLANNER_PITCH_FILE:-/tmp/planner-pitch.md}"
+    export PLANNER_PROBE_FILE="${PLANNER_PROBE_FILE:-/tmp/planner-probe.sh}"
+    rm -f "$PLANNER_PITCH_FILE" "$PLANNER_PROBE_FILE"
     # Guarded: a resource-limit exit (rc 124 = wall-clock timeout) must not
     # abort the script under set -e — record the rc and still publish (#1164).
     PLANNER_RUN_RC=0
@@ -174,6 +182,9 @@ ladder: none"
     log "agent_run complete"
     formula_session_end "$PLANNER_RUN_RC"
     planner_publish_session_pitch || PUBLISH_RC=$?
+    if [ "$PUBLISH_RC" -eq 0 ]; then
+      rm -f "$PLANNER_PITCH_FILE" "$PLANNER_PROBE_FILE"
+    fi
     ;;
   held|opened\ *)
     ;;
@@ -184,8 +195,8 @@ ladder: none"
 esac
 
 # ── Tape: no-op stub call site (#1476) ─────────────────────────────────────
-# The planner no longer appends a dev-loop proposal for the backlog issue it
-# files (the pick owns the record). planner_tape_tick is the intentional
+# The planner no longer appends a dev-loop proposal (the pick owns the
+# record; the session does not file issues). planner_tape_tick is the intentional
 # no-op stub kept as the guarded call site that the acceptance test verifies;
 # it never fails the run (rc 0, no tape write). A held or opened run has no
 # session; the tick is still a no-op.
