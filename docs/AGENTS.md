@@ -124,7 +124,7 @@ disinto/                 (code repo)
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-chat-oauth)
-│                  agent-log-rotate.sh, factory-walk.sh, snapshot-agents.sh,
+│                  agent-log-rotate.sh, factory-walk.sh, healer.sh, snapshot-agents.sh,
 │                  snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh,
 │                  uninstall.sh
