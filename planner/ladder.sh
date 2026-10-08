@@ -6,7 +6,7 @@
 # reach, deploy, replicate. claim_ids (lib/claims.sh) lists the claim files.
 # Status lives in the catalog, not in the file.
 #
-# Function (sourced; no caller yet):
+# Function (sourced; called by planner/pitch-or-idle.sh):
 #   ladder_lowest_gap
 #     -> the lowest rung that no claim id matches, or that any matching id
 #        has status challenged. Prints nothing when every rung has a match

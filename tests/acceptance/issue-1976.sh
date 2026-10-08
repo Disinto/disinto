@@ -49,8 +49,8 @@ prereq_line="$(grep -n 'Retired. The planner does not read or write it.' "$REPO_
   || ac_fail "prerequisites bullet must follow the pitch-open.sh bullet"
 grep -qF 'planner_pitch_open' "$REPO_ROOT/planner/AGENTS.md" \
   || ac_fail "planner/AGENTS.md must name planner_pitch_open"
-grep -qF 'No caller yet.' "$REPO_ROOT/planner/AGENTS.md" \
-  || ac_fail "planner/AGENTS.md must say the opener has no caller yet"
+grep -qF 'Called by `planner/pitch-or-idle.sh`.' "$REPO_ROOT/planner/AGENTS.md" \
+  || ac_fail "planner/AGENTS.md must say the opener is called by planner/pitch-or-idle.sh"
 
 # Env before the scratch dir so this setup is not a 5-line copy of
 # tests/acceptance/issue-1906.sh (duplicate-detection, window=5).

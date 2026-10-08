@@ -7,7 +7,7 @@
 # second one while planner-bot already has an `architect:` PR open. It does
 # not merge, does not file an issue, and does not source lib/env.sh.
 #
-# Functions (sourced; no caller yet):
+# Functions (sourced; called by planner/pitch-or-idle.sh):
 #   planner_pitch_pending
 #     GET /repos/${FORGE_OPS_REPO}/pulls?state=open&limit=50. Print the
 #     .number of the first item whose .title starts with `architect:` and
