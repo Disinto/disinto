@@ -6,10 +6,10 @@
 (sonnet). Finds the project's biggest weakness, challenges planner claims,
 and generates evidence through explore/exploit decisions:
 
-- **Explore** (low confidence) — file a `prediction/unreviewed` issue for
-  the planner to triage
+- **Explore** (low confidence) — file a `prediction/unreviewed` issue.
+  Open prediction issues stay open until the predictor sprint
 - **Exploit** (high confidence) — file a prediction AND dispatch a formula
-  via an `action` issue to generate evidence before the planner even runs
+  via an `action` issue to generate evidence in the same run
 
 The predictor's own prediction history (open + closed issues) serves as its
 memory — it reviews what was actioned, dismissed, or deferred to decide where
@@ -60,4 +60,4 @@ reviews track record (actioned/dismissed/watching) → finds weaknesses
 (prerequisite tree gaps, thin evidence, stale watches, external risks) →
 dedup against existing open predictions → explore (file prediction) or exploit
 (file prediction + dispatch formula via action issue) → `PHASE:done`.
-The planner's Phase 1 later triages these predictions.
+Open prediction issues stay open until the predictor sprint.

@@ -1,270 +1,59 @@
-# formulas/run-planner.toml — Strategic planning formula (v4: graph-driven)
+# formulas/run-planner.toml — Planner proposes one sprint pitch, or nothing (v5)
 #
-# The single planner formula: planner-run.sh always loads this file
-# (the research formula was deleted, #1334; the kind switch is gone, #1338).
+# The single planner formula: planner-run.sh always loads this file.
+# One step, propose. The planner writes at most one pitch file, or nothing.
+# It does not triage predictions, does not write the prerequisite tree,
+# does not file issues, and does not pitch an access request.
+# Open prediction issues stay as they are until the predictor sprint.
 #
-# Executed directly by planner-run.sh via polling loop (planned on
-# PLANNER_INTERVAL, default 12h) — no action issues.
-# planner-run.sh runs a one-shot `claude -p` (opus) via agent_run
-# (lib/agent-sdk.sh) — no tmux sessions, no phase files — and injects
-# this formula as context, plus the graph report from build-graph.py.
-#
-# Steps: preflight → triage-and-plan → commit-ops-changes
-#
-# v4 changes from v3:
-#   - Graph report (orphans, cycles, thin objectives, bottlenecks) replaces
-#     manual repo scanning and hardcoded constraint patterns.
-#   - tea CLI helpers replace inline curl commands.
-#   - 3 steps instead of 6.
-#
-# AGENTS.md maintenance is handled by the gardener (#246).
-# All git writes (tree, vault) happen in one commit at the end.
-# Journal writing is delegated to generic profile_write_journal() function.
+# Executed directly by planner-run.sh via the polling loop (planned on
+# PLANNER_INTERVAL, default 12h) — no action issues. The session writes
+# the pitch (and, when needed, the probe) to scratch files. It does not
+# commit, push, or run a rung.
 
 name        = "run-planner"
-description = "Planner v4: graph-driven planning with tea helpers"
-version     = 4
-model       = "opus"
-
-[context]
-files = ["VISION.md", "AGENTS.md"]
-# RESOURCES.md and prerequisites.md loaded from ops repo (ops: prefix)
-# Recent journal/planner/*.md files + graph report loaded by planner-run.sh
+description = "Planner: propose one sprint pitch, or nothing"
+version     = 5
 
 [[steps]]
-id    = "preflight"
-title = "Pull latest code, run graph, load context"
+id    = "propose"
+title = "Write one pitch file, or nothing"
 description = """
-1. Change to the project repository:
-     cd "$PROJECT_REPO_ROOT"
+The prompt contains `ladder: none` or `ladder: <rung>`.
 
-2. Pull the latest code:
-     git fetch origin "$PRIMARY_BRANCH" --quiet
-     git checkout "$PRIMARY_BRANCH" --quiet
-     git pull --ff-only origin "$PRIMARY_BRANCH" --quiet
+When that line is not `ladder: none`, write nothing.
 
-3. Record the current HEAD SHA:
-     HEAD_SHA=$(git rev-parse HEAD)
-     echo "$HEAD_SHA" > /tmp/planner-head-sha
+When it is `ladder: none`, read `VISION.md`, the claims catalog
+(`${CLAIMS_CATALOG:-$OPS_REPO_ROOT/catalog/claims.md}`), and
+`RESOURCES.md`. Write at most one pitch to `$PLANNER_PITCH_FILE`
+(default `/tmp/planner-pitch.md`), or write nothing. That pitch is the
+next step toward the vision, or nothing. It is not an access request.
+The reach rung's sprint handles access requests.
 
-5. Read the prerequisite tree at: $OPS_REPO_ROOT/prerequisites.md
-   If it does not exist, create an initial tree from VISION.md in the next step.
+That file starts with `# Sprint: <title>`, has `## What this enables`
+and one paragraph, and a sprint block with `class`, `effect`, `expect`,
+and `soak`. `class` is `internal`, `experiment`, or `deploy`. `effect`
+is `none`, or `probes/<name>.sh` with no `..`. No filer block. No
+sub-issues. Do not write `filer:begin`.
 
-5. Read the graph report injected into the prompt (## Structural analysis).
-   This JSON contains: orphans, cycles, disconnected clusters, thin_objectives,
-   bottlenecks (by betweenness centrality). Use it instead of manual file scanning.
+The sprint block is the lines between `<!-- sprint:begin -->` and
+`<!-- sprint:end -->`, which is what `pitch_sprint_block` reads:
+
+  <!-- sprint:begin -->
+  class: <internal | experiment | deploy>
+  effect: <none | probes/<name>.sh>
+  expect: <operator and a number, e.g. >= 1>
+  soak: <integer + d or h, e.g. 7d>
+  <!-- sprint:end -->
+
+When `effect` is `probes/<name>.sh` and that path is not already a file
+in the ops repo, also write the probe to `$PLANNER_PROBE_FILE` (default
+`/tmp/planner-probe.sh`). Do not commit it. The same pitch adds it next
+to `sprints/<slug>.md`.
+
+Do not file an issue.
+
+Do not relabel or close a prediction. Open prediction issues stay as
+they are. Do not write the prerequisite tree. Do not write a vault
+pending item. Do not commit. Do not push. Do not run a rung.
 """
-
-[[steps]]
-id    = "triage-and-plan"
-title = "Triage predictions, update tree, file at constraints"
-description = """
-One unified step replacing the former prediction-triage, update-prerequisite-tree,
-and file-at-constraints steps.
-
-### Part A: Triage predictions
-
-1. Fetch unreviewed predictions:
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues?state=open&type=issues&labels=prediction%2Funreviewed&limit=50"
-   If none, skip to Part B.
-
-2. Fetch all open issues (for overlap check):
-     curl -sf -H "Authorization: token $FORGE_TOKEN" \
-       "$FORGE_API/issues?state=open&type=issues&limit=50"
-
-3. Read available formulas: $FACTORY_ROOT/formulas/*.toml and $PROJECT_REPO_ROOT/formulas/*.toml
-
-4. For each prediction, choose one of two actions (no fence-sitting):
-   - ACTION: agree with the prediction -> create a backlog or action issue,
-     relabel to prediction/actioned, close the prediction
-   - DISMISS: disagree or noise -> comment reasoning, relabel to
-     prediction/dismissed, close the prediction
-
-   If a dismissed prediction is real, the predictor will re-file it with
-   stronger evidence next run. The issue history is the predictor's memory.
-
-5. Execute triage using tea helpers:
-   - Create issues:    tea_file_issue "<title>" "<body>" "backlog" (or "action")
-   - Relabel:          tea_relabel <num> "prediction/actioned" (or "prediction/dismissed")
-   - Comment:          tea_comment <num> "<reasoning>"
-   - Close:            tea_close <num>
-
-   Issue body template (gardener quality gate requires these sections):
-     ## Problem
-     <what the prediction identified>
-
-     ## Proposed solution
-     <approach>
-
-     ## Affected files
-     - <file1>
-
-     ## Acceptance criteria
-     - [ ] <criterion>
-     - [ ] CI green
-
-   Every decision MUST include reasoning in a comment on the prediction issue.
-
-### Part B: Update prerequisite tree
-
-Read these inputs:
-  - VISION.md, RESOURCES.md, prerequisite tree (preflight)
-  - Graph report: orphans, cycles, thin_objectives, bottlenecks, disconnected
-  - Portfolio: ## Addressables and ## Observables tables in AGENTS.md —
-    use these as the concrete inventory of what the factory has produced.
-    Plan toward making addressables observable (measurement wired).
-    Vision changes (#733) should trigger a review of these tables.
-  - Open issues (from Part A or fresh fetch)
-  - Recently closed issues:
-      curl -sf -H "Authorization: token $FORGE_TOKEN" \
-        "$FORGE_API/issues?state=closed&type=issues&limit=50&sort=updated&direction=desc"
-
-Update the tree:
-  1. Mark resolved prerequisites ([x]) — check if issue closed or capability present
-  2. Recalculate objective status (READY/BLOCKED/DONE)
-  3. Add new prerequisites discovered from graph report
-  4. Add new objectives from VISION.md not yet in tree
-  5. Check vault state: $OPS_REPO_ROOT/vault/pending/*.md + $OPS_REPO_ROOT/vault/approved/*.md (blocked-on-vault), $OPS_REPO_ROOT/vault/fired/*.md (resolved?)
-  6. Check RESOURCES.md for newly available capabilities
-
-Bounce/stuck detection — for issues in the tree, fetch recent comments:
-  curl -sf -H "Authorization: token $FORGE_TOKEN" \
-    "$FORGE_API/issues/<number>/comments?limit=10"
-  Signals: BOUNCED (too_large, underspecified),
-  LABEL_CHURN (3+ relabels between backlog/underspecified).
-  If an issue needs a human decision or external resource, it is HUMAN_BLOCKED.
-  Track as stuck_issues[] for constraint filing below.
-
-Hold the updated tree in memory — written to disk in journal-and-commit.
-
-Tree format:
-  # Prerequisite Tree
-  <!-- Last updated: YYYY-MM-DD -->
-
-  ## Objective: <name> (#issue or description)
-  - [x] Resolved prerequisite (reference)
-  - [ ] Unresolved prerequisite (#issue or description)
-  - [ ] Resource need blocked-on-vault ($OPS_REPO_ROOT/vault/pending/<id>.md)
-  Status: READY | BLOCKED — <reason> | DONE
-
-### Part C: File at constraints
-
-From the updated tree + graph bottlenecks, identify the top 5 constraints.
-A constraint is an unresolved prerequisite blocking the most downstream objectives.
-Graph bottlenecks (high betweenness centrality) and thin objectives inform ranking.
-
-HUMAN_BLOCKED handling (needs human decision or external resource):
-  - File a vault procurement item instead of skipping. First check for duplicates
-    across ALL vault directories (pending/, approved/, fired/) — if a file with the
-    same slug already exists in any of them, do NOT create a new one.
-    Naming: $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md (e.g. disinto-github-org.md).
-    Write with this template:
-
-      # Request: <short description>
-
-      ## What
-      <description of the resource or decision needed>
-
-      ## Why
-      Blocks #<issue> (<title>), which blocks <downstream objective>.
-      Waiting since <date constraint was first identified>.
-
-      ## Human action
-      1. <concrete step>
-      2. <concrete step>
-      3. Paste result here or in #<issue>
-
-      ## Factory will then
-      - <what the factory does once the resource is available>
-      - <downstream work that unblocks>
-
-      ## Unblocks
-      - #<issue> — <title>
-
-    Then mark the prerequisite in the tree as "blocked-on-vault ($OPS_REPO_ROOT/vault/pending/<id>.md)".
-    Do NOT skip or mark as "awaiting human decision" — the vault owns the human interface.
-
-Template-or-vision filing gate (for non-stuck constraints):
-  1. Read issue templates from .forgejo/ISSUE_TEMPLATE/*.yaml:
-     - bug.yaml: for broken/incorrect behavior (error in logs, failing test)
-     - feature.yaml: for new capabilities (prerequisite doesn't exist)
-     - refactor.yaml: for restructuring without behavior change
-
-  2. Attempt to fill template fields:
-     - affected_files: list 3 or fewer specific files
-     - acceptance_criteria: write concrete, checkable criteria (max 5)
-     - proposed_solution/approach: is there one clear approach, or design forks?
-
-  3. Complexity test:
-     - If work touches ONE subsystem (3 or fewer files) AND no design forks
-       (only one reasonable approach) AND template fields fill confidently:
-       → File as `backlog` using matching template format
-     - Otherwise → Label `vision` with short body:
-       - Problem statement
-       - Why it's vision-sized
-       - Which objectives it blocks
-       - Include "## Why vision" section explaining complexity
-
-  4. Template selection heuristic:
-     - Bug template: planner identifies something broken (error in logs,
-       incorrect behavior, failing test)
-     - Feature template: new capability needed (prerequisite doesn't exist)
-     - Refactor template: existing code needs restructuring without behavior change
-
-  5. Filing steps:
-     - Check if issue already exists (match by #number in tree or title search)
-     - If no issue, create with tea_file_issue using template format
-     - If issue exists and is open, skip — no duplicates
-
-Priority label sync:
-  - Add priority to current top-5 constraint issues (if missing):
-      tea_relabel <num> "backlog,priority"
-  - Remove priority from issues no longer in top 5:
-      curl -sf -X DELETE -H "Authorization: token $FORGE_TOKEN" \
-        "$FORGE_API/issues/<num>/labels/<priority_label_id>"
-
-Vault procurement: if a constraint needs a resource not in RESOURCES.md with
-recurring cost, create $OPS_REPO_ROOT/vault/pending/<project>-<slug>.md instead of an issue.
-Use the same template as HUMAN_BLOCKED above (What/Why/Human action/Factory will then/Unblocks).
-Dedup: check $OPS_REPO_ROOT/vault/pending/ + $OPS_REPO_ROOT/vault/approved/ + $OPS_REPO_ROOT/vault/fired/ before creating.
-
-Rules:
-- Action budget: the planner may create at most (predictions_addressed + 1)
-  new issues per run if any predictions were triaged, or 4 if no predictions.
-  This covers issues from Part A promotions + Part C constraint filing combined.
-- No issues filed past the bottleneck
-- Leave existing premature issues as-is
-- Only reference formulas that exist on disk
-- Do NOT file issues for objectives blocked on pending vault items
-- Promoted predictions may become constraints — rank them equally
-
-CRITICAL: If any part of this step fails, log the failure and continue.
-"""
-needs = ["preflight"]
-
-[[steps]]
-id    = "commit-ops-changes"
-title = "Write tree and journal; commit and push branch"
-description = """
-### 1. Write prerequisite tree
-Write to: $OPS_REPO_ROOT/prerequisites.md
-
-### 2. Commit ops repo changes to the planner branch
-Commit the ops repo changes (prerequisites, vault items) and push the
-branch. Do NOT push directly to $PRIMARY_BRANCH — planner-run.sh will create a
-PR and walk it to merge via review-bot.
-  cd "$OPS_REPO_ROOT"
-  git add prerequisites.md vault/pending/
-  git add -u
-  if ! git diff --cached --quiet; then
-    git commit -m "chore: planner run $(date -u +%Y-%m-%d)"
-    git push origin HEAD
-  fi
-  cd "$PROJECT_REPO_ROOT"
-
-### 3. Write journal entry (generic)
-The planner-run.sh wrapper will handle journal writing via profile_write_journal()
-after the formula completes. This step is informational only.
-"""
-needs = ["triage-and-plan"]

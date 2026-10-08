@@ -10,18 +10,18 @@
 # a prompt stuffed with prior-run insights is not the policy.
 #
 # Fix (no new behavior):
-#   - formulas/run-planner.toml : delete the "Memory update (every 5th run)"
-#     step from the commit-ops-changes step; remove knowledge/planner-memory.md
-#     from the `git add` line; leave prerequisites.md and vault/pending/
-#     untouched.
+#   - formulas/run-planner.toml : no "Memory update" step and no
+#     planner-memory.md. The prose tree is retired (#1977): the formula
+#     contains "Do not file an issue." and does not name prerequisites.md,
+#     tea_file_issue, prediction/unreviewed, or vault/pending.
 #   - planner/planner-run.sh   : do not read knowledge/planner-memory.md and do
 #     not insert it into PROMPT; delete the MEMORY_BLOCK construction.
 #
 # Acceptance criteria (grep the two files for the removed strings):
 #   1. run-planner.toml has no "Memory update" step.
-#   2. run-planner.toml does not `git add` knowledge/planner-memory.md
-#      (the `git add` line carries only prerequisites.md + vault/pending/).
-#   3. run-planner.toml still writes prerequisites.md and adds vault/pending/.
+#   2. run-planner.toml does not reference planner-memory.md.
+#   3. run-planner.toml contains "Do not file an issue." and does not contain
+#      prerequisites.md, tea_file_issue, prediction/unreviewed, or vault/pending.
 #   4. planner-run.sh has no MEMORY_BLOCK construction (no read, no insert).
 #   5. planner-run.sh does not reference knowledge/planner-memory.md.
 #
@@ -58,19 +58,14 @@ if grep -Fq "planner-memory.md" "$TOML"; then
   ac_fail "run-planner.toml still references planner-memory.md (git add / read)"
 fi
 
-# The `git add` line must carry exactly the unchanged operands (tree + vault),
-# with no planner-memory.md operand (checked separately above).
-if ! grep -Fq "git add prerequisites.md vault/pending/" "$TOML"; then
-  ac_fail "run-planner.toml git add no longer adds 'prerequisites.md vault/pending/'"
+# The prose tree is retired (#1977). The formula refuses to file, and it
+# does not name the old triage / tree / vault paths.
+ac_log "checking run-planner.toml refuses filing and drops the prose tree"
+if ! grep -Fq "Do not file an issue." "$TOML"; then
+  ac_fail "run-planner.toml must contain 'Do not file an issue.'"
 fi
-
-# ── 3. run-planner.toml: prerequisites.md write + vault/pending/ intact ──────
-ac_log "checking run-planner.toml still writes tree + vault/pending"
-if ! grep -Fq "Write to: \$OPS_REPO_ROOT/prerequisites.md" "$TOML"; then
-  ac_fail "run-planner.toml no longer writes prerequisites.md (changed)"
-fi
-if ! grep -Fq "vault/pending/" "$TOML"; then
-  ac_fail "run-planner.toml no longer adds vault/pending/ (changed)"
+if grep -E 'prerequisites.md|tea_file_issue|prediction/unreviewed|vault/pending' "$TOML"; then
+  ac_fail "run-planner.toml still names the retired prose-planning strings"
 fi
 
 # ── 4. planner-run.sh: no MEMORY_BLOCK construction ──────────────────────────

@@ -77,8 +77,8 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `closed
 
 | Label | Meaning | Set by |
 |---|---|---|
-| `backlog` | Queued for implementation; dev-poll picks the first ready one; re-queue point for transient resource-limit exits (#1164). | Planner, gardener, humans, dev-agent |
-| `priority` | Queue tier above plain backlog; FIFO within tier. | Planner, humans |
+| `backlog` | Queued for implementation; dev-poll picks the first ready one; re-queue point for transient resource-limit exits (#1164). | gardener, humans, dev-agent |
+| `priority` | Queue tier above plain backlog; FIFO within tier. | humans |
 | `in-progress` | Dev-agent is working it (one per project); also on vision issues when sub-issues are filed (#764). | dev-agent.sh, filer-bot |
 | `blocked` | Stuck: no-push crash, CI fixes exhausted, 3rd consecutive resource-limit exit → `no_push_after_3_attempts`, or unmet dependency. A single resource-limit exit is transient → re-queue to `backlog` (#1164); see the diagnostic comment. | dev-agent.sh, dev-poll.sh |
 | `waiting-on-compute` | Dispatched, waiting on an external run; dev-poll skips. Removed when the run lands. | Humans, formulas |
@@ -87,10 +87,10 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `closed
 | `bug-report` | User-facing breakage with repro steps; separate triage track. | Gardener |
 | `in-triage` | Reproduced, cause unclear; alongside `bug-report`. | reproduce-agent |
 | `rejected` | Cannot reproduce, out of scope, or invalid; or, per the dev-agent refusal protocol (#1613), **needs ops access** (issue needs access this repo's code change can't provide — a secret, the ops repo, a running host, or a human step) or **design conflict** (issue contradicts the current code or a cited design document). | reproduce-agent, humans, dev-agent.sh |
-| `vision` | Goal anchors from VISION.md. | Planner, humans |
-| `prediction/unreviewed` | Unprocessed prediction. | predictor-run.sh |
-| `prediction/dismissed` | Triaged DISMISS (planner disagreed). | Planner |
-| `prediction/actioned` | Promoted or dismissed. | Planner |
+| `vision` | Goal anchors from VISION.md. | humans |
+| `prediction/unreviewed` | Unprocessed prediction. Open prediction issues stay open until the predictor sprint. | predictor-run.sh |
+| `prediction/dismissed` | Triaged DISMISS. The planner does not relabel or close a prediction. | — |
+| `prediction/actioned` | Promoted or dismissed. Open `prediction/unreviewed` issues stay open until the predictor sprint. | — |
 | `formula` | Operational task; dev-poll skips, dispatcher handles. | Dispatcher |
 | `awaiting-live-verification` | Set by hand when a change still needs a check on the live box; dev-poll skips it. | a human |
 
