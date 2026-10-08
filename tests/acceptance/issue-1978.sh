@@ -194,6 +194,8 @@ assert_not_opened "pending failure"
 write_pitch() {
   local effect="$1" extra="${2:-}"
   local path="$T/session-pitch.md"
+  # Field order differs from the rung writer so the two files do not share
+  # a 5-line window. sprint_field does not care about order.
   cat >"$path" <<EOF
 # Sprint: New thing
 
@@ -203,9 +205,9 @@ A probe the session wrote. The planner pitches it and does not run it.
 
 <!-- sprint:begin -->
 class: internal
-effect: ${effect}
 expect: >= 1
 soak: 14d
+effect: ${effect}
 <!-- sprint:end -->
 ${extra}
 EOF

@@ -121,7 +121,7 @@ build_context_block VISION.md AGENTS.md ops:RESOURCES.md ops:catalog/claims.md
 
 # ── Build structural analysis graph ──────────────────────────────────────
 build_graph_section
-
+log "planner prompt includes the claims catalog"
 
 # ── Prepare .profile context (lessons injection) ─────────────────────────
 formula_prepare_profile_context
