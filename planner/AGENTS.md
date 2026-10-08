@@ -104,6 +104,11 @@ planner formula.
 - `planner/ladder.sh` — `ladder_lowest_gap` prints the lowest missing or
   challenged capability rung (`sense`, `provision`, `reach`, `deploy`,
   `replicate`), or nothing. No network. No caller yet.
+- `planner/pitch-open.sh` — `planner_pitch_open` opens one ops PR titled
+  `architect: <title>` that adds `sprints/<slug>.md`. When given a probe file
+  and a `probes/<name>.sh` path, it adds that file on the same branch before
+  the pull is posted. Returns 0 when `planner-bot` already has an open
+  `architect:` PR. No caller yet.
 - `$OPS_REPO_ROOT/prerequisites.md` — Prerequisite tree: versioned constraint
   map linking VISION.md objectives to their prerequisites. Planner owns the
   tree, humans steer by editing VISION.md. Tree grows organically as the
