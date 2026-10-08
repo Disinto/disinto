@@ -101,6 +101,9 @@ planner formula.
 - `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
   grooming. (Note: the planner no longer dispatches breakdown mode — complex
   issues are labeled `vision` instead.)
+- `planner/ladder.sh` — `ladder_lowest_gap` prints the lowest missing or
+  challenged capability rung (`sense`, `provision`, `reach`, `deploy`,
+  `replicate`), or nothing. No network. No caller yet.
 - `$OPS_REPO_ROOT/prerequisites.md` — Prerequisite tree: versioned constraint
   map linking VISION.md objectives to their prerequisites. Planner owns the
   tree, humans steer by editing VISION.md. Tree grows organically as the
