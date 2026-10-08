@@ -178,6 +178,15 @@ roles:
     namespace: default
     job_id:    edge
 
+  # Healer: the host-side jobspec (nomad/jobs/healer.hcl, #1951) binds this
+  # role to read the Telegram bot token and chat id from
+  # kv/data/disinto/notify/telegram and message the owner by Telegram when
+  # its own fix failed (#1955).
+  - name:      service-healer
+    policy:    service-healer
+    namespace: default
+    job_id:    healer
+
   # ── Per-secret runner roles ────────────────────────────────────────────────
   # vault-runner (Step 5) composes runner-<NAME> policies onto each
   # ephemeral dispatch token based on the action TOML's `secrets = [...]`.
