@@ -26,7 +26,14 @@
 #   HEALER_DRY_RUN  — set to 1 to make the tick a dry run (1950 AC5)
 #
 # ac_healer_stubs   — writes the fake curl and fake nomad into $BIN.
+# ac_healer_init <template> — mktemp, trap, DATA/BIN/HEALER_WORK, stubs.
+# ac_healer_public_fixtures — running forgejo, woodpecker-server, edge,
+#                             each registered, with health-check addresses.
 # healer_run_once <state-dir> <tape-dir> — one `healer.sh --once` tick.
+#   Optional overrides (unset = the defaults 1950/1952 rely on):
+#     HEALER_TEST_COOLDOWN_SECS, HEALER_TEST_ESCALATE_AFTER_SECS,
+#     HEALER_TEST_REMIND_SECS, HEALER_TEST_NOW, HEALER_TEST_NOTIFY_CMD,
+#     HEALER_TEST_PUBLIC_URLS (empty is kept: no public probing).
 # healer_restart_lines        — count of `alloc restart ` in $STUB_LOG.
 # healer_restarts_of <alloc>  — count of restarts of alloc-<alloc>.
 # set_probe_code <key> <code> / clear_probe_code <key> — probe code files.
@@ -146,27 +153,101 @@ ac_healer_stubs() {
   _healer_nomad_stub
 }
 
+# ac_healer_init TEMPLATE — a temp work dir, the stub PATH, and HEALER_WORK.
+# Sets WORK, DATA, BIN. The trap removes WORK on exit.
+ac_healer_init() {
+  WORK="$(mktemp -d "$1")"
+  trap 'rm -rf "$WORK"' EXIT
+  DATA="$WORK/nomad"
+  BIN="$WORK/bin"
+  export HEALER_WORK="$WORK"
+  mkdir -p "$DATA" "$BIN"
+  ac_healer_stubs
+}
+
+# Running forgejo, woodpecker-server and edge, each registered, plus the
+# backend addresses the public-endpoint health check curls. Reads $DATA.
+ac_healer_public_fixtures() {
+  mkdir -p "$DATA"
+  jq -n '[{ID:"forgejo",Status:"running",Type:"service"},
+         {ID:"woodpecker-server",Status:"running",Type:"service"},
+         {ID:"edge",Status:"running",Type:"service"}]' > "$DATA/jobs.json"
+  jq -n '{ID:"forgejo",TaskGroups:[{Name:"forgejo",Services:[{Name:"forgejo"}],
+         Tasks:[{Name:"forgejo",Services:[]}]}]}' > "$DATA/job-forgejo.json"
+  jq -n '[{ID:"alloc-forgejo",JobID:"forgejo",ClientStatus:"running"}]' \
+    > "$DATA/allocs-forgejo.json"
+  jq -n '{ID:"woodpecker-server",TaskGroups:[{Name:"wp",Services:[{Name:"woodpecker"}],
+         Tasks:[{Name:"wp",Services:[]}]}]}' > "$DATA/job-woodpecker-server.json"
+  jq -n '[{ID:"alloc-woodpecker-server",JobID:"woodpecker-server",ClientStatus:"running"}]' \
+    > "$DATA/allocs-woodpecker-server.json"
+  jq -n '{ID:"edge",TaskGroups:[{Name:"edge",Services:[{Name:"edge"}],
+         Tasks:[{Name:"edge",Services:[]}]}]}' > "$DATA/job-edge.json"
+  jq -n '[{ID:"alloc-edge",JobID:"edge",ClientStatus:"running"}]' \
+    > "$DATA/allocs-edge.json"
+  jq -n '[{Namespace:"default",Services:[{ServiceName:"forgejo",Tags:[]},
+         {ServiceName:"woodpecker",Tags:[]},{ServiceName:"edge",Tags:[]}]}]' \
+    > "$DATA/services.json"
+  jq -n '{Services:[{Address:"127.0.0.1:3000"}]}' > "$DATA/svc-forgejo.json"
+  jq -n '{Services:[{Address:"127.0.0.1:9999"}]}' > "$DATA/svc-woodpecker.json"
+}
+
 # One `healer.sh --once` tick. Reads $BIN, $DATA, $HEALER, $STUB_LOG globals.
 # $HEALER_WORK / $HEALER_DRY_RUN must be *exported* by the caller; the child
 # (and the fake curl it spawns) inherit them — a command-assignment prefix can
 # only be literal source text, not the result of a parameter expansion, so the
 # vars are passed through the exported environment instead.
+# HEALER_TEST_* overrides are for tests that must move the clock or the
+# notify command (1955). Unset, the tick matches the 1950/1952 defaults.
 healer_run_once() {
   local state_dir="$1" tape_dir="$2"
+  local public_urls cooldown escalate remind now_epoch notify_cmd
+  cooldown="${HEALER_TEST_COOLDOWN_SECS:-1800}"
+  escalate="${HEALER_TEST_ESCALATE_AFTER_SECS:-1800}"
+  remind="${HEALER_TEST_REMIND_SECS:-86400}"
+  now_epoch="${HEALER_TEST_NOW:-}"
+  # Default is a no-op. An empty HEALER_NOTIFY_CMD would fall through to
+  # bin/notify-owner.sh, which messages the owner when Telegram env is set.
+  # A test that wants a recording stub sets HEALER_TEST_NOTIFY_CMD.
+  notify_cmd="${HEALER_TEST_NOTIFY_CMD:-}"
+  if [ -z "$notify_cmd" ]; then
+    notify_cmd="$(healer_notify_noop)"
+  fi
+  # Empty is a request for no probing, not "use the default".
+  if [ -n "${HEALER_TEST_PUBLIC_URLS+x}" ]; then
+    public_urls="$HEALER_TEST_PUBLIC_URLS"
+  else
+    public_urls="https://self.disinto.ai/forge/ https://self.disinto.ai/ci/"
+  fi
   PATH="$BIN:$PATH" \
   NOMAD_ADDR="http://127.0.0.1:4646" \
   NOMAD_TIMEOUT=2 \
   HEALER_STATE_DIR="$state_dir" \
   HEALER_INTERVAL_SECS=60 \
-  HEALER_COOLDOWN_SECS=1800 \
-  HEALER_MAX_RESTARTS=3 \
-  HEALER_PUBLIC_URLS="https://self.disinto.ai/forge/ https://self.disinto.ai/ci/" \
+  HEALER_COOLDOWN_SECS="$cooldown" \
+  HEALER_ESCALATE_AFTER_SECS="$escalate" \
+  HEALER_REMIND_SECS="$remind" \
+  HEALER_NOW="$now_epoch" \
+  HEALER_NOTIFY_CMD="$notify_cmd" \
+  HEALER_PUBLIC_URLS="$public_urls" \
   HEALER_PUBLIC_FAILURES=3 \
   HEALER_PROBE_TIMEOUT_SECS=1 \
   TAPE_DIR="$tape_dir" \
   FAKE_NOMAD_DATA="$DATA" \
   NOMAD_STUB_LOG="$STUB_LOG" \
     bash "$HEALER" --once
+}
+
+# healer_notify_noop — path of a sender that exits 0 and contacts nothing.
+healer_notify_noop() {
+  local stub="${BIN}/healer-notify-noop"
+  if [ ! -x "$stub" ]; then
+    cat > "$stub" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$stub"
+  fi
+  printf '%s' "$stub"
 }
 
 healer_restart_lines() {

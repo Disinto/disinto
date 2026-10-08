@@ -62,6 +62,42 @@
 #   open proposals live in $HEALER_STATE_DIR/state.json. A tape failure
 #   logs a WARNING and never stops the loop.
 #
+# Owner messages (#1955, the AD-006 exception #1970): the owner does not
+# watch forge issues, the ops repo, or logs, and may take a day or more
+# to answer. Operational faults are fixed here, best effort, without a
+# human. The owner is told only when this healer's own fix did not work,
+# and then by Telegram: each tick runs
+#   ${HEALER_NOTIFY_CMD:-$FACTORY_ROOT/bin/notify-owner.sh} TEXT
+# That command is the only sender. Nothing under lib/ sends it.
+#
+# An episode is one condition: service-unregistered:<job> or
+# public-endpoint-down:<url>. It starts the first time the condition is
+# seen and ends when the condition is gone. Episodes live in
+# $HEALER_STATE_DIR/state.json (key "episodes") so a healer restart does
+# not send a duplicate.
+#
+# The owner is messaged once per episode, when either:
+#   - a remedy acted and the condition is still there
+#     HEALER_ESCALATE_AFTER_SECS (default 1800) later, or
+#   - #1952 recorded unfixable for the URL (that tick, no wait).
+# The message is one plain-text paragraph naming the condition, since
+# when, what the healer did and when, and the next step it cannot take.
+#
+# A reminder is sent every HEALER_REMIND_SECS (default 86400) while the
+# episode lasts. A resolved line is sent only after this tick positively
+# saw the condition gone: the job spec was read and the service is
+# registered, or the URL was probed and answered 2xx/3xx. A skipped or
+# failed check leaves the episode in place — it is not a clear. The line
+# is "disinto: resolved: <condition> (down <duration>)", and only if a
+# message was already sent for that episode. A condition that cleared
+# before any message sends none.
+#
+# A failed send, or a send that reports the channel is not configured,
+# logs a WARNING and is retried on a later tick, at most once per 10
+# minutes. It never stops the loop. The episode stays in state, so a
+# missed send is not forgotten and a healer restart does not duplicate
+# one that landed.
+#
 # Loop: every HEALER_INTERVAL_SECS (default 60). --once runs one tick and
 # exits (tests). One line per action on stdout: [<iso>] healer: <message>.
 #
@@ -71,11 +107,20 @@
 #   NOMAD_TIMEOUT           per-call curl timeout, seconds (default 5)
 #   HEALER_INTERVAL_SECS    loop sleep (default 60)
 #   HEALER_COOLDOWN_SECS    min seconds between restarts of one job (default 1800)
-#   HEALER_STATE_DIR        open proposals + cooldown (default /srv/disinto/healer)
+#   HEALER_STATE_DIR        open proposals + cooldown + episodes
+#                           (default /srv/disinto/healer)
 #   HEALER_PUBLIC_URLS      whitespace-separated public endpoints to probe
 #                           (default https://self.disinto.ai/forge/
 #                           https://self.disinto.ai/ci/; empty = no probing)
 #   HEALER_DRY_RUN          1 = log would restart, do not act
+#   HEALER_ESCALATE_AFTER_SECS
+#                           seconds after a remedy before the owner is told
+#                           the condition is still there (default 1800)
+#   HEALER_REMIND_SECS      seconds between reminders while an episode lasts
+#                           (default 86400)
+#   HEALER_NOTIFY_CMD       command that receives the message text (default
+#                           $FACTORY_ROOT/bin/notify-owner.sh)
+#   HEALER_NOW              optional epoch clock (tests); unset uses date
 #   TAPE_DIR                tape store (lib/tape.sh; default /srv/disinto/tape)
 #
 # Does not source lib/env.sh: this is a host-side loop, not an agent, and
@@ -96,13 +141,28 @@ HEALER_EXEC_TIMEOUT_SECS=15
 # Public endpoint probing (#1952): after this many consecutive failing ticks
 # a restart attempt is made; empty means no endpoint probing.
 HEALER_PUBLIC_FAILURES=3
-HEALER_PUBLIC_URLS="${HEALER_PUBLIC_URLS:-https://self.disinto.ai/forge/ https://self.disinto.ai/ci/}"
+# `:-` would treat an explicit empty value as unset and restore the default,
+# which would probe when the caller asked for none. Empty means no probing.
+HEALER_PUBLIC_URLS="${HEALER_PUBLIC_URLS-https://self.disinto.ai/forge/ https://self.disinto.ai/ci/}"
 # Health-check curl timeout for public endpoints (separate from NOMAD_TIMEOUT,
 # which is for the Nomad API).
 HEALER_PROBE_TIMEOUT_SECS="${HEALER_PROBE_TIMEOUT_SECS:-10}"
+# Owner escalation (#1955). Not a restart knob: a message, after a remedy
+# has already failed to clear the fault, or when nothing is left to restart.
+HEALER_ESCALATE_AFTER_SECS="${HEALER_ESCALATE_AFTER_SECS:-1800}"
+HEALER_REMIND_SECS="${HEALER_REMIND_SECS:-86400}"
+# A failed or not-configured send is retried at most this often. Fixed:
+# the issue says 10 minutes, not an operator knob.
+HEALER_NOTIFY_RETRY_SECS=600
 # Shared per-tick restart budget: capped by HEALER_MAX_RESTARTS, shared by
 # the service-reregister pass and the public-endpoint pass.
 RESTARTS=0
+# Conditions observed this tick, and conditions positively seen gone.
+# A missing note is not a clear: the check may have failed. Reset each tick.
+TICK_NOTES='[]'
+TICK_CLEARS='[]'
+# 1 only after the service-unregistered scan read jobs and the registry.
+TICK_SERVICE_SCAN_OK=0
 
 export NOMAD_ADDR
 
@@ -114,6 +174,12 @@ case "$HEALER_COOLDOWN_SECS" in
 esac
 case "$NOMAD_TIMEOUT" in
   ''|*[!0-9]*) NOMAD_TIMEOUT=5 ;;
+esac
+case "$HEALER_ESCALATE_AFTER_SECS" in
+  ''|*[!0-9]*) HEALER_ESCALATE_AFTER_SECS=1800 ;;
+esac
+case "$HEALER_REMIND_SECS" in
+  ''|*[!0-9]*) HEALER_REMIND_SECS=86400 ;;
 esac
 
 ONCE=0
@@ -137,11 +203,24 @@ while [ $# -gt 0 ]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Host-side loop: do not source lib/env.sh (it wants USER/HOME and can
+# clobber NOMAD_ADDR). FACTORY_ROOT is only needed to find notify-owner.sh.
+FACTORY_ROOT="${FACTORY_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+HEALER_NOTIFY_CMD="${HEALER_NOTIFY_CMD:-$FACTORY_ROOT/bin/notify-owner.sh}"
 # shellcheck source=../lib/tape.sh
 source "${SCRIPT_DIR}/../lib/tape.sh"
 
 log() {
   printf '[%s] healer: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+}
+
+# healer_now — epoch seconds. HEALER_NOW lets a test advance the clock
+# without sleeping; production leaves it unset.
+healer_now() {
+  case "${HEALER_NOW:-}" in
+    ''|*[!0-9]*) date -u +%s ;;
+    *) printf '%s' "$HEALER_NOW" ;;
+  esac
 }
 
 # nomad_get PATH — body of a Nomad GET, or empty on any failure. Callers
@@ -237,6 +316,10 @@ declared_names() {
 
 # missing_names DECLARED_JSON REGISTERED_JSON — declared names not registered.
 missing_names() {
+  # Refuse a non-array. An empty capture must not reach --argjson (jq writes
+  # a parse error to stderr and the tick would look like it failed the read).
+  case "$1" in '['*) ;; *) return 1 ;; esac
+  case "$2" in '['*) ;; *) return 1 ;; esac
   # $name, not `.`: inside `$registered | index(.)` the dot is the array.
   jq -nc --argjson declared "$1" --argjson registered "$2" '
     [ $declared[] as $name | select(($registered | index($name)) == null) | $name ]
@@ -349,6 +432,9 @@ act_on() {
   log "restarted alloc ${alloc} for job ${job}"
   if ! record_restart "$job" "$pid" "$missing" "$now"; then
     log "WARNING: failed to record restart state for ${job}"
+  else
+    episode_note_restart "service-unregistered:${job}" "$job" "$now" \
+      || log "WARNING: failed to note episode restart for ${job}"
   fi
   return 0
 }
@@ -362,7 +448,7 @@ close_open() {
   local cleared bits new
   state="$(read_state)"
   registered="$(registered_names "$services_json")" || return 0
-  now="$(date -u +%s)"
+  now="$(healer_now)"
   jobs="$(printf '%s' "$state" | jq -r '.open // {} | keys[]')" || return 0
   while IFS= read -r job; do
     [ -n "$job" ] || continue
@@ -407,17 +493,19 @@ close_open() {
 
 restart_unregistered() {
   local jobs_json="$1" services_json="$2"
-  local registered ids id spec declared missing allocs alloc now
+  local registered ids id spec declared missing allocs alloc now cap_logged=0
   RESTARTS=0
+  TICK_SERVICE_SCAN_OK=0
   registered="$(registered_names "$services_json")" || {
     log "WARNING: could not read registered services — no restart"
     return 0
   }
-  now="$(date -u +%s)"
+  now="$(healer_now)"
   ids="$(running_service_job_ids "$jobs_json")" || {
     log "WARNING: could not read jobs — no restart"
     return 0
   }
+  TICK_SERVICE_SCAN_OK=1
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     if ! job_id_ok "$id"; then
@@ -425,10 +513,20 @@ restart_unregistered() {
       continue
     fi
     spec="$(nomad_get "/v1/job/${id}")"
+    # A failed spec read is not a clear. Leave any open episode alone.
     json_object "$spec" || continue
     declared="$(declared_names "$spec")" || continue
+    case "$declared" in
+      '['*) ;;
+      *) continue ;;
+    esac
     missing="$(missing_names "$declared" "$registered")" || continue
-    [ "$missing" = "[]" ] && continue
+    if [ "$missing" = "[]" ]; then
+      tick_clear "service-unregistered:${id}"
+      continue
+    fi
+    # Seen, whether or not this tick is allowed to restart it.
+    tick_note "service-unregistered:${id}" "service still unregistered" "$id"
     allocs="$(nomad_get "/v1/job/${id}/allocations")"
     alloc="$(running_alloc "$allocs")"
     if [ -z "$alloc" ]; then
@@ -445,8 +543,11 @@ restart_unregistered() {
         ;;
     esac
     if [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
-      log "restart cap reached — remaining jobs wait"
-      break
+      if [ "$cap_logged" -eq 0 ]; then
+        log "restart cap reached — remaining jobs wait"
+        cap_logged=1
+      fi
+      continue
     fi
     act_on "$id" "$alloc" "$missing" "$now"
     RESTARTS=$((RESTARTS + 1))
@@ -571,6 +672,9 @@ act_on_endpoint() {
   log "restarted alloc ${alloc} for job ${job} (public endpoint ${url})"
   if ! record_endpoint_restart "$job" "$pid" "$url" "$now"; then
     log "WARNING: failed to record endpoint restart state for ${url}"
+  else
+    episode_note_restart "public-endpoint-down:${url}" "$job" "$now" \
+      || log "WARNING: failed to note episode restart for ${url}"
   fi
   return 0
 }
@@ -642,6 +746,7 @@ endpoint_down() {
 handle_public_endpoints() {
   local jobs_json="$1" now="$2"
   local urls url svc job health alloc addr code count n backend
+  local healthy=0 target_job="" word="" detail=""
   urls="${HEALER_PUBLIC_URLS}"
   if [ -z "$urls" ]; then
     return 0
@@ -651,16 +756,21 @@ handle_public_endpoints() {
     if url_up "$code"; then
       set_failure_count "$url" 0 || log "WARNING: failed to reset probe count for ${url}"
       clear_unfixable "$url"
+      tick_clear "public-endpoint-down:${url}"
       log "probe ${url} ${code} (up)"
       continue
     fi
     # Unfixable (see header): the fault is outside the box; do not restart
-    # again until this URL answers 2xx/3xx again.
+    # again until this URL answers 2xx/3xx again. Recheck backend health
+    # so a later reminder does not invent "healthy".
     if printf '%s' "$(read_state)" | jq -e --arg u "$url" \
       '.unfixable // {} | has($u)' >/dev/null 2>&1; then
+      note_unfixable_down "$url" "$code"
       log "probe ${url} ${code} (unfixable — no action)"
       continue
     fi
+    # Down. Note before any continue so a skip cannot look like a clear.
+    tick_note "public-endpoint-down:${url}" "still ${code}" ""
     n="$(get_failure_count "$url")" || n=0
     count=$((n + 1))
     set_failure_count "$url" "$count" || log "WARNING: failed to set probe count for ${url}"
@@ -681,17 +791,21 @@ handle_public_endpoints() {
       continue
     fi
     healthy=1
+    word="healthy"
     if ! health_up "$addr" "$health"; then
       healthy=0
+      word="unhealthy"
       log "probe ${url}: backend ${svc} unhealthy"
     fi
-    if [ "$healthy" -eq 1 ] && [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
-      continue
-    fi
+    detail="$(endpoint_detail "$url" "$code" "$word")"
     if [ "$healthy" -eq 1 ]; then
       target_job="edge"
     else
       target_job="$job"
+    fi
+    tick_note "public-endpoint-down:${url}" "$detail" "$target_job"
+    if [ "$healthy" -eq 1 ] && [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
+      continue
     fi
     # Cooldown for the job we would restart.
     if in_cooldown "$target_job" "$now"; then
@@ -700,7 +814,10 @@ handle_public_endpoints() {
       fi
       continue
     fi
-    alloc="$(endpoint_alloc "$jobs_json" "$target_job")" || continue
+    alloc="$(endpoint_alloc "$jobs_json" "$target_job")" || {
+      tick_note "public-endpoint-down:${url}" "$detail" "$target_job"
+      continue
+    }
     if [ -z "$alloc" ]; then
       log "WARNING: no running alloc for job ${target_job}"
       continue
@@ -710,6 +827,7 @@ handle_public_endpoints() {
     else
       act_on_endpoint "edge" "$alloc" "$url" "$now"
     fi
+    tick_note "public-endpoint-down:${url}" "$detail" "$target_job"
     RESTARTS=$((RESTARTS + 1))
   done
   return 0
@@ -754,13 +872,481 @@ close_endpoint_open() {
   done <<< "$urls"
   return 0
 }
+
+# ── owner escalation (#1955) ────────────────────────────────────────────────
+# The owner is messaged from here, never from lib/. A send failure is a
+# WARNING and a later retry; it does not fail the tick.
+
+# tick_note CONDITION DETAIL ACTED_JOB — one observation this tick.
+# A later note for the same condition replaces this one in escalate_pass.
+tick_note() {
+  local condition="$1" detail="$2" acted_job="$3" new
+  new="$(jq -nc \
+    --argjson cur "$TICK_NOTES" \
+    --arg c "$condition" \
+    --arg detail "$detail" \
+    --arg job "$acted_job" \
+    '$cur + [{condition: $c, detail: $detail, acted_job: $job}]')" || {
+    log "WARNING: failed to note condition ${condition}"
+    return 0
+  }
+  TICK_NOTES="$new"
+}
+
+# tick_clear CONDITION — this tick positively saw the condition gone.
+tick_clear() {
+  local condition="$1" new
+  new="$(jq -nc --argjson cur "$TICK_CLEARS" --arg c "$condition" \
+    '$cur + [$c] | unique')" || {
+    log "WARNING: failed to record clear for ${condition}"
+    return 0
+  }
+  TICK_CLEARS="$new"
+}
+
+# note_unfixable_down URL CODE — the URL is still down and already
+# unfixable. Recheck the backend. A failed check keeps the last real
+# detail (empty detail does not overwrite it) and does not claim healthy.
+note_unfixable_down() {
+  local url="$1" code="$2" backend svc health addr word detail=""
+  backend="$(endpoint_backend "$url" 2>/dev/null || true)"
+  if [ -n "$backend" ]; then
+    read -r svc _ health <<< "$backend"
+    addr="$(service_address "$(nomad_get "/v1/service/${svc}")" 2>/dev/null || true)"
+    if [ -n "$addr" ]; then
+      word="healthy"
+      if ! health_up "$addr" "$health"; then
+        word="unhealthy"
+      fi
+      detail="$(endpoint_detail "$url" "$code" "$word")"
+    fi
+  fi
+  tick_note "public-endpoint-down:${url}" "$detail" "edge"
+}
+
+# endpoint_detail URL CODE WORD — "still 502, forgejo healthy".
+# WORD empty → "still <code>". Always returns 0.
+endpoint_detail() {
+  local url="$1" code="$2" word="$3" backend svc
+  backend="$(endpoint_backend "$url" 2>/dev/null || true)"
+  svc="${backend%% *}"
+  if [ -n "$svc" ] && [ -n "$word" ]; then
+    printf 'still %s, %s %s' "$code" "$svc" "$word"
+  else
+    printf 'still %s' "$code"
+  fi
+  return 0
+}
+
+# episode_note_restart CONDITION JOB NOW — remember the first remedy.
+# A later restart must not push the escalation clock out forever.
+episode_note_restart() {
+  local condition="$1" job="$2" now="$3" state new
+  state="$(read_state)"
+  new="$(jq -nc \
+    --argjson state "$state" \
+    --arg c "$condition" \
+    --arg job "$job" \
+    --argjson now "$now" '
+      ($state // {}) as $s
+      | ($s.episodes // {}) as $eps
+      | ($eps[$c] // {
+          since: $now,
+          acted_at: 0,
+          acted_job: "",
+          sent: 0,
+          notified_at: 0,
+          last_attempt_at: 0,
+          detail: ""
+        }) as $ep
+      | (if ($ep.acted_at // 0) == 0 then
+           $ep + {acted_at: $now, acted_job: $job}
+         else $ep end) as $ep2
+      | $s + {episodes: ($eps + {($c): $ep2})}
+    ')" || return 1
+  write_state "$new"
+}
+
+episode_put() {
+  local cond="$1" ep="$2" state new
+  state="$(read_state)"
+  new="$(jq -nc --argjson state "$state" --arg c "$cond" --argjson ep "$ep" '
+    ($state // {}) | .episodes = ((.episodes // {}) + {($c): $ep})
+  ')" || return 1
+  write_state "$new"
+}
+
+episode_drop() {
+  local cond="$1" state new
+  state="$(read_state)"
+  new="$(jq -nc --argjson state "$state" --arg c "$cond" '
+    ($state // {}) | .episodes = ((.episodes // {}) | del(.[$c]))
+  ')" || return 1
+  write_state "$new"
+}
+
+# episode_unfixable CONDITION — 0 when #1952 recorded unfixable for the URL.
+episode_unfixable() {
+  local cond="$1" url state
+  case "$cond" in
+    public-endpoint-down:*) url="${cond#public-endpoint-down:}" ;;
+    *) return 1 ;;
+  esac
+  state="$(read_state)"
+  printf '%s' "$state" | jq -e --arg u "$url" \
+    '(.unfixable // {}) | has($u)' >/dev/null 2>&1
+}
+
+fmt_clock() {
+  date -u -d "@$1" '+%H:%M UTC' 2>/dev/null || printf '%s' "$1"
+}
+
+fmt_down() {
+  local s="$1" d h m
+  case "$s" in
+    ''|*[!0-9]*) s=0 ;;
+  esac
+  d=$((s / 86400))
+  s=$((s % 86400))
+  h=$((s / 3600))
+  s=$((s % 3600))
+  m=$((s / 60))
+  s=$((s % 60))
+  if [ "$d" -gt 0 ]; then
+    printf '%dd%dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then
+    printf '%dh%02dm' "$h" "$m"
+  elif [ "$m" -gt 0 ]; then
+    printf '%dm%02ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+# build_owner_text KIND COND SINCE ACTED_JOB ACTED_AT DETAIL UNFIXABLE
+# One paragraph. A reminder keeps the same facts with a reminder prefix.
+build_owner_text() {
+  local kind="$1" cond="$2" since="$3" acted_job="$4" acted_at="$5"
+  local detail="$6" unfixable="$7"
+  local since_hm acted_clause next body job
+  case "$since" in ''|*[!0-9]*) since=0 ;; esac
+  case "$acted_at" in ''|*[!0-9]*) acted_at=0 ;; esac
+  since_hm="$(fmt_clock "$since")"
+  if [ -n "$acted_job" ] && [ "$acted_at" -gt 0 ]; then
+    acted_clause="Restarted ${acted_job} at $(fmt_clock "$acted_at")"
+  else
+    acted_clause="No restart recorded"
+  fi
+  case "$cond" in
+    public-endpoint-down:*)
+      if [ "$unfixable" -eq 1 ]; then
+        next="Likely the Cloudflare tunnel on the host. Check: systemctl status cloudflared"
+      else
+        next="The healer cannot restart ${acted_job:-the alloc} again until cooldown ends. Check: nomad alloc status ${acted_job:-edge}"
+      fi
+      if [ -z "$detail" ]; then
+        detail="still down"
+      fi
+      body="disinto: ${cond} down since ${since_hm}. ${acted_clause}; ${detail}. ${next}"
+      ;;
+    service-unregistered:*)
+      job="${cond#service-unregistered:}"
+      next="The healer cannot restart the Nomad agent. Check: nomad job status ${job}"
+      body="disinto: ${cond} since ${since_hm}. ${acted_clause}; service still unregistered. ${next}"
+      ;;
+    *)
+      body="disinto: ${cond} since ${since_hm}. ${acted_clause}. ${detail}"
+      ;;
+  esac
+  if [ "$kind" = "reminder" ]; then
+    body="disinto: reminder: ${body#disinto: }"
+  fi
+  printf '%s' "$body"
+}
+
+# healer_notify TEXT — 0 sent, 2 channel not configured, 1 any other failure.
+# Never exits the healer. stderr is kept off the success path so a
+# "not configured" line is visible and a token is not.
+healer_notify() {
+  local text="$1" cmd errf rc=0 err_line
+  cmd="${HEALER_NOTIFY_CMD:-}"
+  if [ -z "$cmd" ]; then
+    log "WARNING: notify command is empty"
+    return 1
+  fi
+  errf="$(mktemp)" || {
+    log "WARNING: notify: cannot create temp file"
+    return 1
+  }
+  # `cmd || rc=$?` — not `if ! cmd; then rc=$?`. The `!` inverts the status,
+  # so $? inside that then-branch is 0 and a failed send looks like success.
+  "$cmd" "$text" 2>"$errf" || rc=$?
+  err_line="$(head -n 1 "$errf" 2>/dev/null || true)"
+  rm -f "$errf"
+  err_line="${err_line:0:200}"
+  if [ "$rc" -eq 0 ]; then
+    case "$err_line" in
+      *'not configured'*) return 2 ;;
+    esac
+    return 0
+  fi
+  if [ -n "$err_line" ]; then
+    log "WARNING: notify command failed (exit ${rc}): ${err_line}"
+  else
+    log "WARNING: notify command failed (exit ${rc})"
+  fi
+  return 1
+}
+
+# reconcile_episode COND DETAIL ACTED_JOB NOW — create or refresh one
+# episode. acted_at stays at the first remedy. Cooldown / endpoint_open
+# fill it in when the restart was recorded before this object existed.
+reconcile_episode() {
+  local cond="$1" detail="$2" note_job="$3" now="$4"
+  local state ep at since url e_at e_job cur_at
+  state="$(read_state)"
+  ep="$(jq -c --arg c "$cond" --argjson now "$now" '
+    .episodes[$c] // {
+      since: $now, acted_at: 0, acted_job: "", sent: 0,
+      notified_at: 0, last_attempt_at: 0, detail: ""
+    }' <<<"$state")" || return 1
+  if [ -n "$detail" ]; then
+    ep="$(jq -c --arg d "$detail" '.detail = $d' <<<"$ep")" || return 1
+  fi
+  at="$(jq -r '.acted_at // 0' <<<"$ep")"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  if [ "$at" -eq 0 ]; then
+    if [ -z "$note_job" ]; then
+      case "$cond" in
+        service-unregistered:*) note_job="${cond#service-unregistered:}" ;;
+      esac
+    fi
+    since="$(jq -r '.since // 0' <<<"$ep")"
+    case "$since" in ''|*[!0-9]*) since=0 ;; esac
+    if [ -n "$note_job" ]; then
+      at="$(jq -r --arg j "$note_job" '.cooldown[$j] // 0' <<<"$state")"
+      case "$at" in ''|*[!0-9]*) at=0 ;; esac
+      if [ "$at" -gt 0 ] && [ "$at" -ge "$since" ]; then
+        ep="$(jq -c --arg job "$note_job" --argjson at "$at" \
+          '.acted_at = $at | .acted_job = $job' <<<"$ep")" || return 1
+      fi
+    fi
+    case "$cond" in
+      public-endpoint-down:*)
+        url="${cond#public-endpoint-down:}"
+        e_at="$(jq -r --arg u "$url" '.endpoint_open[$u].restarted_at // 0' <<<"$state")"
+        e_job="$(jq -r --arg u "$url" '.endpoint_open[$u].job // ""' <<<"$state")"
+        case "$e_at" in ''|*[!0-9]*) e_at=0 ;; esac
+        cur_at="$(jq -r '.acted_at // 0' <<<"$ep")"
+        case "$cur_at" in ''|*[!0-9]*) cur_at=0 ;; esac
+        since="$(jq -r '.since // 0' <<<"$ep")"
+        case "$since" in ''|*[!0-9]*) since=0 ;; esac
+        if [ "$cur_at" -eq 0 ] && [ "$e_at" -gt 0 ] && [ "$e_at" -ge "$since" ] && [ -n "$e_job" ]; then
+          ep="$(jq -c --arg job "$e_job" --argjson at "$e_at" \
+            '.acted_at = $at | .acted_job = $job' <<<"$ep")" || return 1
+        fi
+        ;;
+    esac
+  fi
+  episode_put "$cond" "$ep"
+}
+
+# owner_due EP NOW UNFIXABLE — prints "escalation" or "reminder", or nothing.
+# A failed attempt is not retried until HEALER_NOTIFY_RETRY_SECS have passed.
+owner_due() {
+  local ep="$1" now="$2" unfixable="$3"
+  local sent acted notified last kind=""
+  sent="$(jq -r '.sent // 0' <<<"$ep")"
+  acted="$(jq -r '.acted_at // 0' <<<"$ep")"
+  notified="$(jq -r '.notified_at // 0' <<<"$ep")"
+  last="$(jq -r '.last_attempt_at // 0' <<<"$ep")"
+  case "$sent" in 1|true) sent=1 ;; *) sent=0 ;; esac
+  case "$acted" in ''|*[!0-9]*) acted=0 ;; esac
+  case "$notified" in ''|*[!0-9]*) notified=0 ;; esac
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ "$sent" -eq 0 ]; then
+    if [ "$unfixable" -eq 1 ]; then
+      kind="escalation"
+    elif [ "$acted" -gt 0 ] && [ $((now - acted)) -ge "$HEALER_ESCALATE_AFTER_SECS" ]; then
+      kind="escalation"
+    fi
+  elif [ $((now - notified)) -ge "$HEALER_REMIND_SECS" ]; then
+    kind="reminder"
+  fi
+  [ -n "$kind" ] || return 0
+  if [ "$last" -gt 0 ] && [ "$now" -ge "$last" ] \
+      && [ $((now - last)) -lt "$HEALER_NOTIFY_RETRY_SECS" ]; then
+    if [ "$sent" -eq 0 ] || [ "$last" -gt "$notified" ]; then
+      return 0
+    fi
+  fi
+  printf '%s' "$kind"
+}
+
+# send_owner_message COND KIND NOW UNFIXABLE — one attempt. Records the
+# attempt before the send so a crash cannot tight-loop, and records a
+# success after. A failure leaves sent=0 (or the previous notified_at) so
+# the episode is not lost.
+send_owner_message() {
+  local cond="$1" kind="$2" now="$3" unfixable="$4"
+  local state ep text rc since acted_job acted_at detail
+  state="$(read_state)"
+  ep="$(jq -c --arg c "$cond" '.episodes[$c] // empty' <<<"$state")"
+  [ -n "$ep" ] || return 0
+  since="$(jq -r '.since // 0' <<<"$ep")"
+  acted_job="$(jq -r '.acted_job // ""' <<<"$ep")"
+  acted_at="$(jq -r '.acted_at // 0' <<<"$ep")"
+  detail="$(jq -r '.detail // ""' <<<"$ep")"
+  text="$(build_owner_text "$kind" "$cond" "$since" "$acted_job" "$acted_at" "$detail" "$unfixable")" \
+    || return 0
+  [ -n "$text" ] || return 0
+  ep="$(jq -c --argjson now "$now" '.last_attempt_at = $now' <<<"$ep")" || return 0
+  if ! episode_put "$cond" "$ep"; then
+    log "WARNING: failed to record notify attempt for ${cond} — not sending this tick"
+    return 0
+  fi
+  rc=0
+  healer_notify "$text" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    state="$(read_state)"
+    ep="$(jq -c --arg c "$cond" --argjson now "$now" \
+      '.episodes[$c] | .sent = 1 | .notified_at = $now' <<<"$state")" || {
+      log "WARNING: notify sent for ${cond} but could not read the episode back"
+      return 0
+    }
+    episode_put "$cond" "$ep" || log "WARNING: notify sent for ${cond} but failed to record it"
+    if [ "$kind" = "reminder" ]; then
+      log "reminded owner: ${cond}"
+    else
+      log "notified owner: ${cond}"
+    fi
+    return 0
+  fi
+  if [ "$rc" -eq 2 ]; then
+    log "WARNING: notify: not configured (${cond})"
+  else
+    log "WARNING: notify failed for ${cond}"
+  fi
+  return 0
+}
+
+# send_resolved COND NOW — one resolved line, only if a message was sent.
+# Otherwise the episode is dropped with no send. A failed resolved send
+# keeps the episode so the next tick can retry.
+send_resolved() {
+  local cond="$1" now="$2"
+  local state ep sent last notified since dur text rc
+  state="$(read_state)"
+  ep="$(jq -c --arg c "$cond" '.episodes[$c] // empty' <<<"$state")"
+  [ -n "$ep" ] || return 0
+  sent="$(jq -r '.sent // 0' <<<"$ep")"
+  case "$sent" in
+    1|true) ;;
+    *)
+      episode_drop "$cond" || log "WARNING: failed to drop silent episode ${cond}"
+      return 0
+      ;;
+  esac
+  last="$(jq -r '.last_attempt_at // 0' <<<"$ep")"
+  notified="$(jq -r '.notified_at // 0' <<<"$ep")"
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  case "$notified" in ''|*[!0-9]*) notified=0 ;; esac
+  if [ "$last" -gt "$notified" ] && [ "$now" -ge "$last" ] \
+      && [ $((now - last)) -lt "$HEALER_NOTIFY_RETRY_SECS" ]; then
+    return 0
+  fi
+  since="$(jq -r '.since // 0' <<<"$ep")"
+  case "$since" in ''|*[!0-9]*) since=0 ;; esac
+  if [ "$now" -ge "$since" ]; then
+    dur="$((now - since))"
+  else
+    dur=0
+  fi
+  text="disinto: resolved: ${cond} (down $(fmt_down "$dur"))"
+  ep="$(jq -c --argjson now "$now" '.last_attempt_at = $now' <<<"$ep")" || return 0
+  if ! episode_put "$cond" "$ep"; then
+    log "WARNING: failed to record resolved attempt for ${cond}"
+    return 0
+  fi
+  rc=0
+  healer_notify "$text" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    episode_drop "$cond" || log "WARNING: resolved sent for ${cond} but failed to drop the episode"
+    log "notified owner: resolved ${cond}"
+    return 0
+  fi
+  if [ "$rc" -eq 2 ]; then
+    log "WARNING: notify: not configured (${cond})"
+  else
+    log "WARNING: notify failed for resolved ${cond}"
+  fi
+  return 0
+}
+
+# escalate_pass NOW — message, remind, or resolve. Never fails the tick.
+escalate_pass() {
+  local now="$1" active cond detail job unfixable kind conds
+  active="$(jq -c 'reduce .[] as $n ({}; .[$n.condition] = $n) | [.[]]' \
+    <<<"$TICK_NOTES" 2>/dev/null)" || active='[]'
+  conds="$(jq -r '.[].condition' <<<"$active" 2>/dev/null || true)"
+  while IFS= read -r cond; do
+    [ -n "$cond" ] || continue
+    detail="$(jq -r --arg c "$cond" \
+      '.[] | select(.condition == $c) | .detail' <<<"$active")" || detail=""
+    job="$(jq -r --arg c "$cond" \
+      '.[] | select(.condition == $c) | .acted_job' <<<"$active")" || job=""
+    reconcile_episode "$cond" "$detail" "$job" "$now" \
+      || log "WARNING: failed to update episode ${cond}"
+    # Prefer the stored detail: an empty note means "keep the last real one".
+    detail="$(jq -r --arg c "$cond" '.episodes[$c].detail // ""' <<<"$(read_state)")" \
+      || detail=""
+    unfixable=0
+    if episode_unfixable "$cond"; then
+      unfixable=1
+    fi
+    # Backend died after unfixable was recorded: do not tell the owner the
+    # tunnel is the next step, and do not claim the backend is healthy.
+    case "$detail" in
+      *unhealthy*) unfixable=0 ;;
+    esac
+    kind="$(owner_due "$(jq -c --arg c "$cond" '.episodes[$c] // {}' <<<"$(read_state)")" \
+      "$now" "$unfixable")" || kind=""
+    [ -n "$kind" ] || continue
+    send_owner_message "$cond" "$kind" "$now" "$unfixable" \
+      || log "WARNING: escalate failed for ${cond}"
+  done <<< "$conds"
+
+  conds="$(jq -r '.episodes // {} | keys[]' <<<"$(read_state)" 2>/dev/null || true)"
+  while IFS= read -r cond; do
+    [ -n "$cond" ] || continue
+    # Still observed down this tick.
+    if jq -e --arg c "$cond" 'any(.[]; .condition == $c)' <<<"$active" >/dev/null 2>&1; then
+      continue
+    fi
+    # Resolve only on a positive clear. A failed spec read, a jobs-list
+    # failure, or a URL that was not probed must leave the episode in place.
+    case "$cond" in
+      service-unregistered:*)
+        [ "$TICK_SERVICE_SCAN_OK" -eq 1 ] || continue
+        ;;
+    esac
+    jq -e --arg c "$cond" 'index($c) != null' <<<"$TICK_CLEARS" >/dev/null 2>&1 \
+      || continue
+    send_resolved "$cond" "$now" || log "WARNING: resolved failed for ${cond}"
+  done <<< "$conds"
+  return 0
+}
+
 healer_tick() {
   local jobs services now
   if ! agent_healthy; then
     log "WARNING: /v1/agent/health failed — no restart"
     return 0
   fi
-  now="$(date -u +%s)"
+  now="$(healer_now)"
+  TICK_NOTES='[]'
+  TICK_CLEARS='[]'
+  TICK_SERVICE_SCAN_OK=0
   jobs="$(nomad_get /v1/jobs)"
   services="$(nomad_get /v1/services)"
   if ! json_array "$jobs" || ! json_array "$services"; then
@@ -771,6 +1357,7 @@ healer_tick() {
   restart_unregistered "$jobs" "$services" || log "WARNING: restart pass failed"
   close_endpoint_open "$now" || log "WARNING: endpoint outcome pass failed"
   handle_public_endpoints "$jobs" "$now" || log "WARNING: endpoint pass failed"
+  escalate_pass "$now" || log "WARNING: escalate pass failed"
   return 0
 }
 

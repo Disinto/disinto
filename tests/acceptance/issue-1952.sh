@@ -62,43 +62,9 @@ grep -qF 'HEALER_PUBLIC_FAILURES' "$HEALER" \
 grep -qF 'HEALER_PROBE_TIMEOUT_SECS' "$HEALER" \
   || ac_fail "must define HEALER_PROBE_TIMEOUT_SECS"
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/healer-1952.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
-
-DATA="$WORK/nomad"
-BIN="$WORK/bin"
-export HEALER_WORK="$WORK"
-mkdir -p "$DATA" "$BIN"
-
-# Shared fake curl/nomad + fixtures.
-ac_healer_stubs
-
-jq -n '[{ID:"forgejo",Status:"running",Type:"service"},
-       {ID:"woodpecker-server",Status:"running",Type:"service"},
-       {ID:"edge",Status:"running",Type:"service"}]' > "$DATA/jobs.json"
-
-jq -n '{ID:"forgejo",TaskGroups:[{Name:"forgejo",Services:[{Name:"forgejo"}],
-       Tasks:[{Name:"forgejo",Services:[]}]}]}' > "$DATA/job-forgejo.json"
-jq -n '[{ID:"alloc-forgejo",JobID:"forgejo",ClientStatus:"running"}]' \
-  > "$DATA/allocs-forgejo.json"
-
-jq -n '{ID:"woodpecker-server",TaskGroups:[{Name:"wp",Services:[{Name:"woodpecker"}],
-       Tasks:[{Name:"wp",Services:[]}]}]}' > "$DATA/job-woodpecker-server.json"
-jq -n '[{ID:"alloc-woodpecker-server",JobID:"woodpecker-server",ClientStatus:"running"}]' \
-  > "$DATA/allocs-woodpecker-server.json"
-
-jq -n '{ID:"edge",TaskGroups:[{Name:"edge",Services:[{Name:"edge"}],
-       Tasks:[{Name:"edge",Services:[]}]}]}' > "$DATA/job-edge.json"
-jq -n '[{ID:"alloc-edge",JobID:"edge",ClientStatus:"running"}]' > "$DATA/allocs-edge.json"
-
-# Nomad /v1/services returns a top-level array of {Namespace, Services:[...]}.
-jq -n '[{Namespace:"default",Services:[{ServiceName:"forgejo",Tags:[]},
-       {ServiceName:"woodpecker",Tags:[]},{ServiceName:"edge",Tags:[]}]}]' \
-  > "$DATA/services.json"
-
-# service addresses used for the backend health check (127.0.0.1:3000 / 9999)
-jq -n '{Services:[{Address:"127.0.0.1:3000"}]}' > "$DATA/svc-forgejo.json"
-jq -n '{Services:[{Address:"127.0.0.1:9999"}]}' > "$DATA/svc-woodpecker.json"
+# Shared fake curl/nomad + the three registered services.
+ac_healer_init "${TMPDIR:-/tmp}/healer-1952.XXXXXX"
+ac_healer_public_fixtures
 
 # Run exactly N ticks; probe codes are set/cleared with set_probe_code /
 # clear_probe_code between calls. Returns the first non-zero exit code seen.
