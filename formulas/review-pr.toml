@@ -111,7 +111,7 @@ Scan the diff for these patterns in agent code (`dev/`, `action/`, `planner/`, `
 
 If ANY appear WITHOUT routing through vault dispatch (file a vault PR on the ops repo — see #73-#77): REQUEST_CHANGES, explaining that external actions must go through vault dispatch per AD-006 (file a vault item instead of executing).
 
-**Exceptions** (do NOT flag): code inside `vault/` (vault handles secrets itself); comments/docs explaining the architecture; `bin/disinto` setup commands managing `secrets/*.enc` and the `run` subcommand; local operations (git push to forge, forge API calls with `FORGE_TOKEN`).
+**Exceptions** (do NOT flag): code inside `vault/` (vault handles secrets itself); comments/docs explaining the architecture; `bin/disinto` setup commands managing `secrets/*.enc` and the `run` subcommand; local operations (git push to forge, forge API calls with `FORGE_TOKEN`); `bin/notify-owner.sh` and its calls from `bin/healer.sh` (AD-006 exception: deterministic host-side owner notification; the Telegram token exists only in the healer job).
 
 ## 6. Re-review (if prior review rounds are provided)
 
