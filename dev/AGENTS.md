@@ -15,7 +15,8 @@ two-tier priority queue: (1) `priority`+`backlog` issues first (FIFO within tier
 direct-merge scan runs before the lock check so approved PRs get merged even while a
 dev-agent session is active. Before that merge it skips a linked issue that is not
 dev-claimable, including a hand-applied awaiting-live-verification (#1833); issue-less
-chore PRs still merge.
+chore PRs still merge, and an agent's own PR with no linked issue merges as issue-less
+once approved and green (#1985).
 
 **Key files**:
 - `dev/dev-poll.sh` — Polling loop participant: finds next ready issue, handles merge/rebase
