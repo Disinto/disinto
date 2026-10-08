@@ -48,6 +48,8 @@ source "$FACTORY_ROOT/lib/pitch-pr.sh"
 LOG_FILE="${DISINTO_LOG_DIR}/architect/architect.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
 LOGFILE="$LOG_FILE"
+# shellcheck disable=SC2034  # consumed by agent-sdk.sh / agent-harness-dsh.sh
+SID_FILE="/tmp/architect-session-${PROJECT_NAME}.sid"
 LOG_AGENT="architect"
 
 log() {
