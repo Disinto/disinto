@@ -9,8 +9,8 @@
 # is skipped. An invalid claim logs one line and appends nothing. A deleted
 # claim file gets nothing — retiring a claim is its merge.
 #
-# gardener/gardener-run.sh calls the tool right after refresh_ops_calibration,
-# before any sprint tool. A non-zero exit only logs a warning.
+# gardener/gardener-run.sh calls the tool after sprint-outcomes.sh and
+# tape-rejections.sh. A non-zero exit only logs a warning.
 #
 # Hermetic: no network, no forge, no agent — a temp TAPE_DIR, CLAIMS_DIR, and
 # PAYLOAD_DIR. The tool is executed, not sourced.

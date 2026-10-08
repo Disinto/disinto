@@ -11,11 +11,9 @@ in a log line and left for a human, and the run exits on the fast path. When
 blocked on external resources or human decisions, files vault items instead of
 escalating directly.
 
-**Trigger**: `supervisor-run.sh` is invoked by two polling loops:
-- **Agents container** (`docker/agents/entrypoint.sh`): started by the polling loop on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
-- **Edge container** (`docker/edge/entrypoint-edge.sh`): separate loop in the edge container (line 169-172). Runs independently of the agents container's polling schedule.
+**Trigger**: `supervisor-run.sh` is invoked by one polling loop, in the agents container (`docker/agents/entrypoint.sh`), on the SUPERVISOR_INTERVAL cadence (default 20 min, #1388). Controlled by the `supervisor` role in `AGENT_ROLES` (included in the default seven-role set since P1/#801).
 
-Both invoke the same `supervisor-run.sh`. Sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise the LLM escalation gate (#1681) decides: with `SUPERVISOR_LLM_ESCALATION=on`, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout; with `off` (default) or unset, names the left-for-a-human recipes in a log line and the run takes the fast path (direct remedies, journal, incidents, exit 0).
+It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if `$FACTORY_ROOT/state/.supervisor-active` is absent. Then runs a recipe evaluation preflight (`evaluate-recipes.sh`): if no abnormal signals requiring LLM are detected, the run exits early (fast path). Otherwise the LLM escalation gate (#1681) decides: with `SUPERVISOR_LLM_ESCALATION=on`, runs `claude -p` via `agent-sdk.sh`, injects `formulas/run-supervisor.toml` with pre-collected metrics as context, and cleans up on completion or timeout; with `off` (default) or unset, names the left-for-a-human recipes in a log line and the run takes the fast path (direct remedies, journal, incidents, exit 0).
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,

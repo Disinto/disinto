@@ -35,24 +35,29 @@ ac_assert_file "$REPO_ROOT/lib/sprint-block.sh" "lib/sprint-block.sh is missing"
 ac_assert_file "$REPO_ROOT/gardener/gardener-run.sh" "gardener/gardener-run.sh is missing"
 ac_assert_file "$REPO_ROOT/gardener/AGENTS.md" "gardener/AGENTS.md is missing"
 
-# The review (formula 3b) requires this sentence after refresh_ops_calibration
-# and after the sentences earlier issues added there. Wrapping is allowed.
+# The review (formula 3b) requires this sentence after refresh_ops_calibration.
+# #1885 places it in the script's tool order: after sprint-outcomes.sh and
+# before claim-proposals.sh. Wrapping is allowed.
 # shellcheck disable=SC2016  # backticks are markdown in the required sentence
 DOC_SENTENCE='Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or `prediction/dismissed` issue the tape does not hold yet as a rejected dev proposal. A failure only logs a warning.'
 AGENTS_FLAT="$(tr '\n' ' ' < "$REPO_ROOT/gardener/AGENTS.md" | tr -s ' ')"
 printf '%s\n' "$AGENTS_FLAT" | grep -qF "$DOC_SENTENCE" \
   || ac_fail "gardener/AGENTS.md must describe tape-rejections.sh (#1631)"
 CAL_DOC=$(grep -n 'refresh_ops_calibration`, #1454' "$REPO_ROOT/gardener/AGENTS.md" | head -n1 | cut -d: -f1)
-HELD_DOC=$(grep -n '#1643' "$REPO_ROOT/gardener/AGENTS.md" | head -n1 | cut -d: -f1)
+SO_DOC=$(grep -n 'tools/sprint-outcomes.sh` (#1676)' "$REPO_ROOT/gardener/AGENTS.md" | head -n1 | cut -d: -f1)
 REJ_DOC=$(grep -n 'tools/tape-rejections.sh` (#1631)' "$REPO_ROOT/gardener/AGENTS.md" | head -n1 | cut -d: -f1)
+CLAIM_DOC=$(grep -n 'tools/claim-proposals.sh` (#1641)' "$REPO_ROOT/gardener/AGENTS.md" | head -n1 | cut -d: -f1)
 [ -n "$CAL_DOC" ] || ac_fail "gardener/AGENTS.md must still name refresh_ops_calibration (#1454)"
-[ -n "$HELD_DOC" ] || ac_fail "gardener/AGENTS.md must still name #1643"
+[ -n "$SO_DOC" ] || ac_fail "gardener/AGENTS.md must still name tools/sprint-outcomes.sh (#1676)"
 [ -n "$REJ_DOC" ] || ac_fail "gardener/AGENTS.md must name tools/tape-rejections.sh (#1631)"
+[ -n "$CLAIM_DOC" ] || ac_fail "gardener/AGENTS.md must still name tools/claim-proposals.sh (#1641)"
 [ "$CAL_DOC" -lt "$REJ_DOC" ] \
   || ac_fail "tape-rejections sentence (line $REJ_DOC) must follow refresh_ops_calibration (line $CAL_DOC)"
-[ "$HELD_DOC" -lt "$REJ_DOC" ] \
-  || ac_fail "tape-rejections sentence (line $REJ_DOC) must follow the earlier-issue sentences (line $HELD_DOC)"
-ac_log "docs OK: tape-rejections.sh follows the calibration sentences"
+[ "$SO_DOC" -lt "$REJ_DOC" ] \
+  || ac_fail "tape-rejections sentence (line $REJ_DOC) must follow sprint-outcomes.sh (line $SO_DOC)"
+[ "$REJ_DOC" -lt "$CLAIM_DOC" ] \
+  || ac_fail "tape-rejections sentence (line $REJ_DOC) must precede claim-proposals.sh (line $CLAIM_DOC)"
+ac_log "docs OK: tape-rejections.sh follows sprint-outcomes.sh"
 
 # Wiring: the call sits after sprint-outcomes.sh (#1676) and before
 # claim-proposals.sh, and a non-zero exit is a warning, not fatal under set -e.

@@ -55,7 +55,10 @@ and executes the pending-actions manifest post-merge.
   `backlog` off the milestone's open issues (#1622).
   A sprint whose `rests_on` names a challenged claim returns the same way,
   signed `claim-challenged` (#1644).
-  Before the sprint tools, `tools/claim-proposals.sh` (#1641) turns each new or
+  Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or
+  `prediction/dismissed` issue the tape does not hold yet as a rejected dev
+  proposal. A failure only logs a warning.
+  Then `tools/claim-proposals.sh` (#1641) turns each new or
   revised claim file in `${OPS_REPO_ROOT}/claims/` into a claim-loop proposal.
   A failure only logs a warning.
   Then `tools/claim-checks.sh` (#1642) runs each proposed claim's check at most
@@ -64,9 +67,6 @@ and executes the pending-actions manifest post-merge.
   A claim whose checks pass for its whole `window` gets a `held` outcome;
   checks go on, and a later miss still contradicts it (#1643). The check's
   probe reads the same window (`PROBE_WINDOW_DAYS`, `PROBE_WINDOW_S`).
-  Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or
-  `prediction/dismissed` issue the tape does not hold yet as a rejected dev
-  proposal. A failure only logs a warning.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.

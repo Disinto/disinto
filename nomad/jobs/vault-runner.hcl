@@ -1,10 +1,12 @@
 # =============================================================================
 # nomad/jobs/vault-runner.hcl — Parameterized batch job for vault action dispatch
 #
-# Part of the Nomad+Vault migration (S5.3, issue #990). Replaces the
-# `docker run --rm vault-runner-${action_id}` pattern in dispatcher.sh with
-# a Nomad-native parameterized batch job. Dispatched by the edge dispatcher
-# (S5.4) via `nomad job dispatch`.
+# Part of the Nomad+Vault migration (S5.3, issue #990). This job is the
+# Nomad backend, used only with DISPATCHER_BACKEND=nomad
+# (`_launch_runner_nomad` in docker/edge/dispatcher.sh dispatches it via
+# `nomad job dispatch`). The live edge uses `docker run`
+# (`_launch_runner_docker`): DISPATCHER_BACKEND defaults to docker, and
+# nomad/jobs/edge.hcl never sets it.
 #
 # Parameterized meta:
 #   action_id     — vault action identifier (used by entrypoint-runner.sh)
