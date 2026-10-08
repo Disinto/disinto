@@ -17,9 +17,9 @@
 #   3. tests/acceptance/issue-1314.sh is gone.
 #   4. planner_formula_file() extracted from planner/planner-run.sh returns
 #      the run-planner.toml path (the kind switch is gone, #1338).
-#   5. the session lifecycle is unchanged: planner-run.sh still loads the
-#      formula via load_formula_or_profile and still runs agent_run + the
-#      ops PR walk.
+#   5. the session lifecycle still loads the formula via
+#      load_formula_or_profile and still runs agent_run. It does not walk
+#      an ops PR: pr_walk_to_merge is absent, planner_pitch_or_idle is present.
 #
 # Run via: tools/run-acceptance.sh 1334
 #
@@ -76,16 +76,20 @@ ac_assert_eq "$OUT" "$SOFTWARE_PATH" \
   "expected $SOFTWARE_PATH, got $OUT"
 ac_log "selection: planner_formula_file -> run-planner.toml"
 
-# 5. Session lifecycle unchanged: formula loading + agent_run + PR walk.
+# 5. Formula loading + agent_run stay. The ops PR walk is gone (#1978):
+# the run opens a pitch via planner_pitch_or_idle instead.
 # Fixed-string greps for literal lines containing $-variable references.
-ac_log "checking the session lifecycle is unchanged"
+ac_log "checking the session lifecycle loads the formula and does not walk a PR"
 # shellcheck disable=SC2016
 grep -qF 'load_formula_or_profile "planner" "$PLANNER_FORMULA"' "$PLANNER_RUN" \
   || ac_fail "planner-run.sh no longer loads the formula via load_formula_or_profile"
 # shellcheck disable=SC2016
 grep -qF 'agent_run --worktree "$WORKTREE" "$PROMPT"' "$PLANNER_RUN" \
   || ac_fail "planner-run.sh session lifecycle (agent_run) changed"
-grep -q 'pr_walk_to_merge' "$PLANNER_RUN" \
-  || ac_fail "planner-run.sh ops PR walk (pr_walk_to_merge) changed"
+if grep -q 'pr_walk_to_merge' "$PLANNER_RUN"; then
+  ac_fail "planner-run.sh must not call pr_walk_to_merge"
+fi
+grep -q 'planner_pitch_or_idle' "$PLANNER_RUN" \
+  || ac_fail "planner-run.sh must call planner_pitch_or_idle"
 
 ac_pass

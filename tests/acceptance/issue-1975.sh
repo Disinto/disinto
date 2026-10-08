@@ -4,7 +4,7 @@
 #
 # Issue #1975: name the lowest missing capability rung.
 #
-# planner/ladder.sh (no caller yet) sources lib/claims.sh and does not source
+# planner/ladder.sh (called by planner/pitch-or-idle.sh) sources lib/claims.sh and does not source
 # lib/env.sh. ladder_lowest_gap prints the lowest rung of
 # sense, provision, reach, deploy, replicate that no claim id matches, or
 # that any matching id has catalog status challenged. Nothing when there is
@@ -47,8 +47,8 @@ ladder_line="$(grep -n 'planner/ladder.sh' "$REPO_ROOT/planner/AGENTS.md" | head
   || ac_fail "planner/ladder.sh bullet must follow the groom-backlog bullet"
 grep -qF 'ladder_lowest_gap' "$REPO_ROOT/planner/AGENTS.md" \
   || ac_fail "planner/AGENTS.md must name ladder_lowest_gap"
-grep -qF 'No caller yet.' "$REPO_ROOT/planner/AGENTS.md" \
-  || ac_fail "planner/AGENTS.md must say the ladder has no caller yet"
+grep -qF 'Called by `planner/pitch-or-idle.sh`.' "$REPO_ROOT/planner/AGENTS.md" \
+  || ac_fail "planner/AGENTS.md must say the ladder is called by planner/pitch-or-idle.sh"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
