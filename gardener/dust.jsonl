@@ -1,0 +1,1 @@
+{"issue":1973,"group":"nomad/jobs/healer.hcl","title":"healer.hcl documents the wrong owner-notify log line","reason":"comment uses pre-rewrite function name notify_owner; actual sender bin/notify-owner.sh logs \"notify-owner: not configured\" - single-line comment fix, no behavior change","ts":"2026-10-08T16:49:56Z"}
