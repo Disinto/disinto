@@ -39,7 +39,7 @@ grep -q 'lib/pitch.sh' "$REPO_ROOT/planner/pitch-open.sh" \
 
 ladder_line="$(grep -n 'planner/ladder.sh' "$REPO_ROOT/planner/AGENTS.md" | head -n 1 | cut -d: -f1)"
 open_line="$(grep -n 'planner/pitch-open.sh' "$REPO_ROOT/planner/AGENTS.md" | head -n 1 | cut -d: -f1)"
-prereq_line="$(grep -n 'Prerequisite tree: versioned constraint' "$REPO_ROOT/planner/AGENTS.md" | head -n 1 | cut -d: -f1)"
+prereq_line="$(grep -n 'Retired. The planner does not read or write it.' "$REPO_ROOT/planner/AGENTS.md" | head -n 1 | cut -d: -f1)"
 [ -n "$ladder_line" ] || ac_fail "planner/AGENTS.md must keep the ladder.sh bullet"
 [ -n "$open_line" ] || ac_fail "planner/AGENTS.md must document planner/pitch-open.sh"
 [ -n "$prereq_line" ] || ac_fail "planner/AGENTS.md must keep the prerequisites bullet"
