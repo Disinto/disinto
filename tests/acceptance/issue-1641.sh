@@ -9,8 +9,8 @@
 # is skipped. An invalid claim logs one line and appends nothing. A deleted
 # claim file gets nothing — retiring a claim is its merge.
 #
-# gardener/gardener-run.sh calls the tool right after refresh_ops_calibration,
-# before any sprint tool. A non-zero exit only logs a warning.
+# gardener/gardener-run.sh calls the tool after sprint-outcomes.sh and
+# tape-rejections.sh. A non-zero exit only logs a warning.
 #
 # Hermetic: no network, no forge, no agent — a temp TAPE_DIR, CLAIMS_DIR, and
 # PAYLOAD_DIR. The tool is executed, not sourced.
@@ -40,18 +40,24 @@ grep -qF 'revised claim file in `${OPS_REPO_ROOT}/claims/`' "$REPO_ROOT/gardener
 grep -qF 'A failure only logs a warning.' "$REPO_ROOT/gardener/AGENTS.md" \
   || ac_fail "gardener/AGENTS.md must say a claim-proposals failure only logs a warning"
 
-# Wiring: the call sits after refresh_ops_calibration and before detect_pr
-# (no sprint tool exists yet; the call must still precede the next step), and
-# a non-zero exit is a warning, not a fatal under set -e.
+# Wiring: the call sits after refresh_ops_calibration and after
+# sprint-outcomes.sh and tape-rejections.sh, and before detect_pr_number.
+# A non-zero exit is a warning, not a fatal under set -e.
 GARDENER="$REPO_ROOT/gardener/gardener-run.sh"
 CAL_LINE=$(grep -n '^refresh_ops_calibration$' "$GARDENER" | head -n1 | cut -d: -f1)
-CLAIM_LINE=$(grep -n 'tools/claim-proposals.sh' "$GARDENER" | head -n1 | cut -d: -f1)
+SO_LINE=$(grep -n 'tools/sprint-outcomes.sh' "$GARDENER" | grep '||' | head -n1 | cut -d: -f1)
+TR_LINE=$(grep -n 'tools/tape-rejections.sh' "$GARDENER" | grep '||' | head -n1 | cut -d: -f1)
+CLAIM_LINE=$(grep -n 'tools/claim-proposals.sh' "$GARDENER" | grep '||' | head -n1 | cut -d: -f1)
 DETECT_LINE=$(grep -n 'detect_pr_number "chore/gardener-"' "$GARDENER" | head -n1 | cut -d: -f1)
 [ -n "$CAL_LINE" ] || ac_fail "gardener-run.sh must call refresh_ops_calibration"
+[ -n "$SO_LINE" ] || ac_fail "gardener-run.sh must call tools/sprint-outcomes.sh"
+[ -n "$TR_LINE" ] || ac_fail "gardener-run.sh must call tools/tape-rejections.sh"
 [ -n "$CLAIM_LINE" ] || ac_fail "gardener-run.sh must call tools/claim-proposals.sh"
 [ -n "$DETECT_LINE" ] || ac_fail "gardener-run.sh must call detect_pr_number"
 [ "$CAL_LINE" -lt "$CLAIM_LINE" ] \
   || ac_fail "claim-proposals.sh (line $CLAIM_LINE) must follow refresh_ops_calibration (line $CAL_LINE)"
+[ "$SO_LINE" -lt "$TR_LINE" ] && [ "$TR_LINE" -lt "$CLAIM_LINE" ] \
+  || ac_fail "claim-proposals.sh (line $CLAIM_LINE) must follow sprint-outcomes.sh (line $SO_LINE) and tape-rejections.sh (line $TR_LINE)"
 [ "$CLAIM_LINE" -lt "$DETECT_LINE" ] \
   || ac_fail "claim-proposals.sh (line $CLAIM_LINE) must precede detect_pr_number (line $DETECT_LINE)"
 grep -F 'tools/claim-proposals.sh' "$GARDENER" | grep -q '||' \

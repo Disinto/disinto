@@ -468,9 +468,9 @@ if [ "$tape_rejections_rc" -ne 0 ]; then
   log "WARNING: tape-rejections.sh failed (rc=${tape_rejections_rc})"
 fi
 
-# Claim-loop proposals (#1641), before any sprint tool. Each new or revised
-# claim file becomes one claim-loop proposal. Never fatal: a non-zero exit
-# only logs a warning.
+# Claim-loop proposals (#1641), after sprint-outcomes.sh and tape-rejections.sh.
+# Each new or revised claim file becomes one claim-loop proposal. Never fatal:
+# a non-zero exit only logs a warning.
 claim_proposals_rc=0
 "$FACTORY_ROOT/tools/claim-proposals.sh" || claim_proposals_rc=$?
 if [ "$claim_proposals_rc" -ne 0 ]; then
