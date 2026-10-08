@@ -345,7 +345,8 @@ TOML
   # PR (defaults-golden contract, #1261).
   for f in nomad/jobs/agents-dev-grok.hcl \
            nomad/jobs/agents-review-grok.hcl \
-           nomad/jobs/agents-architect-grok.hcl; do
+           nomad/jobs/agents-architect-grok.hcl \
+           nomad/jobs/agents-planner-grok.hcl; do
     [ -f "$DISINTO_ROOT/$f" ] || { echo "missing $f" >&2; return 1; }
     grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"200000"' "$DISINTO_ROOT/$f" \
       || { echo "$f does not pin DSH_CONTEXT_WINDOW 200000" >&2; return 1; }
