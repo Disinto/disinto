@@ -205,7 +205,13 @@ healer_run_once() {
   escalate="${HEALER_TEST_ESCALATE_AFTER_SECS:-1800}"
   remind="${HEALER_TEST_REMIND_SECS:-86400}"
   now_epoch="${HEALER_TEST_NOW:-}"
+  # Default is a no-op. An empty HEALER_NOTIFY_CMD would fall through to
+  # bin/notify-owner.sh, which messages the owner when Telegram env is set.
+  # A test that wants a recording stub sets HEALER_TEST_NOTIFY_CMD.
   notify_cmd="${HEALER_TEST_NOTIFY_CMD:-}"
+  if [ -z "$notify_cmd" ]; then
+    notify_cmd="$(healer_notify_noop)"
+  fi
   # Empty is a request for no probing, not "use the default".
   if [ -n "${HEALER_TEST_PUBLIC_URLS+x}" ]; then
     public_urls="$HEALER_TEST_PUBLIC_URLS"
@@ -229,6 +235,19 @@ healer_run_once() {
   FAKE_NOMAD_DATA="$DATA" \
   NOMAD_STUB_LOG="$STUB_LOG" \
     bash "$HEALER" --once
+}
+
+# healer_notify_noop — path of a sender that exits 0 and contacts nothing.
+healer_notify_noop() {
+  local stub="${BIN}/healer-notify-noop"
+  if [ ! -x "$stub" ]; then
+    cat > "$stub" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$stub"
+  fi
+  printf '%s' "$stub"
 }
 
 healer_restart_lines() {

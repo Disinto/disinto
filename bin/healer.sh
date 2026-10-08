@@ -84,9 +84,12 @@
 # when, what the healer did and when, and the next step it cannot take.
 #
 # A reminder is sent every HEALER_REMIND_SECS (default 86400) while the
-# episode lasts. When the condition clears, one
-# "disinto: resolved: <condition> (down <duration>)" is sent, but only if
-# a message was already sent for that episode. A condition that cleared
+# episode lasts. A resolved line is sent only after this tick positively
+# saw the condition gone: the job spec was read and the service is
+# registered, or the URL was probed and answered 2xx/3xx. A skipped or
+# failed check leaves the episode in place — it is not a clear. The line
+# is "disinto: resolved: <condition> (down <duration>)", and only if a
+# message was already sent for that episode. A condition that cleared
 # before any message sends none.
 #
 # A failed send, or a send that reports the channel is not configured,
@@ -154,8 +157,12 @@ HEALER_NOTIFY_RETRY_SECS=600
 # Shared per-tick restart budget: capped by HEALER_MAX_RESTARTS, shared by
 # the service-reregister pass and the public-endpoint pass.
 RESTARTS=0
-# Conditions observed this tick. escalate_pass reads it. Reset each tick.
+# Conditions observed this tick, and conditions positively seen gone.
+# A missing note is not a clear: the check may have failed. Reset each tick.
 TICK_NOTES='[]'
+TICK_CLEARS='[]'
+# 1 only after the service-unregistered scan read jobs and the registry.
+TICK_SERVICE_SCAN_OK=0
 
 export NOMAD_ADDR
 
@@ -309,6 +316,10 @@ declared_names() {
 
 # missing_names DECLARED_JSON REGISTERED_JSON — declared names not registered.
 missing_names() {
+  # Refuse a non-array. An empty capture must not reach --argjson (jq writes
+  # a parse error to stderr and the tick would look like it failed the read).
+  case "$1" in '['*) ;; *) return 1 ;; esac
+  case "$2" in '['*) ;; *) return 1 ;; esac
   # $name, not `.`: inside `$registered | index(.)` the dot is the array.
   jq -nc --argjson declared "$1" --argjson registered "$2" '
     [ $declared[] as $name | select(($registered | index($name)) == null) | $name ]
@@ -484,6 +495,7 @@ restart_unregistered() {
   local jobs_json="$1" services_json="$2"
   local registered ids id spec declared missing allocs alloc now cap_logged=0
   RESTARTS=0
+  TICK_SERVICE_SCAN_OK=0
   registered="$(registered_names "$services_json")" || {
     log "WARNING: could not read registered services — no restart"
     return 0
@@ -493,6 +505,7 @@ restart_unregistered() {
     log "WARNING: could not read jobs — no restart"
     return 0
   }
+  TICK_SERVICE_SCAN_OK=1
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     if ! job_id_ok "$id"; then
@@ -500,10 +513,18 @@ restart_unregistered() {
       continue
     fi
     spec="$(nomad_get "/v1/job/${id}")"
+    # A failed spec read is not a clear. Leave any open episode alone.
     json_object "$spec" || continue
     declared="$(declared_names "$spec")" || continue
+    case "$declared" in
+      '['*) ;;
+      *) continue ;;
+    esac
     missing="$(missing_names "$declared" "$registered")" || continue
-    [ "$missing" = "[]" ] && continue
+    if [ "$missing" = "[]" ]; then
+      tick_clear "service-unregistered:${id}"
+      continue
+    fi
     # Seen, whether or not this tick is allowed to restart it.
     tick_note "service-unregistered:${id}" "service still unregistered" "$id"
     allocs="$(nomad_get "/v1/job/${id}/allocations")"
@@ -735,20 +756,21 @@ handle_public_endpoints() {
     if url_up "$code"; then
       set_failure_count "$url" 0 || log "WARNING: failed to reset probe count for ${url}"
       clear_unfixable "$url"
+      tick_clear "public-endpoint-down:${url}"
       log "probe ${url} ${code} (up)"
+      continue
+    fi
+    # Unfixable (see header): the fault is outside the box; do not restart
+    # again until this URL answers 2xx/3xx again. Recheck backend health
+    # so a later reminder does not invent "healthy".
+    if printf '%s' "$(read_state)" | jq -e --arg u "$url" \
+      '.unfixable // {} | has($u)' >/dev/null 2>&1; then
+      note_unfixable_down "$url" "$code"
+      log "probe ${url} ${code} (unfixable — no action)"
       continue
     fi
     # Down. Note before any continue so a skip cannot look like a clear.
     tick_note "public-endpoint-down:${url}" "still ${code}" ""
-    # Unfixable (see header): the fault is outside the box; do not restart
-    # again until this URL answers 2xx/3xx again.
-    if printf '%s' "$(read_state)" | jq -e --arg u "$url" \
-      '.unfixable // {} | has($u)' >/dev/null 2>&1; then
-      tick_note "public-endpoint-down:${url}" \
-        "$(endpoint_detail "$url" "$code" "healthy")" "edge"
-      log "probe ${url} ${code} (unfixable — no action)"
-      continue
-    fi
     n="$(get_failure_count "$url")" || n=0
     count=$((n + 1))
     set_failure_count "$url" "$count" || log "WARNING: failed to set probe count for ${url}"
@@ -869,6 +891,37 @@ tick_note() {
     return 0
   }
   TICK_NOTES="$new"
+}
+
+# tick_clear CONDITION — this tick positively saw the condition gone.
+tick_clear() {
+  local condition="$1" new
+  new="$(jq -nc --argjson cur "$TICK_CLEARS" --arg c "$condition" \
+    '$cur + [$c] | unique')" || {
+    log "WARNING: failed to record clear for ${condition}"
+    return 0
+  }
+  TICK_CLEARS="$new"
+}
+
+# note_unfixable_down URL CODE — the URL is still down and already
+# unfixable. Recheck the backend. A failed check keeps the last real
+# detail (empty detail does not overwrite it) and does not claim healthy.
+note_unfixable_down() {
+  local url="$1" code="$2" backend svc health addr word detail=""
+  backend="$(endpoint_backend "$url" 2>/dev/null || true)"
+  if [ -n "$backend" ]; then
+    read -r svc _ health <<< "$backend"
+    addr="$(service_address "$(nomad_get "/v1/service/${svc}")" 2>/dev/null || true)"
+    if [ -n "$addr" ]; then
+      word="healthy"
+      if ! health_up "$addr" "$health"; then
+        word="unhealthy"
+      fi
+      detail="$(endpoint_detail "$url" "$code" "$word")"
+    fi
+  fi
+  tick_note "public-endpoint-down:${url}" "$detail" "edge"
 }
 
 # endpoint_detail URL CODE WORD — "still 502, forgejo healthy".
@@ -1244,10 +1297,18 @@ escalate_pass() {
       '.[] | select(.condition == $c) | .acted_job' <<<"$active")" || job=""
     reconcile_episode "$cond" "$detail" "$job" "$now" \
       || log "WARNING: failed to update episode ${cond}"
+    # Prefer the stored detail: an empty note means "keep the last real one".
+    detail="$(jq -r --arg c "$cond" '.episodes[$c].detail // ""' <<<"$(read_state)")" \
+      || detail=""
     unfixable=0
     if episode_unfixable "$cond"; then
       unfixable=1
     fi
+    # Backend died after unfixable was recorded: do not tell the owner the
+    # tunnel is the next step, and do not claim the backend is healthy.
+    case "$detail" in
+      *unhealthy*) unfixable=0 ;;
+    esac
     kind="$(owner_due "$(jq -c --arg c "$cond" '.episodes[$c] // {}' <<<"$(read_state)")" \
       "$now" "$unfixable")" || kind=""
     [ -n "$kind" ] || continue
@@ -1258,17 +1319,19 @@ escalate_pass() {
   conds="$(jq -r '.episodes // {} | keys[]' <<<"$(read_state)" 2>/dev/null || true)"
   while IFS= read -r cond; do
     [ -n "$cond" ] || continue
+    # Still observed down this tick.
     if jq -e --arg c "$cond" 'any(.[]; .condition == $c)' <<<"$active" >/dev/null 2>&1; then
       continue
     fi
-    # Probing disabled: do not invent a clear for an endpoint we did not look at.
+    # Resolve only on a positive clear. A failed spec read, a jobs-list
+    # failure, or a URL that was not probed must leave the episode in place.
     case "$cond" in
-      public-endpoint-down:*)
-        if [ -z "${HEALER_PUBLIC_URLS}" ]; then
-          continue
-        fi
+      service-unregistered:*)
+        [ "$TICK_SERVICE_SCAN_OK" -eq 1 ] || continue
         ;;
     esac
+    jq -e --arg c "$cond" 'index($c) != null' <<<"$TICK_CLEARS" >/dev/null 2>&1 \
+      || continue
     send_resolved "$cond" "$now" || log "WARNING: resolved failed for ${cond}"
   done <<< "$conds"
   return 0
@@ -1282,6 +1345,8 @@ healer_tick() {
   fi
   now="$(healer_now)"
   TICK_NOTES='[]'
+  TICK_CLEARS='[]'
+  TICK_SERVICE_SCAN_OK=0
   jobs="$(nomad_get /v1/jobs)"
   services="$(nomad_get /v1/services)"
   if ! json_array "$jobs" || ! json_array "$services"; then

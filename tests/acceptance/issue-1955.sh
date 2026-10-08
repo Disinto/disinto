@@ -249,6 +249,38 @@ out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC2b must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "1" "AC2b no second message, got: $(cat "$NOTIFY_LOG")"
 
+ac_log "AC2c: dropping the URL from the probe list is not a clear"
+export HEALER_TEST_PUBLIC_URLS="https://self.disinto.ai/ci/"
+export HEALER_TEST_NOW=200010
+before="$(notify_count)"
+rc=0
+out="$(run_once "$STATE" "$TAPE")" || rc=$?
+ac_assert_eq "$rc" "0" "AC2c must exit 0, got $rc: $out"
+ac_assert_eq "$(notify_count)" "$before" "AC2c must not send resolved, got: $(cat "$NOTIFY_LOG")"
+jq -e --arg c "$FORGE_COND" '.episodes[$c].sent == 1' "$STATE/state.json" >/dev/null \
+  || ac_fail "AC2c episode must stay after a skipped probe: $(cat "$STATE/state.json")"
+
+ac_log "AC2d: a reminder rechecks backend health and does not invent healthy"
+export HEALER_TEST_PUBLIC_URLS="$FORGE_URL"
+export HEALER_TEST_REMIND_SECS=10
+export HEALER_TEST_NOW=200010
+set_probe_code forgejo 503
+rc=0
+out="$(run_once "$STATE" "$TAPE")" || rc=$?
+ac_assert_eq "$rc" "0" "AC2d must exit 0, got $rc: $out"
+ac_assert_eq "$(notify_count)" "2" "AC2d one reminder, got: $(cat "$NOTIFY_LOG")"
+rem="$(tail -n 1 "$NOTIFY_LOG")"
+case "$rem" in
+  *"forgejo unhealthy"*) ;;
+  *) ac_fail "AC2d reminder must say the backend is unhealthy, got: $rem" ;;
+esac
+case "$rem" in
+  *"forgejo healthy"*) ac_fail "AC2d must not invent a healthy backend: $rem" ;;
+esac
+case "$rem" in
+  *cloudflared*) ac_fail "AC2d must not point at the tunnel once the backend is down: $rem" ;;
+esac
+
 # ── 3. Resolved only if a message was sent ──────────────────────────────────
 ac_log "AC3: condition clears after a message → one resolved line"
 # The service episode lives in st-1. AC2 reused STATE/TAPE for the endpoint.
@@ -391,5 +423,39 @@ rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC5c retry tick must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "2" "AC5c retries once the 10 minutes have passed, got: $(cat "$NOTIFY_LOG")"
+
+# ── 6. A failed observation is not a clear ──────────────────────────────────
+ac_log "AC6: a failed job-spec read does not send resolved or drop the episode"
+STATE="$WORK/st-6"
+TAPE="$WORK/tp-6"
+STUB_LOG="$WORK/nm-6.log"
+: > "$STUB_LOG"
+reset_notify
+ac_healer_public_fixtures
+write_registered '["edge","woodpecker"]'
+export HEALER_TEST_PUBLIC_URLS=""
+export HEALER_TEST_ESCALATE_AFTER_SECS=100
+export HEALER_TEST_REMIND_SECS=86400
+export HEALER_TEST_COOLDOWN_SECS=999999
+export HEALER_TEST_NOW=600000
+rc=0
+out="$(run_once "$STATE" "$TAPE")" || rc=$?
+ac_assert_eq "$rc" "0" "AC6 action tick must exit 0, got $rc: $out"
+export HEALER_TEST_NOW=600100
+rc=0
+out="$(run_once "$STATE" "$TAPE")" || rc=$?
+ac_assert_eq "$rc" "0" "AC6 escalate tick must exit 0, got $rc: $out"
+ac_assert_eq "$(notify_count)" "1" "AC6 one escalation before the failed read, got: $(cat "$NOTIFY_LOG")"
+rm -f "$DATA/job-forgejo.json"
+export HEALER_TEST_NOW=600200
+rc=0
+out="$(run_once "$STATE" "$TAPE")" || rc=$?
+ac_assert_eq "$rc" "0" "AC6 failed spec read must not stop the loop, got $rc: $out"
+ac_assert_eq "$(notify_count)" "1" "AC6 must not send resolved, got: $(cat "$NOTIFY_LOG")"
+if grep -q 'resolved:' "$NOTIFY_LOG"; then
+  ac_fail "AC6 notify log must not contain a resolved line: $(cat "$NOTIFY_LOG")"
+fi
+jq -e --arg c "$JOB_COND" '.episodes[$c].sent == 1' "$STATE/state.json" >/dev/null \
+  || ac_fail "AC6 episode must remain after a failed spec read: $(cat "$STATE/state.json")"
 
 ac_pass
