@@ -14,10 +14,10 @@
 #     posts the reply (#1911).
 #
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
-# head of queue is picked each iteration. last-seen advances every iteration.
+# head of queue is picked each iteration. The last-seen marker is not advanced after a failed dispatch (_OPUS_DISPATCH_FAILED); a failed dispatch leaves the marker, so the same PR is retried next cycle.
 #
 # Write-permission contract:
-#   ops repo: PATCH PR body, POST comments, close PR
+#   ops repo: PATCH PR body, POST comments, close PR, commit the pitch file to the PR branch through the contents API (`pitch_pr_put` in `lib/pitch-pr.sh`, as `architect-bot`) when drafting or revising sub-issues. It never merges.
 #   project repo: NONE (only reads — issues, acceptance scripts, vision)
 #
 # Formula (#1335): the architect always uses formulas/run-architect.toml —

@@ -61,8 +61,7 @@ Each polling iteration:
 2. Sort by `<!-- architect-last-seen: <iso8601> -->` marker in PR body, ascending
 3. Pick the head of the queue
 4. Detect state, dispatch action
-5. PATCH PR body to update the last-seen marker — cursor advances every iteration
-   whether work happened or not
+5. PATCH PR body to update the last-seen marker, unless the dispatch failed (`_OPUS_DISPATCH_FAILED`); a failed dispatch leaves the marker, so the same PR is retried next cycle
 
 ## Signal model
 
@@ -74,8 +73,7 @@ Each polling iteration:
 ## Write-permission contract
 
 Architect remains read-only on the project repo. Architect's writes:
-- **ops repo**: PATCH PR body, POST comments, close PR. It never merges: merging
-  a pitch is the owner's decision (#1907)
+- **ops repo**: PATCH PR body, POST comments, close PR, commit the pitch file to the PR branch through the contents API (`pitch_pr_put` in `lib/pitch-pr.sh`, as `architect-bot`) when drafting or revising sub-issues. It never merges: merging a pitch is the owner's decision (#1907)
 - **project repo**: NONE (only reads — issue states, acceptance scripts, vision
   titles/bodies for grounding)
 
@@ -101,8 +99,8 @@ Bash in `architect/architect-run.sh` handles state detection and orchestration:
 
 - **Deterministic state machine**: bash reads the PR's comments; the owner's merge or close ends the lifecycle
 - **Reject detection**: `Reject:`-prefixed comments trigger PR close (bash-only)
-- **Round-robin**: PRs sorted by last-seen marker; head of queue processed per tick
-- **Last-seen cursor**: `<!-- architect-last-seen: ... -->` updated every iteration
+- **Round-robin**: PRs sorted by last-seen marker; head of queue processed per tick. The last-seen marker is not advanced after a failed dispatch (`_OPUS_DISPATCH_FAILED`); a failed dispatch leaves the marker, so the same PR is retried next cycle
+- **Last-seen cursor**: `<!-- architect-last-seen: ... -->` is not advanced after a failed dispatch (`_OPUS_DISPATCH_FAILED`); a failed dispatch leaves the marker, so the same PR is retried next cycle
 - **Opus gating**: Model only called when actual engagement or state change detected
 - **Bash-only paths**: Reject handling — no model overhead
 
