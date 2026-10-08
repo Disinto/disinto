@@ -9,7 +9,10 @@
 # job. Nomad ACLs are disabled, so no token is needed.
 #
 # Deployed by hand (`nomad job run`), not by lib/init/nomad/deploy.sh.
-# No vault stanza yet; #1954 adds the Telegram secret.
+# Telegram notify secret (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) is rendered
+# from kv/disinto/notify/telegram via role service-healer (#1954).
+# error_on_missing_key = false lets the healer run, unable to notify, before
+# the secret is seeded; notify_owner then logs "notify: not configured".
 #
 # raw_exec writes straight to the host paths in env (no host_volume mount).
 # healer.sh creates HEALER_STATE_DIR itself. The script loops; this service
@@ -43,6 +46,25 @@ job "healer" {
         HEALER_STATE_DIR = "/srv/disinto/healer"
         TAPE_DIR = "/srv/disinto/tape"
         FACTORY_ROOT = "/opt/disinto"
+      }
+
+      # Telegram secret for notify_owner (#1949, #1955). Missing keys render
+      # empty so the healer still runs before the secret is seeded (#1954).
+      vault {
+        role        = "service-healer"
+        change_mode = "restart"
+      }
+      template {
+        destination          = "secrets/notify.env"
+        env                  = true
+        change_mode          = "restart"
+        error_on_missing_key = false
+        data                 = <<EOT
+{{- with secret "kv/data/disinto/notify/telegram" -}}
+TELEGRAM_BOT_TOKEN={{ .Data.data.bot_token }}
+TELEGRAM_CHAT_ID={{ .Data.data.chat_id }}
+{{- end }}
+EOT
       }
 
       resources {
