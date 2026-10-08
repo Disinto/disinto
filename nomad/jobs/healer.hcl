@@ -50,9 +50,13 @@ job "healer" {
 
       # Telegram secret for notify_owner (#1949, #1955). Missing keys render
       # empty so the healer still runs before the secret is seeded (#1954).
+      # Vault change_mode is noop: the default restart SIGKILLs the task every
+      # token_max_ttl (24h), which is a scheduled kill mid-heal, not a secret
+      # rotation (#1091). The template below stays restart so a seed written
+      # after the job is already running is picked up.
       vault {
         role        = "service-healer"
-        change_mode = "restart"
+        change_mode = "noop"
       }
       template {
         destination          = "secrets/notify.env"

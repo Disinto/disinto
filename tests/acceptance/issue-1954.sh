@@ -31,10 +31,17 @@ grep -q 'role        = "service-healer"' "$SPEC" \
   || ac_fail "healer task must set vault role = \"service-healer\""
 grep -q 'vault {' "$SPEC" \
   || ac_fail "healer task must have a vault block"
+# Vault renewal must not SIGKILL the long-running healer (#1091).
+grep -q 'change_mode = "noop"' "$SPEC" \
+  || ac_fail "vault block must set change_mode = \"noop\""
 
 ac_log "checking the notify.env template"
 grep -q 'destination          = "secrets/notify.env"' "$SPEC" \
   || ac_fail "template must write secrets/notify.env"
+# Template restart fires only when the rendered env changes, so a secret
+# seeded after the job is already running is picked up.
+grep -q 'change_mode          = "restart"' "$SPEC" \
+  || ac_fail "template must set change_mode = \"restart\""
 grep -q 'env                  = true' "$SPEC" \
   || ac_fail "template must set env = true"
 grep -q 'error_on_missing_key = false' "$SPEC" \
