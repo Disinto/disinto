@@ -149,10 +149,11 @@ roles:
     namespace: default
     job_id:    bot-supervisor
 
+  # Bound to the Grok architect job, nomad/jobs/agents-architect-grok.hcl (#1912).
   - name:      bot-architect
     policy:    bot-architect
     namespace: default
-    job_id:    bot-architect
+    job_id:    agents-architect-grok
 
   - name:      bot-vault
     policy:    bot-vault
