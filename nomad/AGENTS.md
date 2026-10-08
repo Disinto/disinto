@@ -30,6 +30,7 @@ see issues #821–#992 for the step breakdown.
 | `nomad/jobs/agents-dev-grok.hcl` | `nomad job run` by hand (2026-10-03) | A second `dev` agent beside agents-dev-qwen, on Grok 4.7 (xAI) through the dsh harness: its DSH_HOME settings route to the `xai` provider, signed in with its own xAI OAuth grant (`.credentials.yaml`). Own forge user `dev-grok-bot`, so dev-poll's assignee checks keep the two dev agents apart; own data dir `/srv/disinto/agent-data-grok/dev`, bind-mounted (no host_volume); Vault role `agents-dev-grok`, policy `service-agents-grok` |
 | `nomad/jobs/agents-review-grok.hcl` | `nomad job run` by hand (2026-10-03) | A second `review` agent on Grok 4.7, set up as agents-dev-grok; posts reviews as `review-grok-bot`. `REVIEW_ONLY_AUTHORS = "dev-grok-bot disinto-admin"` limits it to the Grok dev's and the owner's PRs; data dir `/srv/disinto/agent-data-grok/review` |
 | `nomad/jobs/agent-logs-rotate.hcl` | submitted via `lib/init/nomad/deploy.sh` | Periodic log-rotation job; daily 03:30 UTC copytruncate rotation of `*.log` under `/srv/disinto/agent-data*/` (>50MB, 5 gzip generations, safe for O_APPEND writers) via `bin/agent-log-rotate.sh` on raw_exec (#1195). |
+| `nomad/jobs/healer.hcl` | deployed by hand (`nomad job run`) | runs `bin/healer.sh` on the host: restarts allocations to heal faults; the only job that does (#1951). |
 | `nomad/jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault runner job; executes Vault operations with scoped credentials. |
 
 Nomad auto-merges every `*.hcl` under `-config=/etc/nomad.d/`, so the
