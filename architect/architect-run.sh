@@ -16,9 +16,12 @@
 # Round-robin: PRs sorted by <!-- architect-last-seen: <iso> --> ascending;
 # head of queue is picked each iteration. The last-seen marker is not advanced after a failed dispatch (_OPUS_DISPATCH_FAILED); a failed dispatch leaves the marker, so the same PR is retried next cycle.
 # A formula-load failure and a failed reply POST set that flag too. The unsent
-# reply is stashed under /tmp and reposted next cycle — including when the
-# pitch commit already landed — without a PR-body patch (a patch would bump
-# updated_at and send the PR to the back of the queue).
+# reply is stashed under /tmp (with that cycle's timestamp) and reposted next
+# cycle — including when the pitch commit already landed and when architect-bot
+# has already commented something else — without a PR-body patch (a patch would
+# bump updated_at and send the PR to the back of the queue). A successful
+# repost moves last-seen to the failed cycle's timestamp, not to now, so an
+# owner comment that arrived during the retry stays visible.
 #
 # Write-permission contract:
 #   ops repo: PATCH PR body, POST comments, close PR, commit the pitch file to the PR branch through the contents API (`pitch_pr_put` in `lib/pitch-pr.sh`, as `architect-bot`) when drafting or revising sub-issues. It never merges.
@@ -240,23 +243,49 @@ update_last_seen() {
 # pending_reply_path PR — file holding a reply whose POST failed.
 # Not a lifecycle phase: the forge thread is the record. The file only keeps
 # the unsent body so the next cycle can repost it without patching the PR
-# (a patch would bump updated_at). publish_draft writes the same path when
-# pending_reply_path is not in scope (an extracted copy); keep the two in sync.
+# (a patch would bump updated_at). Format: first line is the failed cycle's
+# NOW_ISO, the rest is the comment body. publish_draft writes the same path
+# and shape when pending_reply_path is not in scope (an extracted copy).
 pending_reply_path() {
   printf '/tmp/architect-pending-reply-%s-%s' "${PROJECT_NAME:-architect}" "$1"
 }
 
-# read_pending_reply PR — print the stashed reply, or nothing.
+# read_pending_seen PR — the failed cycle's timestamp, or nothing.
+read_pending_seen() {
+  local path line
+  path="$(pending_reply_path "$1")"
+  [ -s "$path" ] || return 0
+  IFS= read -r line <"$path" || true
+  printf '%s' "$line"
+}
+
+# read_pending_reply PR — the stashed comment body, or nothing.
 read_pending_reply() {
   local path
   path="$(pending_reply_path "$1")"
   [ -s "$path" ] || return 0
-  cat "$path"
+  tail -n +2 "$path"
 }
 
 # clear_pending_reply PR — drop the stash after the reply is on the thread.
 clear_pending_reply() {
   rm -f "$(pending_reply_path "$1")"
+}
+
+# pending_reply_already_posted PR BODY — 0 when some architect comment's body
+# equals BODY after trailing newlines are stripped. A different architect
+# comment does not count: the first draft's reply must not swallow a later
+# revision whose POST failed (#1962).
+pending_reply_already_posted() {
+  local pr="$1" want="$2"
+  want="${want%"${want##*[!$'\n']}"}"
+  [ -n "$want" ] || return 1
+  printf '%s' "$(get_pr_comments "$pr")" | jq -e \
+    --arg me "${ARCHITECT_LOGIN:-}" \
+    --arg want "$want" \
+    'any(.[];
+      (.user.login // "") == $me
+      and ((.body // "") | sub("\n+$"; "")) == $want)' >/dev/null 2>&1
 }
 
 # ── Round-robin: list and sort PRs by last-seen marker ─────────────────
@@ -472,7 +501,9 @@ publish_draft() {
     else
       stash_path="/tmp/architect-pending-reply-${PROJECT_NAME:-architect}-${stash_pr}"
     fi
-    if ! printf '%s' "$stash_body" >"$stash_path"; then
+    # First line is this cycle's NOW_ISO so a later repost does not mark
+    # comments seen that arrived while the marker was held.
+    if ! printf '%s\n%s' "${NOW_ISO:-}" "$stash_body" >"$stash_path"; then
       log "PR #${stash_pr}: could not stash the failed reply at ${stash_path}"
     fi
     log "PR #${stash_pr}: post_pr_comment failed — holding last-seen so the next run reposts"
@@ -580,7 +611,8 @@ _PROMPT_EOF_
 # the reply and the marker stays put until that POST succeeds.
 # Globals: PR_NUMBER, PR_BODY, LAST_SEEN, NOW_ISO, _OPUS_DISPATCH_FAILED.
 architect_pr_cycle() {
-  local pending_reply="" reason="" updated=""
+  local pending_reply="" pending_seen="" reason="" updated=""
+  local marker_iso="$NOW_ISO"
   _OPUS_DISPATCH_FAILED=false
 
   if has_reject_comment "$PR_NUMBER" "$LAST_SEEN"; then
@@ -590,7 +622,13 @@ architect_pr_cycle() {
   else
     pending_reply="$(read_pending_reply "$PR_NUMBER")"
     if [ -n "$pending_reply" ]; then
-      if architect_has_commented "$PR_NUMBER"; then
+      pending_seen="$(read_pending_seen "$PR_NUMBER")"
+      case "$pending_seen" in
+        [0-9][0-9][0-9][0-9]-*) marker_iso="$pending_seen" ;;
+      esac
+      # Match the stashed body, not "any architect comment". A first-draft
+      # reply must not drop a later revision whose POST failed.
+      if pending_reply_already_posted "$PR_NUMBER" "$pending_reply"; then
         log "PR #${PR_NUMBER}: pending reply already on the thread — dropping the stash"
         clear_pending_reply "$PR_NUMBER"
       elif post_pr_comment "$PR_NUMBER" "$pending_reply"; then
@@ -611,9 +649,10 @@ architect_pr_cycle() {
 
   # Update last-seen only if the dispatch succeeded. A failed dispatch must
   # be re-detected on the next cycle (others_comments_since drops comments
-  # once the marker moves past them).
+  # once the marker moves past them). A repost uses the failed cycle's
+  # timestamp, so a comment that arrived during the retry stays unseen.
   if [ "$_OPUS_DISPATCH_FAILED" = false ]; then
-    updated=$(update_last_seen "$PR_BODY" "$NOW_ISO")
+    updated=$(update_last_seen "$PR_BODY" "$marker_iso")
     if [ -n "$updated" ] && [ "$updated" != "$PR_BODY" ]; then
       patch_pr_body "$PR_NUMBER" "$updated"
       log "Updated last-seen marker on PR #${PR_NUMBER}"

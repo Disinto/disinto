@@ -33,7 +33,8 @@ bash -n "$ARCHITECT_RUN" || ac_fail "bash -n architect/architect-run.sh failed"
 
 PR=7
 LAST_SEEN_ISO="2026-10-07T10:00:00Z"
-NOW_ISO="2026-10-09T00:00:00Z"
+NOW_ISO_DEFAULT="2026-10-09T00:00:00Z"
+NOW_ISO="$NOW_ISO_DEFAULT"
 COMMENT_AT="2026-10-08T12:00:00Z"
 OWNER_BODY="Split entry b"
 
@@ -93,8 +94,10 @@ extract_one() {
 
 EVAL_SRC="$(
   extract_one pending_reply_path
+  extract_one read_pending_seen
   extract_one read_pending_reply
   extract_one clear_pending_reply
+  extract_one pending_reply_already_posted
   extract_one update_last_seen
   extract_one others_comments_since
   extract_one has_reject_comment
@@ -193,6 +196,7 @@ reset_case() {
   PR_BODY="pitch body
 <!-- architect-last-seen: ${LAST_SEEN_ISO} -->"
   LAST_SEEN="$LAST_SEEN_ISO"
+  NOW_ISO="$NOW_ISO_DEFAULT"
   COMMENT_FIXTURE='[]'
   _OPUS_DISPATCH_FAILED=false
 }
@@ -294,13 +298,19 @@ assert_marker_held "AC3 cycle 1"
 ac_assert_eq "$(put_count)" "1" "AC3 cycle 1: pitch commit should have landed (puts $(put_count))"
 ac_assert_eq "$(post_count)" "1" "AC3 cycle 1: the failed POST should have been attempted"
 [ -s "$PENDING_FILE" ] || ac_fail "AC3 cycle 1: failed reply was not stashed"
-failed_reply="$(cat "$PENDING_FILE")"
+failed_seen="$(read_pending_seen "$PR")"
+ac_assert_eq "$failed_seen" "$NOW_ISO" \
+  "AC3 cycle 1: stash should record this cycle's timestamp (got $failed_seen)"
+failed_reply="$(read_pending_reply "$PR")"
 printf '%s' "$failed_reply" | grep -qF "reply from session" \
   || ac_fail "AC3 cycle 1: stash missing the session reply"
 # Commit landed: the pitch now has entries, and there is still no owner
 # comment. The retry must repost the stashed reply, not start another session.
+# A later NOW_ISO must not become the marker — comments that arrive during
+# the retry stay newer than the failed cycle's timestamp.
 PITCH_HAS_ENTRIES=1
 POST_FAILS=0
+NOW_ISO="2026-10-09T00:15:00Z"
 architect_pr_cycle
 ac_assert_eq "$_OPUS_DISPATCH_FAILED" "false" "AC3 cycle 2: flag should be false after repost"
 ac_assert_eq "$(agent_count)" "1" \
@@ -312,7 +322,11 @@ ac_assert_eq "$(cat "$TMP_DIR/post-2")" "$failed_reply" \
   "AC3 cycle 2: reposted body does not match the failed reply"
 [ ! -e "$PENDING_FILE" ] || ac_fail "AC3 cycle 2: stash should be cleared after repost"
 ac_assert_eq "$(patch_count)" "1" "AC3 cycle 2: marker should advance once the reply is posted"
-grep -q "$NOW_ISO" "$PATCH_LOG" || ac_fail "AC3 cycle 2: advanced body missing $NOW_ISO"
+grep -q "$failed_seen" "$PATCH_LOG" \
+  || ac_fail "AC3 cycle 2: marker should be the failed cycle's timestamp"
+if grep -q "$NOW_ISO" "$PATCH_LOG"; then
+  ac_fail "AC3 cycle 2: marker advanced to the retry cycle's now ($NOW_ISO)"
+fi
 if grep -q "$LAST_SEEN_ISO" "$PATCH_LOG"; then
   ac_fail "AC3 cycle 2: old last-seen still in the patch"
 fi
@@ -355,5 +369,40 @@ assert_marker_held "AC6"
 ac_assert_eq "$(post_count)" "0" "AC6: a failed commit must not post"
 [ ! -e "$PENDING_FILE" ] || ac_fail "AC6: a failed commit must not stash a reply"
 ac_log "AC6 passed"
+
+# ── AC7: an earlier architect comment must not swallow a failed revision ──
+ac_log "AC7: different architect-bot comment does not drop a stashed revision"
+reset_case
+PITCH_HAS_ENTRIES=1
+AGENT_CHANGES_FILE=1
+POST_FAILS=1
+COMMENT_FIXTURE="$(jq -nc \
+  --arg me "$ARCHITECT_LOGIN" \
+  --arg owner "$OWNER_BODY" \
+  --arg at "$COMMENT_AT" \
+  '[{user:{login:$me},body:"earlier draft summary",updated_at:"2026-10-06T00:00:00Z"},
+    {user:{login:"owner"},body:$owner,updated_at:$at}]')"
+architect_pr_cycle
+ac_assert_eq "$_OPUS_DISPATCH_FAILED" "true" "AC7 cycle 1: flag should be true"
+assert_marker_held "AC7 cycle 1"
+[ -s "$PENDING_FILE" ] || ac_fail "AC7 cycle 1: failed revision was not stashed"
+revision="$(read_pending_reply "$PR")"
+printf '%s' "$revision" | grep -qF "reply from session" \
+  || ac_fail "AC7 cycle 1: stash is not the revision reply"
+# Next cycle still has only the earlier architect comment, not this body.
+POST_FAILS=0
+NOW_ISO="2026-10-09T00:15:00Z"
+architect_pr_cycle
+ac_assert_eq "$(post_count)" "2" \
+  "AC7 cycle 2: stash must be reposted, not dropped (posts $(post_count))"
+ac_assert_eq "$(cat "$TMP_DIR/post-2")" "$revision" \
+  "AC7 cycle 2: reposted body does not match the stashed revision"
+ac_assert_eq "$(agent_count)" "1" \
+  "AC7 cycle 2: must not start another session (agent_run count $(agent_count))"
+[ ! -e "$PENDING_FILE" ] || ac_fail "AC7 cycle 2: stash should be cleared after the repost"
+if grep -q 'dropping the stash' "$TMP_DIR/run.log"; then
+  ac_fail "AC7 cycle 2: dropped the stash because architect-bot had already commented"
+fi
+ac_log "AC7 passed"
 
 ac_pass
