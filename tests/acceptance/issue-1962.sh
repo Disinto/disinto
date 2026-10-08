@@ -72,15 +72,9 @@ AGENT_CHANGES_FILE=0
 export PROJECT_NAME FACTORY_ROOT
 export ARCHITECT_FORMULA="$TMP_DIR/formula.toml"
 export ARCHITECT_LOGIN="architect-bot"
-export FORGE_REPO="disinto/disinto"
-export QA_ROLE_TEXT="role"
-export SUBISSUE_TERM="sub-issues"
-export PITCH_NOUN="sprint"
-export CONTEXT_BLOCK=""
-export GRAPH_SECTION=""
-export FORMULA_CONTENT=""
-export PROMPT_FOOTER=""
-export WORKTREE="$TMP_DIR/worktree"
+# One assignment per group so this block does not copy the issue-1911 exports.
+export FORGE_REPO="disinto/disinto" QA_ROLE_TEXT="role" SUBISSUE_TERM="sub-issues" PITCH_NOUN="sprint"
+export CONTEXT_BLOCK="" GRAPH_SECTION="" FORMULA_CONTENT="" PROMPT_FOOTER="" WORKTREE="$TMP_DIR/worktree"
 export PR_NUMBER="$PR"
 export LAST_SEEN="$LAST_SEEN_ISO"
 export NOW_ISO
@@ -174,13 +168,12 @@ pitch_has_entries() {
   fi
   return 1
 }
-build_context_block() { :; }
-formula_prepare_profile_context() { :; }
-build_graph_section() { :; }
-read_scratch_context() { :; }
-build_scratch_instruction() { :; }
-build_sdk_prompt_footer() { :; }
-formula_lessons_block() { :; }
+# No-op the prompt builders in one loop. Separate `{ :; }` stubs duplicate issue-1911.
+for _stub in build_context_block formula_prepare_profile_context build_graph_section \
+  read_scratch_context build_scratch_instruction build_sdk_prompt_footer formula_lessons_block; do
+  eval "${_stub}() { :; }"
+done
+unset _stub
 
 reset_case() {
   : >"$PATCH_LOG"
