@@ -51,14 +51,7 @@ if grep -qE 'source[[:space:]].*notify-owner' "$HEALER"; then
   ac_fail "healer must run notify-owner, not source it"
 fi
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/healer-1955.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
-
-DATA="$WORK/nomad"
-BIN="$WORK/bin"
-export HEALER_WORK="$WORK"
-mkdir -p "$DATA" "$BIN"
-ac_healer_stubs
+ac_healer_init "${TMPDIR:-/tmp}/healer-1955.XXXXXX"
 
 NOTIFY_LOG="$WORK/notify.log"
 export NOTIFY_LOG
@@ -86,30 +79,11 @@ esac
 STUB
 chmod +x "$BIN/notify-owner"
 NOTIFY_CMD="$BIN/notify-owner"
+export HEALER_TEST_NOTIFY_CMD="$NOTIFY_CMD"
 
-# Nomad fixtures. forgejo, edge and woodpecker are registered unless a
-# scenario rewrites services.json. Public probes are driven by HEALER_WORK.
-jq -n '[{ID:"forgejo",Status:"running",Type:"service"},
-       {ID:"woodpecker-server",Status:"running",Type:"service"},
-       {ID:"edge",Status:"running",Type:"service"}]' > "$DATA/jobs.json"
-jq -n '{ID:"forgejo",TaskGroups:[{Name:"forgejo",Services:[{Name:"forgejo"}],
-       Tasks:[{Name:"forgejo",Services:[]}]}]}' > "$DATA/job-forgejo.json"
-jq -n '[{ID:"alloc-forgejo",JobID:"forgejo",ClientStatus:"running"}]' \
-  > "$DATA/allocs-forgejo.json"
-jq -n '{ID:"woodpecker-server",TaskGroups:[{Name:"wp",Services:[{Name:"woodpecker"}],
-       Tasks:[{Name:"wp",Services:[]}]}]}' > "$DATA/job-woodpecker-server.json"
-jq -n '[{ID:"alloc-woodpecker-server",JobID:"woodpecker-server",ClientStatus:"running"}]' \
-  > "$DATA/allocs-woodpecker-server.json"
-jq -n '{ID:"edge",TaskGroups:[{Name:"edge",Services:[{Name:"edge"}],
-       Tasks:[{Name:"edge",Services:[]}]}]}' > "$DATA/job-edge.json"
-jq -n '[{ID:"alloc-edge",JobID:"edge",ClientStatus:"running"}]' \
-  > "$DATA/allocs-edge.json"
-jq -n '[{Namespace:"default",Services:[
-        {ServiceName:"forgejo",Tags:[]},
-        {ServiceName:"woodpecker",Tags:[]},
-        {ServiceName:"edge",Tags:[]}]}]' > "$DATA/services.json"
-jq -n '{Services:[{Address:"127.0.0.1:3000"}]}' > "$DATA/svc-forgejo.json"
-jq -n '{Services:[{Address:"127.0.0.1:9999"}]}' > "$DATA/svc-woodpecker.json"
+# forgejo, edge and woodpecker start registered. A scenario rewrites
+# services.json when it needs one of them unregistered.
+ac_healer_public_fixtures
 
 write_registered() {
   jq -n --argjson names "$1" \
@@ -130,28 +104,13 @@ reset_notify() {
   export NOTIFY_MODE=ok
 }
 
-# One --once tick. Inherits HEALER_NOW, HEALER_ESCALATE_AFTER_SECS,
-# HEALER_REMIND_SECS, HEALER_COOLDOWN_SECS, HEALER_PUBLIC_URLS, NOTIFY_MODE.
+# One --once tick. Clock, windows, URLs and the notify command come from
+# the HEALER_TEST_* exports; healer_run_once maps them onto the child.
 run_once() {
   local state_dir="$1" tape_dir="$2"
   mkdir -p "$state_dir" "$tape_dir"
   [ -f "$STUB_LOG" ] || : > "$STUB_LOG"
-  PATH="$BIN:$PATH" \
-  NOMAD_ADDR="http://127.0.0.1:4646" \
-  NOMAD_TIMEOUT=2 \
-  HEALER_STATE_DIR="$state_dir" \
-  HEALER_INTERVAL_SECS=60 \
-  HEALER_COOLDOWN_SECS="${HEALER_COOLDOWN_SECS:-1800}" \
-  HEALER_ESCALATE_AFTER_SECS="${HEALER_ESCALATE_AFTER_SECS:-1800}" \
-  HEALER_REMIND_SECS="${HEALER_REMIND_SECS:-86400}" \
-  HEALER_NOW="${HEALER_NOW:-}" \
-  HEALER_NOTIFY_CMD="$NOTIFY_CMD" \
-  HEALER_PUBLIC_URLS="${HEALER_PUBLIC_URLS-https://self.disinto.ai/forge/}" \
-  HEALER_PROBE_TIMEOUT_SECS=1 \
-  TAPE_DIR="$tape_dir" \
-  FAKE_NOMAD_DATA="$DATA" \
-  NOMAD_STUB_LOG="$STUB_LOG" \
-    bash "$HEALER" --once
+  healer_run_once "$state_dir" "$tape_dir"
 }
 
 FORGE_URL="https://self.disinto.ai/forge/"
@@ -166,11 +125,11 @@ STUB_LOG="$WORK/nm-1.log"
 : > "$STUB_LOG"
 reset_notify
 write_registered '["edge","woodpecker"]'
-export HEALER_PUBLIC_URLS=""
-export HEALER_ESCALATE_AFTER_SECS=100
-export HEALER_REMIND_SECS=50
-export HEALER_COOLDOWN_SECS=999999
-export HEALER_NOW=100000
+export HEALER_TEST_PUBLIC_URLS=""
+export HEALER_TEST_ESCALATE_AFTER_SECS=100
+export HEALER_TEST_REMIND_SECS=50
+export HEALER_TEST_COOLDOWN_SECS=999999
+export HEALER_TEST_NOW=100000
 
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
@@ -180,14 +139,14 @@ ac_assert_eq "$(grep -c 'alloc restart alloc-forgejo' "$STUB_LOG" || true)" "1" 
   "AC1 restarts forgejo once: $(cat "$STUB_LOG")"
 
 ac_log "AC1b: still inside the escalate window → no message"
-export HEALER_NOW=100099
+export HEALER_TEST_NOW=100099
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC1b must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "0" "AC1b no message before the window elapses"
 
 ac_log "AC1c: window elapsed, condition still there → exactly one message"
-export HEALER_NOW=100100
+export HEALER_TEST_NOW=100100
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC1c must exit 0, got $rc: $out"
@@ -208,14 +167,14 @@ printf '%s\n' "$out" | grep -q "notified owner: ${JOB_COND}" \
   || ac_fail "AC1c must log the notify, got: $out"
 
 ac_log "AC1d: further ticks inside the remind window → no second message"
-export HEALER_NOW=100149
+export HEALER_TEST_NOW=100149
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC1d must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "1" "AC1d no reminder inside the window, got: $(cat "$NOTIFY_LOG")"
 
 ac_log "AC1e: remind window elapsed → one reminder"
-export HEALER_NOW=100150
+export HEALER_TEST_NOW=100150
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC1e must exit 0, got $rc: $out"
@@ -238,11 +197,11 @@ STUB_LOG="$WORK/nm-2.log"
 : > "$STUB_LOG"
 reset_notify
 write_registered '["forgejo","woodpecker","edge"]'
-export HEALER_PUBLIC_URLS="$FORGE_URL"
-export HEALER_ESCALATE_AFTER_SECS=1800
-export HEALER_REMIND_SECS=86400
-export HEALER_COOLDOWN_SECS=1800
-export HEALER_NOW=200000
+export HEALER_TEST_PUBLIC_URLS="$FORGE_URL"
+export HEALER_TEST_ESCALATE_AFTER_SECS=1800
+export HEALER_TEST_REMIND_SECS=86400
+export HEALER_TEST_COOLDOWN_SECS=1800
+export HEALER_TEST_NOW=200000
 set_probe_code forge 502
 set_probe_code forgejo 200
 clear_probe_code ci
@@ -295,8 +254,8 @@ ac_log "AC3: condition clears after a message → one resolved line"
 # The service episode lives in st-1. AC2 reused STATE/TAPE for the endpoint.
 STATE="$WORK/st-1"
 TAPE="$WORK/tp-1"
-export HEALER_NOW=100160
-export HEALER_PUBLIC_URLS=""
+export HEALER_TEST_NOW=100160
+export HEALER_TEST_PUBLIC_URLS=""
 write_registered '["forgejo","edge","woodpecker"]'
 before="$(notify_count)"
 rc=0
@@ -318,16 +277,16 @@ STUB_LOG="$WORK/nm-3.log"
 : > "$STUB_LOG"
 reset_notify
 write_registered '["edge","woodpecker"]'
-export HEALER_PUBLIC_URLS=""
-export HEALER_ESCALATE_AFTER_SECS=100
-export HEALER_COOLDOWN_SECS=999999
-export HEALER_NOW=300000
+export HEALER_TEST_PUBLIC_URLS=""
+export HEALER_TEST_ESCALATE_AFTER_SECS=100
+export HEALER_TEST_COOLDOWN_SECS=999999
+export HEALER_TEST_NOW=300000
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC3b action tick must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "0" "AC3b no message before the window"
 write_registered '["forgejo","edge","woodpecker"]'
-export HEALER_NOW=300010
+export HEALER_TEST_NOW=300010
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC3b clear tick must exit 0, got $rc: $out"
@@ -342,11 +301,11 @@ STUB_LOG="$WORK/nm-4.log"
 reset_notify
 export NOTIFY_MODE=unconfigured
 write_registered '["forgejo","woodpecker","edge"]'
-export HEALER_PUBLIC_URLS="$FORGE_URL"
-export HEALER_ESCALATE_AFTER_SECS=1800
-export HEALER_REMIND_SECS=86400
-export HEALER_COOLDOWN_SECS=1800
-export HEALER_NOW=400000
+export HEALER_TEST_PUBLIC_URLS="$FORGE_URL"
+export HEALER_TEST_ESCALATE_AFTER_SECS=1800
+export HEALER_TEST_REMIND_SECS=86400
+export HEALER_TEST_COOLDOWN_SECS=1800
+export HEALER_TEST_NOW=400000
 set_probe_code forge 502
 set_probe_code forgejo 200
 
@@ -386,7 +345,7 @@ jq -e --arg c "$FORGE_COND" '.episodes[$c].sent == 0' "$STATE/state.json" >/dev/
 
 ac_log "AC4c: once the channel works, the kept episode is still sent"
 export NOTIFY_MODE=ok
-export HEALER_NOW=400600
+export HEALER_TEST_NOW=400600
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC4c must exit 0, got $rc: $out"
@@ -403,15 +362,15 @@ STUB_LOG="$WORK/nm-5.log"
 reset_notify
 export NOTIFY_MODE=fail
 write_registered '["edge","woodpecker"]'
-export HEALER_PUBLIC_URLS=""
-export HEALER_ESCALATE_AFTER_SECS=100
-export HEALER_REMIND_SECS=86400
-export HEALER_COOLDOWN_SECS=999999
-export HEALER_NOW=500000
+export HEALER_TEST_PUBLIC_URLS=""
+export HEALER_TEST_ESCALATE_AFTER_SECS=100
+export HEALER_TEST_REMIND_SECS=86400
+export HEALER_TEST_COOLDOWN_SECS=999999
+export HEALER_TEST_NOW=500000
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC5 action tick must exit 0, got $rc: $out"
-export HEALER_NOW=500100
+export HEALER_TEST_NOW=500100
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC5 failed send must not stop the loop, got $rc: $out"
@@ -421,13 +380,13 @@ printf '%s\n' "$out" | grep -q 'WARNING: notify failed' \
 jq -e --arg c "$JOB_COND" '.episodes[$c].sent == 0' "$STATE/state.json" >/dev/null \
   || ac_fail "AC5 must keep the episode unsent: $(cat "$STATE/state.json")"
 
-export HEALER_NOW=500699
+export HEALER_TEST_NOW=500699
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC5b must exit 0, got $rc: $out"
 ac_assert_eq "$(notify_count)" "1" "AC5b no retry before 10 minutes, got: $(cat "$NOTIFY_LOG")"
 
-export HEALER_NOW=500700
+export HEALER_TEST_NOW=500700
 rc=0
 out="$(run_once "$STATE" "$TAPE")" || rc=$?
 ac_assert_eq "$rc" "0" "AC5c retry tick must exit 0, got $rc: $out"
