@@ -245,6 +245,8 @@ job "agents-dev-qwen" {
         # constraint was steps, not information. CLAUDE_TIMEOUT still caps the
         # session at 2h.
         CLAUDE_MAX_TURNS   = "100"
+        # A wall-clock timeout hands the issue to the Grok dev agent (#1986).
+        DEV_ESCALATE_TO    = "dev-grok-bot"
         # Per-organ cadence scheduler (#1388): the loop paces organs on their
         # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
         # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).

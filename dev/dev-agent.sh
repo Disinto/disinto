@@ -711,6 +711,13 @@ fi
 # =============================================================================
 # no_push_outcome — decide what to do when agent_run finished without pushing.
 #
+# #1986: a wall-clock timeout (rc 124) with DEV_ESCALATE_TO set to a login
+# other than this agent's (forge_whoami) is re-queued assigned to that agent
+# on the first timeout — not retried here, and not blocked at attempt >= 2.
+# DEV_CARRY=0 and _PR_WALK_EXIT_REASON=timeout. Unset, or set to this agent,
+# keeps today's re-queue-then-block behaviour. error_max_turns and no_result
+# are unchanged.
+#
 # A run stopped by a resource limit (max turns, the wall-clock timeout, or a
 # no_result terminal row — the harness never wrote a normal result row, i.e.
 # server/harness death rather than "agent chose not to push") is a TRANSIENT
@@ -765,7 +772,36 @@ no_push_outcome() {
   fi
 
   if [ -n "$requeue_reason" ]; then
-    if [ "$attempt" -ge 2 ]; then
+    # #1986: hand a wall-clock timeout to another dev agent on the first
+    # timeout. Checked before the attempt cap so attempt >= 2 escalates
+    # instead of blocking. A failed PATCH is a WARNING — the issue is
+    # already re-queued.
+    local escalate_to="" me="" payload="" patch_code=""
+    escalate_to="${DEV_ESCALATE_TO:-}"
+    if [ "$requeue_reason" = "timeout" ] && [ -n "$escalate_to" ]; then
+      me="$(forge_whoami 2>/dev/null)" || me=""
+    fi
+    if [ "$requeue_reason" = "timeout" ] && [ -n "$escalate_to" ] && [ "$escalate_to" != "$me" ]; then
+      DEV_CARRY=0
+      _PR_WALK_EXIT_REASON="timeout"
+      issue_requeue "$issue" "timeout" \
+        "Resource limit (timeout) — escalated to ${escalate_to}"
+      payload="$(jq -nc --arg login "$escalate_to" '{assignees:[$login]}')" || payload=""
+      if [ -z "$payload" ]; then
+        log "WARNING: timeout escalation could not build assignee payload for #${issue}" || true
+      else
+        if ! patch_code="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+          -H "Authorization: token ${FORGE_TOKEN:-}" \
+          -H "Content-Type: application/json" \
+          "${FORGE_API:-}/issues/${issue}" \
+          -d "$payload")"; then
+          patch_code=""
+        fi
+        if [ "$patch_code" != "200" ] && [ "$patch_code" != "201" ]; then
+          log "WARNING: timeout escalation PATCH assignees to ${escalate_to} failed for #${issue} (HTTP ${patch_code:-curl-failed})" || true
+        fi
+      fi
+    elif [ "$attempt" -ge 2 ]; then
       # Cap fires: the work is abandoned, so nothing to carry forward.
       DEV_CARRY=0
       _PR_WALK_EXIT_REASON="no_push_after_3_attempts"
