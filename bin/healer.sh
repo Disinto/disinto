@@ -21,6 +21,26 @@
 # A declared name absent from the registry is unregistered. The remedy is
 # one `nomad alloc restart` of that job's running allocation.
 #
+# Second check (public endpoints, #1952): the owner does not watch this box,
+# so a 502 on a public endpoint must be fixed here, not in the ops repo.
+# Each tick, every URL in $HEALER_PUBLIC_URLS is probed with curl (10 s);
+# 2xx/3xx = up (the streak resets to 0), anything else is a failing tick.
+# After 3 consecutive failing ticks the endpoint's backend is picked from its
+# path (/forge/ → service forgejo, health /api/healthz; /ci/ → service
+# woodpecker, health /ci/healthz — a bare /healthz answers 200 from the web
+# UI's catch-all, so it is never used). The address comes from
+# /v1/service/<name> (.Services[].Address = "host:port"); the health check is
+# curl on http://<address><health path> (2xx = healthy). An unregistered
+# service is left to the service-reregister pass. Registered + unhealthy →
+# that alloc is restarted; registered + healthy → the edge alloc is restarted.
+# If the URL is still down after an edge restart with a healthy backend,
+# nothing is left to restart — the fault is outside the box (the Cloudflare
+# tunnel): the URL is recorded under unfixable in state.json for #1955 and
+# logged once. Once recorded, no further endpoint restart is attempted for
+# that URL until it answers 2xx/3xx again (which resets the failure streak
+# and clears the unfixable entry), so a bad tunnel does not drive a
+# per-cooldown edge-restart loop.
+#
 # Guards (a tick that cannot confirm Nomad is healthy does not restart,
 # and does not close an open proposal — the next tick retries):
 #   - a job named agents-* is skipped while `nomad alloc exec` finds a
@@ -52,6 +72,9 @@
 #   HEALER_INTERVAL_SECS    loop sleep (default 60)
 #   HEALER_COOLDOWN_SECS    min seconds between restarts of one job (default 1800)
 #   HEALER_STATE_DIR        open proposals + cooldown (default /srv/disinto/healer)
+#   HEALER_PUBLIC_URLS      whitespace-separated public endpoints to probe
+#                           (default https://self.disinto.ai/forge/
+#                           https://self.disinto.ai/ci/; empty = no probing)
 #   HEALER_DRY_RUN          1 = log would restart, do not act
 #   TAPE_DIR                tape store (lib/tape.sh; default /srv/disinto/tape)
 #
@@ -70,6 +93,16 @@ HEALER_MAX_RESTARTS=3
 # alloc exec must not hang the loop. A timeout is treated as "cannot see
 # the alloc" and the agents-* job is skipped, not restarted.
 HEALER_EXEC_TIMEOUT_SECS=15
+# Public endpoint probing (#1952): after this many consecutive failing ticks
+# a restart attempt is made; empty means no endpoint probing.
+HEALER_PUBLIC_FAILURES=3
+HEALER_PUBLIC_URLS="${HEALER_PUBLIC_URLS:-https://self.disinto.ai/forge/ https://self.disinto.ai/ci/}"
+# Health-check curl timeout for public endpoints (separate from NOMAD_TIMEOUT,
+# which is for the Nomad API).
+HEALER_PROBE_TIMEOUT_SECS="${HEALER_PROBE_TIMEOUT_SECS:-10}"
+# Shared per-tick restart budget: capped by HEALER_MAX_RESTARTS, shared by
+# the service-reregister pass and the public-endpoint pass.
+RESTARTS=0
 
 export NOMAD_ADDR
 
@@ -374,7 +407,8 @@ close_open() {
 
 restart_unregistered() {
   local jobs_json="$1" services_json="$2"
-  local registered ids id spec declared missing allocs alloc now count=0
+  local registered ids id spec declared missing allocs alloc now
+  RESTARTS=0
   registered="$(registered_names "$services_json")" || {
     log "WARNING: could not read registered services — no restart"
     return 0
@@ -410,24 +444,323 @@ restart_unregistered() {
         alloc_is_idle "$id" "$alloc" || continue
         ;;
     esac
-    if [ "$count" -ge "$HEALER_MAX_RESTARTS" ]; then
+    if [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
       log "restart cap reached — remaining jobs wait"
       break
     fi
     act_on "$id" "$alloc" "$missing" "$now"
-    count=$((count + 1))
+    RESTARTS=$((RESTARTS + 1))
   done <<< "$ids"
   return 0
 }
 
-# healer_tick — one pass. Always returns 0: a query failure, a tape
-# failure, or a restart failure must not stop the loop.
+# ── public endpoints (#1952) ────────────────────────────────────────────────
+# endpoint_backend <url> — "service job health-path" (whitespace-separated)
+# for the public endpoint <url>; print nothing and return 1 when <url> is
+# not a known endpoint.  The service name is what Nomad registers (service
+# "woodpecker" belongs to job woodpecker-server), so both names are returned.
+endpoint_backend() {
+  local url host path seg
+  url="$1"
+  [ -n "$url" ] || return 1
+  url="${url#*://}"
+  host="${url%%/*}"
+  path="${url#"$host"/}"
+  seg="${path%%/*}"
+  case "$seg" in
+    forge) printf 'forgejo forgejo /api/healthz' ;;
+    ci) printf 'woodpecker woodpecker-server /ci/healthz' ;;
+    *) return 1 ;;
+  esac
+}
+
+# probe_url <url> — HTTP status of one probe. 0 = curl itself failed
+# (unreachable / timeout), which is down, not up.
+probe_url() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m "$HEALER_PROBE_TIMEOUT_SECS" \
+    "$1" 2>/dev/null)" || true
+  case "$code" in
+    ''|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$code" ;;
+  esac
+}
+
+# url_up <code> — 0 when 2xx or 3xx (a redirect is up); 1 otherwise, including
+# 0 (curl itself failed).
+url_up() {
+  case "$1" in
+    2*|3*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# health_up <address> <health-path> — 0 when the backend health endpoint
+# (http://<address><health-path>) answers 2xx.
+health_up() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m "$HEALER_PROBE_TIMEOUT_SECS" \
+    "http://${1}${2}" 2>/dev/null)" || true
+  url_up "$code"
+}
+
+# state accessors for the per-URL failure streak.
+get_failure_count() {
+  printf '%s' "$(read_state)" \
+    | jq -r --arg u "$1" '(.failures // {})[($u)] // 0'
+}
+
+set_failure_count() {
+  local url="$1" n="$2" state new
+  state="$(read_state)"
+  new="$(jq -nc \
+    --argjson state "$state" --arg u "$url" --argjson n "$n" '
+      ($state // {})
+      | .failures = ((.failures // {}) + {($u): $n})
+    ')" || return 1
+  write_state "$new"
+}
+
+# service_address <svc-json> — first non-empty .Services[].Address (host:port);
+# empty when the service has no registered address (unregistered).
+service_address() {
+  printf '%s' "$1" \
+    | jq -r '
+      ([ .Services[]? | select(type == "object"
+          and (.Address | type) == "string" and (.Address != "")) | .Address ]
+        | map(select(length > 0)) | unique | (.[0] // empty))'
+}
+
+# endpoint_alloc <jobs-json> <job> — the running allocation of <job>, else
+# empty. <job> is looked up by ID, not service name: endpoint_backend()
+# already knows the job that declares the service (which can differ, e.g.
+# service woodpecker in job woodpecker-server), so a service-name search would
+# miss it. The running-service-job guard keeps us away from jobs that are no
+# longer running service jobs.
+endpoint_alloc() {
+  local jobs_json="$1" job="$2" ids alloc
+  job_id_ok "$job" || return 1
+  ids="$(running_service_job_ids "$jobs_json")" || return 1
+  grep -Fxq -- "$job" <<<"$ids" || return 1
+  alloc="$(running_alloc "$(nomad_get "/v1/job/${job}/allocations")")"
+  [ -n "$alloc" ] && { printf '%s' "$alloc"; return 0; }
+  return 1
+}
+
+# act_on_endpoint <job> <alloc> <url> <now> — one endpoint restart (or a dry-run
+# line), with its tape proposal. A failed restart is not cooled down so the
+# next tick may retry.
+act_on_endpoint() {
+  local job="$1" alloc="$2" url="$3" now="$4" pid="" ctx=""
+  if [ "${HEALER_DRY_RUN:-}" = "1" ]; then
+    log "would restart ${job}"
+    return 0
+  fi
+  pid="$(healer_proposal_id)"
+  ctx="$(jq -nc --arg sig "public-endpoint-down:${job}" \
+    '{signature: $sig, organ: "healer"}')" || ctx=""
+  if [ -z "$ctx" ] || ! tape_proposal "$pid" repair endpoint-restart "" "" \
+      "$ctx" "" auto "url:${url}"; then
+    log "WARNING: tape: failed to append endpoint proposal for ${job}"
+    pid=""
+  fi
+  if ! nomad alloc restart "$alloc"; then
+    log "WARNING: alloc restart failed for ${job} (${alloc})"
+    return 0
+  fi
+  log "restarted alloc ${alloc} for job ${job} (public endpoint ${url})"
+  if ! record_endpoint_restart "$job" "$pid" "$url" "$now"; then
+    log "WARNING: failed to record endpoint restart state for ${url}"
+  fi
+  return 0
+}
+
+# record_endpoint_restart <job> <pid> <url> <now> — cooldown + endpoint_open
+# (keyed by url) for a public-endpoint restart.
+record_endpoint_restart() {
+  local job="$1" pid="$2" url="$3" now="$4" state new
+  state="$(read_state)"
+  new="$(jq -nc \
+    --argjson state "$state" --arg job "$job" --arg pid "$pid" \
+    --arg url "$url" --argjson now "$now" '
+      ($state // {}) as $s
+      | ($s + {cooldown: (($s.cooldown // {}) + {($job): $now})})
+      | if $pid == "" then .
+        else .endpoint_open = ((.endpoint_open // {})
+          + {($url): {proposal_id: $pid, restarted_at: $now, job: $job}})
+        end
+    ')" || return 1
+  write_state "$new"
+}
+
+# clear_unfixable <url> — drop the unfixable record for <url> when it is back
+# up, so it is only reported while it actually needs a human.
+clear_unfixable() {
+  local url="$1" state new
+  state="$(read_state)"
+  if printf '%s' "$state" | jq -e --arg u "$url" '(.unfixable // {})
+      | has($u)' >/dev/null 2>&1; then
+    new="$(jq -nc --argjson state "$state" --arg u "$url" '
+      ($state // {})
+      | .unfixable = ((.unfixable // {}) | with_entries(
+            select(.key != $u))
+    ')" || return
+    write_state "$new" || return
+  fi
+  return 0
+}
+
+# record_unfixable <url> <epoch> — set state.unfixable[url] = epoch only when
+# it is not already recorded (once per incident). Return 0 when a new record
+# was written, 1 when it was already recorded (nothing to do), 2 on failure.
+record_unfixable() {
+  local url="$1" now="$2" state new
+  state="$(read_state)"
+  if printf '%s' "$state" | jq -e --arg u "$url" '(.unfixable // {}) | has($u)' \
+      >/dev/null 2>&1; then
+    return 1
+  fi
+  new="$(jq -nc --argjson state "$state" --arg u "$url" --argjson now "$now" '
+      ($state // {})
+      | .unfixable = ((.unfixable // {}) + {($u): $now})')" || return 2
+  write_state "$new" || return 2
+  return 0
+}
+
+# endpoint_down <url> <now> — the URL is still down with nothing left to
+# restart (healthy backend + edge in cooldown): record unfixable and log once.
+endpoint_down() {
+  local url="$1" now="$2"
+  if record_unfixable "$url" "$now"; then
+    log "WARNING: ${url} down with healthy backend and edge in cooldown — nothing left to restart (unfixable)"
+  fi
+}
+
+# handle_public_endpoints <jobs-json> <now> — probe every configured URL, keep
+# the failure streaks, and act when a streak reaches HEALER_PUBLIC_FAILURES.
+# Never fails the tick.
+handle_public_endpoints() {
+  local jobs_json="$1" now="$2"
+  local urls url svc job health alloc addr code count n backend
+  urls="${HEALER_PUBLIC_URLS}"
+  if [ -z "$urls" ]; then
+    return 0
+  fi
+  for url in $urls; do
+    code="$(probe_url "$url")"
+    if url_up "$code"; then
+      set_failure_count "$url" 0 || log "WARNING: failed to reset probe count for ${url}"
+      clear_unfixable "$url"
+      log "probe ${url} ${code} (up)"
+      continue
+    fi
+    # Unfixable (see header): the fault is outside the box; do not restart
+    # again until this URL answers 2xx/3xx again.
+    if printf '%s' "$(read_state)" | jq -e --arg u "$url" \
+      '.unfixable // {} | has($u)' >/dev/null 2>&1; then
+      log "probe ${url} ${code} (unfixable — no action)"
+      continue
+    fi
+    n="$(get_failure_count "$url")" || n=0
+    count=$((n + 1))
+    set_failure_count "$url" "$count" || log "WARNING: failed to set probe count for ${url}"
+    log "probe ${url} ${code} (failing ticks: ${count})"
+    if [ "$count" -lt "$HEALER_PUBLIC_FAILURES" ]; then
+      continue
+    fi
+    backend="$(endpoint_backend "$url" || true)"
+    if [ -z "$backend" ]; then
+      log "WARNING: no backend for public endpoint ${url}"
+      continue
+    fi
+    read -r svc job health <<< "$backend"
+    addr="$(service_address "$(nomad_get "/v1/service/${svc}")" 2>/dev/null || true)"
+    if [ -z "$addr" ]; then
+      # Unregistered service — #1950's service-reregister pass owns it.
+      log "skip ${url}: service ${svc} unregistered"
+      continue
+    fi
+    healthy=1
+    if ! health_up "$addr" "$health"; then
+      healthy=0
+      log "probe ${url}: backend ${svc} unhealthy"
+    fi
+    if [ "$healthy" -eq 1 ] && [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
+      continue
+    fi
+    if [ "$healthy" -eq 1 ]; then
+      target_job="edge"
+    else
+      target_job="$job"
+    fi
+    # Cooldown for the job we would restart.
+    if in_cooldown "$target_job" "$now"; then
+      if [ "$healthy" -eq 1 ]; then
+        endpoint_down "$url" "$now"
+      fi
+      continue
+    fi
+    alloc="$(endpoint_alloc "$jobs_json" "$target_job")" || continue
+    if [ -z "$alloc" ]; then
+      log "WARNING: no running alloc for job ${target_job}"
+      continue
+    fi
+    if [ "$healthy" -eq 0 ]; then
+      act_on_endpoint "$job" "$alloc" "$url" "$now"
+    else
+      act_on_endpoint "edge" "$alloc" "$url" "$now"
+    fi
+    RESTARTS=$((RESTARTS + 1))
+  done
+  return 0
+}
+
+# close_endpoint_open <now> — close an open endpoint-restart proposal:
+# cleared=1 when the URL answers 2xx/3xx, else cleared=0 when the job's
+# restart cooldown has passed. The entry is dropped either way; a missing or
+# malformed entry is skipped. Never fails the tick.
+close_endpoint_open() {
+  local now="$1" state urls url pid restarted job code cleared bits
+  state="$(read_state)"
+  urls="$(jq -r '.endpoint_open // {} | keys[]' <<<"$state")"
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    pid="$(jq -r --arg u "$url" '.endpoint_open[$u].proposal_id // empty' <<<"$state")"
+    restarted="$(jq -r --arg u "$url" '.endpoint_open[$u].restarted_at // empty' <<<"$state")"
+    job="$(jq -r --arg u "$url" '.endpoint_open[$u].job // empty' <<<"$state")"
+    if [ -z "$pid" ] || [ -z "$restarted" ] || [ "$restarted" = "null" ]; then
+      continue
+    fi
+    code="$(probe_url "$url")"
+    if url_up "$code"; then
+      cleared=1
+    elif [ "$((now - restarted))" -ge "$HEALER_COOLDOWN_SECS" ]; then
+      cleared=0
+    else
+      continue
+    fi
+    bits="$(jq -nc --argjson cleared "$cleared" '{acted: 1, cleared: $cleared}')" \
+      || bits=""
+    if [ -z "$bits" ] || ! tape_outcome "$pid" "$bits" '{}' '{}' '[]'; then
+      log "WARNING: tape: failed to append endpoint outcome for ${url} (${pid})"
+      continue
+    fi
+    log "outcome recorded for ${job} cleared=${cleared}"
+    if ! state="$(printf '%s' "$state" | jq -c --arg u "$url" 'del(.endpoint_open[$u])')"; then
+      log "WARNING: failed to drop endpoint_open entry for ${url}"
+      continue
+    fi
+    write_state "$state" || log "WARNING: failed to write state after dropping ${url}"
+  done <<< "$urls"
+  return 0
+}
 healer_tick() {
-  local jobs services
+  local jobs services now
   if ! agent_healthy; then
     log "WARNING: /v1/agent/health failed — no restart"
     return 0
   fi
+  now="$(date -u +%s)"
   jobs="$(nomad_get /v1/jobs)"
   services="$(nomad_get /v1/services)"
   if ! json_array "$jobs" || ! json_array "$services"; then
@@ -436,6 +769,8 @@ healer_tick() {
   fi
   close_open "$services" || log "WARNING: outcome pass failed"
   restart_unregistered "$jobs" "$services" || log "WARNING: restart pass failed"
+  close_endpoint_open "$now" || log "WARNING: endpoint outcome pass failed"
+  handle_public_endpoints "$jobs" "$now" || log "WARNING: endpoint pass failed"
   return 0
 }
 
