@@ -22,13 +22,19 @@
 # allocations, so the #1950 service-reregister pass stays idle and the only
 # restarts observed are the endpoint ones.
 #
-# Verifies the four acceptance criteria (per the issue):
-#   AC1  /forge/ down 3 ticks, forgejo HEALTHY  -> restart edge (not forgejo)
-#   AC2  /forge/ down 3 ticks, forgejo UNHEALTHY -> restart forgejo (not edge)
-#   AC3  /forge/ + /ci/ down 3 ticks, forgejo healthy + woodpecker unhealthy
-#        -> restart edge AND woodpecker-server (2 restarts <= 3 shared budget)
-#   AC4  /forge/ down, forgejo healthy, edge in cooldown (short cooldown)
-#        -> record unfixable once, no edge re-restart (fault outside the box)
+# Verifies the four issue acceptance criteria (AC1-AC5; AC3 is an added
+# two-URL scenario). Mapped to the criteria in the issue body:
+#   AC1 -> criterion 2: /forge/ down 3 ticks, forgejo HEALTHY
+#        -> restart edge (not forgejo)
+#   AC2 -> criterion 1: /forge/ down 3 ticks, forgejo UNHEALTHY
+#        -> restart forgejo (not edge)
+#   AC3  (added) /forge/ + /ci/ down 3 ticks, forgejo healthy +
+#        woodpecker unhealthy -> restart edge AND woodpecker-server
+#        (2 restarts <= 3 shared budget)
+#   AC4 -> criterion 3: /forge/ down, forgejo healthy, edge in cooldown
+#        -> record unfixable once, no edge re-restart (fault outside box)
+#   AC5 -> criterion 4: /forge/ down then back to 200 -> count reset to 0
+#        and outcome {acted:1, cleared:1} appended to the tape
 #
 # Run via: tools/run-acceptance.sh 1952
 # =============================================================================
@@ -259,4 +265,26 @@ ac_assert_eq "$(restarts_of edge)" "1" "AC4 only alloc-edge was restarted: $(cat
 jq -e '(.unfixable // {}) | has("https://self.disinto.ai/forge/")' \
   "$STATE_DIR/state.json" >/dev/null 2>&1 \
   || ac_fail "AC4 state.json must record unfixable for /forge/, got: $(cat "$STATE_DIR/state.json")"
+
+# ── AC 5: /forge/ down then back to 200 -> count reset, outcome cleared ───────
+ac_log "AC5: /forge/ down 3 ticks then 200 -> count reset to 0, outcome {acted:1,cleared:1}"
+STATE_DIR="$WORK/st-5"; TAPE_DIR="$WORK/tp-5"; STUB_LOG="$WORK/nm-5.log"
+set_code forge 502
+set_code forgejo 200
+clear_code ci; clear_code woodpecker
+rc=0; run_ticks 3 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
+ac_assert_eq "$rc" "0" "AC5 exit 0 after 3 down ticks, got $rc"
+# The URL comes back up.
+set_code forge 200
+rc=0; run_ticks 1 "$STATE_DIR" "$TAPE_DIR" "$STUB_LOG" || rc=$?
+ac_assert_eq "$rc" "0" "AC5 exit 0 after up tick, got $rc"
+# Probe count resets to 0.
+ac_assert_eq "$(jq -r --arg u "https://self.disinto.ai/forge/" '(.failures // {}) | .[$u] // 0' "$STATE_DIR/state.json")" \
+  "0" "AC5 failure count resets to 0"
+# The open proposal was closed and dropped from state.
+jq -e '.endpoint_open // {} | (length == 0)' "$STATE_DIR/state.json" \
+  || ac_fail "AC5 endpoint_open must be empty after clear: $(cat "$STATE_DIR/state.json")"
+# Exactly one {acted:1,cleared:1} outcome was appended to the tape.
+ac_assert_eq "$(jq -sc '[.[] | select(.type == "outcome" and .bits.acted == 1 and .bits.cleared == 1)] | length' "$TAPE_DIR/tape.jsonl")" \
+  "1" "AC5 exactly one {acted:1,cleared:1} outcome"
 ac_pass
