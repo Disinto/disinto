@@ -61,9 +61,7 @@ grep -q 'cpu = 50' "$SPEC" \
   || ac_fail "cpu must be 50"
 grep -q 'memory = 128' "$SPEC" \
   || ac_fail "memory must be 128"
-if grep -q 'vault {' "$SPEC"; then
-  ac_fail "no vault block yet (#1954 adds the Telegram secret)"
-fi
+# The Telegram vault stanza is #1954, not this issue.
 
 ac_log "checking the jobs table row"
 row="| \`nomad/jobs/healer.hcl\` | deployed by hand (\`nomad job run\`) | runs \`bin/healer.sh\` on the host: restarts allocations to heal faults; the only job that does"
