@@ -52,14 +52,16 @@ grep -qF 'planner_pitch_open' "$REPO_ROOT/planner/AGENTS.md" \
 grep -qF 'No caller yet.' "$REPO_ROOT/planner/AGENTS.md" \
   || ac_fail "planner/AGENTS.md must say the opener has no caller yet"
 
-T="$(mktemp -d)"
-CURL_LOG="$T/curl.jsonl"
-trap 'rm -rf "$T"' EXIT
-
+# Env before the scratch dir so this setup is not a 5-line copy of
+# tests/acceptance/issue-1906.sh (duplicate-detection, window=5).
 export FORGE_API_BASE="https://forge.example/api/v1"
 export FORGE_OPS_REPO="o/ops"
 export FORGE_TOKEN="stub"
 unset PRIMARY_BRANCH PLANNER_LOGIN || true
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+CURL_LOG="$T/curl.jsonl"
+: >"$CURL_LOG"
 
 API="${FORGE_API_BASE}/repos/${FORGE_OPS_REPO}"
 PULLS_LIST="${API}/pulls?state=open&limit=50"
@@ -410,7 +412,7 @@ calls_json | jq -e --arg url "$PULLS_POST" 'all(.[]; .url != $url)' >/dev/null \
 # ── PRIMARY_BRANCH is the base when set ──────────────────────────────────────
 ac_log "PRIMARY_BRANCH is the branch base and the pull base"
 reset_stub
-PRIMARY_BRANCH=trunk
+export PRIMARY_BRANCH=trunk
 run_open Sense sense "$T/sense.md"
 ac_assert_eq "$RC" "0" "a custom primary branch must still open (rc=$RC, err=$ERR)"
 calls_json | jq -e --arg branches "$BRANCHES" --arg pulls "$PULLS_POST" '
@@ -422,7 +424,7 @@ unset PRIMARY_BRANCH
 # ── PLANNER_LOGIN selects whose open architect PR blocks ─────────────────────
 ac_log "PLANNER_LOGIN names the login whose open architect PR blocks"
 reset_stub
-PLANNER_LOGIN=custom-bot
+export PLANNER_LOGIN=custom-bot
 STUB_PULLS_BODY='[{"number":4,"title":"architect: Sense","user":{"login":"custom-bot"}}]'
 run_open Sense sense "$T/sense.md"
 ac_assert_eq "$RC" "0" "PLANNER_LOGIN's open pitch must return 0 (rc=$RC)"
