@@ -134,10 +134,11 @@ roles:
     namespace: default
     job_id:    bot-gardener
 
+  # Bound to the Grok planner job, nomad/jobs/agents-planner-grok.hcl.
   - name:      bot-planner
     policy:    bot-planner
     namespace: default
-    job_id:    bot-planner
+    job_id:    agents-planner-grok
 
   - name:      bot-predictor
     policy:    bot-predictor
