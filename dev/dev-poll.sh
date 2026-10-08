@@ -667,7 +667,9 @@ pr_head_branch() {
 # issue that is not dev-claimable (hand-applied awaiting-live-verification, or
 # any other _ILC_NON_DEV_LABELS label) must be skipped here, or try_direct_merge
 # merges the PR and closes the issue before those skips run (#1833). Issue-less
-# chore PRs (PL_ISSUE=0) have no issue to classify and still merge.
+# chore PRs (PL_ISSUE=0) have no issue to classify and still merge. An agent's
+# own PR with no linked issue merges as issue-less once approved and green
+# (#1985).
 # =============================================================================
 log "pre-lock: scanning for mergeable PRs"
 PL_PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
@@ -680,11 +682,21 @@ for i in $(seq 0 $(($(echo "$PL_PRS" | jq 'length') - 1))); do
   PL_PR_BRANCH=$(echo "$PL_PRS" | jq -r ".[$i].head.ref")
   PL_PR_TITLE=$(echo "$PL_PRS" | jq -r ".[$i].title")
   PL_PR_BODY=$(echo "$PL_PRS" | jq -r ".[$i].body // \"\"")
+  # #1985: the PR's author — the issue-less arm below must distinguish
+  # this agent's own split-out PRs from everyone else's.
+  PL_PR_AUTHOR=$(echo "$PL_PRS" | jq -r ".[$i].user.login")
 
   PL_ISSUE=$(extract_issue_from_pr "$PL_PR_BRANCH" "$PL_PR_TITLE" "$PL_PR_BODY")
   if [ -z "$PL_ISSUE" ]; then
     # Allow chore PRs from gardener/planner/predictor to merge without issue number
     if [[ "$PL_PR_BRANCH" =~ ^chore/(gardener|planner|predictor)- ]]; then
+      PL_ISSUE=0
+    # #1985: this agent's own PR with no issue reference (a split-out PR)
+    # has no issue to claim, but it must still land once approved and green:
+    # set PL_ISSUE=0 so the CI/approval checks run and try_direct_merge
+    # closes nothing. Every other author (owner, other bots) still skips.
+    elif [ "$PL_PR_AUTHOR" = "$BOT_USER" ]; then
+      log "PR #${PL_PR_NUM} has no linked issue — own PR, merge as issue-less once approved and green"
       PL_ISSUE=0
     else
       continue
