@@ -12,7 +12,8 @@
 # Telegram notify secret (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) is rendered
 # from kv/disinto/notify/telegram via role service-healer (#1954).
 # error_on_missing_key = false lets the healer run, unable to notify, before
-# the secret is seeded; notify_owner then logs "notify: not configured".
+# the secret is seeded; bin/notify-owner.sh then logs
+# "notify-owner: not configured" (exit 0).
 #
 # raw_exec writes straight to the host paths in env (no host_volume mount).
 # healer.sh creates HEALER_STATE_DIR itself. The script loops; this service
@@ -48,7 +49,7 @@ job "healer" {
         FACTORY_ROOT = "/opt/disinto"
       }
 
-      # Telegram secret for notify_owner (#1949, #1955). Missing keys render
+      # Telegram secret for bin/notify-owner.sh (#1949, #1955). Missing keys render
       # empty so the healer still runs before the secret is seeded (#1954).
       # Vault change_mode is noop: the default restart SIGKILLs the task every
       # token_max_ttl (24h), which is a scheduled kill mid-heal, not a secret
