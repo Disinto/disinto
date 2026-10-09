@@ -55,24 +55,40 @@ has_unfixable() {
     "$1/state.json" >/dev/null 2>&1
 }
 
-# ── AC1: backend dies after unfixable → drop record, restart forgejo ────────
-ac_log "AC1: healthy backend marks unfixable; later death restarts forgejo"
-STATE_DIR="$WORK/st-1"
-TAPE_DIR="$WORK/tp-1"
-STUB_LOG="$WORK/nm-1.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
-set_probe_code forge 502
-set_probe_code forgejo 200
-clear_probe_code ci
-clear_probe_code woodpecker
+# Fresh state, tape, and stub log for one acceptance case.
+prepare_case() {
+  local n="$1"
+  STATE_DIR="$WORK/case-$n"
+  TAPE_DIR="$WORK/tape-$n"
+  STUB_LOG="$WORK/stub-$n.log"
+  mkdir -p "$STATE_DIR" "$TAPE_DIR"
+  printf '' >"$STUB_LOG"
+}
 
-i=0
-while [ "$i" -lt 4 ]; do
-  i=$((i + 1))
+# Public URL code, then forgejo health code. ci and woodpecker stay up.
+set_codes() {
+  local forge_code="$1" backend_code="$2"
+  set_probe_code forge "$forge_code"
+  set_probe_code forgejo "$backend_code"
+  clear_probe_code ci
+  clear_probe_code woodpecker
+}
+
+run_case() {
   rc=0
   out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
-  ac_assert_eq "$rc" "0" "AC1 tick ${i} exit 0, got $rc: $out"
+}
+
+# ── AC1: backend dies after unfixable → drop record, restart forgejo ────────
+ac_log "AC1: healthy backend marks unfixable; later death restarts forgejo"
+prepare_case 1
+set_codes 502 200
+
+ticks=0
+while [ "$ticks" -lt 4 ]; do
+  ticks=$((ticks + 1))
+  run_case
+  ac_assert_eq "$rc" "0" "AC1 tick ${ticks} exit 0, got $rc: $out"
 done
 ac_assert_eq "$(healer_restarts_of edge)" "1" \
   "AC1 edge restarted once before unfixable: $(cat "$STUB_LOG")"
@@ -82,8 +98,7 @@ has_unfixable "$STATE_DIR" \
   || ac_fail "AC1 tick 4 must record unfixable, got: $(cat "$STATE_DIR/state.json")"
 
 set_probe_code forgejo 503
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+run_case
 ac_assert_eq "$rc" "0" "AC1 death tick exit 0, got $rc: $out"
 if has_unfixable "$STATE_DIR"; then
   ac_fail "AC1 must drop unfixable once forgejo is unhealthy, got: $(cat "$STATE_DIR/state.json")"
@@ -97,16 +112,10 @@ printf '%s\n' "$out" | grep -q "backend down — unfixable cleared" \
 
 # ── AC2: backend still healthy → unfixable stays, no restart ────────────────
 ac_log "AC2: recheck still healthy keeps unfixable and does not restart"
-STATE_DIR="$WORK/st-2"
-TAPE_DIR="$WORK/tp-2"
-STUB_LOG="$WORK/nm-2.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 2
 seed_unfixable "$STATE_DIR" 500000
-set_probe_code forge 502
-set_probe_code forgejo 200
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+set_codes 502 200
+run_case
 ac_assert_eq "$rc" "0" "AC2 exit 0, got $rc: $out"
 has_unfixable "$STATE_DIR" \
   || ac_fail "AC2 healthy backend must keep unfixable, got: $(cat "$STATE_DIR/state.json")"
@@ -117,16 +126,10 @@ printf '%s\n' "$out" | grep -q "unfixable — no action" \
 
 # ── AC3: URL 2xx/3xx still clears unfixable ─────────────────────────────────
 ac_log "AC3: URL 2xx still clears unfixable, no restart"
-STATE_DIR="$WORK/st-3"
-TAPE_DIR="$WORK/tp-3"
-STUB_LOG="$WORK/nm-3.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 3
 seed_unfixable "$STATE_DIR" 500000
-set_probe_code forge 200
-set_probe_code forgejo 200
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+set_codes 200 200
+run_case
 ac_assert_eq "$rc" "0" "AC3 exit 0, got $rc: $out"
 if has_unfixable "$STATE_DIR"; then
   ac_fail "AC3 URL 2xx must clear unfixable, got: $(cat "$STATE_DIR/state.json")"
@@ -136,18 +139,12 @@ ac_assert_eq "$(healer_restart_lines)" "0" \
 
 # ── AC4: cooldown still blocks the restart after unfixable is dropped ───────
 ac_log "AC4: forgejo in cooldown → unfixable dropped, restart waits"
-STATE_DIR="$WORK/st-4"
-TAPE_DIR="$WORK/tp-4"
-STUB_LOG="$WORK/nm-4.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 4
 export HEALER_TEST_COOLDOWN_SECS=1800
 export HEALER_TEST_NOW=600000
 seed_unfixable "$STATE_DIR" 600000 '{"cooldown":{"edge":600000,"forgejo":600000}}'
-set_probe_code forge 502
-set_probe_code forgejo 503
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+set_codes 502 503
+run_case
 ac_assert_eq "$rc" "0" "AC4 cooldown tick exit 0, got $rc: $out"
 if has_unfixable "$STATE_DIR"; then
   ac_fail "AC4 must drop unfixable even when cooldown blocks the restart, got: $(cat "$STATE_DIR/state.json")"
@@ -157,8 +154,7 @@ ac_assert_eq "$(healer_restarts_of forgejo)" "0" \
 
 ac_log "AC4b: after cooldown, the same unhealthy backend is restarted"
 export HEALER_TEST_NOW=601800
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+run_case
 ac_assert_eq "$rc" "0" "AC4b exit 0, got $rc: $out"
 ac_assert_eq "$(healer_restarts_of forgejo)" "1" \
   "AC4b restarts forgejo once cooldown ends: $(cat "$STUB_LOG")"
@@ -186,16 +182,10 @@ jq -n '[
   {ID:"extra-c",Status:"running",Type:"service"}
 ]' > "$DATA/jobs.json"
 
-STATE_DIR="$WORK/st-5"
-TAPE_DIR="$WORK/tp-5"
-STUB_LOG="$WORK/nm-5.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 5
 seed_unfixable "$STATE_DIR" 700000
-set_probe_code forge 502
-set_probe_code forgejo 503
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+set_codes 502 503
+run_case
 ac_assert_eq "$rc" "0" "AC5 exit 0, got $rc: $out"
 ac_assert_eq "$(healer_restart_lines)" "3" \
   "AC5 exactly the 3 service restarts, not a 4th: $(cat "$STUB_LOG")"
@@ -208,8 +198,7 @@ printf '%s\n' "$out" | grep -q "restart cap reached — ${FORGE_URL} waits" \
   || ac_fail "AC5 capped URL must be logged as waiting, got: $out"
 
 ac_log "AC5b: next tick, budget free, the dropped-unfixable backend is restarted"
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+run_case
 ac_assert_eq "$rc" "0" "AC5b exit 0, got $rc: $out"
 ac_assert_eq "$(healer_restarts_of forgejo)" "1" \
   "AC5b restarts forgejo once the budget is free: $(cat "$STUB_LOG")"
@@ -217,19 +206,14 @@ ac_healer_public_fixtures
 
 # ── AC6: unregistered backend drops unfixable ───────────────────────────────
 ac_log "AC6: unregistered backend drops unfixable"
-STATE_DIR="$WORK/st-6"
-TAPE_DIR="$WORK/tp-6"
-STUB_LOG="$WORK/nm-6.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 6
 seed_unfixable "$STATE_DIR" 800000
-set_probe_code forge 502
+set_codes 502 503
 jq -n '{Services:[]}' > "$DATA/svc-forgejo.json"
 jq -n '[{Namespace:"default",Services:[
   {ServiceName:"woodpecker",Tags:[]},{ServiceName:"edge",Tags:[]}
 ]}]' > "$DATA/services.json"
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+run_case
 ac_assert_eq "$rc" "0" "AC6 exit 0, got $rc: $out"
 if has_unfixable "$STATE_DIR"; then
   ac_fail "AC6 unregistered backend must drop unfixable, got: $(cat "$STATE_DIR/state.json")"
@@ -242,17 +226,11 @@ ac_healer_public_fixtures
 
 # ── AC7: a failed Nomad read keeps unfixable ────────────────────────────────
 ac_log "AC7: failed service read keeps unfixable and does not restart"
-STATE_DIR="$WORK/st-7"
-TAPE_DIR="$WORK/tp-7"
-STUB_LOG="$WORK/nm-7.log"
-mkdir -p "$TAPE_DIR"
-: > "$STUB_LOG"
+prepare_case 7
 seed_unfixable "$STATE_DIR" 900000
-set_probe_code forge 502
-set_probe_code forgejo 503
+set_codes 502 503
 rm -f "$DATA/svc-forgejo.json"
-rc=0
-out="$(healer_run_once "$STATE_DIR" "$TAPE_DIR")" || rc=$?
+run_case
 ac_assert_eq "$rc" "0" "AC7 exit 0, got $rc: $out"
 has_unfixable "$STATE_DIR" \
   || ac_fail "AC7 a failed recheck must keep unfixable, got: $(cat "$STATE_DIR/state.json")"
