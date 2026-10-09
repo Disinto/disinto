@@ -29,20 +29,26 @@
 # path (/forge/ → service forgejo, health /api/healthz; /ci/ → service
 # woodpecker, health /ci/healthz — a bare /healthz answers 200 from the web
 # UI's catch-all, so it is never used). The address comes from
-# /v1/service/<name> (.Services[].Address = "host:port"); the health check is
-# curl on http://<address><health path> (2xx = healthy). An unregistered
-# service is left to the service-reregister pass. Registered + unhealthy →
-# that alloc is restarted; registered + healthy → the edge alloc is restarted.
+# GET /v1/service/<name>, a JSON array of ServiceRegistration (Nomad 1.9):
+# Address and Port are separate fields, joined here to host:port. [] is
+# unregistered. The health check is curl on http://<address><health path>
+# (2xx = healthy). An unregistered service is left to the service-reregister
+# pass. Registered + unhealthy → that alloc is restarted; registered +
+# healthy → the edge alloc is restarted.
 # If the URL is still down after its own edge restart with a healthy backend,
 # nothing is left to restart — the fault is outside the box (the Cloudflare
 # tunnel): the URL is recorded under unfixable in state.json for #1955 and
 # logged once. "Its own" is load-bearing: edge is a single job shared by all
 # public endpoints, so the shared per-job cooldown alone must never declare a
-# sibling URL that was never restarted to be outside the box (#1989). Once
-# recorded, no further endpoint restart is attempted for that URL until it
-# answers 2xx/3xx again (which resets the failure streak and clears the
-# unfixable entry), so a bad tunnel does not drive a per-cooldown
-# edge-restart loop.
+# sibling URL that was never restarted to be outside the box (#1989). While
+# that backend stays healthy, no further endpoint restart is attempted for
+# that URL until it answers 2xx/3xx again (which resets the failure streak
+# and clears the unfixable entry), so a bad tunnel does not drive a
+# per-cooldown edge-restart loop. A later recheck that finds the backend
+# unhealthy or unregistered drops the record (#1990) and the normal endpoint
+# pass may restart that backend alloc, still subject to HEALER_COOLDOWN_SECS
+# and the per-tick restart cap. A failed recheck keeps the record — a missed
+# Nomad read is not "the backend died".
 #
 # Guards (a tick that cannot confirm Nomad is healthy does not restart,
 # and does not close an open proposal — the next tick retries):
@@ -627,14 +633,29 @@ set_failure_count() {
   write_state "$new"
 }
 
-# service_address <svc-json> — first non-empty .Services[].Address (host:port);
-# empty when the service has no registered address (unregistered).
+# service_address <svc-json> — host:port of the first Nomad 1.9
+# ServiceRegistration in a GET /v1/service/:name body. That body is a JSON
+# array; Address and Port are separate fields. [] (and an array with no
+# usable registration) is unregistered: print nothing. A non-array is not a
+# registration list; print nothing and let the caller decide whether that
+# was a failed read.
 service_address() {
   printf '%s' "$1" \
     | jq -r '
-      ([ .Services[]? | select(type == "object"
-          and (.Address | type) == "string" and (.Address != "")) | .Address ]
-        | map(select(length > 0)) | unique | (.[0] // empty))'
+      if type != "array" then empty
+      else
+        [ .[] | select(type == "object"
+            and (.Address | type) == "string" and .Address != ""
+            and (.Port | type) == "number"
+            and .Port > 0 and .Port < 65536)
+          | if (.Address | contains(":")) then
+              "[" + .Address + "]:" + (.Port | tostring)
+            else
+              .Address + ":" + (.Port | tostring)
+            end
+        ] | .[0] // empty
+      end
+    ' 2>/dev/null || true
 }
 
 # endpoint_alloc <jobs-json> <job> — the running allocation of <job>, else
@@ -702,8 +723,9 @@ record_endpoint_restart() {
   write_state "$new"
 }
 
-# clear_unfixable <url> — drop the unfixable record for <url> when it is back
-# up, so it is only reported while it actually needs a human.
+# clear_unfixable <url> — drop the unfixable record for <url>. Called when
+# the URL answers 2xx/3xx, and when a recheck finds the backend unhealthy
+# or unregistered (#1990) so the normal restart path can run.
 clear_unfixable() {
   local url="$1" state new
   state="$(read_state)"
@@ -712,7 +734,7 @@ clear_unfixable() {
     new="$(jq -nc --argjson state "$state" --arg u "$url" '
       ($state // {})
       | .unfixable = ((.unfixable // {}) | with_entries(
-            select(.key != $u))
+            select(.key != $u)))
     ')" || return
     write_state "$new" || return
   fi
@@ -767,6 +789,34 @@ endpoint_down() {
   fi
 }
 
+# unfixable_backend_dead URL — 0 when a recheck shows the backend is
+# unhealthy or unregistered, so state.unfixable[url] must be dropped (#1990).
+# 1 when the backend is still healthy, or the recheck failed (keep the
+# record; do not guess from an empty Nomad read).
+unfixable_backend_dead() {
+  local url="$1" backend svc health addr raw
+  backend="$(endpoint_backend "$url" 2>/dev/null || true)"
+  [ -n "$backend" ] || return 1
+  read -r svc _ health <<< "$backend"
+  [ -n "$svc" ] || return 1
+  raw="$(nomad_get "/v1/service/${svc}")"
+  # Empty or non-array is a failed read, not "unregistered". A Nomad
+  # 1.9 success is a JSON array ([] = no registrations). jq exits 0 on
+  # empty input without running the filter, so the empty check is first.
+  [ -n "$raw" ] || return 1
+  if ! printf '%s' "$raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    return 1
+  fi
+  addr="$(service_address "$raw")"
+  if [ -z "$addr" ]; then
+    return 0
+  fi
+  if health_up "$addr" "$health"; then
+    return 1
+  fi
+  return 0
+}
+
 # handle_public_endpoints <jobs-json> <now> — probe every configured URL, keep
 # the failure streaks, and act when a streak reaches HEALER_PUBLIC_FAILURES.
 # The shared HEALER_MAX_RESTARTS budget applies to every restart here, healthy
@@ -789,14 +839,24 @@ handle_public_endpoints() {
       log "probe ${url} ${code} (up)"
       continue
     fi
-    # Unfixable (see header): the fault is outside the box; do not restart
-    # again until this URL answers 2xx/3xx again. Recheck backend health
-    # so a later reminder does not invent "healthy".
+    # Unfixable (see header): recorded while the backend was healthy and
+    # the edge was in cooldown. Keep it only while a recheck still shows
+    # that backend healthy. Unhealthy or unregistered means the fault is
+    # back inside the box: drop the record and fall through so this pass
+    # can restart the backend alloc (cooldown and the per-tick cap still
+    # apply). A failed recheck keeps the record.
     if printf '%s' "$(read_state)" | jq -e --arg u "$url" \
       '.unfixable // {} | has($u)' >/dev/null 2>&1; then
-      note_unfixable_down "$url" "$code"
-      log "probe ${url} ${code} (unfixable — no action)"
-      continue
+      if ! unfixable_backend_dead "$url"; then
+        note_unfixable_down "$url" "$code"
+        log "probe ${url} ${code} (unfixable — no action)"
+        continue
+      fi
+      if clear_unfixable "$url"; then
+        log "probe ${url} ${code} (backend down — unfixable cleared)"
+      else
+        log "WARNING: failed to drop unfixable for ${url}"
+      fi
     fi
     # Down. Note before any continue so a skip cannot look like a clear.
     tick_note "public-endpoint-down:${url}" "still ${code}" ""
