@@ -33,13 +33,16 @@
 # curl on http://<address><health path> (2xx = healthy). An unregistered
 # service is left to the service-reregister pass. Registered + unhealthy →
 # that alloc is restarted; registered + healthy → the edge alloc is restarted.
-# If the URL is still down after an edge restart with a healthy backend,
+# If the URL is still down after its own edge restart with a healthy backend,
 # nothing is left to restart — the fault is outside the box (the Cloudflare
 # tunnel): the URL is recorded under unfixable in state.json for #1955 and
-# logged once. Once recorded, no further endpoint restart is attempted for
-# that URL until it answers 2xx/3xx again (which resets the failure streak
-# and clears the unfixable entry), so a bad tunnel does not drive a
-# per-cooldown edge-restart loop.
+# logged once. "Its own" is load-bearing: edge is a single job shared by all
+# public endpoints, so the shared per-job cooldown alone must never declare a
+# sibling URL that was never restarted to be outside the box (#1989). Once
+# recorded, no further endpoint restart is attempted for that URL until it
+# answers 2xx/3xx again (which resets the failure streak and clears the
+# unfixable entry), so a bad tunnel does not drive a per-cooldown
+# edge-restart loop.
 #
 # Guards (a tick that cannot confirm Nomad is healthy does not restart,
 # and does not close an open proposal — the next tick retries):
@@ -733,8 +736,30 @@ record_unfixable() {
   return 0
 }
 
-# endpoint_down <url> <now> — the URL is still down with nothing left to
-# restart (healthy backend + edge in cooldown): record unfixable and log once.
+# own_endpoint_restart <url> <now> — 0 when <url>'s own endpoint restart is
+# still inside the cooldown window: its endpoint_open entry exists with a
+# restarted_at within HEALER_COOLDOWN_SECS of <now>; 1 otherwise (never
+# restarted, or its own window has elapsed).
+#
+# The per-job cooldown in in_cooldown() is shared across every public endpoint
+# (edge is one job), so it cannot by itself say "this URL was restarted".
+# #1989: recording unfixable off the shared cooldown declared a sibling URL
+# that had never been restarted to be outside the box. endpoint_open[url] is
+# set exactly when this URL's own restart acted, and close_endpoint_open keeps
+# it only while the URL is down and its own window is open, so it is the
+# per-URL signal the unfixable decision needs.
+own_endpoint_restart() {
+  local url="$1" now="$2" state at
+  state="$(read_state)"
+  at="$(printf '%s' "$state" | jq -r --arg u "$url" \
+      '.endpoint_open[$u].restarted_at // empty' 2>/dev/null)" || return 1
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  [ $((now - at)) -lt "$HEALER_COOLDOWN_SECS" ]
+}
+
+# endpoint_down <url> <now> — the URL is still down with a healthy backend and
+# its own edge restart still cooling (nothing left to restart for this URL):
+# record unfixable and log once.
 endpoint_down() {
   local url="$1" now="$2"
   if record_unfixable "$url" "$now"; then
@@ -814,9 +839,13 @@ handle_public_endpoints() {
       log "restart cap reached — ${url} waits"
       continue
     fi
-    # Cooldown for the job we would restart.
+    # Cooldown for the job we would restart.  The unfixable record follows only
+    # when this URL's own endpoint restart is what is cooling; the shared
+    # per-job cooldown is set by whichever endpoint last restarted the job and
+    # would alone falsely declare a sibling URL that was never restarted to be
+    # outside the box (#1989).
     if in_cooldown "$target_job" "$now"; then
-      if [ "$healthy" -eq 1 ]; then
+      if [ "$healthy" -eq 1 ] && own_endpoint_restart "$url" "$now"; then
         endpoint_down "$url" "$now"
       fi
       continue
