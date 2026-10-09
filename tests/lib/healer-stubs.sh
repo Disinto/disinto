@@ -169,6 +169,9 @@ ac_healer_init() {
 
 # Running forgejo, woodpecker-server and edge, each registered, plus the
 # backend addresses the public-endpoint health check curls. Reads $DATA.
+# svc-*.json is the Nomad 1.9 GET /v1/service/:name body: a JSON array of
+# ServiceRegistration, Address and Port separate (not a pre-joined host:port
+# under .Services[]).
 ac_healer_public_fixtures() {
   mkdir -p "$DATA"
   jq -n '[{ID:"forgejo",Status:"running",Type:"service"},
@@ -189,8 +192,10 @@ ac_healer_public_fixtures() {
   jq -n '[{Namespace:"default",Services:[{ServiceName:"forgejo",Tags:[]},
          {ServiceName:"woodpecker",Tags:[]},{ServiceName:"edge",Tags:[]}]}]' \
     > "$DATA/services.json"
-  jq -n '{Services:[{Address:"127.0.0.1:3000"}]}' > "$DATA/svc-forgejo.json"
-  jq -n '{Services:[{Address:"127.0.0.1:9999"}]}' > "$DATA/svc-woodpecker.json"
+  jq -n '[{ServiceName:"forgejo",Address:"127.0.0.1",Port:3000}]' \
+    > "$DATA/svc-forgejo.json"
+  jq -n '[{ServiceName:"woodpecker",Address:"127.0.0.1",Port:9999}]' \
+    > "$DATA/svc-woodpecker.json"
 }
 
 # One `healer.sh --once` tick. Reads $BIN, $DATA, $HEALER, $STUB_LOG globals.

@@ -34,6 +34,15 @@ ac_assert_file "$HEALER" "bin/healer.sh must exist"
 ac_healer_init "${TMPDIR:-/tmp}/healer-1990.XXXXXX"
 ac_healer_public_fixtures
 
+# The fixture must be the live Nomad 1.9 body. The old {"Services":[{"Address":
+# "host:port"}]} shape lets a wrong parser look green.
+jq -e 'type == "array" and .[0].Address == "127.0.0.1" and .[0].Port == 3000' \
+  "$DATA/svc-forgejo.json" >/dev/null \
+  || ac_fail "forgejo fixture must be a ServiceRegistration array (Address and Port separate)"
+jq -e 'type == "array" and .[0].Address == "127.0.0.1" and .[0].Port == 9999' \
+  "$DATA/svc-woodpecker.json" >/dev/null \
+  || ac_fail "woodpecker fixture must be a ServiceRegistration array (Address and Port separate)"
+
 FORGE_URL="https://self.disinto.ai/forge/"
 export HEALER_TEST_PUBLIC_URLS="$FORGE_URL"
 
@@ -209,7 +218,8 @@ ac_log "AC6: unregistered backend drops unfixable"
 prepare_case 6
 seed_unfixable "$STATE_DIR" 800000
 set_codes 502 503
-jq -n '{Services:[]}' > "$DATA/svc-forgejo.json"
+# [] is the live "no registrations" body, not {"Services":[]}.
+jq -n '[]' > "$DATA/svc-forgejo.json"
 jq -n '[{Namespace:"default",Services:[
   {ServiceName:"woodpecker",Tags:[]},{ServiceName:"edge",Tags:[]}
 ]}]' > "$DATA/services.json"
