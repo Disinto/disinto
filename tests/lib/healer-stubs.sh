@@ -7,6 +7,7 @@
 #   issue-1950.sh — the service-reregister pass
 #   issue-1952.sh — the public-endpoint pass
 #   issue-1988.sh — the shared per-tick restart cap on that pass
+#   issue-1990.sh — drop unfixable when that backend later dies
 #
 # The fake implements exactly the surface healer.sh exercises:
 #   * curl: routes 127.0.0.1:4646/* to fixture files in $FAKE_NOMAD_DATA and

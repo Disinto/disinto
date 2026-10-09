@@ -10,8 +10,9 @@
 #   - backend HEALTHY    -> restart the edge alloc
 #   - service UNREGISTERED -> leave to the #1950 service-reregister pass
 #   - still down after an edge restart, backend healthy -> record `unfixable`
-#     (fault is the Cloudflare tunnel, outside the box) and stop retrying until
-#     the URL answers 2xx/3xx again.
+#     (fault is the Cloudflare tunnel, outside the box) and stop retrying
+#     while that backend stays healthy. A later unhealthy or unregistered
+#     backend drops the record (#1990). The URL answering 2xx/3xx also clears it.
 #
 # Hermetic: shared curl + nomad stubs from tests/lib/healer-stubs.sh,
 # per-AC temp HEALER_STATE_DIR/TAPE_DIR. The Nomad API is served from fixtures
