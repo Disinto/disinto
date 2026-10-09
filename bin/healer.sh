@@ -48,7 +48,9 @@
 #     the next tick tries again (an exec failure also skips — do not kill
 #     work the healer cannot see)
 #   - at most one restart per job per HEALER_COOLDOWN_SECS (default 1800)
-#   - at most 3 restarts per tick
+#   - at most 3 restarts per tick, shared by the service pass and every
+#     public-endpoint restart (healthy or unhealthy backend). A URL past
+#     the cap is still noted for escalation and is not restarted (#1988)
 #   - no restart when /v1/agent/health fails
 #   - HEALER_DRY_RUN=1 logs "would restart <job>" instead of acting
 #
@@ -742,7 +744,9 @@ endpoint_down() {
 
 # handle_public_endpoints <jobs-json> <now> — probe every configured URL, keep
 # the failure streaks, and act when a streak reaches HEALER_PUBLIC_FAILURES.
-# Never fails the tick.
+# The shared HEALER_MAX_RESTARTS budget applies to every restart here, healthy
+# or unhealthy backend. A URL past the cap is still noted (the tick_note above
+# the check) and is not restarted. Never fails the tick.
 handle_public_endpoints() {
   local jobs_json="$1" now="$2"
   local urls url svc job health alloc addr code count n backend
@@ -804,7 +808,10 @@ handle_public_endpoints() {
       target_job="$job"
     fi
     tick_note "public-endpoint-down:${url}" "$detail" "$target_job"
-    if [ "$healthy" -eq 1 ] && [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
+    # Shared budget (#1950/#1952/#1988). Already noted above, so escalation
+    # still sees this URL. Applies whether the backend is healthy or not.
+    if [ "$RESTARTS" -ge "$HEALER_MAX_RESTARTS" ]; then
+      log "restart cap reached — ${url} waits"
       continue
     fi
     # Cooldown for the job we would restart.
