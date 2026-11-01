@@ -272,9 +272,11 @@ EOT
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
+      # Reserves 128 (76 MiB idle, 2026-11-01); memory_max is the hard cap.
       resources {
-        cpu    = 200
-        memory = 256
+        cpu        = 200
+        memory     = 128
+        memory_max = 256
       }
     }
 

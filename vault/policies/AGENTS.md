@@ -31,10 +31,10 @@ KV v2). Vault addresses KV v2 data at `kv/data/<path>` and metadata at
 | `service-forgejo` | `kv/data/disinto/shared/forgejo/*` |
 | `service-woodpecker` | `kv/data/disinto/shared/woodpecker/*` |
 | `service-agents` | All 7 `kv/data/disinto/bots/<role>/*` namespaces + `kv/data/disinto/shared/forge/*` + `kv/data/disinto/shared/ci/*` (Woodpecker token, #1114 — read by the qwen jobspecs); composite policy for the `agents` Nomad job (S4.1) |
-| `service-agents-grok` | `service-agents` plus `kv/data/disinto/bots/dev-grok` and `kv/data/disinto/bots/review-grok` (2026-10-03); the policy of the `agents-dev-grok` and `agents-review-grok` jobs |
+| `service-agents-grok` | `service-agents` plus `kv/data/disinto/bots/dev-grok` and `kv/data/disinto/bots/review-grok` (2026-10-03); the policy of the `agents-dev-grok` and `agents-review-grok` jobs Those jobs were removed on 2026-11-01; the policy stays for a restore. |
 | `service-dispatcher` | `kv/data/disinto/runner/*` (list+read) + `kv/data/disinto/shared/ops-repo/*` (read); was used by the edge job's `dispatcher` task (S5.1, #988) — task removed in #1184, role/policy retained but currently unused |
 | `service-healer` | `kv/data/disinto/notify/telegram` (read); the policy of the `healer` Nomad job (Telegram bot token + chat id; message-the-owner-on-failure, #1955) |
-| `bot-<role>` (dev, review, gardener, architect, planner, predictor, supervisor, vault, dev-qwen, filer) | `kv/data/disinto/bots/<role>/*` + `kv/data/disinto/shared/forge/*`; `bot-architect` is the policy of the `agents-architect-grok` job (#1912) |
+| `bot-<role>` (dev, review, gardener, architect, planner, predictor, supervisor, vault, dev-qwen, filer) | `kv/data/disinto/bots/<role>/*` + `kv/data/disinto/shared/forge/*`; `bot-architect` is the policy of the `agents-architect-grok` job (#1912; removed 2026-11-01) |
 | `runner-<TOKEN>` (GITHUB\_TOKEN, CODEBERG\_TOKEN, CLAWHUB\_TOKEN, DEPLOY\_KEY, NPM\_TOKEN, DOCKER\_HUB\_TOKEN, SSH\_KEY, SSH\_KNOWN\_HOSTS) | `kv/data/disinto/runner/<TOKEN>` (exactly one). SSH\_KEY / SSH\_KNOWN\_HOSTS are files, not env. |
 | `dispatcher` | `kv/data/disinto/runner/*` + `kv/data/disinto/shared/ops-repo/*` |
 

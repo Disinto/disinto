@@ -20,9 +20,8 @@
 #   3. DEV_ESCALATE_TO unset, rc 124: re-queue at attempts 0–1, block at 2
 #   4. DEV_ESCALATE_TO=dev-grok-bot, login dev-grok-bot: today's behaviour
 #   5. subtype error_max_turns without rc 124: today's behaviour
-#   6. agents-dev-qwen.hcl sets DEV_ESCALATE_TO = "dev-grok-bot"
-#      (nomad job validate of nomad/jobs/*.hcl is the CI step; this test
-#      needs no nomad binary)
+#   (AC 6 pinned DEV_ESCALATE_TO = "dev-grok-bot" in agents-dev-qwen.hcl;
+#   it was dropped when the Grok agents were removed on 2026-11-01.)
 #
 # Run via: tools/run-acceptance.sh 1986
 # Contract: executable bash, set -euo pipefail, exit 0, last stdout line PASS.
@@ -38,9 +37,7 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 source "$REPO_ROOT/tests/lib/acceptance-no-push-harness.sh"
 
 TARGET="$REPO_ROOT/dev/dev-agent.sh"
-JOBSPEC="$REPO_ROOT/nomad/jobs/agents-dev-qwen.hcl"
 ac_assert_file "$TARGET" "dev/dev-agent.sh must exist"
-ac_assert_file "$JOBSPEC" "nomad/jobs/agents-dev-qwen.hcl must exist"
 
 ac_require_cmd bash jq
 
@@ -293,19 +290,5 @@ ac_has_call_matching "issue_block ${ISSUE} no_push_after_3_attempts " \
   || ac_fail "no_result attempt 2 must block, got: ${CALLS[*]:-nothing}"
 assert_no_patch
 ac_log "AC 5c OK"
-
-# ── 6. the Qwen jobspec names the escalation target ──────────────────────────
-ac_log "AC 6: agents-dev-qwen.hcl sets DEV_ESCALATE_TO = dev-grok-bot"
-grep -Eq 'DEV_ESCALATE_TO[[:space:]]*=[[:space:]]*"dev-grok-bot"' "$JOBSPEC" \
-  || ac_fail 'jobspec must set DEV_ESCALATE_TO = "dev-grok-bot"'
-# The one-line comment names this issue. nomad job validate runs in CI
-# (.woodpecker/nomad-validate.yml) over every nomad/jobs/*.hcl.
-grep -F '#1986' "$JOBSPEC" >/dev/null \
-  || ac_fail "jobspec comment must name #1986"
-# The Grok job must not escalate to itself.
-if grep -Eq 'DEV_ESCALATE_TO[[:space:]]*=' "$REPO_ROOT/nomad/jobs/agents-dev-grok.hcl"; then
-  ac_fail "agents-dev-grok.hcl must leave DEV_ESCALATE_TO unset"
-fi
-ac_log "AC 6 OK"
 
 ac_pass

@@ -75,9 +75,8 @@ formulas change.
 ```bash
 # All jobs running?
 # Expected: agents-dev-qwen, agents-review-qwen, agents-gardener-qwen,
-#           agents-supervisor-opus, agents-dev-grok, agents-review-grok,
-#           edge, forgejo, staging, vault-runner, woodpecker-agent,
-#           woodpecker-server
+#           agents-supervisor-opus, edge, forgejo, healer, staging,
+#           vault-runner, woodpecker-agent, woodpecker-server
 nomad job status
 
 # Factory status summary?

@@ -78,9 +78,11 @@ job "staging" {
         read_only   = true
       }
 
+      # Reserves 128 (49 MiB idle, 2026-11-01); memory_max is the hard cap.
       resources {
-        cpu    = 100
-        memory = 256
+        cpu        = 100
+        memory     = 128
+        memory_max = 256
       }
     }
   }

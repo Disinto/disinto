@@ -12,7 +12,7 @@ see issues #821–#992 for the step breakdown.
 
 | File/Dir | Deployed to | Owned by |
 |---|---|---|
-| `nomad/server.hcl` | /etc/nomad.d/server.hcl | agent role, bind, ports, `data_dir` (S0.2) |
+| `nomad/server.hcl` | /etc/nomad.d/server.hcl | agent role, bind, ports, `data_dir` (S0.2); memory oversubscription on (`default_scheduler_config`, 2026-11-01) |
 | `nomad/client.hcl` | /etc/nomad.d/client.hcl | Docker driver cfg + `host_volume` declarations (S0.2); `allow_privileged = true` for woodpecker-agent Docker-in-Docker (S3-fix-5, #961) |
 | `nomad/vault.hcl`  | /etc/vault.d/vault.hcl  | Vault storage, listener, UI, `disable_mlock` (S0.3; install-time capability check flips it to `true` when the host's bounding set lacks CAP_IPC_LOCK, #1285) |
 | `nomad/jobs/forgejo.hcl` | submitted via `lib/init/nomad/deploy.sh` | Forgejo job; reads creds from Vault via consul-template stanza (S2.4) |
@@ -26,10 +26,6 @@ see issues #821–#992 for the step breakdown.
 | `nomad/jobs/agents-dev-qwen.hcl` | submitted via `lib/init/nomad/deploy.sh` | Per-role agent job running the `dev` role against the local Qwen model; one role per job keeps the llama slot count a property of the deployment (S4 split, #1123, #1125); carries the Porter-door env vars (`PORTER_SSH_TARGET`, `PORTER_JEV_KEY`, `PORTER_JEV_KNOWN_HOSTS`) — kept for `tools/jev-scope.sh`, but no longer called by the `dev` role since #1632 (Jev reading dropped from the tape context) — key on the agent-data volume, no API key in the job (AD-005) |
 | `nomad/jobs/agents-review-qwen.hcl` | submitted via `lib/init/nomad/deploy.sh` | Per-role agent job running the `review` role against the local Qwen model; one role per job keeps the llama slot count a property of the deployment (S4 split, #1123, #1125) |
 | `nomad/jobs/agents-gardener-qwen.hcl` | submitted via `lib/init/nomad/deploy.sh` | Per-role agent job running the `gardener` role against the local Qwen model; one role per job keeps the llama slot count a property of the deployment (S4 split, #1123, #1125) |
-| `nomad/jobs/agents-architect-grok.hcl` | `nomad job run` by hand, like agents-dev-grok | The `architect` role alone, on Grok 4.7 (xAI) through the dsh harness, set up as agents-dev-grok: its own xAI OAuth grant in its DSH_HOME, data dir `/srv/disinto/agent-data-grok/architect`. Forge identity `architect-bot` (`kv/disinto/bots/architect`); Vault role and policy `bot-architect`, which read only that path and the shared forge config. No tape volume: an undecided pitch serves no proposal (#1912) |
-| `nomad/jobs/agents-planner-grok.hcl` | in the repo only | The `planner` role alone, on Grok 4.7 through the dsh harness, set up as agents-architect-grok: data dir `/srv/disinto/agent-data-grok/planner`. Forge identity `planner-bot` (`kv/disinto/bots/planner`); Vault role and policy `bot-planner`, job_id `agents-planner-grok`. No tape volume. |
-| `nomad/jobs/agents-dev-grok.hcl` | `nomad job run` by hand (2026-10-03) | A second `dev` agent beside agents-dev-qwen, on Grok 4.7 (xAI) through the dsh harness: its DSH_HOME settings route to the `xai` provider, signed in with its own xAI OAuth grant (`.credentials.yaml`). Own forge user `dev-grok-bot`, so dev-poll's assignee checks keep the two dev agents apart; own data dir `/srv/disinto/agent-data-grok/dev`, bind-mounted (no host_volume); Vault role `agents-dev-grok`, policy `service-agents-grok` |
-| `nomad/jobs/agents-review-grok.hcl` | `nomad job run` by hand (2026-10-03) | A second `review` agent on Grok 4.7, set up as agents-dev-grok; posts reviews as `review-grok-bot`. `REVIEW_ONLY_AUTHORS = "dev-grok-bot disinto-admin"` limits it to the Grok dev's and the owner's PRs; data dir `/srv/disinto/agent-data-grok/review` |
 | `nomad/jobs/agent-logs-rotate.hcl` | submitted via `lib/init/nomad/deploy.sh` | Periodic log-rotation job; daily 03:30 UTC copytruncate rotation of `*.log` under `/srv/disinto/agent-data*/` (>50MB, 5 gzip generations, safe for O_APPEND writers) via `bin/agent-log-rotate.sh` on raw_exec (#1195). |
 | `nomad/jobs/healer.hcl` | deployed by hand (`nomad job run`) | runs `bin/healer.sh` on the host: restarts allocations to heal faults; the only job that does (#1951). Telegram secret from `kv/disinto/notify/telegram` (role `service-healer`). `unfixable[url]` in `state.json` is a soft flag — a recheck that finds the backend unhealthy clears it so the public-endpoint pass can restart it (tests/acceptance/issue-1990.sh); the per-tick restart budget `HEALER_MAX_RESTARTS=3` is shared by the service-reregister and endpoint passes; service health is read from Nomad 1.9 service registrations. |
 | `nomad/jobs/vault-runner.hcl` | submitted via `lib/init/nomad/deploy.sh` | Vault runner job; executes Vault operations with scoped credentials. |
@@ -72,6 +68,12 @@ convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
    over `nomad/jobs/*.hcl` and validates every match. Just make sure
    the existing `nomad/**` trigger path still covers your file (it
    does for anything under `nomad/jobs/`).
+5. Size memory as a reservation plus a cap: `memory` is what the
+   scheduler reserves (what the task uses at rest), `memory_max` the
+   hard limit it may grow to. Oversubscription is on in
+   `nomad/server.hcl`. The node's capacity is the box's memory limit, so
+   reserving every task's cap leaves no room to place anything.
+   raw_exec tasks (healer, the edge snapshot) keep a single `memory`.
 
 ## How CI validates these files
 

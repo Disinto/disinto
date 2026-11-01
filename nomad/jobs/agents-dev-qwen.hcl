@@ -245,8 +245,8 @@ job "agents-dev-qwen" {
         # constraint was steps, not information. CLAUDE_TIMEOUT still caps the
         # session at 2h.
         CLAUDE_MAX_TURNS   = "100"
-        # A wall-clock timeout hands the issue to the Grok dev agent (#1986).
-        DEV_ESCALATE_TO    = "dev-grok-bot"
+        # DEV_ESCALATE_TO (#1986) is unset: the Grok dev agent it named was
+        # removed on 2026-11-01, so a wall-clock timeout re-queues as before.
         # Per-organ cadence scheduler (#1388): the loop paces organs on their
         # own intervals (GARDENER_INTERVAL / ARCHITECT_INTERVAL /
         # PLANNER_INTERVAL / SUPERVISOR_INTERVAL).
@@ -384,9 +384,13 @@ EOT
       }
 
       # Agents run Claude/llama sessions — need CPU + memory headroom.
+      # The scheduler reserves `memory` (an idle agent uses under 100 MiB);
+      # `memory_max` is the hard cap a session can grow to (oversubscription,
+      # nomad/server.hcl).
       resources {
-        cpu    = 500
-        memory = 2048
+        cpu        = 500
+        memory     = 512
+        memory_max = 2048
       }
     }
   }

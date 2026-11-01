@@ -324,9 +324,13 @@ EOT
       }
 
       # Agents run Claude/llama sessions — need CPU + memory headroom.
+      # The scheduler reserves `memory` (an idle agent uses under 100 MiB);
+      # `memory_max` is the hard cap a session can grow to (oversubscription,
+      # nomad/server.hcl).
       resources {
-        cpu    = 500
-        memory = 1024
+        cpu        = 500
+        memory     = 256
+        memory_max = 1024
       }
     }
   }

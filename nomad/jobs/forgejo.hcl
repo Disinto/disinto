@@ -190,10 +190,12 @@ EOT
       # 1024 MiB (2026-10-04, was 512). With six agents, the gardener, the
       # supervisor and the edge collectors polling it, Forgejo sat at its
       # 512 MiB limit: API calls took 15-50 s and SQL queries were logged
-      # as slow.
+      # as slow. 1024 stays the hard cap (memory_max); 512 is reserved since
+      # 2026-11-01 (285 MiB in use with three agents).
       resources {
-        cpu    = 300
-        memory = 1024
+        cpu        = 300
+        memory     = 512
+        memory_max = 1024
       }
     }
   }

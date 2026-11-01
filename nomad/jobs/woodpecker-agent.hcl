@@ -163,9 +163,12 @@ EOT
 
       # Baseline — tune once we have real usage numbers under nomad.
       # Conservative limits so an unhealthy agent can't starve the node.
+      # Reserves 64 (25 MiB idle, 2026-11-01); memory_max is the hard cap.
+      # Pipeline containers start through docker.sock, outside this task.
       resources {
-        cpu    = 200
-        memory = 256
+        cpu        = 200
+        memory     = 64
+        memory_max = 256
       }
     }
   }
