@@ -4,6 +4,9 @@ From the owner's direction of 2026-10-07, with the owner's decisions of the
 same day (end of this note); this note is the detail behind
 `proposal-loop.md` §8. The vision gives the goal. The organs need to
 know what they can touch, so they can propose the next step toward it.
+Amended by the owner on 2026-11-01: disinto supports many models, and
+which model an organ runs on is a deployment choice. Grok stays a
+supported provider but is not in use.
 
 ## Capabilities are claims
 
@@ -117,8 +120,8 @@ Expert in the future: what will break, and what we believe wrongly.
 - **Targets:**
   - claims whose last value sits close to `expect`;
   - claims held for a long time without an experiment against them;
-  - resources trending toward exhaustion: disk, memory, Grok quota,
-    llama slots;
+  - resources trending toward exhaustion: disk, memory, per-provider
+    model quotas, local model-server capacity;
   - single points of failure: one Vault root token file, one gardener,
     one runner host.
 - **Proposals:** `experiment` sprints whose children are vault actions
@@ -150,9 +153,10 @@ experiment-sprint pitches and claim drafts.
 First experiments the factory can run on itself before it has arms.
 Each is a reversible change to the live factory through the vault gate:
 
-- the Qwen dev's thinking budget (4096 against a lower value): merge
-  time and stuck rate;
-- the split of backlog work between the Grok and Qwen devs;
+- a thinking budget on the local model (none since 2026-11-01, against
+  a cap): merge time and stuck rate;
+- the split of backlog work between devs on different models (needs a
+  second provider switched on);
 - whether shellcheck scoped to changed files changes `dev-ci-first-green`.
 
 ## Resources
@@ -162,10 +166,12 @@ the empty `RESOURCES.md` template. For each resource it records the
 kind, host, capacity, the probe that reads current use, and the cost or
 owner. Live resources today:
 
-- llama-server slots (disinto is capped at 2 of 4);
-- the xAI grants;
+- the local model server (Strata on the host, uncapped since
+  2026-11-01);
+- hosted-model grants, one per provider and agent (none in use since
+  2026-11-01; xAI's Grok is supported);
 - CI workflows (3);
-- node memory (12 GiB);
+- node memory (8 GiB);
 - your review time.
 
 A pitch declares its expected use. The supervisor watches utilization
@@ -233,15 +239,20 @@ including the capability rungs: the planner develops its own arms.
    the claims, the capability claims and resources. It pitches the
    lowest missing rung, the next vision step, or an access request, or
    nothing. The prose tree is retired.
-   - runs on Grok, deployed only after the 2026-10-12 readout
+   - runs on the model its deployment chooses (below); deployed only
+     after the readout planned for 2026-10-12, not yet held
    - effect: a planner-authored pitch decided within 14 days; it should
      be rung 1, sense
 3. **The predictor experiments.** Targets, interventions through the
    vault gate, the budget, claim drafts.
    - written once the planner shows the gate works
 
-The organs run on Grok: they run rarely, their reasoning matters, and it
-keeps them off the 2 llama slots.
+An organ's model is a deployment choice, not part of its design: dsh
+routes a job to any provider its settings declare (the local model,
+xAI's Grok, and others). The organs suit a stronger model when one is
+available, because they run rarely and their reasoning matters. Since
+2026-11-01 no hosted provider is in use, so they run on the local
+model.
 
 ## Open questions
 
