@@ -49,7 +49,8 @@ and executes the pending-actions manifest post-merge.
   After the refresh, `tools/sprint-outcomes.sh` (#1676) writes the outcome of
   each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), or,
   with effect `none`, from whether a child failed. A failure only logs a
-  warning.
+  warning. While `${TAPE_DIR}/sprints/HOLD` exists it writes nothing (a hold
+  set by hand).
   It also returns an open sprint at once when a child's last outcome is signed
   with one of `SPRINT_RETURN_SIGNATURES` (default `design-conflict`), and takes
   `backlog` off the milestone's open issues (#1622).

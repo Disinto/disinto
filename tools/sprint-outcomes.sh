@@ -56,6 +56,13 @@
 #         and duration_s = now minus the mtime of the id file.
 #       * Touch ${TAPE_DIR}/sprints/<N>.done only after the append succeeds.
 #
+# A hold stops all of it: while ${TAPE_DIR}/sprints/HOLD exists, the tool
+# logs one line and exits 0 without reading the due list, returning a
+# sprint or appending anything. It is set and removed by hand, for when
+# the effect probes would read the wrong window (2026-11-01: the soaks of
+# sprints 2-6 ended while the box was off, and the probes read the last N
+# days from now).
+#
 # The gardener calls this right after refresh_ops_calibration
 # (gardener/gardener-run.sh); a non-zero exit only logs a warning.
 #
@@ -761,6 +768,12 @@ _sprint_one() {
   log "sprint ${n}: outcome written (effect ${met}, ${children})"
   return 0
 }
+
+# The hold (see the header): nothing is read or written while it exists.
+if [ -e "${SPRINTS_DIR}/HOLD" ]; then
+  log "on hold (${SPRINTS_DIR}/HOLD exists): no sprint verdicts this run"
+  exit 0
+fi
 
 failed=0
 # A design conflict returns the sprint before any soak verdict (#1622). A
