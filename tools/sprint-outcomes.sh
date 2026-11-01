@@ -47,7 +47,13 @@
 #       * children: the JSON printed by tools/sprint-children.sh <sprint id>
 #         (#1674) — {"n_children", n_merged, n_rejected, n_failed}.
 #       * effect a path: value="$(probe_value "<effect>")" (lib/probe.sh,
-#         #1673). A non-zero return: one log line, no outcome this run. Then
+#         #1673), run over the sprint's own soak window (#2020): PROBE_UNTIL
+#         = the epoch seconds at the soak's end (the integer epoch in
+#         ${SPRINTS_DIR}/<N>.soak plus the soak seconds), PROBE_WINDOW_S =
+#         the soak seconds, PROBE_WINDOW_DAYS = those seconds rounded up to
+#         days, at least 1. A missing or non-integer <N>.soak, or a
+#         non-integer soak: one log line, no outcome this run. A non-zero
+#         probe return: one log line, no outcome this run. Then
 #         sprint_expect_met "<value>" "<expect>": rc 0 -> met 1, rc 1 -> met 0,
 #         rc 2 -> one log line, no outcome.
 #       * effect `none` or missing: met 1 when n_failed is 0, else 0.
@@ -650,7 +656,7 @@ _sprint_one() {
   local description effect expect
   local children n_failed
   local value probe_rc expect_rc met numbers_json duration_s epoch
-  local done_file
+  local done_file soak_s soak_start soak_days
 
   id_file="${SPRINTS_DIR}/${n}"
   done_file="${SPRINTS_DIR}/${n}.done"
@@ -700,10 +706,22 @@ _sprint_one() {
   met=
   numbers_json=""
   if [[ "$effect" != "none" && -n "$effect" ]]; then
-    # A probe path. The probe's own reason line goes to stderr; this tool's
+    # A probe path. The probe reads the sprint's own soak window, not its
+    # default up to now (#2020): the soak started at the epoch written to
+    # <N>.soak by tools/sprint-due.sh and ran for the soak's seconds. Same
+    # shape tools/claim-checks.sh uses for a claim's window.
+    soak_s="$(sprint_soak_seconds "$description")"
+    soak_start="$(tr -d '[:space:]' <"${SPRINTS_DIR}/${n}.soak" 2>/dev/null || true)"
+    if ! [[ "$soak_start" =~ ^[0-9]+$ ]] || ! [[ "$soak_s" =~ ^[0-9]+$ ]]; then
+      log "sprint ${n}: soak window unknown — no outcome this run"
+      return 0
+    fi
+    soak_days=$(( (soak_s + 86399) / 86400 ))
+    [[ "$soak_days" -lt 1 ]] && soak_days=1
+    # The probe's own reason line goes to stderr; this tool's
     # one log line goes here (stdout).
     probe_rc=0
-    value="$(probe_value "$effect" 2>"$reason_file")" || probe_rc=$?
+    value="$(export PROBE_UNTIL=$((soak_start + soak_s)) PROBE_WINDOW_S="$soak_s" PROBE_WINDOW_DAYS="$soak_days"; probe_value "$effect" 2>"$reason_file")" || probe_rc=$?
     reason="$(head -n 1 "$reason_file" 2>/dev/null || true)"
     rm -f "$reason_file"
     if [ "$probe_rc" -ne 0 ]; then

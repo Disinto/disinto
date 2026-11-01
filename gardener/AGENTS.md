@@ -47,8 +47,9 @@ and executes the pending-actions manifest post-merge.
   Then through `tools/calibration-purpose.sh` (#1652), which appends a
   `purpose` column from grades.
   After the refresh, `tools/sprint-outcomes.sh` (#1676) writes the outcome of
-  each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), or,
-  with effect `none`, from whether a child failed. A failure only logs a
+  each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), run
+  over the soak window (`PROBE_UNTIL` = the soak's end), or, with effect
+  `none`, from whether a child failed. A failure only logs a
   warning. While `${TAPE_DIR}/sprints/HOLD` exists it writes nothing (a hold
   set by hand).
   It also returns an open sprint at once when a child's last outcome is signed
