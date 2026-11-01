@@ -105,7 +105,8 @@ STUB
 }
 
 # Render a Nomad jobspec by invoking the real helper with the CLIs stubbed.
-# $1 = harness ("" exercises the helper's default), $2 = context window.
+# $1 = harness ("" exercises the helper's default), $2 = context window,
+# $3 = provider ("" means the --provider flag was not given, #2005).
 # The helper calls `exit` on its refusal path, which terminates the subshell
 # — capture the subshell's status from outside it, and always return 0 so the
 # caller can assert on rc rather than aborting the test.
@@ -116,7 +117,7 @@ _render_nomad() {
     source "$HIRE_LIB" 2>/dev/null
     disinto_hire_an_agent_nomad \
       "labbot" "dev" "http://10.0.0.1:8081" "qwen" "300" "lab" "tok" "pw" \
-      "${1:-}" "${2:-}" \
+      "${1:-}" "${2:-}" "${3:-}" \
       >"$TMP/stdout" 2>"$TMP/stderr"
   ) || rc=$?
   echo "${rc:-0}" > "$TMP/rc"
@@ -343,6 +344,50 @@ TOML
   _render_nomad dsh 200000
   [ "$(cat "$TMP/rc")" = "0" ]
   grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"200000"' "$JOBSPEC_OUT"
+}
+
+# ── --provider (#2005) ────────────────────────────────────────────────────────
+
+@test "--provider xai emits DSH_PROVIDER on the line right after DSH_BASE_URL" {
+  _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+  _render_nomad dsh 100000 xai
+  [ "$(cat "$TMP/rc")" = "0" ]
+  # exactly once
+  [ "$(grep -Ec 'DSH_PROVIDER' "$JOBSPEC_OUT")" = "1" ]
+  grep -Eq 'DSH_PROVIDER[[:space:]]*=[[:space:]]*"xai"' "$JOBSPEC_OUT"
+  # directly after DSH_BASE_URL
+  awk '/DSH_BASE_URL/ { getline; exit !/^        DSH_PROVIDER        = "xai"$/ }' "$JOBSPEC_OUT"
+}
+
+@test "without --provider the jobspec has no DSH_PROVIDER and stays byte-identical" {
+  _stub_vault_ok
+  unset FORGE_REPO FACTORY_REPO CLAUDE_TIMEOUT CLAUDE_MAX_TURNS CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+  _render_nomad dsh
+  [ "$(cat "$TMP/rc")" = "0" ]
+  ! grep -q 'DSH_PROVIDER' "$JOBSPEC_OUT"
+  cmp -s "$JOBSPEC_OUT" "$FIXTURES/jobspec-default.hcl"
+}
+
+@test "--provider with --harness claude is refused before any side effect" {
+  _stub_vault_ok
+  _run_hire "testbot" "dev" \
+    --local-model "http://10.0.0.1:8081" --model qwen --harness claude --provider xai
+  [ "$(cat "$TMP/hire-rc")" != "0" ]
+  grep -q -- "--provider" "$TMP/hire-stderr"
+  # ... nothing was rendered or deployed, and nothing hit the projects dir.
+  [ ! -s "$NOMAD_CALLS" ]
+  [ -z "$(ls -A "$FACTORY_ROOT/projects")" ]
+}
+
+@test "--provider with a name outside ^[a-z0-9-]+$ is refused" {
+  _stub_vault_ok
+  _run_hire "testbot" "dev" \
+    --local-model "http://10.0.0.1:8081" --model qwen --harness dsh --provider '../x'
+  [ "$(cat "$TMP/hire-rc")" != "0" ]
+  grep -q -- "--provider" "$TMP/hire-stderr"
+  [ ! -s "$NOMAD_CALLS" ]
+  [ -z "$(ls -A "$FACTORY_ROOT/projects")" ]
 }
 
 @test "dsh compose service emits dsh's settings-form environment and no CLAUDE_* tuning" {
