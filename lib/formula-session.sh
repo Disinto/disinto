@@ -451,6 +451,28 @@ formula_tape_ulid() {
   printf '%s' "$out"
 }
 
+# formula_tape_agent — the run's agent string, <harness>/<model>. A dsh
+# agent on the local provider (DSH_PROVIDER unset or llamacpp) records the
+# model its server says it serves (first id of GET $DSH_BASE_URL/models):
+# the server ignores the request's model name, so CLAUDE_MODEL can name a
+# model that no longer runs (on 2026-11-01 runs said Qwen3.8-27B while
+# Strata served Qwen3.8-Flash-Next). Falls back to CLAUDE_MODEL when the
+# server does not answer; the harness alone when neither is known.
+formula_tape_agent() {
+  local harness="${AGENT_HARNESS:-dsh}" model="${CLAUDE_MODEL:-}" served=""
+  if [ "$harness" = dsh ] && [ "${DSH_PROVIDER:-llamacpp}" = llamacpp ] \
+    && [ -n "${DSH_BASE_URL:-}" ]; then
+    served=$(curl -sf -m 5 "${DSH_BASE_URL%/}/models" 2>/dev/null \
+      | jq -r '.data[0].id // empty' 2>/dev/null) || served=""
+  fi
+  [ -n "$served" ] && model="$served"
+  if [ -n "$model" ]; then
+    printf '%s/%s' "$harness" "$model"
+  else
+    printf '%s' "$harness"
+  fi
+}
+
 # formula_session_start [ORGAN]
 # Opens the tape run record for the current formula session, when the session
 # serves a proposal:
@@ -459,7 +481,8 @@ formula_tape_ulid() {
 #     exist only under a proposal; a missing proposal row is an orphan run,
 #     not a new proposal)
 #   - organ = $1 (default "organ"), agent = <harness>/<model>
-#     (AGENT_HARNESS, default dsh, + CLAUDE_MODEL when set)
+#     (formula_tape_agent: the served model for a local dsh agent, else
+#     CLAUDE_MODEL when set)
 # With $TAPE_PROPOSAL_ID unset the session is a metric, not a run: nothing
 # is appended to the tape and _FORMULA_TAPE_ACTIVE is left at 0, so
 # formula_session_end is a no-op — the cost is already recorded in
@@ -480,8 +503,7 @@ formula_session_start() {
   [ -n "$run_id" ] || run_id="run-$$-$(date -u +%s)"
   proposal="$TAPE_PROPOSAL_ID"
   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  agent="${AGENT_HARNESS:-dsh}"
-  [ -n "${CLAUDE_MODEL:-}" ] && agent="${agent}/${CLAUDE_MODEL}"
+  agent=$(formula_tape_agent)
 
   _FORMULA_TAPE_ACTIVE=1
   _FORMULA_TAPE_RUN_ID="$run_id"
