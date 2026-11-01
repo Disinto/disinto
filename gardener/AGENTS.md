@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5bcdcc174a7ae95c1bbcf019e644c36264f37973 -->
+<!-- last-reviewed: c9e000b17b36dbb541bdf9790eb9c2d7aecc557f -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -88,7 +88,12 @@ and executes the pending-actions manifest post-merge.
   grooming steps as one JSON object per line.
 - `gardener/pending-actions.json` — Final manifest (JSON array) committed to the PR,
   reviewed alongside AGENTS.md changes, executed by gardener-run.sh after merge.
-  Converted from JSONL at commit time.
+  Converted from JSONL at commit time. `edit_body` PATCHes `{"body": …}`, i.e. it
+  **replaces** the issue body: the `body` field must be the complete new body — the
+  issue's current body verbatim plus the appended sections — never a fragment, or the
+  merge deletes the original description. Build those strings with `jq --arg` or a
+  single-quoted heredoc; a double-quoted shell string interpolates `$dsh_home`,
+  `$DSH_HOME` and `$seed` out of the text before it ever reaches the manifest.
 
 **Shared libraries** (sourced by gardener-run.sh):
 - `lib/formula-session.sh` — Formula loading (`load_formula_or_profile`), context
