@@ -159,6 +159,30 @@ ac_pick_in_subshell() {
   ' 2>&1
 }
 
+# ac_dsh_seed_block <entrypoint-file> — print the dsh provider-settings seeding
+# block of docker/agents/entrypoint.sh: from its '# dsh provider settings'
+# comment line to the next blank line. Shared by the dsh seeding tests
+# (issue-2004.sh, issue-2010.sh) so the extractor is not copy-pasted into each
+# one (duplicate-detection, #1134).
+ac_dsh_seed_block() {
+  local entrypoint="$1"
+  ac_assert_file "$entrypoint" "docker/agents/entrypoint.sh must exist"
+  awk '
+    /^# dsh provider settings/ { in_block = 1 }
+    in_block && /^[[:space:]]*$/ { exit }
+    in_block { print }
+  ' "$entrypoint"
+}
+
+# ac_dsh_seed_fixtures <dir> — write two fake provider-settings templates into
+# <dir>: settings-llamacpp.yaml carrying the __DSH_BASE_URL__ placeholder, and
+# settings-xai.yaml without one. Shared by the dsh seeding tests.
+ac_dsh_seed_fixtures() {
+  local dir="$1"
+  printf 'provider: llamacpp\nbaseURL: __DSH_BASE_URL__\n' > "$dir/settings-llamacpp.yaml"
+  printf 'provider: xai\nbaseURL: https://api.x.ai/v1\n' > "$dir/settings-xai.yaml"
+}
+
 # ac_has_call_matching <pattern> — return 0 if any element of the test's
 # global CALLS array contains <pattern> as a substring.
 # shellcheck disable=SC2154  # CALLS is defined by the sourcing test

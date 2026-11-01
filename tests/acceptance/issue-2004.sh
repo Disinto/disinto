@@ -10,10 +10,10 @@
 # a plain [a-z0-9-] name, or whose template is missing, warns on stderr and
 # seeds nothing. An existing settings.yaml is never overwritten.
 #
-# The test extracts the seeding block from the entrypoint (from its
-# '# dsh provider settings' comment line to the next blank line) and runs it
-# in a throwaway subshell with DSH_HOME and DSH_SEED_DIR in temp dirs holding
-# fake templates. No docker, no network.
+# The test extracts the seeding block from the entrypoint with the shared
+# ac_dsh_seed_block helper and runs it in a throwaway subshell with DSH_HOME and
+# DSH_SEED_DIR in temp dirs holding fake templates from ac_dsh_seed_fixtures.
+# No docker, no network.
 #
 # Run via: tools/run-acceptance.sh 2004
 # =============================================================================
@@ -25,24 +25,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash grep awk sed cmp
+ac_require_cmd bash sed cmp
 
-ENTRYPOINT="$REPO_ROOT/docker/agents/entrypoint.sh"
-ac_assert_file "$ENTRYPOINT" "docker/agents/entrypoint.sh must exist"
-
-# ── Extract the seeding block: comment line up to the next blank line ────────
-BLOCK="$(awk '
-  /^# dsh provider settings/ { in_block = 1 }
-  in_block && /^[[:space:]]*$/ { exit }
-  in_block { print }
-' "$ENTRYPOINT")"
+# The seeding-block extractor and the fake provider templates are shared helpers
+# in tests/lib/acceptance-helpers.sh (issue-2010.sh uses the same pair), so
+# neither is copy-pasted into each test (duplicate-detection, #1134).
+BLOCK="$(ac_dsh_seed_block "$REPO_ROOT/docker/agents/entrypoint.sh")"
 [ -n "$BLOCK" ] || ac_fail "could not extract the seeding block from docker/agents/entrypoint.sh"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-printf 'provider: llamacpp\nbaseURL: __DSH_BASE_URL__\n' > "$TMP_DIR/settings-llamacpp.yaml"
-printf 'provider: xai\nbaseURL: https://api.x.ai/v1\n' > "$TMP_DIR/settings-xai.yaml"
+ac_dsh_seed_fixtures "$TMP_DIR"
 
 # run_block <home-dir> <provider> — run the extracted block with an empty
 # provider meaning unset. Exit status lands in run_rc, stderr in err.log.
@@ -95,7 +88,7 @@ cmp -s "$TMP_DIR/home5/settings.yaml" <(printf 'operator customisation\n') \
   || ac_fail "AC5: an existing settings.yaml must never be overwritten"
 
 ac_log "AC6: bash -n passes and issue-1682 still passes"
-bash -n "$ENTRYPOINT" || ac_fail "bash -n docker/agents/entrypoint.sh failed"
+bash -n "$REPO_ROOT/docker/agents/entrypoint.sh" || ac_fail "bash -n docker/agents/entrypoint.sh failed"
 rc1682=0
 out1682="$(bash "$REPO_ROOT/tests/acceptance/issue-1682.sh")" || rc1682=$?
 ac_assert_eq "$rc1682" "0" "issue-1682.sh must still pass (got: $out1682)"

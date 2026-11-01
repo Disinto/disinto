@@ -112,6 +112,16 @@ dsh_provider="${DSH_PROVIDER:-llamacpp}"
 if [ "${AGENT_HARNESS:-dsh}" = "dsh" ] && [ ! -f "$dsh_home/settings.yaml" ]; then
   if [[ "$dsh_provider" =~ ^[a-z0-9-]+$ ]] \
     && [ -f "$dsh_seed_dir/settings-$dsh_provider.yaml" ]; then
+    # #2010: create $dsh_home before the redirect. A custom DSH_HOME on a
+    # Nomad host volume (or a mount that failed to init) does not exist yet,
+    # and under `set -euo pipefail` the failed redirect aborts the entrypoint
+    # before the poll loop starts. lib/dsh-seed.sh does the same mkdir; the
+    # entrypoint runs as root, so the fresh dir is also handed to the agent
+    # user (the umask above makes it 0700, which uid 1000 could not write).
+    # Both are guarded: an unwritable mount warns-free here and the sed below
+    # still fails loudly if the directory genuinely cannot be written.
+    mkdir -p "$dsh_home" 2>/dev/null || true
+    chown agent:agent "$dsh_home" 2>/dev/null || true
     sed "s|__DSH_BASE_URL__|${DSH_BASE_URL:-http://10.10.10.1:8081/v1}|" \
       "$dsh_seed_dir/settings-$dsh_provider.yaml" > "$dsh_home/settings.yaml"
     chown agent:agent "$dsh_home/settings.yaml" 2>/dev/null || true
