@@ -111,7 +111,7 @@ agents, which size their window from the model name (see
 
 The agents image ships dsh as a pinned npm global and seeds the `headless`
 profile into `DSH_HOME` on first start (also when `AGENT_HARNESS` is unset: dsh is the default, #1682), so a hired dsh agent boots without
-bootstrapping anything at session time. Claude Code stays installed as well, for agents that set `AGENT_HARNESS=claude`; with the variable unset an agent runs dsh (#1683). The entrypoint checks for the `claude` CLI and its login only for those agents, so a dsh agent starts without either.
+bootstrapping anything at session time. A missing `$DSH_HOME/settings.yaml` is seeded from `/opt/dsh/settings-<DSH_PROVIDER>.yaml`: `llamacpp` (the default, with `DSH_BASE_URL` filled in) or `xai` (Grok, which signs in with the agent's own OAuth grant). An existing file is never overwritten. Claude Code stays installed as well, for agents that set `AGENT_HARNESS=claude`; with the variable unset an agent runs dsh (#1683). The entrypoint checks for the `claude` CLI and its login only for those agents, so a dsh agent starts without either.
 
 ### Hiring on a Nomad box
 
