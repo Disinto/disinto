@@ -22,8 +22,9 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Single root derivation (no SCRIPT_DIR/REPO_ROOT bootstrap pair, so the
+# block does not mirror tools/migrate-ac-to-file.sh line-for-line).
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
   cat <<EOF
