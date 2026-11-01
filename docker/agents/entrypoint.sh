@@ -101,15 +101,23 @@ fi
 # dsh provider settings (same #1107 thread): dsh resolves its model provider
 # from $DSH_HOME/settings.yaml; the DSH_BASE_URL env alone leaves it on the
 # deepseek-official default route, which fails with MISSING_CREDENTIAL.
-# Seed the baked llama.cpp template with DSH_BASE_URL substituted; never
-# overwrite an operator-customised file. An unset harness means dsh.
+# Seed the baked template named by DSH_PROVIDER (default llamacpp), looked up
+# in ${DSH_SEED_DIR:-/opt/dsh} like lib/dsh-seed.sh does, with DSH_BASE_URL
+# substituted; never overwrite an operator-customised file. A DSH_PROVIDER
+# that is not a plain [a-z0-9-] name, or whose template is missing, warns on
+# stderr and seeds nothing. An unset harness means dsh.
 dsh_home="${DSH_HOME:-/home/agent/data/dsh}"
-if [ "${AGENT_HARNESS:-dsh}" = "dsh" ] \
-  && [ -f /opt/dsh/settings-llamacpp.yaml ] \
-  && [ ! -f "$dsh_home/settings.yaml" ]; then
-  sed "s|__DSH_BASE_URL__|${DSH_BASE_URL:-http://10.10.10.1:8081/v1}|" \
-    /opt/dsh/settings-llamacpp.yaml > "$dsh_home/settings.yaml"
-  chown agent:agent "$dsh_home/settings.yaml" 2>/dev/null || true
+dsh_seed_dir="${DSH_SEED_DIR:-/opt/dsh}"
+dsh_provider="${DSH_PROVIDER:-llamacpp}"
+if [ "${AGENT_HARNESS:-dsh}" = "dsh" ] && [ ! -f "$dsh_home/settings.yaml" ]; then
+  if [[ "$dsh_provider" =~ ^[a-z0-9-]+$ ]] \
+    && [ -f "$dsh_seed_dir/settings-$dsh_provider.yaml" ]; then
+    sed "s|__DSH_BASE_URL__|${DSH_BASE_URL:-http://10.10.10.1:8081/v1}|" \
+      "$dsh_seed_dir/settings-$dsh_provider.yaml" > "$dsh_home/settings.yaml"
+    chown agent:agent "$dsh_home/settings.yaml" 2>/dev/null || true
+  else
+    echo "WARN: DSH_PROVIDER='$dsh_provider' is not a valid provider name or has no settings-$dsh_provider.yaml template in $dsh_seed_dir; not seeding $dsh_home/settings.yaml" >&2
+  fi
 fi
 
 # Context-cap migration (80k compact): DSH_HOMEs seeded before this change
