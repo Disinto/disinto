@@ -31,6 +31,10 @@
 #   PROBE_WINDOW_DAYS and PROBE_WINDOW_S set from the claim's window; a probe
 #   reads its window from them and keeps its own default for other callers.
 #
+#   A sprint verdict (tools/sprint-outcomes.sh) runs the probe with PROBE_UNTIL
+#   (epoch seconds, the soak's end), PROBE_WINDOW_S and PROBE_WINDOW_DAYS (the
+#   soak); a probe reads the window that ends at PROBE_UNTIL, default now.
+#
 # Hermetic aside from the probe itself: bash + timeout. No network, no forge,
 # no agent, no secrets (AD-006).
 # =============================================================================
