@@ -15,7 +15,7 @@
 #   source "${FACTORY_ROOT}/lib/hire-agent.sh"
 #   disinto_hire_an_agent <agent-name> <role> [--formula <path>] [--local-model <url>]
 #     [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>]
-#     [--harness <claude|dsh>] [--context-window <tokens>]
+#     [--harness <claude|dsh>] [--context-window <tokens>] [--provider <name>]
 #
 # Authentication precedence:
 #   1. --admin-token <pat>  (explicit flag)
@@ -59,6 +59,8 @@ set -euo pipefail
 #   $9 harness     - agent harness: "dsh" (default) or "claude" (#1107)
 #   $10 context_window - dsh context window in tokens (default 100000;
 #       dsh harness only)
+#   $11 provider   - DSH_PROVIDER for the dsh jobspec (#2005); empty means
+#       the entrypoint's default (llamacpp). Ignored for the claude harness.
 disinto_hire_an_agent_nomad() {
   local agent_name="$1"
   local role="$2"
@@ -70,6 +72,7 @@ disinto_hire_an_agent_nomad() {
   local user_pass="$8"
   local harness="${9:-dsh}"
   local context_window="${10:-100000}"
+  local provider="${11:-}"
 
   local vault_name="bot-${agent_name}"
   # KV mount is kv-only (no override, #1108) — matches the hardcoded `kv/`
@@ -208,6 +211,15 @@ POLICY
         DSH_PERMISSION_MODE = "danger-full-access"
         DSH_MODEL           = "${model}"
         DSH_BASE_URL        = "${local_model}"
+ENV
+    # #2005: --provider names the settings template the entrypoint seeds
+    # (docker/agents/entrypoint.sh, #2004). The line lands right after
+    # DSH_BASE_URL and only when the flag was given — without it the
+    # jobspec stays byte-identical to the default.
+    if [ -n "$provider" ]; then
+      printf '        DSH_PROVIDER        = "%s"\n' "$provider" >> "$env_block_file"
+    fi
+    cat >> "$env_block_file" <<ENV
         DSH_CONTEXT_WINDOW  = "${context_window}"
         # settings.yaml uses apiKeyEnv indirection; llama-server ignores
         # the key but dsh requires the env to be set (#1234).
@@ -440,10 +452,11 @@ disinto_hire_an_agent() {
   local admin_pat=""
   local harness="dsh"
   local context_window="100000"
+  local provider=""
 
   if [ -z "$agent_name" ] || [ -z "$role" ]; then
     echo "Error: agent-name and role required" >&2
-    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>] [--harness <claude|dsh>] [--context-window <tokens>]" >&2
+    echo "Usage: disinto hire-an-agent <agent-name> <role> [--formula <path>] [--local-model <url>] [--model <name>] [--poll-interval <seconds>] [--admin-token <pat>] [--harness <claude|dsh>] [--context-window <tokens>] [--provider <name>]" >&2
     exit 1
   fi
 
@@ -502,6 +515,10 @@ disinto_hire_an_agent() {
         context_window="$2"
         shift 2
         ;;
+      --provider)
+        provider="$2"
+        shift 2
+        ;;
       *)
         echo "Unknown option: $1" >&2
         exit 1
@@ -521,6 +538,19 @@ disinto_hire_an_agent() {
   if ! [[ "$context_window" =~ ^[1-9][0-9]*$ ]]; then
     echo "Error: --context-window must be a positive integer of tokens (got '$context_window')" >&2
     exit 1
+  fi
+  # Validate --provider before any side effect (#2005): it is dsh-only, and
+  # its name lands verbatim in the dsh jobspec env, so it must be a plain
+  # provider name (the entrypoint's DSH_PROVIDER grammar, #2004).
+  if [ -n "$provider" ]; then
+    if [ "$harness" = "claude" ]; then
+      echo "Error: --provider is only valid with --harness dsh (the claude harness has no DSH_PROVIDER)" >&2
+      exit 1
+    fi
+    if ! [[ "$provider" =~ ^[a-z0-9-]+$ ]]; then
+      echo "Error: --provider must match ^[a-z0-9-]+$ (got '$provider')" >&2
+      exit 1
+    fi
   fi
   if [ -z "$formula_path" ]; then
     formula_path="${FACTORY_ROOT}/formulas/${role}.toml"
@@ -1125,7 +1155,7 @@ p.write_text(output)
       disinto_hire_an_agent_nomad \
         "$agent_name" "$role" "$local_model" "$model" \
         "$interval" "$project_name" "$agent_token" "$user_pass" \
-        "$harness" "$context_window"
+        "$harness" "$context_window" "$provider"
     fi
   fi
 
