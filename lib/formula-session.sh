@@ -41,6 +41,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"
 # Source tape writers for the proposal-loop tape instrumentation (#1391)
 source "$(dirname "${BASH_SOURCE[0]}")/tape.sh"
 
+# Source the served-model lookup used by formula_tape_agent (#2013)
+source "$(dirname "${BASH_SOURCE[0]}")/served-model.sh"
+
 # ── Run guards ───────────────────────────────────────────────────────────
 
 # acquire_run_lock LOCK_FILE
@@ -453,18 +456,14 @@ formula_tape_ulid() {
 
 # formula_tape_agent — the run's agent string, <harness>/<model>. A dsh
 # agent on the local provider (DSH_PROVIDER unset or llamacpp) records the
-# model its server says it serves (first id of GET $DSH_BASE_URL/models):
-# the server ignores the request's model name, so CLAUDE_MODEL can name a
-# model that no longer runs (on 2026-11-01 runs said Qwen3.8-27B while
-# Strata served Qwen3.8-Flash-Next). Falls back to CLAUDE_MODEL when the
-# server does not answer; the harness alone when neither is known.
+# model its server says it serves (served_model_id, lib/served-model.sh,
+# #2013): the server ignores the request's model name, so CLAUDE_MODEL can
+# name a model that no longer runs (on 2026-11-01 runs said Qwen3.8-27B
+# while Strata served Qwen3.8-Flash-Next). Falls back to CLAUDE_MODEL when
+# the server does not answer; the harness alone when neither is known.
 formula_tape_agent() {
-  local harness="${AGENT_HARNESS:-dsh}" model="${CLAUDE_MODEL:-}" served=""
-  if [ "$harness" = dsh ] && [ "${DSH_PROVIDER:-llamacpp}" = llamacpp ] \
-    && [ -n "${DSH_BASE_URL:-}" ]; then
-    served=$(curl -sf -m 5 "${DSH_BASE_URL%/}/models" 2>/dev/null \
-      | jq -r '.data[0].id // empty' 2>/dev/null) || served=""
-  fi
+  local harness="${AGENT_HARNESS:-dsh}" model="${CLAUDE_MODEL:-}" served
+  served=$(served_model_id)
   [ -n "$served" ] && model="$served"
   if [ -n "$model" ]; then
     printf '%s/%s' "$harness" "$model"
