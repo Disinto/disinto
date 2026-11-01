@@ -89,7 +89,7 @@ and the historical `dev` when the forge GET fails; `parent` = the minted sprint 
 (`lib/sprint-tape.sh` `sprint_proposal_id`), empty when there is no usable milestone or the mint
 failed — context = `{"open_prs":<n>, "size_class":"S|M|L", "backend":"<model>?"}` (open_prs
 from one pull GET, size_class from the issue's size label — case-insensitive, default
-M; backend present only when DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS is set; on the
+M; backend = the model the local server reports serving (`served_model_id`, `lib/served-model.sh`), else DSH_MODEL/CLAUDE_MODEL/AGENT_HARNESS, omitted when none is known (#2014); on the
 API-failure path the context degrades to `{}`). Per #1632 the proposal carries **no**
 forecast and **no** Jev-scope reading: the context is built from `open_prs` /
 `size_class` / `backend` only (no `jev` key), and the forecast argument of

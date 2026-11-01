@@ -22,6 +22,8 @@ set -euo pipefail
 # Load shared environment and libraries
 export PROJECT_TOML="${1:-}"
 source "$(dirname "$0")/../lib/env.sh"
+# shellcheck source=../lib/served-model.sh
+source "$(dirname "$0")/../lib/served-model.sh"
 source "$(dirname "$0")/../lib/ci-helpers.sh"
 # shellcheck source=../lib/pr-lifecycle.sh
 source "$(dirname "$0")/../lib/pr-lifecycle.sh"
@@ -1576,10 +1578,14 @@ emit_tape_proposal() {
     "${API}/pulls?state=open&limit=50" 2>/dev/null \
     | jq -r 'if type == "array" then length else empty end')" || open_prs=""
 
-  # backend: the model running this agent — DSH_MODEL > CLAUDE_MODEL >
-  # AGENT_HARNESS, omitted when none is set (the pack documents it, so a
-  # reader can condition on it; write-side honesty only — nothing reads it yet).
-  backend="${DSH_MODEL:-}"
+  # backend: the model running this agent — the served model first
+  # (served_model_id, lib/served-model.sh): the local server ignores the
+  # requested model name, so the config chain can name a model that no longer
+  # runs (#2014); fall back to DSH_MODEL > CLAUDE_MODEL > AGENT_HARNESS,
+  # omitted when none is known (the pack documents it, so a reader can
+  # condition on it; write-side honesty only — nothing reads it yet).
+  backend="$(served_model_id)"
+  [ -n "$backend" ] || backend="${DSH_MODEL:-}"
   [ -n "$backend" ] || backend="${CLAUDE_MODEL:-}"
   [ -n "$backend" ] || backend="${AGENT_HARNESS:-}"
 

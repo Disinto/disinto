@@ -123,6 +123,9 @@ run_emit() {
     source "$REPO_ROOT/lib/tape.sh"
     source "$REPO_ROOT/lib/sprint-block.sh"
     source "$REPO_ROOT/lib/sprint-tape.sh"
+    # #2014: emit_tape_proposal takes the backend from served_model_id first.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/served-model.sh"
     # Probe: if the pick path still dials the catalog forecast lib, it writes a
     # marker line here. (It also echoes a flat prior so a buggy pick could read
     # a value — the assertion never needs the value, only whether it fired.)
