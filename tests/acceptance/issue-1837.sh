@@ -13,6 +13,8 @@
 #   3. A stub that sleeps 5s with TIMEOUT_S=1 returns 124.
 #   4. With DSH_BASE_URL unset, returns 1, does not call the stub, and the
 #      output names DSH_BASE_URL not set.
+#   5. (#2009) DSH_PROVIDER selects the seed template (default llamacpp);
+#      an invalid provider warns on stderr and seeds no settings.yaml.
 #
 # Run via: tools/run-acceptance.sh 1837
 # =============================================================================
@@ -131,5 +133,32 @@ rc="$(run_sidecar hi "$OUT_NOURL" 30)"
 grep -qF 'DSH_BASE_URL not set' "$OUT_NOURL" \
   || ac_fail "output must say DSH_BASE_URL not set (got: $(cat "$OUT_NOURL"))"
 ac_log "AC 4 OK"
+
+# ── 5. DSH_PROVIDER selects the seed template (#2009) ────────────────────────
+ac_log "AC 5: DSH_PROVIDER=xai seeds the xai template into a fresh DSH_HOME"
+printf '%s\n' 'provider: xai' > "$FAKE_SEED/settings-xai.yaml"
+export DSH_BASE_URL="http://127.0.0.1:9/v1"
+export DSH_HOME="$WORK/home-xai"
+export DSH_PROVIDER="xai"
+: > "$DSH_ARGV_LOG"
+rc="$(run_sidecar hi "$WORK/out-xai.txt" 30)"
+[ "$rc" = "0" ] \
+  || ac_fail "sidecar_agent_run must return 0 with DSH_PROVIDER=xai (rc=$rc, log: $(cat "$LOGFILE"))"
+cmp -s "$DSH_HOME/settings.yaml" "$FAKE_SEED/settings-xai.yaml" \
+  || ac_fail "DSH_PROVIDER=xai must seed the xai template (got: $(cat "$DSH_HOME/settings.yaml"))"
+
+ac_log "AC 6: an invalid DSH_PROVIDER warns on stderr and seeds no settings.yaml"
+export DSH_HOME="$WORK/home-bad"
+export DSH_PROVIDER="../x"
+rc=0
+sidecar_agent_run hi "$WORK/out-bad.txt" 30 2>"$WORK/warn.log" || rc=$?
+[ "$rc" = "0" ] \
+  || ac_fail "an invalid provider must warn but still run the stub (rc=$rc)"
+[ ! -f "$DSH_HOME/settings.yaml" ] \
+  || ac_fail "DSH_PROVIDER=../x must not seed settings.yaml (got: $(cat "$DSH_HOME/settings.yaml"))"
+grep -q 'DSH_PROVIDER' "$WORK/warn.log" \
+  || ac_fail "stderr must name DSH_PROVIDER (got: $(cat "$WORK/warn.log"))"
+unset DSH_PROVIDER
+ac_log "AC 5/6 OK"
 
 ac_pass
