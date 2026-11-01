@@ -1,0 +1,29 @@
+# DeepSeek Harness settings — xAI (Grok) provider, container variant.
+# Baked into the agents image as /opt/dsh/settings-xai.yaml. Auth is the
+# agent's own OAuth grant, stored as record llm-pi-ai/xai in
+# $DSH_HOME/.credentials.yaml (no apiKeyEnv, so dsh uses the stored grant
+# and refreshes it in place). Never share one grant between agents: a
+# refresh may rotate it. grok-4.7 is newer than dsh 0.1.1-rc.2's catalog,
+# so it is declared here.
+llm-pi-ai:
+  providers:
+    xai:
+      displayName: xAI Grok (subscription)
+      api: openai-responses
+      baseURL: https://api.x.ai/v1
+      models:
+        - id: grok-4.7
+          name: Grok 4.7
+          contextWindow: 500000
+          maxTokens: 32768
+          input: [text, image]
+          reasoningEfforts:
+            low: low
+            medium: medium
+            high: high
+            xhigh: xhigh
+
+agent-default-model:
+  provider: xai
+  model: grok-4.7
+  reasoningEffort: medium

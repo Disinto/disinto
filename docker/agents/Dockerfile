@@ -63,6 +63,9 @@ RUN mkdir -p /opt/dsh/profiles \
 # from $DSH_HOME/settings.yaml, NOT from DSH_BASE_URL env. entrypoint.sh
 # seeds it (with the env's DSH_BASE_URL substituted) on first start.
 COPY docker/agents/dsh-settings-llamacpp.yaml /opt/dsh/settings-llamacpp.yaml
+COPY docker/agents/dsh-settings-xai.yaml /opt/dsh/settings-xai.yaml
+# The xai template is baked only for now (#2003); #2004 makes entrypoint.sh
+# seed the template DSH_PROVIDER names. Nothing reads it yet.
 
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
