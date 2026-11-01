@@ -1,12 +1,22 @@
 [
   {
     "action": "edit_body",
-    "issue": 1973,
-    "body": "Flagged by AI reviewer in PR #1972.\n\n## Problem\n\n`nomad/jobs/healer.hcl` says a missing Telegram secret makes `notify_owner` log `notify: not configured`. The sender specified by #1949 and added in PR #1972 is `bin/notify-owner.sh`, and it logs `notify-owner: not configured` (exit 0). The comment still uses the pre-rewrite function name `notify_owner`.\n\nAn operator, or the #1955 implementer, grepping for the string in the jobspec will miss the real line and can treat a correctly unconfigured channel as a broken sender.\n\nThis comment predates PR #1972. #1949's affected-file list does not include `healer.hcl`, so the mismatch was not fixed there.\n\n---\n*Auto-created from AI review*\n\n\n## Affected files\n\n- `nomad/jobs/healer.hcl` — the top-of-file comment block that still names the removed function `notify_owner` (line ~15).\n\n## Acceptance criteria\n\n- [ ] `nomad/jobs/healer.hcl` no longer references the pre-rewrite function name `notify_owner`.\n- [ ] The comment accurately states that `bin/notify-owner.sh` logs `notify-owner: not configured` when the Telegram secret is missing.\n- [ ] No other jobspec or doc in the repo still references the removed `notify_owner` name."
+    "issue": 2010,
+    "body": "\n\n## Affected files\n\n- `docker/agents/entrypoint.sh` — the dsh provider-settings seeding block that writes `\"$dsh_home/settings.yaml` with no `mkdir -p \"$dsh_home\"` beforehand.\n- `lib/dsh-seed.sh` — the reference implementation (`dsh_seed_home()`) that does `mkdir -p \"$DSH_HOME\"` before the identical write.\n\n## Acceptance criteria\n\n- [ ] `docker/agents/entrypoint.sh` creates `` (guarded `mkdir -p`) before the `sed ... > \"/settings.yaml\"` redirect.\n- [ ] The entrypoint still starts when `DSH_HOME` points at a path that does not exist yet (e.g. `DSH_HOME=/tmp/x/a/b`).\n- [ ] An existing operator-customised `settings.yaml` is still never overwritten.\n- [ ] ShellCheck passes on the changed file.\n- [ ] No default constants (`DSH_CONTEXT_WINDOW`, `CLAUDE_TIMEOUT`, `MAX_DIFF`, `DIFF_THRESHOLD`, `DIGEST_CAP`) move.\n\n## Related\n\n- #2009 (sibling — same PR #2008 review)\n- #2011 (sibling — same PR #2008 review)"
+  },
+  {
+    "action": "edit_body",
+    "issue": 2009,
+    "body": "\n\n## Affected files\n\n- `lib/dsh-seed.sh` — `dsh_seed_home()` hardcodes `\"/settings-llamacpp.yaml\"`.\n- `docker/agents/entrypoint.sh` — the provider-aware seeding to mirror (`DSH_PROVIDER` + `^[a-z0-9-]+$` guard).\n- `tests/acceptance/issue-1836.sh`, `tests/acceptance/issue-1837.sh` — extend for provider selection.\n\n## Acceptance criteria\n\n- [ ] `dsh_seed_home()` selects `/opt/dsh/settings-llamacpp.yaml`.\n- [ ] The provider name is validated with the same `^[a-z0-9-]+$` guard as `docker/agents/entrypoint.sh`.\n- [ ] A missing or invalid provider template warns on stderr and seeds nothing (no silent llama.cpp fallback).\n- [ ] The acceptance tests cover both the default `llamacpp` provider and a named provider.\n- [ ] ShellCheck passes on the changed files.\n\n## Related\n\n- #2010 (sibling — same PR #2008 review; independent fix, no dependency)\n- #2011 (sibling — same PR #2008 review)"
   },
   {
     "action": "add_label",
-    "issue": 1973,
+    "issue": 2010,
+    "label": "backlog"
+  },
+  {
+    "action": "add_label",
+    "issue": 2009,
     "label": "backlog"
   }
 ]

@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5bcdcc174a7ae95c1bbcf019e644c36264f37973 -->
+<!-- last-reviewed: c9e000b17b36dbb541bdf9790eb9c2d7aecc557f -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -45,10 +45,29 @@ disinto/                 (code repo)
 │                  claude-config.sh, backup.sh, forge-helpers.sh, inbox-sentinels.sh,
 │                  gardener-edit.sh, gardener-pr.sh, stale-base-check.sh,
 │                  agent-harness-dsh.sh, agent-metrics.sh, dsh-session.sh, resources.sh,
-│                  run-ledger.sh, snapshot-tmp.sh, stats.sh, tape.sh, vault-ssh.sh
-│                  hooks/ — Claude Code session hooks
-│                  init/nomad/ — cluster-up.sh, install.sh, vault-init.sh, deploy.sh,
-│                  wp-oauth-register.sh, wp-seed-secrets.sh, lib-vault-mlock.sh
+│                  run-ledger.sh, snapshot-tmp.sh, stats.sh, tape.sh, vault-ssh.sh,
+│                  served-model.sh (served_model_id — the model the local server
+│                  reports serving, #2014), dsh-seed.sh (dsh_seed_home for one-shot
+│                  dsh runs), dsh-oneshot.sh (one headless dsh prompt, #1847),
+│                  probe.sh (run a sprint/claim probe and read its number, #1673),
+│                  sprint-tape.sh (mint the sprint-level tape proposal, #1618),
+│                  sprint-block.sh (parse a milestone's sprint block, #1629),
+│                  sprint-milestone.sh (a pitch's sprint milestone, #1911),
+│                  claims.sh (read ops-repo claim files, #1640),
+│                  catalog-forecast.sh (p_success from the ops catalog, §9.2),
+│                  tape-outcome-guard.sh (one merged outcome per proposal, #1737),
+│                  ci-first-green.sh (#1877), forge-paginate.sh, forge-api-fallback.sh,
+│                  pr-author-filter.sh (#1690), pr-review-feedback.sh (#1688),
+│                  pitch.sh / pitch-pr.sh (read + update a pitch on its ops PR, #1906),
+│                  table-column.sh (append a column to a markdown table, #1650),
+│                  wp-agent-health.sh (newest Woodpecker agent contact, #1698)
+│                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop,
+│                  on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
+│                  init/nomad/ — cluster-up.sh, install.sh, forgejo-bootstrap.sh,
+│                  chat-init.sh, vault-init.sh, vault-engines.sh, vault-nomad-auth.sh,
+│                  lib-systemd.sh, systemd-nomad.sh, systemd-vault.sh, deploy.sh,
+│                  wp-oauth-register.sh, wp-activate-repo.sh, wp-seed-secrets.sh,
+│                  lib-vault-mlock.sh
 ├── nomad/         server.hcl, client.hcl, vault.hcl — HCL configs for /etc/nomad.d/ and /etc/vault.d/
 │                  jobs/ — forgejo.hcl (Vault secrets, S2.4); woodpecker-server.hcl (S3.1); woodpecker-agent.hcl
 │                  (host-net, docker.sock, Vault KV, S3.2); agents.hcl (7 roles + llama, S4.1);
@@ -56,7 +75,11 @@ disinto/                 (code repo)
 │                  dispatch, S5.3); staging.hcl (Caddy file-server, S5.2); edge.hcl (Caddy proxy
 │                  + dispatcher, S5.1); agents-dev-qwen.hcl, agents-gardener-qwen.hcl,
 │                  agents-review-qwen.hcl (qwen-backend jobs); agent-logs-rotate.hcl (batch log
-│                  rotation)
+│                  rotation); healer.hcl (host-side raw_exec allocation healer running
+│                  bin/healer.sh, #1951 — the only deterministic host process allowed to
+│                  message the owner directly via bin/notify-owner.sh, AD-006 exception)
+│                  acl-policies/chat-ops.hcl — Nomad ACL policy for the chat-Claude control
+│                  surface, bound to the token Vault renders into the edge Caddy task (#650)
 ├── projects/      *.toml.example — templates; *.toml — local per-box config (gitignored)
 ├── formulas/      Issue templates (TOML specs for multi-step agent tasks).
 │                  run-gardener.toml, run-planner.toml, run-predictor.toml, run-supervisor.toml,
