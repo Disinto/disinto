@@ -207,9 +207,11 @@ WOODPECKER_FORGEJO_SECRET=seed-me
 EOT
       }
 
+      # Reserves 128 (64 MiB idle, 2026-11-01); memory_max is the hard cap.
       resources {
-        cpu    = 300
-        memory = 512
+        cpu        = 300
+        memory     = 128
+        memory_max = 512
       }
     }
   }

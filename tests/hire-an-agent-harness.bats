@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# DSH_CONTEXT_WINDOW also appears in nomad/jobs/agents-*-grok.hcl (200000, set by hand
-# for Grok, 2026-10-03); hire-an-agent's default stays 100000.
+# DSH_CONTEXT_WINDOW 200000 was set by hand in the Grok jobspecs (2026-10-03,
+# removed 2026-11-01); hire-an-agent's default stays 100000.
 # =============================================================================
 # tests/hire-an-agent-harness.bats — #1107: `--harness` flag to hire either a
 #   Claude or a dsh agent.
@@ -334,22 +334,6 @@ TOML
     [ -f "$DISINTO_ROOT/$f" ] || { echo "missing $f" >&2; return 1; }
     grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"100000"' "$DISINTO_ROOT/$f" \
       || { echo "$f does not pin DSH_CONTEXT_WINDOW 100000" >&2; return 1; }
-  done
-}
-
-@test "stock grok jobspecs pin DSH_CONTEXT_WINDOW to the hand-set 200000" {
-  # The per-role grok jobspecs (Grok 4.7 via the dsh harness) set the context
-  # window by hand to 200000, larger than the 100000 dsh default. hire-an-agent
-  # and the stock qwen jobspecs keep the 100000 default (see file header). Pin
-  # each grok jobspec so a move of the value breaks here and in CI in the same
-  # PR (defaults-golden contract, #1261).
-  for f in nomad/jobs/agents-dev-grok.hcl \
-           nomad/jobs/agents-review-grok.hcl \
-           nomad/jobs/agents-architect-grok.hcl \
-           nomad/jobs/agents-planner-grok.hcl; do
-    [ -f "$DISINTO_ROOT/$f" ] || { echo "missing $f" >&2; return 1; }
-    grep -Eq 'DSH_CONTEXT_WINDOW[[:space:]]*=[[:space:]]*"200000"' "$DISINTO_ROOT/$f" \
-      || { echo "$f does not pin DSH_CONTEXT_WINDOW 200000" >&2; return 1; }
   done
 }
 

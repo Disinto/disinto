@@ -98,7 +98,9 @@ roles:
     job_id:    agents-gardener-qwen
 
   # Grok 4.7 agents beside the qwen ones (2026-10-03): own forge identities,
-  # so their policy adds the dev-grok and review-grok bot paths.
+  # so their policy adds the dev-grok and review-grok bot paths. Their jobs
+  # were removed on 2026-11-01 (no Grok subscription); the roles stay, so
+  # restoring a jobspec from git history is enough to bring one back.
   - name:      agents-dev-grok
     policy:    service-agents-grok
     namespace: default
@@ -134,7 +136,8 @@ roles:
     namespace: default
     job_id:    bot-gardener
 
-  # Bound to the Grok planner job, nomad/jobs/agents-planner-grok.hcl.
+  # Bound to the Grok planner job agents-planner-grok (jobspec removed
+  # 2026-11-01, in git history).
   - name:      bot-planner
     policy:    bot-planner
     namespace: default
@@ -150,7 +153,8 @@ roles:
     namespace: default
     job_id:    bot-supervisor
 
-  # Bound to the Grok architect job, nomad/jobs/agents-architect-grok.hcl (#1912).
+  # Bound to the Grok architect job agents-architect-grok (#1912; jobspec
+  # removed 2026-11-01, in git history).
   - name:      bot-architect
     policy:    bot-architect
     namespace: default

@@ -19,8 +19,8 @@
 #   * _launch_runner_docker has no claude-shared / CLAUDE_SHARED_DIR /
 #     CLAUDE_CONFIG_DIR / .claude.json references
 #   * _launch_runner_docker passes DSH_BASE_URL=${DSH_BASE_URL} exactly once
-#   * nomad/jobs/edge.hcl sets DSH_BASE_URL = "http://10.10.10.1:8088/v1"
-#     exactly once
+#   * nomad/jobs/edge.hcl sets DSH_BASE_URL = "http://10.10.10.1:8081/v1"
+#     exactly once (was the :8088 think-budget proxy until 2026-11-01)
 #
 # Run via: tools/run-acceptance.sh 1803
 # =============================================================================
@@ -59,7 +59,7 @@ cr2="$(grep -cF 'DSH_BASE_URL=${DSH_BASE_URL}' <<<"$FN_RUNNER" || true)"
   || ac_fail "_launch_runner_docker must pass DSH_BASE_URL=${DSH_BASE_URL} exactly once (got: $cr2)"
 
 ac_log "CR3: edge.hcl sets DSH_BASE_URL on the caddy task once"
-cr3="$(grep -cE '^ *DSH_BASE_URL *= *"http://10\.10\.10\.1:8088/v1"' "$SPEC" || true)"
+cr3="$(grep -cE '^ *DSH_BASE_URL *= *"http://10\.10\.10\.1:8081/v1"' "$SPEC" || true)"
 [ "$cr3" = "1" ] \
   || ac_fail "nomad/jobs/edge.hcl must set DSH_BASE_URL exactly once (got: $cr3)"
 

@@ -33,6 +33,15 @@ ports {
 server {
   enabled          = true
   bootstrap_expect = 1
+
+  # Jobs reserve `memory` and may grow to `memory_max` (2026-11-01). The
+  # node's capacity is the box's memory limit, and reserving every task's
+  # cap left no room to place anything. Applies when the cluster
+  # bootstraps; a running cluster needs
+  # `nomad operator scheduler set-config -memory-oversubscription=true`.
+  default_scheduler_config {
+    memory_oversubscription_enabled = true
+  }
 }
 
 client {

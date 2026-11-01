@@ -264,7 +264,7 @@ EOT
         PROJECT_NAME           = "disinto"
         FACTORY_FORGE_PAT_FILE = "/secrets/forge-pat"
         NOMAD_ADDR             = "http://localhost:4646"
-        DSH_BASE_URL           = "http://10.10.10.1:8088/v1"
+        DSH_BASE_URL           = "http://10.10.10.1:8081/v1"
         # Vault runner image when an action names none: the image this box
         # builds (ci.yml rebuild-and-deploy-agents). The nomad backend's
         # vault-runner.hcl defaults to the same; compose keeps :latest.
@@ -272,9 +272,11 @@ EOT
       }
 
       # Caddy needs CPU + memory headroom for reverse proxy work.
+      # Reserves 128 (76 MiB idle, 2026-11-01); memory_max is the hard cap.
       resources {
-        cpu    = 200
-        memory = 256
+        cpu        = 200
+        memory     = 128
+        memory_max = 256
       }
     }
 
