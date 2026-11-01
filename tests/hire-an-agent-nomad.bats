@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# CLAUDE_TIMEOUT 7200 also appears in nomad/jobs/agents-*-grok.hcl, copied from the qwen
-# jobs (2026-10-03); the default is unchanged.
+# CLAUDE_TIMEOUT 7200 was copied into the Grok jobspecs (2026-10-03, removed
+# 2026-11-01); the default is unchanged.
 # #1687 edits the lib/AGENTS.md row that mentions CLAUDE_TIMEOUT; the default stays 7200.
 # #1847 lib/dsh-oneshot.sh falls back via ${CLAUDE_TIMEOUT:-7200}; the default stays 7200.
 # #1848 lib/profile.sh no longer saves and restores CLAUDE_TIMEOUT around the digest; the default stays 7200.

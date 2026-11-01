@@ -221,9 +221,10 @@ job "agents-review-qwen" {
         AGENT_HARNESS       = "dsh"
         DSH_HOME            = "/home/agent/data/dsh"
         DSH_PERMISSION_MODE = "danger-full-access"
-        # The think-budget proxy on the host, not llama-server (:8081): it caps
-        # thinking per request and holds disinto to 2 of llama-server's 4 slots.
-        DSH_BASE_URL        = "http://10.10.10.1:8088/v1"
+        # The host model server directly (Strata, Qwen3.8-Flash-Next, since
+        # 2026-11-01). The think-budget proxy (:8088) is gone: no per-request
+        # thinking cap and no slot cap. Seeds a missing settings.yaml only.
+        DSH_BASE_URL        = "http://10.10.10.1:8081/v1"
         DSH_MODEL           = "unsloth/Qwen3.8-27B"
         DSH_CONTEXT_WINDOW  = "100000"
         # settings.yaml uses apiKeyEnv indirection; llama-server ignores
