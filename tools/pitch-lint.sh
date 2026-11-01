@@ -327,12 +327,15 @@ lint_entries() {
     if [ "$lines" -gt 100 ]; then
       lint_err "$id" "body has ${lines} lines (max 100)"
     fi
+    # grep -q exits at the first match; a piped printf then dies of SIGPIPE
+    # and pipefail reports the pipeline as failed, so a heading that IS there
+    # can be reported missing (the #1903 CI flake). A here-string has no pipe.
     for h in "${required[@]}"; do
-      if ! printf '%s\n' "$body" | grep -Fxq -- "## ${h}"; then
+      if ! grep -Fxq -- "## ${h}" <<<"$body"; then
         lint_err "$id" "missing ## ${h}"
       fi
     done
-    if ! printf '%s\n' "$body" | grep -Fxq -- "## Existing tests"; then
+    if ! grep -Fxq -- "## Existing tests" <<<"$body"; then
       lint_warn "$id" "missing ## Existing tests"
     fi
     if ! body_has_unchecked "$body"; then

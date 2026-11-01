@@ -110,7 +110,11 @@ run_emit() {
   esac
   local ac_fail=""
   if [ "$fail" = "1" ]; then ac_fail="1"; fi
+  # #2014: served_model_id runs first; with DSH_BASE_URL empty it reports
+  # nothing, so this test keeps pinning the DSH_MODEL > CLAUDE_MODEL >
+  # AGENT_HARNESS precedence.
   DSH_MODEL="$dsh" CLAUDE_MODEL="$claude" AGENT_HARNESS="$harness" \
+    DSH_BASE_URL="" \
     AC_STUB_FAIL="$ac_fail" AC_STUB_SIZE="$size" \
     ac_run_tape_emit "$STUB_BIN" "$tape_dir" "$FN_SRC" "$fail" \
       emit_tape_proposal "$issue"

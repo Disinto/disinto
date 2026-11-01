@@ -316,6 +316,9 @@ ac_run_tape_emit() {
     # #1737: emit_tape_outcome skips a second merged outcome via this guard.
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+    # #2014: emit_tape_proposal takes the backend from served_model_id first.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/served-model.sh"
     eval "$fn_src"
     if [ "$fail" = "1" ]; then
       export AC_STUB_FAIL=1
@@ -346,6 +349,9 @@ ac_run_sprint_emit() {
     source "$REPO_ROOT/lib/tape.sh"
     source "$REPO_ROOT/lib/sprint-block.sh"
     source "$REPO_ROOT/lib/sprint-tape.sh"
+    # #2014: emit_tape_proposal takes the backend from served_model_id first.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/served-model.sh"
     eval "$fn_src"
     if [ "$fail" = "1" ]; then
       export AC_STUB_FAIL=1
