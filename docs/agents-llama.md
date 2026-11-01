@@ -222,6 +222,13 @@ If you need to manually rotate credentials:
 2. Edit `.env` and replace `FORGE_TOKEN_<USER_UPPER>` and `FORGE_PASS_<USER_UPPER>`
 3. Restart the agent service: `docker compose restart agents-<name>`
 
+### xAI sign-in
+
+`tools/xai-login.sh <dsh_home> [label]` signs one dsh agent into xAI by device
+code. It prints a URL and code for a human to approve, then writes the grant to
+`<dsh_home>/.credentials.yaml`. It refuses to overwrite an existing grant. Run
+it once per agent and never copy a grant between agents.
+
 ## Configuration reference
 
 ### Environment variables (`.env`)
