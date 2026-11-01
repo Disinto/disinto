@@ -253,3 +253,65 @@ EOF
   [ ! -e "$TAPE_DIR/tape.jsonl" ]
   [[ "$output" == *WARNING*tape* ]]
 }
+
+# curl_stub MODE — a curl on PATH that logs its arguments; "ok" prints a
+# /models response, "fail" exits like an unreachable server.
+curl_stub() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BATS_TEST_TMPDIR/curl.log"
+[ "$1" = ok ] || exit 7
+printf '%s' '{"object":"list","data":[{"id":"served-model"}]}'
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+}
+
+@test "a local dsh agent records the model its server serves" {
+  curl_stub ok
+  write_driver <<EOF
+set -euo pipefail
+log() { :; }
+export PATH="$BATS_TEST_TMPDIR/bin:\$PATH"
+export AGENT_HARNESS=dsh CLAUDE_MODEL=configured-model DSH_BASE_URL=http://model.test/v1 LOG_AGENT=testorgan
+unset DSH_PROVIDER
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-served
+formula_session_start "testorgan"
+EOF
+  [ "$status" -eq 0 ]
+  jq -es '.[0].agent == "dsh/served-model"' "$TAPE_DIR/tape.jsonl" >/dev/null
+  grep -q 'http://model.test/v1/models' "$BATS_TEST_TMPDIR/curl.log"
+}
+
+@test "an unreachable model server falls back to CLAUDE_MODEL" {
+  curl_stub fail
+  write_driver <<EOF
+set -euo pipefail
+log() { :; }
+export PATH="$BATS_TEST_TMPDIR/bin:\$PATH"
+export AGENT_HARNESS=dsh CLAUDE_MODEL=configured-model DSH_BASE_URL=http://model.test/v1 LOG_AGENT=testorgan
+unset DSH_PROVIDER
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-fallback
+formula_session_start "testorgan"
+EOF
+  [ "$status" -eq 0 ]
+  jq -es '.[0].agent == "dsh/configured-model"' "$TAPE_DIR/tape.jsonl" >/dev/null
+}
+
+@test "a dsh agent on another provider never asks the local server" {
+  curl_stub ok
+  write_driver <<EOF
+set -euo pipefail
+log() { :; }
+export PATH="$BATS_TEST_TMPDIR/bin:\$PATH"
+export AGENT_HARNESS=dsh CLAUDE_MODEL=configured-model DSH_BASE_URL=http://model.test/v1 DSH_PROVIDER=xai LOG_AGENT=testorgan
+source "\$ROOT/lib/formula-session.sh"
+export TAPE_PROPOSAL_ID=prop-xai
+formula_session_start "testorgan"
+EOF
+  [ "$status" -eq 0 ]
+  jq -es '.[0].agent == "dsh/configured-model"' "$TAPE_DIR/tape.jsonl" >/dev/null
+  [ ! -e "$BATS_TEST_TMPDIR/curl.log" ]
+}
