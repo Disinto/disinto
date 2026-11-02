@@ -1,12 +1,1 @@
-[
-  {
-    "action": "comment",
-    "issue": 2011,
-    "body": "Gardener: fixed in this housekeeping PR. The Dockerfile comment now describes provider-template seeding (`DSH_PROVIDER` selects settings-llamacpp.yaml or settings-xai.yaml — #2004, #2009, #2010), so \"Nothing reads it yet\" was stale. Closing as resolved."
-  },
-  {
-    "action": "close",
-    "issue": 2011,
-    "reason": "stale comment fixed in gardener housekeeping PR"
-  }
-]
+[]

@@ -1,4 +1,4 @@
-<!-- last-reviewed: a5192523dd1087c7a53160fb8c68326b54ae5c35 -->
+<!-- last-reviewed: ee5b217243090d91f6a2e9d88c0740225bc98d13 -->
 # Planner Agent
 
 **Role**: Pitches one sprint toward the vision, or writes nothing. Invoked
