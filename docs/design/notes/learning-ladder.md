@@ -94,7 +94,8 @@ a read is slow), rubrics (8 signatures, three attributions), loop
 naming (levels and triggers), class (sprint nature), proposer (an
 organ's bot account or `disinto-admin`; the implementer never
 proposes), world model (claims in the ops repo; surprise from three
-sources; organs draft, the human merges; `world-model.md`).
+sources; organs draft, the human merges, since 2026-11-02 the gate;
+`world-model.md`).
 
 Still open:
 

@@ -244,16 +244,19 @@ factory the confirmation comes, the higher the level.
 | `broke` | −1 | the work was reverted, or it hit a wall without asking (the memory cap, a denied action) | git, the walls, the healer |
 | `none` | 0 | nothing came back, or nothing held | – |
 | `held` | 0.25 | the factory changed itself and the change held: its merges are still on main after the soak | git and the running jobs |
-| `made` | 0.5 | it used its resources to make something: a computed result, a new version of itself running beside the old | a probe merged before the sprint was approved |
+| `made` | 0.5 | it used its resources to make something: a computed result, a new version of itself running beside the old | a probe fixed in advance: merged through the gate before the sprint's work began |
 | `reachable` | 0.75 | someone outside could reach it: a page that answers from the internet, a published package | a fetch from outside the box |
 | `reached` | 1 | someone outside did reach it, and signal came back | a signal the factory did not cause: a request from an address that is not the factory's, a reply or an issue from an account that is not a bot |
 
 A sprint names the level it aims at (`level:` in its block, §2) and a
 probe of that level's kind. Its grade is the highest level confirmed:
 the target level if the probe meets `expect`, else `held` if its work
-held, else `none`. `broke` overrides all three. The factory can never
-confirm its own effect above `held`: work inside the box tops out at
-0.25, so the only way up is outward, toward the walls.
+held, else `none`. `broke` overrides all three. Only `held` is read
+after the fact from the factory's own records. `made` counts only
+against a check fixed before the work began, so the work cannot move
+its own goalpost; `reachable` and `reached` need a confirmation from
+outside the box. Work that only changes the factory tops out at 0.25,
+and the way past 0.5 is outward, toward the walls.
 
 Two channels, kept separate forever:
 
@@ -330,10 +333,10 @@ and the ops PRs that carry probes, claims and packs. At the start the
 gate approves all of them itself, transparently: it classifies the
 request by tier (`policy.toml`), records the request and its approval
 on the tape, approves it, and tells you on Telegram. It blocks
-nothing. Rejecting dangerous actions starts once grades pass 0.5, when
-something the factory made is reachable from outside: the first such
-grade tells you it is time to write rejection rules, and until you
-write them approval stays transparent. The walls are not approvals
+nothing. Rejecting dangerous actions starts once a grade above 0.5
+lands (`reachable` or `reached`: something the factory made can be
+reached from outside). That first grade tells you it is time to write
+rejection rules, and until you write them approval stays transparent. The walls are not approvals
 and stay hard: the container, the memory cap and Nomad's reservations
 are enforced by code. Decided by the owner on 2026-11-02.
 
@@ -456,8 +459,8 @@ The tape learns by counting. A per-class rate moves by 1/n per
 outcome, and one surprise looks like noise. A human updates in one
 shot: one observation refutes one specific belief, and every plan
 resting on that belief changes at once. The design gets the same by
-keeping the world model as **claims** — written, checkable, merged by
-a human — and leaving counting to verify them.
+keeping the world model as **claims** — written, checkable, merged
+through the gate (§3) — and leaving counting to verify them.
 
 **A claim** is a statement plus a check the factory can run itself.
 One file per claim in the ops repo, `claims/<id>.toml`:
@@ -479,7 +482,8 @@ the world (`deploy`, `experiment`) share the format.
 first outcome, *held* while its last outcome is `held`, *challenged*
 once a check misses. Checks keep running after `held`; each is a run
 under the claim's proposal, and a miss writes a new outcome at once —
-the last outcome counts. Only the file is written, only by merge.
+the last outcome counts. Only the file is written, only by a merge
+through the gate (§3).
 Retiring a claim is a merge that deletes its file.
 
 **Proposals rest on claims.** A sprint block names `rests_on:` (§2);
@@ -503,8 +507,8 @@ its issues inherit it.
 **Revision is a proposal** in the `claim` loop. An organ drafts it — a
 new claim, a revised or retired one, or for source 3 new vocabulary (a
 probe, a signature, a bit) — as an ops PR under its bot account, with
-`caused_by` the proposal whose outcome surprised it. You merge or
-close. This is where a language model earns its place: explaining a
+`caused_by` the proposal whose outcome surprised it. The gate merges
+or closes it (transparently for now, §3). This is where a language model earns its place: explaining a
 surprise with the claim that would have predicted it. Re-reading
 payloads is legitimate here and only here — to draft a claim, which
 must then pass its check. The loop's outcome is the check's verdict:
@@ -612,8 +616,9 @@ the planner can provision, so the predictor's reach is bounded by the
 planner's arms. Once forecasts are on (§3), the predictor is their
 first proposer. Its budget is one experiment every two days.
 
-Both organs propose and never decide. Every sprint they pitch waits for
-your decision, and every claim they draft waits for your merge. Idle
+Both organs propose and never decide. Every sprint they pitch and
+every claim they draft passes the gate; for now it approves
+transparently and tells you (§3). Idle
 stays legal: a cycle with nothing worth proposing writes nothing.
 
 ---
