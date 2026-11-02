@@ -57,12 +57,12 @@ notice_owner() {
   # dir), bash's own error lands on the already-discarded stderr, leaving
   # exactly the diagnostic line below.
   if ! printf '%s' "${text:0:4000}" 2>/dev/null >"$tmp"; then
-    rm -f "$tmp"
+    rm -f "$tmp" 2>/dev/null
     echo "notice_owner: cannot write notice: $notices_dir" >&2
     return 1
   fi
   if ! mv "$tmp" "$target" 2>/dev/null; then
-    rm -f "$tmp"
+    rm -f "$tmp" 2>/dev/null
     echo "notice_owner: cannot move notice into place: $notices_dir" >&2
     return 1
   fi

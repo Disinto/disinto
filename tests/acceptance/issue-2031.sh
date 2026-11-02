@@ -114,28 +114,33 @@ ac_assert_eq "$(printf '%s' "$ERR" | grep -c . | tr -d ' ')" "1" \
 [ -z "$OUT" ] || ac_fail "empty text must print nothing to stdout (got: $OUT)"
 [ ! -e "$DIR4" ] || ac_fail "empty text must create no directory or file (dir exists: $DIR4)"
 
-ac_log "AC4b: a read-only directory returns 1 with one stderr line"
+ac_log "AC4b: an unwritable directory returns 1 with one stderr line"
 DIR5="$TMP_DIR/notices-5"
 mkdir -p "$DIR5"
+# CI runs this test as root, and root ignores the chmod bits: the sentinel
+# directory occupying the temp-file name blocks the write for every uid,
+# while the chmod still makes the directory read-only for non-root runners.
+# $$ inside the sourced subshell is this script's pid, so the sentinel names
+# exactly the temp path notice_owner would write to.
+mkdir "$DIR5/.notice-$$.tmp"
 chmod 555 "$DIR5"
 run_notice "$DIR5" "cannot be written"
-ac_assert_eq "$RC" "1" "writing into a read-only dir must return 1 (got $RC)"
+ac_assert_eq "$RC" "1" "writing into a read-only dir must return 1 (got $RC): $ERR"
 ac_assert_eq "$(printf '%s' "$ERR" | grep -c . | tr -d ' ')" "1" \
   "the write failure must print exactly one stderr line (got: $ERR)"
 ac_assert_eq "$(txt_count "$DIR5")" "0" "no notice file may be left behind (got $(txt_count "$DIR5"))"
-ac_assert_eq "$(entry_count "$DIR5")" "0" "no .tmp or partial file may be left behind (got $(entry_count "$DIR5") entries)"
+ac_assert_eq "$(entry_count "$DIR5")" "1" \
+  "no partial file may be left behind: only the sentinel dir remains (got $(entry_count "$DIR5") entries)"
 chmod 755 "$DIR5"
 
-ac_log "AC4c: a directory under a read-only parent returns 1 with one stderr line"
-PARENT="$TMP_DIR/parent-6"
-mkdir -p "$PARENT"
-chmod 555 "$PARENT"
-run_notice "$PARENT/notices-6" "cannot be created"
-ac_assert_eq "$RC" "1" "mkdir under a read-only parent must return 1 (got $RC)"
+ac_log "AC4c: a notices dir blocked by a regular file returns 1 with one stderr line"
+BLOCKER="$TMP_DIR/blocker-6"
+touch "$BLOCKER"
+run_notice "$BLOCKER/notices-6" "cannot be created"
+ac_assert_eq "$RC" "1" "mkdir under a regular file must return 1 (got $RC): $ERR"
 ac_assert_eq "$(printf '%s' "$ERR" | grep -c . | tr -d ' ')" "1" \
   "the mkdir failure must print exactly one stderr line (got: $ERR)"
-[ ! -e "$PARENT/notices-6" ] || ac_fail "mkdir must not have created $PARENT/notices-6"
-chmod 755 "$PARENT"
+[ ! -e "$BLOCKER/notices-6" ] || ac_fail "mkdir must not have created $BLOCKER/notices-6"
 
 # ── AC5: the lib never sends — no network code, syntactically valid ──────────
 ac_log "AC5: lib/notice.sh names no sender and parses cleanly"
