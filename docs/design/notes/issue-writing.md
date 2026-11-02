@@ -20,8 +20,8 @@ Eliminate complexity *before* filing:
   does not count). New vocabulary (a rubric, a pack, a block format)
   and new behavior never share an issue.
 - Cross-repo writes are out of scope for dev issues. Ops-repo files
-  (packs, rubrics, probes) are created by an ops PR a human merges;
-  code references them.
+  (packs, rubrics, probes) are created by an ops PR through the gate
+  (`../proposal-loop.md` §3); code references them.
 - The body lands whole in the implementer's prompt: ≤ 100 lines.
   Reference code by path, don't explain the architecture.
 - Acceptance = one command whose output can be checked. If you cannot

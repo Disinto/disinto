@@ -14,8 +14,9 @@ what was proposed   ↔   what came back
 
 That pair is the atom of experience. A forecast is a claim about what
 will come back; an outcome is what actually came back; a grade is the
-human's reading of what came back. If a piece of data is not part of a
-pair, it is a payload — kept for audit, never learned from directly.
+size of what came back, read on the effect scale (§3). If a piece of
+data is not part of a pair, it is a payload — kept for audit, never
+learned from directly.
 
 **Stage.** Stage 1 writes the tape and reads one thing: the
 calibration table, *promised vs. actual* per (loop, class). It is live
@@ -126,6 +127,7 @@ carries:
 
 ```text
 class: deploy            deploy | experiment | internal
+level: reachable         the effect-scale level it aims at (§3); default held
 effect: probes/<name>.sh a probe in the ops repo, or none
 expect: >= 3             operator and number the probe must meet
 soak: 7d                 wait after the work is done, before measuring
@@ -134,7 +136,8 @@ rests_on: <claim ids>    optional: the claims (§6) this sprint depends on
 
 - A **probe** measures; it does not do the work. It prints one number.
   An experiment is run by the sprint's children; its probe reads the
-  result. Probes live in the ops repo, so a human merges every one.
+  result. Probes live in the ops repo, so every one passes its gate
+  (§3, "The gate, approved transparently").
 - A sprint terminates one of two ways. **Effect**: the milestone has
   no open issues, the soak passes, the probe runs; the outcome carries
   `bits.effect` (met or not) and `numbers.effect_value`. **Returned**:
@@ -143,7 +146,7 @@ rests_on: <claim ids>    optional: the claims (§6) this sprint depends on
   `bits.returned`, and its queued children leave the backlog.
 - `effect: none` is allowed for a sprint with nothing to measure; its
   effect is then "no child failed". Most sprints have a measurable
-  effect, and that effect is what the grade reads.
+  effect, and its level on the effect scale is the grade (§3).
 
 ---
 
@@ -217,7 +220,7 @@ proposal (patrols, housekeeping) are metrics, not tape.
 | `proposal` | id |
 | `value` | a number in [−1, 1], or null. Negative: moved away from the vision. Null is the common case and is honest |
 | `when` | `at_approval` or `at_outcome` |
-| `who` | you, or a named calibrator. Never an organ |
+| `who` | `effect-scale` (code reading the scale below), or you overriding it. Never a language model |
 
 **The vision** is the project's `VISION.md`, in the project repo —
 the document the planner plans against. A grade answers one question:
@@ -226,24 +229,53 @@ purpose; a vision that lives only in someone's head cannot be graded
 against, and one that changes is read as it stood at grading time (git
 history). On this deployment that is `VISION.md` in the disinto repo.
 
-On this deployment grades are given per sprint, at outcome, reading
-the sprint's measured effect (`tools/grade.sh milestone:N <value>`).
-Issues are not graded; they earn credit through their sprint (§2
-rule 3).
+On this deployment grades are given per sprint, at outcome, by code:
+the sprint's level on the effect scale below. Issues are not graded;
+they earn credit through their sprint (§2 rule 3). You can override
+any grade (`tools/grade.sh milestone:N <value>`); calibration reads
+your grade over the code's, and the tape keeps both.
+
+**The effect scale.** The bigger the effect, the higher the grade, and
+an effect's size is set by who can confirm it: the further from the
+factory the confirmation comes, the higher the level.
+
+| level | grade | the effect | confirmed by |
+|---|---|---|---|
+| `broke` | −1 | the work was reverted, or it hit a wall without asking (the memory cap, a denied action) | git, the walls, the healer |
+| `none` | 0 | nothing came back, or nothing held | – |
+| `held` | 0.25 | the factory changed itself and the change held: its merges are still on main after the soak | git and the running jobs |
+| `made` | 0.5 | it used its resources to make something: a computed result, a new version of itself running beside the old | a probe merged before the sprint was approved |
+| `reachable` | 0.75 | someone outside could reach it: a page that answers from the internet, a published package | a fetch from outside the box |
+| `reached` | 1 | someone outside did reach it, and signal came back | a signal the factory did not cause: a request from an address that is not the factory's, a reply or an issue from an account that is not a bot |
+
+A sprint names the level it aims at (`level:` in its block, §2) and a
+probe of that level's kind. Its grade is the highest level confirmed:
+the target level if the probe meets `expect`, else `held` if its work
+held, else `none`. `broke` overrides all three. The factory can never
+confirm its own effect above `held`: work inside the box tops out at
+0.25, so the only way up is outward, toward the walls.
 
 Two channels, kept separate forever:
 
 - **Competence**: the outcome bits and numbers. Dense, automatic,
   derived by code. Trains "can the factory do X."
-- **Purpose**: the grade. Sparse, human, nullable. Trains "does X move
-  the vision."
+- **Purpose**: the grade. Sparse, read from the effect scale by code,
+  nullable. Trains "does X move the vision."
 
 Never collapse them into one number. A learner fed only dev-loop
 success learns to propose small safe issues. That is the hallway: the
-inside view is a model, not the objective. A sprint's measured effect
-sits on the border: it is an outcome number (competence — did the
-claimed effect happen), and it is what the human reads to grade
-(purpose). The number does not become the grade.
+inside view is a model, not the objective. The scale keeps the hallway
+shut by capping what the inside can confirm. A sprint's probe value is
+competence (did the claimed effect happen); the level it confirms is
+purpose. The probe's number does not become the grade; the level does.
+
+**Self-grading, accepted.** A brain grades itself too, and drugs are
+its shortcut. The factory will find shortcuts the same way: grades
+that rise while the world does not change. We accept that risk at the
+start. When it shows, we add rules, not a human grader: harder
+external confirmations, and an appetite for harder goals (the same
+effect a second time earns less). Decided by the owner on 2026-11-02;
+until then grades were the owner's alone.
 
 **Disposition (the gut).** Competence is not "it merged". A loop is
 competent when it disposes of what it was fed, one of two ways:
@@ -282,14 +314,28 @@ saturates, the bit is wrong, not the loop perfect.
   shaping signal) is fuel for statistics, never purpose. If the proxy
   is noise, learning wanders — acceptable, and honest. If the proxy is
   biased — a systematic hill, "nice README, distance up" — learning
-  climbs it. Bias is worse than noise, and the human grade is what
-  catches it.
-- The human grade is the only purpose-termination we trust. In a
-  graded loop (§7), an outcome still ungraded after its grace period
-  reads as purpose 0 to calibration; the record itself stays null.
-  Null is what was given. Loops that are not graded show no purpose.
-- The vault gate is initiation, not reward. Your merge authorizes a
+  climbs it. Bias is worse than noise. The confirmer's distance from
+  the factory, and your override, are what catch it.
+- The effect level is the purpose-termination we trust, because its
+  confirmer stands outside the work. In a graded loop (§7), an outcome
+  still ungraded after its grace period reads as purpose 0 to
+  calibration; the record itself stays null. Null is what was given.
+  Loops that are not graded show no purpose.
+- The vault gate is initiation, not reward. Its approval authorizes a
   run; it says nothing about what came back.
+
+**The gate, approved transparently.** Everything that would wait for
+your merge goes through the vault gate: vault actions, pitches (§8),
+and the ops PRs that carry probes, claims and packs. At the start the
+gate approves all of them itself, transparently: it classifies the
+request by tier (`policy.toml`), records the request and its approval
+on the tape, approves it, and tells you on Telegram. It blocks
+nothing. Rejecting dangerous actions starts once grades pass 0.5, when
+something the factory made is reachable from outside: the first such
+grade tells you it is time to write rejection rules, and until you
+write them approval stays transparent. The walls are not approvals
+and stay hard: the container, the memory cap and Nomad's reservations
+are enforced by code. Decided by the owner on 2026-11-02.
 
 **Scope.** Small, uniform completions are the statistics: per-class
 rates assume comparable scope, and a class whose members range from
@@ -339,8 +385,9 @@ The bias is contained, not denied:
 2. The payloads are retained, so any crushed field can be re-derived
    with a better rubric or model later. The tape is a cache of
    perception, not the only copy.
-3. The purpose channel never passes through the LLM. Grades are yours.
-   The hard bits are code's. The LLM only labels texture in between.
+3. The purpose channel never passes through the LLM. Grades are
+   code's, read from the effect scale, or yours. The hard bits are
+   code's too. The LLM only labels texture in between.
 
 A language model may crush text into fields. It may not invent fields,
 and it may not write grades. A language model's *prediction* about a
@@ -392,7 +439,8 @@ The self-fix gradient, honestly bounded:
 3. **Graduate** — remedies with n ≥ 20 and success ≥ 0.9 may skip the
    human gate (`decision: auto`). Purpose-bearing proposals never do.
    The gate comes away per class, by evidence — not all at once, by
-   faith.
+   faith. While the gate approves transparently (§3) nothing waits on
+   it; this rule applies again once rejection rules exist.
 4. **See** — the factory does not learn to see. A failure that
    produces no event (a wedged CI agent, a silent cron) leaves no
    trace for any of the above. Monitors over expected event rates
@@ -498,8 +546,8 @@ config ───► PER DEPLOYMENT, ops repo
 
 The catalog lives **in** the ops repo: it is small, it is what organs
 and humans read, and its history in git is a feature. The config lives
-there too, so every pack, rubric, probe and claim passes a human
-merge. A new
+there too, so every pack, rubric, probe and claim passes the ops
+repo's gate (approved transparently for now, §3). A new
 disinto deployment adopts this mechanism by writing its own config and
 wiring its organs to the four records — no code change. The decision
 path never scans the tape.
@@ -509,7 +557,7 @@ path never scans the tape.
 ## 8. Organs that propose
 
 Proposals come from organs, each under its own bot account (§3), and
-you decide. Two organs carry the factory toward its goal: the planner
+the gate decides: for now it approves transparently and tells you (§3). Two organs carry the factory toward its goal: the planner
 and the predictor. Neither needs a new loop or record: they propose
 sprints (§2), vault actions and claims (§6).
 
@@ -543,7 +591,8 @@ them, in order (the capability ladder, `notes/organs.md`):
 
 Each rung is an `internal` sprint whose effect probe is the
 capability's check. A pitch goes through the existing vault gate: an
-ops-repo PR, the architect's Q&A, and your merge as the decision. The
+ops-repo PR, the architect's Q&A, and the gate's approval as the
+decision (transparent for now, §3). The
 gardener then creates the milestone and files the sub-issues. Once its effect is met, the capability claim
 follows as an ops PR. Once it has arms, the planner pitches steps
 toward the vision as sprints with probes. Each sprint names the
