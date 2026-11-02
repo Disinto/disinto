@@ -101,7 +101,9 @@ the gardener's `pitch-vision` pitches use today:
    questions in PR comments and revises the draft. A comment
    starting `Reject:` closes the PR.
 3. **Merging the pitch PR is the decision**, as for every vault action;
-   closing it unmerged rejects the pitch.
+   closing it unmerged rejects the pitch. Since 2026-11-02 the gate
+   merges it itself and tells you, until rejection rules exist
+   (`proposal-loop.md` §3, "The gate, approved transparently").
 4. The gardener creates the sprint's milestone with its block, records
    the decision on the tape, and files the sub-issues into the
    milestone in dependency order. The ops-filer pipeline the architect

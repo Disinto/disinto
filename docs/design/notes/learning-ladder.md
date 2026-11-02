@@ -74,9 +74,10 @@ from stage 1: they need no forecast, and the rungs verify them.
 - Not LLM-written purpose. The LLM is diet: it may crush text to
   fields, draft proposals, predict as a named forecast method, and
   write the inner policy of an option, and draft claims with their
-  checks as ops PRs a human merges. It never writes a grade, a table of
-  statistics, or an exploration controller, and nothing it drafts
-  takes effect without a merge.
+  checks as ops PRs. It never writes a grade, a table of statistics,
+  or an exploration controller, and nothing it drafts takes effect
+  without passing the gate (approved transparently for now,
+  `proposal-loop.md` §3).
 - Not a generative world model. Recorded trees are exact over what
   ran; they do not predict unseen branches.
 - Not search control on the composition forest. A sprint of unlike
@@ -85,13 +86,16 @@ from stage 1: they need no forecast, and the rungs verify them.
 ## Open questions
 
 Resolved 2026-09-29/30 and folded into the design: grade protocol
-(per sprint, at outcome, −1..1), termination per level (sprint effect
+(per sprint, at outcome, −1..1; revised 2026-11-02: the grade is read
+from the effect scale by code, and the owner may override it,
+`proposal-loop.md` §3), termination per level (sprint effect
 after soak, or returned), rollup rules (counts), compaction (none until
 a read is slow), rubrics (8 signatures, three attributions), loop
 naming (levels and triggers), class (sprint nature), proposer (an
 organ's bot account or `disinto-admin`; the implementer never
 proposes), world model (claims in the ops repo; surprise from three
-sources; organs draft, the human merges; `world-model.md`).
+sources; organs draft, the human merges, since 2026-11-02 the gate;
+`world-model.md`).
 
 Still open:
 

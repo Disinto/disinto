@@ -47,17 +47,21 @@ is fast and verified, by hand only.
 
 Counting does none of these. A language model does (2) well and (4)
 badly — it explains, it does not keep score. So: the model explains,
-the tape keeps score, the human admits.
+the tape keeps score, the human admits. (Since 2026-11-02 the gate
+admits, transparently for now, and tells the human:
+`proposal-loop.md` §3.)
 
 ## Decisions (answers 1a 2c 3b 4a 5a)
 
 1. **Where it lives**: a claims register in the ops repo, one file per
-   claim, merged by a human like packs, rubrics and probes.
+   claim, merged by a human like packs, rubrics and probes (since
+   2026-11-02 merged through the gate, `proposal-loop.md` §3).
 2. **Surprise**: all three sources — a contradicted claim, a forecast
    miss beyond its calibrated band, and what the vocabulary cannot
    record.
-3. **Revision**: an organ drafts it as an ops PR; the human merges. That
-   makes revision a proposal, hence the `claim` loop.
+3. **Revision**: an organ drafts it as an ops PR; the human merges
+   (since 2026-11-02 the gate merges). That makes revision a proposal,
+   hence the `claim` loop.
 4. **On challenge**: every open proposal resting on the claim returns
    automatically.
 5. **Existing prose**: convert what is checkable into claims, drop the

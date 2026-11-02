@@ -20,8 +20,8 @@ Eliminate complexity *before* filing:
   does not count). New vocabulary (a rubric, a pack, a block format)
   and new behavior never share an issue.
 - Cross-repo writes are out of scope for dev issues. Ops-repo files
-  (packs, rubrics, probes) are created by an ops PR a human merges;
-  code references them.
+  (packs, rubrics, probes) are created by an ops PR through the gate
+  (`proposal-loop.md` §3); code references them.
 - The body lands whole in the implementer's prompt: ≤ 100 lines.
   Reference code by path, don't explain the architecture.
 - Acceptance = one command whose output can be checked. If you cannot
@@ -101,10 +101,10 @@ Eliminate complexity *before* filing:
 ## Sprints
 
 A sprint is a milestone. Put the sprint block in its description when
-you create it (`class`, `effect`, `expect`, `soak`, optional
+you create it (`class`, `level`, `effect`, `expect`, `soak`, optional
 `rests_on`; see `proposal-loop.md` §2). Issues added to the milestone
 take its class and the claims it rests on. If a claim it rests on is
 challenged, the sprint returns and its queued issues leave the
 backlog.
 The probe the block names must already exist in the ops repo's
-`probes/`, merged by a human.
+`probes/`, merged through the gate (`proposal-loop.md` §3).
