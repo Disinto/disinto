@@ -1,4 +1,4 @@
-<!-- last-reviewed: c9e000b17b36dbb541bdf9790eb9c2d7aecc557f -->
+<!-- last-reviewed: a5192523dd1087c7a53160fb8c68326b54ae5c35 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -21,6 +21,8 @@ disinto/                 (code repo)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)
+│                  pending-actions.jsonl — staging manifest: one action per line,
+│                  written by gardener-run.sh, converted to JSON at commit time
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
@@ -34,6 +36,7 @@ disinto/                 (code repo)
 │                  SCHEMA.md — vault item schema documentation
 │                  validate.sh — vault item validator
 │                  examples/ — example vault action TOMLs (promote, publish, release, webhook-call, run-experiment)
+│                  policy.toml — per-formula blast-radius tiers read by classify.sh
 ├── lib/           env.sh, secrets.sh, agent-sdk.sh, ci-helpers.sh, ci-debug.sh,
 │                  ci-fix-tracker.sh, load-project.sh, parse-deps.sh, guard.sh,
 │                  mirrors.sh, pr-lifecycle.sh, issue-lifecycle.sh, worktree.sh,
@@ -95,7 +98,9 @@ disinto/                 (code repo)
 │                  experiment runner script (wave 2, #1293)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
 │                  edge/ (Caddy + dispatcher + engagement); agents/ (llama-server agents + dsh
-│                  headless patches)
+│                  headless patches, dsh-settings-llamacpp.yaml /
+│                  dsh-settings-xai.yaml — provider settings templates baked into
+│                  the image, selected by DSH_PROVIDER at seed time, #2003/#2004)
 ├── tools/         Operational tools: edge-control/ (register.sh, install.sh,
 │                  dispatch.sh, key-command.sh, porter-install.sh, porter-front.sh, porter-caddy.sh, porter-dns.sh, porter-wrap.sh, porter-admin.sh, porter-doctor.sh, porter-tunnel-keys.sh, stripe-webhook.sh; lib/ (ports.sh,
 │                  caddy.sh, authorized_keys.sh, accounts.sh, name-verbs.sh,
@@ -132,6 +137,15 @@ disinto/                 (code repo)
 │                  provisioning (S2.1/S2.2)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by
 │                  `bin/disinto --with <svc>`
+│                  sprint-due.sh, sprint-children.sh, sprint-outcomes.sh — sprint
+│                  queue queries (#1675, #1674, #1676); tape-stuck.sh — sessions
+│                  stuck on a phase, read from the tape (#1648);
+│                  migrate-ac-to-file.sh — move an issue's acceptance criteria into
+│                  tests/acceptance/issue-<n>.sh; calibration-purpose.sh and
+│                  calibration-signatures.sh — Jev-scope calibration readers (#1652,
+│                  #1651); sync-nomad-client-config.sh — regenerate the Nomad client
+│                  config; xai-login.sh / xai-login.mjs — XAI provider login (#2006);
+│                  edge-control/README.md — edge-control operator guide
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
 │                  branch-protection.md, stats.md);
 │                  contributing/ (acceptance-tests.md, issues-for-bots.md);

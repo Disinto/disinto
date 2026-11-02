@@ -1,4 +1,4 @@
-<!-- last-reviewed: c9e000b17b36dbb541bdf9790eb9c2d7aecc557f -->
+<!-- last-reviewed: a5192523dd1087c7a53160fb8c68326b54ae5c35 -->
 # Planner Agent
 
 **Role**: Pitches one sprint toward the vision, or writes nothing. Invoked
@@ -13,8 +13,10 @@ read or write it, and it does not write vault state.
 Each project manages its own planner state in a separate ops repo.
 
 **Trigger**: `planner-run.sh` is invoked by the polling loop in
-`docker/agents/entrypoint.sh` every 12 hours (iteration math at lines
-794-804, #1388), which passes its project TOML through. Accepts an
+`docker/agents/entrypoint.sh` every 12 hours (`PLANNER_INTERVAL`, default
+43200s, paced by the planner rung of the per-organ cadence block, #1388 —
+cite the rung, not a line number, since entrypoint line numbers drift),
+which passes its project TOML through. Accepts an
 optional project TOML argument, defaults to `projects/disinto.toml`.
 Sources `lib/guard.sh` and calls `check_active planner` first — skips if
 `$FACTORY_ROOT/state/.planner-active` is absent. Then calls

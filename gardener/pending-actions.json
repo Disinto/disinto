@@ -1,22 +1,12 @@
 [
   {
-    "action": "edit_body",
-    "issue": 2010,
-    "body": "Flagged by AI reviewer in PR #2008.\n\n## Problem\n`docker/agents/entrypoint.sh:112-117` seeds `$dsh_home/settings.yaml` with `sed ... > \"$dsh_home/settings.yaml\"` but never creates `$dsh_home`. The script runs under `set -euo pipefail`, so if `DSH_HOME` points at a directory that does not exist yet (a custom `DSH_HOME` on a Nomad host volume, or a mount that failed to init), the redirect fails, the entrypoint aborts, and the organ never starts its poll loop. `lib/dsh-seed.sh` does `mkdir -p \"$DSH_HOME\"` before the identical write — the entrypoint should do the same. Verified locally: running the extracted block with `DSH_HOME=/tmp/x/a/b` produces `No such file or directory` on the redirect.\n\n## Fix\nAdd `mkdir -p \"$dsh_home\" 2>/dev/null || true` (or a guarded `mkdir -p`) inside the seeding branch before the `sed` write.\n\n---\n*Auto-created from AI review*\n\n\n## Affected files\n\n- `docker/agents/entrypoint.sh` — the dsh provider-settings seeding block that writes `\"$dsh_home/settings.yaml\"` with no `mkdir -p \"$dsh_home\"` beforehand.\n- `lib/dsh-seed.sh` — the reference implementation (`dsh_seed_home()`) that does `mkdir -p \"$DSH_HOME\"` before the identical write.\n\n## Acceptance criteria\n\n- [ ] `docker/agents/entrypoint.sh` creates `$dsh_home` (guarded `mkdir -p`) before the `sed ... > \"$dsh_home/settings.yaml\"` redirect.\n- [ ] The entrypoint still starts when `DSH_HOME` points at a path that does not exist yet (e.g. `DSH_HOME=/tmp/x/a/b`).\n- [ ] An existing operator-customised `settings.yaml` is still never overwritten.\n- [ ] ShellCheck passes on the changed file.\n- [ ] No default constants (`DSH_CONTEXT_WINDOW`, `CLAUDE_TIMEOUT`, `MAX_DIFF`, `DIFF_THRESHOLD`, `DIGEST_CAP`) move.\n\n## Related\n\n- #2009 (sibling — same PR #2008 review)\n- #2011 (sibling — same PR #2008 review)"
+    "action": "comment",
+    "issue": 2011,
+    "body": "Gardener: fixed in this housekeeping PR. The Dockerfile comment now describes provider-template seeding (`DSH_PROVIDER` selects settings-llamacpp.yaml or settings-xai.yaml — #2004, #2009, #2010), so \"Nothing reads it yet\" was stale. Closing as resolved."
   },
   {
-    "action": "edit_body",
-    "issue": 2009,
-    "body": "Flagged by AI reviewer in PR #2008.\n\n## Problem\n`docker/agents/entrypoint.sh` now seeds a missing `$DSH_HOME/settings.yaml` from `${DSH_SEED_DIR:-/opt/dsh}/settings-<DSH_PROVIDER>.yaml` (#2004), but `lib/dsh-seed.sh` — the seeding path used by `docker/runner/entrypoint-runner.sh` (vault runner) and the reproduce/triage sidecars — still hardcodes `\"$seed/settings-llamacpp.yaml\"` (lib/dsh-seed.sh:23) and knows nothing about `DSH_PROVIDER`. The entrypoint comment cites `lib/dsh-seed.sh` as the reference for `DSH_SEED_DIR` handling, so the two paths now diverge: a runner or sidecar with `DSH_PROVIDER=xai` silently gets the llama.cpp settings.\n\n## Fix\nMirror the provider lookup and the `^[a-z0-9-]+$` guard in `dsh_seed_home()`, and extend `tests/acceptance/issue-1836.sh` / `issue-1837.sh` to cover the provider selection.\n\n---\n*Auto-created from AI review*\n\n\n## Affected files\n\n- `lib/dsh-seed.sh` — `dsh_seed_home()` hardcodes `\"$seed/settings-llamacpp.yaml\"` (line 23).\n- `docker/agents/entrypoint.sh` — the provider-aware seeding to mirror (`DSH_PROVIDER` + `^[a-z0-9-]+$` guard).\n- `tests/acceptance/issue-1836.sh`, `tests/acceptance/issue-1837.sh` — extend for provider selection.\n\n## Acceptance criteria\n\n- [ ] `dsh_seed_home()` selects `${DSH_SEED_DIR:-/opt/dsh}/settings-$DSH_PROVIDER.yaml`, defaulting to `llamacpp` when `DSH_PROVIDER` is unset.\n- [ ] The provider name is validated with the same `^[a-z0-9-]+$` guard as `docker/agents/entrypoint.sh`.\n- [ ] A missing or invalid provider template warns on stderr and seeds nothing (no silent llama.cpp fallback).\n- [ ] The acceptance tests cover both the default `llamacpp` provider and a named provider.\n- [ ] `mkdir -p \"$DSH_HOME\"` still runs before the `sed ... > \"$DSH_HOME/settings.yaml\"` write.\n- [ ] ShellCheck passes on the changed files.\n\n## Related\n\n- #2010 (sibling — same PR #2008 review; independent fix, no dependency)\n- #2011 (sibling — same PR #2008 review)"
-  },
-  {
-    "action": "add_label",
-    "issue": 2010,
-    "label": "backlog"
-  },
-  {
-    "action": "add_label",
-    "issue": 2009,
-    "label": "backlog"
+    "action": "close",
+    "issue": 2011,
+    "reason": "stale comment fixed in gardener housekeeping PR"
   }
 ]

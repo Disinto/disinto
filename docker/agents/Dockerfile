@@ -64,8 +64,9 @@ RUN mkdir -p /opt/dsh/profiles \
 # seeds it (with the env's DSH_BASE_URL substituted) on first start.
 COPY docker/agents/dsh-settings-llamacpp.yaml /opt/dsh/settings-llamacpp.yaml
 COPY docker/agents/dsh-settings-xai.yaml /opt/dsh/settings-xai.yaml
-# The xai template is baked only for now (#2003); #2004 makes entrypoint.sh
-# seed the template DSH_PROVIDER names. Nothing reads it yet.
+# Both provider templates are baked (#2003); entrypoint.sh and lib/dsh-seed.sh
+# seed $DSH_HOME/settings.yaml from the one named by DSH_PROVIDER — llamacpp by
+# default, xai when DSH_PROVIDER says so (#2004, #2009, #2010).
 
 # Non-root user
 RUN useradd -m -u 1000 -s /bin/bash agent
