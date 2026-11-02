@@ -1,1 +1,0 @@
-{"issue":2011,"group":"docker/agents","title":"docker/agents/Dockerfile: stale 'Nothing reads it yet' comment on the baked xai settings template","reason":"comment-only fix: entrypoint.sh already seeds settings-$DSH_PROVIDER.yaml (#2004), so the comment is misleading","ts":"2026-11-01T20:50:44Z"}

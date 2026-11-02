@@ -1,11 +1,13 @@
-<!-- last-reviewed: c9e000b17b36dbb541bdf9790eb9c2d7aecc557f -->
+<!-- last-reviewed: a5192523dd1087c7a53160fb8c68326b54ae5c35 -->
 # Review Agent
 
 **Role**: AI-powered PR review — post structured findings and formal
 approve/request-changes verdicts to forge.
 
 **Trigger**: `review-poll.sh` is invoked by the polling loop in `docker/agents/entrypoint.sh`
-every 5 minutes (every loop iteration; the invocation is at `docker/agents/entrypoint.sh:743`). It scans open PRs whose CI has passed and
+every 5 minutes (`POLL_INTERVAL`, default 300s — every loop iteration, in the
+fast-organ block of the main poll loop, #1388; cite the block rather than a line
+number, since entrypoint line numbers drift). It scans open PRs whose CI has passed and
 that lack a review for the current HEAD SHA, then spawns `review-pr.sh <pr-number>`.
 
 **Key files**:
