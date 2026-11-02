@@ -1454,6 +1454,9 @@ healer_tick() {
   close_endpoint_open "$now" || log "WARNING: endpoint outcome pass failed"
   handle_public_endpoints "$jobs" "$now" || log "WARNING: endpoint pass failed"
   escalate_pass "$now" || log "WARNING: escalate pass failed"
+  # Drain the owner-notice queue lib/notice.sh (#2031) through the healer-only
+  # sender (#2032). A missing notices dir exits 0 silently.
+  HEALER_NOTIFY_CMD="$HEALER_NOTIFY_CMD" "${HEALER_NOTICES_DRAIN:-$FACTORY_ROOT/bin/notices-drain.sh}" "${TAPE_DIR:-/srv/disinto/tape}/notices" || log "WARNING: notices drain failed"
   return 0
 }
 

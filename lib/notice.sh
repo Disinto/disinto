@@ -8,15 +8,15 @@
 # agent may only write a queue file. Every agent job mounts the tape volume
 # read-write at /srv/disinto/tape and the healer runs with TAPE_DIR set there,
 # so a file queue under the tape is a channel the healer (bin/healer.sh) can
-# drain through bin/notify-owner.sh (#2032). This lib never sends anything:
+# drain through bin/notices-drain.sh (#2032). This lib never sends anything:
 # it writes files and nothing else.
 #
 # Public (sourced; pure bash, does not source lib/env.sh):
 #   notice_owner TEXT
 #     -> queue one owner notice. Directory:
 #        ${NOTICES_DIR:-${TAPE_DIR:-/srv/disinto/tape}/notices}, created with
-#        mkdir -p. The first 4000 characters of TEXT (the cap
-#        bin/notify-owner.sh applies) are written to a temp file inside that
+#        mkdir -p. The first 4000 characters of TEXT (the cap the sender
+#        applies) are written to a temp file inside that
 #        directory, then mv'd to <epoch-seconds>-<pid>-<RANDOM>.txt in the
 #        same directory, so the sender never reads a half-written file.
 #        Return 0 when the file is in place; return 1 with exactly one stderr
