@@ -74,16 +74,14 @@ if [ ! -r "$TAPE_FILE" ]; then
   exit 1
 fi
 
-# Malformed lines (a torn final line from a crashed writer) are skipped with a
-# stderr note, as tools/sprint-children.sh does; they never fail the read.
-total_lines=$(grep -c '' "$TAPE_FILE" || true)
-valid_lines=$(jq -R -c 'fromjson? | select(type == "object")' \
-  < "$TAPE_FILE" 2>/dev/null | grep -c '' || true)
-total_lines="${total_lines:-0}"
-valid_lines="${valid_lines:-0}"
-skipped=$(( total_lines - valid_lines ))
-[ "$skipped" -ge 0 ] || skipped=0
-if [ "$skipped" -gt 0 ]; then
+# Malformed lines (a torn final line from a crashed writer) are skipped, not
+# fatal: one jq pass counts the parseable object records and the gap to the
+# line count is how many lines were torn; the note goes to stderr.
+skipped=$(jq -R -s '
+  [ split("\n")[] | select(length != 0) ] as $lines
+  | ($lines | length) - ([ $lines[] | select(try fromjson | type == "object") ] | length)
+' "$TAPE_FILE" 2>/dev/null || echo 0)
+if [ "${skipped:-0}" -gt 0 ]; then
   echo "sprint-held: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
 fi
 
