@@ -9,6 +9,7 @@
 # Block format (lines, in a Forgejo milestone description):
 #
 #   class: deploy            (deploy | experiment | internal)
+#   level: reachable         (optional: held | made | reachable | reached; default held)
 #   effect: probes/<name>.sh (a path under the ops repo, or none)
 #   expect: >= 3             (one of >= <= > < ==, a space, a number)
 #   soak: 7d                 (an integer followed by d or h)
@@ -30,6 +31,16 @@
 #         malformed. EXPECT is an operator (`>=`, `<=`, `>`, `<`, `==`), a
 #         space and a number; VALUE is a number (integer or decimal, may be
 #         negative). Comparison is done with awk, not bash integer tests.
+#   sprint_level TEXT
+#     -> the `level` field of TEXT: the effect-scale level the sprint aims at
+#         (docs/design/proposal-loop.md §3). A missing line prints `held`
+#         (the default); `held`, `made`, `reachable`, `reached` print
+#         themselves. Any other word — `broke` and `none` are outcomes, not
+#         aims — prints nothing and returns 1.
+#   sprint_level_value LEVEL
+#     -> the grade of a level on the effect scale: broke -1, none 0,
+#         held 0.25, made 0.5, reachable 0.75, reached 1. Any other word
+#         prints nothing and returns 1.
 #
 # Notes:
 #   * No validation of `class` or `effect` here — callers decide.
@@ -123,4 +134,47 @@ sprint_expect_met() {
     else met = (v == n)
     exit (met ? 0 : 1)
   }'
+}
+
+# sprint_level TEXT — print the effect-scale level the sprint aims at
+# (docs/design/proposal-loop.md §2, §3). A missing `level:` line prints the
+# default `held`. Only the four aim-words are accepted: `held`, `made`,
+# `reachable`, `reached`. Anything else (including `broke` and `none`, which
+# are outcomes a sprint does not aim at) prints nothing and returns 1.
+#   The value reaches here already trimmed by sprint_field, so
+#   `level:   made  ` reads as `made`.
+sprint_level() {
+  local text="${1:-}" level
+  level="$(sprint_field "$text" level)"
+  if [ -z "$level" ]; then
+    printf 'held\n'
+    return 0
+  fi
+  case "$level" in
+    held | made | reachable | reached)
+      printf '%s\n' "$level"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# sprint_level_value LEVEL — print the grade of a level on the effect scale
+# (docs/design/proposal-loop.md §3): broke -1, none 0, held 0.25, made 0.5,
+# reachable 0.75, reached 1. An unknown level prints nothing and returns 1.
+#   `broke` and `none` are not aims (sprint_level refuses them) but they are
+#   grades a sprint's outcome can land on, so the scale names them too.
+sprint_level_value() {
+  local level="${1:-}"
+  case "$level" in
+    broke)     printf '%s\n' -1 ;;
+    none)      printf '%s\n' 0 ;;
+    held)      printf '%s\n' 0.25 ;;
+    made)      printf '%s\n' 0.5 ;;
+    reachable) printf '%s\n' 0.75 ;;
+    reached)   printf '%s\n' 1 ;;
+    *)         return 1 ;;
+  esac
 }
