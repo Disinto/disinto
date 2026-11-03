@@ -27,7 +27,10 @@ Bot accounts open and merge their own vault PRs. The dispatcher verifies that an
 
 ## Testing
 
-The gate's merge behavior is covered hermetically by `tests/acceptance/issue-2037.sh` (stubbed forge API, no live services).
+1. **Merged PR runs** — a vault TOML that arrived through a merged PR is dispatched whoever merged it (#2034).
+2. **Direct push rejected** — a TOML with no merge commit behind it is moved to `vault/rejected/`.
+
+The gate's merge behavior is covered hermetically by `tests/acceptance/issue-2037.sh` (stubbed forge API, no live services); the dispatcher's merged-PR check by `tests/acceptance/issue-2034.sh`.
 
 ## Related Issues
 
