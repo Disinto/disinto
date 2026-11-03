@@ -41,6 +41,8 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 source "$FACTORY_ROOT/lib/tape.sh"
 # shellcheck source=pitch-or-idle.sh
 source "$SCRIPT_DIR/pitch-or-idle.sh"
+# The gap reader (#2056): challenged can-fix claims the session pitches.
+source "$SCRIPT_DIR/gaps.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/planner/planner.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -164,7 +166,8 @@ PUBLISH_RC=0
 case "$PITCH_LINE" in
   session)
     PROMPT="${PROMPT}
-ladder: none"
+ladder: none
+gaps: $(planner_claim_gaps | paste -sd' ' | sed 's/^$/none/')"
     formula_worktree_setup "$WORKTREE"
     formula_session_start "planner"
     # Same defaults planner_publish_session_pitch reads. Export them so a

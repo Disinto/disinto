@@ -47,7 +47,7 @@ planner formula.
   `tests/acceptance/issue-1476.sh`), and `emit_planner_proposal` / the pre-session
   open-issue snapshot are deleted (they had no remaining caller). The run-lifecycle
   tape records (`formula_session_start` / `formula_session_end`) are unchanged.
-- `formulas/run-planner.toml` — One step, propose: write at most one pitch file to `$PLANNER_PITCH_FILE`, or nothing. When the effect probe is not already in the ops repo, also write it to `$PLANNER_PROBE_FILE`. No prediction triage, no prerequisite tree, no issue filing, no access request.
+- `formulas/run-planner.toml` — One step, propose: write at most one pitch file to `$PLANNER_PITCH_FILE`, or nothing. When the effect probe is not already in the ops repo, also write it to `$PLANNER_PROBE_FILE`. No prediction triage, no prerequisite tree, no issue filing, no access request. A `gaps:` line names challenged `can-fix-*` claims; a pitch for one comes before a vision step (#2056).
   Claude executes all steps in a single one-shot session with tool access
 - `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
   grooming. (Note: the planner no longer dispatches breakdown mode — complex
@@ -64,6 +64,10 @@ planner formula.
   missing rung as a pitch, prints `held` when one is already open, or prints
   `session`. `planner_publish_session_pitch` opens the session pitch. Does
   not source `lib/env.sh`. Does not call `agent_run`.
+- `planner/gaps.sh` — `planner_claim_gaps` prints the challenged `can-*`
+  claims that are not ladder rungs (from `catalog/claims.md`);
+  `planner-run.sh` passes them to the session as `gaps:` under `ladder: none`
+  (#2056). No network.
 - `$OPS_REPO_ROOT/prerequisites.md` — Retired. The planner does not read or write it.
 - `$OPS_REPO_ROOT/knowledge/planner-memory.md` — Retired (#1477). The planner does not read or write it.
 

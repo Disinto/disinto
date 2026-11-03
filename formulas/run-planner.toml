@@ -21,6 +21,16 @@ title = "Write one pitch file, or nothing"
 description = """
 The prompt contains `ladder: none` or `ladder: <rung>`.
 
+Under `ladder: none` a second line, `gaps: <ids>` or `gaps: none`, names
+the challenged capability claims that are not ladder rungs. A
+`can-fix-<condition>` claim is a repair remedy the supervisor suspended
+(`proposal-loop.md` §5): the factory cannot clear `<condition>`. When
+`gaps:` names one, the pitch is the step that would make that claim hold,
+before any vision step: read its statement in the catalog, say in the
+paragraph which capability is missing, and set the sprint block's
+`effect` to the claim's `check` and `expect` to its `expect`. Do not name
+that claim in `rests_on`: a challenged claim returns the sprint.
+
 When that line is not `ladder: none`, write nothing.
 
 When it is `ladder: none`, read `VISION.md`, the claims catalog
