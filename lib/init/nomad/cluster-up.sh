@@ -78,6 +78,11 @@ HOST_VOLUME_DIRS=(
   "/srv/disinto/snapshot-state"
   "/srv/disinto/inbox-state"
   "/srv/disinto/projects"
+  # The machine report, mounted read-only by machine/install.sh on the LXD
+  # host (#2070, declared as host_volume "machine" in nomad/client.hcl).
+  # Nomad needs the path to exist to fingerprint the volume; the loop below
+  # creates it only when no mount is already there (#2075).
+  "/srv/disinto/machine"
 )
 
 # Operator-managed per-env factory project TOML directory (#794).
@@ -327,6 +332,14 @@ log "── Step 4/9: host-volume dirs under /srv/disinto/ ──"
 # explicit makes the log output read naturally as a top-down creation).
 install -d -m 0755 -o root -g root "/srv/disinto"
 for d in "${HOST_VOLUME_DIRS[@]}"; do
+  # A path already mounted by the machine (e.g. the read-only machine
+  # report, #2070/#2075) is left exactly as the mount left it: install -d
+  # would race with the device and chmod 0777 fails on a read-only
+  # mountpoint under set -e.
+  if mountpoint -q "$d"; then
+    log "mounted: ${d} (left as the machine mounted it)"
+    continue
+  fi
   if [ -d "$d" ]; then
     log "unchanged: ${d}"
   else
