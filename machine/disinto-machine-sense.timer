@@ -1,0 +1,11 @@
+# machine/disinto-machine-sense.timer — installed by machine/install.sh
+[Unit]
+Description=Run the disinto machine sense every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

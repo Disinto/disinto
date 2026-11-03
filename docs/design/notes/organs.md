@@ -176,6 +176,19 @@ owner. Live resources today:
 - node memory (8 GiB);
 - your review time.
 
+**The machine is sensed from outside.** The box is an LXD container:
+from inside it a disk check sees the whole volume the box is stored on,
+not who uses it, and memory reads the box's cap, not the machine's. So
+the machine reports itself. `machine/machine-sense.sh`, run by a
+systemd timer on the LXD host every 10 minutes, writes `machine.json`
+(volumes and unallocated space, memory, CPU, LXD containers, the
+largest processes, folder sizes with growth per day, and the neighbours
+the owner lists) into a directory that `machine/install.sh` mounts
+read-only into the box at `/srv/disinto/machine` (owner decision
+2026-11-03). The box reads the report and cannot touch the machine.
+For the machine, the sense rung's inventory is this report, and its
+claim is `can-sense-machine`.
+
 A pitch declares its expected use. The supervisor watches utilization
 as monitors (§5). Policies for using a resource are predictor
 experiments.

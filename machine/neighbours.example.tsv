@@ -1,0 +1,5 @@
+# Who else lives on this machine: one line per neighbour, tab-separated:
+#   path<TAB>owner<TAB>note
+# machine/install.sh copies this file to /etc/disinto-machine/neighbours.tsv
+# once; edit it there. machine-sense.sh publishes it in the report.
+/opt/example/research	owner	a project that manages and cleans up its own disk
