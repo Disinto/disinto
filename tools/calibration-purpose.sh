@@ -22,9 +22,11 @@
 # is not a fallback. A loop not in the pack is not graded: dev issues must
 # not show a fake 0.
 #
-# Per eligible proposal the reading is the `value` of its last grade record
-# in tape order, or 0 when it has none or the value is null. The record
-# itself is not rewritten. The cell is `M (g/e)`: M is the mean of those
+# Per eligible proposal the reading is the `value` of its last grade whose
+# `who` is not `effect-scale` — the owner's grade read over the code's (#2033),
+# the tape keeping both — or its last grade when it carries none of the
+# owner's. Either way it is 0 when there is no grade or the value is null. The
+# record itself is not rewritten. The cell is `M (g/e)`: M is the mean of those
 # readings with two decimals, g is how many of the eligible proposals had a
 # numeric grade, e is the eligible count. No eligible proposal: the key is
 # left out, so the row prints `-`.
@@ -184,7 +186,7 @@ if os.path.isfile(tape_path) and os.path.getsize(tape_path) > 0:
             elif kind == "grade":
                 pid = rec.get("proposal_id")
                 if isinstance(pid, str):
-                    grades.setdefault(pid, []).append(rec.get("value"))
+                    grades.setdefault(pid, []).append((rec.get("who"), rec.get("value")))
 
 # key -> list of numeric grades, None where the reading is the synthetic 0
 # (no grade record, or a null / non-numeric value). The 0 still enters the
@@ -202,8 +204,11 @@ for pid in order:
         continue
     if now - stamped < timedelta(hours=grace[loop]):
         continue
-    recorded = grades.get(pid)
-    value = recorded[-1] if recorded else None
+    recorded = grades.get(pid) or []
+    # The owner's grade (any who but effect-scale) is read over the code's,
+    # whichever of the two came last in tape order (#2033).
+    owners = [given for who, given in recorded if who != "effect-scale"]
+    value = owners[-1] if owners else (recorded[-1][1] if recorded else None)
     groups.setdefault(loop + "/" + cls, []).append(value if numeric(value) else None)
 
 cells = {}

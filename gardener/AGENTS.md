@@ -45,7 +45,8 @@ and executes the pending-actions manifest post-merge.
   The report passes through `tools/calibration-signatures.sh` (#1651), which
   appends a `top signatures` column.
   Then through `tools/calibration-purpose.sh` (#1652), which appends a
-  `purpose` column from grades.
+  `purpose` column from grades. When a proposal carries grades by both, the
+  owner's (any `who` but `effect-scale`) is read over the code's (#2033).
   After the refresh, `tools/sprint-outcomes.sh` (#1676) writes the outcome of
   each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), run
   over the soak window (`PROBE_UNTIL` = the soak's end), or, with effect
