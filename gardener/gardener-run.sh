@@ -458,6 +458,20 @@ if [ "$sprint_outcomes_rc" -ne 0 ]; then
   log "WARNING: sprint-outcomes.sh failed (rc=${sprint_outcomes_rc})"
 fi
 
+# Turn sprint outcomes into grades on the effect scale (#2036), right after
+# the outcomes land (docs/design/proposal-loop.md §3): code writes the grade
+# as `who: effect-scale`; the owner still overrides with tools/grade.sh.
+# The held tool reads the freshest main, so fetch it first — the checkout is
+# only pulled later, at the post-merge step. Never fatal: a non-zero exit
+# only logs a warning.
+git -C "$PROJECT_REPO_ROOT" fetch "${FORGE_REMOTE}" "$PRIMARY_BRANCH" --quiet 2>/dev/null || true
+sprint_grades_rc=0
+SPRINT_HELD_REF="${FORGE_REMOTE}/${PRIMARY_BRANCH}" \
+  "$FACTORY_ROOT/tools/sprint-grades.sh" || sprint_grades_rc=$?
+if [ "$sprint_grades_rc" -ne 0 ]; then
+  log "WARNING: sprint-grades.sh failed (rc=${sprint_grades_rc})"
+fi
+
 # Rejected issues reach the tape (#1631), right after sprint outcomes. A
 # closed `rejected` or `prediction/dismissed` issue the tape does not hold
 # yet is written as a rejected dev proposal and never runs. Never fatal: a

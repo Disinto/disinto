@@ -57,6 +57,12 @@ and executes the pending-actions manifest post-merge.
   `backlog` off the milestone's open issues (#1622).
   A sprint whose `rests_on` names a challenged claim returns the same way,
   signed `claim-challenged` (#1644).
+  Then `tools/sprint-grades.sh` (#2036) grades each scored sprint on the effect
+  scale (`docs/design/proposal-loop.md` §3) as `who: effect-scale`: −1 when a
+  merge was reverted, the sprint's `level:` when its probe was met, else `held`
+  (0.25) when its merges are still on main (`tools/sprint-held.sh`, #2030),
+  else 0; a sprint with `effect: none` reads only whether its merges held.
+  Idempotent. The owner can still override with `tools/grade.sh`.
   Then `tools/tape-rejections.sh` (#1631) records each closed `rejected` or
   `prediction/dismissed` issue the tape does not hold yet as a rejected dev
   proposal. A failure only logs a warning.
