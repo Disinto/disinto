@@ -30,7 +30,9 @@
 #   * AC4 rerun appends nothing; an id already holding an effect-scale grade
 #     is skipped; a proposal with no outcome is skipped; HOLD -> nothing.
 #   * AC5 an unknown level word is skipped with the exact log line.
-#   * AC6 gardener-run.sh calls the tool after sprint-outcomes.sh and before
+#   * AC6 a malformed (torn) tape line is skipped, not fatal: grading still
+#     happens.
+#   * AC7 gardener-run.sh calls the tool after sprint-outcomes.sh and before
 #     tape-rejections.sh, with the fetch and SPRINT_HELD_REF; bash -n passes;
 #     the tool is executable.
 #
@@ -242,8 +244,18 @@ case "$OUT" in
   *) ac_fail "unknown level must log the exact line, got: $OUT" ;;
 esac
 
-# ── AC6: the gardener wiring ─────────────────────────────────────────────────
-ac_log "AC6: gardener-run.sh runs sprint-grades.sh between outcomes and rejections"
+# ── AC6: a torn tape line is skipped, not fatal ───────────────────────────────
+ac_log "AC6: a malformed tape line is ignored; grading still happens"
+D="$WORK/ac6"; seed_sprint "$D" 1 p6 1
+printf '%s\n' '{"type":"outcome","proposal_id":' >>"$D/tape.jsonl"
+printf '%s\n' '{"type":"proposal","id":"p6","decision":"approved"' >>"$D/tape.jsonl"
+run_grades "$D" held
+ac_assert_eq "$RC" "0" "a torn tape line must not fail the run (got $RC): $OUT / $ERR"
+ac_assert_eq "$(grade_count "$D" p6)" "1" \
+  "a torn line must not disable grading: $(cat "$D/tape.jsonl")"
+
+# ── AC7: the gardener wiring ──────────────────────────────────────────────────
+ac_log "AC7: gardener-run.sh runs sprint-grades.sh between outcomes and rejections"
 GARDENER="$REPO_ROOT/gardener/gardener-run.sh"
 ac_assert_file "$GARDENER" "gardener/gardener-run.sh is missing"
 grades_line="$(grep -n 'sprint-grades\.sh' "$GARDENER" | head -n 1 | cut -d: -f1)"

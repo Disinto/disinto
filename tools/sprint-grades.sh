@@ -90,46 +90,33 @@ _pid_from_id_file() {
   printf '%s' "${raw// /}"
 }
 
-# _outcome_on_tape PID — 0 when the tape holds an outcome for PID, 1 when it
-# does not, 2 when the tape cannot be read.
-_outcome_on_tape() {
-  local id="$1" rc=0
-  jq -e -n --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
-    any($rows[]?; .type == "outcome" and .proposal_id == $id)
-  ' >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    0 | 1) return "$rc" ;;
-    *)     return 2    ;;
-  esac
-}
-
-# _scale_grade_on_tape PID — 0 when a grade for PID signed effect-scale is
-# already on the tape (reruns must append nothing), 1 when it is not, 2 when
-# the tape cannot be read.
-_scale_grade_on_tape() {
-  local id="$1" rc=0
-  jq -e -n --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
-    any($rows[]?; .type == "grade" and .proposal_id == $id and .who == "effect-scale")
-  ' >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    0 | 1) return "$rc" ;;
-    *)     return 2    ;;
-  esac
-}
-
-# _probe_met PID — print 1 when the id's last outcome recorded effect 1 or
-# true, else 0; rc 1 when the tape cannot be read. Torn lines are ignored.
-_probe_met() {
-  local id="$1" out rc=0
-  out="$(jq -rn --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
-    [ $rows[]? | select(.type == "outcome" and .proposal_id == $id) ]
-    | last | (.bits // {}) | (.effect // 0)
-  ' 2>/dev/null)" || rc=$?
-  [ "$rc" -eq 0 ] || return 1
-  case "$out" in
-    1 | true) printf 1 ;;
-    *)        printf 0 ;;
-  esac
+# _tape_flags PID — print one line "HAS_OUTCOME HAS_SCALE_GRADE MET" read
+# from the tape in one pass. A malformed (torn) line is skipped, never fatal:
+# the tape is append-only and half-written rows do happen. rc 2 when the tape
+# cannot be read at all.
+_tape_flags() {
+  local id="$1" tape="${TAPE_DIR}/tape.jsonl" outcome=0 graded=0 met=0 row probe
+  if [ ! -r "$tape" ]; then
+    return 2
+  fi
+  while IFS= read -r row || [ -n "$row" ]; do
+    probe="$(jq -e -rR --arg id "$id" '
+      fromjson?
+      | if .type == "outcome" and .proposal_id == $id then
+          (.bits // {}).effect as $e
+          | (if $e == 1 or $e == true then 1 else 0 end)
+        elif .type == "grade" and .proposal_id == $id
+             and .who == "effect-scale" then
+          "scale"
+        else
+          empty
+        end' <<<"$row" 2>/dev/null)" || continue
+    case "$probe" in
+      scale) graded=1 ;;
+      1 | 0) outcome=1; met="$probe" ;;
+    esac
+  done <"$tape"
+  printf '%s %s %s' "$outcome" "$graded" "$met"
 }
 
 # _grade_one N PID — grade one sprint.
@@ -139,15 +126,20 @@ _probe_met() {
 _grade_one() {
   local n="$1" pid="$2"
   local rc body reason_file reason description effect level state value met
+  local has_outcome has_grade
 
-  # Idempotence and the no-outcome skip (see the header).
+  # Idempotence and the no-outcome skip (see the header), in one tape pass.
   rc=0
-  _outcome_on_tape "$pid" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    log "sprint ${n}: no outcome on the tape${rc:+ (rc ${rc})} — not graded"
+  read -r has_outcome has_grade met <<<"$(_tape_flags "$pid")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$has_outcome" ]; then
+    log "sprint ${n}: could not read the tape (rc ${rc}) — no grade this run"
+    return 1
+  fi
+  if [ "$has_outcome" != 1 ]; then
+    log "sprint ${n}: no outcome on the tape — not graded"
     return 0
   fi
-  if _scale_grade_on_tape "$pid"; then
+  if [ "$has_grade" = 1 ]; then
     log "sprint ${n}: already graded by the effect scale — nothing appended"
     return 0
   fi
@@ -176,13 +168,6 @@ _grade_one() {
   fi
   effect="$(sprint_field "$description" effect)" || effect=""
   effect="${effect:-}"
-
-  rc=0
-  met="$(_probe_met "$pid")" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    log "sprint ${n}: could not read the tape — no grade this run"
-    return 1
-  fi
 
   rc=0
   state="$("$HELD_TOOL" "$pid")" || rc=$?
