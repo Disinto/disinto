@@ -80,6 +80,10 @@ and executes the pending-actions manifest post-merge.
   A claim whose checks pass for its whole `window` gets a `held` outcome;
   checks go on, and a later miss still contradicts it (#1643). The check's
   probe reads the same window (`PROBE_WINDOW_DAYS`, `PROBE_WINDOW_S`).
+  Then `tools/grade-threshold.sh` (#2039): the first grade above 0.5 on the
+  tape queues one notice for the owner (`lib/notice.sh`) that it is time to
+  write rejection rules for the gate (`docs/design/proposal-loop.md` §3),
+  once, marked by `${TAPE_DIR}/gate/rejection-rules-told`.
 - `gardener/gardener-step.sh` — Per-iteration step executor: sources `gardener/classify.sh`,
   reads its JSON output, and dispatches to the matching `formulas/<task>.toml`.
   Manages scratch worktree and PR creation for single-file updates.

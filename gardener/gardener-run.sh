@@ -494,6 +494,16 @@ if [ "$tape_rejections_rc" -ne 0 ]; then
   log "WARNING: tape-rejections.sh failed (rc=${tape_rejections_rc})"
 fi
 
+# The first grade above 0.5 on the tape tells the owner it is time to write
+# rejection rules for the gate (docs/design/proposal-loop.md §3), once, marked
+# by ${TAPE_DIR}/gate/rejection-rules-told. Never fatal: a non-zero exit only
+# logs a warning.
+grade_threshold_rc=0
+"$FACTORY_ROOT/tools/grade-threshold.sh" || grade_threshold_rc=$?
+if [ "$grade_threshold_rc" -ne 0 ]; then
+  log "WARNING: grade-threshold.sh failed (rc=${grade_threshold_rc})"
+fi
+
 # Claim-loop proposals (#1641), after sprint-outcomes.sh and tape-rejections.sh.
 # Each new or revised claim file becomes one claim-loop proposal. Never fatal:
 # a non-zero exit only logs a warning.
