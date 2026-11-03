@@ -24,7 +24,8 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   the recipe's repair proposal id; the condition's state entry keeps `acted` and `acted_at`, and `repair_tape_tick` writes the outcome `{acted, cleared}` once the condition stops firing within `SUPERVISOR_REPAIR_WINDOW_S` (default 3600) or the window passes (#1637). `repair_tape_tick` runs only when the recipe evaluation is trustworthy — `RECIPE_EVAL_OK=1`, set when the evaluator exits 0 with a non-empty JSON object carrying a `fired` array — so a failed or non-JSON evaluation leaves state entries open instead of closing them as cleared (#1713). A non-zero script exit never interrupts the tick. When the LLM escalation gate runs a session (`SUPERVISOR_LLM_ESCALATION=on`, #1681), it first writes a `diagnose` repair proposal for the fired conditions and exports its id as `TAPE_PROPOSAL_ID`; the tick logic of #1637 writes its outcome (#1638). A failed outcome append leaves that condition in the repair state file so the next tick retries (#1702).
   A failing direct fix logs `direct action <name> (<script>) failed, rc=<n>: <last stderr line>` (#1697). **Stop rule (#2053)**: before it looks up the proposal, `repair_direct_dispatch` asks `repair_suspended <recipe>` (`lib/repair-suspend.sh`). Once ≥ `suspend_at` of the recipe's last `window` tried outcomes failed (acted, not cleared) and the last one failed, the script does not run and the tick logs `suspended: <recipe>`; while suspended it runs once per `trial_days` (`trial: <recipe>`), and a cleared try lifts it. Thresholds come from the ops pack `packs/repair.toml`; without the pack the rule is off (`docs/design/proposal-loop.md` §5). The first tick of a suspension writes `${TAPE_DIR}/repair/<recipe>.suspended` and queues one owner notice through `lib/notice.sh` (#2031); the lift removes the marker and logs `suspension lifted: <recipe>` (#2054). When the rule cannot evaluate (no pack, no tape: `repair_suspended` prints nothing), a recipe with a marker stays suspended and its script does not run (`stop rule unreadable: <recipe> stays suspended`); only an evaluated, not-suspended result lifts it (#2076). The same tick drafts `claims/can-fix-<recipe>.toml` as an ops PR under the supervisor's account (`lib/repair-claim.sh`, #2055); the lift drafts its revision, so the claim is checked afresh.
 - `supervisor/preflight.sh` — Data collection: system resources (RAM, disk, swap,
-  load), Docker status, active sessions + phase files, lock files, agent log
+  load) plus the `Disk owner:` (#2077): box, neighbours or unknown, from the machine
+  report (`/srv/disinto/machine/machine.json`, #2070), Docker status, active sessions + phase files, lock files, agent log
   tails, CI pipeline status, open PRs, issue counts, stale worktrees, blocked
   issues, public endpoints (`PUBLIC_URLS`; DOWN after 2 failing ticks in a row), unregistered Nomad services (from the snapshot state). Also performs **stale phase cleanup**: scans `/tmp/*-session-*.phase`
   files for `PHASE:escalate` entries and auto-removes any whose linked issue
@@ -37,6 +38,10 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   from the run ledger at `${OPS_REPO_ROOT}/runs`, artifacts disk %, and oldest
   open `judgment`-labeled issue age — the "Research Runs" section is omitted
   when the ledger directory is absent (not a failure).
+- `supervisor/evaluate-recipes.sh` — Rule evaluation against the preflight
+  output: `disk_pct_gt` does not fire when the disk owner is `neighbours`:
+  the box cannot free space other projects use (#2077). When it fires with an
+  owner line present, the owner text joins the evidence.
 - `formulas/run-supervisor.toml` — Execution spec: six steps (preflight review,
   health-assessment, decide-actions, report, incidents, journal) with `needs`
   dependencies. Claude evaluates all metrics and takes actions in a single

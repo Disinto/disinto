@@ -79,9 +79,23 @@ eval_swap_mb_gt() {
 eval_disk_pct_gt() {
   local section_text="$1"
   local threshold="$2"
-  local disk_pct
+  local disk_pct owner_line owner
   disk_pct=$(printf '%s\n' "$section_text" | grep -oP 'Disk:\s+\K[0-9]+' | head -1)
   if [ -n "${disk_pct:-}" ] && [ "$disk_pct" -gt "$threshold" ] 2>/dev/null; then
+    # #2077: the box is an LXD container on a shared volume. When the machine
+    # report says neighbours fill it, a Docker prune cannot free the space, so
+    # the recipe does not fire. `unknown` or a missing owner line (no report)
+    # fires as before.
+    owner_line=$(printf '%s\n' "$section_text" | grep -m1 '^Disk owner: ' || true)
+    if [ -n "$owner_line" ]; then
+      owner="${owner_line#Disk owner: }"
+      owner="${owner%% *}"
+      if [ "$owner" = "neighbours" ]; then
+        return 1
+      fi
+      _EVIDENCE="Disk: ${disk_pct}% used (threshold: ${threshold}%), ${owner_line#Disk owner: }"
+      return 0
+    fi
     _EVIDENCE="Disk: ${disk_pct}% used (threshold: ${threshold}%)"
     return 0
   fi
