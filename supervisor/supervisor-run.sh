@@ -51,6 +51,8 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 source "$FACTORY_ROOT/lib/ci-helpers.sh"
 # shellcheck source=../lib/tape.sh
 source "$FACTORY_ROOT/lib/tape.sh"
+# shellcheck source=../lib/repair-suspend.sh
+source "$FACTORY_ROOT/lib/repair-suspend.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -482,7 +484,7 @@ fi
 # without aborting. Total: always returns 0.
 repair_direct_dispatch() {
   local recipe_output="${1:-}"
-  local name script evidence started started_epoch tsv
+  local name script evidence started started_epoch tsv counts
   local ended ended_epoch rc duration_s status state_file proposal_id cost errf
   local acted_flag acted_epoch
   if [ -z "$recipe_output" ]; then
@@ -498,6 +500,12 @@ repair_direct_dispatch() {
     if [ -z "$script" ] || [ "$script" = "__MISSING__" ]; then
       continue
     fi
+    # Stop rule (proposal-loop.md §5): a remedy that keeps failing does not run.
+    rc=0; counts="$(repair_suspended "$name")" || rc=$?
+    case "$rc" in
+      0) log "suspended: ${name} (${counts% *} of last ${counts#* } tries failed)"; continue ;;
+      2) log "trial: ${name} (${counts% *} of last ${counts#* } tries failed)" ;;
+    esac
     # Repair-tape pairing (#1636): a direct remedy with no open proposal
     # gets one now, so the run that follows pairs with it.
     proposal_id=""
