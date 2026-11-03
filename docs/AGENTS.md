@@ -128,6 +128,9 @@ disinto/                 (code repo)
 │                  tape-rejections.sh — a closed rejected issue the tape does not hold
 │                  yet becomes a rejected dev proposal (#1631)
 │                  pitch-decisions.sh — a decided pitch reaches the tape; a merged one becomes its milestone and sub-issues (#1891, #1892)
+│                  pitch-approve.sh — a bot's open pitch PR whose drafted sub-issues
+│                  pass pitch-lint.sh and whose probe exists is merged by the gate
+│                  and the owner is told via notice.sh (#2038)
 │                  claim-checks.sh — run a proposed claim's check; one miss contradicts it (#1642)
 │                  claims-report.sh — catalog table of each claim's status (#1645)
 │                  grade.sh — one-command human grading of a proposal (#1410)

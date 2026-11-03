@@ -25,8 +25,12 @@ and executes the pending-actions manifest post-merge.
 
 **Key files**:
 - `gardener/gardener-run.sh` — One-shot full-formula executor (invoked from host cron in
-  bare-metal mode, `lib/ci-setup.sh:65`): lock, memory guard, syncs the ops clone at the
-  start of every run via `ensure_ops_repo()` (#1653) — before the precondition checks, so
+  bare-metal mode, `lib/ci-setup.sh:65`): lock, memory guard,
+  runs `tools/pitch-approve.sh` (#2038) first — a bot's open pitch PR whose drafted
+  sub-issues pass `tools/pitch-lint.sh` and whose probe exists is merged by the gate
+  and the owner is told (`lib/notice.sh`; `docs/design/proposal-loop.md` §3) — then
+  syncs the ops clone at the start of every run via `ensure_ops_repo()` (#1653) — before
+  the precondition checks, so
   even early-exit runs read fresh operational data (non-fatal, warnings only),
   then runs `tools/pitch-decisions.sh` (#1891), also before the precondition checks: a pitch (an ops-repo PR adding `sprints/<slug>.md`) closed unmerged becomes a rejected `sprint` proposal with `context.pitch`; a merged one gets its milestone (`lib/sprint-milestone.sh`) and an approved `sprint` proposal with `context.pitch` and `ref` `milestone:<id>`, then filer-bot files its sub-issues into the milestone (`lib/sprint-filer.sh`) (non-fatal),
   sources disinto project config, loads formula via `load_formula_or_profile`,
