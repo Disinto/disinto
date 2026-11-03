@@ -15,8 +15,8 @@
 # exits 1 with a `calibration-signatures:` line and writes nothing.
 #
 # Hermetic: fixture tape and table in tmp dirs; TAPE_STUCK_TOOL is a stub;
-# AC 1 uses the default TAPE_MODEL_TOOL (the real tools/tape-model.sh,
-# wiring #2059), AC 2 a failing stub.
+# AC 1 wires TAPE_MODEL_TOOL to the real tools/tape-model.sh (#2059 default),
+# #2059), AC 2 points it at stubs.
 #
 # Acceptance:
 #   AC 1  rows | dev | backlog | grok-4.7 | … | agent-loop:1 |,
@@ -46,39 +46,36 @@ ac_assert_file "$REPO_ROOT/tools/calibration-signatures.sh" \
 ac_assert_file "$REPO_ROOT/tools/tape-model.sh" \
   "tools/tape-model.sh (#2059) is missing"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+SIG_TOOL="$REPO_ROOT/tools/calibration-signatures.sh"
 
-# ── Fixture tape ──────────────────────────────────────────────────────────────
-# dev/backlog: p1 served by dsh/grok-4.7 (last outcome agent-loop, an earlier
-# outcome must not count), p2 served by dsh/unsloth/Qwen3.8-27B (agent-loop),
-# p3 with no run at all (needs-ops).
-TAPE_DIR="$TMP_DIR/tape"
-mkdir -p "$TAPE_DIR"
-cat >"$TAPE_DIR/tape.jsonl" <<'EOF'
-{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p1","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"2063-p1"}
-{"type":"run","t":"2026-02-01T00:00:30Z","proposal_id":"p1","agent":"dsh/grok-4.7"}
-{"type":"outcome","t":"2026-02-01T00:01:00Z","proposal_id":"p1","bits":{"merged":1},"signature":"old-sig","numbers":{},"children":{},"payloads":[]}
-{"type":"outcome","t":"2026-02-01T00:02:00Z","proposal_id":"p1","bits":{"merged":1},"signature":"agent-loop","numbers":{},"children":{},"payloads":[]}
-{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p2","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"2063-p2"}
-{"type":"run","t":"2026-02-01T00:00:30Z","proposal_id":"p2","agent":"dsh/unsloth/Qwen3.8-27B"}
-{"type":"outcome","t":"2026-02-01T00:03:00Z","proposal_id":"p2","bits":{"merged":1},"signature":"agent-loop","numbers":{},"children":{},"payloads":[]}
-{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p3","loop":"dev","class":"backlog","context":{},"decision":"rejected","ref":"2063-p3"}
-{"type":"outcome","t":"2026-02-01T00:04:00Z","proposal_id":"p3","bits":{},"signature":"needs-ops","numbers":{},"children":{},"payloads":[]}
-EOF
+# dev/backlog tape: p1 served by dsh/grok-4.7 (its last outcome is agent-loop;
+# the earlier one must not count), p2 served by dsh/unsloth/Qwen3.8-27B
+# (agent-loop), p3 with no run at all (needs-ops).
+TAPE="$WORK/tape/tape.jsonl"
+mkdir -p "$WORK/tape"
+printf '%s\n' \
+  '{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p1","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"2063-p1"}' \
+  '{"type":"run","t":"2026-02-01T00:00:45Z","proposal_id":"p1","agent":"dsh/grok-4.7"}' \
+  '{"type":"outcome","t":"2026-02-01T00:01:00Z","proposal_id":"p1","bits":{"merged":1},"signature":"old-sig","numbers":{},"children":{},"payloads":[]}' \
+  '{"type":"outcome","t":"2026-02-01T00:02:00Z","proposal_id":"p1","bits":{"merged":1},"signature":"agent-loop","numbers":{},"children":{},"payloads":[]}' \
+  '{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p2","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"2063-p2"}' \
+  '{"type":"run","t":"2026-02-01T00:00:45Z","proposal_id":"p2","agent":"dsh/unsloth/Qwen3.8-27B"}' \
+  '{"type":"outcome","t":"2026-02-01T00:03:00Z","proposal_id":"p2","bits":{"merged":1},"signature":"agent-loop","numbers":{},"children":{},"payloads":[]}' \
+  '{"type":"proposal","t":"2026-02-01T00:00:00Z","id":"p3","loop":"dev","class":"backlog","context":{},"decision":"rejected","ref":"2063-p3"}' \
+  '{"type":"outcome","t":"2026-02-01T00:04:00Z","proposal_id":"p3","bits":{},"signature":"needs-ops","numbers":{},"children":{},"payloads":[]}' \
+  >"$TAPE"
 
 # Two dev/backlog stuck samples (#2061): one names its model, one has none and
-# lands on `-`. No arguments.
-STUCK="$TMP_DIR/stuck.sh"
-cat >"$STUCK" <<'EOF'
-#!/usr/bin/env bash
-if [ "$#" -ne 0 ]; then
-  echo "stuck stub: expected no arguments, got: $*" >&2
-  exit 1
-fi
-printf '%s\n' '[{"loop":"dev","class":"backlog","model":"unsloth/Qwen3.8-27B"},{"loop":"dev","class":"backlog"}]'
-EOF
-chmod +x "$STUCK"
+# lands on `-`. The stub refuses arguments.
+STUB="$WORK/stuck_stub.sh"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[ "$#" -eq 0 ] || { echo "stub: zero args expected, got $*" >&2; exit 1; }' \
+  "printf '%s\n' '[{\"loop\":\"dev\",\"class\":\"backlog\",\"model\":\"unsloth/Qwen3.8-27B\"},{\"loop\":\"dev\",\"class\":\"backlog\"}]'" \
+  >"$STUB"
+chmod +x "$STUB"
 
 # The ten-column calibration table of #2062, one row per model.
 TABLE='| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
@@ -87,25 +84,17 @@ TABLE='| loop | class | model | n | promised | actual | error | mean duration_s 
 | dev | backlog | unsloth/Qwen3.8-27B | 2 | - | 50% | - | - | - | - |
 | dev | backlog | - | 2 | - | 100% | - | - | - | - |'
 
-# run_sig <table> [model_tool]: TAPE_DIR and TAPE_STUCK_TOOL are fixed; when a
-# model tool is given it overrides the default tools/tape-model.sh. stdout ->
-# $OUT, stderr -> $ERR, exit status -> $RC.
+# run_sig <table> [model_tool]: the fixture TAPE_DIR and stuck stub are fixed;
+# when a model tool is given it overrides the default tools/tape-model.sh.
 run_sig() {
-  local table="$1" model_tool="${2:-}"
+  local table="$1" model="${2:-$REPO_ROOT/tools/tape-model.sh}"
   RC=0
   OUT=""
   ERR=""
-  if [ -n "$model_tool" ]; then
-    TAPE_DIR="$TAPE_DIR" TAPE_STUCK_TOOL="$STUCK" TAPE_MODEL_TOOL="$model_tool" \
-      bash "$REPO_ROOT/tools/calibration-signatures.sh" <<<"$table" \
-      >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
-  else
-    TAPE_DIR="$TAPE_DIR" TAPE_STUCK_TOOL="$STUCK" \
-      bash "$REPO_ROOT/tools/calibration-signatures.sh" <<<"$table" \
-      >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
-  fi
-  OUT="$(cat "$TMP_DIR/out" 2>/dev/null || true)"
-  ERR="$(cat "$TMP_DIR/err" 2>/dev/null || true)"
+  TAPE_DIR="$WORK/tape" TAPE_STUCK_TOOL="$STUB" TAPE_MODEL_TOOL="$model" \
+    bash "$SIG_TOOL" <<<"$table" >"$WORK/stdout.txt" 2>"$WORK/stderr.txt" || RC=$?
+  OUT="$(cat "$WORK/stdout.txt" 2>/dev/null || true)"
+  ERR="$(cat "$WORK/stderr.txt" 2>/dev/null || true)"
 }
 
 # ── AC 1: labels are counted per (loop, class, model) ─────────────────────────
@@ -119,47 +108,38 @@ WANT='| loop | class | model | n | promised | actual | error | mean duration_s |
 | dev | backlog | unsloth/Qwen3.8-27B | 2 | - | 50% | - | - | - | - | agent-loop:1, stuck:1 |
 | dev | backlog | - | 2 | - | 100% | - | - | - | - | needs-ops:1, stuck:1 |'
 ac_assert_eq "$OUT" "$WANT" "AC 1: appended table mismatch (got '$OUT')"
-case "$OUT" in
-  *$'| agent-loop:1 |'*) ;;
-  *) ac_fail "AC 1: the grok-4.7 row must end ' agent-loop:1 |' (got: $OUT)" ;;
-esac
-case "$OUT" in
-  *$'| agent-loop:1, stuck:1 |'*) ;;
-  *) ac_fail "AC 1: the unsloth/Qwen3.8-27B row must end ' agent-loop:1, stuck:1 |' (got: $OUT)" ;;
-esac
-case "$OUT" in
-  *$'| needs-ops:1, stuck:1 |'*) ;;
-  *) ac_fail "AC 1: the model-less row must end ' needs-ops:1, stuck:1 |' (got: $OUT)" ;;
-esac
+for row_suffix in \
+  '| agent-loop:1 |' \
+  '| agent-loop:1, stuck:1 |' \
+  '| needs-ops:1, stuck:1 |'
+do
+  case "$OUT" in
+    *"$row_suffix"*) ;;
+    *) ac_fail "AC 1: a model row must end '$row_suffix' (got: $OUT)" ;;
+  esac
+done
 ac_log "AC 1 OK: the model rows carry their own labels, stuck joins its own model"
 
 # ── AC 2: a failing or wrong-shaped model tool refuses ────────────────────────
-FAIL_MODEL="$TMP_DIR/model-fail.sh"
-cat >"$FAIL_MODEL" <<'EOF'
-#!/usr/bin/env bash
-echo "model stub: forced failure" >&2
-exit 1
-EOF
-chmod +x "$FAIL_MODEL"
+BUST_MODEL="$WORK/model_bust.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$BUST_MODEL"
+chmod +x "$BUST_MODEL"
 
 ac_log "AC 2: TAPE_MODEL_TOOL exits 1 -> rc 1, empty stdout, one calibration-signatures: line"
-run_sig "$TABLE" "$FAIL_MODEL"
+run_sig "$TABLE" "$BUST_MODEL"
 ac_assert_eq "$RC" "1" "AC 2: a failing model tool must exit 1 (rc=$RC)"
 ac_assert_eq "$OUT" "" "AC 2: a failing model tool must write nothing (got '$OUT')"
 printf '%s\n' "$ERR" | grep -qF 'calibration-signatures:' \
   || ac_fail "AC 2: stderr must name the failure with a calibration-signatures: line (got: $ERR)"
-n_lines="$(printf '%s\n' "$ERR" | grep -c 'calibration-signatures:' || true)"
-ac_assert_eq "$n_lines" "1" "AC 2: stderr must carry exactly one calibration-signatures: line (got: $ERR)"
+sig_lines="$(printf '%s\n' "$ERR" | grep -c 'calibration-signatures:' || true)"
+ac_assert_eq "$sig_lines" "1" "AC 2: exactly one calibration-signatures: line (got: $ERR)"
 
-NOT_OBJECT="$TMP_DIR/model-array.sh"
-cat >"$NOT_OBJECT" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' '[]'
-EOF
-chmod +x "$NOT_OBJECT"
+ARRAY_MODEL="$WORK/model_array.sh"
+printf '%s\n' '#!/usr/bin/env bash' "printf '%s' '[]'" >"$ARRAY_MODEL"
+chmod +x "$ARRAY_MODEL"
 
 ac_log "AC 2: a model tool printing a JSON array is refused"
-run_sig "$TABLE" "$NOT_OBJECT"
+run_sig "$TABLE" "$ARRAY_MODEL"
 ac_assert_eq "$RC" "1" "AC 2: a non-object model tool must exit 1 (rc=$RC)"
 ac_assert_eq "$OUT" "" "AC 2: a non-object model tool must write nothing (got '$OUT')"
 printf '%s\n' "$ERR" | grep -qF 'calibration-signatures:' \
@@ -170,7 +150,7 @@ ac_log "AC 2 OK: model-tool failure exits 1 and writes nothing"
 ac_log "AC 3: bash -n tools/calibration-signatures.sh"
 bash -n "$REPO_ROOT/tools/calibration-signatures.sh" \
   || ac_fail "AC 3: bash -n failed on tools/calibration-signatures.sh"
-[ -x "$REPO_ROOT/tools/calibration-signatures.sh" ] \
+[ -x "$SIG_TOOL" ] \
   || ac_fail "AC 3: tools/calibration-signatures.sh must be executable"
 
 ac_log "AC 3: tests/acceptance/issue-1651.sh"
