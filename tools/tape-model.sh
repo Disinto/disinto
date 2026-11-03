@@ -51,16 +51,15 @@ if [ ! -f "$TAPE_FILE" ] || [ ! -s "$TAPE_FILE" ]; then
   exit 0
 fi
 
-# Count all lines and the parseable records; the difference is the number of
-# malformed lines to skip (a torn final line from a crashed writer),
-# mirroring tools/calibration.sh.
-total_lines=$(grep -c '' "$TAPE_FILE" || true)
-valid_lines=$(jq -R -c 'fromjson? | select(type == "object")' < "$TAPE_FILE" | grep -c '' || true)
-total_lines="${total_lines:-0}"
-valid_lines="${valid_lines:-0}"
-skipped=$(( total_lines - valid_lines ))
-[ "$skipped" -ge 0 ] || skipped=0
-[ "$skipped" -eq 0 ] || echo "tape-model: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
+# Malformed lines (a torn final line from a crashed writer) are skipped and
+# noted on stderr, like tools/calibration.sh behaves. Written as its own
+# pass: subtract the records jq can parse from the line count.
+records=$(jq -R -c 'fromjson? | select(type == "object")' < "$TAPE_FILE" | grep -c '' || true)
+lines=$(grep -c '' "$TAPE_FILE" || true)
+skipped=$(( lines - records ))
+if [ "${skipped:-0}" -gt 0 ]; then
+  echo "tape-model: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
+fi
 
 jq -R -s '
   [ split("\n")[]
