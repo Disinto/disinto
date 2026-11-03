@@ -314,6 +314,74 @@ nomad_services_section() {
   fi
 }
 
+# disk_owner_line — whose footprint fills the volume the box lives on (#2077).
+#
+# The box is an LXD container on a shared volume; `df -h /` in the supervisor
+# reports the whole volume. One jq pass over the machine report
+# ${MACHINE_REPORT:-/srv/disinto/machine/machine.json} (written by
+# machine/machine-sense.sh on the LXD host, #2070) prints:
+#   Disk owner: box|neighbours|unknown (<detail>)
+# Footprint: the folders[] entry named ${MACHINE_BOX_NAME:-disinto-nomad-box},
+# else the entry with root == "/opt/ai" and name == "lxd" (an upper bound).
+# Volume: the volumes[] entry whose mount is the longest prefix of the
+# footprint's root. share = floor(size_b * 100 / used_b); growth =
+# growth_b_per_day // 0. Owner is box when share >= ${DISK_OWNER_PCT:-20} or
+# growth >= ${DISK_OWNER_GROWTH_B:-5368709120} (5 GiB a day), else neighbours.
+# unknown — each with its reason in the detail — when: no file; not JSON; t
+# more than 1800 s old; errors[] not empty; no footprint entry; no volume.
+disk_owner_line() {
+  local report="${MACHINE_REPORT:-/srv/disinto/machine/machine.json}"
+  local box="${MACHINE_BOX_NAME:-disinto-nomad-box}"
+  local pct="${DISK_OWNER_PCT:-20}"
+  local growth_min="${DISK_OWNER_GROWTH_B:-5368709120}"
+  case "$pct" in ''|*[!0-9]*) pct=20 ;; esac
+  case "$growth_min" in ''|*[!0-9]*) growth_min=5368709120 ;; esac
+
+  local owner
+  if [ ! -f "$report" ]; then
+    owner="unknown (no machine report at ${report})"
+  elif ! jq -e . "$report" >/dev/null 2>&1; then
+    owner="unknown (machine report is not JSON)"
+  else
+    owner="$(jq -r \
+      --arg box "$box" \
+      --argjson pct "$pct" \
+      --argjson growth_min "$growth_min" '
+      def gb(n): (n / 1000000000) | floor;
+      (.t? | try fromdate) as $t_epoch
+      | (.errors // []) as $errors
+      | (.folders // []) as $folders
+      | (($folders | map(select(.name == $box)) | first)
+         // ($folders | map(select(.root == "/opt/ai" and .name == "lxd")) | first)) as $fp
+      | (if $fp == null then null else
+          (.volumes // [])
+          | map(select((.mount // null) as $m | $m != null and (($fp.root // "") | startswith($m))))
+          | sort_by(.mount | length) | last
+        end) as $vol
+      | if $t_epoch == null then
+          "unknown (machine report has no readable t)"
+        elif (now - $t_epoch) > 1800 then
+          "unknown (machine report is \(((now - $t_epoch) / 60) | floor) minutes old)"
+        elif ($errors | length) > 0 then
+          "unknown (machine report has errors: \($errors | join(", ")))"
+        elif $fp == null then
+          "unknown (no footprint entry for \($box))"
+        elif $vol == null then
+          "unknown (no volume mounts the footprint root \($fp.root // "?"))"
+        elif (($vol.used_b // 0) | tonumber) <= 0 then
+          "unknown (volume \($vol.mount) reports no used bytes)"
+        else
+          ((($fp.size_b // 0) * 100 / $vol.used_b) | floor) as $share
+          | ($fp.growth_b_per_day // 0) as $growth
+          | (if $share >= $pct or $growth >= $growth_min then "box" else "neighbours" end) as $owner
+          | "\($owner) (box \(gb($fp.size_b)) GB = \($share)% of used on \($vol.mount), growth \(gb($growth)) GB/day)"
+        end
+    ' "$report" 2>/dev/null)"
+    [ -n "$owner" ] || owner="unknown (machine report could not be read)"
+  fi
+  echo "Disk owner: ${owner}"
+}
+
 # ── Side-effect: preflight output (only when executed directly) ──────────
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
@@ -331,6 +399,7 @@ _load=$(cat /proc/loadavg 2>/dev/null || echo "unknown")
 
 echo "RAM: ${_avail_mb}MB available / ${_total_mb}MB total, Swap: ${_swap_used}MB used"
 echo "Disk: ${_disk_pct}% used (${_disk_used}/${_disk_total} on /)"
+disk_owner_line
 echo "Load: ${_load}"
 echo ""
 
