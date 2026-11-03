@@ -17,7 +17,9 @@
 # 3. Writes TOML to vault/actions/<action-id>.toml on that branch
 # 4. Creates PR targeting main with title "vault: <action-id>"
 # 5. Body includes context field from TOML
-# 6. Returns PR number (existing or newly created)
+# 6. Medium/high tier: the gate merges the PR at once (#2037, docs/design/
+#    proposal-loop.md §3) and queues an owner notice via lib/notice.sh (#2031)
+# 7. Returns PR number (existing or newly created)
 #
 # Idempotent: if PR for same action-id exists, returns its number
 #
@@ -131,6 +133,17 @@ vault_request() {
 
   printf '%s' "$toml_content" > "$tmp_toml"
 
+  # Owner notices queue through lib/notice.sh (#2031), the sibling of this
+  # file; a missing notice lib only warns, it never fails the request.
+  local notice_lib
+  notice_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/notice.sh"
+  if [ -f "$notice_lib" ]; then
+    # shellcheck source=./notice.sh
+    source "$notice_lib"
+  else
+    _vault_log "Warning: lib/notice.sh not found — owner notices skipped"
+  fi
+
   # Source vault-env.sh for validate_vault_action
   local vault_env="${FACTORY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/action-vault/vault-env.sh"
   if [ ! -f "$vault_env" ]; then
@@ -184,6 +197,8 @@ vault_request() {
     # Prepend dispatch_mode = "direct" to the TOML
     printf 'dispatch_mode = "direct"\n%s\n' "$toml_content" > "$direct_toml"
     _vault_commit_direct "$ops_api" "$direct_toml" "${action_id}"
+    notice_owner "vault: ${action_id} (low) committed to ops main by the gate" \
+      || _vault_log "Warning: owner notice for ${action_id} could not be queued"
     return 0
   fi
 
@@ -198,8 +213,7 @@ Formula: ${VAULT_ACTION_FORMULA:-}
 Secrets: ${VAULT_ACTION_SECRETS:-}
 
 ---
-This vault action has been created by an agent and requires admin approval
-before execution. See the TOML file for details."
+Approved by the gate (tier ${vault_tier}, docs/design/proposal-loop.md §3); the dispatcher runs it once merged. See the TOML file for details."
 
   # Create branch
   local branch="vault/${action_id}"
@@ -271,15 +285,24 @@ before execution. See the TOML file for details."
     return 1
   }
 
-  # Enable auto-merge on the PR — Forgejo will auto-merge after approval
-  _vault_log "Enabling auto-merge for PR #${pr_num}"
-  curl -sf -X POST \
+  # The gate approves the vault action itself (docs/design/proposal-loop.md §3):
+  # ops main carries no branch protection, so merge the PR at once instead of
+  # requesting auto-merge when checks succeed (#2037). A failed merge leaves
+  # the PR open; the request still succeeds.
+  if curl -sf -X POST \
     -H "Authorization: token ${admin_token}" \
     -H "Content-Type: application/json" \
     "${ops_api}/pulls/${pr_num}/merge" \
-    -d '{"Do":"merge","merge_when_checks_succeed":true}' >/dev/null 2>&1 || {
-    _vault_log "Warning: failed to enable auto-merge (may already be enabled or not supported)"
-  }
+    -d '{"Do":"merge"}' >/dev/null 2>&1; then
+    _vault_log "PR #${pr_num} merged by the gate (tier ${vault_tier})"
+  else
+    _vault_log "Warning: gate merge of PR #${pr_num} failed — left open"
+  fi
+
+  # Tell the owner the gate approved the action (#2031). A failed notice is
+  # a warning, never a failed request.
+  notice_owner "vault: ${action_id} (${vault_tier}) approved by the gate — ops PR #${pr_num}" \
+    || _vault_log "Warning: owner notice for ${action_id} could not be queued"
 
   # Add labels to PR (vault, pending-approval)
   _vault_log "PR #${pr_num} created, adding labels"
