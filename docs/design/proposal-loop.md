@@ -438,8 +438,33 @@ mean cost.
 The self-fix gradient, honestly bounded:
 
 1. **Retry** — a remedy with good stats fires from a recipe, no human.
-2. **Escalate** — a remedy whose worked-rate degrades becomes a
-   `diagnose` proposal (root cause), not another retry.
+2. **Suspend** — a remedy whose tries keep failing stops. Once ≥ 10
+   of its last 20 tried outcomes failed (`acted` and not `cleared`),
+   the recipe is still evaluated and still reported, but its script
+   does not run; the thresholds are a pack (`packs/repair.toml`, §7).
+   While suspended it gets one try per trial period (7 days); a
+   cleared try lifts the suspension, and the next failure restores it.
+   You are told once, on the transition. A suspension is also a
+   surprise (§6): the supervisor drafts, as an ops PR under its own
+   account, `claims/can-fix-<condition>.toml` — "the remedy clears the
+   condition it acts on", class `internal`, checked as the cleared
+   fraction of its acted outcomes over 7 days, expect ≥ 0.5 — and the
+   claim's first check, reading the same tape, challenges it. That is
+   the rule's anti-fragile half: the stop only keeps the factory from
+   getting worse; the challenged claim is a named gap, which the
+   planner reads after the ladder (§8). The weekly try is the claim's
+   exercise, and the lift drafts the claim's revision, so counting
+   verifies the recovery. The claim names the symptom (the factory
+   cannot clear `<condition>`), not the cause (for disk pressure: the
+   box cannot see the host volume it reports on); the cause is a
+   diagnosis, made in the planner's session or by you, and recorded by
+   revising the claim's `rests_on`. A `diagnose` proposal (the LLM
+   escalation, #1638) stays the path for unknown signatures when
+   escalation is on. Replayed on the tape, the rule stops disk-pressure
+   at its 11th outcome (2026-10-04 03:41Z) instead of its 96th; no
+   other remedy reaches it. Decided by the owner on 2026-11-02;
+   implemented by #2053 (the rule), #2054 (the notice), #2055 (the
+   claim), #2056 (the planner) and #2057 (the gate).
 3. **Graduate** — remedies with n ≥ 20 and success ≥ 0.9 may skip the
    human gate (`decision: auto`). Purpose-bearing proposals never do.
    The gate comes away per class, by evidence — not all at once, by
@@ -544,6 +569,7 @@ config ───► PER DEPLOYMENT, ops repo
               packs/loops.toml     loop → competence bit(s)
               packs/stuck.toml     loop → stuck horizon (hours)
               packs/graded.toml    graded loop → grace period (hours)
+              packs/repair.toml    repair stop rule: window, suspend_at, trial_days (§5)
               rubrics/<loop>.toml  reason → signature, attribution
               probes/*.sh          sprint effect probes and claim checks
               claims/<id>.toml     the world model (§6)
@@ -575,6 +601,17 @@ capability is an arm. A contradicted one is a lost arm. A capability
 with no claim file is a gap. Use is evidence: every action that uses a
 capability exercises it, and a dedicated exercise is needed only when
 the capability went unused for its window.
+
+A capability can be lost in the repair loop too. `can-fix-<condition>`
+(§5) says the factory can clear a condition it watches; a suspension
+challenges it. The planner reads these after the ladder: when no rung
+is missing or challenged, a challenged `can-fix-*` claim is the next
+gap, and the planning session pitches the step that would make it
+hold. The sprint's effect is the claim's check, its expect the claim's
+expect, and the pitch states which capability is missing. The sprint
+does not rest on the challenged claim (that would return it). Until
+the ladder is complete the rungs come first, which for disk pressure
+was already the right order: the missing capability was sense.
 
 **The planner** turns the vision into sprints. It reads `VISION.md`,
 the held claims and the capability claims. Its first question is not
