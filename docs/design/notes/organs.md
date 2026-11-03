@@ -187,7 +187,7 @@ the owner lists) into a directory that `machine/install.sh` mounts
 read-only into the box at `/srv/disinto/machine` (owner decision
 2026-11-03). The box reads the report and cannot touch the machine.
 For the machine, the sense rung's inventory is this report, and its
-claim is `can-sense-machine`.
+claim will be `can-sense-machine`.
 
 A pitch declares its expected use. The supervisor watches utilization
 as monitors (§5). Policies for using a resource are predictor
