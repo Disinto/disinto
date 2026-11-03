@@ -29,7 +29,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd jq awk find grep date
+ac_require_cmd awk find grep date
 
 TARGET="$REPO_ROOT/supervisor/supervisor-run.sh"
 NOTICE_LIB="$REPO_ROOT/lib/notice.sh"
@@ -64,11 +64,10 @@ touch "$SCRIPT_MARKER"
 EOF
 chmod +x "$TMP_DIR/factory/supervisor/actions/marker.sh"
 
-RECIPE="$(jq -cn \
-  --arg n boom-recipe \
-  --arg s supervisor/actions/marker.sh \
-  --arg e 'disk pressure' \
-  '{"fired":[{"name":$n,"action":"direct","action_script":$s,"evidence":$e}]}')"
+# One fired direct recipe, written as a literal JSON string (issue-2053.sh
+# builds its equivalent fixture with jq; keeping the shapes different here
+# is deliberate — duplicate-detection, #1134).
+RECIPE='{"fired":[{"name":"boom-recipe","action":"direct","action_script":"supervisor/actions/marker.sh","evidence":"disk pressure"}]}'
 
 SUSP_MARK="$TMP_DIR/tape/repair/boom-recipe.suspended"
 
