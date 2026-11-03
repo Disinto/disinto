@@ -54,22 +54,16 @@ ac_assert_file "$REPO_ROOT/tools/tape-model.sh" "tools/tape-model.sh is missing"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# ── Fixture packs (hermetic, no ops repo involved) ────────────────────────────
-
-PACKS="$TMP_DIR/packs"
-mkdir -p "$PACKS"
-cat > "$PACKS/loops.toml" <<'EOF'
-dev = "merged"
-EOF
-cat > "$PACKS/stuck.toml" <<'EOF'
-dev = 48
-EOF
-
-# Fixed clock: 2026-02-10 00:00:00 UTC; proposals 72 h old = 2026-02-07.
-export CALIBRATION_NOW="2026-02-10T00:00:00Z"
-export CALIBRATION_LOOPS_FILE="$PACKS/loops.toml"
-export CALIBRATION_STUCK_FILE="$PACKS/stuck.toml"
-export TAPE_DIR="$TMP_DIR/tape"
+# ── Fixture packs and clock (hermetic, no ops repo involved) ──────────────────
+# A dev horizon of 48 h with the single competence bit "merged"; the fixed
+# clock sits 72 h after the fixture proposals, so every no-outcome dev
+# proposal in them is stuck.
+printf 'dev = "merged"\n' > "$TMP_DIR/loops.toml"
+printf 'dev = 48\n' > "$TMP_DIR/stuck.toml"
+export CALIBRATION_NOW="2026-05-04T00:00:00Z"
+export CALIBRATION_LOOPS_FILE="$TMP_DIR/loops.toml"
+export CALIBRATION_STUCK_FILE="$TMP_DIR/stuck.toml"
+export TAPE_DIR="$TMP_DIR/2061-tape"
 mkdir -p "$TAPE_DIR"
 
 # run_stuck <tool> — run the given tape-stuck tool; stdout in $OUT, stderr in
@@ -85,8 +79,8 @@ run_stuck() {
 
 ac_log "AC1: p-1 run agent dsh/qwen3.8-flash-next-q2_0 -> .model == qwen3.8-flash-next-q2_0"
 cat > "$TAPE_DIR/tape.jsonl" <<'EOF'
-{"type":"proposal","t":"2026-02-07T00:00:00Z","id":"p-1","loop":"dev","class":"backlog","context":{},"forecast":{"p_success":0.7},"decision":"approved","ref":"2061-1"}
-{"type":"run","t":"2026-02-07T00:10:00Z","proposal_id":"p-1","organ":"dev","agent":"dsh/qwen3.8-flash-next-q2_0","started":"2026-02-07T00:10:00Z","attempts":1}
+{"type":"proposal","t":"2026-05-01T00:00:00Z","id":"p-1","loop":"dev","class":"backlog","context":{},"forecast":{"p_success":0.7},"decision":"approved","ref":"2061-1"}
+{"type":"run","t":"2026-05-01T00:10:00Z","proposal_id":"p-1","organ":"dev","agent":"dsh/qwen3.8-flash-next-q2_0","started":"2026-05-01T00:10:00Z","attempts":1}
 EOF
 run_stuck "$REPO_ROOT/tools/tape-stuck.sh"
 ac_assert_eq "$RC" "0" "AC1: must exit 0 (rc=$RC, err: $ERR)"
@@ -98,11 +92,11 @@ ac_log "AC1 OK"
 
 ac_log "AC2: p-2 (no run, no backend) -> \"-\"; p-3 (bash run, backend grok-4.7) -> grok-4.7"
 cat > "$TAPE_DIR/tape.jsonl" <<'EOF'
-{"type":"proposal","t":"2026-02-07T00:00:00Z","id":"p-1","loop":"dev","class":"backlog","context":{},"forecast":{"p_success":0.7},"decision":"approved","ref":"2061-1"}
-{"type":"run","t":"2026-02-07T00:10:00Z","proposal_id":"p-1","organ":"dev","agent":"dsh/qwen3.8-flash-next-q2_0","started":"2026-02-07T00:10:00Z","attempts":1}
-{"type":"proposal","t":"2026-02-07T00:00:00Z","id":"p-2","loop":"dev","class":"review","context":{},"decision":"approved","ref":"2061-2"}
-{"type":"proposal","t":"2026-02-07T00:00:00Z","id":"p-3","loop":"dev","class":"gardener","context":{"backend":"grok-4.7"},"decision":"approved","ref":"2061-3"}
-{"type":"run","t":"2026-02-07T00:10:00Z","proposal_id":"p-3","organ":"dev","agent":"bash","started":"2026-02-07T00:10:00Z","attempts":1}
+{"type":"proposal","t":"2026-05-01T00:00:00Z","id":"p-1","loop":"dev","class":"backlog","context":{},"forecast":{"p_success":0.7},"decision":"approved","ref":"2061-1"}
+{"type":"run","t":"2026-05-01T00:10:00Z","proposal_id":"p-1","organ":"dev","agent":"dsh/qwen3.8-flash-next-q2_0","started":"2026-05-01T00:10:00Z","attempts":1}
+{"type":"proposal","t":"2026-05-01T00:00:00Z","id":"p-2","loop":"dev","class":"review","context":{},"decision":"approved","ref":"2061-2"}
+{"type":"proposal","t":"2026-05-01T00:00:00Z","id":"p-3","loop":"dev","class":"gardener","context":{"backend":"grok-4.7"},"decision":"approved","ref":"2061-3"}
+{"type":"run","t":"2026-05-01T00:10:00Z","proposal_id":"p-3","organ":"dev","agent":"bash","started":"2026-05-01T00:10:00Z","attempts":1}
 EOF
 run_stuck "$REPO_ROOT/tools/tape-stuck.sh"
 ac_assert_eq "$RC" "0" "AC2: must exit 0 (rc=$RC, err: $ERR)"
