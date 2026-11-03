@@ -156,8 +156,8 @@ disinto/                 (code repo)
 │                  from the run's `agent` string, else `context.backend` (#2059);
 │                  migrate-ac-to-file.sh — move an issue's acceptance criteria into
 │                  tests/acceptance/issue-<n>.sh; calibration-purpose.sh and
-│                  calibration-signatures.sh — Jev-scope calibration readers (#1652,
-│                  #1651); sync-nomad-client-config.sh — regenerate the Nomad client
+│                  calibration-signatures.sh — calibration column readers (#1652, #1651;
+│                  signatures per (loop, class, model) since #2063); sync-nomad-client-config.sh — regenerate the Nomad client
 │                  config; xai-login.sh / xai-login.mjs — XAI provider login (#2006);
 │                  edge-control/README.md — edge-control operator guide
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
