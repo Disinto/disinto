@@ -13,6 +13,7 @@
 # value   = a float bounded to -1..1 (#1621): negative means the sprint moved
 #           away from the vision. Below -1 or above 1 -> exit 64.
 # who     = the invoking user ($USER; falls back to `id -un` when unset)
+#           the owner, from the box; agent containers are refused
 # when    = at_outcome by default (graded after seeing the outcome);
 #           pass at_approval to grade at approval time
 #
@@ -30,11 +31,21 @@
 #   0    grade appended and printed
 #   64   usage error: missing args, non-float value, value outside -1..1,
 #        missing/empty sprint id file for milestone:<N>, unknown `when`
+#   77   refused: run inside an agent container (DISINTO_CONTAINER=1)
 #   1/2  propagated from lib/tape.sh (refused / usage)
 # =============================================================================
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# #2035: grade.sh is the owner's override (docs/design/proposal-loop.md §3).
+# Inside an agent container $USER is `agent`, so an LLM-driven agent with a
+# shell could forge an override that calibration reads over the code's.
+# Refuse before touching the tape.
+if [ "${DISINTO_CONTAINER:-}" = "1" ]; then
+  echo "grade.sh: the owner's override; agents never write grades (docs/design/proposal-loop.md §3)" >&2
+  exit 77
+fi
 
 # shellcheck source=../lib/tape.sh
 source "$REPO_ROOT/lib/tape.sh"

@@ -232,7 +232,8 @@ history). On this deployment that is `VISION.md` in the disinto repo.
 On this deployment grades are given per sprint, at outcome, by code:
 the sprint's level on the effect scale below. Issues are not graded;
 they earn credit through their sprint (§2 rule 3). You can override
-any grade (`tools/grade.sh milestone:N <value>`); calibration reads
+any grade (`tools/grade.sh milestone:N <value>`) (from the box; the tool
+refuses inside agent containers); calibration reads
 your grade over the code's, and the tape keeps both.
 
 **The effect scale.** The bigger the effect, the higher the grade, and
