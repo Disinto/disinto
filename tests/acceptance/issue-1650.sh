@@ -32,8 +32,10 @@ ac_assert_file "$REPO_ROOT/lib/table-column.sh" "lib/table-column.sh is missing"
 ac_assert_file "$REPO_ROOT/lib/AGENTS.md" "lib/AGENTS.md is missing"
 
 # The review (formula 3b) requires this row directly after lib/stats.sh.
+# #2060 rewrote the sentence (the row's key is now loop/class/model with a
+# loop/class fallback); the row's position is unchanged.
 # shellcheck disable=SC2016  # the row is a literal markdown cell, backticks included
-ROW='| `lib/table-column.sh` | `table_append_column NAME VALUES_JSON` (#1650): appends one column to a markdown table read on stdin; a row'"'"'s value is the key `<loop>/<class>` (its first two cells) of VALUES_JSON, `-` when missing. | calibration column tools (#1651, #1652) |'
+ROW='| `lib/table-column.sh` | `table_append_column NAME VALUES_JSON` (#1650): appends one column to a markdown table read on stdin; a row'"'"'s value is VALUES_JSON at `<loop>/<class>/<model>` (its first three cells), else at `<loop>/<class>` (its first two), else `-` (#2060). | calibration column tools (#1651, #1652) |'
 grep -qF "$ROW" "$REPO_ROOT/lib/AGENTS.md" \
   || ac_fail "lib/AGENTS.md must document table_append_column (#1650)"
 awk '
