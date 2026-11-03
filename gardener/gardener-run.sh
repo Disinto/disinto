@@ -69,9 +69,12 @@ acquire_run_lock "/tmp/gardener-run.lock"
 
 # A bot's open pitch PR whose drafted sub-issues pass the lint and whose
 # effect probe exists is merged by the gate and the owner is told (#2038,
-# docs/design/proposal-loop.md §3). The merged pitch is pulled by the ops
-# clone sync below and reaches the tape in this same run. Never fatal: a
-# non-zero exit only logs a warning.
+# docs/design/proposal-loop.md §3); a bot's PR that only adds or changes
+# claims/*.toml, probes/*.sh or packs/*.toml and validates is merged the same
+# way (#2057). The merged pitch is pulled by the ops clone sync below and
+# reaches the tape in this same run; a merged claim becomes a claim proposal
+# through tools/claim-proposals.sh later in the run. Never fatal: a non-zero
+# exit only logs a warning.
 pitch_approve_rc=0
 "$FACTORY_ROOT/tools/pitch-approve.sh" || pitch_approve_rc=$?
 if [ "$pitch_approve_rc" -ne 0 ]; then
