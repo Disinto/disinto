@@ -3,11 +3,15 @@
 #
 # Runs on every push to main, on the disinto-nomad-box runner:
 #   1. detect-changes      — did the merge touch the edge runtime (docker/edge,
-#                              bin/snapshot-*, edge.hcl)? Sets a flag for step 2.
+#                              bin/snapshot-*, edge.hcl) or the healer's own
+#                              scripts (bin/healer.sh, lib/tape.sh)? Sets flags
+#                              for step 2.
 #   2. rebuild-and-deploy  — under the deploy lock: fast-forward /opt/disinto
 #                              (the host checkout the edge runs the dispatcher
-#                              and the snapshot daemon from) to this commit;
-#                              when the flag is set, rebuild disinto/edge:local
+#                              and the snapshot daemon from, and the healer
+#                              loop runs from) to this commit; when the healer
+#                              flag is set, restart the healer job; when the
+#                              edge flag is set, rebuild disinto/edge:local
 #                              from it, run and restart the edge job, and poll
 #                              until its allocation is running (<= 120s).
 #
@@ -90,6 +94,19 @@ steps:
           echo "no" > .ci/needs-redeploy
           echo "detect-changes: docs/tests-only merge, skipping redeploy"
         fi
+        # The healer is a long-lived raw_exec loop running bin/healer.sh from
+        # /opt/disinto: bash loads that script and the lib/tape.sh it sources
+        # once, at start, so a merged change to either stays inert until the
+        # job restarts (#2067).
+        if echo "$changed" | grep -E \
+             '^(bin/healer\.sh|lib/tape\.sh)$' \
+             >/dev/null; then
+          echo "yes" > .ci/needs-healer-restart
+          echo "detect-changes: healer restart required"
+        else
+          echo "no" > .ci/needs-healer-restart
+          echo "detect-changes: healer unchanged"
+        fi
 
   # ── 2. Rebuild the edge image and re-launch the nomad job ─────────────────
   # The step image (docker:27-cli) ships the docker CLI but NO nomad binary,
@@ -166,6 +183,15 @@ steps:
           git -c safe.directory="$OPT" -C "$OPT" merge -q --ff-only FETCH_HEAD
         fi
         echo "rebuild-and-deploy: $OPT at $(git -c safe.directory="$OPT" -C "$OPT" rev-parse --short HEAD)"
+
+        # The healer loop loads bin/healer.sh and lib/tape.sh once at start, so
+        # a merge that changed either restarts the job to pick it up (#2067). A
+        # change to nomad/jobs/healer.hcl itself still needs `nomad job run` by
+        # hand: this step stages only the edge jobspec.
+        if [ "$(cat .ci/needs-healer-restart 2>/dev/null || echo no)" = "yes" ]; then
+          echo "rebuild-and-deploy: nomad job restart healer"
+          nomad_api job restart -on-error=fail healer
+        fi
 
         if [ "$(cat .ci/needs-redeploy 2>/dev/null || echo no)" != "yes" ]; then
           echo "rebuild-and-deploy: no edge restart (no runtime paths changed)"

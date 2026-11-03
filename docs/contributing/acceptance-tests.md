@@ -107,8 +107,10 @@ deployed. On every push to `main` it:
    `bin/snapshot-*.sh`, `nomad/jobs/edge.hcl`). Other merges skip the redeploy.
 2. **Advances `/opt/disinto`** to the merged commit (fast-forward only), on
    every merge: the edge runs the dispatcher and the snapshot daemon from
-   that host checkout, and `agent-logs-rotate` runs scripts from it. Then,
-   when the edge runtime changed, it **rebuilds + redeploys**
+   that host checkout, and `agent-logs-rotate` runs scripts from it. When the
+   merge changed `bin/healer.sh` or `lib/tape.sh`, it then restarts the healer
+   job, which runs its loop from that checkout and loads both once at start
+   (#2067). Then, when the edge runtime changed, it **rebuilds + redeploys**
    `disinto/edge:local` from `/opt/disinto`, re-launches and restarts the
    nomad job, and polls `nomad job status` until the alloc is running
    (≤120s). Concurrent merges serialize via `flock` against
