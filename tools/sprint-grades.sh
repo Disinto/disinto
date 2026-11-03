@@ -59,7 +59,7 @@
 # =============================================================================
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 
 # shellcheck source=../lib/sprint-block.sh
 source "$REPO_ROOT/lib/sprint-block.sh"
@@ -72,10 +72,10 @@ TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 SPRINTS_DIR="${TAPE_DIR}/sprints"
 HELD_TOOL="${SPRINT_HELD_TOOL:-$REPO_ROOT/tools/sprint-held.sh}"
 
-command -v jq >/dev/null 2>&1 || {
+if ! command -v jq >/dev/null 2>&1; then
   echo "sprint-grades: required tool missing: jq" >&2
   exit 1
-}
+fi
 
 # Same shape as lib/env.sh log(), without sourcing it (see header).
 log() {
@@ -83,69 +83,53 @@ log() {
     "${LOG_AGENT:-sprint-grades}" "$*"
 }
 
-# _read_pid N — print the sprint proposal id from the id file, or nothing.
-_read_pid() {
-  local pid=""
-  IFS= read -r pid <"${SPRINTS_DIR}/${1}" || pid=""
-  pid="${pid//$'\r'/}"
-  pid="${pid#"${pid%%[![:space:]]*}"}"
-  pid="${pid%"${pid##*[![:space:]]}"}"
-  printf '%s' "$pid"
+# _pid_from_id_file N — echo the proposal id stored in the sprint's id file.
+_pid_from_id_file() {
+  local raw=""
+  raw="$(tr -d '\r\n' <"${SPRINTS_DIR}/$1" 2>/dev/null || true)"
+  printf '%s' "${raw// /}"
 }
 
-# _tape_has_outcome PID — 0 when the tape already holds an outcome for PID,
-# 1 when it does not, 2 when the tape cannot be read.
-_tape_has_outcome() {
-  local pid="$1" tape="${TAPE_DIR}/tape.jsonl" rc=0
-  if [ ! -f "$tape" ] || [ ! -s "$tape" ]; then
-    return 1
-  fi
-  jq -e -sR --arg pid "$pid" '
-    [ split("\n")[] | (try fromjson catch null) | select(type == "object") ]
-    | any(.type == "outcome" and .proposal_id == $pid)
-  ' "$tape" >/dev/null 2>&1 || rc=$?
-  if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
-    return "$rc"
-  fi
-  return 2
-}
-
-# _tape_has_scale_grade PID — 0 when the tape already holds an effect-scale
-# grade for PID (a rerun must append nothing), 1 when it does not, 2 when the
-# tape cannot be read.
-_tape_has_scale_grade() {
-  local pid="$1" tape="${TAPE_DIR}/tape.jsonl" rc=0
-  if [ ! -f "$tape" ] || [ ! -s "$tape" ]; then
-    return 1
-  fi
-  jq -e -sR --arg pid "$pid" '
-    [ split("\n")[] | (try fromjson catch null) | select(type == "object") ]
-    | any(.type == "grade" and .proposal_id == $pid and .who == "effect-scale")
-  ' "$tape" >/dev/null 2>&1 || rc=$?
-  if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
-    return "$rc"
-  fi
-  return 2
-}
-
-# _last_effect PID — print bits.effect of the id's last outcome in tape
-# order as 1 or 0; rc 1 when the tape cannot be read. Torn lines are skipped.
-_last_effect() {
-  local pid="$1" tape="${TAPE_DIR}/tape.jsonl" out rc met
-  rc=0
-  out="$(jq -rRs --arg pid "$pid" '
-    [ split("\n")[] | (try fromjson catch null) | select(type == "object") ]
-    | [ .[] | select(.type == "outcome" and .proposal_id == $pid) ] | last
-    | (.bits.effect // 0)' "$tape" 2>/dev/null)" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    return 1
-  fi
-  met=0
-  case "$out" in
-    1 | true) met=1 ;;
+# _outcome_on_tape PID — 0 when the tape holds an outcome for PID, 1 when it
+# does not, 2 when the tape cannot be read.
+_outcome_on_tape() {
+  local id="$1" rc=0
+  jq -e -n --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
+    any($rows[]?; .type == "outcome" and .proposal_id == $id)
+  ' >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0 | 1) return "$rc" ;;
+    *)     return 2    ;;
   esac
-  printf '%s' "$met"
-  return 0
+}
+
+# _scale_grade_on_tape PID — 0 when a grade for PID signed effect-scale is
+# already on the tape (reruns must append nothing), 1 when it is not, 2 when
+# the tape cannot be read.
+_scale_grade_on_tape() {
+  local id="$1" rc=0
+  jq -e -n --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
+    any($rows[]?; .type == "grade" and .proposal_id == $id and .who == "effect-scale")
+  ' >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0 | 1) return "$rc" ;;
+    *)     return 2    ;;
+  esac
+}
+
+# _probe_met PID — print 1 when the id's last outcome recorded effect 1 or
+# true, else 0; rc 1 when the tape cannot be read. Torn lines are ignored.
+_probe_met() {
+  local id="$1" out rc=0
+  out="$(jq -rn --arg id "$id" --slurpfile rows "${TAPE_DIR}/tape.jsonl" '
+    [ $rows[]? | select(.type == "outcome" and .proposal_id == $id) ]
+    | last | (.bits // {}) | (.effect // 0)
+  ' 2>/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  case "$out" in
+    1 | true) printf 1 ;;
+    *)        printf 0 ;;
+  esac
 }
 
 # _grade_one N PID — grade one sprint.
@@ -158,12 +142,12 @@ _grade_one() {
 
   # Idempotence and the no-outcome skip (see the header).
   rc=0
-  _tape_has_outcome "$pid" || rc=$?
+  _outcome_on_tape "$pid" || rc=$?
   if [ "$rc" -ne 0 ]; then
     log "sprint ${n}: no outcome on the tape${rc:+ (rc ${rc})} — not graded"
     return 0
   fi
-  if _tape_has_scale_grade "$pid"; then
+  if _scale_grade_on_tape "$pid"; then
     log "sprint ${n}: already graded by the effect scale — nothing appended"
     return 0
   fi
@@ -194,7 +178,7 @@ _grade_one() {
   effect="${effect:-}"
 
   rc=0
-  met="$(_last_effect "$pid")" || rc=$?
+  met="$(_probe_met "$pid")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     log "sprint ${n}: could not read the tape — no grade this run"
     return 1
@@ -263,7 +247,7 @@ fi
 
 while IFS= read -r n; do
   [ -n "$n" ] || continue
-  pid="$(_read_pid "$n")"
+  pid="$(_pid_from_id_file "$n")"
   [ -n "$pid" ] || continue
   _grade_one "$n" "$pid" || failed=1
 done < <(printf '%s\n' "${ids[@]}" | sort -n)
