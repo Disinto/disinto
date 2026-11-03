@@ -53,6 +53,8 @@ source "$FACTORY_ROOT/lib/ci-helpers.sh"
 source "$FACTORY_ROOT/lib/tape.sh"
 # shellcheck source=../lib/repair-suspend.sh
 source "$FACTORY_ROOT/lib/repair-suspend.sh"
+# shellcheck source=../lib/notice.sh
+source "$FACTORY_ROOT/lib/notice.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -292,6 +294,53 @@ repair_state_put() {
   return 0
 }
 
+# repair_suspension_mark NAME COUNTS — the "told once" marker for a new
+# suspension (#2054), one file per recipe:
+# ${TAPE_DIR:-/srv/disinto/tape}/repair/<NAME>.suspended. Return 0 only when
+# the marker was absent and is now freshly written (the first tick of the
+# suspension, so the owner gets exactly one notice); return 1 when it already
+# exists, when NAME is not [A-Za-z0-9._-]+, or when the write fails (one
+# WARNING). COUNTS is the "<failed> <counted>" line repair_suspended printed.
+repair_suspension_mark() {
+  local name="${1:-}" counts="${2:-}" dir marker epoch
+  case "$name" in
+    ""|*[!A-Za-z0-9._-]*)
+      return 1
+      ;;
+  esac
+  dir="${TAPE_DIR:-/srv/disinto/tape}/repair"
+  marker="$dir/$name.suspended"
+  if [ -f "$marker" ]; then
+    return 1
+  fi
+  epoch="$(date -u +%s)"
+  if ! mkdir -p "$dir" 2>/dev/null \
+    || ! printf '%s %s\n' "$epoch" "$counts" > "$marker" 2>/dev/null; then
+    log "WARNING: suspension: failed to write owner-notice marker for ${name}"
+    return 1
+  fi
+  return 0
+}
+
+# repair_suspension_clear NAME — remove the suspension marker for NAME
+# (#2054): a lifted suspension loses the marker, so the next suspension is
+# marked and announced again. Return 0 when the marker was present and
+# removed, 1 when it is absent or NAME is not [A-Za-z0-9._-]+.
+repair_suspension_clear() {
+  local name="${1:-}" dir marker
+  case "$name" in
+    ""|*[!A-Za-z0-9._-]*)
+      return 1
+      ;;
+  esac
+  dir="${TAPE_DIR:-/srv/disinto/tape}/repair"
+  marker="$dir/$name.suspended"
+  if [ -f "$marker" ] && rm -f "$marker" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 # emit_repair_proposal CONDITION [CLASS] [REF] — append one repair
 # proposal to the tape (loop="repair", caused_by empty — the condition
 # stays in context.signature, never in caused_by) and register the
@@ -503,8 +552,21 @@ repair_direct_dispatch() {
     # Stop rule (proposal-loop.md §5): a remedy that keeps failing does not run.
     rc=0; counts="$(repair_suspended "$name")" || rc=$?
     case "$rc" in
-      0) log "suspended: ${name} (${counts% *} of last ${counts#* } tries failed)"; continue ;;
+      0)
+        log "suspended: ${name} (${counts% *} of last ${counts#* } tries failed)"
+        # Tell the owner once per suspension (#2054): the marker exists for
+        # the whole suspension, so only the first tick queues a notice.
+        if repair_suspension_mark "$name" "$counts"; then
+          notice_owner "repair: ${name} suspended — ${counts% *} of its last ${counts#* } tries failed (${script}). One try per trial period (packs/repair.toml) until a try clears; proposal-loop.md §5." || log "WARNING: owner notice failed for ${name}"
+        fi
+        continue
+        ;;
       2) log "trial: ${name} (${counts% *} of last ${counts#* } tries failed)" ;;
+      *)
+        if repair_suspension_clear "$name"; then
+          log "suspension lifted: ${name}"
+        fi
+        ;;
     esac
     # Repair-tape pairing (#1636): a direct remedy with no open proposal
     # gets one now, so the run that follows pairs with it.

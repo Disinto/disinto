@@ -202,6 +202,9 @@ run_dispatch_case() {
     export MARKER_FILE="$marker"
     log() { printf '%s\n' "$*"; }
     tape_run() { return 0; }
+    # #2054: the suspension arm calls notice_owner when it marks the
+    # suspension; stub it so this hermetic test queues nothing.
+    notice_owner() { :; }
     repair_tape_state_file() { printf '%s\n' "$TMP_DIR/no-such-state.json"; }
     emit_repair_proposal() { return 0; }
     if [ "$mode" = "0" ]; then
