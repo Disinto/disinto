@@ -101,7 +101,7 @@ of the bootstrap sequence.
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
 | `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot task); `nomad/jobs/agents-supervisor-opus.hcl` (ro) |
-| `machine`                   | `/srv/disinto/machine` (ro)            | none yet; the supervisor and gardener jobs mount it in a follow-up issue |
+| `machine`                   | `/srv/disinto/machine` (ro)            | `agents-supervisor-opus`, `agents-gardener-qwen` (#2091) |
 
 The `snapshot-state` host path uses `/srv/disinto/` (not `/var/lib/disinto/`)
 because the `raw_exec` snapshot daemon writes directly to the host path
