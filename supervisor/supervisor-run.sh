@@ -55,6 +55,8 @@ source "$FACTORY_ROOT/lib/tape.sh"
 source "$FACTORY_ROOT/lib/repair-suspend.sh"
 # shellcheck source=../lib/notice.sh
 source "$FACTORY_ROOT/lib/notice.sh"
+# shellcheck source=../lib/repair-claim.sh
+source "$FACTORY_ROOT/lib/repair-claim.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/supervisor/supervisor.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -558,6 +560,10 @@ repair_direct_dispatch() {
         # the whole suspension, so only the first tick queues a notice.
         if repair_suspension_mark "$name" "$counts"; then
           notice_owner "repair: ${name} suspended — ${counts% *} of its last ${counts#* } tries failed (${script}). One try per trial period (packs/repair.toml) until a try clears; proposal-loop.md §5." || log "WARNING: owner notice failed for ${name}"
+          # #2055: the suspension records the missing capability as a claim,
+          # so the planner can pitch the step that adds it.
+          repair_claim_pr "$name" "$script" suspended "$counts" >/dev/null \
+            || log "WARNING: claim draft failed for ${name}"
         fi
         continue
         ;;
@@ -565,6 +571,10 @@ repair_direct_dispatch() {
       *)
         if repair_suspension_clear "$name"; then
           log "suspension lifted: ${name}"
+          # #2055: the lift drafts the claim's revision: a new proposal,
+          # checked afresh.
+          repair_claim_pr "$name" "$script" lifted "$counts" >/dev/null \
+            || log "WARNING: claim draft failed for ${name}"
         fi
         ;;
     esac
