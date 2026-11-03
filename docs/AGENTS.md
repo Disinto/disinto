@@ -152,6 +152,8 @@ disinto/                 (code repo)
 │                  above 0.5 queues one owner notice to write the gate's
 │                  rejection rules (#2039); tape-stuck.sh — sessions
 │                  stuck on a phase, read from the tape (#1648);
+│                  tape-model.sh — proposal id → the model that served its run,
+│                  from the run's `agent` string, else `context.backend` (#2059);
 │                  migrate-ac-to-file.sh — move an issue's acceptance criteria into
 │                  tests/acceptance/issue-<n>.sh; calibration-purpose.sh and
 │                  calibration-signatures.sh — Jev-scope calibration readers (#1652,
