@@ -109,10 +109,10 @@ ac_assert_eq "$rc" "0" "AC 1: multi-bit pack must exit 0 (rc=$rc)"
 # promised 50%, error |50-67| = 17, mean (50+70+90)/3 = 70.0,
 # dur_promised 80.0, dur_error |80.0-70.0| = 10.0
 expected="$HEADER
-| dev | fix | 3 | 50% | 67% | 17 | 70.0 | 80.0 | 10.0 |"
+| dev | fix | - | 3 | 50% | 67% | 17 | 70.0 | 80.0 | 10.0 |"
 ac_assert_eq "$out" "$expected" \
   "AC 1: expected the multi-bit row (n=3 excludes {exit_ok:1}), got: $out"
-[[ "$out" == *'| dev | fix | 3 |'* ]] \
+[[ "$out" == *'| dev | fix | - | 3 |'* ]] \
   || ac_fail "AC 1: n must be 3 (the {exit_ok:1} pair is not a sample)"
 ac_log "AC 1 OK: multi-bit sampling rule"
 
@@ -123,7 +123,7 @@ ac_assert_eq "$rc" "0" "AC 2: single-string pack must exit 0 (rc=$rc)"
 # Under a single/one-element `merged` pack, d1 (merged:0) is a FAILURE — the
 # rejected:1 bit is not listed — d2 failure, d4 success -> n 3, actual 33%
 single_expected="$HEADER
-| dev | fix | 3 | 50% | 33% | 17 | 70.0 | 80.0 | 10.0 |"
+| dev | fix | - | 3 | 50% | 33% | 17 | 70.0 | 80.0 | 10.0 |"
 ac_assert_eq "$out" "$single_expected" \
   "AC 2: single-string must match pre-#1614 rows, got: $out"
 

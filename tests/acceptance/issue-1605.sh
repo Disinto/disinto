@@ -83,9 +83,9 @@ ac_assert_eq "$rc" "0" "AC 1: with-research pack must exit 0 (rc=$rc)"
 # research = 2 pairs (report_present 1 then 0) -> n 2, actual 50%, mean (30+50)/2 = 40.0
 # dev -> merged 1 -> n 1, actual 100%, mean 100.0; repair -> regression_cleared 1 -> mean 50.0
 expected="$HEADER
-| dev | fix | 1 | - | 100% | - | 100.0 | - | - |
-| repair | incident | 1 | - | 100% | - | 50.0 | - | - |
-| research | docs | 2 | - | 50% | - | 40.0 | - | - |"
+| dev | fix | - | 1 | - | 100% | - | 100.0 | - | - |
+| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |
+| research | docs | - | 2 | - | 50% | - | 40.0 | - | - |"
 ac_assert_eq "$out" "$expected" "AC 1: expected the research/dev/repair rows, got: $out"
 [[ "$out" == *'| research | docs |'* ]] || ac_fail "AC 1: the research row must appear when named in the pack"
 [[ "$out" == *'| planner | docs |'* ]] && ac_fail "AC 1: planner (absent from the pack) must not appear"
@@ -96,8 +96,8 @@ ac_log "AC 2: research absent from the pack -> no research row (planner too)"
 run_calib "$TMP_DIR/packs/without-research.toml" "$TMP_DIR"
 ac_assert_eq "$rc" "0" "AC 2: without-research pack must exit 0 (rc=$rc)"
 expected="$HEADER
-| dev | fix | 1 | - | 100% | - | 100.0 | - | - |
-| repair | incident | 1 | - | 100% | - | 50.0 | - | - |"
+| dev | fix | - | 1 | - | 100% | - | 100.0 | - | - |
+| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |"
 ac_assert_eq "$out" "$expected" "AC 2: expected only dev/repair rows, got: $out"
 [[ "$out" == *'| research | docs |'* ]] && ac_fail "AC 2: research must NOT appear when absent from the pack"
 ac_log "AC 2 OK: an absent loop is never a sample"

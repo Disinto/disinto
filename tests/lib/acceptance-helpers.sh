@@ -523,7 +523,7 @@ EOF
 # The per-pack tests (issue-1605.sh, issue-1614.sh) use their own fixture
 # packs and a per-run CALIBRATION_LOOPS_FILE seam, unlike the four tests that
 # use the fixed standard pack via ac_calibration_env. The shared TMP_DIR/trap,
-# TOOL, the exact 9-column table HEADER, the rc/out/err_out run state, and the
+# TOOL, the exact 10-column table HEADER, the rc/out/err_out run state, and the
 # run_calib() runner below are the single definition of that boilerplate, so
 # the two tests do not duplicate it file-to-file (duplicate-detection).
 #
@@ -536,7 +536,7 @@ ac_calib_env() {
   # shellcheck disable=SC2034  # TOOL is consumed by the calling acceptance scripts
   TOOL="$REPO_ROOT/tools/calibration.sh"
   # shellcheck disable=SC2034  # HEADER is consumed by the calling acceptance scripts
-  HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+  HEADER=$'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|'
   # Stuck pack pinned to a non-existent file: no horizon named, so no stuck
   # samples (#1649). Keeps the per-run pack goldens valid and deterministic
   # regardless of whether the ops repo ships packs/stuck.toml. The stuck
