@@ -16,9 +16,9 @@
 #       * line 1 (the header) gets ` NAME |` appended
 #       * line 2 (the separator) gets `---|` appended
 #       * every later line that starts with `|` gets ` <value> |`, where
-#         value is VALUES_JSON["<loop>/<class>"] and loop/class are that
-#         line's first two cells with surrounding spaces trimmed; `-` when
-#         the key is missing
+#         value is VALUES_JSON["<loop>/<class>/<model>"] — that line's first
+#         three cells with surrounding spaces trimmed (#2060) — else
+#         VALUES_JSON["<loop>/<class>"], its first two cells, else `-`
 #       * every other line passes through unchanged (already trimmed)
 #     VALUES_JSON is a JSON object of strings. Invalid JSON, a non-object,
 #     or a non-string value: return 1 and write nothing (stdin is still
@@ -51,17 +51,32 @@ _table_trim() {
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
-# _table_row_key LINE — `<loop>/<class>` from the first two pipe-cells.
+# _table_row_key2 LINE — `<loop>/<class>` from the first two pipe-cells.
 # A missing cell is empty, so the key is still `loop/class` (either side
 # may be blank). Cells are trimmed; the rest of the row is ignored, so a
 # column appended earlier does not move the key.
-_table_row_key() {
+_table_row_key2() {
   local line="$1" rest loop class
   rest="${line#|}"
   loop="${rest%%|*}"
   rest="${rest#*|}"
   class="${rest%%|*}"
   printf '%s/%s' "$(_table_trim "$loop")" "$(_table_trim "$class")"
+}
+
+# _table_row_key LINE — `<loop>/<class>/<model>` from the first three
+# pipe-cells (#2060). A missing cell is empty, so a table whose third cell
+# does not exist still yields a `loop/class/` key that no per-model VALUES_JSON
+# entry matches, and the caller falls back to the two-cell key.
+_table_row_key() {
+  local line="$1" rest loop class model
+  rest="${line#|}"
+  loop="${rest%%|*}"
+  rest="${rest#*|}"
+  class="${rest%%|*}"
+  rest="${rest#*|}"
+  model="${rest%%|*}"
+  printf '%s/%s/%s' "$(_table_trim "$loop")" "$(_table_trim "$class")" "$(_table_trim "$model")"
 }
 
 # _table_json_ok JSON — rc 0 when JSON is an object whose every value is a
@@ -91,7 +106,7 @@ table_append_column() {
     return 1
   fi
 
-  local n=0 line key value
+  local n=0 line key3 key2 value
   while IFS= read -r line || [ -n "${line:-}" ]; do
     line="$(_table_trim_right "$line")"
     n=$((n + 1))
@@ -100,8 +115,10 @@ table_append_column() {
     elif [ "$n" -eq 2 ]; then
       printf '%s\n' "${line}---|"
     elif [[ "$line" == "|"* ]]; then
-      key="$(_table_row_key "$line")"
-      value="$(jq -r --arg key "$key" 'if has($key) then .[$key] else "-" end' <<<"$json")"
+      key3="$(_table_row_key "$line")"
+      key2="$(_table_row_key2 "$line")"
+      value="$(jq -r --arg k3 "$key3" --arg k2 "$key2" \
+        'if has($k3) then .[$k3] elif has($k2) then .[$k2] else "-" end' <<<"$json")"
       printf '%s\n' "${line} ${value} |"
     else
       printf '%s\n' "$line"
