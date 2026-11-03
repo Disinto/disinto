@@ -17,6 +17,7 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
 
 **Key files**:
 - `supervisor/supervisor-run.sh` — Polling loop participant + orchestrator: lock, memory guard,
+  ops clone sync (`ensure_ops_repo`, #2069: fetch, checkout of the primary branch, ff-only pull; never fatal),
   runs preflight.sh, sources disinto project config, runs claude -p via agent-sdk.sh,
   injects formula prompt with metrics, handles crash recovery. **Repair tape (#1408, #1533, #1636, #1637, #1638)**: `repair_direct_dispatch()` writes a repair proposal (`emit_repair_proposal` → `repair_state_put`, empty `caused_by`) right before it runs a direct recipe's script, unless one is open (`incident` recipes write none), pairing each script run with a tape `tape_run`
   (open, then close with status completed/failed, organ=supervisor, agent=bash) under
