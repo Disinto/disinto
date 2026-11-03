@@ -39,13 +39,11 @@ PREFLIGHT="$REPO_ROOT/supervisor/preflight.sh"
 EVALUATOR="$REPO_ROOT/supervisor/evaluate-recipes.sh"
 AGENTS_MD="$REPO_ROOT/supervisor/AGENTS.md"
 
-for _pair in \
-  "$PREFLIGHT|supervisor/preflight.sh must exist" \
-  "$EVALUATOR|supervisor/evaluate-recipes.sh must exist" \
-  "$AGENTS_MD|supervisor/AGENTS.md must exist"
-do
-  ac_assert_file "${_pair%%|*}" "${_pair#*|}"
-done
+# Plain assertions, not a _pair loop: the loop body would duplicate the one
+# in issue-1927.sh and trip the CI duplicate-detection window (5 lines).
+ac_assert_file "$PREFLIGHT" "supervisor/preflight.sh must exist"
+ac_assert_file "$EVALUATOR" "supervisor/evaluate-recipes.sh must exist"
+ac_assert_file "$AGENTS_MD" "supervisor/AGENTS.md must exist"
 
 # has_text TEXT NEEDLE — pure bash substring check (the #1650/#1687 lesson:
 # `printf ... | grep -q X` can die with 141 under pipefail even when grep
