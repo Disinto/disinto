@@ -19,6 +19,7 @@
 # Host_volume contract:
 #   - agent-data-opus-supervisor: per-agent runtime data (logs, state)
 #   - snapshot-state: snapshot daemon state, read-only (#1927)
+#   - machine: the machine report, read-only (#2070, #2091)
 #   Declared in nomad/client.hcl.
 #
 # docker.sock mount:
@@ -92,6 +93,15 @@ job "agents-supervisor-opus" {
       type      = "host"
       source    = "tape"
       read_only = false
+    }
+
+    # The machine report (#2070, host_volume "machine"): read-only at the
+    # box path, so a reader's default /srv/disinto/machine/machine.json
+    # needs no env override. Written by the LXD host, never by a job.
+    volume "machine" {
+      type      = "host"
+      source    = "machine"
+      read_only = true
     }
 
     # Operator-managed per-env factory project TOMLs (#794). Mounted RO into
@@ -170,6 +180,12 @@ job "agents-supervisor-opus" {
         volume      = "tape"
         destination = "/srv/disinto/tape"
         read_only   = false
+      }
+
+      volume_mount {
+        volume      = "machine"
+        destination = "/srv/disinto/machine"
+        read_only   = true
       }
 
       # ── Non-secret env ─────────────────────────────────────────────────────

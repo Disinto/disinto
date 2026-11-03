@@ -42,6 +42,7 @@
 # lib/init/nomad/cluster-up.sh. The gardener gets a dedicated
 # agent-data-gardener source (not the shared "agent-data" source the dev
 # and review jobs use) so its state cannot collide with theirs (#1123).
+# machine (read-only, #2091) is the machine report; the LXD host mounts it (#2070).
 # =============================================================================
 
 job "agents-gardener-qwen" {
@@ -95,6 +96,15 @@ job "agents-gardener-qwen" {
       type      = "host"
       source    = "tape"
       read_only = false
+    }
+
+    # The machine report (#2070, host_volume "machine"): read-only at the
+    # box path, so a reader's default /srv/disinto/machine/machine.json
+    # needs no env override. Written by the LXD host, never by a job.
+    volume "machine" {
+      type      = "host"
+      source    = "machine"
+      read_only = true
     }
 
     # Operator-managed per-env factory project TOMLs (#794), mounted RO into
@@ -164,6 +174,12 @@ job "agents-gardener-qwen" {
         volume      = "tape"
         destination = "/srv/disinto/tape"
         read_only   = false
+      }
+
+      volume_mount {
+        volume      = "machine"
+        destination = "/srv/disinto/machine"
+        read_only   = true
       }
 
       # ── Non-secret env ─────────────────────────────────────────────────────
