@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5afdda13c076f8d841326cc5785667ae44045e22 -->
+<!-- last-reviewed: a5149bf4f0d96d64687b438cb9ee53e90070d16e -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -143,7 +143,11 @@ disinto/                 (code repo)
 │                  sprint-due.sh, sprint-children.sh, sprint-outcomes.sh — sprint
 │                  queue queries (#1675, #1674, #1676); sprint-held.sh — whether a
 │                  sprint's merges still sit on main (`held`/`broke`/`none`), the
-│                  effect-scale reader (#2030); tape-stuck.sh — sessions
+│                  effect-scale reader (#2030); sprint-grades.sh — write each
+│                  scored sprint's effect-scale grade (`who: effect-scale`),
+│                  idempotent (#2036); grade-threshold.sh — the first tape grade
+│                  above 0.5 queues one owner notice to write the gate's
+│                  rejection rules (#2039); tape-stuck.sh — sessions
 │                  stuck on a phase, read from the tape (#1648);
 │                  migrate-ac-to-file.sh — move an issue's acceptance criteria into
 │                  tests/acceptance/issue-<n>.sh; calibration-purpose.sh and
@@ -152,7 +156,18 @@ disinto/                 (code repo)
 │                  config; xai-login.sh / xai-login.mjs — XAI provider login (#2006);
 │                  edge-control/README.md — edge-control operator guide
 ├── docs/          Protocol docs (PHASE-PROTOCOL.md, EVIDENCE-ARCHITECTURE.md, AGENTS.md,
-│                  branch-protection.md, stats.md);
+│                  branch-protection.md, stats.md, VAULT.md — the vault PR
+│                  approval workflow; BLAST-RADIUS.md — vault blast-radius tiers;
+│                  AGENT-DESIGN.md — agent design principles;
+│                  OBSERVABLE-DEPLOY.md — every addressable is born observable;
+│                  agents-llama.md — local-model agents and autocompact lane
+│                  sizing (AD-002); CLAUDE-AUTH-CONCURRENCY.md (AD-002);
+│                  EVAL-MCP-SERVER.md — MCP wrapper evaluation;
+│                  edge-routing-fallback.md — per-project subdomain contingency;
+│                  mirror-bootstrap.md — pull-mirror cutover; nomad-migration.md
+│                  + nomad-cutover-runbook.md; release-verification.md;
+│                  updating-factory.md;
+│                  investigation-685-reviewer-approved-destructive-compose.md);
 │                  contributing/ (acceptance-tests.md, issues-for-bots.md);
 │                  design/ (proposal-loop.md — how the factory proposes, records
 │                  and learns; notes/ incl. organs.md, issue-writing.md,
@@ -165,6 +180,8 @@ disinto/                 (code repo)
 │                  tools/run-acceptance.sh; helpers at tests/lib/acceptance-helpers.sh
 ├── tests/lib/       Shared test helpers (acceptance-helpers.sh, webhook-route-helpers.sh)
 ├── templates/     Issue templates
+├── .forgejo/      ISSUE_TEMPLATE/ (bug.yaml, feature.yaml, refactor.yaml,
+│                  experiment.yaml) — the templates promoted issues should follow
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-chat-oauth)
@@ -206,13 +223,13 @@ disinto-ops/             (ops repo — {project}-ops)
 
 Each agent directory has its own AGENTS.md with detailed instructions:
 
-- [dev/AGENTS.md](dev/AGENTS.md) — Issue implementation workflow
-- [review/AGENTS.md](review/AGENTS.md) — PR review workflow
-- [gardener/AGENTS.md](gardener/AGENTS.md) — Backlog grooming workflow
-- [supervisor/AGENTS.md](supervisor/AGENTS.md) — Health monitoring workflow
-- [planner/AGENTS.md](planner/AGENTS.md) — Strategic planning workflow
-- [predictor/AGENTS.md](predictor/AGENTS.md) — Infrastructure prediction workflow
-- [architect/AGENTS.md](architect/AGENTS.md) — Sprint decomposition workflow
-- [lib/AGENTS.md](lib/AGENTS.md) — Shared helper reference
-- [nomad/AGENTS.md](nomad/AGENTS.md) — Nomad job configuration reference
-- [vault/policies/AGENTS.md](vault/policies/AGENTS.md) — Vault policy reference
+- [dev/AGENTS.md](../dev/AGENTS.md) — Issue implementation workflow
+- [review/AGENTS.md](../review/AGENTS.md) — PR review workflow
+- [gardener/AGENTS.md](../gardener/AGENTS.md) — Backlog grooming workflow
+- [supervisor/AGENTS.md](../supervisor/AGENTS.md) — Health monitoring workflow
+- [planner/AGENTS.md](../planner/AGENTS.md) — Strategic planning workflow
+- [predictor/AGENTS.md](../predictor/AGENTS.md) — Infrastructure prediction workflow
+- [architect/AGENTS.md](../architect/AGENTS.md) — Sprint decomposition workflow
+- [lib/AGENTS.md](../lib/AGENTS.md) — Shared helper reference
+- [nomad/AGENTS.md](../nomad/AGENTS.md) — Nomad job configuration reference
+- [vault/policies/AGENTS.md](../vault/policies/AGENTS.md) — Vault policy reference
