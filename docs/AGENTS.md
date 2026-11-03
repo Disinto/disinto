@@ -1,4 +1,4 @@
-<!-- last-reviewed: efcfd4d5ddf11fc9469d4e2dd1f68cb8f2091630 -->
+<!-- last-reviewed: 9d445dd97257967120ebb4c853516d9d14af7b95 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -25,13 +25,21 @@ disinto/                 (code repo)
 │                  written by gardener-run.sh, converted to JSON at commit time
 ├── predictor/     predictor-run.sh — polling-loop executor for run-predictor formula
 ├── planner/       planner-run.sh — polling-loop executor for run-planner formula
+│                  ladder.sh (name the lowest missing capability rung, #1975),
+│                  pitch-open.sh (open at most one planner pitch, #1976),
+│                  pitch-or-idle.sh (the ladder pitch, or `session`, #1978),
+│                  gaps.sh (challenged `can-*` claims that are not ladder rungs,
+│                  passed to the session as `gaps:` under `ladder: none`, #2056)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
 │                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
 │                  write-incident.sh, commit-incidents.sh
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
 │                           cleanup-worktrees, disk-pressure,
 │                           git-rebase-fix)
-├── machine/       machine-sense.sh, install.sh, disinto-machine-sense.{service,timer}
+├── machine/       machine-sense.sh, install.sh, disinto-machine-sense.{service,timer},
+│                  neighbours.example.tsv (path<TAB>owner<TAB>note rows install.sh
+│                  copies once to /etc/disinto-machine/neighbours.tsv; published in
+│                  the report)
 │                  — run on the LXD host, not in the box: a read-only report of
 │                  the machine, mounted read-only into the box at /srv/disinto/machine
 ├── architect/     architect-run.sh — drafts and revises the sub-issues of ops-repo pitches
@@ -98,7 +106,8 @@ disinto/                 (code repo)
 │                  file-subissues.toml, pitch-vision.toml, revisit-blocked.toml, release.toml,
 │                  reproduce.toml — operational task specs
 │                  deploy-drift.toml — deploy-drift check spec; run-experiment.sh —
-│                  experiment runner script (wave 2, #1293)
+│                  experiment runner script (wave 2, #1293); release.sh — the
+│                  model-free release runner the release vault action invokes (#516)
 ├── docker/        Dockerfiles: reproduce, runner; research/ (experiment runner image, #1293);
 │                  edge/ (Caddy + dispatcher + engagement); agents/ (llama-server agents + dsh
 │                  headless patches, dsh-settings-llamacpp.yaml /
