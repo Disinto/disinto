@@ -1,0 +1,11 @@
+# machine/disinto-machine-sense.service — installed by machine/install.sh
+[Unit]
+Description=disinto machine sense: a read-only report of this machine for the disinto box
+Documentation=file:///usr/local/bin/disinto-machine-sense
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/disinto-machine-sense
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=20min

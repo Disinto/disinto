@@ -31,6 +31,9 @@ disinto/                 (code repo)
 │                  actions/ — remediation scripts (cleanup-locks, cleanup-phase-files,
 │                           cleanup-worktrees, disk-pressure,
 │                           git-rebase-fix)
+├── machine/       machine-sense.sh, install.sh, disinto-machine-sense.{service,timer}
+│                  — run on the LXD host, not in the box: a read-only report of
+│                  the machine, mounted read-only into the box at /srv/disinto/machine
 ├── architect/     architect-run.sh — drafts and revises the sub-issues of ops-repo pitches
 ├── action-vault/  vault-env.sh — shared env setup (vault redesign in progress, see #73-#77)
 │                  SCHEMA.md — vault item schema documentation
