@@ -2,6 +2,11 @@
 
 Static site for disinto.ai.
 
+Served since 2026-11-03 by Caddy on the `self.disinto.ai` droplet,
+from `/var/www/disinto.ai/current`. That is a link to
+`deploys/<UTC timestamp>/`, the layout `formulas/run-publish-site.toml`
+writes. Access log: `/var/log/caddy/access.log`.
+
 ## Files
 
 - `index.html` — landing page

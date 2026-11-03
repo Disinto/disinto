@@ -27,7 +27,7 @@ log() {
 }
 
 # Output path: write to live site root if deployed, else to site/data/
-SITE_ROOT="${DISINTO_SITE_ROOT:-/home/debian/disinto-site}"
+SITE_ROOT="${DISINTO_SITE_ROOT:-/var/www/disinto.ai/current}"
 if [ -d "$SITE_ROOT" ] || [ -L "$SITE_ROOT" ]; then
   OUTPUT_DIR="$(readlink -f "$SITE_ROOT")/data"
 else
