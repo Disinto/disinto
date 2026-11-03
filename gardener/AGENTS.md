@@ -1,4 +1,4 @@
-<!-- last-reviewed: 68d751dd0b8ef098c6e35cd2e8dc3701c69bdd38 -->
+<!-- last-reviewed: 5afdda13c076f8d841326cc5785667ae44045e22 -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance
@@ -14,7 +14,7 @@ polling loop in `docker/agents/entrypoint.sh` on the GARDENER_INTERVAL cadence
 `check_active gardener` first — skips if `$FACTORY_ROOT/state/.gardener-active` is absent.
 `gardener/gardener-step.sh` is the pull-one-task step driver (one task per
 invocation);
-in bare-metal mode the executor also runs from host cron (`lib/ci-setup.sh:63`).
+in bare-metal mode the executor also runs from host cron (`lib/ci-setup.sh:65`).
 **Early-exit optimization**: if no new commits since last run (compared via
 `LAST_SHA_FILE`) and no backlog or tech-debt issues exist, the model is not
 invoked — the run exits immediately (no tokens consumed). Otherwise, builds a
@@ -25,7 +25,7 @@ and executes the pending-actions manifest post-merge.
 
 **Key files**:
 - `gardener/gardener-run.sh` — One-shot full-formula executor (invoked from host cron in
-  bare-metal mode, `lib/ci-setup.sh:63`): lock, memory guard, syncs the ops clone at the
+  bare-metal mode, `lib/ci-setup.sh:65`): lock, memory guard, syncs the ops clone at the
   start of every run via `ensure_ops_repo()` (#1653) — before the precondition checks, so
   even early-exit runs read fresh operational data (non-fatal, warnings only),
   then runs `tools/pitch-decisions.sh` (#1891), also before the precondition checks: a pitch (an ops-repo PR adding `sprints/<slug>.md`) closed unmerged becomes a rejected `sprint` proposal with `context.pitch`; a merged one gets its milestone (`lib/sprint-milestone.sh`) and an approved `sprint` proposal with `context.pitch` and `ref` `milestone:<id>`, then filer-bot files its sub-issues into the milestone (`lib/sprint-filer.sh`) (non-fatal),

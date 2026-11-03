@@ -1,4 +1,4 @@
-<!-- last-reviewed: 68d751dd0b8ef098c6e35cd2e8dc3701c69bdd38 -->
+<!-- last-reviewed: 5afdda13c076f8d841326cc5785667ae44045e22 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -138,7 +138,9 @@ disinto/                 (code repo)
 │                  vault-seed-<svc>.sh — per-service Vault secret seeders; auto-invoked by
 │                  `bin/disinto --with <svc>`
 │                  sprint-due.sh, sprint-children.sh, sprint-outcomes.sh — sprint
-│                  queue queries (#1675, #1674, #1676); tape-stuck.sh — sessions
+│                  queue queries (#1675, #1674, #1676); sprint-held.sh — whether a
+│                  sprint's merges still sit on main (`held`/`broke`/`none`), the
+│                  effect-scale reader (#2030); tape-stuck.sh — sessions
 │                  stuck on a phase, read from the tape (#1648);
 │                  migrate-ac-to-file.sh — move an issue's acceptance criteria into
 │                  tests/acceptance/issue-<n>.sh; calibration-purpose.sh and
@@ -150,7 +152,9 @@ disinto/                 (code repo)
 │                  branch-protection.md, stats.md);
 │                  contributing/ (acceptance-tests.md, issues-for-bots.md);
 │                  design/ (proposal-loop.md — how the factory proposes, records
-│                  and learns; notes/ incl. organs.md, issue-writing.md)
+│                  and learns; notes/ incl. organs.md, issue-writing.md,
+│                  learning-ladder.md, world-model.md, representation.md,
+│                  search-control.md)
 ├── site/          disinto.ai website content
 ├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
 │                  vault-import.bats, disinto-init-nomad.bats)
