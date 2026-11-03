@@ -1,4 +1,4 @@
-<!-- last-reviewed: a5149bf4f0d96d64687b438cb9ee53e90070d16e -->
+<!-- last-reviewed: efcfd4d5ddf11fc9469d4e2dd1f68cb8f2091630 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -30,6 +30,7 @@ Full tree: `docs/AGENTS.md`. Key directories:
 - **docker/** — Dockerfiles + edge container
 - **tools/** — operational tools (vault provisioning, edge-control)
 - **bin/** — `disinto` CLI + snapshot-*.sh collectors (Nomad: HTTP API, not CLI)
+- **machine/** — read-only LXD-host report (`machine-sense.sh` + systemd units), runs on the host, not in the box; mounted into the box at `/srv/disinto/machine`
 - **action-vault/** — vault item validation + examples
 - **docs/** — protocol docs
 - **vault/policies/** — vault HCL policies
