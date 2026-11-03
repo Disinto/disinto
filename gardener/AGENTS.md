@@ -28,7 +28,10 @@ and executes the pending-actions manifest post-merge.
   bare-metal mode, `lib/ci-setup.sh:65`): lock, memory guard,
   runs `tools/pitch-approve.sh` (#2038) first — a bot's open pitch PR whose drafted
   sub-issues pass `tools/pitch-lint.sh` and whose probe exists is merged by the gate
-  and the owner is told (`lib/notice.sh`; `docs/design/proposal-loop.md` §3) — then
+  and the owner is told (`lib/notice.sh`; `docs/design/proposal-loop.md` §3) — and,
+  #2057, a bot's PR that only adds or changes `claims/*.toml`, `probes/*.sh` or
+  `packs/*.toml` and passes `claim_valid`, `bash -n` or a TOML parse is merged the
+  same way — then
   syncs the ops clone at the start of every run via `ensure_ops_repo()` (#1653) — before
   the precondition checks, so
   even early-exit runs read fresh operational data (non-fatal, warnings only),
