@@ -101,6 +101,7 @@ of the bootstrap sequence.
 | `ops-repo`                    | `/srv/disinto/ops-repo`                | `nomad/jobs/vault-runner.hcl` |
 | `agent-data-opus-supervisor`  | `/srv/disinto/agent-data-opus-supervisor` | `nomad/jobs/agents-supervisor-opus.hcl` |
 | `snapshot-state`              | `/srv/disinto/snapshot-state`          | `nomad/jobs/edge.hcl` (snapshot task); `nomad/jobs/agents-supervisor-opus.hcl` (ro) |
+| `machine`                   | `/srv/disinto/machine` (ro)            | none yet; the supervisor and gardener jobs mount it in a follow-up issue |
 
 The `snapshot-state` host path uses `/srv/disinto/` (not `/var/lib/disinto/`)
 because the `raw_exec` snapshot daemon writes directly to the host path
@@ -108,6 +109,12 @@ because the `raw_exec` snapshot daemon writes directly to the host path
 bypassing the Nomad volume_mount layer. The caddy task no longer mounts it
 (#1770). The supervisor job mounts the same volume read-only at
 `/var/lib/disinto/snapshot` (#1926) so it can read Nomad alerts (#1927).
+
+The `machine` host path is not created by the box: `machine/install.sh` on the
+LXD host mounts the machine report's directory there read-only (#2070).
+`cluster-up.sh` creates the directory only when nothing is mounted at it, so
+Nomad can fingerprint the volume on a box without the device; it never chmods
+a mountpoint.
 
 ### Required plugin blocks
 

@@ -134,6 +134,16 @@ client {
     path      = "/srv/disinto/inbox-state"
     read_only = false
   }
+
+  # The machine report (machine/machine-sense.sh, #2070): the LXD host
+  # writes machine.json into a directory machine/install.sh mounts
+  # read-only into the box at /srv/disinto/machine. Read-only here too:
+  # no job writes it. Created by the machine, not by cluster-up.sh, which
+  # only makes the mountpoint when the device is absent.
+  host_volume "machine" {
+    path      = "/srv/disinto/machine"
+    read_only = true
+  }
 }
 
 # raw_exec driver for the snapshot-daemon (issue #755).
