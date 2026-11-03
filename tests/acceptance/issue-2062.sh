@@ -51,19 +51,16 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 # ── Fixture packs (hermetic, no ops repo involved) ────────────────────────────
-PACKS="$TMP_DIR/packs"
-mkdir -p "$PACKS"
-cat > "$PACKS/loops.toml" <<'EOF'
-dev = "merged"
-EOF
-cat > "$PACKS/stuck.toml" <<'EOF'
-dev = 48
-EOF
+# dev's competence bit is `merged`; the stuck horizon for dev is 48 hours.
+LOOPS_PACK="$TMP_DIR/loops.toml"
+STUCK_PACK="$TMP_DIR/stuck.toml"
+printf 'dev = "merged"\n' > "$LOOPS_PACK"
+printf 'dev = 48\n' > "$STUCK_PACK"
 
 # Fixed clock: 2026-02-12 00:00:00 UTC. The stuck candidate p5 is 72 h old
 # (2026-02-09), past the 48 h horizon.
 export CALIBRATION_NOW="2026-02-12T00:00:00Z"
-export CALIBRATION_LOOPS_FILE="$PACKS/loops.toml"
+export CALIBRATION_LOOPS_FILE="$LOOPS_PACK"
 
 TOOL="$REPO_ROOT/tools/calibration.sh"
 # Exact output of the tool's header + separator row (ten columns, #2062).
@@ -128,7 +125,7 @@ write_base_tape "$TC"
 printf '%s\n' \
   '{"type":"proposal","t":"2026-02-09T00:00:00Z","id":"p5","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"2062-p5"}' \
   '{"type":"run","t":"2026-02-09T00:00:30Z","proposal_id":"p5","agent":"dsh/grok-4.7"}' >> "$TC/tape.jsonl"
-run_calib_2062 "$PACKS/stuck.toml" "$TC"
+run_calib_2062 "$STUCK_PACK" "$TC"
 ac_assert_eq "$RC" "0" "AC 2: must exit 0 (rc=$RC, err: $ERR)"
 expected="$HEADER
 | dev | backlog | - | 1 | - | 100% | - | - | - | - |
