@@ -45,8 +45,8 @@ rung below.
 |---|---|---|---|---|
 | 1 sense | `can-sense-<host>` | an action container on `<host>` runs a read-only inventory (CPU, memory, disk, docker, LXD) and stores it as an artifact | low, no gate | the resources inventory; pitches that know their cost |
 | 2 provision | `can-provision` | an action starts a named LXC container in its own LXD project, on `ai-pool` (`/opt/ai`) only, reports its address, deletes it | medium | sandboxes for the predictor; test instances |
-| 3 reach | `can-reach-porter` | an action container with the `ssh` mount logs in to the porter host, `disinto.ai`, and runs `whoami` and `uname` | low once access exists | remote work |
-| 4 deploy | `can-deploy-porter` | an action runs `porter-install.sh` at a ref on `disinto.ai` and verifies it with the `status` verb | high | shipping: Fold 1 → 2 in `VISION.md` |
+| 3 reach | `can-reach-porter` | an action container with the `ssh` mount logs in to the porter host, `self.disinto.ai`, and runs `whoami` and `uname` | low once access exists | remote work |
+| 4 deploy | `can-deploy-porter` | an action runs `porter-install.sh` at a ref on `self.disinto.ai` and verifies it with the `status` verb | high | shipping: Fold 1 → 2 in `VISION.md` |
 | 5 replicate | `can-replicate` | provision, install disinto at a ref, run its acceptance tests and claim checks against the new instance, report | high | testing new versions of itself; **move** is a separate, later decision |
 
 **Asking you.** When a rung fails for want of access, such as a key
@@ -224,12 +224,15 @@ experiments.
    sandbox project to begin with, and only on `/opt/ai`. Memory and
    disk on the host are exactly the choke points, so the limits target
    them (Safety).
-2. **Porter:** it runs on `disinto.ai`; rungs 3 and 4 target that host.
-   Checked 2026-10-07 from the factory's container: port 22 on
-   `disinto.ai` (159.89.14.107) is reachable, the server accepts only
-   public keys, and the factory holds no key for it. Its edge tunnel is
-   unused (`EDGE_TUNNEL_HOST` unset); public traffic reaches the host
-   through cloudflared. So rung 3 begins with the access request.
+2. **Porter:** it runs on `self.disinto.ai` (165.227.129.61); rungs 3
+   and 4 target that host. The droplet that used to be the porter host,
+   159.89.14.107, no longer exists. On 2026-11-03 `disinto.ai` moved to
+   `self.disinto.ai` too: its Caddy serves the landing page (`site/`)
+   from `/var/www/disinto.ai/current` beside the forge and CI. The
+   factory reaches that host through two narrow accounts:
+   - `porter`, the door the dev agents use for Jev readings;
+   - `factory`, the reverse tunnel the box holds open with autossh.
+   Neither is an admin login, so rung 3 begins with the access request.
 3. **Approval:** reuse the vault gate the architect's pitches already go
    through: merging the pitch PR is the decision, as for every vault
    action, and closing it unmerged rejects the pitch (The planner).
@@ -271,7 +274,7 @@ model.
 
 ## Open questions
 
-- **The account for rungs 3 and 4:** which account on `disinto.ai`
+- **The account for rungs 3 and 4:** which account on `self.disinto.ai`
   does the factory's key use? The `porter` user is the customer door;
   updating the porter needs an admin account. The planner's first
   access request asks for exactly this.

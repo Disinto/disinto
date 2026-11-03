@@ -74,12 +74,12 @@ _planner_rung_pitch_write() {
     reach)
       title="Reach the porter"
       effect="probes/can-reach-porter.sh"
-      paragraph="An action container logs in to the porter host, disinto.ai, and runs whoami and uname."
+      paragraph="An action container logs in to the porter host, self.disinto.ai, and runs whoami and uname."
       ;;
     deploy)
       title="Deploy the porter"
       effect="probes/can-deploy-porter.sh"
-      paragraph="An action runs porter-install.sh at a ref on disinto.ai and verifies it with the status verb."
+      paragraph="An action runs porter-install.sh at a ref on self.disinto.ai and verifies it with the status verb."
       ;;
     replicate)
       title="Replicate"

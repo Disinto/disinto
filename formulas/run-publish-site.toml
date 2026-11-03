@@ -23,12 +23,12 @@ default     = "site/"
 [vars.site_root]
 description = "Symlink path that Caddy serves (points to latest deploy)"
 required    = false
-default     = "/home/debian/disinto-site"
+default     = "/var/www/disinto.ai/current"
 
 [vars.deploy_dir]
 description = "Parent directory for timestamped deploy snapshots"
 required    = false
-default     = "/home/debian/disinto-deploys"
+default     = "/var/www/disinto.ai/deploys"
 
 [vars.max_deploys]
 description = "Number of historical deploys to keep (older ones are pruned)"
