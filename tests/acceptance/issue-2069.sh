@@ -40,6 +40,13 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash git awk grep tail cat mktemp
 
+# CI containers have no git identity (~/.gitconfig is empty), so every commit
+# this fixture makes carries an explicit author through the git env vars.
+export GIT_AUTHOR_NAME="acceptance-fixture"
+export GIT_AUTHOR_EMAIL="acceptance-fixture@example.com"
+export GIT_COMMITTER_NAME="acceptance-fixture"
+export GIT_COMMITTER_EMAIL="acceptance-fixture@example.com"
+
 TARGET="$REPO_ROOT/supervisor/supervisor-run.sh"
 LIB="$REPO_ROOT/lib/formula-session.sh"
 ac_assert_file "$TARGET" "supervisor/supervisor-run.sh must exist"
@@ -109,6 +116,8 @@ advance_origin() {
 new_stale_clone() {
   local dir="$1"
   git clone --quiet "$ORIGIN_DIR" "$dir"
+  git -C "$dir" config user.name "ops-test"
+  git -C "$dir" config user.email "ops-test@example.com"
   git -C "$dir" checkout -b planner/run-2026-08-06
   printf 'stale local note\n' > "$dir/stale-note.txt"
   git -C "$dir" add -A
