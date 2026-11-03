@@ -162,7 +162,7 @@ disinto/                 (code repo)
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-chat-oauth)
 │                  agent-log-rotate.sh, factory-walk.sh, healer.sh, notify-owner.sh,
-│                  snapshot-agents.sh, snapshot-daemon.sh,
+│                  notices-drain.sh, snapshot-agents.sh, snapshot-daemon.sh,
 │                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh,
 │                  uninstall.sh
 ├── tape/          Tape records written by lib/tape.sh (#1389); the dev-loop
