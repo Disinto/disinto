@@ -54,6 +54,10 @@ and executes the pending-actions manifest post-merge.
   Then through `tools/calibration-purpose.sh` (#1652), which appends a
   `purpose` column from grades. When a proposal carries grades by both, the
   owner's (any `who` but `effect-scale`) is read over the code's (#2033).
+  Last through `tools/calibration-within.sh` (#2064), which appends a
+  `within` column: the share of a row's samples whose result came within the
+  loop's hours in the ops `packs/within.toml` (`-` for a loop the pack does
+  not name).
   After the refresh, `tools/sprint-outcomes.sh` (#1676) writes the outcome of
   each sprint whose soak is over: from its `effect` probe (`lib/probe.sh`), run
   over the soak window (`PROBE_UNTIL` = the soak's end), or, with effect

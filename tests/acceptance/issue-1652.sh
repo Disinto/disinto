@@ -52,7 +52,9 @@ GARDENER="$REPO_ROOT/gardener/gardener-run.sh"
 FN_SRC="$(ac_extract_fn refresh_ops_calibration "$GARDENER")"
 [ -n "$FN_SRC" ] || ac_fail "could not extract refresh_ops_calibration() from gardener-run.sh"
 case "$FN_SRC" in
-  *'out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" | "$FACTORY_ROOT/tools/calibration-purpose.sh" )" || rc=$?'*) ;;
+  # #2064 appends calibration-within.sh after this stage, so the pin ends at
+  # the purpose stage rather than at the closing parenthesis of the pipeline.
+  *'out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" | "$FACTORY_ROOT/tools/calibration-purpose.sh"'*) ;;
   *) ac_fail "refresh_ops_calibration must pipe signatures through calibration-purpose.sh" ;;
 esac
 ac_log "wiring OK: purpose is appended after the signatures column"

@@ -416,7 +416,7 @@ refresh_ops_calibration() {
     return 0
   fi
   # pipefail is on: any tool failing keeps the old calibration.md.
-  out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" | "$FACTORY_ROOT/tools/calibration-purpose.sh" )" || rc=$?
+  out="$( "$FACTORY_ROOT/tools/calibration.sh" | "$FACTORY_ROOT/tools/calibration-signatures.sh" | "$FACTORY_ROOT/tools/calibration-purpose.sh" | "$FACTORY_ROOT/tools/calibration-within.sh" )" || rc=$?
   if [ "$rc" -ne 0 ]; then
     log "WARNING: calibration.sh failed (rc=$rc) — calibration.md not refreshed"
     return 0
