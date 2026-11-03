@@ -24,7 +24,7 @@
 #        nothing either.
 #   AC4: a tape whose last line is torn still finds the earlier 0.9 (owner
 #        grade) and queues once.
-#   AC5: a notices dir that cannot be written returns 1 with no marker (retry).
+#   AC5: an unwritable notices dir returns 1 with no marker (retry).
 #   AC6: gardener-run.sh calls the tool before the "# Claim-loop proposals
 #        (#1641)" comment; bash -n passes on both files; the tool is executable.
 #
@@ -45,28 +45,27 @@ ac_assert_file "$REPO_ROOT/gardener/gardener-run.sh" "gardener/gardener-run.sh i
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# grade_grade <proposal_id> <value> <who> — one tape-grade line.
+# grade_line <proposal_id> <value> <who> — one tape-grade record.
 grade_line() {
   printf '{"type":"grade","t":"2026-11-05T00:00:00Z","proposal_id":"%s","value":%s,"when":"at_outcome","who":"%s"}\n' \
     "$1" "$2" "$3"
 }
 
 # run_tool <tape_dir> <notices_dir> — run the tool hermetically with the
-# scenario's TAPE_DIR/NOTICES_DIR. stdout -> OUT, stderr -> ERR, status -> RC.
+# scenario's TAPE_DIR/NOTICES_DIR: status in RC, stdout in CAP_OUT, stderr in
+# CAP_ERR.
 run_tool() {
+  local tape="$1" notices="$2"
   RC=0
-  OUT=""
-  ERR=""
-  (
-    export TAPE_DIR="$1" NOTICES_DIR="$2"
-    bash "$REPO_ROOT/tools/grade-threshold.sh"
-  ) >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
-  OUT="$(cat "$TMP_DIR/out" 2>/dev/null)"
-  ERR="$(cat "$TMP_DIR/err" 2>/dev/null)"
+  ( TAPE_DIR="$tape" NOTICES_DIR="$notices" \
+      bash "$REPO_ROOT/tools/grade-threshold.sh" ) \
+    >"$TMP_DIR/cap-out" 2>"$TMP_DIR/cap-err" || RC=$?
+  CAP_OUT="$(cat "$TMP_DIR/cap-out")"
+  CAP_ERR="$(cat "$TMP_DIR/cap-err")"
 }
 
-# txt_count <dir> — number of *.txt files directly in dir (0 if no dir).
-txt_count() {
+# notices_queued <dir> — count of queued *.txt notices directly in dir.
+notices_queued() {
   find "$1" -maxdepth 1 -name '*.txt' 2>/dev/null | wc -l | tr -d ' '
 }
 
@@ -80,16 +79,16 @@ mkdir -p "$T1"
   printf '{"type":"proposal","t":"2026-11-04T00:00:00Z","id":"p-1","loop":"sprint","class":"internal"}\n'
 } >"$T1/tape.jsonl"
 run_tool "$T1" "$TMP_DIR/notices-1"
-ac_assert_eq "$RC" "0" "no grade above 0.5 must exit 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$TMP_DIR/notices-1")" "0" "no notice may be queued (got $(txt_count "$TMP_DIR/notices-1"))"
+ac_assert_eq "$RC" "0" "no grade above 0.5 must exit 0 (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$TMP_DIR/notices-1")" "0" "no notice may be queued (got $(notices_queued "$TMP_DIR/notices-1"))"
 [ ! -e "$T1/gate/rejection-rules-told" ] || ac_fail "no marker may exist when nothing queued"
 
 ac_log "AC1b: a missing tape is 'none' — rc 0, no notice"
 T1B="$TMP_DIR/tape-1b"
 mkdir -p "$T1B"
 run_tool "$T1B" "$TMP_DIR/notices-1b"
-ac_assert_eq "$RC" "0" "a missing tape must exit 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$TMP_DIR/notices-1b")" "0" "no notice may be queued (got $(txt_count "$TMP_DIR/notices-1b"))"
+ac_assert_eq "$RC" "0" "a missing tape must exit 0 (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$TMP_DIR/notices-1b")" "0" "no notice may be queued (got $(notices_queued "$TMP_DIR/notices-1b"))"
 [ ! -e "$T1B/gate" ] || ac_fail "no gate dir or marker may exist when nothing queued"
 
 # ── AC2: the first grade above 0.5 queues one notice and marks the told state ─
@@ -104,8 +103,8 @@ mkdir -p "$T2"
 } >"$T2/tape.jsonl"
 NOTICES2="$TMP_DIR/notices-2"
 run_tool "$T2" "$NOTICES2"
-ac_assert_eq "$RC" "0" "a grade above 0.5 must exit 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES2")" "1" "exactly one notice must be queued (got $(txt_count "$NOTICES2"))"
+ac_assert_eq "$RC" "0" "a grade above 0.5 must exit 0 (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$NOTICES2")" "1" "exactly one notice must be queued (got $(notices_queued "$NOTICES2"))"
 NOTICE="$(cat "$(find "$NOTICES2" -maxdepth 1 -name '*.txt')" 2>/dev/null)"
 for needle in "0.75" "p-7" "rejection rules"; do
   case "$NOTICE" in
@@ -114,24 +113,24 @@ for needle in "0.75" "p-7" "rejection rules"; do
   esac
 done
 ac_assert_file "$T2/gate/rejection-rules-told" "the marker gate/rejection-rules-told must exist"
-case "$OUT" in
+case "$CAP_OUT" in
   *"grade-threshold"*|*"told the owner"*) ;;
-  *) ac_fail "the tool must log one line when it queues the notice (got: $OUT)" ;;
+  *) ac_fail "the tool must log one line when it queues the notice (got: $CAP_OUT)" ;;
 esac
 
 # ── AC3: once told, never told again — even when a newer grade lands ─────────
 ac_log "AC3: rerun queues nothing"
 run_tool "$T2" "$NOTICES2"
-ac_assert_eq "$RC" "0" "the marked rerun must exit 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES2")" "1" "the rerun must queue no new notice (got $(txt_count "$NOTICES2"))"
-ac_assert_eq "$OUT" "" "the marked run must print nothing (got: $OUT)"
+ac_assert_eq "$RC" "0" "the marked rerun must exit 0 (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$NOTICES2")" "1" "the rerun must queue no new notice (got $(notices_queued "$NOTICES2"))"
+ac_assert_eq "$CAP_OUT" "" "the marked run must print nothing (got: $CAP_OUT)"
 
 ac_log "AC3b: a new 1.0 grade with the marker present queues nothing"
 grade_line p-9 1.0 owner >>"$T2/tape.jsonl"
 run_tool "$T2" "$NOTICES2"
-ac_assert_eq "$RC" "0" "the marked run must exit 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES2")" "1" "the new grade must not queue a second notice (got $(txt_count "$NOTICES2"))"
-ac_assert_eq "$OUT" "" "the marked run must print nothing (got: $OUT)"
+ac_assert_eq "$RC" "0" "the marked run must exit 0 (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$NOTICES2")" "1" "the new grade must not queue a second notice (got $(notices_queued "$NOTICES2"))"
+ac_assert_eq "$CAP_OUT" "" "the marked run must print nothing (got: $CAP_OUT)"
 
 # ── AC4: a torn last line is skipped, the earlier 0.9 is still found ──────────
 ac_log "AC4: torn last line — the earlier 0.9 owner grade queues once"
@@ -144,8 +143,8 @@ mkdir -p "$T4"
 } >"$T4/tape.jsonl"
 NOTICES4="$TMP_DIR/notices-4"
 run_tool "$T4" "$NOTICES4"
-ac_assert_eq "$RC" "0" "a torn tape line must not be fatal (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES4")" "1" "exactly one notice must be queued (got $(txt_count "$NOTICES4"))"
+ac_assert_eq "$RC" "0" "a torn tape line must not be fatal (got $RC): $CAP_ERR"
+ac_assert_eq "$(notices_queued "$NOTICES4")" "1" "exactly one notice must be queued (got $(notices_queued "$NOTICES4"))"
 NOTICE4="$(cat "$(find "$NOTICES4" -maxdepth 1 -name '*.txt')" 2>/dev/null)"
 case "$NOTICE4" in
   *"0.9"*) ;;
@@ -161,7 +160,7 @@ grade_line p-6 0.75 effect-scale >"$T5/tape.jsonl"
 BLOCKER="$TMP_DIR/blocker"
 touch "$BLOCKER"
 run_tool "$T5" "$BLOCKER/notices"
-ac_assert_eq "$RC" "1" "a notice that cannot be queued must exit 1 (got $RC): $ERR"
+ac_assert_eq "$RC" "1" "a notice that cannot be queued must exit 1 (got $RC): $CAP_ERR"
 [ ! -e "$T5/gate/rejection-rules-told" ] \
   || ac_fail "the marker must NOT be written when the queue failed (retry next run)"
 
