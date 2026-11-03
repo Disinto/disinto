@@ -28,6 +28,17 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd bash jq awk grep mktemp date
 
+# has_text TEXT NEEDLE — true when NEEDLE appears anywhere in TEXT. Pure bash,
+# no pipe: `printf ... | grep -q X` can die with 141 when grep -q exits on its
+# first match before the writer has flushed, and pipefail then reports the
+# pipeline as failed even though grep matched (the #1650/#1687 lesson — this
+# exact test flaked in CI that way). The $'\r' strip keeps the match
+# independent of a stray carriage return.
+has_text() {
+  local text="$1" needle="$2"
+  [[ "${text//$'\r'}" == *"$needle"* ]]
+}
+
 PREFLIGHT="$REPO_ROOT/supervisor/preflight.sh"
 RECIPES="$REPO_ROOT/supervisor/recipes.yaml"
 EVALUATOR="$REPO_ROOT/supervisor/evaluate-recipes.sh"
@@ -85,19 +96,19 @@ recipe="$(awk '
   p { print }
 ' "$RECIPES")"
 [ -n "$recipe" ] || ac_fail "nomad-service-unregistered recipe is missing"
-printf '%s\n' "$recipe" | grep -q 'severity: P1' \
+has_text "$recipe" 'severity: P1' \
   || ac_fail "nomad-service-unregistered must be P1, got: $recipe"
-printf '%s\n' "$recipe" | grep -q 'section: "Nomad Services"' \
+has_text "$recipe" 'section: "Nomad Services"' \
   || ac_fail "nomad-service-unregistered must watch the Nomad Services section, got: $recipe"
-printf '%s\n' "$recipe" | grep -q 'rule: field_eq' \
+has_text "$recipe" 'rule: field_eq' \
   || ac_fail "nomad-service-unregistered must use field_eq, got: $recipe"
-printf '%s\n' "$recipe" | grep -q 'field: "Nomad Services"' \
+has_text "$recipe" 'field: "Nomad Services"' \
   || ac_fail "nomad-service-unregistered field must be Nomad Services, got: $recipe"
-printf '%s\n' "$recipe" | grep -q 'value: "MISSING"' \
+has_text "$recipe" 'value: "MISSING"' \
   || ac_fail "nomad-service-unregistered value must be MISSING, got: $recipe"
-printf '%s\n' "$recipe" | grep -q 'action: incident' \
+has_text "$recipe" 'action: incident' \
   || ac_fail "nomad-service-unregistered must be action: incident, got: $recipe"
-if printf '%s\n' "$recipe" | grep -q 'action_script:'; then
+if has_text "$recipe" 'action_script:'; then
   ac_fail "nomad-service-unregistered must not set action_script, got: $recipe"
 fi
 
@@ -123,12 +134,16 @@ write_state() {
 }
 
 run_section() {
-  local snap="$1"
-  FN_SRC="$FN" SNAPSHOT_PATH="$snap" bash -c '
+  local snap="$1" rc=0 out err
+  err="$TMP/run-err.txt"
+  out="$(FN_SRC="$FN" SNAPSHOT_PATH="$snap" bash -c '
     set -euo pipefail
     eval "$FN_SRC"
     nomad_services_section
-  '
+  ' 2>"$err")" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || ac_fail "nomad_services_section run failed (rc $rc): $(head -n 1 "$err")"
+  printf '%s\n' "$out"
 }
 
 # Feed preflight text to the evaluator. Fails the test on a non-zero exit or
@@ -156,11 +171,11 @@ ac_log "AC 1: fresh unregistered-service alert prints MISSING and fires"
 write_state "$TMP/missing.json" "$(fresh_ts)" \
   '["service forgejo of job forgejo not registered"]'
 out_missing="$(run_section "$TMP/missing.json")"
-printf '%s\n' "$out_missing" | grep -qx '## Nomad Services' \
+has_text "$out_missing" '## Nomad Services' \
   || ac_fail "fresh alert run must print the Nomad Services section, got: $out_missing"
-printf '%s\n' "$out_missing" | grep -qx 'service forgejo of job forgejo not registered' \
+has_text "$out_missing" 'service forgejo of job forgejo not registered' \
   || ac_fail "fresh alert run must name the service, got: $out_missing"
-printf '%s\n' "$out_missing" | grep -qx 'Nomad Services: MISSING' \
+has_text "$out_missing" 'Nomad Services: MISSING' \
   || ac_fail "fresh alert run must print Nomad Services: MISSING, got: $out_missing"
 
 fired_missing="$(eval_recipes "$out_missing")"
@@ -175,12 +190,12 @@ ac_log "AC 2: fresh job-dead alert prints OK and does not fire"
 
 write_state "$TMP/dead.json" "$(fresh_ts)" '["job x dead"]'
 out_ok="$(run_section "$TMP/dead.json")"
-printf '%s\n' "$out_ok" | grep -qx 'Nomad Services: OK' \
+has_text "$out_ok" 'Nomad Services: OK' \
   || ac_fail "job-dead run must print Nomad Services: OK, got: $out_ok"
-if printf '%s\n' "$out_ok" | grep -qx 'Nomad Services: MISSING'; then
+if has_text "$out_ok" 'Nomad Services: MISSING'; then
   ac_fail "job-dead run must not print MISSING, got: $out_ok"
 fi
-if printf '%s\n' "$out_ok" | grep -q 'job x dead'; then
+if has_text "$out_ok" 'job x dead'; then
   ac_fail "job-dead run must not print unrelated alerts, got: $out_ok"
 fi
 
