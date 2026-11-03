@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # dispatcher.sh — Edge task dispatcher
 #
-# Polls the ops repo for vault actions that arrived via admin-merged PRs.
+# Polls the ops repo for vault actions that arrived via merged PRs (the gate
+# approves transparently, docs/design/proposal-loop.md §3).
 #
 # Flow:
 # 1. Poll loop: git pull the ops repo every 60s
 # 2. Scan vault/actions/ for TOML files without .result.json
-# 3. Verify TOML arrived via merged PR with admin merger (Forgejo API)
+# 3. Verify TOML arrived via a merged PR (the gate approves transparently,
+#    docs/design/proposal-loop.md §3)
 # 4. Validate TOML using vault-env.sh validator
 # 5. Decrypt declared secrets via load_secret (lib/env.sh)
 # 6. Launch: delegate to _launch_runner_{docker,nomad} backend
@@ -184,10 +186,13 @@ get_pr_merger() {
   pr_json=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
     "${ops_api}/pulls/${pr_number}" 2>/dev/null) || return 2
 
+  # Note: `merged_at` falls back to "" not `empty` — in jq an object with an
+  # empty-valued key produces no output at all, which would silently yield an
+  # empty merger_json when the PR has no merged_at.
   echo "$pr_json" | jq -r '{
-      username: .merge_user?.login // .user?.login,
+      username: (.merged_by?.login // .merge_user?.login // .user?.login),
       merged: .merged,
-      merged_at: .merged_at // empty
+      merged_at: (.merged_at // "")
     }' || return 2
   return 0
 }
@@ -267,17 +272,14 @@ verify_admin_approver() {
   return 1
 }
 
-# Verify vault action arrived via admin-merged PR
+# Verify vault action arrived via a merged PR
 # Usage: verify_admin_merged <toml_file>
 # Returns: 0=verified, 1=rejected (terminal), 2=transient API failure
 #          (transient: caller must NOT write a result — retry next cycle)
 #
-# Verification order (for auto-merge workflow):
-# 1. Check PR reviews for admin APPROVED state (primary check for auto-merge)
-# 2. Fallback: Check if merger is admin (backwards compat for manual merges)
-#
-# This handles the case where auto-merge is performed by a bot (dev-bot)
-# but the actual approval came from an admin reviewer.
+# Merging is the approval (docs/design/proposal-loop.md §3): the gate merges
+# vault PRs transparently, so the dispatcher only confirms the TOML arrived
+# through a merged PR — never who merged it (#2034).
 verify_admin_merged() {
   local toml_file="$1"
   local action_id
@@ -292,21 +294,6 @@ verify_admin_merged() {
 
   log "Action ${action_id} arrived via PR #${pr_num}"
 
-  # First, try admin approver check (for auto-merge workflow)
-  local approver_rc=0
-  verify_admin_approver "$pr_num" "$action_id" || approver_rc=$?
-  if [ "$approver_rc" -eq 0 ]; then
-    return 0
-  fi
-  if [ "$approver_rc" -eq 2 ]; then
-    # Transient API failure — do not let the merger fallback mask it with a
-    # false rejection; retry next cycle instead.
-    log "WARNING: Admin approval check for PR #${pr_num} failed transiently — retrying next cycle"
-    return 2
-  fi
-
-  # approver_rc == 1: no admin approval (terminal) — fall back to merger check
-  # (backwards compatibility for manual merges)
   local merger_json
   merger_json=$(get_pr_merger "$pr_num") || {
     log "WARNING: Could not fetch PR #${pr_num} details — retrying next cycle"
@@ -323,23 +310,7 @@ verify_admin_merged() {
     return 1
   fi
 
-  # Check if merger is admin
-  if [ -z "$merger_username" ]; then
-    log "WARNING: Could not determine PR #${pr_num} merger — retrying next cycle"
-    return 2
-  fi
-
-  local allow_rc=0
-  is_allowed_admin "$merger_username" || allow_rc=$?
-  if [ "$allow_rc" -eq 2 ]; then
-    log "WARNING: Admin check for PR #${pr_num} merger '${merger_username}' failed transiently — retrying next cycle"
-    return 2
-  elif [ "$allow_rc" -ne 0 ]; then
-    log "WARNING: PR #${pr_num} merged by non-admin user '${merger_username}' — rejecting"
-    return 1
-  fi
-
-  log "Verified: PR #${pr_num} merged by admin '${merger_username}' (fallback check)"
+  log "Verified: PR #${pr_num} merged by '${merger_username}' (the gate approves transparently, proposal-loop.md §3)"
   return 0
 }
 
