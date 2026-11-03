@@ -34,7 +34,7 @@
 # Output: one JSON array on stdout, one object per stuck proposal, in the order
 # the proposals appear in the tape. Each object has the sample shape calibration
 # groups on:
-#   {"loop","class","promised","est_dvision","competence","duration","signature"}
+#   {"loop","class","promised","est_dvision","competence","duration","signature","model"}
 #   - loop, class       from the proposal record
 #   - promised          the proposal's forecast.p_success when it is a number,
 #                       else null
@@ -44,6 +44,8 @@
 #   - competence        [false] — it counts as one failure sample
 #   - duration          always null — no competence outcome, nothing to average
 #   - signature         "stuck" — for the signatures column (#1651)
+#   - model             the model that served the proposal's run, from
+#                       tools/tape-model.sh (#2059); "-" when it names none
 #
 # No record is written: the tape is only read. A missing or empty tape, or one
 # with no stuck proposals, prints `[]`. Malformed tape lines (a torn final line
@@ -57,7 +59,9 @@
 #   0  JSON array printed
 #   1  python3 missing, or the loops pack (argument omitted) is missing or
 #      unparsable, or the stuck pack is unparsable / carries a value that is
-#      not a positive integer, or the clock ($CALIBRATION_NOW) is unparseable
+#      not a positive integer, or the clock ($CALIBRATION_NOW) is unparseable,
+#      or tools/tape-model.sh (#2059) exits non-zero or prints something that
+#      is not a JSON object
 # =============================================================================
 set -euo pipefail
 
@@ -139,12 +143,21 @@ fi
 # ── Tape listing ─────────────────────────────────────────────────────────────
 
 if [ -f "$TAPE_FILE" ] && [ -s "$TAPE_FILE" ]; then
+  # The model map for the samples, from the standalone reader
+  # tools/tape-model.sh (#2059): run once, passed to the listing as
+  # MODELS_JSON alongside the packs. A non-zero exit is exit 1 with a
+  # `tape-stuck: failed to read models` line, like an unparsable pack; a
+  # non-object or non-JSON map is caught by the listing the same way. Its
+  # malformed-line note is swallowed: the listing below notes the same
+  # skipped lines, so stderr stays one note per run.
+  MODELS_JSON="$(TAPE_DIR="$TAPE_DIR" "$(dirname "$0")/tape-model.sh" 2>/dev/null)" \
+    || { echo "tape-stuck: failed to read models" >&2; exit 1; }
   # stdout: the JSON array (only on success); stderr: either the number of
   # malformed lines skipped (a bare integer, 0 when none), or a one-line error.
   err_file="$(mktemp)"
   rc=0
   out="$(
-    NOW="$NOW" PACK_JSON="$PACK_JSON" STUCK_JSON="$STUCK_JSON" TAPE_FILE="$TAPE_FILE" \
+    NOW="$NOW" PACK_JSON="$PACK_JSON" STUCK_JSON="$STUCK_JSON" MODELS_JSON="$MODELS_JSON" TAPE_FILE="$TAPE_FILE" \
     python3 - <<'PYEOF' 2>"$err_file"
 import json, os, sys
 from datetime import datetime, timedelta, timezone
@@ -179,6 +192,12 @@ except ValueError:
     fail("unparseable stuck pack")
 if not isinstance(stuck, dict):
     stuck = {}
+try:
+    models = json.loads(os.environ["MODELS_JSON"])
+except ValueError:
+    fail("failed to read models")
+if not isinstance(models, dict):
+    fail("failed to read models")
 
 now = parse_iso8601(os.environ["NOW"])
 if now is None:
@@ -265,6 +284,7 @@ for p in proposals:
         "competence": [False],
         "duration": None,
         "signature": "stuck",
+        "model": models.get(p["id"], "-"),
     })
 
 sys.stdout.write(json.dumps(samples) + "\n")
