@@ -226,9 +226,10 @@ check_script dev/phase-test.sh
 check_script gardener/gardener-run.sh    lib/formula-session.sh
 check_script review/review-pr.sh         lib/agent-sdk.sh
 check_script review/review-poll.sh
-# pitch-or-idle.sh is sourced by planner-run.sh (#1978). Its functions are
-# not in lib/, so the resolution check must see that file.
-check_script planner/planner-run.sh      lib/formula-session.sh planner/pitch-or-idle.sh
+# pitch-or-idle.sh is sourced by planner-run.sh (#1978), and gaps.sh too
+# (#2056). Their functions are not in lib/, so the resolution check must see
+# those files.
+check_script planner/planner-run.sh      lib/formula-session.sh planner/pitch-or-idle.sh planner/gaps.sh
 check_script supervisor/supervisor-poll.sh
 check_script supervisor/update-prompt.sh
 check_script supervisor/supervisor-run.sh  lib/formula-session.sh
