@@ -83,7 +83,7 @@ _agent_run_dsh() {
   local diag_dir="${DISINTO_LOG_DIR:-/tmp}/${LOG_AGENT:-dev}"
   local diag_file="${diag_dir}/agent-run-last.json"
   local start_ts output rc session_dir="" resume_dir="" best_mtime=0 mtime dir slug_dir normalised rec_cwd run_dir_p
-  local has_pushed delivered
+  local has_pushed delivered session_tape
 
   log "agent_run(dsh): starting (resume=${resume_id:-(new)}, dir=${run_dir})"
 
@@ -117,10 +117,17 @@ _agent_run_dsh() {
   # dsh headless writes to stdout directly and mounts no TUI.
   # DSH_RESUME_SESSION is honoured by the image-patched headless runner
   # (docker/agents/dsh-headless-resume.mjs); empty means a fresh session.
+  # #2074: the model session runs with a fresh empty scratch TAPE_DIR/NOTICES_DIR
+  # (prefix assignments, so the caller's TAPE_DIR is untouched) so factory code
+  # the session runs can never write the live tape, its repair state or the
+  # owner-notice queue; the scratch dir is removed on every path below.
+  session_tape="$(mktemp -d "${DISINTO_DATA_DIR:-/tmp}/session-tape.XXXXXX")"
   output=$(cd "$run_dir" && \
     DSH_HOME="$dsh_home" DSH_PERMISSION_MODE=danger-full-access \
     DSH_RESUME_SESSION="$resume_id" \
+    TAPE_DIR="$session_tape" NOTICES_DIR="$session_tape/notices" \
     timeout -k 10 "$limit" dsh --profile headless "$prompt" 2>>"$LOGFILE") && rc=0 || rc=$?
+  rm -rf "$session_tape"
 
   # busybox `timeout` (alpine CI) reports the child's signal-death status
   # (143=TERM, 137=KILL via -k) where GNU coreutils reports 124; a signal
