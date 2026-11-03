@@ -6,7 +6,8 @@
 #
 # tools/calibration-signatures.sh reads the finished calibration table on
 # stdin and appends a `top signatures` column (table_append_column, #1650).
-# Per <loop>/<class> it counts the signature of each proposal's last outcome
+# Per <loop>/<class>/<model> (model from tools/tape-model.sh, #2059; `-` when
+# it names none) it counts the signature of each proposal's last outcome
 # in tape order, plus one `stuck` per sample of that loop and class from
 # ${TAPE_STUCK_TOOL:-tools/tape-stuck.sh} run with no arguments. Up to three
 # labels, `name:count`, most frequent first, ties by name. No label: the key
@@ -88,9 +89,11 @@ cat >"$TAPE_DIR/tape.jsonl" <<'EOF'
 {"type":"grade","t":"2026-02-01T00:10:00Z","proposal_id":"p1","signature":"grade-sig","value":1,"when":"at_outcome","who":"human"}
 EOF
 
-# One dev/backlog sample. Its signature field is deliberately not "stuck":
-# the column adds the label stuck, it does not copy the sample's signature.
-# A sprint sample must not invent a row or change dev/backlog. No arguments.
+# One dev/backlog sample and one sprint/experiment sample. Its signature field
+# is deliberately not "stuck": the column adds the label stuck, it does not
+# copy the sample's signature. A sprint sample must not invent a row or change
+# dev/backlog. Samples carry "model":"-" (#2061), matching the model-less
+# fixture rows. No arguments.
 STUCK="$TMP_DIR/stuck.sh"
 cat >"$STUCK" <<'EOF'
 #!/usr/bin/env bash
@@ -98,23 +101,24 @@ if [ "$#" -ne 0 ]; then
   echo "stuck stub: expected no arguments, got: $*" >&2
   exit 1
 fi
-printf '%s\n' '[{"loop":"dev","class":"backlog","signature":"not-the-label"},{"loop":"sprint","class":"experiment","signature":"other"}]'
+printf '%s\n' '[{"loop":"dev","class":"backlog","signature":"not-the-label","model":"-"},{"loop":"sprint","class":"experiment","signature":"other","model":"-"}]'
 EOF
 chmod +x "$STUCK"
 
 # The other columns are a fixture, not a live calibration.sh run: the tool
-# must append and leave them byte-for-byte. No trailing newline — the
-# here-string supplies the last one.
-TABLE='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
-|---|---|---|---|---|---|---|---|---|
-| dev | backlog | 4 | 50% | 75% | 25 | 10.0 | 12.0 | 2.0 |
-| dev | fix | 1 | - | 0% | - | - | - | - |
-| repair | incident | 1 | 10% | 0% | 10 | 1.0 | 2.0 | 1.0 |'
-WANT='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures |
+# must append and leave them byte-for-byte. The model cell is the ten-column
+# layout of #2062; the fixture tape names no model, so every row is "-".
+# No trailing newline — the here-string supplies the last one.
+TABLE='| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 |---|---|---|---|---|---|---|---|---|---|
-| dev | backlog | 4 | 50% | 75% | 25 | 10.0 | 12.0 | 2.0 | agent-loop:2, needs-ops:1, stuck:1 |
-| dev | fix | 1 | - | 0% | - | - | - | - | - |
-| repair | incident | 1 | 10% | 0% | 10 | 1.0 | 2.0 | 1.0 | - |'
+| dev | backlog | - | 4 | 50% | 75% | 25 | 10.0 | 12.0 | 2.0 |
+| dev | fix | - | 1 | - | 0% | - | - | - | - |
+| repair | incident | - | 1 | 10% | 0% | 10 | 1.0 | 2.0 | 1.0 |'
+WANT='| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dev | backlog | - | 4 | 50% | 75% | 25 | 10.0 | 12.0 | 2.0 | agent-loop:2, needs-ops:1, stuck:1 |
+| dev | fix | - | 1 | - | 0% | - | - | - | - | - |
+| repair | incident | - | 1 | 10% | 0% | 10 | 1.0 | 2.0 | 1.0 | - |'
 
 run_sig() {
   local tape_dir="$1" stuck="$2" table="$3"
@@ -161,14 +165,14 @@ cat >"$TOP_TAPE/tape.jsonl" <<'EOF'
 {"type":"proposal","t":"2026-02-02T00:08:00Z","id":"a5","loop":"dev","class":"backlog","context":{},"decision":"approved","ref":"t5"}
 {"type":"outcome","t":"2026-02-02T00:09:00Z","proposal_id":"a5","bits":{},"signature":"world","numbers":{},"children":{},"payloads":[]}
 EOF
-TOP_TABLE='| loop | class | n |
-|---|---|---|
-| dev | backlog | 5 |'
+TOP_TABLE='| loop | class | model | n |
+|---|---|---|---|
+| dev | backlog | - | 5 |'
 run_sig "$TOP_TAPE" "$STUCK" "$TOP_TABLE"
 ac_assert_eq "$RC" "0" "top-three run must exit 0 (rc=$RC) [stderr: $ERR]"
-ac_assert_eq "$OUT" '| loop | class | n | top signatures |
-|---|---|---|---|
-| dev | backlog | 5 | agent-loop:2, design-conflict:1, needs-ops:1 |' \
+ac_assert_eq "$OUT" '| loop | class | model | n | top signatures |
+|---|---|---|---|---|
+| dev | backlog | - | 5 | agent-loop:2, design-conflict:1, needs-ops:1 |' \
   "only the three most frequent labels, ties by name (got '$OUT')"
 ac_log "top three OK"
 

@@ -10,7 +10,8 @@
 # the finished table on stdin and writes it to stdout with a `top signatures`
 # column appended via table_append_column (lib/table-column.sh, #1650).
 #
-# Per `<loop>/<class>` the labels are:
+# Per `<loop>/<class>/<model>` — model from tools/tape-model.sh (#2059), `-`
+# for a proposal it does not name — the labels are:
 #   * the `signature` of the last outcome, in tape order, of each proposal on
 #     ${TAPE_DIR:-/srv/disinto/tape}/tape.jsonl whose loop and class match.
 #     A proposal with no outcome, or whose last outcome has no signature, adds
@@ -18,7 +19,8 @@
 #   * one `stuck` for each sample of that loop and class printed by
 #     ${TAPE_STUCK_TOOL:-<this dir>/tape-stuck.sh}, run with no arguments
 #     (#1648). The sample's own signature field is not read — the label is
-#     always `stuck`.
+#     always `stuck`. Its model is its own `model` field (#2061); a sample
+#     without one lands on `-`.
 #
 # The cell is up to three labels as `name:count`, comma-separated, most
 # frequent first, ties broken by name. No label: the key is left out of the
@@ -34,12 +36,16 @@
 #   TAPE_DIR         tape directory (default /srv/disinto/tape)
 #   TAPE_STUCK_TOOL  stuck-proposal reader (default <this dir>/tape-stuck.sh);
 #                    run with no arguments; a non-zero exit fails this tool
+#   TAPE_MODEL_TOOL  model-per-proposal reader (default <this dir>/tape-model.sh,
+#                    #2059); run with no arguments; a non-zero exit or a
+#                    non-JSON-object output fails this tool (#2063)
 #
 # Exit codes:
 #   0  table printed, with the column appended
-#   1  jq missing, the stuck tool failed or did not print a JSON array, or
-#      the tape could not be read. Nothing is written (stdin is still
-#      consumed, so a pipeline writer is not SIGPIPE'd).
+#   1  jq missing, the stuck tool failed or did not print a JSON array, the
+#      model tool failed or did not print a JSON object, or the tape could not
+#      be read. Nothing is written (stdin is still consumed, so a pipeline
+#      writer is not SIGPIPE'd).
 #
 # Hermetic aside from the tape dir and the stuck tool it is pointed at. No
 # network, no agent, no secrets (AD-006). Does not source lib/env.sh.
@@ -64,6 +70,7 @@ fi
 TAPE_DIR="${TAPE_DIR:-/srv/disinto/tape}"
 TAPE_FILE="${TAPE_DIR}/tape.jsonl"
 STUCK_TOOL="${TAPE_STUCK_TOOL:-$SCRIPT_DIR/tape-stuck.sh}"
+MODEL_TOOL="${TAPE_MODEL_TOOL:-$SCRIPT_DIR/tape-model.sh}"
 
 stuck_rc=0
 stuck_out="$("$STUCK_TOOL")" || stuck_rc=$?
@@ -76,6 +83,17 @@ if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$stuck_out"; then
   exit 1
 fi
 
+model_rc=0
+model_out="$("$MODEL_TOOL")" || model_rc=$?
+if [ "$model_rc" -ne 0 ]; then
+  echo "calibration-signatures: model tool failed (rc=$model_rc): $MODEL_TOOL" >&2
+  exit 1
+fi
+if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$model_out"; then
+  echo "calibration-signatures: model tool did not print a JSON object" >&2
+  exit 1
+fi
+
 # A missing or empty tape contributes no outcome signatures. /dev/null parses
 # as no records, so the filter below has one shape.
 tape_input="/dev/null"
@@ -83,9 +101,9 @@ if [ -f "$TAPE_FILE" ] && [ -s "$TAPE_FILE" ]; then
   tape_input="$TAPE_FILE"
 fi
 
-# One object: "<loop>/<class>" -> "name:count, ..." (at most three). A key
-# with no label is absent, and table_append_column prints `-` for it.
-values="$(jq -R -s -c --argjson stuck "$stuck_out" '
+# One object: "<loop>/<class>/<model>" -> "name:count, ..." (at most three).
+# A key with no label is absent, and table_append_column prints `-` for it.
+values="$(jq -R -s -c --argjson stuck "$stuck_out" --argjson models "$model_out" '
   [ split("\n")[]
     | (try fromjson catch null)
     | select(type == "object") ] as $recs
@@ -102,13 +120,13 @@ values="$(jq -R -s -c --argjson stuck "$stuck_out" '
        | . as $p
        | ($lasts[$p.id].signature) as $sig
        | select(($sig | type) == "string" and $sig != "")
-       | {key: ($p.loop + "/" + $p.class), sig: $sig}
+       | {key: ($p.loop + "/" + $p.class + "/" + ($models[$p.id] // "-")), sig: $sig}
      ] + [
        $stuck[]
        | select(type == "object"
                and ((.loop | type) == "string")
                and ((.class | type) == "string"))
-       | {key: (.loop + "/" + .class), sig: "stuck"}
+       | {key: (.loop + "/" + .class + "/" + (.model // "-")), sig: "stuck"}
      ]) as $labels
   | ($labels
      | group_by(.key)
