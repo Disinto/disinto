@@ -5,8 +5,8 @@
 | Tier | Meaning | Dispatch path |
 |------|---------|---------------|
 | low | Revertable, no external side effects | Direct commit to ops main; no human gate |
-| medium | Significant but reversible | PR on ops repo; blocks calling agent until merged |
-| high | Irreversible or high-blast-radius | PR on ops repo; hard blocks |
+| medium | Significant but reversible | PR on ops repo, merged by the gate at once; the owner is told (proposal-loop.md §3) |
+| high | Irreversible or high-blast-radius | PR on ops repo, merged by the gate at once; the owner is told (proposal-loop.md §3) |
 
 ## Which agents are affected
 
