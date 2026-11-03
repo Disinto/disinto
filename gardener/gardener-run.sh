@@ -66,6 +66,18 @@ LOG_AGENT="gardener"
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active gardener
 acquire_run_lock "/tmp/gardener-run.lock"
+
+# A bot's open pitch PR whose drafted sub-issues pass the lint and whose
+# effect probe exists is merged by the gate and the owner is told (#2038,
+# docs/design/proposal-loop.md §3). The merged pitch is pulled by the ops
+# clone sync below and reaches the tape in this same run. Never fatal: a
+# non-zero exit only logs a warning.
+pitch_approve_rc=0
+"$FACTORY_ROOT/tools/pitch-approve.sh" || pitch_approve_rc=$?
+if [ "$pitch_approve_rc" -ne 0 ]; then
+  log "WARNING: pitch-approve.sh failed (rc=${pitch_approve_rc})"
+fi
+
 # Sync the ops clone at the start of every run (#1653), before the precondition
 # checks, so runs that exit early still read fresh operational data.
 ensure_ops_repo
