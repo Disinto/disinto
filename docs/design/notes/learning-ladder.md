@@ -10,7 +10,7 @@ In order, each rung gated on the tape being thick and honest enough.
 Claims (`proposal-loop.md` §6, `world-model.md`) run beside the ladder
 from stage 1: they need no forecast, and the rungs verify them.
 
-1. **Calibration report** — stage 1's only read. Per (loop, class):
+1. **Calibration report** — stage 1's only read. Per (loop, class, model):
    n, promised, actual, error, top signatures (incl. stuck), purpose.
    Live; honest once stuck samples and the gut bits land (#1614,
    #1615).

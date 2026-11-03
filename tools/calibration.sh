@@ -12,10 +12,12 @@
 # matches no proposal (orphan) is skipped; a proposal without any outcome
 # forms no pair.
 #
-# Pairs are grouped by (loop, class) — both taken from the proposal — after
-# dropping non-samples, and summarised as a markdown table on stdout:
+# Pairs are grouped by (loop, class, model) — loop and class from the proposal,
+# model from tools/tape-model.sh (#2059): the model that served the proposal's
+# run, `-` when none — after dropping non-samples, and summarised as a markdown
+# table on stdout:
 #
-#   | loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
+#   | loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 #
 #   n               number of sample pairs in the group, counting stuck
 #                   proposals (tools/tape-stuck.sh, #1648) read at read time
@@ -108,7 +110,8 @@
 #   0  report printed; a missing or empty tape, or a tape with no sample
 #      pairs, prints the header row only
 #   1  jq missing, or the loops pack file is missing or unparsable, or the
-#      stuck pack is unparsable
+#      stuck pack is unparsable, or the model map (tools/tape-model.sh,
+#      #2059) fails to read
 # =============================================================================
 set -euo pipefail
 
@@ -121,8 +124,8 @@ TAPE_FILE="${TAPE_DIR}/tape.jsonl"
 # issue #1605).
 LOOPS_FILE="${CALIBRATION_LOOPS_FILE:-${OPS_REPO_ROOT:-/home/agent/repos/_factory/disinto-ops}/packs/loops.toml}"
 
-echo '| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
-echo '|---|---|---|---|---|---|---|---|---|'
+echo '| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'
+echo '|---|---|---|---|---|---|---|---|---|---|'
 
 # Fail closed before touching the tape: the loop->competence-bit map now lives
 # in the pack, so without a readable pack there is no sample to summarise and
@@ -220,6 +223,7 @@ fi
 stuck_json="$(
   "$(dirname "$0")/tape-stuck.sh" "$pack_json"
 )" || { echo "calibration: failed to read stuck pack" >&2; exit 1; }
+model_json="$("$(dirname "$0")/tape-model.sh")" || { echo "calibration: failed to read models" >&2; exit 1; }
 
 [ -f "$TAPE_FILE" ] || exit 0
 [ -s "$TAPE_FILE" ] || exit 0
@@ -235,15 +239,15 @@ skipped=$(( total_lines - valid_lines ))
 [ "$skipped" -ge 0 ] || skipped=0
 [ "$skipped" -eq 0 ] || echo "calibration: skipped ${skipped} malformed line(s) in ${TAPE_FILE}" >&2
 
-# One tab-separated row per (loop, class) sample group:
-# loop <tab> class <tab> n <tab> promised (integer %, or the literal
+# One tab-separated row per (loop, class, model) sample group:
+# loop <tab> class <tab> model <tab> n <tab> promised (integer %, or the literal
 # "-") <tab> actual (integer %) <tab> mean duration_s (the literal
 # "NA" when no pair in the group carries one) <tab> est duration_s (the
 # literal "NA" when no sample pair in the group carries a numeric
 # est_dvision greater than 0). The reader derives error =
 # |promised - actual| (or "-") and dur_error = |est duration_s - mean
 # duration_s| (or "-") from the same values.
-jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
+jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" --argjson models "$model_json" '
   [ split("\n")[]
     | (try fromjson catch null)
     | select(type == "object") ] as $recs
@@ -265,6 +269,7 @@ jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
   | map(last)
   | map({ loop: $props[.proposal_id].loop,
            class: $props[.proposal_id].class,
+           model: ($models[.proposal_id] // "-"),
            promised: $props[.proposal_id].promised,
            est_dvision: $props[.proposal_id].est_dvision,
            bits: (.bits | if type == "object" then . else {} end),
@@ -280,6 +285,7 @@ jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
   # bit, is never a sample.
   | map({ loop: .loop,
            class: .class,
+           model: .model,
            promised: .promised,
            est_dvision: .est_dvision,
            competence: (($loops[.loop]) as $bits
@@ -290,15 +296,17 @@ jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
            duration: .duration })
   | map(select((.competence | type) == "array" and (.competence | length) > 0))
   # Stuck proposals (tools/tape-stuck.sh, #1648) arrive already in sample
-  # shape — competence [false], duration/est_dvision null, signature "stuck"
-  # — so appending them (`. + $stuck`) adds one failure sample per stuck
-  # proposal without touching any other column. They count in n, pull `actual`
-  # below what the outcomes alone give, and contribute nothing to the mean
-  # duration or duration-forecast columns.
+  # shape — competence [false], duration/est_dvision null, signature "stuck",
+  # model (#2061) — so appending them (`. + $stuck`) adds one failure sample
+  # per stuck proposal without touching any other column. They count in n,
+  # pull `actual` below what the outcomes alone give, and contribute nothing
+  # to the mean duration or duration-forecast columns.
   | . + $stuck
-  | group_by([.loop, .class])
+  | map(.model = (.model // "-"))
+  | group_by([.loop, .class, .model])
   | map({ loop: .[0].loop,
            class: .[0].class,
+           model: .[0].model,
            n: length,
            promised: ((map(.promised) | map(select(. != null)))
                       | if length > 0 then ((100 * add / length) | round) else null end),
@@ -309,9 +317,9 @@ jq -R -s -r --argjson loops "$pack_json" --argjson stuck "$stuck_json" '
            df: ((map(.est_dvision) | map(select(. != null)) | map(select(. > 0)))
                 | if length > 0 then add / length else null end) })
   | .[]
-  | "\(.loop)\t\(.class)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)\t\(if .df == null then "NA" else (.df | tostring) end)"
+  | "\(.loop)\t\(.class)\t\(.model)\t\(.n)\t\(if .promised == null then "-" else (.promised | tostring) end)\t\(.mr)\t\(if .md == null then "NA" else (.md | tostring) end)\t\(if .df == null then "NA" else (.df | tostring) end)"
 ' "$TAPE_FILE" |
-while IFS=$'\t' read -r lp cl n promised actual md df; do
+while IFS=$'\t' read -r lp cl mo n promised actual md df; do
   if [ "$md" = "NA" ]; then
     mean="-"
   else
@@ -338,6 +346,6 @@ while IFS=$'\t' read -r lp cl n promised actual md df; do
         'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.1f", d }')"
     fi
   fi
-  printf '| %s | %s | %s | %s | %s%% | %s | %s | %s | %s |\n' \
-    "$lp" "$cl" "$n" "$p" "$actual" "$e" "$mean" "$durp" "$dure"
+  printf '| %s | %s | %s | %s | %s | %s%% | %s | %s | %s | %s |\n' \
+    "$lp" "$cl" "$mo" "$n" "$p" "$actual" "$e" "$mean" "$durp" "$dure"
 done

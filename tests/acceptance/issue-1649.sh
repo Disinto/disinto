@@ -73,7 +73,7 @@ TAPE_DIR="$TMP_DIR/tape"
 mkdir -p "$TAPE_DIR"
 TOOL="$REPO_ROOT/tools/calibration.sh"
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|'
 
 # run_calib [stuck-file] [clock] — run the calibration tool with CALIBRATION_
 # LOOPS_FILE fixed (loops.toml), CALIBRATION_STUCK_FILE and CALIBRATION_NOW
@@ -122,10 +122,10 @@ ac_assert_eq "$RC" "0" "AC 1: stuck 72 h no-outcome must exit 0 (rc=$RC, err: $E
 # error |80-50|=30, mean duration 100.0 (p-2 is null), dur_promised 100.0,
 # dur_error 0.0
 expected="$HEADER
-| dev | fix | 2 | 80% | 50% | 30 | 100.0 | 100.0 | 0.0 |"
+| dev | fix | - | 2 | 80% | 50% | 30 | 100.0 | 100.0 | 0.0 |"
 ac_assert_eq "$OUT" "$expected" "AC 1: expected the stuck-included row (n=2 actual=50%), got: $OUT"
-[[ "$OUT" == *'| dev | fix | 2 |'* ]] || ac_fail "AC 1: n must grow by 1 to 2 (got: $OUT)"
-[[ "$OUT" == *'| dev | fix | 2 | 80% | 50% |'* ]] || ac_fail "AC 1: actual must be below 100% (50%), got: $OUT"
+[[ "$OUT" == *'| dev | fix | - | 2 |'* ]] || ac_fail "AC 1: n must grow by 1 to 2 (got: $OUT)"
+[[ "$OUT" == *'| dev | fix | - | 2 | 80% | 50% |'* ]] || ac_fail "AC 1: actual must be below 100% (50%), got: $OUT"
 ac_log "AC 1 OK: stuck proposal counted as a failure sample"
 
 # ── AC 2: the same proposal 24 h old -> not counted ───────────────────────────
@@ -141,10 +141,10 @@ ac_assert_eq "$RC" "0" "AC 2: 24 h no-outcome must exit 0 (rc=$RC, err: $ERR)"
 # Only p-1 is a sample: n 1, promised 80%, actual 100%, error 20,
 # mean 100.0, dur_promised 100.0, dur_error 0.0
 expected="$HEADER
-| dev | fix | 1 | 80% | 100% | 20 | 100.0 | 100.0 | 0.0 |"
+| dev | fix | - | 1 | 80% | 100% | 20 | 100.0 | 100.0 | 0.0 |"
 ac_assert_eq "$OUT" "$expected" \
   "AC 2: 24 h no-outcome proposal must not be counted (n=1 actual=100%), got: $OUT"
-[[ "$OUT" == *'| dev | fix | 1 |'* ]] || ac_fail "AC 2: the 24 h proposal must not add a sample (n=1, got: $OUT)"
+[[ "$OUT" == *'| dev | fix | - | 1 |'* ]] || ac_fail "AC 2: the 24 h proposal must not add a sample (n=1, got: $OUT)"
 ac_log "AC 2 OK: under-horizon no-outcome proposal is not counted"
 
 # ── AC 3: without a stuck pack, output is byte-identical to today ─────────────
@@ -164,7 +164,7 @@ ac_assert_eq "$RC" "0" "AC 3: missing stuck pack must exit 0 (rc=$RC, err: $ERR)
 # n 1, promised 80%, actual 100%, error 20, mean 100.0, dur_promised 100.0,
 # dur_error 0.0
 expected="$HEADER
-| dev | fix | 1 | 80% | 100% | 20 | 100.0 | 100.0 | 0.0 |"
+| dev | fix | - | 1 | 80% | 100% | 20 | 100.0 | 100.0 | 0.0 |"
 ac_assert_eq "$OUT" "$expected" \
   "AC 3: without a stuck pack the 72 h no-outcome proposal must be absent (row byte-identical to pre-#1649), got: $OUT"
 ac_log "AC 3 OK: no stuck pack -> byte-identical output"

@@ -7,7 +7,7 @@
 # Two new columns were appended to tools/calibration.sh's table (fields 9/10,
 # existing fields 2–8 untouched and in the same order):
 #
-#   | loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
+#   | loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 #
 #   - dur_promised  mean of the sample pairs' proposal forecast.est_dvision
 #                   (seconds) over the pairs whose value is numeric AND greater
@@ -43,7 +43,7 @@ ac_require_cmd bash jq awk grep bats
 
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|'
 
 # Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
 # competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
@@ -97,7 +97,7 @@ ac_assert_eq "$rc" "0" "AC 1 fixture must exit 0 (rc=$rc)"
 # dur_promised = mean(80, 40) = 60.0; mean duration_s = (100+50)/2 = 75.0;
 # dur_error = |60.0 - 75.0| = 15.0. The row must contain | 60.0 | 15.0 |.
 expected="$HEADER
-| dev | fix | 2 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |"
+| dev | fix | - | 2 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |"
 ac_assert_eq "$out" "$expected" \
   "AC 1 must print the dev|fix row ending | 60.0 | 15.0 |, got: $out"
 [[ "$out" == *"| 60.0 | 15.0 |"* ]] \
@@ -116,7 +116,7 @@ ac_assert_eq "$rc" "0" "AC 2 fixture must exit 0 (rc=$rc)"
 # mean (still 75.0, not 58.3 = mean(100,50,0)); dur_error stays |60.0-75.0| =
 # 15.0.
 expected="$HEADER
-| dev | fix | 3 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |"
+| dev | fix | - | 3 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |"
 ac_assert_eq "$out" "$expected" \
   "AC 2 must keep | 60.0 | 15.0 | after adding an est_dvision 0 pair, got: $out"
 [[ "$out" == *"| 60.0 | 15.0 |"* ]] \

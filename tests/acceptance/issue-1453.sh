@@ -5,7 +5,7 @@
 # Issue #1453: calibration.sh's stdout table was missing the model's promise.
 # Now it reports promised vs actual:
 #
-#   | loop | class | n | promised | actual | error | mean duration_s |
+#   | loop | class | model | n | promised | actual | error | mean duration_s |
 #
 #   promised = mean of the proposals' forecast.p_success (integer %) over the
 #              pairs that carry a numeric one; "-" when no pair in the group
@@ -47,14 +47,14 @@ ac_require_cmd bash jq awk grep bats
 
 # ── Shared table constants ────────────────────────────────────────────────────
 # Exact output of the tool's header + separator row (no leading space).
-HEADER=$'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|'
+HEADER=$'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|'
 
 # Expected row for the forecast fixture: mean(0.5,0.7)=60%, 1/2 merged=50%,
 # error |60-50|=10, mean duration (100+50)/2=75.0:
-EXPECTED_FC_ROW=$'| dev | fix | 2 | 60% | 50% | 10 | 75.0 | - | - |'
+EXPECTED_FC_ROW=$'| dev | fix | - | 2 | 60% | 50% | 10 | 75.0 | - | - |'
 
 # Expected row for the no-forecast group (1 pair, merged, dur 100):
-EXPECTED_NA_ROW=$'| dev | fix | 1 | - | 100% | - | 100.0 | - | - |'
+EXPECTED_NA_ROW=$'| dev | fix | - | 1 | - | 100% | - | 100.0 | - | - |'
 
 # Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
 # competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL

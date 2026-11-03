@@ -3,11 +3,13 @@
 #
 # calibration.sh reads $TAPE_DIR/tape.jsonl, pairs each proposal with its
 # LAST outcome record (in tape order), drops non-sample pairs, and groups
-# the rest by (loop, class) as a markdown table:
+# the rest by (loop, class, model) as a markdown table:
 #
-#   | loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
+#   | loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |
 #
 #   - n               number of sample pairs in the group
+#   - model           the model that served the proposal's run
+#                     (tools/tape-model.sh, #2059); "-" when no run names one
 #   - promised        mean of the proposals' forecast.p_success (integer
 #                     percent) over the sample pairs that carry a numeric one
 #                     (forecast lands on the proposal record, #1451);
@@ -67,7 +69,7 @@ EOF
 
 # header_only — the whole output is the header row and its separator.
 header_only() {
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|' ]
 }
 
 # write_fixture_tape — 3 sampled pairs across 2 loops, plus records that must
@@ -108,7 +110,7 @@ EOF
   # p-1 merged, p-2 not -> dev/fix n=2, actual 50%, mean 100.0 (p-2 has no
   # duration); p-3 regression_cleared -> repair/incident n=1, 100%,
   # mean 50.0
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 2 | - | 50% | - | 100.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 50.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 2 | - | 50% | - | 100.0 | - | - |\n| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |' ]
 }
 
 @test "group with no durations: mean duration_s is -" {
@@ -118,7 +120,7 @@ EOF
 EOF
   run bash "$TOOL"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'| dev | fix | 1 | - | 0% | - | - | - | - |'* ]]
+  [[ "$output" == *'| dev | fix | - | 1 | - | 0% | - | - | - | - |'* ]]
 }
 
 @test "rows sorted by loop then class" {
@@ -136,7 +138,7 @@ EOF
   [ "$status" -eq 0 ]
   # p-4 (review) is never a sample: only dev + repair rows print, sorted
   # dev/docs, dev/fix, repair/incident
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | docs | 1 | - | 0% | - | 20.0 | - | - |\n| dev | fix | 1 | - | 100% | - | 10.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 30.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | docs | - | 1 | - | 0% | - | 20.0 | - | - |\n| dev | fix | - | 1 | - | 100% | - | 10.0 | - | - |\n| repair | incident | - | 1 | - | 100% | - | 30.0 | - | - |' ]
 }
 
 @test "last outcome per proposal wins" {
@@ -147,7 +149,7 @@ EOF
 EOF
   run bash "$TOOL"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'| dev | fix | 1 | - | 100% | - | 120.0 | - | - |'* ]]
+  [[ "$output" == *'| dev | fix | - | 1 | - | 100% | - | 120.0 | - | - |'* ]]
 }
 
 @test "last outcome without the bit is not a sample" {
@@ -191,7 +193,7 @@ EOF
   [ "$status" -eq 0 ]
   # r-2 carries merged:1 but no regression_cleared -> not a sample: n=1
   # (never 2, so never 50%/0%), mean 100.0 (not 150.0)
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| repair | incident | 1 | - | 100% | - | 100.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| repair | incident | - | 1 | - | 100% | - | 100.0 | - | - |' ]
 }
 
 @test "repair: regression_cleared 0 counts as a failure" {
@@ -202,7 +204,7 @@ EOF
   run bash "$TOOL"
   [ "$status" -eq 0 ]
   # bit present (0) -> counted in n as a failure
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| repair | incident | 1 | - | 0% | - | - | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| repair | incident | - | 1 | - | 0% | - | - | - | - |' ]
 }
 
 @test "dev: 10 merged plus 6 exit_ok-only outcomes are not samples" {
@@ -220,7 +222,7 @@ EOF
   [ "$status" -eq 0 ]
   # only the 10 merged outcomes count: n=10, actual=100%, mean over the 10
   # samples only (the 999-s exit_ok durations are excluded)
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 10 | - | 100% | - | 100.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 10 | - | 100% | - | 100.0 | - | - |' ]
 }
 
 @test "true/false bits count as success/failure" {
@@ -235,7 +237,7 @@ EOF
   run bash "$TOOL"
   [ "$status" -eq 0 ]
   # true/false are valid bit values: 1/2 merged, 0/1 cleared -> 50%/0%
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 2 | - | 50% | - | 75.0 | - | - |\n| repair | incident | 1 | - | 0% | - | 10.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 2 | - | 50% | - | 75.0 | - | - |\n| repair | incident | - | 1 | - | 0% | - | 10.0 | - | - |' ]
 }
 
 @test "malformed line is skipped with stderr note" {
@@ -243,8 +245,8 @@ EOF
   printf 'not json {\n' >> "$TAPE_DIR/tape.jsonl"
   run bash "$TOOL" 2>&1
   [ "$status" -eq 0 ]
-  [[ "$output" == *'| dev | fix | 2 | - | 50% | - | 100.0 | - | - |'* ]]
-  [[ "$output" == *'| repair | incident | 1 | - | 100% | - | 50.0 | - | - |'* ]]
+  [[ "$output" == *'| dev | fix | - | 2 | - | 50% | - | 100.0 | - | - |'* ]]
+  [[ "$output" == *'| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |'* ]]
   [[ "$output" == *'skipped 1 malformed line(s)'* ]]
 }
 
@@ -258,7 +260,7 @@ EOF
   run bash "$TOOL"
   [ "$status" -eq 0 ]
   # promised mean(0.5, 0.7) = 60%, actual 50% (1/2 merged), error |60-50| = 10
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 2 | 60% | 50% | 10 | 75.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 2 | 60% | 50% | 10 | 75.0 | - | - |' ]
 }
 
 @test "forecast on only some pairs: mean over the numeric ones only" {
@@ -272,7 +274,7 @@ EOF
   [ "$status" -eq 0 ]
   # only p-1 carries a numeric p_success -> promised = 50%; p-2 still
   # counts in n and actual, so pairs without a forecast are not dropped
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 2 | 50% | 50% | 0 | 75.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 2 | 50% | 50% | 0 | 75.0 | - | - |' ]
 }
 
 @test "est_dvision forecasts: dur_promised is the mean of positive values, dur_error is the gap to mean duration_s" {
@@ -286,7 +288,7 @@ EOF
   [ "$status" -eq 0 ]
   # dur_promised = mean(80, 40) = 60.0; mean duration_s = 75.0;
   # dur_error = |60.0 - 75.0| = 15.0
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 2 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 2 | 50% | 100% | 50 | 75.0 | 60.0 | 15.0 |' ]
 }
 
 @test "est_dvision 0 (stub) and missing are never counted in dur_promised" {
@@ -303,14 +305,14 @@ EOF
   # p-2 carries the old est_dvision 0 stub and p-3 no value at all; both must be
   # excluded: dur_promised = 80.0 (not (80+0+null)/3), mean duration_s =
   # (100+50+25)/3 = 58.3, dur_error = |80.0 - 58.3| = 21.7
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 3 | 50% | 100% | 50 | 58.3 | 80.0 | 21.7 |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 3 | 50% | 100% | 50 | 58.3 | 80.0 | 21.7 |' ]
 }
 
 @test "defaults TAPE_DIR to /srv/disinto/tape (header path only, no writes)" {
   run bash "$TOOL"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'* ]]
-  [[ "$output" == *'|---|---|---|---|---|---|---|---|---|'* ]]
+  [[ "$output" == *'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |'* ]]
+  [[ "$output" == *'|---|---|---|---|---|---|---|---|---|---|'* ]]
 }
 
 @test "tape file is not modified by a run" {
@@ -342,7 +344,7 @@ EOF
   export CALIBRATION_LOOPS_FILE
   run bash "$TOOL"
   [ "$status" -eq 0 ]
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 50.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |' ]
   # Pack with research -> research row appears.
   cat > "$BATS_TEST_TMPDIR/pack-with-research.toml" <<'EOF'
 dev = "merged"
@@ -353,5 +355,5 @@ EOF
   export CALIBRATION_LOOPS_FILE
   run bash "$TOOL"
   [ "$status" -eq 0 ]
-  [ "$output" = $'| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|\n| dev | fix | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | 1 | - | 100% | - | 50.0 | - | - |\n| research | docs | 1 | - | 100% | - | 15.0 | - | - |' ]
+  [ "$output" = $'| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error |\n|---|---|---|---|---|---|---|---|---|---|\n| dev | fix | - | 1 | - | 100% | - | 100.0 | - | - |\n| repair | incident | - | 1 | - | 100% | - | 50.0 | - | - |\n| research | docs | - | 1 | - | 100% | - | 15.0 | - | - |' ]
 }

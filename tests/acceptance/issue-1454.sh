@@ -141,7 +141,7 @@ run_refresh() {
 # appends a purpose column. This fixture's outcome is unsigned, the stuck pack
 # is absent, and the graded pack is missing, so both new cells are `-`; the
 # header is what this AC pins.
-HEADER='| loop | class | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures | purpose |'
+HEADER='| loop | class | model | n | promised | actual | error | mean duration_s | dur_promised | dur_error | top signatures | purpose |'
 # Shared calibration setup: $TMP_DIR + EXIT trap, the standard loop->
 # competence-bit pack as $CALIBRATION_LOOPS_FILE, and TOOL
 # (tests/lib/acceptance-helpers.sh).

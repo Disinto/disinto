@@ -19,7 +19,7 @@ data is not part of a pair, it is a payload — kept for audit, never
 learned from directly.
 
 **Stage.** Stage 1 writes the tape and reads one thing: the
-calibration table, *promised vs. actual* per (loop, class). It is live
+calibration table, *promised vs. actual* per (loop, class, model). It is live
 for dev and repair. Forecasts are off until that table is honest (§3).
 Stage 2's first target is **sprint approval**: a sprint arrives with a
 forecast of its effect, drawn from past sprints of its class, and the
@@ -106,7 +106,9 @@ Rules that keep the tree learnable:
    credit through their own pairs and as context of the next sprint
    over the same ground. Credit flows through context and bootstrap,
    never by splitting a grade.
-4. **Statistics are per (loop, class), never pooled across depths.**
+4. **Statistics are per (loop, class, model), never pooled across depths or
+   across the models that served them.** The model is the run's served-model
+   string, so a model change starts a new row by itself; no date, no epoch file.
    "Sprint classes whose issues were rejected" is a join at read time,
    not a pooling at write time.
 5. **Depth is small and named per deployment.** Here: issue < sprint.
@@ -560,7 +562,7 @@ dropped.
 moment ───► TAPE      /srv/disinto/tape/tape.jsonl   append-only, outside git
 payloads ─► PAYLOADS  /srv/disinto/tape/payloads/    content-addressed, 90 days
 read ─────► CATALOG   ops repo catalog/
-              calibration.md   per (loop, class): n, promised, actual, error,
+              calibration.md   per (loop, class, model): n, promised, actual, error,
                                duration, top signatures (incl. stuck), purpose
               claims.md        per claim: status, checks run, last value,
                                open proposals resting on it
