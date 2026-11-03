@@ -573,12 +573,26 @@ repair_direct_dispatch() {
         ;;
       2) log "trial: ${name} (${counts% *} of last ${counts#* } tries failed)" ;;
       *)
-        if repair_suspension_clear "$name"; then
-          log "suspension lifted: ${name}"
-          # #2055: the lift drafts the claim's revision: a new proposal,
-          # checked afresh.
-          repair_claim_pr "$name" "$script" lifted "$counts" >/dev/null \
-            || log "WARNING: claim draft failed for ${name}"
+        # #2076: repair_suspended prints "<failed> <counted>" only when the
+        # rule could evaluate. Silence with a non-zero rc means the pack or
+        # the tape is unreadable — that is not "not suspended". A recipe
+        # that already carries the "told once" marker is a known suspension,
+        # so it fails closed: keep the marker, do not lift, do not run the
+        # script. Lifting here would delete the marker, run the remedy, and
+        # make the next readable tick announce the same suspension to the
+        # owner a second time. With no marker there is nothing to keep: the
+        # rule is off, so run as before.
+        if [ -n "$counts" ]; then
+          if repair_suspension_clear "$name"; then
+            log "suspension lifted: ${name}"
+            # #2055: the lift drafts the claim's revision: a new proposal,
+            # checked afresh.
+            repair_claim_pr "$name" "$script" lifted "$counts" >/dev/null \
+              || log "WARNING: claim draft failed for ${name}"
+          fi
+        elif [ -f "${TAPE_DIR:-/srv/disinto/tape}/repair/${name}.suspended" ]; then
+          log "stop rule unreadable: ${name} stays suspended (no pack or tape)"
+          continue
         fi
         ;;
     esac
