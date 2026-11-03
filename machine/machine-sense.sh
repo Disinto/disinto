@@ -69,7 +69,9 @@ if ! mkdir -p "$SHARE" "$STATE" 2>/dev/null; then
 fi
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+tmp=""
+# A failed run must not leave a half-written report in the share the box reads.
+trap 'rm -rf "$work"; if [ -n "$tmp" ]; then rm -f "$tmp"; fi' EXIT
 errors=()
 
 read_volumes() {

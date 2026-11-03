@@ -40,6 +40,13 @@ if ! lxc config device show "$box" | grep -q '^machine-sense:'; then
   lxc config device add "$box" machine-sense disk \
     source="$share" path=/srv/disinto/machine readonly=true
 fi
+# An existing device may have been added by hand: insist on the read-only mount.
+for kv in "source=$share" "path=/srv/disinto/machine" "readonly=true"; do
+  if [ "$(lxc config device get "$box" machine-sense "${kv%%=*}")" != "${kv#*=}" ]; then
+    echo "install.sh: device machine-sense on $box must have $kv; fix or remove it" >&2
+    exit 1
+  fi
+done
 
 systemctl daemon-reload
 systemctl enable --now disinto-machine-sense.timer
