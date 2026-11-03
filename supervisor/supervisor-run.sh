@@ -82,6 +82,10 @@ check_active supervisor
 acquire_run_lock "/tmp/supervisor-run.lock"
 memory_guard 2000
 
+# Sync the ops clone at the start of every run, as the gardener does (#1653):
+# the stop rule's pack (packs/repair.toml, #2053) and incidents live there.
+ensure_ops_repo
+
 log "--- Supervisor run start ---"
 
 # ── Resolve forge remote for git operations ─────────────────────────────
