@@ -1,4 +1,4 @@
-<!-- last-reviewed: 5afdda13c076f8d841326cc5785667ae44045e22 -->
+<!-- last-reviewed: a5149bf4f0d96d64687b438cb9ee53e90070d16e -->
 # nomad/ — Agent Instructions
 
 Nomad + Vault HCL for the factory's single-node cluster. These files are
@@ -38,7 +38,7 @@ it owns.
 ## Vault ACL policies
 
 `vault/policies/` holds one `.hcl` file per Vault policy; see
-[`vault/policies/AGENTS.md`](vault/policies/AGENTS.md) for the naming
+[`vault/policies/AGENTS.md`](../vault/policies/AGENTS.md) for the naming
 convention, KV path summary, and JWT-auth role bindings (S2.1/S2.3).
 
 ## Not yet implemented
@@ -166,7 +166,7 @@ accept (or vice versa).
 - `.woodpecker/nomad-validate.yml` — this directory's CI pipeline.
 - `vault/policies/` — Vault ACL policy HCL files (S2.1); the
   `vault-policy-fmt` / `vault-policy-validate` CI steps above enforce
-  their shape. See [`vault/policies/AGENTS.md`](vault/policies/AGENTS.md)
+  their shape. See [`vault/policies/AGENTS.md`](../vault/policies/AGENTS.md)
   for the policy lifecycle, CI enforcement details, and common failure
   modes.
 - `vault/roles.yaml` — JWT-auth role → policy bindings (S2.3); the
