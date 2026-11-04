@@ -55,7 +55,10 @@ MIGRATION_ERR
 fi
 
 DISINTO_BAKED="/home/agent/disinto"
-DISINTO_LIVE="/home/agent/repos/_factory"
+# A job that follows its own factory ref (#2107) needs its own checkout:
+# FACTORY_CHECKOUT gives it one instead of the project-repos tree shared by
+# the jobs that mount it.
+DISINTO_LIVE="${FACTORY_CHECKOUT:-/home/agent/repos/_factory}"
 DISINTO_DIR="$DISINTO_BAKED"  # start with baked copy; switched to live checkout after bootstrap
 LOGFILE="/home/agent/data/agent-entrypoint.log"
 
@@ -399,15 +402,7 @@ bootstrap_factory_repo() {
     fi
   else
     log "Factory bootstrap: pulling latest ${repo}"
-    # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
-    gosu agent env \
-      DISINTO_LIVE="$DISINTO_LIVE" \
-      PRIMARY_BRANCH="$primary_branch" \
-      bash -s <<'EOF' || log "Factory bootstrap: pull failed — using existing checkout"
-      cd "$DISINTO_LIVE" && \
-      git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
-      git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
-EOF
+    factory_reset || log "Factory bootstrap: pull failed — using existing checkout"
   fi
 
   # Copy project TOMLs from baked dir — they are gitignored AND docker-ignored,
@@ -545,20 +540,45 @@ print(cfg.get('repo_root', ''))
   return 0
 }
 
+# The ref this job follows: FACTORY_REF, falling back to the primary branch,
+# falling back to main (#2107).
+factory_ref() {
+  printf '%s\n' "${FACTORY_REF:-${PRIMARY_BRANCH:-main}}"
+}
+
+# Reset the factory checkout to the ref this job follows (#2107).  Fetches
+# the primary branch from origin and, when the ref differs, the ref too.  A
+# ref that is not a commit of the primary branch is refused: the checkout is
+# left untouched and the function returns non-zero — a job only ever runs a
+# commit of the primary branch.  Runs as the agent user; any failure returns
+# non-zero.
+factory_reset() {
+  local ref primary
+  ref="$(factory_ref)"
+  primary="${PRIMARY_BRANCH:-main}"
+  # See #738 — pass refs via env to avoid outer-shell expansion into bash -c.
+  gosu agent env \
+    DISINTO_LIVE="$DISINTO_LIVE" \
+    PRIMARY_BRANCH="$primary" \
+    FACTORY_REF="$ref" \
+    bash -s <<'EOF'
+    cd "$DISINTO_LIVE" && \
+    git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
+    if [ "$FACTORY_REF" != "$PRIMARY_BRANCH" ]; then
+      git fetch origin "$FACTORY_REF" --quiet 2>/dev/null && \
+      git merge-base --is-ancestor "origin/$FACTORY_REF" "origin/$PRIMARY_BRANCH"
+    fi && \
+    git reset --hard "origin/$FACTORY_REF" --quiet 2>/dev/null
+EOF
+}
+
 # Pull latest factory code at the start of each poll iteration (#593).
 # Runs as the agent user; failures are non-fatal (stale code still works).
 pull_factory_repo() {
   [ "$DISINTO_DIR" = "$DISINTO_LIVE" ] || return 0
-  local primary_branch="${PRIMARY_BRANCH:-main}"
-  # See #738 — pass branch via env to avoid outer-shell expansion into bash -c.
-  gosu agent env \
-    DISINTO_LIVE="$DISINTO_LIVE" \
-    PRIMARY_BRANCH="$primary_branch" \
-    bash -s <<'EOF' || log "Factory pull failed — continuing with current checkout"
-    cd "$DISINTO_LIVE" && \
-    git fetch origin "$PRIMARY_BRANCH" --quiet 2>/dev/null && \
-    git reset --hard "origin/$PRIMARY_BRANCH" --quiet 2>/dev/null
-EOF
+  if ! factory_reset; then
+    log "Factory pull of $(factory_ref) failed or $(factory_ref) is not on ${PRIMARY_BRANCH:-main} — continuing with current checkout"
+  fi
 }
 
 # Configure git and tea once at startup (as root, then drop to agent)
