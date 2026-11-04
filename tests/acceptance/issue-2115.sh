@@ -51,6 +51,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../lib/rollout-fixture.sh
+source "$REPO_ROOT/tests/lib/rollout-fixture.sh"
 
 ac_require_cmd bash git jq awk timeout
 
@@ -65,41 +67,12 @@ printf 'soak_s = 1800\ntake_polls = 2\n# the soak, in seconds\n' > "$PACK"
 
 CANARY_JOB="agents-review-qwen"
 
-# commit_on BRANCH MESSAGE — one commit on BRANCH in the clone $CLONE, echo its
-# SHA (the same helper shape as issue-2114's fixture).
-commit_on() {
-  local branch="$1" message="$2"
-  if git -C "$CLONE" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
-    git -C "$CLONE" checkout --quiet "$branch"
-  elif git -C "$CLONE" rev-parse --verify --quiet HEAD >/dev/null; then
-    git -C "$CLONE" checkout --quiet -b "$branch"
-  fi
-  printf '%s\n' "$message" >>"$CLONE/history.txt"
-  git -C "$CLONE" add -A
-  git -C "$CLONE" commit --quiet -m "$message"
-  git -C "$CLONE" rev-parse HEAD
-}
-
-# fixture NAME — a fresh origin/clone pair: main at M2, live and canary at M1.
-# Sets the globals ORIGIN, CLONE, TAPE_DIR, ISSUE_LOG, M1, M2.
-fixture() {
+# fixture NAME — the shared rollout fixture (rollout-fixture.sh), plus the log
+# file where the stubbed rollout_rollback_issue records its calls.
+fixture_with_issues() {
   local name="$1"
-  ORIGIN="$WORK/$name/origin"
-  CLONE="$WORK/$name/clone"
-  TAPE_DIR="$WORK/$name/tape"
+  rollout_fixture "$name"
   ISSUE_LOG="$WORK/$name/issues"
-  mkdir -p "$CLONE" "$TAPE_DIR/rollout/evidence"
-  git init -b main --bare "$ORIGIN" >/dev/null
-  git init -b main "$CLONE" >/dev/null
-  git -C "$CLONE" config user.name "rollout-close-test"
-  git -C "$CLONE" config user.email "rollout-close-test@example.com"
-  git -C "$CLONE" remote add origin "$ORIGIN"
-
-  M1="$(commit_on main "M1")"
-  git -C "$CLONE" push --quiet origin main
-  git -C "$CLONE" push --quiet origin "$M1:refs/heads/live" "$M1:refs/heads/canary"
-  M2="$(commit_on main "M2")"
-  git -C "$CLONE" push --quiet origin main
 }
 
 # open_rollout — run the first tick: the rollout of M2 opens, canary at M2,
@@ -151,15 +124,6 @@ tick() {
         ' stub "$TOOL" 2>&1)" || RC=$?
 }
 
-origin_head() {  # origin_head BRANCH — the SHA origin has for BRANCH
-  git -C "$ORIGIN" rev-parse "refs/heads/$1" 2>/dev/null || echo missing
-}
-
-tape_count() {  # tape_count TYPE — how many records of TYPE the tape holds
-  [ -r "$TAPE_DIR/tape.jsonl" ] || { echo 0; return; }
-  jq -s --arg type "$1" '[.[] | select(.type == $type)] | length' "$TAPE_DIR/tape.jsonl"
-}
-
 log_has() {  # log_has TEXT — the tick's log contains TEXT
   case "$OUT" in
     *"$1"*) return 0 ;;
@@ -169,7 +133,7 @@ log_has() {  # log_has TEXT — the tick's log contains TEXT
 
 # ── AC1: the soak met -> promote ──────────────────────────────────────────────
 ac_log "AC1: verdict promote -> live fast-forwards to M2, outcome promoted 1, open null"
-fixture ac1
+fixture_with_issues ac1
 open_rollout
 m2_evidence 0
 tick 7000
@@ -198,7 +162,7 @@ ac_log "AC1 OK"
 
 # ── AC2: still soaking -> wait ────────────────────────────────────────────────
 ac_log "AC2: verdict wait at NOW 6000 -> nothing moves, one more closed run, no outcome"
-fixture ac2
+fixture_with_issues ac2
 open_rollout
 m2_evidence 0
 tick 6000
@@ -213,7 +177,7 @@ ac_log "AC2 OK"
 
 # ── AC3: smoke failed -> rollback with a dev issue ────────────────────────────
 ac_log "AC3: take of M2 with smoke 1 -> canary back to M1, rolled_back 1, blocked_main M2, issue filed"
-fixture ac3
+fixture_with_issues ac3
 open_rollout
 m2_evidence 1
 tick 7000
@@ -249,7 +213,7 @@ ac_log "AC3 OK"
 
 # ── AC4: canary moved off the commit by hand -> rolled back, no issue ─────────
 ac_log "AC4: canary pushed back to M1 by hand -> rolled back with reason moved, rolled_back 0, no issue"
-fixture ac4
+fixture_with_issues ac4
 open_rollout
 m2_evidence 0
 git -C "$ORIGIN" update-ref refs/heads/canary "$M1"
@@ -277,7 +241,7 @@ ac_log "AC4 OK"
 
 # ── AC5: after a rollback, main must move before the next rollout ─────────────
 ac_log "AC5: main unchanged after a rollback -> no proposal; a new M3 -> the next tick opens it"
-fixture ac5
+fixture_with_issues ac5
 open_rollout
 m2_evidence 1
 tick 7000
