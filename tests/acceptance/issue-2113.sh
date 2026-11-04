@@ -36,7 +36,7 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash jq python3
+ac_require_cmd bash jq awk
 
 TOOL="$REPO_ROOT/tools/rollout.sh"
 ac_assert_file "$TOOL" "tools/rollout.sh is missing"
@@ -61,42 +61,39 @@ ac_write_curl_stub "$STUB_BIN"
 # records its -d body to AC_BODY_FILE and answers {"number":321}.
 # AC_NO_BACKLOG=1 drops the backlog label, AC_LABELS_FAIL=1 fails the GET,
 # AC_CREATE_NO_NUMBER=1 answers without a number.
-python3 - "$STUB_BIN/curl" <<'PY'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-old = "  *)\n    exit 22\n    ;;\n"
-new = (
-    "  *'/labels?limit=50'*)\n"
-    "    if [ \"${AC_LABELS_FAIL:-}\" = \"1\" ]; then exit 22; fi\n"
-    "    if [ \"${AC_NO_BACKLOG:-}\" = \"1\" ]; then\n"
-    "      printf '%s\\n' '[{\"id\":9,\"name\":\"bug\"}]'\n"
-    "    else\n"
-    "      printf '%s\\n' '[{\"id\":7,\"name\":\"backlog\"},{\"id\":9,\"name\":\"bug\"}]'\n"
-    "    fi\n"
-    "    ;;\n"
-    "  *'/issues'*)\n"
-    "    body=\"\"\n"
-    "    prev=\"\"\n"
-    "    for a in \"$@\"; do\n"
-    "      if [ \"$prev\" = \"-d\" ] || [ \"$prev\" = \"--data\" ]; then body=\"$a\"; fi\n"
-    "      prev=\"$a\"\n"
-    "    done\n"
-    "    if [ -n \"${AC_BODY_FILE:-}\" ]; then printf '%s' \"$body\" > \"$AC_BODY_FILE\"; fi\n"
-    "    if [ \"${AC_CREATE_NO_NUMBER:-}\" = \"1\" ]; then\n"
-    "      printf '%s\\n' '{\"id\":55}'\n"
-    "    else\n"
-    "      printf '%s\\n' '{\"number\":321}'\n"
-    "    fi\n"
-    "    ;;\n"
-    "  *)\n"
-    "    exit 22\n"
-    "    ;;\n"
+STUB_ARMS=$(cat <<'ARMS_EOF'
+  *'/labels?limit=50'*)
+    if [ "${AC_LABELS_FAIL:-}" = "1" ]; then exit 22; fi
+    if [ "${AC_NO_BACKLOG:-}" = "1" ]; then
+      printf '%s\n' '[{"id":9,"name":"bug"}]'
+    else
+      printf '%s\n' '[{"id":7,"name":"backlog"},{"id":9,"name":"bug"}]'
+    fi
+    ;;
+  *'/issues'*)
+    posted=""
+    prior=""
+    for arg in "$@"; do
+      case "$prior" in
+        -d|--data) posted="$arg" ;;
+      esac
+      prior="$arg"
+    done
+    if [ -n "${AC_BODY_FILE:-}" ]; then printf '%s' "$posted" > "$AC_BODY_FILE"; fi
+    if [ "${AC_CREATE_NO_NUMBER:-}" = "1" ]; then
+      printf '%s\n' '{"id":55}'
+    else
+      printf '%s\n' '{"number":321}'
+    fi
+    ;;
+ARMS_EOF
 )
-if old not in text:
-    raise SystemExit("ac_write_curl_stub catch-all not found")
-path.write_text(text.replace(old, new, 1))
-PY
+export STUB_ARMS
+# ENVIRON, not -v: awk's -v would eat the \n escapes inside the arms.
+awk 'BEGIN { arms = ENVIRON["STUB_ARMS"] }
+     /^  \*)$/ { print arms } { print }' "$STUB_BIN/curl" > "$STUB_BIN/curl.ext"
+mv "$STUB_BIN/curl.ext" "$STUB_BIN/curl"
+chmod +x "$STUB_BIN/curl"
 
 export FORGE_API="https://forge.example/api/v1/repos/disinto/disinto"
 export FORGE_TOKEN="stub-token"
