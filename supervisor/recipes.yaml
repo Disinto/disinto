@@ -155,14 +155,11 @@ recipes:
   # Experiment-run health, all incident actions (a human or a bash recipe
   # resolves — the supervisor only files the incident, #1322).
 
-  - name: artifacts-disk
-    severity: P1
-    detect:
-      source: preflight
-      section: "Research Runs"
-      rule: disk_pct_gt
-      threshold: 80
-    action: incident
+  # artifacts-disk (P1, disk_pct_gt 80 on this section) is removed until
+  # research runs exist (#2100): artifacts/ is empty, and on a shared volume
+  # the percentage is the neighbours' usage. Restore it with the research
+  # kind (#1293), with a `Disk owner:` line in this section so disk_pct_gt
+  # skips usage that is not the factory's (#2077).
 
   - name: run-heartbeat-stale
     severity: P2

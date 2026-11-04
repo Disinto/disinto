@@ -68,7 +68,6 @@ Categorize every finding from the metrics into priority levels.
 
 ### P1 — Disk pressure / public endpoint down / unregistered Nomad service
 - Disk usage > 80%
-- Artifacts disk > 80% (Research Runs section — research-run payloads, #1322)
 - Public Endpoints: DOWN — a URL in `PUBLIC_URLS` failed on two ticks in a row
   (`## Public Endpoints`). Monitor only: file an incident, no remedy (#1923).
 - Nomad Services: MISSING — an alert `service <name> of job <ID> not registered`
