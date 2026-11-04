@@ -10,6 +10,9 @@
 # Idempotent. Installs:
 #   /usr/local/bin/disinto-machine-sense        machine/machine-sense.sh
 #   /etc/systemd/system/disinto-machine-sense.{service,timer}
+#     the unit sets MACHINE_SENSE_FOLDER_ROOTS="/opt/ai /opt/ai/lxd/containers"
+#     so the box footprint at /opt/ai/lxd/containers/<box> lands in folders[]
+#     without hand-edited host env (#2094)
 #   /etc/disinto-machine/neighbours.tsv         from the example, only if absent
 #   /var/lib/disinto-machine/share (0755) and state (0700)
 #   LXD disk device "machine-sense" on BOX: the share directory, read-only, at

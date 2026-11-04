@@ -5,6 +5,11 @@ Documentation=file:///usr/local/bin/disinto-machine-sense
 
 [Service]
 Type=oneshot
+# du --max-depth=1 only lists direct children of a root, and the box's own
+# folder lives at /opt/ai/lxd/containers/<box>: without the deeper root the
+# supervisor's Disk owner gate (#2077) can only fall back to the /opt/ai +
+# "lxd" upper bound (#2094).
+Environment="MACHINE_SENSE_FOLDER_ROOTS=/opt/ai /opt/ai/lxd/containers"
 ExecStart=/usr/local/bin/disinto-machine-sense
 Nice=19
 IOSchedulingClass=idle
