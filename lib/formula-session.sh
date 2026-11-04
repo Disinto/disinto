@@ -221,7 +221,10 @@ ensure_ops_repo() {
     if ! git_err="$(git -C "$ops_root" pull --ff-only origin "${PRIMARY_BRANCH}" --quiet 2>&1 1>/dev/null)"; then
       log "WARNING: ops repo pull failed: $(tail -n 1 <<<"$git_err")"
     fi
-    migrate_ops_repo "$ops_root" "${PRIMARY_BRANCH}"
+    # The migration runs git internally (add/commit/push); a stray .git/index.lock
+    # from a concurrent organ run makes it fail (#2088). Guard the call so a
+    # migration failure logs a WARNING instead of tripping the caller's set -e.
+    migrate_ops_repo "$ops_root" "${PRIMARY_BRANCH}" || log "WARNING: ops repo migration failed"
     return 0
   fi
 
