@@ -34,6 +34,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
+# shellcheck source=../lib/rollout-fixture.sh
+source "$REPO_ROOT/tests/lib/rollout-fixture.sh"
 
 ac_require_cmd bash git jq awk timeout
 
@@ -49,41 +51,8 @@ printf 'soak_s = 1800\ntake_polls = 2\n# the soak, in seconds\n' > "$PACK"
 CANARY_JOB="agents-review-qwen"
 NOW=5000
 
-# commit_on BRANCH MESSAGE — one commit on BRANCH in the clone $CLONE, echo its
-# SHA. (The same shape as issue-2112's fixture helper.)
-commit_on() {
-  local branch="$1" message="$2"
-  if git -C "$CLONE" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
-    git -C "$CLONE" checkout --quiet "$branch"
-  elif git -C "$CLONE" rev-parse --verify --quiet HEAD >/dev/null; then
-    git -C "$CLONE" checkout --quiet -b "$branch"
-  fi
-  printf '%s\n' "$message" >>"$CLONE/history.txt"
-  git -C "$CLONE" add -A
-  git -C "$CLONE" commit --quiet -m "$message"
-  git -C "$CLONE" rev-parse HEAD
-}
-
-# fixture NAME — a fresh origin/clone pair: main at M2, live and canary at M1.
-# Sets the globals ORIGIN, CLONE, TAPE_DIR, M1, M2.
-fixture() {
-  local name="$1"
-  ORIGIN="$WORK/$name/origin"
-  CLONE="$WORK/$name/clone"
-  TAPE_DIR="$WORK/$name/tape"
-  mkdir -p "$CLONE" "$TAPE_DIR/rollout/evidence"
-  git init -b main --bare "$ORIGIN" >/dev/null
-  git init -b main "$CLONE" >/dev/null
-  git -C "$CLONE" config user.name "rollout-tick-test"
-  git -C "$CLONE" config user.email "rollout-tick-test@example.com"
-  git -C "$CLONE" remote add origin "$ORIGIN"
-
-  M1="$(commit_on main "M1")"
-  git -C "$CLONE" push --quiet origin main
-  git -C "$CLONE" push --quiet origin "$M1:refs/heads/live" "$M1:refs/heads/canary"
-  M2="$(commit_on main "M2")"
-  git -C "$CLONE" push --quiet origin main
-}
+# The fixture helpers (commit_on, rollout_fixture, origin_head, tape_count)
+# come from tests/lib/rollout-fixture.sh, shared with issue-2115's test.
 
 # canary_evidence REF — write the canary's evidence lines into the fixture's
 # tape, the last one a poll following REF.
@@ -106,18 +75,9 @@ run_tick() {
     || RC=$?
 }
 
-origin_head() {  # origin_head BRANCH — the SHA origin has for BRANCH
-  git -C "$ORIGIN" rev-parse "refs/heads/$1" 2>/dev/null || echo missing
-}
-
-tape_count() {  # tape_count TYPE — how many records of TYPE the tape holds
-  [ -r "$TAPE_DIR/tape.jsonl" ] || { echo 0; return; }
-  jq -s --arg type "$1" '[.[] | select(.type == $type)] | length' "$TAPE_DIR/tape.jsonl"
-}
-
 # ── AC1: one tick starts the rollout ──────────────────────────────────────────
 ac_log "AC1: main ahead of live -> canary to M2, proposal + closed run, state open"
-fixture ac1
+rollout_fixture ac1
 canary_evidence canary
 run_tick
 ac_assert_eq "$RC" 0 "AC1 the tick must return 0, got $RC: $OUT"
@@ -161,7 +121,7 @@ esac
 
 # ── AC3: the hold, the missing pack and an idle canary all stop the tick ──────
 ac_log "AC3a: HOLD present -> on hold, nothing moves"
-fixture ac3a
+rollout_fixture ac3a
 canary_evidence canary
 : > "${TAPE_DIR}/rollout/HOLD"
 run_tick
@@ -174,7 +134,7 @@ case "$OUT" in
 esac
 
 ac_log "AC3b: no pack -> off, nothing moves"
-fixture ac3b
+rollout_fixture ac3b
 canary_evidence canary
 RC=0
 OUT="$(TAPE_DIR="$TAPE_DIR" ROLLOUT_GIT_DIR="$CLONE" ROLLOUT_PACK_FILE="$WORK/no-such-pack.toml" \
@@ -188,7 +148,7 @@ case "$OUT" in
 esac
 
 ac_log "AC3c: the canary's last line names main -> idle, nothing moves"
-fixture ac3c
+rollout_fixture ac3c
 canary_evidence main
 run_tick
 ac_assert_eq "$RC" 0 "AC3c the tick must return 0, got $RC: $OUT"
@@ -201,7 +161,7 @@ esac
 
 # ── AC4: blocked_main stops a new rollout ─────────────────────────────────────
 ac_log "AC4: blocked_main = M2 -> no proposal"
-fixture ac4
+rollout_fixture ac4
 canary_evidence canary
 printf '{"open":null,"blocked_main":"%s"}\n' "$M2" > "$TAPE_DIR/rollout/state.json"
 run_tick
@@ -215,7 +175,7 @@ esac
 
 # ── AC5: canary drifted from live -> pulled back, no rollout ──────────────────
 ac_log "AC5: main and live at M2, canary at M1 -> canary reset to live, no proposal"
-fixture ac5
+rollout_fixture ac5
 canary_evidence canary
 git -C "$ORIGIN" update-ref refs/heads/live "$M2"
 run_tick

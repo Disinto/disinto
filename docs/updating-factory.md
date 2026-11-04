@@ -105,6 +105,9 @@ minutes) and rolls `main` through the canary:
 - every other agent takes it only after the soak, the `soak_s` seconds in the
   ops repo's `packs/rollout.toml`, once the canary's evidence says the commit
   held;
+- a commit that fails on the canary is rolled back: `canary` is reset to `live`,
+  an issue naming the commit and its evidence opens for dev, and no rollout
+  starts until `main` moves — the next one takes the fix;
 - `touch ${TAPE_DIR}/rollout/HOLD` (default `/srv/disinto/tape/rollout/HOLD`)
   freezes rollouts, exactly as the sprint hold does;
 - if the tool itself breaks, nothing moves — it fails closed. A push of `live`
