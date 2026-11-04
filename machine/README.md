@@ -21,6 +21,17 @@ and writes `machine.json`:
 The schema is in the script's header. The report has sizes and names,
 never file contents.
 
+**The folder roots.** `folders[]` lists only the **direct children** of
+each `MACHINE_SENSE_FOLDER_ROOTS` root (`du --max-depth=1`). The box's
+own folder lives one level deeper, at
+`/opt/ai/lxd/containers/<box-name>`, so the installed unit sets
+`MACHINE_SENSE_FOLDER_ROOTS="/opt/ai /opt/ai/lxd/containers"` by
+default (#2094). Without the deep root the supervisor's Disk owner gate
+(#2077) never finds the entry named `${MACHINE_BOX_NAME:-disinto-nomad-box}`
+and falls back to the `/opt/ai` + `lxd` upper bound, blaming the box for
+all of LXD's disk. If the box lives elsewhere, add its parent folder to
+the same variable.
+
 **How the box sees it.** `install.sh` mounts the report's directory into
 the box read-only, at `/srv/disinto/machine/machine.json`. The box can
 read the report and cannot touch the machine. No key, socket or

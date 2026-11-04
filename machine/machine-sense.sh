@@ -26,7 +26,10 @@
 #   processes[]    the 5 largest by RSS: comm, rss_b (command name, no args)
 #   folders[]      each child of each MACHINE_SENSE_FOLDER_ROOTS entry: root,
 #                  name, size_b, measured, growth_b_per_day (null without a
-#                  snapshot 12 h to 8 days older than the current one)
+#                  snapshot 12 h to 8 days older than the current one). The
+#                  box's own folder sits one level below /opt/ai/lxd, so the
+#                  default roots include /opt/ai/lxd/containers (#2094):
+#                  du --max-depth=1 only lists direct children of a root.
 #   neighbours[]   MACHINE_SENSE_NEIGHBOURS lines "path<TAB>owner<TAB>note":
 #                  who else lives on the machine, written by its owner
 #
@@ -38,7 +41,10 @@
 #   MACHINE_SENSE_SHARE            /var/lib/disinto-machine/share
 #   MACHINE_SENSE_STATE            /var/lib/disinto-machine/state
 #   MACHINE_SENSE_NEIGHBOURS       /etc/disinto-machine/neighbours.tsv
-#   MACHINE_SENSE_FOLDER_ROOTS     /opt/ai (space-separated list)
+#   MACHINE_SENSE_FOLDER_ROOTS     /opt/ai /opt/ai/lxd/containers
+#                                  (space-separated list; the deeper root puts
+#                                  the box footprint /opt/ai/lxd/containers/<box>
+#                                  into folders[] for disk_owner_line, #2077/#2094)
 #   MACHINE_SENSE_FOLDERS_EVERY_S  21600
 #   MACHINE_SENSE_PROC             /proc
 #   MACHINE_SENSE_NOW              now, epoch seconds (tests)
@@ -53,7 +59,9 @@ set -euo pipefail
 SHARE="${MACHINE_SENSE_SHARE:-/var/lib/disinto-machine/share}"
 STATE="${MACHINE_SENSE_STATE:-/var/lib/disinto-machine/state}"
 NEIGHBOURS="${MACHINE_SENSE_NEIGHBOURS:-/etc/disinto-machine/neighbours.tsv}"
-ROOTS="${MACHINE_SENSE_FOLDER_ROOTS:-/opt/ai}"
+# The deeper root is a default so the box's own folder lands in folders[]
+# without hand-edited host env (#2094).
+ROOTS="${MACHINE_SENSE_FOLDER_ROOTS:-/opt/ai /opt/ai/lxd/containers}"
 EVERY="${MACHINE_SENSE_FOLDERS_EVERY_S:-21600}"
 PROC="${MACHINE_SENSE_PROC:-/proc}"
 NOW="${MACHINE_SENSE_NOW:-$(date -u +%s)}"
