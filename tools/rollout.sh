@@ -57,6 +57,18 @@
 #     in the supervisor container); the forge API cannot move a branch, its
 #     PATCH only renames (#2112).
 #
+#   rollout_rollback_issue COMMIT SUBJECT REASON EVIDENCE
+#     File the dev issue for a commit the rollout rolled back from the canary
+#     (docs/design/notes/self-update.md, "Roll back"). It files as the
+#     caller's forge account: FORGE_TOKEN against FORGE_API, the project
+#     repo's API base as lib/env.sh exports it. GET
+#     ${FORGE_API}/labels?limit=50 and take the id of `backlog`: a failed
+#     GET returns 1, and no such label files the issue without labels. Then
+#     POST ${FORGE_API}/issues with title, body and labels, built with jq -n,
+#     and print the new issue's .number; return 1 when the POST fails or the
+#     answer has no number (#2113). Nothing calls it yet: the rollback branch
+#     of the tick wires it in with #2115.
+#
 # Polls count lines, not minutes: a review poll waits for its reviews, so one
 # iteration can outlast POLL_INTERVAL. A canary that writes nothing is waited
 # on; the healer's lag notice covers that case (step 14 of the sprint).
@@ -65,7 +77,8 @@
 # starts, promotes or rolls back a rollout (#2114, #2115; the supervisor runs
 # it per tick, #2116) is added in step 9 of the sprint.
 #
-# Tests: tests/acceptance/issue-2111.sh, tests/acceptance/issue-2112.sh.
+# Tests: tests/acceptance/issue-2111.sh, tests/acceptance/issue-2112.sh,
+# tests/acceptance/issue-2113.sh.
 # =============================================================================
 set -euo pipefail
 
@@ -205,6 +218,98 @@ rollout_move() {
     push_args+=(--force)
   fi
   timeout 60 git -C "$dir" push "${push_args[@]}" origin "$sha:refs/heads/$branch"
+}
+
+# ── filing the dev issue for a rolled-back commit (#2113) ────────────────────
+# "Roll back" of docs/design/notes/self-update.md: the canary failed on the
+# commit, the rollout moved canary back to live, and dev gets one issue with
+# the commit and the evidence so the fix is the next thing rolled out. The
+# issue is filed as the caller's forge account (FORGE_TOKEN from lib/env.sh,
+# FORGE_API its API base for the project repo).
+
+rollout_rollback_issue() {
+  if [ "$#" -ne 4 ]; then
+    echo "usage: rollout_rollback_issue COMMIT SUBJECT REASON EVIDENCE" >&2
+    return 2
+  fi
+  local commit="$1" subject="$2" reason="$3" evidence="$4"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "rollout: required tool missing: jq" >&2
+    return 1
+  fi
+  if [ -z "${FORGE_API:-}" ] || [ -z "${FORGE_TOKEN:-}" ]; then
+    echo "rollout: rollout_rollback_issue needs FORGE_API and FORGE_TOKEN" >&2
+    return 1
+  fi
+
+  # The hint for the Problem section, by the rollback reason of rollout_watch.
+  local hint
+  case "$reason" in
+    smoke)
+      hint="the smoke (\`.woodpecker/agent-smoke.sh\`) failed on it, see \`smoke_tail\`" ;;
+    rc)
+      hint="\`review/review-poll.sh\` exited non-zero" ;;
+    not-taken)
+      hint="the canary did not take it within two polls (\`pull_factory_repo\` in \`docker/agents/entrypoint.sh\`)" ;;
+    left)
+      hint="the canary stopped running it" ;;
+    work)
+      hint="every review the canary started on it failed" ;;
+    *)
+      hint="$reason" ;;
+  esac
+
+  # Step 1: the id of the backlog label. A failed GET aborts the filing; a
+  # missing label files the issue without labels.
+  local labels_json label_id=""
+  if ! labels_json="$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
+      "${FORGE_API}/labels?limit=50" 2>/dev/null)"; then
+    return 1
+  fi
+  if ! label_id="$(printf '%s' "$labels_json" | jq -r \
+      '[.[] | select(.name == "backlog")][0].id // empty' 2>/dev/null)"; then
+    return 1
+  fi
+
+  # Step 2: file the issue.
+  local title="fix(rollout): ${commit:0:7} failed on the canary (${reason})"
+  local body="## Problem
+The canary ran \`${commit}\` (${subject}) and the rollout rolled it back: ${hint}.
+
+Its evidence (newest last):
+
+\`\`\`
+${evidence}
+\`\`\`
+
+## Proposed solution
+Find why the canary failed on this commit and fix it on \`main\`. No rollout starts until \`main\` moves; the next one takes the fix.
+
+## Acceptance criteria
+- [ ] .woodpecker/agent-smoke.sh passes on the fix.
+- [ ] The failure shown above does not occur with the fix.
+
+## Acceptance test
+\`tests/acceptance/issue-<this issue's number>.sh\`"
+
+  local payload created number
+  payload="$(jq -n \
+    --arg title "$title" \
+    --arg body "$body" \
+    --argjson labels "[${label_id}]" \
+    '{title: $title, body: $body, labels: $labels}')"
+
+  if ! created="$(curl -sf -X POST -H "Authorization: token ${FORGE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${FORGE_API}/issues" -d "$payload" 2>/dev/null)"; then
+    return 1
+  fi
+  number="$(printf '%s' "$created" | jq -r '.number // empty' 2>/dev/null)"
+  if [ -z "$number" ]; then
+    return 1
+  fi
+  printf '%s\n' "$number"
 }
 
 # Run directly: `tick` arrives with #2114/#2115; until then the tool only
