@@ -1,4 +1,4 @@
-<!-- last-reviewed: b624b00904ff63fcac6cf8cff73ee753a80fc041 -->
+<!-- last-reviewed: a86ebfabd9c0884dda95b6eae8f1024d52a6e0d1 -->
 # Planner Agent
 
 **Role**: Pitches one sprint toward the vision, or writes nothing. Invoked
@@ -55,6 +55,9 @@ planner formula.
 - `planner/ladder.sh` — `ladder_lowest_gap` prints the lowest missing or
   challenged capability rung (`sense`, `provision`, `reach`, `deploy`,
   `replicate`), or nothing. No network. Called by `planner/pitch-or-idle.sh`.
+  Design note (#2104): the ladder gains `update-self` as rung 2
+  (`docs/design/notes/self-update.md`); `ladder.sh`, `gaps.sh`, and the
+  golden tests still name five rungs until #2124 lands.
 - `planner/pitch-open.sh` — `planner_pitch_open` opens one ops PR titled
   `architect: <title>` that adds `sprints/<slug>.md`. When given a probe file
   and a `probes/<name>.sh` path, it adds that file on the same branch before
