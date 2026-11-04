@@ -16,6 +16,8 @@ Invoked by `docker/agents/entrypoint.sh` every 5 minutes. Sources `lib/guard.sh`
 `check_active reviewer` — skips if `$FACTORY_ROOT/state/.reviewer-active` is absent.
 **Circuit breaker**: counts existing `<!-- review-error: <sha> -->` comments; skips a PR
 if ≥3 consecutive errors for the same HEAD SHA (prevents flooding on repeated review failures).
+Each poll records its work, reviews due, done and failed, as one evidence line
+(`lib/rollout-evidence.sh`, #2109); the rollout tool reads the canary's (docs/design/notes/self-update.md).
 A reviewer can be limited by PR author: REVIEW_ONLY_AUTHORS and REVIEW_SKIP_AUTHORS (space-separated logins, pr_author_allowed in lib/pr-author-filter.sh, #1690); agents-review-qwen, the only reviewer since the Grok agents were removed (2026-11-01), sets neither and reviews every author. The same filter applies to re-reviews (#1902): a sid in PHASE:awaiting_changes whose head moved is not re-reviewed when the author is not this reviewer's. The sid is left for the existing cleanup (PR closed, or idle past 4h).
 - `review/review-pr.sh` — Polling loop participant: Creates/reuses a tmux session
 (`review-{project}-{pr}`), injects PR diff, waits for Claude to write structured JSON output,

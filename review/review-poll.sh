@@ -16,6 +16,11 @@ source "$(dirname "$0")/../lib/worktree.sh"
 source "$(dirname "$0")/../lib/guard.sh"
 # shellcheck source=../lib/pr-author-filter.sh
 source "$(dirname "$0")/../lib/pr-author-filter.sh"
+# shellcheck source=../lib/rollout-evidence.sh
+source "$(dirname "$0")/../lib/rollout-evidence.sh"
+# Make sure the evidence directory exists before the first work line (#2109);
+# never fails, prints nothing.
+rollout_evidence_init
 check_active reviewer
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -91,6 +96,7 @@ PRS=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
 
 if [ -z "$PRS" ]; then
   log "No open PRs targeting ${PRIMARY_BRANCH}"
+  rollout_evidence_work review 0 0 0 2>/dev/null || true
   exit 0
 fi
 
@@ -99,6 +105,7 @@ log "Found ${TOTAL} open PRs"
 
 REVIEWED=0
 SKIPPED=0
+FAILED=0
 
 # --- Re-review: trigger review for .sid files in awaiting_changes state with new commits ---
 if [ -n "$REVIEW_SIDS" ]; then
@@ -145,6 +152,7 @@ if [ -n "$REVIEW_SIDS" ]; then
     if [ "$review_rc" -eq 0 ]; then
       REVIEWED=$((REVIEWED + 1))
     else
+      FAILED=$((FAILED + 1))
       log "  #${pr_num} re-review failed (exit code $review_rc): $(echo "$review_output" | tail -3)"
     fi
 
@@ -204,6 +212,7 @@ while IFS= read -r line; do
   if [ "$review_rc" -eq 0 ]; then
     REVIEWED=$((REVIEWED + 1))
   else
+    FAILED=$((FAILED + 1))
     log "  #${PR_NUM} review failed (exit code $review_rc): $(echo "$review_output" | tail -3)"
   fi
 
@@ -216,4 +225,5 @@ while IFS= read -r line; do
 
 done <<< "$PRS"
 
-log "--- Poll done: ${REVIEWED} reviewed, ${SKIPPED} skipped ---"
+rollout_evidence_work review "$((REVIEWED + FAILED))" "$REVIEWED" "$FAILED" 2>/dev/null || true
+log "--- Poll done: ${REVIEWED} reviewed, ${SKIPPED} skipped, ${FAILED} failed ---"
