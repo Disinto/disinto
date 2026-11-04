@@ -167,6 +167,12 @@ init_state_dir() {
 # shellcheck source=lib/git-creds.sh
 source "${DISINTO_BAKED}/lib/git-creds.sh"
 
+# Source the rollout evidence writer (#2108).  The path is deliberately the
+# BAKED copy — the image's own lib — so a canary commit a job is testing
+# cannot change how its own evidence gets written.
+# shellcheck source=lib/rollout-evidence.sh
+source "${DISINTO_BAKED}/lib/rollout-evidence.sh"
+
 # Wrapper that calls the shared configure_git_creds with agent-specific paths,
 # then repairs any legacy baked-credential URLs in existing clones.
 _setup_git_creds() {
@@ -581,6 +587,57 @@ pull_factory_repo() {
   fi
 }
 
+# Record the commit this job's factory checkout runs (#2108): one evidence
+# line per NEW commit (see lib/rollout-evidence.sh above).  A baked checkout
+# (DISINTO_DIR != DISINTO_LIVE) is the image itself, not a rollout candidate,
+# so it records nothing.  On a new commit the smoke script runs first — its
+# output goes to agent-smoke.log — and its exit code, plus the last five log
+# lines when it failed, ride in the take line.  A failed append never breaks
+# the loop.
+_TAKEN_COMMIT=""
+record_factory_take() {
+  [ "$DISINTO_DIR" = "$DISINTO_LIVE" ] || return 0
+
+  local head
+  head="$(gosu agent git -C "$DISINTO_LIVE" rev-parse HEAD 2>/dev/null)" || return 0
+  if [ "$head" = "$_TAKEN_COMMIT" ]; then
+    return 0
+  fi
+
+  local rc=0
+  gosu agent timeout 120 bash "${DISINTO_LIVE}/.woodpecker/agent-smoke.sh" \
+    >> "${DISINTO_LOG_DIR}/agent-smoke.log" 2>&1 || rc=$?
+
+  local tail=""
+  if [ "$rc" != 0 ]; then
+    tail="$(tail -n 5 "${DISINTO_LOG_DIR}/agent-smoke.log" 2>/dev/null)" || tail=""
+  fi
+
+  rollout_evidence_take "$(factory_ref)" "$head" "$rc" "$tail" || true
+  _TAKEN_COMMIT="$head"
+  return 0
+}
+
+# Wait for this iteration's fast organs one pid at a time, recording each one's
+# exit as rollout evidence (#2108).  A bare wait on the whole pid list keeps only
+# the LAST pid's status, so the other organ's exit is lost — and under `set -e`
+# a non-zero last organ ends the entrypoint, restarting the container.  Per-pid
+# waits write one poll line per fast organ and still return the last organ's
+# code, so the entrypoint's exit behaviour is unchanged.
+wait_fast_organs() {
+  local i rc=0 last_rc=0
+  for i in "${!FAST_PIDS[@]}"; do
+    rc=0
+    wait "${FAST_PIDS[$i]}" || rc=$?
+    if [ "$DISINTO_DIR" = "$DISINTO_LIVE" ]; then
+      rollout_evidence_poll "$(factory_ref)" "${_TAKEN_COMMIT:-unknown}" \
+        "${FAST_ROLES[$i]}" "$rc" || true
+    fi
+    last_rc=$rc
+  done
+  return "$last_rc"
+}
+
 # Configure git and tea once at startup (as root, then drop to agent)
 _setup_git_creds
 configure_git_identity
@@ -721,6 +778,9 @@ log "Organ intervals — gardener: ${GARDENER_INTERVAL}s, architect: ${ARCHITECT
 # on their own intervals, guarded by pgrep so only one instance runs at a
 # time. The iteration counter paces the slow organs (iteration *
 # POLL_INTERVAL modulo their interval).
+# The evidence directory is created and handed to the agent user while this
+# entrypoint is still root (#2108).
+rollout_evidence_init
 iteration=0
 while true; do
   iteration=$((iteration + 1))
@@ -728,6 +788,10 @@ while true; do
 
   # Pull latest factory code so poll scripts stay current (#593)
   pull_factory_repo
+
+  # Record which commit this job now runs, and the smoke that proved it
+  # (#2108)
+  record_factory_take
 
   # Stale .sid cleanup — needed for agents that don't support --resume
   # Run this as the agent user
@@ -765,12 +829,14 @@ print(cfg.get('primary_branch', 'main'))
 
     # --- Fast organs: run in background, wait before slow organs ---
     FAST_PIDS=()
+    FAST_ROLES=()
 
     # Review poll (every iteration)
     if [[ ",${AGENT_ROLES}," == *",review,"* ]]; then
       log "Running review-poll (iteration ${iteration}) for ${toml}"
       gosu agent bash -c "cd ${DISINTO_DIR} && bash review/review-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/review-poll.log" 2>&1 &
       FAST_PIDS+=($!)
+      FAST_ROLES+=(review)
     fi
 
     sleep 2  # stagger fast polls
@@ -780,12 +846,15 @@ print(cfg.get('primary_branch', 'main'))
       log "Running dev-poll (iteration ${iteration}) for ${toml}"
       gosu agent bash -c "cd ${DISINTO_DIR} && bash dev/dev-poll.sh \"${toml}\"" >> "${DISINTO_LOG_DIR}/dev-poll.log" 2>&1 &
       FAST_PIDS+=($!)
+      FAST_ROLES+=(dev)
     fi
 
     # Wait only for THIS iteration's fast polls — long-running organs from
-    # prior iterations must not block us.
+    # prior iterations must not block us.  Each organ's exit is recorded as
+    # rollout evidence, and the entrypoint still exits with the last organ's
+    # non-zero code (#2108).
     if [ ${#FAST_PIDS[@]} -gt 0 ]; then
-      wait "${FAST_PIDS[@]}"
+      wait_fast_organs || exit $?
     fi
 
     # --- Slow organs: run in background with pgrep guard, paced by the
