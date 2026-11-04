@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tools/rollout.sh — the update-self rollout tool (#2111, #2112)
+# tools/rollout.sh — the update-self rollout tool (#2111, #2112, #2114)
 #
 # The rollout tool of the update-self rung (docs/design/notes/self-update.md,
 # "The flow"): it decides from the canary's evidence lines
 # (lib/rollout-evidence.sh, #2106) whether the commit the canary took held,
-# failed, or still needs soaking — the "Watch", "Promote" and "Roll back"
-# steps. All rollout logic lives in this one file, which the wall protects.
+# failed, or still needs soaking — the "Start", "Watch", "Promote" and
+# "Roll back" steps. All rollout logic lives in this one file, which the wall
+# protects.
 #
 # functions so far:
 #   rollout_watch FILE COMMIT SINCE NOW SOAK_S TAKE_POLLS
@@ -69,18 +70,56 @@
 #     answer has no number (#2113). Nothing calls it yet: the rollback branch
 #     of the tick wires it in with #2115.
 #
+#   rollout_tick
+#     One supervisor tick (#2114; the supervisor calls it per tick, #2116). The
+#     first half of a tick decides whether to act at all, and starts a rollout:
+#     when nothing is being rolled out and main is ahead of live, canary moves
+#     to main's head and the tape gets a proposal of loop `rollout` with that
+#     commit as its ref, plus one closed run for this tick (docs/design/notes/
+#     self-update.md, "Start" and "Records and the grade"). Steps in order,
+#     each ending the tick:
+#       1. ${TAPE_DIR}/rollout/HOLD exists        -> "on hold"
+#       2. the pack has no soak_s or take_polls   -> "off: no pack"
+#       3. the canary's last take/poll line is not ref canary (its jobspec has
+#          no FACTORY_REF yet)                    -> "idle: <job> does not follow canary"
+#       4. rollout_heads fails                    -> "idle: no live/canary branch"
+#       5. live is not on main                    -> "ERROR: live <sha> is not on main"
+#       6. a rollout is already open              -> "open: <id>"
+#       7. canary differs from live               -> force canary back to live,
+#                                                   "canary reset to live"
+#       8. main equals live                       -> nothing
+#       9. main equals blocked_main               -> "waiting for main to move past <sha7>"
+#       10. start: canary to main, proposal, state, run -> "started <sha7>"
+#     Env seams: TAPE_DIR (default /srv/disinto/tape), ROLLOUT_GIT_DIR (default
+#     PROJECT_REPO_ROOT), ROLLOUT_CANARY_JOB (default agents-review-qwen),
+#     ROLLOUT_PACK_FILE (default ${OPS_REPO_ROOT:-}/packs/rollout.toml),
+#     ROLLOUT_NOW (epoch, default now). State lives in
+#     ${TAPE_DIR}/rollout/state.json as
+#     {"open":null|{"id","commit","moved_at"},"blocked_main":null|"<sha>"};
+#     a missing file means both null. Log lines go to stderr as
+#     "[<iso>] rollout: <text>", and every path returns 0: the tool fails
+#     closed, so a broken tick never aborts the supervisor.
+#
 # Polls count lines, not minutes: a review poll waits for its reviews, so one
 # iteration can outlast POLL_INTERVAL. A canary that writes nothing is waited
 # on; the healer's lag notice covers that case (step 14 of the sprint).
 #
-# Run directly the tool prints its usage and exits 2: the `tick` command that
-# starts, promotes or rolls back a rollout (#2114, #2115; the supervisor runs
-# it per tick, #2116) is added in step 9 of the sprint.
+# Run directly: `tools/rollout.sh tick` runs the tick above; any other
+# argument prints the usage and exits 2. Sourcing the file defines the
+# functions without running anything.
 #
 # Tests: tests/acceptance/issue-2111.sh, tests/acceptance/issue-2112.sh,
-# tests/acceptance/issue-2113.sh.
+# tests/acceptance/issue-2113.sh, tests/acceptance/issue-2114.sh.
 # =============================================================================
 set -euo pipefail
+
+# The tick writes tape records (#2114), and stats_epoch_to_iso converts the
+# tick's epoch clock to the ISO stamps the tape wants: busybox `date` (the CI
+# image) cannot parse @epoch.
+# shellcheck source=../lib/tape.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/tape.sh"
+# shellcheck source=../lib/stats.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/stats.sh"
 
 rollout_watch() {
   if [ "$#" -ne 6 ]; then
@@ -312,10 +351,205 @@ Find why the canary failed on this commit and fix it on \`main\`. No rollout sta
   printf '%s\n' "$number"
 }
 
-# Run directly: `tick` arrives with #2114/#2115; until then the tool only
-# prints its usage. Sourcing the file defines rollout_watch without running
-# this guard.
+# ── the tick: start a rollout when main is ahead of live (#2114) ──────────────
+# The supervisor runs `tools/rollout.sh tick` every tick (#2116). The tick's
+# clock and paths are env seams so a test can run it hermetically.
+
+# _rollout_log TEXT — one tick line on stderr: "[<iso>] rollout: <text>".
+_rollout_log() {
+  printf '[%s] rollout: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+# _rollout_pack_int PACK KEY — the integer value of KEY in the flat TOML pack,
+# printed on stdout; nothing when the file is unreadable or the key is absent
+# or holds a non-integer. Blank lines, inline comments and non-assignments are
+# skipped, the rule the repair pack reader uses (lib/repair-suspend.sh).
+_rollout_pack_int() {
+  local pack="$1" key="$2"
+  [ -r "$pack" ] || return 0
+  awk -v want="$key" '
+    {
+      row = $0
+      sub(/[[:space:]]*#.*$/, "", row)
+      gsub(/^[[:space:]]+/, "", row)
+      gsub(/[[:space:]]+$/, "", row)
+      if (row == "") next
+      eq = index(row, "=")
+      if (eq <= 1) next
+      name = substr(row, 1, eq - 1)
+      value = substr(row, eq + 1)
+      gsub(/^[[:space:]]+/, "", name)
+      gsub(/[[:space:]]+$/, "", name)
+      gsub(/^[[:space:]]+/, "", value)
+      gsub(/[[:space:]]+$/, "", value)
+      if (name == want && value ~ /^-?[0-9]+$/) { print value; exit }
+    }
+  ' "$pack"
+}
+
+# _rollout_state_read FILE — the rollout state as a JSON object; the empty
+# object when the file is missing or unreadable.
+_rollout_state_read() {
+  local file="$1" body
+  body=""
+  if [ -r "$file" ]; then
+    body="$(cat "$file" 2>/dev/null || true)"
+  fi
+  if printf '%s' "$body" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    printf '%s\n' "$body"
+  else
+    printf '{"open":null,"blocked_main":null}\n'
+  fi
+}
+
+# _rollout_state_open FILE ID COMMIT MOVED_AT — record the rollout this tick
+# started: open = {id, commit, moved_at}, blocked_main = null, every other key
+# of the state kept. Written to a temp file in the same directory, then moved.
+_rollout_state_open() {
+  local file="$1" id="$2" commit="$3" moved="$4" dir tmp
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  tmp="$(mktemp "$dir/state.XXXXXX" 2>/dev/null)" || return 1
+  if jq -cn --arg id "$id" --arg commit "$commit" --argjson moved "$moved" \
+      --arg current "$(_rollout_state_read "$file")" '
+      ((try ($current | fromjson)) // {})
+      + {open: {id: $id, commit: $commit, moved_at: $moved}, blocked_main: null}' \
+      >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$file"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+rollout_tick() {
+  if ! command -v jq >/dev/null 2>&1; then
+    _rollout_log "ERROR: required tool missing: jq"
+    return 0
+  fi
+
+  local tape_dir="${TAPE_DIR:-/srv/disinto/tape}"
+  local dir="${ROLLOUT_GIT_DIR:-${PROJECT_REPO_ROOT:-}}"
+  local job="${ROLLOUT_CANARY_JOB:-agents-review-qwen}"
+  local pack="${ROLLOUT_PACK_FILE:-${OPS_REPO_ROOT:-}/packs/rollout.toml}"
+  local state_file="${tape_dir}/rollout/state.json"
+  local now
+  if [[ "${ROLLOUT_NOW:-}" =~ ^[0-9]+$ ]]; then
+    now="$ROLLOUT_NOW"
+  else
+    now="$(date -u +%s)"
+  fi
+
+  # 1. The owner's hold freezes the rollouts, as for sprints.
+  if [ -e "${tape_dir}/rollout/HOLD" ]; then
+    _rollout_log "on hold"
+    return 0
+  fi
+
+  # 2. Without the soak there is no rollout to decide about.
+  local soak take_polls
+  soak="$(_rollout_pack_int "$pack" soak_s)"
+  take_polls="$(_rollout_pack_int "$pack" take_polls)"
+  if [ -z "$soak" ] || [ -z "$take_polls" ]; then
+    _rollout_log "off: no pack"
+    return 0
+  fi
+
+  # 3. The canary must actually follow the canary branch: until its jobspec
+  #    sets FACTORY_REF its evidence names main, and the tool does nothing.
+  local evidence last_ref=""
+  evidence="${tape_dir}/rollout/evidence/${job}.jsonl"
+  if [ -r "$evidence" ]; then
+    last_ref="$(jq -rn -R '
+      [inputs | fromjson? | select(.kind == "take" or .kind == "poll")]
+      | .[-1] | (.ref // empty)' "$evidence" 2>/dev/null)" || last_ref=""
+  fi
+  if [ "$last_ref" != "canary" ]; then
+    _rollout_log "idle: ${job} does not follow canary"
+    return 0
+  fi
+
+  # 4. The branches must exist.
+  local heads main live canary
+  if ! heads="$(rollout_heads "$dir")"; then
+    _rollout_log "idle: no live/canary branch"
+    return 0
+  fi
+  read -r main live canary <<<"$heads"
+
+  # 5. A live that is not on main is a broken deployment, not a rollout.
+  if ! rollout_on_main "$dir" "$live"; then
+    _rollout_log "ERROR: live ${live} is not on main"
+    return 0
+  fi
+
+  local state
+  state="$(_rollout_state_read "$state_file")"
+
+  # 6. One rollout at a time: the open one is watched by the next steps.
+  local open_id
+  open_id="$(printf '%s' "$state" | jq -r '.open.id // empty' 2>/dev/null)" || open_id=""
+  if [ -n "$open_id" ]; then
+    _rollout_log "open: ${open_id}"
+    return 0
+  fi
+
+  # 7. A canary that drifted off live is pulled back before anything starts.
+  if [ "$canary" != "$live" ]; then
+    if rollout_move "$dir" canary "$live" force; then
+      _rollout_log "canary reset to live"
+    else
+      _rollout_log "WARNING: could not reset canary to ${live}"
+    fi
+    return 0
+  fi
+
+  # 8. Nothing to start: live already runs main's head.
+  if [ "$main" = "$live" ]; then
+    return 0
+  fi
+
+  # 9. A commit the last rollout rolled back: wait for main to move past it.
+  local blocked_main=""
+  blocked_main="$(printf '%s' "$state" | jq -r '.blocked_main // empty' 2>/dev/null)" || blocked_main=""
+  if [ -n "$blocked_main" ] && [ "$blocked_main" = "$main" ]; then
+    _rollout_log "waiting for main to move past ${main:0:7}"
+    return 0
+  fi
+
+  # 10. Start.
+  if ! rollout_move "$dir" canary "$main"; then
+    _rollout_log "ERROR: cannot move canary to ${main}"
+    return 0
+  fi
+
+  local id started duration_s
+  id="rollout-${now}-${main:0:12}"
+  started="$(stats_epoch_to_iso "$now")"
+  if ! tape_proposal "$id" rollout "$job" "" "" "{\"live\":\"${live}\"}" "" auto "$main" \
+      >/dev/null 2>&1; then
+    _rollout_log "WARNING: tape: failed to append proposal ${id}"
+  fi
+  if ! _rollout_state_open "$state_file" "$id" "$main" "$now"; then
+    _rollout_log "WARNING: failed to write ${state_file}"
+  fi
+  # The run is this tick: it opens and closes at the tick's clock.
+  duration_s=0
+  if ! tape_run "$id" supervisor rollout "$started" "$started" '1' \
+      "{\"duration_s\":${duration_s}}" completed >/dev/null 2>&1; then
+    _rollout_log "WARNING: tape: failed to append the run of ${id}"
+  fi
+  _rollout_log "started ${main:0:7}"
+  return 0
+}
+
+# Run directly: `tick` runs the tick; anything else is a usage error. Sourcing
+# the file defines the functions without running this guard.
 if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  if [ "$#" -eq 1 ] && [ "$1" = "tick" ]; then
+    rollout_tick
+    exit 0
+  fi
   echo "usage: tools/rollout.sh tick" >&2
   exit 2
 fi
