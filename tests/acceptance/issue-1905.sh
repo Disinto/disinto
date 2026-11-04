@@ -25,12 +25,15 @@ TOOL="$REPO_ROOT/tools/pitch-lint.sh"
 ac_assert_file "$TOOL" "pitch-lint.sh must exist for the #1905 warnings"
 
 # Header names both warnings and the optional second argument.
-hdr="$(sed -n '1,35p' "$TOOL")"
-printf '%s\n' "$hdr" | grep -q 'FILE \[BACKLOG_JSON\]' \
+# Grep the file directly: the earlier `sed -n '1,35p' | printf | grep`
+# window failed on the third pattern in the CI container (#2099) while
+# passing everywhere else. Fixed-string greps over the whole file keep
+# the same assertions with no window or pipe to trip on.
+grep -qF 'FILE [BACKLOG_JSON]' "$TOOL" \
   || ac_fail "header usage must be pitch-lint.sh FILE [BACKLOG_JSON]"
-printf '%s\n' "$hdr" | grep -q 'more than 2 code files' \
+grep -qF 'more than 2 code files' "$TOOL" \
   || ac_fail "header must list the code-file warning"
-printf '%s\n' "$hdr" | grep -q 'open backlog issue' \
+grep -qF 'open backlog issue' "$TOOL" \
   || ac_fail "header must list the backlog-overlap warning"
 
 grep -qF 'markdown report; warns on overlap with a backlog list' \
