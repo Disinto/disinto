@@ -92,6 +92,27 @@ tail -20 /srv/disinto/agent-data/logs/dev/dev-agent.log
 If a job did not come up, read its allocation log:
 `nomad alloc logs <allocation-id>`.
 
+### Rollouts through the canary
+
+The factory no longer takes every merge at once. Each agent job follows one of
+two branches, set by `FACTORY_REF` in its jobspec: every agent follows `live`,
+except the review agent — the canary — which follows `canary` in its own
+checkout. The supervisor runs `tools/rollout.sh tick` on every tick (every 20
+minutes) and rolls `main` through the canary:
+
+- a merge reaches the canary first: the tick moves `canary` to `main`'s head
+  and records a `rollout` proposal on the tape;
+- every other agent takes it only after the soak, the `soak_s` seconds in the
+  ops repo's `packs/rollout.toml`, once the canary's evidence says the commit
+  held;
+- `touch ${TAPE_DIR}/rollout/HOLD` (default `/srv/disinto/tape/rollout/HOLD`)
+  freezes rollouts, exactly as the sprint hold does;
+- if the tool itself breaks, nothing moves — it fails closed. A push of `live`
+  to a commit of `main` by `disinto-admin` unblocks it.
+
+The flow, the rules it keeps and the records it writes are in
+[docs/design/notes/self-update.md](design/notes/self-update.md).
+
 ---
 
 ## Legacy: docker-compose update path
