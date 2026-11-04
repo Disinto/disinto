@@ -11,7 +11,8 @@
 # Usage:
 #   bash site/collect-engagement.sh
 #
-# Cron: 55 23 * * * cd /home/debian/dark-factory && bash site/collect-engagement.sh
+# Schedule: none. Nothing runs this today; run it from a disinto checkout:
+#   cd <checkout> && bash site/collect-engagement.sh
 # =============================================================================
 set -euo pipefail
 

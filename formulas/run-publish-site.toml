@@ -36,9 +36,9 @@ required    = false
 default     = "5"
 
 [vars.repo_root]
-description = "Local checkout path for the disinto repo"
+description = "Local checkout path for the disinto repo (the vault runner's FACTORY_ROOT, docker/runner/entrypoint-runner.sh)"
 required    = false
-default     = "/home/debian/dark-factory"
+default     = "/home/agent/disinto"
 
 [[steps]]
 id          = "pull-latest"
@@ -201,7 +201,7 @@ Check 1 — Caddy access log exists and is being written:
   fi
 
 Check 2 — collect-engagement.sh is present in the repo:
-  FACTORY_ROOT="${FACTORY_ROOT:-/home/debian/dark-factory}"
+  FACTORY_ROOT="${FACTORY_ROOT:-/home/agent/disinto}"
   if [ -x "$FACTORY_ROOT/site/collect-engagement.sh" ]; then
     echo "OK: collect-engagement.sh is present and executable"
   else
@@ -213,7 +213,7 @@ Check 3 — engagement evidence has been collected at least once:
   LATEST=$(ls -1t "$EVIDENCE_DIR"/*.json 2>/dev/null | head -1 || true)
   if [ -n "$LATEST" ]; then
     echo "OK: Latest engagement report: $LATEST"
-    jq -r '"  visitors=\(.unique_visitors) pages=\(.page_views) referrals=\(.referred_visitors)"' "$LATEST" 2>/dev/null || true
+    jq -r '"  visitors=\\(.unique_visitors) pages=\\(.page_views) referrals=\\(.referred_visitors)"' "$LATEST" 2>/dev/null || true
   else
     echo "NOTE: No engagement reports yet — run: bash site/collect-engagement.sh"
     echo "The first report will appear after the scheduled collection runs (daily at 23:55 UTC)."
@@ -222,7 +222,7 @@ Check 3 — engagement evidence has been collected at least once:
 Summary:
   echo ""
   echo "Observable status: addressable=disinto.ai measurement=caddy-access-logs"
-  echo "Evidence path: \$OPS_REPO_ROOT/evidence/engagement/YYYY-MM-DD.json"
+  echo "Evidence path: \\$OPS_REPO_ROOT/evidence/engagement/YYYY-MM-DD.json"
   echo "Consumer: planner reads ops repo evidence/engagement/ during gap analysis"
 """
 needs       = ["verify"]
