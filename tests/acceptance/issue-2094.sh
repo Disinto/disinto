@@ -65,15 +65,17 @@ ac_log 'AC3: the lxd upper-bound fallback emits the owner line from its entry'
 FN_OWNER="$(ac_extract_fn disk_owner_line "$PREFLIGHT")"
 [ -n "$FN_OWNER" ] || ac_fail "could not extract disk_owner_line() from supervisor/preflight.sh"
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Fixtures use literal "/opt/ai" paths: disk_owner_line hard-codes the
+# upper-bound match, so no real filesystem walk is involved here.
+FIX="$(mktemp -d)"
+trap 'rm -rf "$FIX"' EXIT
 
-iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
-now_epoch="$(date -u +%s)"
+utc_ts() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+fixture_t="$(date -u +%s)"
 
 # machine.json fixture: $1 = folders JSON, $2 = volume mount, $3 = used_b
-make_report() {
-  jq -n --arg t "$(iso "$now_epoch")" --argjson folders "$1" \
+report_fixture() {
+  jq -n --arg t "$(utc_ts "$fixture_t")" --argjson folders "$1" \
       --arg mount "$2" --argjson used "$3" '
     {schema: 1, t: $t, errors: [],
      volumes: [
@@ -85,52 +87,52 @@ make_report() {
 }
 
 run_owner() {  # $1 = machine report path; echoes the Disk owner line
-  MACHINE_REPORT="$1" OWNER_FN="$FN_OWNER" bash -c '
+  OWNER_SRC="$FN_OWNER" MACHINE_REPORT="$1" bash <<'OWNER_RUN'
     set -u
-    eval "$OWNER_FN"
+    eval "$OWNER_SRC"
     disk_owner_line
-  '
+OWNER_RUN
 }
 
 # The live host layout before #2094: folders[] holds only direct children of
 # /opt/ai. The box footprint is absent, so the owner line must come from the
 # root "/opt/ai" + name "lxd" fallback entry (700 GB, not the 87 GB research
 # entry).
-make_report '[
+report_fixture '[
   {"root": "/opt/ai", "name": "lxd", "size_b": 700000000000, "growth_b_per_day": 0},
   {"root": "/opt/ai", "name": "research", "size_b": 87000000000, "growth_b_per_day": 4000000000}
-]' "/opt/ai" 787000000000 > "$WORK/live-layout.json"
-out="$(run_owner "$WORK/live-layout.json")"
+]' "/opt/ai" 787000000000 > "$FIX/live-layout.json"
+out="$(run_owner "$FIX/live-layout.json")"
 ac_assert_eq "$out" \
   "Disk owner: box (box 700 GB = 88% of used on /opt/ai, growth 0 GB/day)" \
   "AC3: the upper-bound fallback must emit the owner line from the lxd entry, got: $out"
 
 # A small lxd entry through the same fallback reads neighbours: the fallback
 # is an upper bound, not an automatic guilty verdict.
-make_report '[
+report_fixture '[
   {"root": "/opt/ai", "name": "lxd", "size_b": 36600000000, "growth_b_per_day": 0},
   {"root": "/opt/ai", "name": "research", "size_b": 700000000000, "growth_b_per_day": 0}
-]' "/opt/ai" 787000000000 > "$WORK/fallback-small.json"
-out="$(run_owner "$WORK/fallback-small.json")"
+]' "/opt/ai" 787000000000 > "$FIX/fallback-small.json"
+out="$(run_owner "$FIX/fallback-small.json")"
 ac_assert_eq "$out" \
   "Disk owner: neighbours (box 36 GB = 4% of used on /opt/ai, growth 0 GB/day)" \
   "AC3: fallback entry of 4% of used must read neighbours, got: $out"
 
 # With the deep default roots the box entry exists and wins over the upper
 # bound: the 36.6 GB box folder, not the 700 GB lxd entry, drives the owner.
-make_report '[
+report_fixture '[
   {"root": "/opt/ai/lxd/containers", "name": "disinto-nomad-box", "size_b": 36600000000, "growth_b_per_day": 0},
   {"root": "/opt/ai/lxd/containers", "name": "other-box", "size_b": 300000000000, "growth_b_per_day": 0},
   {"root": "/opt/ai", "name": "lxd", "size_b": 700000000000, "growth_b_per_day": 0}
-]' "/opt/ai" 787000000000 > "$WORK/deep.json"
-out="$(run_owner "$WORK/deep.json")"
+]' "/opt/ai" 787000000000 > "$FIX/deep.json"
+out="$(run_owner "$FIX/deep.json")"
 ac_assert_eq "$out" \
   "Disk owner: neighbours (box 36 GB = 4% of used on /opt/ai, growth 0 GB/day)" \
   "AC3: the named box entry must beat the lxd upper bound, got: $out"
 
 # ── AC4: machine-sense.sh run with the deep roots lands the box footprint ────
 ac_log 'AC4: machine-sense.sh with the deep roots emits the box entry into folders[]'
-T="$WORK/sense"
+T="$FIX/sense"
 STUB="$T/bin"
 FAI="$T/ai"
 mkdir -p "$STUB" "$T/proc" "$FAI/research" "$FAI/lxd/containers/disinto-nomad-box" \
@@ -175,7 +177,7 @@ REPORT="$T/share/machine.json"
 rc=0
 PATH="$STUB:$PATH" MACHINE_SENSE_SHARE="$T/share" MACHINE_SENSE_STATE="$T/state" \
   MACHINE_SENSE_PROC="$T/proc" MACHINE_SENSE_NEIGHBOURS="$T/neighbours.tsv" \
-  MACHINE_SENSE_NOW="$now_epoch" \
+  MACHINE_SENSE_NOW="$fixture_t" \
   MACHINE_SENSE_FOLDER_ROOTS="$FAI $FAI/lxd/containers" \
   bash "$SENSE" || rc=$?
 ac_assert_eq "$rc" "0" "AC4: machine-sense.sh must exit 0, got $rc"
