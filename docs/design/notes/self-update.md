@@ -18,7 +18,8 @@ within five minutes, all at once:
 - the only way back is another merge.
 
 On 2026-11-01 two `docker/agents/` merges redeployed the agents and
-killed the dev sessions in flight.
+killed the dev sessions in flight. That is an image change, a class
+the first version of the canary does not cover (Not in it yet).
 
 So the factory already updates itself in place. This rung does not add
 that power. It puts the update through a canary, measures it, and makes
@@ -88,9 +89,13 @@ that already runs, following another branch.
 
 ## Not in it yet
 
-- **Images and jobspecs.** CI rebuilds and redeploys the agents image
-  when `docker/agents/` changes (`ci.yml`, `rebuild-and-deploy-agents`).
-  Jobspecs are applied by hand. Both stay as they are.
+- **Images and jobspecs.** CI rebuilds the agents image and restarts
+  every agent when a merge touches `docker/agents/`
+  (`ci.yml`, `rebuild-and-deploy-agents`). Jobspecs are applied by
+  hand. The canary does not gate either: the 2026-11-01 incident above
+  could happen again. What closes the gap is the follow-up that builds
+  the image, applies the jobspecs and fast-forwards `/opt/disinto` from
+  `live` instead of `main`.
 - **`/opt/disinto`.** CI fast-forwards it to `main`, and the edge, the
   healer and the box's tools run from it. Moving it to `live` is the next
   step once the flow holds.
@@ -101,11 +106,14 @@ that already runs, following another branch.
 
 ## Records and the grade
 
-- Loop `rollout` uses the same four records (§3):
+- Loop `rollout` uses the records of §3:
   - a proposal at the start, with the commit as its ref;
   - runs, the tool's ticks;
   - an outcome at promotion or rollback, with bits `promoted` and
-    `smoke`, and numbers `soak_s` and `polls`.
+    `smoke`, and numbers `soak_s` and `polls`;
+  - no grade per rollout. The grade belongs to the rung's sprint.
+  `packs/loops.toml` lists `promoted` as the loop's competence bit, and
+  `packs/rollout.toml` holds the soak (§7).
 - The capability claim is `can-update-self`: "the factory updates itself
   through a canary: a new version runs beside the old one and replaces
   it only after it held". Its probe, `probes/can-update-self.sh`, counts
@@ -140,9 +148,12 @@ short, because each entry means a PR waits for the owner:
 | the design | `docs/design/**` |
 
 The ops repo has no branch rule today, and the gardener pushes to it
-directly. A rule on its `main` protects `vault/policy.toml`,
-`packs/repair.toml` and `packs/rollout.toml`, and leaves every other push
-as it is.
+directly. Checked on the live forge on 2026-11-04: the ops repo lists no
+branch protection, and the gardener's catalog commits land on `main`.
+`setup_vault_branch_protection` (`lib/branch-protection.sh`, run by
+`bin/disinto` init) is not in place on this deployment. A rule on its
+`main` protects `vault/policy.toml`, `packs/repair.toml` and
+`packs/rollout.toml`, and leaves every other push as it is.
 
 A PR that waits on a protected file tells the owner once, through
 `lib/notice.sh`, so it does not sit unseen.
@@ -152,11 +163,15 @@ A PR that waits on a protected file tells the owner once, through
 The rung's sprint, pitched through the gate, carries these as
 sub-issues:
 
-1. `FACTORY_REF` in `pull_factory_repo`, defaulting to `main`, so
-   nothing changes until the branches exist. Each agent records its
+1. `FACTORY_REF` in `pull_factory_repo`: the factory checkout resets
+   to `origin/${FACTORY_REF:-$PRIMARY_BRANCH}`. `PRIMARY_BRANCH` stays
+   the project's branch, and with `FACTORY_REF` unset nothing changes
+   until the branches exist. Each agent records its
    commit, its smoke result and its role script's exits.
 2. The `live` and `canary` branches at `main`'s head, with their push
-   rule.
+   rule. `supervisor-bot` needs write on the repo: the live forge has
+   it, but `lib/forge-setup.sh` grants it read, so a fresh install
+   would not.
 3. `tools/rollout.sh`, `packs/rollout.toml` and loop `rollout` on the
    tape; the supervisor calls the tool each tick.
 4. The jobspecs: review follows `canary`, the others follow `live`
@@ -165,7 +180,9 @@ sub-issues:
 6. The wall: the protected file patterns on both repos, and the notice
    for a PR waiting on one.
 7. The ladder: `planner/ladder.sh` and `planner/pitch-or-idle.sh` learn
-   `update-self` as rung 2 and the DigitalOcean provision rung.
+   `update-self` as rung 2 and the DigitalOcean provision rung. The
+   numbered rung references in `planner/gaps.sh` and
+   `planner/AGENTS.md` become names.
 
 The claim `can-update-self` follows as an ops PR once the sprint's
 effect is met (§8).

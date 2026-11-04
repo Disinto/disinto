@@ -184,7 +184,7 @@ disinto/                 (code repo)
 │                  investigation-685-reviewer-approved-destructive-compose.md);
 │                  contributing/ (acceptance-tests.md, issues-for-bots.md);
 │                  design/ (proposal-loop.md — how the factory proposes, records
-│                  and learns; notes/ incl. organs.md, issue-writing.md,
+│                  and learns; notes/ incl. organs.md, self-update.md, issue-writing.md,
 │                  learning-ladder.md, world-model.md, representation.md,
 │                  search-control.md)
 ├── site/          disinto.ai website content

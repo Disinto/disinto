@@ -572,6 +572,7 @@ config ───► PER DEPLOYMENT, ops repo
               packs/stuck.toml     loop → stuck horizon (hours)
               packs/graded.toml    graded loop → grace period (hours)
               packs/repair.toml    repair stop rule: window, suspend_at, trial_days (§5)
+              packs/rollout.toml   update-self soak (notes/self-update.md)
               rubrics/<loop>.toml  reason → signature, attribution
               probes/*.sh          sprint effect probes and claim checks
               claims/<id>.toml     the world model (§6)
@@ -638,16 +639,16 @@ them, in order (the capability ladder, `notes/organs.md`):
 6. **replicate**: the factory builds a new instance of itself, tests
    it against its claims, and moves to it.
 
-Each rung is an `internal` sprint whose effect probe is the
-capability's check. A pitch goes through the existing vault gate: an
-ops-repo PR, the architect's Q&A, and the gate's approval as the
-decision (transparent for now, §3). The
-gardener then creates the milestone and files the sub-issues. Once its effect is met, the capability claim
-follows as an ops PR. Once it has arms, the planner pitches steps
-toward the vision as sprints with probes. Each sprint names the
-capability claims it `rests_on`, so a lost arm returns the sprints
-that need it (§6). Rungs above sense cross the vault gate
-(`policy.toml` tiers). Moving is always `high`.
+Each rung is an `internal` sprint whose effect probe is the capability's
+check. A pitch goes through the existing vault gate: an ops-repo PR, the
+architect's Q&A, and the gate's approval as the decision (transparent
+for now, §3). The gardener then creates the milestone and files the
+sub-issues. Once its effect is met, the capability claim follows as an
+ops PR. Once it has arms, the planner pitches steps toward the vision as
+sprints with probes. Each sprint names the capability claims it
+`rests_on`, so a lost arm returns the sprints that need it (§6). Rungs
+above sense, update-self excepted, cross the vault gate (`policy.toml`
+tiers). Moving is always `high`.
 
 **The predictor** is the expert in the future. It reads the same claims
 and the tape, picks the beliefs it doubts and the dangers it expects,
