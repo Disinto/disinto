@@ -145,14 +145,14 @@ ac_assert_eq "$RC" 2 "AC5 rollout_move must reject a branch that is not live or 
 ac_assert_eq "$(origin_head main)" "$M2" "AC5 main must be untouched by rollout_move"
 
 # ── AC6: bash -n still passes and the direct-run usage guard is intact (#2111) ─
-rc=0
-bash -n "$TOOL" || rc=$?
-ac_assert_eq "$rc" 0 "bash -n tools/rollout.sh must pass"
+syntax_rc=0
+bash -n "$TOOL" || syntax_rc=$?
+ac_assert_eq "$syntax_rc" 0 "tools/rollout.sh must parse under bash -n"
 
-rc=0
-err="$(bash "$TOOL" 2>&1)" || rc=$?
-ac_assert_eq "$rc" 2 "running tools/rollout.sh directly must exit 2, got $rc"
-ac_assert_eq "$err" "usage: tools/rollout.sh tick" \
-  "running tools/rollout.sh directly must print the usage line, got: $err"
+direct_rc=0
+direct_msg="$(bash "$TOOL" 2>&1)" || direct_rc=$?
+ac_assert_eq "$direct_rc" 2 "tools/rollout.sh run directly must exit 2, got $direct_rc"
+ac_assert_eq "$direct_msg" "usage: tools/rollout.sh tick" \
+  "tools/rollout.sh run directly must print its usage line, got: $direct_msg"
 
 ac_pass
