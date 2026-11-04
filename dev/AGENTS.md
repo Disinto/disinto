@@ -165,6 +165,8 @@ polls.
 
 **Factory ref (#2107)**: before each poll the entrypoint resets the job's factory checkout to `FACTORY_REF` (default: the primary branch), and only when that ref is a commit of the primary branch; otherwise it keeps the current checkout. `FACTORY_CHECKOUT` (default `/home/agent/repos/_factory`, shared by the jobs that mount `project-repos`) gives a job its own checkout. Rollouts through a canary use both (docs/design/notes/self-update.md).
 
+**Rollout evidence (#2108)**: each loop records the commit its factory checkout runs; on a new commit it first runs `.woodpecker/agent-smoke.sh` on it (log `agent-smoke.log`) and records the exit; after each iteration it records each fast organ's exit (`lib/rollout-evidence.sh`). The loop still exits with the last fast organ's non-zero code.
+
 **Lifecycle**: dev-poll.sh (invoked by polling loop, `check_active dev`) → dev-agent.sh →
 tmux session → phase file drives CI/review loop → merge + `mirror_push()` → `issue_close()`; or no push → `no_push_outcome()` requeues resource-limit exits to `backlog` / blocks `no_push` and `no_push_after_3_attempts` (#1164). With `DEV_ESCALATE_TO` set, a wall-clock timeout re-queues the issue assigned to that agent instead (#1986); no deployed job sets it since the Grok dev agent was removed (2026-11-01).
 On respawn after `PHASE:escalate`, the stale phase file is cleared first so the session
