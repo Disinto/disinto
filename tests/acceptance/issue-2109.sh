@@ -9,10 +9,10 @@
 # per poll (due = REVIEWED + FAILED), and adds ", <FAILED> failed" to its
 # closing log line. A failed append never fails the poll.
 #
-# Hermetic: no network, no forge, no agent. Same fixture as issue-1902.sh:
-# review-poll.sh copied next to a symlinked lib/ and a review-pr.sh stub with
-# a configurable exit code; curl and ci_required_passed are stubs. A temp
-# TAPE_DIR and NOMAD_JOB_NAME=agents-test give one evidence file per AC.
+# Hermetic: no network, no forge, no agent. A copy of review-poll.sh runs
+# next to a symlinked lib/ and a review-pr.sh stub whose exit code is set by
+# AC_REVIEW_RC; curl and ci_required_passed are stubs. Each AC gets its own
+# temp TAPE_DIR, with NOMAD_JOB_NAME=agents-test.
 #
 # Acceptance:
 #   1. review-pr.sh stub exits 1, one PR needing review: the last evidence
@@ -54,71 +54,60 @@ CURL_LOG="${WORK}/curl.log"
 CALLS="${WORK}/review-pr.calls"
 STDOUT="${WORK}/poll.stdout"
 STDERR="${WORK}/poll.stderr"
-FAKE_HOME="${WORK}/home"
+STUB_DIR="${WORK}/fake-home"
 
-mkdir -p "${FAKE_HOME}/.local/bin" "${WORK}/review" "${WORK}/state"
+mkdir -p "${STUB_DIR}/.local/bin" "${WORK}/review" "${WORK}/state"
 ln -s "$REPO_ROOT/lib" "${WORK}/lib"
 cp "$POLL_SRC" "$POLL"
 touch "${WORK}/state/.reviewer-active"
 
-# ci_required_passed is defined when review-poll sources lib/ci-helpers.sh;
-# a DEBUG trap installed from BASH_ENV replaces it once that definition exists.
-cat > "${WORK}/ci-stub.env" << 'EOF'
-_issue_2109_ci_stub() {
-  if declare -F ci_required_passed >/dev/null 2>&1; then
-    ci_required_passed() { return 0; }
-    trap - DEBUG
-  fi
+# A DEBUG trap installed from BASH_ENV swaps ci_required_passed for a green
+# stub as soon as lib/ci-helpers.sh (sourced by the poll) defines it.
+cat > "${WORK}/ci-stub.env" << 'CIENV'
+_ci_green() {
+  declare -F ci_required_passed >/dev/null 2>&1 || return 0
+  ci_required_passed() { return 0; }
+  trap - DEBUG
   return 0
 }
-trap _issue_2109_ci_stub DEBUG
-EOF
+trap _ci_green DEBUG
+CIENV
 
-cat > "${FAKE_HOME}/.local/bin/curl" << 'EOF'
+cat > "${STUB_DIR}/.local/bin/curl" << 'CURLSTUB'
 #!/usr/bin/env bash
-# Hermetic forge stand-in. The last argument is the URL review-poll passes.
+# Fake forge API for the poll: the last argument is the URL review-poll passes.
 set -euo pipefail
 url="${*: -1}"
 printf '%s\n' "$url" >> "${AC_CURL_LOG:?}"
 sha="${AC_HEAD_SHA:?}"
 if [ "${AC_NO_PRS:-}" = "1" ]; then
   case "$url" in
-    *'/pulls?state=open'*)
-      printf '[]\n'
-      ;;
-    *)
-      exit 22
-      ;;
+    *'/pulls?state=open'*) echo '[]' ;;
+    *) echo '[]' ;;
   esac
   exit 0
 fi
 case "$url" in
   *'/pulls?state=open'*)
     jq -n --arg sha "$sha" \
-      '[{number:2109,head:{sha:$sha,ref:"fix/issue-2109"},base:{ref:"main"},draft:false,title:"fix evidence",user:{login:"dev-bot"}}]'
+      '[{number:2109,head:{sha:$sha,ref:"fix/issue-2109"},base:{ref:"main"},draft:false,title:"evidence",user:{login:"dev-bot"}}]'
     ;;
-  *'/pulls/2109/reviews')
-    printf '[]\n'
-    ;;
-  *'/issues/2109/comments')
-    printf '[]\n'
-    ;;
+  *'/pulls/2109/reviews') echo '[]' ;;
+  *'/issues/2109/comments') echo '[]' ;;
   *'/pulls/2109')
     jq -n --arg sha "$sha" '{state:"open",head:{sha:$sha},user:{login:"dev-bot"}}'
     ;;
-  *)
-    exit 22
-    ;;
+  *) exit 22 ;;
 esac
-EOF
-chmod +x "${FAKE_HOME}/.local/bin/curl"
+CURLSTUB
+chmod +x "${STUB_DIR}/.local/bin/curl"
 
 # review-pr.sh stub: exit code comes from AC_REVIEW_RC; every call is counted.
-cat > "${WORK}/review/review-pr.sh" << 'EOF'
+cat > "${WORK}/review/review-pr.sh" << 'PRSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >> "${AC_REVIEW_PR_CALLS:?}"
 exit "${AC_REVIEW_RC:-0}"
-EOF
+PRSTUB
 chmod +x "${WORK}/review/review-pr.sh"
 
 # run_poll TAPE_DIR REVIEW_RC [NO_PRS=0] — one poll run against a fresh log
@@ -129,7 +118,7 @@ run_poll() {
   : > "$CURL_LOG"
   rm -f "$LOGFILE" "$STDOUT" "$STDERR"
   env -u DISINTO_CONTAINER -u PROJECT_TOML -u FORGE_TOKEN_OVERRIDE \
-    HOME="$FAKE_HOME" \
+    HOME="$STUB_DIR" \
     USER="${USER:-agent}" \
     BASH_ENV="${WORK}/ci-stub.env" \
     PROJECT_NAME="$PROJECT" \
@@ -147,7 +136,7 @@ run_poll() {
     bash "$POLL" >"$STDOUT" 2>"$STDERR"
 }
 
-last_work_line() {
+last_evidence_line() {
   tail -n 1 "$1/rollout/evidence/agents-test.jsonl" 2>/dev/null
 }
 
@@ -160,7 +149,7 @@ run_poll "$T1" 1 || rc=$?
 ac_assert_eq "$rc" "0" "AC1: the poll must exit 0 even when every review fails (got $rc; stderr: $(cat "$STDERR" 2>/dev/null || true))"
 ac_assert_eq "$(wc -l < "$CALLS" | tr -d '[:space:]')" "1" \
   "AC1: review-pr.sh must be called once (got $(cat "$CALLS" 2>/dev/null || true))"
-line="$(last_work_line "$T1")"
+line="$(last_evidence_line "$T1")"
 ac_assert_jq '.kind == "work" and .due == 1 and .done == 0 and .failed == 1' \
   "$line" "AC1: last evidence line must be work due 1 done 0 failed 1, got: $line"
 grep -F ", 1 failed" "$LOGFILE" >/dev/null \
@@ -174,7 +163,7 @@ mkdir -p "$T2"
 rc=0
 run_poll "$T2" 0 || rc=$?
 ac_assert_eq "$rc" "0" "AC2: the poll must exit 0 (got $rc)"
-line="$(last_work_line "$T2")"
+line="$(last_evidence_line "$T2")"
 ac_assert_jq '.kind == "work" and .due == 1 and .done == 1 and .failed == 0' \
   "$line" "AC2: last evidence line must be work due 1 done 1 failed 0, got: $line"
 ac_log "AC2 OK"
@@ -188,7 +177,7 @@ run_poll "$T3" 0 1 || rc=$?
 ac_assert_eq "$rc" "0" "AC3: the poll must exit 0 with no open PRs (got $rc)"
 n="$(wc -l < "$T3/rollout/evidence/agents-test.jsonl" 2>/dev/null | tr -d '[:space:]')"
 ac_assert_eq "$n" "1" "AC3: the no-PRs poll must record exactly one evidence line (got $n)"
-line="$(last_work_line "$T3")"
+line="$(last_evidence_line "$T3")"
 ac_assert_jq '.kind == "work" and .due == 0 and .done == 0 and .failed == 0' \
   "$line" "AC3: the no-PRs evidence line must be work due 0 done 0 failed 0, got: $line"
 ac_log "AC3 OK"
