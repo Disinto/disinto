@@ -505,7 +505,15 @@ migrate_ops_repo() {
       git config user.email "disinto-admin@localhost"
     fi
 
-    git add -A
+    # Stage the seeded files. A stray .git/index.lock (e.g. left by a
+    # concurrent organ run on the shared ops clone) makes this fail (#2088),
+    # so wrap it: log the failure and return 1 rather than aborting the
+    # caller's run under set -e.
+    if ! git add -A 2>/dev/null; then
+      echo "Warning: failed to stage migration changes in ${ops_root}" >&2
+      cd "$orig_dir"
+      return 1
+    fi
     if ! git diff --cached --quiet 2>/dev/null; then
       if ! git commit -m "chore: migrate ops repo structure to canonical layout" -q; then
         echo "Error: failed to commit migration changes" >&2

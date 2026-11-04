@@ -33,20 +33,7 @@ FN_SRC="$(ac_extract_fn ensure_ops_repo "$LIB_FILE")"
 # ── Hermetic git fixture: bare origin + commits + per-AC clones ─────────────
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-ORIGIN_DIR="$TMP_DIR/origin"
-git init -b main --bare "$ORIGIN_DIR"
-
-WORK_DIR="$TMP_DIR/origin-work"
-mkdir -p "$WORK_DIR/packs"
-printf '# ops config\n' > "$WORK_DIR/packs/ops-config.toml"
-git -C "$WORK_DIR" init -b main
-git -C "$WORK_DIR" config user.name "ops-test"
-git -C "$WORK_DIR" config user.email "ops-test@example.com"
-git -C "$WORK_DIR" add -A
-git -C "$WORK_DIR" commit -m "initial ops commit"
-git -C "$WORK_DIR" remote add origin "$ORIGIN_DIR"
-git -C "$WORK_DIR" push --quiet origin main
+ac_git_ops_origin "$TMP_DIR"
 
 # Advance the origin by one commit (append a line, commit, push).
 advance_origin() {
