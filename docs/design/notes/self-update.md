@@ -109,11 +109,14 @@ that already runs, following another branch.
 - Loop `rollout` uses the records of §3:
   - a proposal at the start, with the commit as its ref;
   - runs, the tool's ticks;
-  - an outcome at promotion or rollback, with bits `promoted` and
-    `smoke`, and numbers `soak_s` and `polls`;
+  - an outcome at promotion or rollback, with bits `promoted`,
+    `rolled_back` and `smoke`, and numbers `soak_s` and `polls`;
   - no grade per rollout. The grade belongs to the rung's sprint.
-  `packs/loops.toml` lists `promoted` as the loop's competence bit, and
-  `packs/rollout.toml` holds the soak (§7).
+  `packs/loops.toml` lists `promoted` and `rolled_back`: either
+  decision is competent, as dev's `merged` or `rejected`, and a rollout
+  that decides neither is stuck after 24 h (`packs/stuck.toml`).
+  `packs/rollout.toml` holds the soak (§7). All three came with the
+  rung's sprint pitch (ops #122).
 - The capability claim is `can-update-self`: "the factory updates itself
   through a canary: a new version runs beside the old one and replaces
   it only after it held". Its probe, `probes/can-update-self.sh`, counts
