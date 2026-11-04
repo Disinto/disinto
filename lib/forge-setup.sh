@@ -578,7 +578,7 @@ setup_forge() {
     # planner-bot: write (prerequisites.md, memory)
     # gardener-bot: write (backlog grooming)
     # vault-bot: write (vault items)
-    # supervisor-bot: read (health monitoring)
+    # supervisor-bot: write (health monitoring; moves the live and canary branches, #2110)
     # predictor-bot: read (pattern detection)
     # architect-bot: write (sprint PRs)
     local bot_perm
@@ -588,7 +588,7 @@ setup_forge() {
       [planner-bot]="write"
       [gardener-bot]="write"
       [vault-bot]="write"
-      [supervisor-bot]="read"
+      [supervisor-bot]="write"
       [predictor-bot]="read"
       [architect-bot]="write"
     )

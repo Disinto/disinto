@@ -39,3 +39,26 @@ The payload in `lib/branch-protection.sh` is the source of truth, but the
 function only runs when it is invoked (e.g. via `bin/disinto` hire/setup
 paths). Applying the gate to an already-running forge is a deliberate human
 step, not something the code does on its own.
+
+## Rollout branches (live, canary)
+
+The self-update rollout moves two branches of the project repo, `live` and
+`canary`, each holding a commit of `main`: every agent follows `live`, one
+agent follows `canary`, and the rollout promotes `canary` to `live` after it
+soaked, or rolls `canary` back to `live`. See
+[`docs/design/notes/self-update.md`](design/notes/self-update.md) for the flow.
+
+`rollout_branches_setup` in [`lib/branch-rules.sh`](../lib/branch-rules.sh)
+creates the two branches that are missing, each starting at `main`, and puts a
+push rule on `live`: only `supervisor-bot` and `disinto-admin` may push it, and
+only `disinto-admin` may merge it. An existing branch is left where it is.
+
+`canary` gets no rule. Forgejo refuses every non-fast-forward push to a
+protected branch and its API offers no force-push allowlist, while a rollback
+moves `canary` back — a rule there would block the rollback the rollout needs.
+Safety comes from the tool instead: the agents take only a `canary` that is a
+commit of `main`, and the rollout tool resets a `canary` it did not set.
+
+As for the CI gate above, applying this to a live forge is a deliberate step by
+a repo admin: `lib/branch-rules.sh rollout-branches <owner/repo>`, run with the
+`FORGE_TOKEN` of `disinto-admin`.
