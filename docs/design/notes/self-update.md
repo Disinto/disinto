@@ -109,8 +109,8 @@ that already runs, following another branch.
 - Loop `rollout` uses the records of §3:
   - a proposal at the start, with the commit as its ref;
   - runs, the tool's ticks;
-  - an outcome at promotion or rollback, with bits `promoted` and
-    `smoke`, and numbers `soak_s` and `polls`;
+  - an outcome at promotion or rollback, with bits `promoted`,
+    `rolled_back` and `smoke`, and numbers `soak_s` and `polls`;
   - no grade per rollout. The grade belongs to the rung's sprint.
   `packs/loops.toml` lists `promoted` and `rolled_back`: either
   decision is competent, as dev's `merged` or `rejected`, and a rollout
