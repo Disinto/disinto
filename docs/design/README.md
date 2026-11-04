@@ -18,4 +18,5 @@ implement. Edit it here, by PR, like any other doc.
 | [notes/representation.md](notes/representation.md) | The representation research (PPM, TabPFN, HDC) and the commitment it led to. |
 | [notes/search-control.md](notes/search-control.md) | Rival attempts (`continued_from`) for experiment sprints and repair. Not built. |
 | [notes/organs.md](notes/organs.md) | The planner and the predictor as proposers, the capability ladder, resources, safety, bootstrap sprints (2026-10-07). |
+| [notes/self-update.md](notes/self-update.md) | The update-self rung (2026-11-04): a merged change runs on one agent, the canary, before the others take it; promote or roll back; the wall on what grades, stops and gates the factory. |
 | [notes/issue-writing.md](notes/issue-writing.md) | Scope discipline and disinto conventions for whoever files issues: the owner, an agent session, or the architect. |

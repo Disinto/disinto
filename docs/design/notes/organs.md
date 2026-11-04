@@ -44,10 +44,11 @@ rung below.
 | rung | claim | first action | tier | unlocks |
 |---|---|---|---|---|
 | 1 sense | `can-sense-<host>` | an action container on `<host>` runs a read-only inventory (CPU, memory, disk, docker, LXD) and stores it as an artifact | low, no gate | the resources inventory; pitches that know their cost |
-| 2 provision | `can-provision` | an action starts a named LXC container in its own LXD project, on `ai-pool` (`/opt/ai`) only, reports its address, deletes it | medium | sandboxes for the predictor; test instances |
-| 3 reach | `can-reach-porter` | an action container with the `ssh` mount logs in to the porter host, `self.disinto.ai`, and runs `whoami` and `uname` | low once access exists | remote work |
-| 4 deploy | `can-deploy-porter` | an action runs `porter-install.sh` at a ref on `self.disinto.ai` and verifies it with the `status` verb | high | shipping: Fold 1 → 2 in `VISION.md` |
-| 5 replicate | `can-replicate` | provision, install disinto at a ref, run its acceptance tests and claim checks against the new instance, report | high | testing new versions of itself; **move** is a separate, later decision |
+| 2 update-self | `can-update-self` | a merged change runs on one agent, the canary, beside the old version on the others; it is promoted to all when it held and rolled back when it failed (`self-update.md`) | none: each change already passed review, and the canary is the check | new versions of itself, in place: the effect `made` |
+| 3 provision | `can-provision` | an action creates a throwaway droplet on DigitalOcean with a token scoped to droplets, reports its address, deletes it. Later; LXD on the machine waits for memory (Decisions, 2026-11-04) | medium | sandboxes for the predictor; test instances |
+| 4 reach | `can-reach-porter` | an action container with the `ssh` mount logs in to the porter host, `self.disinto.ai`, and runs `whoami` and `uname` | low once access exists | remote work |
+| 5 deploy | `can-deploy-porter` | an action runs `porter-install.sh` at a ref on `self.disinto.ai` and verifies it with the `status` verb | high | shipping: Fold 1 → 2 in `VISION.md` |
+| 6 replicate | `can-replicate` | provision, install disinto at a ref, run its acceptance tests and claim checks against the new instance, report | high | testing new versions of itself; **move** is a separate, later decision |
 
 **Asking you.** When a rung fails for want of access, such as a key
 the porter host does not accept, the planner proposes a request to you.
@@ -57,15 +58,17 @@ grant is the decision. The outcome is the next exercise: the request
 terminates `ok` when the exercise succeeds within its window, and
 `returned` when you decline.
 
-**Self-versions.** Rung 5 is where "develops new versions of itself"
-becomes concrete. The dev loop already changes the code. Replication
-deploys a factory at a ref on a fresh container and holds it to the
-same claims as the live one. Testing new versions is the requirement.
-Whether and how the factory then **moves** is decided later, by what
-works. Any move is never automatic, and its effect probe is the claims
-holding on the new instance for a full window.
+**Self-versions.** Two rungs make "develops new versions of itself"
+concrete. Update-self (rung 2, `self-update.md`) runs each new version
+on one agent beside the old one before the others take it. Replicate
+(rung 6) is the full form. The dev loop already changes the code.
+Replication deploys a factory at a ref on a fresh container and holds it
+to the same claims as the live one. Testing new versions is the
+requirement. Whether and how the factory then **moves** is decided
+later, by what works. Any move is never automatic, and its effect probe
+is the claims holding on the new instance for a full window.
 
-**Disk decides the shape of rung 5.** The sandbox pool (`ai-pool`, a
+**Disk decides the shape of rung 6.** The sandbox pool (`ai-pool`, a
 directory on the host's `ai` volume) had 43 GiB free of 368 GiB (88%
 used) on 2026-10-07. The host root had 17 GiB free (83%). The live
 factory alone carries about 22 GB of docker images. A full copy does
@@ -137,10 +140,10 @@ Expert in the future: what will break, and what we believe wrongly.
   which is what makes its conclusion causal.
 - **Danger needs a sandbox.** An experiment that could harm the live
   factory, such as filling a disk or killing a service, runs only on a
-  rung-2 sandbox. Until the factory can provision, the predictor's
-  experiments are reversible changes to the live factory, through the
-  vault gate: one setting, one agent, a fixed span, and the old value
-  restored at the end.
+  provision-rung sandbox. Until the factory can provision, the
+  predictor's experiments are reversible changes to the live factory,
+  through the vault gate: one setting, one agent, a fixed span, and the
+  old value restored at the end.
 - **A demonstrated danger:** the predictor drafts the claim revision
   (claim loop), and the remedy goes to the dev or repair loop.
 - **Forecasts (stage 2):** the predictor is the first forecaster, a
@@ -195,7 +198,9 @@ experiments.
 
 ## Safety
 
-- **Tiers:** sense is low. Provision and access requests are medium.
+- **Tiers:** sense is low. Update-self is not a vault action: each
+  change already passed review, and the canary is its check
+  (`self-update.md`). Provision and access requests are medium.
   Deploy, replicate and move are high. Graduation (§5) applies only to
   exercises with n ≥ 20 and success ≥ 0.9, and never to move.
 - **Credentials:** each capability's credential is a Vault secret scoped
@@ -205,7 +210,7 @@ experiments.
   we start for it.** The factory runs in an LXC container on the host,
   so starting a sibling means LXD API access on the host. That is the
   most powerful credential it would hold, so the planner requests it
-  (rung 2) and you grant it scoped:
+  (the provision rung) and you grant it scoped:
   - a dedicated LXD project, e.g. `disinto-sandbox`;
   - a client certificate restricted to that project;
   - storage on `ai-pool` (`/opt/ai/lxd`) only, never the host root;
@@ -216,6 +221,13 @@ experiments.
   bounds. The project's limits sit on the host's choke points, memory
   and disk: at first at most 2 instances, 8 GiB of memory and 20 GiB of
   disk in total, revised from the sense report.
+
+  Deferred on 2026-11-04: the machine lacks the memory, so the
+  provision rung starts on DigitalOcean (Decisions, 2026-11-04). These
+  bounds apply if it returns to the machine.
+- **Update-self** cannot change what grades, stops or gates the
+  factory: those files are protected on `main` and only the owner
+  merges them (`self-update.md`, The wall).
 - **Move** is never automatic.
 
 ## Decisions (owner, 2026-10-07)
@@ -224,23 +236,36 @@ experiments.
    sandbox project to begin with, and only on `/opt/ai`. Memory and
    disk on the host are exactly the choke points, so the limits target
    them (Safety).
-2. **Porter:** it runs on `self.disinto.ai` (165.227.129.61); rungs 3
-   and 4 target that host. The droplet that used to be the porter host,
-   159.89.14.107, no longer exists. On 2026-11-03 `disinto.ai` moved to
-   `self.disinto.ai` too: its Caddy serves the landing page (`site/`)
-   from `/var/www/disinto.ai/current` beside the forge and CI. The
-   factory reaches that host through two narrow accounts:
+2. **Porter:** it runs on `self.disinto.ai` (165.227.129.61); the reach
+   and deploy rungs target that host. The droplet that used to be the
+   porter host, 159.89.14.107, no longer exists. On 2026-11-03
+   `disinto.ai` moved to `self.disinto.ai` too: its Caddy serves the
+   landing page (`site/`) from `/var/www/disinto.ai/current` beside the
+   forge and CI. The factory reaches that host through two narrow
+   accounts:
    - `porter`, the door the dev agents use for Jev readings;
    - `factory`, the reverse tunnel the box holds open with autossh.
-   Neither is an admin login, so rung 3 begins with the access request.
+   Neither is an admin login, so the reach rung begins with the access
+   request.
 3. **Approval:** reuse the vault gate the architect's pitches already go
    through: merging the pitch PR is the decision, as for every vault
    action, and closing it unmerged rejects the pitch (The planner).
 4. **Move:** undecided, "depends on what works". The requirement is that
-   the factory can test new versions of itself (rung 5).
+   the factory can test new versions of itself (the replicate rung).
 5. **Predictor budget:** one experiment every 2 days. The owner asked
    what a read-only experiment is. There is none: observation is not an
    experiment (The predictor).
+
+## Decisions (owner, 2026-11-04)
+
+1. **Provision waits.** The machine lacks the memory for LXD
+   sandboxes. The provision rung becomes rung 3 and starts on
+   DigitalOcean: an action creates a throwaway droplet with a token
+   scoped to droplets, reports its address and deletes it. It comes
+   after update-self.
+2. **Update-self first.** Rung 2 is the factory updating itself in
+   place through a canary (`self-update.md`), behind a wall on what
+   grades, stops and gates it.
 
 ## Bootstrap (owner, 2026-10-07)
 
@@ -274,7 +299,7 @@ model.
 
 ## Open questions
 
-- **The account for rungs 3 and 4:** which account on `self.disinto.ai`
-  does the factory's key use? The `porter` user is the customer door;
-  updating the porter needs an admin account. The planner's first
-  access request asks for exactly this.
+- **The account for the reach and deploy rungs:** which account on
+  `self.disinto.ai` does the factory's key use? The `porter` user is the
+  customer door; updating the porter needs an admin account. The
+  planner's first access request asks for exactly this.

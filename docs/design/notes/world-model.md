@@ -83,8 +83,8 @@ with the owner's research notes, WhySutton). That is the
 bottom-up, slow version. Claims are the top-down, one-shot version: a
 prediction enters on one surprise, drafted by a model and admitted by a
 human, and the counting layer then verifies it. A held claim names
-something worth conditioning on, which is what option models (ladder
-rung 3) will need.
+something worth conditioning on, which is what option models (learning
+ladder, rung 3) will need.
 
 ## Defaults on this deployment
 

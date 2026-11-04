@@ -572,6 +572,7 @@ config ───► PER DEPLOYMENT, ops repo
               packs/stuck.toml     loop → stuck horizon (hours)
               packs/graded.toml    graded loop → grace period (hours)
               packs/repair.toml    repair stop rule: window, suspend_at, trial_days (§5)
+              packs/rollout.toml   update-self soak (notes/self-update.md)
               rubrics/<loop>.toml  reason → signature, attribution
               probes/*.sh          sprint effect probes and claim checks
               claims/<id>.toml     the world model (§6)
@@ -597,12 +598,13 @@ sprints (§2), vault actions and claims (§6).
 **Capabilities are claims.** What the factory can do in the world is
 part of the world model and is held like any claim: a statement plus a
 check, where the check is an action that tries. Examples: read a host's
-resources, start an LXC container, log in to the porter host, update
-the porter, stand up a new instance of itself and move to it. A held
-capability is an arm. A contradicted one is a lost arm. A capability
-with no claim file is a gap. Use is evidence: every action that uses a
-capability exercises it, and a dedicated exercise is needed only when
-the capability went unused for its window.
+resources, roll out a new version of itself through a canary, start a
+throwaway machine, log in to the porter host, update the porter, stand
+up a new instance of itself and move to it. A held capability is an arm.
+A contradicted one is a lost arm. A capability with no claim file is a
+gap. Use is evidence: every action that uses a capability exercises it,
+and a dedicated exercise is needed only when the capability went unused
+for its window.
 
 A capability can be lost in the repair loop too. `can-fix-<condition>`
 (§5) says the factory can clear a condition it watches; a suspension
@@ -623,26 +625,30 @@ them, in order (the capability ladder, `notes/organs.md`):
 
 1. **sense**: an action container reads the resources of the host it
    is sent to;
-2. **provision**: an action starts an LXC container. That is a
-   credential the planner requests, scoped to its own LXD project on
-   `/opt/ai`; nobody starts containers for it;
-3. **reach**: an action container logs in to the porter host. If it
+2. **update-self**: a merged change runs first on one agent, the
+   canary, beside the old version on the others, and replaces it
+   only after it held (`notes/self-update.md`);
+3. **provision**: an action starts a throwaway machine. That is a
+   credential the planner requests, scoped to droplets on
+   DigitalOcean at first (LXD on the machine waits for memory);
+   nobody starts machines for it;
+4. **reach**: an action container logs in to the porter host. If it
    cannot, the planner asks you for access, and that request is its
    proposal;
-4. **deploy**: an action updates the porter on the remote host;
-5. **replicate**: the factory builds a new instance of itself, tests
+5. **deploy**: an action updates the porter on the remote host;
+6. **replicate**: the factory builds a new instance of itself, tests
    it against its claims, and moves to it.
 
-Each rung is an `internal` sprint whose effect probe is the
-capability's check. A pitch goes through the existing vault gate: an
-ops-repo PR, the architect's Q&A, and the gate's approval as the
-decision (transparent for now, §3). The
-gardener then creates the milestone and files the sub-issues. Once its effect is met, the capability claim
-follows as an ops PR. Once it has arms, the planner pitches steps
-toward the vision as sprints with probes. Each sprint names the
-capability claims it `rests_on`, so a lost arm returns the sprints
-that need it (§6). Rungs above sense cross the vault gate
-(`policy.toml` tiers). Moving is always `high`.
+Each rung is an `internal` sprint whose effect probe is the capability's
+check. A pitch goes through the existing vault gate: an ops-repo PR, the
+architect's Q&A, and the gate's approval as the decision (transparent
+for now, §3). The gardener then creates the milestone and files the
+sub-issues. Once its effect is met, the capability claim follows as an
+ops PR. Once it has arms, the planner pitches steps toward the vision as
+sprints with probes. Each sprint names the capability claims it
+`rests_on`, so a lost arm returns the sprints that need it (§6). Rungs
+above sense, update-self excepted, cross the vault gate (`policy.toml`
+tiers). Moving is always `high`.
 
 **The predictor** is the expert in the future. It reads the same claims
 and the tape, picks the beliefs it doubts and the dangers it expects,
