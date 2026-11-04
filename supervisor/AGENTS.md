@@ -49,8 +49,9 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   unhealthy** classification (newest agent contact older than
   `WP_AGENT_CONTACT_MAX_S`, default 300 s, or ≥3 fast-failure pipelines/15m)
   and research-run findings from the preflight
-  "Research Runs" section (added #1322): P1 artifacts disk > 80%, P2 in-flight
-  run older than 70 min, P3 oldest open judgment issue older than 4 h;
+  "Research Runs" section (added #1322): P2 in-flight run older than 70 min,
+  P3 oldest open judgment issue older than 4 h (the P1 artifacts-disk recipe is
+  removed until research runs exist, #2100);
   P1 public endpoint DOWN after 2 failing ticks (`## Public Endpoints`, #1923);
   P1 unregistered Nomad service (`## Nomad Services`: MISSING, #1927);
   decide-actions documents the pre-session auto-recovery path

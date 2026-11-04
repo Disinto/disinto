@@ -22,13 +22,13 @@
 #      only, Artifacts Disk %, Oldest judgment: 5h (#12).
 #   3. With an ops root lacking runs/ (or OPS_REPO_ROOT unset), the function
 #      prints nothing (omission, not a failure).
-#   4. recipes.yaml carries the three recipes (artifacts-disk P1,
-#      run-heartbeat-stale P2, judgment-stale P3), each action: incident on
-#      the "Research Runs" section, and evaluate-recipes.sh implements the
-#      judgment_age_h_gt rule.
+#   4. recipes.yaml carries the two recipes (run-heartbeat-stale P2,
+#      judgment-stale P3), each action: incident on the "Research Runs"
+#      section — artifacts-disk is removed (#2100) — and evaluate-recipes.sh
+#      implements the judgment_age_h_gt rule.
 #   5. Where yq is available, evaluate-recipes.sh still parses recipes.yaml:
-#      a fixture preflight fires exactly the three new recipes (all
-#      incident), and an empty preflight fires none.
+#      a fixture preflight fires exactly the two recipes (all incident), and
+#      an empty preflight fires none.
 #
 # Run via: tools/run-acceptance.sh 1322
 # =============================================================================
@@ -123,7 +123,7 @@ _out_unset="$(run_rr "" "$JUDG_JSON")" \
   || ac_fail "__preflight_research_runs exited non-zero (OPS_REPO_ROOT unset)"
 [ -z "$_out_unset" ] || ac_fail "section printed although OPS_REPO_ROOT is unset: $_out_unset"
 
-# ── 4. recipes.yaml: three incident recipes wired to the new section ────────
+# ── 4. recipes.yaml: two incident recipes wired to the new section ───────────
 # Exact block comparison (name, severity, section, rule, threshold, action in
 # one shot per recipe). Parsed with awk — no yq dependency, so this also runs
 # on the busybox CI runner.
@@ -135,16 +135,10 @@ recipe_block() {
   ' "$RECIPES"
 }
 
-_expected='  - name: artifacts-disk
-    severity: P1
-    detect:
-      source: preflight
-      section: "Research Runs"
-      rule: disk_pct_gt
-      threshold: 80
-    action: incident'
-[ "$(recipe_block artifacts-disk)" = "$_expected" ] \
-  || ac_fail "artifacts-disk recipe block is not P1/disk_pct_gt/80/incident on Research Runs"
+# artifacts-disk is gone (#2100): artifacts/ is empty and the percentage on a
+# shared volume is the neighbours', so no recipe may match this section now.
+[ -z "$(recipe_block artifacts-disk)" ] \
+  || ac_fail "artifacts-disk recipe must be removed (#2100), got: $(recipe_block artifacts-disk)"
 _expected='  - name: run-heartbeat-stale
     severity: P2
     detect:
@@ -185,9 +179,9 @@ EOF
   if [ -s "$_err" ]; then
     ac_fail "evaluate-recipes.sh warned: $(head -n 1 "$_err")"
   fi
-  jq -e '(.fired | map(.name) | sort) == ["artifacts-disk","judgment-stale","run-heartbeat-stale"]' \
+  jq -e '(.fired | map(.name) | sort) == ["judgment-stale","run-heartbeat-stale"]' \
     <<<"$_fired" >/dev/null \
-    || ac_fail "expected exactly artifacts-disk, run-heartbeat-stale, judgment-stale to fire; got: $_fired"
+    || ac_fail "expected exactly run-heartbeat-stale and judgment-stale to fire (artifacts-disk removed, #2100); got: $_fired"
   jq -e '[.fired[] | select(.action != "incident")] | length == 0' \
     <<<"$_fired" >/dev/null \
     || ac_fail "fired Research Runs recipes must all be action: incident"
