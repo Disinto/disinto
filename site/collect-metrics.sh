@@ -9,7 +9,8 @@
 # Usage:
 #   bash site/collect-metrics.sh
 #
-# Cron: 0 */6 * * * cd /home/debian/dark-factory && bash site/collect-metrics.sh
+# Schedule: none. Nothing runs this today; run it from a disinto checkout:
+#   cd <checkout> && bash site/collect-metrics.sh
 # =============================================================================
 set -euo pipefail
 
