@@ -135,7 +135,7 @@ disinto/                 (code repo)
 │                  cut-release.sh — cut a release: bump, tag, push, wait for CI
 │                  images, check GHCR visibility (#1228)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
-│                  rollout.sh — the update-self rollout tool: canary evidence → verdict; moves live/canary by git push; `tools/rollout.sh tick` is the supervisor's rollout step (#2111, #2112, #2114; notes/self-update.md)
+│                  rollout.sh — the update-self rollout tool: canary evidence → verdict; moves live/canary by git push; `tools/rollout.sh tick` is the supervisor's rollout step, promoting or rolling back the open rollout (#2111, #2112, #2113, #2114, #2115; notes/self-update.md)
 │                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
 │                  claim-proposals.sh — a merged claim becomes a claim-loop proposal (#1641)
 │                  tape-rejections.sh — a closed rejected issue the tape does not hold

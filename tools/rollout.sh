@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tools/rollout.sh — the update-self rollout tool (#2111, #2112, #2114)
+# tools/rollout.sh — the update-self rollout tool (#2111, #2112, #2113, #2114,
+# #2115)
 #
 # The rollout tool of the update-self rung (docs/design/notes/self-update.md,
 # "The flow"): it decides from the canary's evidence lines
@@ -67,29 +68,55 @@
 #     GET returns 1, and no such label files the issue without labels. Then
 #     POST ${FORGE_API}/issues with title, body and labels, built with jq -n,
 #     and print the new issue's .number; return 1 when the POST fails or the
-#     answer has no number (#2113). Nothing calls it yet: the rollback branch
-#     of the tick wires it in with #2115.
+#     answer has no number (#2113). The rollback branch of the tick calls it
+#     (#2115); a canary moved off the commit by hand files no issue.
 #
 #   rollout_tick
-#     One supervisor tick (#2114; the supervisor calls it per tick, #2116). The
-#     first half of a tick decides whether to act at all, and starts a rollout:
-#     when nothing is being rolled out and main is ahead of live, canary moves
-#     to main's head and the tape gets a proposal of loop `rollout` with that
-#     commit as its ref, plus one closed run for this tick (docs/design/notes/
-#     self-update.md, "Start" and "Records and the grade"). Steps in order,
-#     each ending the tick:
+#     One supervisor tick (#2114, #2115; the supervisor calls it per tick,
+#     #2116). A tick either watches the open rollout — promoting it or rolling
+#     it back — or, when none is open, decides whether to start one
+#     (docs/design/notes/self-update.md, "Start", "Watch", "Promote",
+#     "Roll back" and "Records and the grade"). Steps in order, each ending
+#     the tick:
 #       1. ${TAPE_DIR}/rollout/HOLD exists        -> "on hold"
 #       2. the pack has no soak_s or take_polls   -> "off: no pack"
 #       3. the canary's last take/poll line is not ref canary (its jobspec has
 #          no FACTORY_REF yet)                    -> "idle: <job> does not follow canary"
 #       4. rollout_heads fails                    -> "idle: no live/canary branch"
 #       5. live is not on main                    -> "ERROR: live <sha> is not on main"
-#       6. a rollout is already open              -> "open: <id>"
+#       6. a rollout is open (id, commit C): watch C with rollout_watch and
+#          log "open: <id>" (#2115):
+#            canary != C                         -> rolled back, reason "moved",
+#                                                   bit rolled_back 0, no issue
+#            verdict wait                        -> a closed run, "watching
+#                                                   <sha7>: <polls> polls, <soak_s>s"
+#            verdict promote                     -> live to C (on failure: a
+#                                                   run with status failed, the
+#                                                   rollout stays open); else the
+#                                                   outcome (promoted 1, smoke
+#                                                   <v.smoke>, numbers soak_s and
+#                                                   polls), a closed run, open =
+#                                                   null, "promoted <sha7>"
+#            verdict rollback                    -> canary forced back to live
+#                                                   (on failure: a run with
+#                                                   status failed, the rollout
+#                                                   stays open); else the outcome
+#                                                   (promoted 0, rolled_back 1),
+#                                                   a closed run, open = null,
+#                                                   blocked_main = main, "rolled
+#                                                   back <sha7>: <reason>", and
+#                                                   rollout_rollback_issue(C, the
+#                                                   commit's subject, the reason,
+#                                                   C's last 20 evidence lines);
+#                                                   a failed issue logs a WARNING
 #       7. canary differs from live               -> force canary back to live,
 #                                                   "canary reset to live"
 #       8. main equals live                       -> nothing
 #       9. main equals blocked_main               -> "waiting for main to move past <sha7>"
 #       10. start: canary to main, proposal, state, run -> "started <sha7>"
+#     A failed tape append logs a WARNING and changes no decision. After a
+#     rollback blocked_main is main's head at that moment: no rollout starts
+#     until main moves past it, so the next one takes the fix.
 #     Env seams: TAPE_DIR (default /srv/disinto/tape), ROLLOUT_GIT_DIR (default
 #     PROJECT_REPO_ROOT), ROLLOUT_CANARY_JOB (default agents-review-qwen),
 #     ROLLOUT_PACK_FILE (default ${OPS_REPO_ROOT:-}/packs/rollout.toml),
@@ -109,7 +136,8 @@
 # functions without running anything.
 #
 # Tests: tests/acceptance/issue-2111.sh, tests/acceptance/issue-2112.sh,
-# tests/acceptance/issue-2113.sh, tests/acceptance/issue-2114.sh.
+# tests/acceptance/issue-2113.sh, tests/acceptance/issue-2114.sh,
+# tests/acceptance/issue-2115.sh.
 # =============================================================================
 set -euo pipefail
 
@@ -351,7 +379,7 @@ Find why the canary failed on this commit and fix it on \`main\`. No rollout sta
   printf '%s\n' "$number"
 }
 
-# ── the tick: start a rollout when main is ahead of live (#2114) ──────────────
+# ── the tick: start, watch, promote or roll back (#2114, #2115) ───────────────
 # The supervisor runs `tools/rollout.sh tick` every tick (#2116). The tick's
 # clock and paths are env seams so a test can run it hermetically.
 
@@ -414,6 +442,27 @@ _rollout_state_open() {
       --arg current "$(_rollout_state_read "$file")" '
       ((try ($current | fromjson)) // {})
       + {open: {id: $id, commit: $commit, moved_at: $moved}, blocked_main: null}' \
+      >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$file"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# _rollout_state_close FILE BLOCKED_MAIN — close the rollout this tick decided
+# about: open = null, blocked_main = BLOCKED_MAIN (an empty argument keeps the
+# current value), every other key of the state kept. Written to a temp file in
+# the same directory, then moved.
+_rollout_state_close() {
+  local file="$1" blocked="${2:-}" dir tmp
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  tmp="$(mktemp "$dir/state.XXXXXX" 2>/dev/null)" || return 1
+  if jq -cn --arg blocked "$blocked" --arg current "$(_rollout_state_read "$file")" '
+      ((try ($current | fromjson)) // {})
+      + {open: null}
+      + (if $blocked != "" then {blocked_main: $blocked} else {} end)' \
       >"$tmp" 2>/dev/null; then
     mv "$tmp" "$file"
     return 0
@@ -486,11 +535,107 @@ rollout_tick() {
   local state
   state="$(_rollout_state_read "$state_file")"
 
-  # 6. One rollout at a time: the open one is watched by the next steps.
-  local open_id
+  # 6. One rollout at a time: the open one is watched, promoted or rolled
+  #    back (#2115). C is the open commit, ID its proposal.
+  local open_id open_commit open_moved
   open_id="$(printf '%s' "$state" | jq -r '.open.id // empty' 2>/dev/null)" || open_id=""
   if [ -n "$open_id" ]; then
+    open_commit="$(printf '%s' "$state" | jq -r '.open.commit // empty' 2>/dev/null)" || open_commit=""
+    open_moved="$(printf '%s' "$state" | jq -r '.open.moved_at // 0' 2>/dev/null)" || open_moved=0
     _rollout_log "open: ${open_id}"
+
+    local v verdict reason started duration_s
+    started="$(stats_epoch_to_iso "$now")"
+    duration_s=0
+    if ! v="$(rollout_watch "$evidence" "$open_commit" "$open_moved" "$now" "$soak" "$take_polls")"; then
+      _rollout_log "ERROR: cannot watch the rollout of ${open_commit}"
+      return 0
+    fi
+    if ! verdict="$(printf '%s' "$v" | jq -r '.verdict // "wait"' 2>/dev/null)"; then
+      _rollout_log "ERROR: unreadable watch verdict for ${open_commit}"
+      return 0
+    fi
+
+    local rolled
+    if [ "$canary" != "$open_commit" ]; then
+      # Someone moved canary off the open commit: it can no longer soak.
+      reason="moved"
+      rolled=0
+    elif [ "$verdict" = "wait" ]; then
+      local polls soak
+      polls="$(printf '%s' "$v" | jq -r '.polls // 0' 2>/dev/null)" || polls=0
+      soak="$(printf '%s' "$v" | jq -r '.soak_s // 0' 2>/dev/null)" || soak=0
+      if ! tape_run "$open_id" supervisor rollout "$started" "$started" '1' \
+          "{\"duration_s\":${duration_s}}" completed >/dev/null 2>&1; then
+        _rollout_log "WARNING: tape: failed to append the run of ${open_id}"
+      fi
+      _rollout_log "watching ${open_commit:0:7}: ${polls} polls, ${soak}s"
+      return 0
+    elif [ "$verdict" = "promote" ]; then
+      if ! rollout_move "$dir" live "$open_commit"; then
+        _rollout_log "ERROR: cannot move live to ${open_commit}"
+        if ! tape_run "$open_id" supervisor rollout "$started" "$started" '1' \
+            "{\"duration_s\":${duration_s}}" failed >/dev/null 2>&1; then
+          _rollout_log "WARNING: tape: failed to append the run of ${open_id}"
+        fi
+        return 0
+      fi
+      if ! tape_outcome "$open_id" \
+          "$(printf '%s' "$v" | jq -c '{promoted: 1, rolled_back: 0, smoke: (.smoke // 0)}')" \
+          "$(printf '%s' "$v" | jq -c '{soak_s: (.soak_s // 0), polls: (.polls // 0)}')" \
+          '{}' '[]' >/dev/null 2>&1; then
+        _rollout_log "WARNING: tape: failed to append the outcome of ${open_id}"
+      fi
+      if ! tape_run "$open_id" supervisor rollout "$started" "$started" '1' \
+          "{\"duration_s\":${duration_s}}" completed >/dev/null 2>&1; then
+        _rollout_log "WARNING: tape: failed to append the run of ${open_id}"
+      fi
+      if ! _rollout_state_close "$state_file" ""; then
+        _rollout_log "WARNING: failed to write ${state_file}"
+      fi
+      _rollout_log "promoted ${open_commit:0:7}"
+      return 0
+    else
+      reason="$(printf '%s' "$v" | jq -r '.reason // ""' 2>/dev/null)" || reason=""
+      rolled=1
+    fi
+
+    # Roll back: the canary failed on the commit, or moved off it by hand
+    # (reason "moved": no issue is filed for that).
+    if ! rollout_move "$dir" canary "$live" force; then
+      _rollout_log "ERROR: cannot roll canary back to ${live}"
+      if ! tape_run "$open_id" supervisor rollout "$started" "$started" '1' \
+          "{\"duration_s\":${duration_s}}" failed >/dev/null 2>&1; then
+        _rollout_log "WARNING: tape: failed to append the run of ${open_id}"
+      fi
+      return 0
+    fi
+    if ! tape_outcome "$open_id" \
+        "$(printf '%s' "$v" | jq -c --argjson rolled "$rolled" \
+            '{promoted: 0, rolled_back: $rolled, smoke: (.smoke // 0)}')" \
+        "$(printf '%s' "$v" | jq -c '{soak_s: (.soak_s // 0), polls: (.polls // 0)}')" \
+        '{}' '[]' >/dev/null 2>&1; then
+      _rollout_log "WARNING: tape: failed to append the outcome of ${open_id}"
+    fi
+    if ! tape_run "$open_id" supervisor rollout "$started" "$started" '1' \
+        "{\"duration_s\":${duration_s}}" completed >/dev/null 2>&1; then
+      _rollout_log "WARNING: tape: failed to append the run of ${open_id}"
+    fi
+    if ! _rollout_state_close "$state_file" "$main"; then
+      _rollout_log "WARNING: failed to write ${state_file}"
+    fi
+    _rollout_log "rolled back ${open_commit:0:7}: ${reason}"
+
+    # One dev issue names the commit and its evidence, so the fix becomes the
+    # next rollout. A failed filing is a warning, not a decision.
+    if [ "$reason" != "moved" ]; then
+      local subject issue_evidence
+      subject="$(git -C "$dir" log -1 --format=%s "$open_commit" 2>/dev/null)" || subject=""
+      issue_evidence="$(grep -F "$open_commit" "$evidence" 2>/dev/null | tail -20)" || issue_evidence=""
+      if ! rollout_rollback_issue "$open_commit" "$subject" "$reason" "$issue_evidence" >/dev/null 2>&1; then
+        _rollout_log "WARNING: could not file the dev issue for ${open_commit:0:7}"
+      fi
+    fi
     return 0
   fi
 
