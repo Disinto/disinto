@@ -183,6 +183,27 @@ ac_dsh_seed_fixtures() {
   printf 'provider: xai\nbaseURL: https://api.x.ai/v1\n' > "$dir/settings-xai.yaml"
 }
 
+# ac_git_ops_origin <dir> — build a hermetic bare git origin plus a work clone
+# with one "ops config" commit, shared by the ops-clone acceptance tests
+# (issue-1653.sh, issue-2088.sh) so the fixture is not duplicated file-to-file
+# (duplicate-detection). Sets globals ORIGIN_DIR (the bare origin) and
+# WORK_DIR (the clone with the initial commit). Requires `git`.
+ac_git_ops_origin() {
+  local dir="$1"
+  ORIGIN_DIR="$dir/origin"
+  WORK_DIR="$dir/origin-work"
+  git init -b main --bare "$ORIGIN_DIR"
+  mkdir -p "$WORK_DIR/packs"
+  printf '# ops config\n' > "$WORK_DIR/packs/ops-config.toml"
+  git -C "$WORK_DIR" init -b main
+  git -C "$WORK_DIR" config user.name "ops-test"
+  git -C "$WORK_DIR" config user.email "ops-test@example.com"
+  git -C "$WORK_DIR" add -A
+  git -C "$WORK_DIR" commit -m "initial ops commit"
+  git -C "$WORK_DIR" remote add origin "$ORIGIN_DIR"
+  git -C "$WORK_DIR" push --quiet origin main
+}
+
 # ac_has_call_matching <pattern> — return 0 if any element of the test's
 # global CALLS array contains <pattern> as a substring.
 # shellcheck disable=SC2154  # CALLS is defined by the sourcing test
