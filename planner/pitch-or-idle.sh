@@ -56,20 +56,29 @@ _planner_pitch_slug() {
 # _planner_rung_pitch_write RUNG DEST — write RUNG's pitch to DEST and print
 # its title. Return 1 for an unknown rung. The paragraph ends with the
 # sentence the owner reads: the planner pitches the rung and does not run it.
-# No filer block, no sub-issues. The effect file is not consulted.
+# No filer block, no sub-issues. The effect file is not consulted. Each rung
+# carries its own soak (#1978); update-self aims at level `made` with a 7-day
+# soak (#2123).
 _planner_rung_pitch_write() {
   local rung="$1" dest="$2"
-  local title effect paragraph
+  local title effect paragraph level="" soak="14d"
   case "$rung" in
     sense)
       title="Sense"
       effect="probes/can-sense.sh"
       paragraph="An action container on the factory host runs a read-only inventory (CPU, memory, disk, docker, LXD) and stores it as an artifact."
       ;;
+    update-self)
+      title="Self-update through a canary"
+      effect="probes/can-update-self.sh"
+      paragraph="A merged change runs first on one agent, the canary, beside the old version on the others, and replaces it on all of them only after it held; a change that fails is rolled back."
+      level="made"
+      soak="7d"
+      ;;
     provision)
       title="Provision"
       effect="probes/can-provision.sh"
-      paragraph='An action starts a named LXC container in its own LXD project, on ai-pool (`/opt/ai`) only, reports its address, and deletes it.'
+      paragraph="An action creates a throwaway droplet on DigitalOcean with a token scoped to droplets, reports its address, and deletes it."
       ;;
     reach)
       title="Reach the porter"
@@ -90,6 +99,12 @@ _planner_rung_pitch_write() {
       return 1
       ;;
   esac
+  # A rung with no level prints no level line, leaving its file byte-identical
+  # to the pre-#2123 pitch.
+  local level_line=""
+  if [ -n "$level" ]; then
+    level_line="level: ${level}"$'\n'
+  fi
   cat >"$dest" <<EOF
 # Sprint: ${title}
 
@@ -99,9 +114,9 @@ ${paragraph} The planner pitches it and does not run it.
 
 <!-- sprint:begin -->
 class: internal
-effect: ${effect}
+${level_line}effect: ${effect}
 expect: >= 1
-soak: 14d
+soak: ${soak}
 <!-- sprint:end -->
 EOF
   printf '%s\n' "$title"

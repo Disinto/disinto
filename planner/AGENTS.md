@@ -64,7 +64,9 @@ planner formula.
   the pull is posted. Returns 0 when `planner-bot` already has an open
   `architect:` PR. Called by `planner/pitch-or-idle.sh`.
 - `planner/pitch-or-idle.sh` — `planner_pitch_or_idle` opens the lowest
-  missing rung as a pitch, prints `held` when one is already open, or prints
+  missing rung as a pitch (each rung has its own pitch text; `update-self`
+  aims at level `made` with a 7-day soak, #2123), prints `held` when one is
+  already open, or prints
   `session`. `planner_publish_session_pitch` opens the session pitch. Does
   not source `lib/env.sh`. Does not call `agent_run`.
 - `planner/gaps.sh` — `planner_claim_gaps` prints the challenged `can-*`
