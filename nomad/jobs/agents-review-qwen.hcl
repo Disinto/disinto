@@ -209,6 +209,11 @@ job "agents-review-qwen" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "review"
+        # The canary (#2117, docs/design/notes/self-update.md): follows the
+        # canary branch in its own checkout, on this job's data volume, so
+        # the shared /home/agent/repos/_factory keeps following live.
+        FACTORY_REF        = "canary"
+        FACTORY_CHECKOUT   = "/home/agent/data/_factory"
         # The only reviewer since the Grok agents were removed (2026-11-01):
         # no REVIEW_SKIP_AUTHORS, so it reviews every author's PRs.
 
