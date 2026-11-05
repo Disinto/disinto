@@ -509,6 +509,10 @@ pr_merge() {
         return 0
       fi
       _prl_merge_failure_diagnostics "$pr_json"
+      # The wall (#2122): a PR that changes a protected file tells the owner once.
+      if declare -F wall_notice_once >/dev/null 2>&1; then
+        wall_notice_once "$pr_num" "$pr_json" || true
+      fi
       _PR_MERGE_ERROR="blocked (HTTP 405): ${body}${_PRL_MERGE_DETAIL}"
       _prl_log "PR #${pr_num} merge blocked: ${_PR_MERGE_ERROR}"
       return 2
