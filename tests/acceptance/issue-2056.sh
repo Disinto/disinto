@@ -6,8 +6,8 @@
 #
 # planner/gaps.sh sources lib/claims.sh — not lib/env.sh, no network — and
 # planner_claim_gaps prints the ids from claim_ids that match ^can-, are not
-# ladder rungs (^can-(sense(-[a-z0-9-]+)?|provision|reach-porter|
-# deploy-porter|replicate)$), and are challenged in
+# ladder rungs (^can-(sense(-[a-z0-9-]+)?|update-self|provision|
+# reach-porter|deploy-porter|replicate)$), and are challenged in
 # ${CLAIMS_CATALOG:-${OPS_REPO_ROOT:-}/catalog/claims.md}: one id per line,
 # sorted; nothing when none match or the catalog is missing; always rc 0.
 #

@@ -2,18 +2,20 @@
 # =============================================================================
 # planner/gaps.sh — the challenged can-* claims the ladder cannot name (#2056)
 #
-# The ladder (planner/ladder.sh) knows five rungs; a can-* claim outside them
-# is invisible there. A suspended remedy is a named gap (docs/design/
-# proposal-loop.md §5, §8): the planner pitches the step that would add the
-# missing capability, after the ladder. Which step that is, bash cannot know
+# The ladder (planner/ladder.sh) names the capability rungs; a can-* claim
+# outside them is invisible there. A suspended remedy is a named gap
+# (docs/design/proposal-loop.md §5, §8): the planner pitches the step that
+# would add the missing capability, after the ladder. Which step that is, bash
+# cannot know
 # (for disk-pressure it was the sense rung), so this reader only names the
 # gap and the planning session pitches it.
 #
 # Function (sourced; called by planner/planner-run.sh):
 #   planner_claim_gaps
 #     -> the ids from claim_ids (lib/claims.sh) that match ^can-, are not a
-#        rung id (^can-(sense(-[a-z0-9-]+)?|provision|reach-porter|
-#        deploy-porter|replicate)$ — the ladder's own patterns), and whose
+#        rung id (^can-(sense(-[a-z0-9-]+)?|update-self|provision|
+#        reach-porter|deploy-porter|replicate)$ — the ladder's own patterns),
+#        and whose
 #        row in the catalog has status challenged. One id per line, sorted
 #        (claim_ids order). Nothing when none match or the catalog is
 #        missing. Always returns 0. No arguments.
@@ -72,7 +74,7 @@ planner_claim_gaps() {
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     [[ "$id" =~ ^can- ]] || continue
-    if [[ "$id" =~ ^can-(sense(-[a-z0-9-]+)?|provision|reach-porter|deploy-porter|replicate)$ ]]; then
+    if [[ "$id" =~ ^can-(sense(-[a-z0-9-]+)?|update-self|provision|reach-porter|deploy-porter|replicate)$ ]]; then
       continue
     fi
     [ -n "${challenged[$id]:-}" ] || continue

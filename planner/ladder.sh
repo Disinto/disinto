@@ -2,8 +2,9 @@
 # =============================================================================
 # planner/ladder.sh — name the lowest missing capability rung (#1975)
 #
-# The capability ladder (docs/design/notes/organs.md) is sense, provision,
-# reach, deploy, replicate. claim_ids (lib/claims.sh) lists the claim files.
+# The capability ladder (docs/design/notes/organs.md) is sense, update-self,
+# provision, reach, deploy, replicate. claim_ids (lib/claims.sh) lists the
+# claim files.
 # Status lives in the catalog, not in the file.
 #
 # Function (sourced; called by planner/pitch-or-idle.sh):
@@ -14,11 +15,12 @@
 #        decision. No arguments.
 #
 # A claim id matches a rung when:
-#   sense      ^can-sense(-[a-z0-9-]+)?$
-#   provision  can-provision
-#   reach      can-reach-porter
-#   deploy     can-deploy-porter
-#   replicate  can-replicate
+#   sense       ^can-sense(-[a-z0-9-]+)?$
+#   update-self ^can-update-self$
+#   provision   can-provision
+#   reach       can-reach-porter
+#   deploy      can-deploy-porter
+#   replicate   can-replicate
 #
 # Catalog: ${CLAIMS_CATALOG:-${OPS_REPO_ROOT:-}/catalog/claims.md}. Rows
 # split on `|`. A leading `|` is the markdown-table marker (the claims
@@ -72,7 +74,7 @@ ladder_lowest_gap() {
     done < "$catalog"
   fi
 
-  for rung in sense provision reach deploy replicate; do
+  for rung in sense update-self provision reach deploy replicate; do
     matched=0
     challenged_match=0
     if [ "${#ids_arr[@]}" -gt 0 ]; then
@@ -80,6 +82,9 @@ ladder_lowest_gap() {
         case "$rung" in
           sense)
             [[ "$id" =~ ^can-sense(-[a-z0-9-]+)?$ ]] || continue
+            ;;
+          update-self)
+            [ "$id" = "can-update-self" ] || continue
             ;;
           provision)
             [ "$id" = "can-provision" ] || continue

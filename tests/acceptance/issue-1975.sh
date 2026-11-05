@@ -6,9 +6,9 @@
 #
 # planner/ladder.sh (called by planner/pitch-or-idle.sh) sources lib/claims.sh and does not source
 # lib/env.sh. ladder_lowest_gap prints the lowest rung of
-# sense, provision, reach, deploy, replicate that no claim id matches, or
-# that any matching id has catalog status challenged. Nothing when there is
-# no gap. Always rc 0 for that decision. No network, no writes.
+# sense, update-self, provision, reach, deploy, replicate that no claim id
+# matches, or that any matching id has catalog status challenged. Nothing
+# when there is no gap. Always rc 0 for that decision. No network, no writes.
 #
 # Hermetic: a temp CLAIMS_DIR and CLAIMS_CATALOG. No forge, no agent.
 #
@@ -99,22 +99,23 @@ ac_assert_eq "$OUT" "sense" \
 ac_assert_eq "$RC" "0" "empty CLAIMS_DIR must return 0 (rc=$RC)"
 [ -z "$ERR" ] || ac_fail "empty CLAIMS_DIR must not print stderr (got: $ERR)"
 
-# ── AC2: held can-sense-box, no other can-* claim, prints provision ──────────
-ac_log "AC2: held can-sense-box prints provision"
+# ── AC2: held can-sense-box, no other can-* claim, prints update-self ────────
+ac_log "AC2: held can-sense-box prints update-self"
 add_claim can-sense-box
 add_claim dev-comes-back
 write_catalog \
   '| can-sense-box | internal | held | 1 | 1 | - | sense |' \
   '| can-provision | internal | held | 1 | 1 | - | catalog row is not a claim file |'
 run_ladder
-ac_assert_eq "$OUT" "provision" \
-  "held can-sense-box must print provision (got '$OUT') [stderr: $ERR]"
+ac_assert_eq "$OUT" "update-self" \
+  "held can-sense-box must print update-self (got '$OUT') [stderr: $ERR]"
 ac_assert_eq "$RC" "0" "held can-sense-box must return 0 (rc=$RC)"
 [ -z "$ERR" ] || ac_fail "held can-sense-box must not print stderr (got: $ERR)"
 
-# ── AC3: all five present, none challenged, prints nothing ───────────────────
-ac_log "AC3: all five present, none challenged, prints nothing"
+# ── AC3: all six present, none challenged, prints nothing ────────────────────
+ac_log "AC3: all six present, none challenged, prints nothing"
 add_claim can-sense
+add_claim can-update-self
 add_claim can-provision
 add_claim can-reach-porter
 add_claim can-deploy-porter
@@ -123,6 +124,7 @@ add_claim can-replicate
 # not-a-rung challenged must not open a gap on a rung it does not match.
 write_catalog \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
+  '| can-update-self | internal | held | 1 | 1 | - | update self |' \
   '| can-sense-box | internal | held | 1 | 1 | - | sense host |' \
   '| can-provision | internal | provisional | 0 | - | - | provision |' \
   '| can-reach-porter | internal | not proposed | 0 | - | - | reach |' \
@@ -130,11 +132,13 @@ write_catalog \
   '| not-a-rung | internal | challenged | 1 | 0 | - | unrelated |'
 run_ladder
 ac_assert_eq "$OUT" "" \
-  "all five held-or-other must print nothing (got '$OUT') [stderr: $ERR]"
-ac_assert_eq "$RC" "0" "all five present must return 0 (rc=$RC)"
-[ -z "$ERR" ] || ac_fail "all five present must not print stderr (got: $ERR)"
+  "all six held-or-other must print nothing (got '$OUT') [stderr: $ERR]"
+ac_assert_eq "$RC" "0" "all six present must return 0 (rc=$RC)"
+[ -z "$ERR" ] || ac_fail "all six present must not print stderr (got: $ERR)"
 
 # ── AC4: can-provision challenged, can-sense held, prints provision ──────────
+# The can-update-self claim added in AC3 is held, so the ladder passes rung 2
+# and names provision as the gap.
 ac_log "AC4: challenged can-provision prints provision"
 write_catalog \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
@@ -160,7 +164,7 @@ ac_log "missing catalog is not challenged"
 rm -f "$CATALOG"
 run_ladder
 ac_assert_eq "$OUT" "" \
-  "missing catalog with all five claims must print nothing (got '$OUT')"
+  "missing catalog with all six claims must print nothing (got '$OUT')"
 ac_assert_eq "$RC" "0" "missing catalog must return 0 (rc=$RC)"
 [ -z "$ERR" ] || ac_fail "missing catalog must not print stderr (got: $ERR)"
 
