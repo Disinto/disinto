@@ -518,6 +518,10 @@ if [ "$RECIPE_EVAL_OK" = 1 ]; then
   repair_tape_tick
 fi
 
+# Rollout (#2116): one step of the update-self rollout per tick, on this
+# checkout's code; it never fails the tick (docs/design/notes/self-update.md).
+bash "$FACTORY_ROOT/tools/rollout.sh" tick >>"$LOG_FILE" 2>&1 || log "WARNING: rollout tick failed"
+
 # repair_direct_dispatch — run the direct-action scripts for the recipes that
 # fired this tick (fast path, #1533). For each real `action_script`, if the
 # state file has no open proposal for that recipe, write one first
