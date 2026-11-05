@@ -87,13 +87,13 @@ run_wall_notice() {
     else
       wall_notice_once "$pr"
     fi
-  ) >"$TMP_DIR/out" 2>"$TMP_DIR/err" || RC=$?
-  OUT="$(cat "$TMP_DIR/out" 2>/dev/null)"
-  ERR="$(cat "$TMP_DIR/err" 2>/dev/null)"
+  ) >"$TMP_DIR/wn.stdout" 2>"$TMP_DIR/wn.stderr" || RC=$?
+  OUT="$(cat "$TMP_DIR/wn.stdout" 2>/dev/null || true)"
+  ERR="$(cat "$TMP_DIR/wn.stderr" 2>/dev/null || true)"
 }
 
-# txt_count <dir> — number of *.txt files directly in dir.
-txt_count() {
+# notice_count <dir> — number of *.txt files directly in dir.
+notice_count() {
   find "$1" -maxdepth 1 -name '*.txt' 2>/dev/null | wc -l | tr -d ' '
 }
 
@@ -105,7 +105,7 @@ NOTICES1="$TMP_DIR/notices-1"
 run_wall_notice "$TAPE1" "$NOTICES1" 5 '{"html_url":"https://f/p/5"}'
 ac_assert_eq "$RC" "0" "wall_notice_once must always return 0 (got $RC): $ERR"
 [ -z "$OUT" ] || ac_fail "wall_notice_once must print nothing to stdout (got: $OUT)"
-ac_assert_eq "$(txt_count "$NOTICES1")" "1" "exactly one notice file must be queued (got $(txt_count "$NOTICES1"))"
+ac_assert_eq "$(notice_count "$NOTICES1")" "1" "exactly one notice file must be queued (got $(notice_count "$NOTICES1"))"
 NOTICE1="$(find "$NOTICES1" -maxdepth 1 -name '*.txt')"
 TEXT1="$(cat "$NOTICE1")"
 case "$TEXT1" in
@@ -131,7 +131,7 @@ ac_assert_eq "$(grep -c '/pulls/5/files?limit=50' "$TMP_DIR/gets.txt" | tr -d ' 
 ac_log "AC2: a second call for PR 5 queues no new notice"
 run_wall_notice "$TAPE1" "$NOTICES1" 5 '{"html_url":"https://f/p/5"}'
 ac_assert_eq "$RC" "0" "the second call must return 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES1")" "1" "the marker must prevent a second notice (got $(txt_count "$NOTICES1"))"
+ac_assert_eq "$(notice_count "$NOTICES1")" "1" "the marker must prevent a second notice (got $(notice_count "$NOTICES1"))"
 
 # ── AC3: no wall hit -> no notice, no marker ──────────────────────────────────
 ac_log "AC3: PR 7 (README.md only) queues no notice and writes no marker"
@@ -139,7 +139,7 @@ TAPE3="$TMP_DIR/tape-3"
 NOTICES3="$TMP_DIR/notices-3"
 run_wall_notice "$TAPE3" "$NOTICES3" 7
 ac_assert_eq "$RC" "0" "wall_notice_once must return 0 with no hits (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES3")" "0" "no notice may be queued for an unwalled PR (got $(txt_count "$NOTICES3"))"
+ac_assert_eq "$(notice_count "$NOTICES3")" "0" "no notice may be queued for an unwalled PR (got $(notice_count "$NOTICES3"))"
 if [ -e "$TAPE3/wall/pr-7.told" ]; then
   ac_fail "no marker may be written when nothing hit the wall"
 fi
@@ -150,7 +150,7 @@ TAPE4="$TMP_DIR/tape-4"
 NOTICES4="$TMP_DIR/notices-4"
 run_wall_notice "$TAPE4" "$NOTICES4" 5 '{"html_url":"https://f/p/5"}' 1
 ac_assert_eq "$RC" "0" "a failed GET must still return 0 (got $RC): $ERR"
-ac_assert_eq "$(txt_count "$NOTICES4")" "0" "a failed GET must queue no notice (got $(txt_count "$NOTICES4"))"
+ac_assert_eq "$(notice_count "$NOTICES4")" "0" "a failed GET must queue no notice (got $(notice_count "$NOTICES4"))"
 if [ -e "$TAPE4/wall/pr-5.told" ]; then
   ac_fail "a failed GET must write no marker"
 fi
