@@ -33,8 +33,10 @@
 # https://forge.example/api/v1); TAPE_DIR and NOTICES_DIR come from
 # lib/notice.sh.
 #
-# Nothing calls this yet: the dev merge path wires it in (#2122, step 17).
-# Tests: tests/acceptance/issue-2121.sh.
+# Called from pr_merge's 405 branch (lib/pr-lifecycle.sh, #2122) when the
+# caller sources this module; dev/dev-poll.sh does, wiring it into the dev
+# merge paths.
+# Tests: tests/acceptance/issue-2121.sh, tests/acceptance/issue-2122.sh.
 # =============================================================================
 set -euo pipefail
 

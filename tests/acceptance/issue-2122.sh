@@ -16,7 +16,10 @@
 #      head SHA are identical to before — nothing else changes.
 #   3. dev/dev-poll.sh sources lib/wall-notice.sh; bash -n passes for
 #      lib/pr-lifecycle.sh and dev/dev-poll.sh.
-#   4. tests/acceptance/issue-1090-merge-block-reporting.sh still passes.
+#   4. The docs are not stale after the wiring: lib/AGENTS.md lists
+#      dev/dev-poll.sh as a sourcing caller of lib/wall-notice.sh, and the
+#      lib/wall-notice.sh header no longer claims nothing calls it.
+#   5. tests/acceptance/issue-1090-merge-block-reporting.sh still passes.
 # =============================================================================
 set -euo pipefail
 
@@ -119,7 +122,18 @@ bash -n "$REPO_ROOT/lib/pr-lifecycle.sh" \
 bash -n "$REPO_ROOT/dev/dev-poll.sh" \
   || ac_fail "bash -n fails on dev/dev-poll.sh"
 
-# ── 4. The existing merge-block acceptance test still passes ─────────────────
+# ── 4. The docs describe the wiring, they are not stale ──────────────────────
+agents_row=$(grep 'lib/wall-notice\.sh' "$REPO_ROOT/lib/AGENTS.md")
+case "$agents_row" in
+  *"none yet"*) ac_fail "lib/AGENTS.md still says lib/wall-notice.sh is sourced by 'none yet'" ;;
+  *"dev/dev-poll.sh"*) ;;
+  *) ac_fail "lib/AGENTS.md must list dev/dev-poll.sh as a source of lib/wall-notice.sh: $agents_row" ;;
+esac
+if grep -q 'Nothing calls this yet' "$REPO_ROOT/lib/wall-notice.sh"; then
+  ac_fail "lib/wall-notice.sh header still claims nothing calls it"
+fi
+
+# ── 5. The existing merge-block acceptance test still passes ─────────────────
 out1090=$(bash "$REPO_ROOT/tests/acceptance/issue-1090-merge-block-reporting.sh" 2>&1) || {
   ac_fail "issue-1090-merge-block-reporting.sh must still pass: $out1090"
 }
