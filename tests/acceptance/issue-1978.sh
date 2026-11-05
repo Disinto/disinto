@@ -154,7 +154,7 @@ PITCH_FILE="$(sed -n '3p' "$T/open-args")"
 grep -qF 'effect: probes/can-reach-porter.sh' "$PITCH_FILE" \
   || ac_fail "reach pitch must name probes/can-reach-porter.sh"
 
-ac_log "provision paragraph names ai-pool and keeps the pool path"
+ac_log "provision paragraph names a throwaway droplet on DigitalOcean"
 clear_open
 (
   planner_pitch_pending() { return 0; }
@@ -162,8 +162,8 @@ clear_open
   planner_pitch_open() { record_open "$@"; }
   planner_pitch_or_idle >/dev/null
 )
-grep -qF 'ai-pool (`/opt/ai`) only' "$(sed -n '3p' "$T/open-args")" \
-  || ac_fail "provision paragraph must name ai-pool (/opt/ai)"
+grep -qF 'throwaway droplet on DigitalOcean' "$(sed -n '3p' "$T/open-args")" \
+  || ac_fail "provision paragraph must name a throwaway droplet on DigitalOcean"
 
 ac_log "AC3: an empty ladder prints session and does not open"
 clear_open
