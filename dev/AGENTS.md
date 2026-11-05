@@ -79,7 +79,7 @@ not held; a re-review unblocks it automatically. **Merge-block escalation (#1090
 reason on the same head — after `MERGE_BLOCK_RETRY_LIMIT` (default 3) identical
 failures, `escalate_merge_blocked_pr()` posts the full untruncated forge response,
 labels the issue `blocked`, drops `in-progress`, and callers stop retrying and skip
-the dev-agent fallback (return code 2). **Tape proposal emission (#1398)**: when the
+the dev-agent fallback (return code 2). **The wall (#2122)**: a merge refused with 405 also calls `wall_notice_once` (`lib/wall-notice.sh`): when the PR changes a protected file, the owner is told once; only `disinto-admin` can merge it. **Tape proposal emission (#1398)**: when the
 pick resolves, `emit_tape_proposal()` appends one `{"type":"proposal","loop":"dev",...}`
 record to the tape (`lib/tape.sh`) before launching dev-agent — class = the issue's
 milestone's sprint block `class:` line (`deploy`/`experiment`/`internal`, parsed via

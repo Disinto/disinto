@@ -50,6 +50,8 @@ source "$(dirname "$0")/../lib/signature.sh"
 # shellcheck source=../lib/catalog-forecast.sh
 # Kept (unused since #1632) so catalog_forecast can be re-enabled later.
 source "$(dirname "$0")/../lib/catalog-forecast.sh"
+# shellcheck source=../lib/wall-notice.sh
+source "$(dirname "$0")/../lib/wall-notice.sh"
 check_active dev
 
 # Initialize CI fix tracker (must be called before any tracker functions)
