@@ -35,7 +35,9 @@
 #   Optional overrides (unset = the defaults 1950/1952 rely on):
 #     HEALER_TEST_COOLDOWN_SECS, HEALER_TEST_ESCALATE_AFTER_SECS,
 #     HEALER_TEST_REMIND_SECS, HEALER_TEST_NOW, HEALER_TEST_NOTIFY_CMD,
-#     HEALER_TEST_PUBLIC_URLS (empty is kept: no public probing).
+#     HEALER_TEST_PUBLIC_URLS (empty is kept: no public probing),
+#     HEALER_TEST_LIVE_LAG (the command the tick runs for the live-lag check,
+#     #2119; default `true`, so no healer test ever reaches git)
 # healer_restart_lines        — count of `alloc restart ` in $STUB_LOG.
 # healer_restarts_of <alloc>  — count of restarts of alloc-<alloc>.
 # set_probe_code <key> <code> / clear_probe_code <key> — probe code files.
@@ -238,6 +240,7 @@ healer_run_once() {
   HEALER_PUBLIC_URLS="$public_urls" \
   HEALER_PUBLIC_FAILURES=3 \
   HEALER_PROBE_TIMEOUT_SECS=1 \
+  HEALER_LIVE_LAG="${HEALER_TEST_LIVE_LAG:-true}" \
   TAPE_DIR="$tape_dir" \
   FAKE_NOMAD_DATA="$DATA" \
   NOMAD_STUB_LOG="$STUB_LOG" \
