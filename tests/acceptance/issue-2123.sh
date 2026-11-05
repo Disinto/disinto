@@ -13,7 +13,8 @@
 # planner/ladder.sh is untouched: #2124 adds the rung to the ladder, so the
 # ladder never names a rung without a pitch.
 #
-# Hermetic: stubs for the ladder and the opener. No forge, no agent.
+# Hermetic: the shared rung-pitch stubs from tests/lib/acceptance-helpers.sh.
+# No forge, no agent.
 #
 # Acceptance: `bash tests/acceptance/issue-2123.sh` exits 0 and calls ac_pass.
 # =============================================================================
@@ -24,7 +25,7 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../../tests/lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash grep mktemp
+ac_require_cmd bash grep mktemp cmp
 IDLE="$REPO_ROOT/planner/pitch-or-idle.sh"
 LADDER="$REPO_ROOT/planner/ladder.sh"
 ac_assert_file "$IDLE" "planner/pitch-or-idle.sh is missing"
@@ -47,44 +48,16 @@ fi
 # shellcheck source=../../planner/pitch-or-idle.sh
 source "$IDLE"
 
-T="$(mktemp -d)"
-trap 'rm -rf "$T"' EXIT
-export OPS_REPO_ROOT="$T/ops"
-mkdir -p "$OPS_REPO_ROOT"
-
-# record_open — stub planner_pitch_open. Prints 9. Args land in $T/open-args.
-record_open() {
-  printf '%s\n' "$#" >"$T/open-argc"
-  printf '%s\n' "$@" >"$T/open-args"
-  printf '9\n'
-}
-
-clear_open() {
-  rm -f "$T/open-argc" "$T/open-args"
-}
-
-# rung_pitch RUNG — open RUNG's pitch through planner_pitch_or_idle with the
-# ladder and the opener stubbed. Prints the pitch file path.
-rung_pitch() {
-  local rung="$1" out
-  clear_open
-  out="$(
-    RUNG_NAME="$rung"
-    planner_pitch_pending() { return 0; }
-    ladder_lowest_gap() { printf '%s\n' "$RUNG_NAME"; }
-    planner_pitch_open() { record_open "$@"; }
-    planner_pitch_or_idle
-  )"
-  ac_assert_eq "$out" "opened 9" "the rung pitch must print opened <n> (got '$out')"
-  sed -n '3p' "$T/open-args"
-}
+BOX="$(mktemp -d)"
+trap 'rm -rf "$BOX"' EXIT
+ac_rung_fixture "$BOX"
 
 ac_log "AC1: the ladder printing update-self opens the canary pitch"
-PITCH="$(rung_pitch update-self)"
-ac_assert_eq "$(sed -n '1p' "$T/open-args")" "Self-update through a canary" \
+PITCH="$(ac_rung_pitch "$BOX" update-self)"
+ac_assert_eq "$(sed -n '1p' "$BOX/open-args")" "Self-update through a canary" \
   "update-self title passed to planner_pitch_open"
-ac_assert_eq "$(sed -n '2p' "$T/open-args")" "update-self" "update-self slug is the rung id"
-ac_assert_eq "$(sed -n '1p' "$T/open-argc")" "3" "a rung pitch takes no probe arguments"
+ac_assert_eq "$(sed -n '2p' "$BOX/open-args")" "update-self" "update-self slug is the rung id"
+ac_assert_eq "$(sed -n '1p' "$BOX/open-argc")" "3" "a rung pitch takes no probe arguments"
 grep -qF 'effect: probes/can-update-self.sh' "$PITCH" \
   || ac_fail "update-self pitch must name probes/can-update-self.sh"
 grep -qF 'level: made' "$PITCH" || ac_fail "update-self pitch must set level: made"
@@ -98,7 +71,7 @@ if grep -qF 'filer:begin' "$PITCH"; then
 fi
 
 ac_log "AC2: sense has no level line and keeps soak: 14d"
-PITCH="$(rung_pitch sense)"
+PITCH="$(ac_rung_pitch "$BOX" sense)"
 grep -qF 'soak: 14d' "$PITCH" || ac_fail "sense pitch must keep soak: 14d"
 if grep -qF 'level:' "$PITCH"; then
   ac_fail "a rung with no level must print no level line"
@@ -107,7 +80,7 @@ grep -qF 'effect: probes/can-sense.sh' "$PITCH" \
   || ac_fail "sense pitch must keep effect: probes/can-sense.sh"
 
 ac_log "AC3: provision names DigitalOcean and not ai-pool"
-PITCH="$(rung_pitch provision)"
+PITCH="$(ac_rung_pitch "$BOX" provision)"
 grep -qF 'DigitalOcean' "$PITCH" || ac_fail "provision pitch must name DigitalOcean"
 if grep -qF 'ai-pool' "$PITCH"; then
   ac_fail "provision pitch must not name ai-pool"
@@ -116,34 +89,34 @@ if grep -qF 'level:' "$PITCH"; then
   ac_fail "provision pitch must have no level line"
 fi
 
-ac_log "AC4: reach and replicate files are byte-identical to the pre-#2123 pitch"
-golden() {
-  local title="$1" effect="$2" paragraph="$3"
-  cat <<EOF
-# Sprint: ${title}
-
-## What this enables
-
-${paragraph} The planner pitches it and does not run it.
-
-<!-- sprint:begin -->
-class: internal
-effect: ${effect}
-expect: >= 1
-soak: 14d
-<!-- sprint:end -->
-EOF
+# rung_golden TITLE EFFECT PARAGRAPH — the whole pitch body a rung with no
+# level and the default soak writes, byte for byte.
+rung_golden() {
+  {
+    printf '# Sprint: %s\n' "$1"
+    printf '\n%s\n' '## What this enables'
+    printf '\n%s The planner pitches it and does not run it.\n' "$3"
+    printf '\n%s\n' '<!-- sprint:begin -->'
+    printf '%s\n' 'class: internal'
+    printf 'effect: %s\n' "$2"
+    printf '%s\n' 'expect: >= 1'
+    printf '%s\n' 'soak: 14d'
+    printf '%s\n' '<!-- sprint:end -->'
+  }
 }
-PITCH="$(rung_pitch reach)"
-golden "Reach the porter" "probes/can-reach-porter.sh" \
+
+ac_log "AC4: reach and replicate files are byte-identical to the pre-#2123 pitch"
+PITCH="$(ac_rung_pitch "$BOX" reach)"
+rung_golden "Reach the porter" "probes/can-reach-porter.sh" \
   "An action container logs in to the porter host, self.disinto.ai, and runs whoami and uname." \
   | cmp -s - "$PITCH" || ac_fail "reach pitch file must be byte-identical to today's"
-PITCH="$(rung_pitch replicate)"
-golden "Replicate" "probes/can-replicate.sh" \
+PITCH="$(ac_rung_pitch "$BOX" replicate)"
+rung_golden "Replicate" "probes/can-replicate.sh" \
   "Provision a container, install disinto at a ref, and run its acceptance tests and claim checks against the new instance." \
   | cmp -s - "$PITCH" || ac_fail "replicate pitch file must be byte-identical to today's"
 
 ac_log "issue-1978 still passes with the new provision paragraph"
-bash "$REPO_ROOT/tests/acceptance/issue-1978.sh" >/dev/null || ac_fail "issue-1978.sh must still pass"
+bash "$REPO_ROOT/tests/acceptance/issue-1978.sh" >/dev/null \
+  || ac_fail "issue-1978.sh must still pass"
 
 ac_pass

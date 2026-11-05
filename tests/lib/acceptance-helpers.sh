@@ -718,3 +718,45 @@ ac_pitch_file() {
     printf '%s\n' "<!-- filer:end -->"
   } >"$dest"
 }
+
+# ── Rung-pitch fixtures (issue-1978.sh; reused by issue-2123.sh) ──────────────
+# planner_pitch_or_idle opens the lowest missing rung as a pitch through
+# planner_pitch_open. A rung-pitch test stubs both in-process: the fixture dir
+# holds the fake ops repo plus the opener's recorded argv. These are the single
+# definition of that fixture, so two tests do not copy it file-to-file
+# (duplicate-detection, 5-line windows). The caller must have sourced
+# planner/pitch-or-idle.sh and pass a throwaway DIR.
+
+# ac_rung_fixture DIR — make DIR/ops the fake ops repo and clear the record.
+ac_rung_fixture() {
+  local dir="$1"
+  export OPS_REPO_ROOT="$dir/ops"
+  mkdir -p "$OPS_REPO_ROOT"
+  rm -f "$dir/open-argc" "$dir/open-args"
+}
+
+# ac_open_stub DIR — planner_pitch_open stand-in: argv count to DIR/open-argc,
+# argv (DIR excluded) to DIR/open-args, prints 9.
+ac_open_stub() {
+  local dir="$1"
+  shift
+  printf '%s\n' "$#" >"$dir/open-argc"
+  printf '%s\n' "$@" >"$dir/open-args"
+  printf '9\n'
+}
+
+# ac_rung_pitch DIR RUNG — stub the pending check, the ladder and the opener, run
+# planner_pitch_or_idle for RUNG, fail unless it printed `opened 9`, and print
+# the pitch file path the opener received.
+ac_rung_pitch() {
+  local dir="$1" rung="$2" out
+  out="$(
+    STUB_DIR="$dir" STUB_RUNG="$rung"
+    planner_pitch_pending() { return 0; }
+    ladder_lowest_gap() { printf '%s\n' "$STUB_RUNG"; }
+    planner_pitch_open() { ac_open_stub "$STUB_DIR" "$@"; }
+    planner_pitch_or_idle
+  )"
+  ac_assert_eq "$out" "opened 9" "rung '$rung' must print opened <n> (got '$out')"
+  sed -n '3p' "$dir/open-args"
+}

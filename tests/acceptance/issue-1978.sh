@@ -84,20 +84,7 @@ source "$IDLE"
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
-export OPS_REPO_ROOT="$T/ops"
-mkdir -p "$OPS_REPO_ROOT"
-
-# record_open — stub planner_pitch_open. Prints 9. Args land in $T/open-args.
-record_open() {
-  printf '%s\n' "$#" >"$T/open-argc"
-  printf '%s\n' "$@" >"$T/open-args"
-  printf '9\n'
-}
-
-# clear_open — drop the previous stub record.
-clear_open() {
-  rm -f "$T/open-argc" "$T/open-args"
-}
+ac_rung_fixture "$T"
 
 # assert_not_opened — the stub was not called.
 assert_not_opened() {
@@ -105,18 +92,10 @@ assert_not_opened() {
 }
 
 ac_log "AC1: ladder sense opens a pitch with slug sense and no filer block"
-clear_open
-OUT="$(
-  planner_pitch_pending() { return 0; }
-  ladder_lowest_gap() { printf 'sense\n'; }
-  planner_pitch_open() { record_open "$@"; }
-  planner_pitch_or_idle
-)"
-ac_assert_eq "$OUT" "opened 9" "planner_pitch_or_idle must print opened <n> (got '$OUT')"
+PITCH_FILE="$(ac_rung_pitch "$T" sense)"
 ac_assert_eq "$(sed -n '1p' "$T/open-args")" "Sense" "title passed to planner_pitch_open"
 ac_assert_eq "$(sed -n '2p' "$T/open-args")" "sense" "slug passed must be sense"
 ac_assert_eq "$(sed -n '1p' "$T/open-argc")" "3" "a rung pitch takes no probe arguments"
-PITCH_FILE="$(sed -n '3p' "$T/open-args")"
 grep -qF 'effect: probes/can-sense.sh' "$PITCH_FILE" \
   || ac_fail "pitch file must contain effect: probes/can-sense.sh"
 if grep -qF 'filer:begin' "$PITCH_FILE"; then
@@ -129,70 +108,49 @@ grep -qF 'expect: >= 1' "$PITCH_FILE" || ac_fail "rung pitch must set expect: >=
 grep -qF 'soak: 14d' "$PITCH_FILE" || ac_fail "rung pitch must set soak: 14d"
 
 ac_log "AC2: a missing probes/can-sense.sh still opens"
-clear_open
 [ ! -e "$OPS_REPO_ROOT/probes/can-sense.sh" ] || ac_fail "fixture must not contain the sense probe"
-OUT="$(
-  planner_pitch_pending() { return 0; }
-  ladder_lowest_gap() { printf 'sense\n'; }
-  planner_pitch_open() { record_open "$@"; }
-  planner_pitch_or_idle
-)"
-ac_assert_eq "$OUT" "opened 9" "a missing rung probe must still print opened (got '$OUT')"
+ac_rung_pitch "$T" sense >/dev/null
 
 ac_log "reach title is Reach the porter and the slug is the rung id"
-clear_open
-OUT="$(
-  planner_pitch_pending() { return 0; }
-  ladder_lowest_gap() { printf 'reach\n'; }
-  planner_pitch_open() { record_open "$@"; }
-  planner_pitch_or_idle
-)"
-ac_assert_eq "$OUT" "opened 9" "reach must open (got '$OUT')"
+PITCH_FILE="$(ac_rung_pitch "$T" reach)"
 ac_assert_eq "$(sed -n '1p' "$T/open-args")" "Reach the porter" "reach title"
 ac_assert_eq "$(sed -n '2p' "$T/open-args")" "reach" "reach slug is the rung id"
-PITCH_FILE="$(sed -n '3p' "$T/open-args")"
 grep -qF 'effect: probes/can-reach-porter.sh' "$PITCH_FILE" \
   || ac_fail "reach pitch must name probes/can-reach-porter.sh"
 
 ac_log "provision paragraph names a throwaway droplet on DigitalOcean"
-clear_open
-(
-  planner_pitch_pending() { return 0; }
-  ladder_lowest_gap() { printf 'provision\n'; }
-  planner_pitch_open() { record_open "$@"; }
-  planner_pitch_or_idle >/dev/null
-)
-grep -qF 'throwaway droplet on DigitalOcean' "$(sed -n '3p' "$T/open-args")" \
+PITCH_FILE="$(ac_rung_pitch "$T" provision)"
+grep -qF 'throwaway droplet on DigitalOcean' "$PITCH_FILE" \
   || ac_fail "provision paragraph must name a throwaway droplet on DigitalOcean"
 
 ac_log "AC3: an empty ladder prints session and does not open"
-clear_open
+ac_rung_fixture "$T"
 OUT="$(
   planner_pitch_pending() { return 0; }
   ladder_lowest_gap() { return 0; }
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_pitch_or_idle
 )"
 ac_assert_eq "$OUT" "session" "an empty ladder must print session (got '$OUT')"
 assert_not_opened "session"
 
 ac_log "AC4: a pending pitch prints held and does not open"
-clear_open
+ac_rung_fixture "$T"
 OUT="$(
   planner_pitch_pending() { printf '4\n'; }
-  ladder_lowest_gap() { printf 'sense\n'; record_open ladder-called; }
-  planner_pitch_open() { record_open "$@"; }
+  ladder_lowest_gap() { printf 'sense\n'; ac_open_stub "$T" ladder-called; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_pitch_or_idle
 )"
 ac_assert_eq "$OUT" "held" "a pending number must print held (got '$OUT')"
 assert_not_opened "held"
 
 ac_log "pending failure prints nothing and returns 1"
-clear_open
+ac_rung_fixture "$T"
 RC=0
 OUT="$(
   planner_pitch_pending() { return 1; }
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_pitch_or_idle
 )" || RC=$?
 ac_assert_eq "$RC" "1" "planner_pitch_pending failure must return 1 (rc=$RC)"
@@ -224,7 +182,7 @@ EOF
 }
 
 ac_log "AC5: missing ops probe plus a probe file opens with PROBE_SRC and PROBE_DEST"
-clear_open
+ac_rung_fixture "$T"
 PROBE="$T/probe.sh"
 printf 'echo 1\n' >"$PROBE"
 PITCH="$(write_pitch 'probes/new-thing.sh')"
@@ -233,7 +191,7 @@ export PLANNER_PROBE_FILE="$PROBE"
 rm -rf "$OPS_REPO_ROOT/probes"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "0" "publish with a probe file must return 0 (rc=$RC)"
@@ -243,36 +201,36 @@ ac_assert_eq "$(sed -n '4p' "$T/open-args")" "$PROBE" "PROBE_SRC must be PLANNER
 ac_assert_eq "$(sed -n '5p' "$T/open-args")" "probes/new-thing.sh" "PROBE_DEST must be the effect path"
 
 ac_log "AC6: missing ops probe and no probe file returns 0 and does not open"
-clear_open
+ac_rung_fixture "$T"
 export PLANNER_PROBE_FILE="$T/no-such-probe.sh"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "0" "a missing probe file must return 0 (rc=$RC)"
 assert_not_opened "missing probe file"
 
 ac_log "AC7: an ops probe that is already a file opens with no probe arguments"
-clear_open
+ac_rung_fixture "$T"
 mkdir -p "$OPS_REPO_ROOT/probes"
 : >"$OPS_REPO_ROOT/probes/new-thing.sh"
 export PLANNER_PROBE_FILE="$PROBE"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "0" "an ops probe already present must return 0 (rc=$RC)"
 ac_assert_eq "$(sed -n '1p' "$T/open-argc")" "3" "an ops probe already present takes no probe arguments"
 
 ac_log "effect none opens with no probe arguments"
-clear_open
+ac_rung_fixture "$T"
 PITCH="$(write_pitch 'none')"
 export PLANNER_PITCH_FILE="$PITCH"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "0" "effect none must return 0 (rc=$RC)"
@@ -280,33 +238,33 @@ ac_assert_eq "$(sed -n '1p' "$T/open-argc")" "3" "effect none takes no probe arg
 ac_assert_eq "$(sed -n '1p' "$T/open-args")" "New thing" "effect none keeps the sprint title"
 
 ac_log "a bad effect, a filer block, and a missing file"
-clear_open
+ac_rung_fixture "$T"
 PITCH="$(write_pitch 'not-a-probe')"
 export PLANNER_PITCH_FILE="$PITCH"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "1" "a bad effect must return 1 (rc=$RC)"
 assert_not_opened "bad effect"
 
-clear_open
+ac_rung_fixture "$T"
 PITCH="$(write_pitch 'none' '<!-- filer:begin -->')"
 export PLANNER_PITCH_FILE="$PITCH"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "1" "filer:begin must return 1 (rc=$RC)"
 assert_not_opened "filer block"
 
-clear_open
+ac_rung_fixture "$T"
 export PLANNER_PITCH_FILE="$T/missing-pitch.md"
 RC=0
 (
-  planner_pitch_open() { record_open "$@"; }
+  planner_pitch_open() { ac_open_stub "$T" "$@"; }
   planner_publish_session_pitch
 ) || RC=$?
 ac_assert_eq "$RC" "0" "a missing pitch file must return 0 (rc=$RC)"
