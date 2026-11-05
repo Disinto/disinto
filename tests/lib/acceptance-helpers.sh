@@ -126,6 +126,34 @@ ac_assert_file() {
   [ -r "$path" ] || ac_fail "$reason"
 }
 
+# ── Jobspec (HCL) readers ────────────────────────────────────────────────────
+# Nomad jobspecs are HCL, not shell: these readers let the per-role agent
+# tests (#2117, #2118) assert on a task's env stanza without each test
+# carrying its own parser copy (the duplicate-detection gate, #1134).
+
+# ac_jobspec_env_block <file> — print the body of the file's `env { ... }`
+# stanza, tracked by brace depth so a nested block cannot close it early.
+ac_jobspec_env_block() {
+  awk '
+    /^[[:space:]]*env[[:space:]]*\{/ { open = 1; depth = 1; next }
+    open {
+      depth += gsub(/\{/, "{", $0) - gsub(/\}/, "}", $0)
+      print
+      if (!depth) exit
+    }
+  ' "$1"
+}
+
+# ac_env_value <env-body> <key> — the value of <key> in an env-block body
+# (quotes stripped), or empty when the key is absent.
+ac_env_value() {
+  local body="$1" key="$2"
+  printf '%s\n' "$body" \
+    | grep -E "^[[:space:]]*${key}[[:space:]]*=" \
+    | head -n1 \
+    | sed -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//; s/\"//g; s/[[:space:]]+$//"
+}
+
 # ── In-process stub helpers ─────────────────────────────────────────────────
 # For acceptance tests that extract decision functions from top-level
 # executables (which cannot be sourced without running the whole script) and

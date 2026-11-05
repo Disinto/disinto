@@ -47,18 +47,7 @@ ac_assert_eq "$checkout_count" "1" \
 
 # ── AC2: inside the task env block, role unchanged ───────────────────────────
 ac_log "AC2: both lines sit inside the task's env { ... } block"
-env_block() {
-  awk '
-    !inblk && /^[[:space:]]*env[[:space:]]*\{/ { inblk = 1; depth = 0 }
-    inblk {
-      line = $0
-      depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
-      print
-      if (depth == 0) exit
-    }
-  ' "$1"
-}
-env="$(env_block "$SPEC")"
+env="$(ac_jobspec_env_block "$SPEC")"
 [ -n "$env" ] || ac_fail "could not extract the task's env { ... } block"
 
 if ! printf '%s\n' "$env" | grep -qF 'FACTORY_REF        = "canary"'; then
@@ -68,10 +57,7 @@ if ! printf '%s\n' "$env" | grep -qF 'FACTORY_CHECKOUT   = "/home/agent/data/_fa
   ac_fail 'FACTORY_CHECKOUT = "/home/agent/data/_factory" must sit inside the task env block'
 fi
 
-role="$(printf '%s\n' "$env" \
-  | grep -E '^[[:space:]]*AGENT_ROLES[[:space:]]*=' \
-  | head -n1 \
-  | sed -E 's/^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*//; s/"//g; s/[[:space:]]+$//')"
+role="$(ac_env_value "$env" AGENT_ROLES)"
 ac_assert_eq "$role" "review" \
   "AGENT_ROLES must still pin the single role \"review\" (got '$role')"
 

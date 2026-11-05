@@ -191,6 +191,9 @@ job "agents-supervisor-opus" {
       # ── Non-secret env ─────────────────────────────────────────────────────
       env {
         AGENT_ROLES        = "supervisor"
+        # Follows live: a merge reaches this job only after it held on the
+        # canary (#2118, docs/design/notes/self-update.md).
+        FACTORY_REF        = "live"
         FORGE_REPO         = "disinto-admin/disinto"
         # Activate bootstrap_factory_repo so DISINTO_DIR switches to the
         # live clone and per-env TOMLs from factory-projects are picked up
