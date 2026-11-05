@@ -60,6 +60,10 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   `lib/secret-scan.sh` for redaction; graceful exit in degraded mode.
 - `supervisor/commit-incidents.sh` — Commits and pushes incident markdown files
   to the ops repo after the Claude session writes them.
+- `tools/rollout.sh tick` — run once per tick after the repair tape (#2116): one
+  step of the update-self rollout (start, watch, promote, roll back), from the
+  supervisor's own checkout. Output goes to the supervisor log; a failure never
+  fails the tick (docs/design/notes/self-update.md).
 - `$OPS_REPO_ROOT/knowledge/*.md` — Domain-specific remediation guides (memory,
   disk, CI, git, dev-agent, review-agent, forge)
 
