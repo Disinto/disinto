@@ -34,25 +34,6 @@ ac_require_cmd awk grep sed
 
 LIVE_LINE='FACTORY_REF        = "live"'
 
-env_block() {
-  awk '
-    !inblk && /^[[:space:]]*env[[:space:]]*\{/ { inblk = 1; depth = 0 }
-    inblk {
-      line = $0
-      depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
-      print
-      if (depth == 0) exit
-    }
-  ' "$1"
-}
-
-role_of() {
-  printf '%s\n' "$1" \
-    | grep -E '^[[:space:]]*AGENT_ROLES[[:space:]]*=' \
-    | head -n1 \
-    | sed -E 's/^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*//; s/"//g; s/[[:space:]]+$//'
-}
-
 specs=(
   "nomad/jobs/agents-dev-qwen.hcl:dev"
   "nomad/jobs/agents-gardener-qwen.hcl:gardener"
@@ -72,7 +53,7 @@ for entry in "${specs[@]}"; do
 
   # ── AC2: inside the task env block, right after AGENT_ROLES ─────────────────
   ac_log "AC2: $rel keeps its live ref inside the task env block"
-  env="$(env_block "$spec")"
+  env="$(ac_jobspec_env_block "$spec")"
   [ -n "$env" ] || ac_fail "could not extract the task's env { ... } block from $rel"
 
   if ! printf '%s\n' "$env" | grep -qF "$LIVE_LINE"; then
@@ -90,7 +71,7 @@ for entry in "${specs[@]}"; do
     ac_fail "in $rel only comment lines may sit between AGENT_ROLES and FACTORY_REF"
   fi
 
-  pinned_role="$(role_of "$env")"
+  pinned_role="$(ac_env_value "$env" AGENT_ROLES)"
   ac_assert_eq "$pinned_role" "$role" \
     "AGENT_ROLES must still pin the single role \"$role\" in $rel (got '$pinned_role')"
 
