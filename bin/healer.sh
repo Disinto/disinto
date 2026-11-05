@@ -109,6 +109,13 @@
 # missed send is not forgotten and a healer restart does not duplicate
 # one that landed.
 #
+# Live lag (#2119): the rollout tool fails closed, so a broken tool is silent
+# and every agent keeps the last good version. Each tick also runs
+# bin/live-lag.sh, which runs from /opt/disinto — not from live — and queues
+# one owner notice when `live` has trailed `main` for lag_notice_h hours (ops
+# packs/rollout.toml, default 24) with no promotion. The drain right after it
+# sends that notice in the same tick.
+#
 # Loop: every HEALER_INTERVAL_SECS (default 60). --once runs one tick and
 # exits (tests). One line per action on stdout: [<iso>] healer: <message>.
 #
@@ -132,6 +139,8 @@
 #   HEALER_NOTIFY_CMD       command that receives the message text (default
 #                           $FACTORY_ROOT/bin/notify-owner.sh)
 #   HEALER_NOW              optional epoch clock (tests); unset uses date
+#   HEALER_LIVE_LAG         the live-lag check (#2119); default
+#                           $FACTORY_ROOT/bin/live-lag.sh
 #   TAPE_DIR                tape store (lib/tape.sh; default /srv/disinto/tape)
 #
 # Does not source lib/env.sh: this is a host-side loop, not an agent, and
@@ -1454,6 +1463,11 @@ healer_tick() {
   close_endpoint_open "$now" || log "WARNING: endpoint outcome pass failed"
   handle_public_endpoints "$jobs" "$now" || log "WARNING: endpoint pass failed"
   escalate_pass "$now" || log "WARNING: escalate pass failed"
+  # The rollout tool fails closed, so a broken tool is silent: the check lives
+  # outside it, running from /opt/disinto rather than live, and queues one
+  # notice when live has trailed main for lag_notice_h hours with no promotion
+  # (#2119). The drain below sends it in this same tick.
+  "${HEALER_LIVE_LAG:-$FACTORY_ROOT/bin/live-lag.sh}" || log "WARNING: live lag check failed"
   # Drain the owner-notice queue lib/notice.sh (#2031) through the healer-only
   # sender (#2032). A missing notices dir exits 0 silently.
   HEALER_NOTIFY_CMD="$HEALER_NOTIFY_CMD" "${HEALER_NOTICES_DRAIN:-$FACTORY_ROOT/bin/notices-drain.sh}" "${TAPE_DIR:-/srv/disinto/tape}/notices" || log "WARNING: notices drain failed"

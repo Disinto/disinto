@@ -200,10 +200,10 @@ disinto/                 (code repo)
 ├── bin/           The `disinto` CLI script (multi-command: init, up, secrets, validate, vault,
 │                  wp, backup, edge, ci-logs; vault includes reseed-all, reseed-ops-repo,
 │                  reseed-runner, reseed-chat-oauth)
-│                  agent-log-rotate.sh, factory-walk.sh, healer.sh, notify-owner.sh,
-│                  notices-drain.sh, snapshot-agents.sh, snapshot-daemon.sh,
-│                  snapshot-forge.sh, snapshot-inbox.sh, snapshot-nomad.sh,
-│                  uninstall.sh
+│                  agent-log-rotate.sh, factory-walk.sh, healer.sh, live-lag.sh,
+│                  notify-owner.sh, notices-drain.sh, snapshot-agents.sh,
+│                  snapshot-daemon.sh, snapshot-forge.sh, snapshot-inbox.sh,
+│                  snapshot-nomad.sh, uninstall.sh
 ├── tape/          Tape records written by lib/tape.sh (#1389); the dev-loop
 │                  context pack and failure-signature rubric stubs (#1400) were
 │                  removed in #1481. The failure-signature rubric now lives in
