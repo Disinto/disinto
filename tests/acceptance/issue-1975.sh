@@ -33,9 +33,7 @@ ac_assert_eq "$(grep -c curl "$REPO_ROOT/planner/ladder.sh" || true)" "0" \
   "planner/ladder.sh must not mention curl"
 grep -q 'lib/claims.sh' "$REPO_ROOT/planner/ladder.sh" \
   || ac_fail "planner/ladder.sh must source lib/claims.sh"
-if grep -E '^[[:space:]]*(source|\.)[[:space:]]' "$REPO_ROOT/planner/ladder.sh" | grep -q 'env.sh'; then
-  ac_fail "planner/ladder.sh must not source lib/env.sh"
-fi
+ac_assert_not_sourcing_env "$REPO_ROOT/planner/ladder.sh" "planner/ladder.sh"
 ac_assert_eq "$(grep -cE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$REPO_ROOT/planner/ladder.sh")" "1" \
   "planner/ladder.sh must define only ladder_lowest_gap"
 
@@ -57,21 +55,9 @@ CLAIMS_DIR="$TMP_DIR/claims"
 CATALOG="$TMP_DIR/catalog/claims.md"
 mkdir -p "$CLAIMS_DIR" "$(dirname "$CATALOG")"
 
-# add_claim ID — an empty claim file. ladder_lowest_gap reads the name only.
-add_claim() {
-  printf 'statement = "x"\n' >"$CLAIMS_DIR/$1.toml"
-}
-
-# write_catalog [row...] — a claims-report shaped table. Rows are full lines.
-write_catalog() {
-  {
-    printf '%s\n' '| claim | class | status | checks | last value | resting sprints | statement |'
-    printf '%s\n' '|---|---|---|---|---|---|---|'
-    if [ "$#" -gt 0 ]; then
-      printf '%s\n' "$@"
-    fi
-  } >"$CATALOG"
-}
+# The claim and catalog fixtures come from tests/lib/acceptance-helpers.sh:
+# ac_add_claim writes an empty claim file (ladder_lowest_gap reads the name
+# only), ac_write_catalog a claims-report shaped table.
 
 # run_ladder — source planner/ladder.sh in a throwaway subshell and call
 # ladder_lowest_gap. stdout -> $OUT, stderr -> $ERR, status -> $RC.
@@ -90,7 +76,7 @@ run_ladder() {
 
 # ── AC1: empty CLAIMS_DIR prints sense, even if the catalog lists rungs ─────
 ac_log "AC1: empty CLAIMS_DIR prints sense"
-write_catalog \
+ac_write_catalog "$CATALOG" \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
   '| can-provision | internal | held | 1 | 1 | - | provision |'
 run_ladder
@@ -101,9 +87,9 @@ ac_assert_eq "$RC" "0" "empty CLAIMS_DIR must return 0 (rc=$RC)"
 
 # ── AC2: held can-sense-box, no other can-* claim, prints update-self ────────
 ac_log "AC2: held can-sense-box prints update-self"
-add_claim can-sense-box
-add_claim dev-comes-back
-write_catalog \
+ac_add_claim "$CLAIMS_DIR" can-sense-box
+ac_add_claim "$CLAIMS_DIR" dev-comes-back
+ac_write_catalog "$CATALOG" \
   '| can-sense-box | internal | held | 1 | 1 | - | sense |' \
   '| can-provision | internal | held | 1 | 1 | - | catalog row is not a claim file |'
 run_ladder
@@ -114,15 +100,15 @@ ac_assert_eq "$RC" "0" "held can-sense-box must return 0 (rc=$RC)"
 
 # ── AC3: all six present, none challenged, prints nothing ────────────────────
 ac_log "AC3: all six present, none challenged, prints nothing"
-add_claim can-sense
-add_claim can-update-self
-add_claim can-provision
-add_claim can-reach-porter
-add_claim can-deploy-porter
-add_claim can-replicate
+ac_add_claim "$CLAIMS_DIR" can-sense
+ac_add_claim "$CLAIMS_DIR" can-update-self
+ac_add_claim "$CLAIMS_DIR" can-provision
+ac_add_claim "$CLAIMS_DIR" can-reach-porter
+ac_add_claim "$CLAIMS_DIR" can-deploy-porter
+ac_add_claim "$CLAIMS_DIR" can-replicate
 # replicate has no catalog row: a missing row is not challenged.
 # not-a-rung challenged must not open a gap on a rung it does not match.
-write_catalog \
+ac_write_catalog "$CATALOG" \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
   '| can-update-self | internal | held | 1 | 1 | - | update self |' \
   '| can-sense-box | internal | held | 1 | 1 | - | sense host |' \
@@ -140,7 +126,7 @@ ac_assert_eq "$RC" "0" "all six present must return 0 (rc=$RC)"
 # The can-update-self claim added in AC3 is held, so the ladder passes rung 2
 # and names provision as the gap.
 ac_log "AC4: challenged can-provision prints provision"
-write_catalog \
+ac_write_catalog "$CATALOG" \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
   '|  can-provision  | internal |  challenged  | 1 | 0 | - | provision |'
 run_ladder
@@ -151,7 +137,7 @@ ac_assert_eq "$RC" "0" "challenged can-provision must return 0 (rc=$RC)"
 
 # Any matching sense id challenged is a sense gap, even if another is held.
 ac_log "any challenged sense match prints sense"
-write_catalog \
+ac_write_catalog "$CATALOG" \
   '| can-sense | internal | held | 1 | 1 | - | sense |' \
   '| can-sense-box | internal | challenged | 1 | 0 | - | sense host |'
 run_ladder

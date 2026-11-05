@@ -126,6 +126,38 @@ ac_assert_file() {
   [ -r "$path" ] || ac_fail "$reason"
 }
 
+# ── Claim and catalog fixtures ───────────────────────────────────────────────
+# The ladder/gaps acceptance tests (#1975, #2056, #2124) need the same
+# hermetic claim files and claims-report table; carrying the fixture in each
+# test file trips duplicate-detection (#1134), so it lives here.
+
+# ac_add_claim <claims-dir> <id> — write a minimal claim TOML named <id>.toml.
+ac_add_claim() {
+  local dir="$1" id="$2"
+  printf 'statement = "x"\n' >"$dir/$id.toml"
+}
+
+# ac_write_catalog <path> [row...] — write a claims-report-shaped markdown
+# table: the header, the separator, then one row per remaining argument.
+ac_write_catalog() {
+  local path="$1"; shift
+  {
+    printf '%s\n' '| claim | class | status | checks | last value | resting sprints | statement |'
+    printf '%s\n' '|---|---|---|---|---|---|---|'
+    if [ "$#" -gt 0 ]; then
+      printf '%s\n' "$@"
+    fi
+  } >"$path"
+}
+
+# ac_assert_not_sourcing_env <file> <label> — fail if <file> sources lib/env.sh.
+ac_assert_not_sourcing_env() {
+  local file="$1" label="$2"
+  if grep -E '^[[:space:]]*(source|\.)[[:space:]]' "$file" | grep -q 'env.sh'; then
+    ac_fail "$label must not source lib/env.sh"
+  fi
+}
+
 # ── Jobspec (HCL) readers ────────────────────────────────────────────────────
 # Nomad jobspecs are HCL, not shell: these readers let the per-role agent
 # tests (#2117, #2118) assert on a task's env stanza without each test
