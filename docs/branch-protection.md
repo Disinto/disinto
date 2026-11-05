@@ -62,3 +62,32 @@ commit of `main`, and the rollout tool resets a `canary` it did not set.
 As for the CI gate above, applying this to a live forge is a deliberate step by
 a repo admin: `lib/branch-rules.sh rollout-branches <owner/repo>`, run with the
 `FORGE_TOKEN` of `disinto-admin`.
+
+## The wall: protected files
+
+With rollouts, the factory can roll out changes to what grades it, what stops
+it and what gates it. The **wall** is the forge's `protected_file_patterns` on
+`main` of both repos, defined by `wall_patterns` in
+[`lib/wall.sh`](../lib/wall.sh) (see
+[`docs/design/notes/self-update.md`](design/notes/self-update.md), "The wall").
+The bots have write, not admin, so they cannot merge a PR that changes a
+protected file; the owner merges it as `disinto-admin`.
+
+- `disinto` (`disinto-admin/disinto`): `tools/sprint-grades.sh`,
+  `tools/sprint-held.sh`, `tools/grade.sh`, `tools/grade-threshold.sh`,
+  `lib/sprint-block.sh` (what grades it), `lib/repair-suspend.sh` (what stops
+  it), `action-vault/policy.toml` (what gates it), `tools/rollout.sh` and
+  `.woodpecker/**` (what rolls it out), and `docs/design/**` (the design).
+- `ops` (`disinto-admin/ops`): `vault/policy.toml`, `packs/repair.toml`,
+  `packs/rollout.toml`.
+
+A PR that changes a listed file merges only by a repo admin's override (as
+`disinto-admin`, the API's `force_merge`); on ops `main` the new rule keeps
+direct pushes open to every writer as today, but a direct push that changes one
+of the listed files is refused. Each entry means a PR waits for the owner, so
+the list stays short.
+
+Applying it to a live forge is a deliberate step by a repo admin, as for the
+rules above: `lib/wall.sh apply <owner/repo> <disinto|ops>`, run with the
+`FORGE_TOKEN` of `disinto-admin`. `wall_hits KIND` answers which paths of a
+list are walled, for the tools that must know before they merge or push.
