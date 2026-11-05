@@ -207,6 +207,9 @@ job "agents-dev-qwen" {
         # Claude Code sizes its context window from it.
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "dev"
+        # Follows live: a merge reaches this job only after it held on the
+        # canary (#2118, docs/design/notes/self-update.md).
+        FACTORY_REF        = "live"
 
         # Porter door — the dev role asks Jev for a scope reading on each pick
         # (#1598 wiring). tools/jev-scope.sh fails closed when any of the three

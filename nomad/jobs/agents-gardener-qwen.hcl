@@ -208,6 +208,11 @@ job "agents-gardener-qwen" {
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
         AGENT_ROLES        = "gardener"
+        # Follows live: a merge reaches this job only after it held on the
+        # canary (#2118, docs/design/notes/self-update.md). Shares the
+        # /srv/disinto/project-repos/_factory checkout with the dev job, so
+        # both pin the same ref.
+        FACTORY_REF        = "live"
 
         # dsh harness migration (#1357): gardener joins dev + review on the
         # dsh harness (llama.cpp Qwen3.8-27B via DSH_BASE_URL). Env names
