@@ -52,12 +52,12 @@ planner formula.
 - `formulas/groom-backlog.toml` — Grooming formula for backlog triage and
   grooming. (Note: the planner no longer dispatches breakdown mode — complex
   issues are labeled `vision` instead.)
-- `planner/ladder.sh` — `ladder_lowest_gap` prints the lowest missing or
-  challenged capability rung (`sense`, `provision`, `reach`, `deploy`,
-  `replicate`), or nothing. No network. Called by `planner/pitch-or-idle.sh`.
-  Design note (#2104): the ladder gains `update-self` as rung 2
-  (`docs/design/notes/self-update.md`); `ladder.sh`, `gaps.sh`, and the
-  golden tests still name five rungs until #2124 lands.
+- `planner/ladder.sh` — `ladder_lowest_gap` prints the lowest missing or challenged
+  capability rung (`sense`, `update-self`, `provision`, `reach`, `deploy`, `replicate`),
+  or nothing. No network. Called by `planner/pitch-or-idle.sh`.
+  Design note (#2104): the ladder names `update-self` as rung 2
+  (`docs/design/notes/self-update.md`), landed by #2124 in `ladder.sh`,
+  `gaps.sh`, and the acceptance tests.
 - `planner/pitch-open.sh` — `planner_pitch_open` opens one ops PR titled
   `architect: <title>` that adds `sprints/<slug>.md`. When given a probe file
   and a `probes/<name>.sh` path, it adds that file on the same branch before

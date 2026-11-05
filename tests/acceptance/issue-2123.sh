@@ -10,8 +10,8 @@
 # LXD ai-pool. Every other rung's pitch file stays byte-identical: no level
 # line, soak 14d.
 #
-# planner/ladder.sh is untouched: #2124 adds the rung to the ladder, so the
-# ladder never names a rung without a pitch.
+# planner/ladder.sh names update-self as rung 2: the ladder only names a rung
+# it has a pitch for (#2124 landed the rung).
 #
 # Hermetic: the shared rung-pitch stubs from tests/lib/acceptance-helpers.sh.
 # No forge, no agent.
@@ -31,12 +31,11 @@ LADDER="$REPO_ROOT/planner/ladder.sh"
 ac_assert_file "$IDLE" "planner/pitch-or-idle.sh is missing"
 ac_assert_file "$LADDER" "planner/ladder.sh is missing"
 
-ac_log "static: bash -n, ladder.sh still names no update-self rung"
+ac_log "static: bash -n, ladder.sh names the update-self rung (#2124 landed it)"
 bash -n "$IDLE"
 bash -n "$LADDER"
-if grep -qF 'update-self' "$LADDER"; then
-  ac_fail "planner/ladder.sh must not name update-self yet (#2124 adds it)"
-fi
+grep -qF 'update-self' "$LADDER" \
+  || ac_fail "planner/ladder.sh must name the update-self rung (#2124)"
 grep -qF 'Self-update through a canary' "$IDLE" \
   || ac_fail "pitch-or-idle.sh must carry the update-self title"
 grep -qF 'throwaway droplet on DigitalOcean' "$IDLE" \
