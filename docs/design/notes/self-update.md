@@ -147,7 +147,7 @@ short, because each entry means a PR waits for the owner:
 | what grades it | `tools/sprint-grades.sh`, `tools/sprint-held.sh`, `tools/grade.sh`, `tools/grade-threshold.sh`, `lib/sprint-block.sh` |
 | what stops it | `lib/repair-suspend.sh` |
 | what gates it | `action-vault/policy.toml` |
-| what rolls it out | `tools/rollout.sh`, `.woodpecker/**` |
+| what rolls it out | `tools/rollout.sh`, `.woodpecker/*.yml` |
 | the design | `docs/design/**` |
 
 The ops repo has no branch rule today, and the gardener pushes to it

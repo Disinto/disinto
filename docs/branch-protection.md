@@ -77,7 +77,10 @@ protected file; the owner merges it as `disinto-admin`.
   `tools/sprint-held.sh`, `tools/grade.sh`, `tools/grade-threshold.sh`,
   `lib/sprint-block.sh` (what grades it), `lib/repair-suspend.sh` (what stops
   it), `action-vault/policy.toml` (what gates it), `tools/rollout.sh` and
-  `.woodpecker/**` (what rolls it out), and `docs/design/**` (the design).
+  `.woodpecker/*.yml` (what rolls it out), and `docs/design/**` (the design).
+  The pipelines are walled, not the scripts they run: every new sourced file
+  is listed in `.woodpecker/agent-smoke.sh`, and walling that would send each
+  such PR to the owner.
 - `ops` (`disinto-admin/ops`): `vault/policy.toml`, `packs/repair.toml`,
   `packs/rollout.toml`.
 

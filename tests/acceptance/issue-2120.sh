@@ -43,7 +43,7 @@ ac_require_cmd bash jq
 WALL="$REPO_ROOT/lib/wall.sh"
 ac_assert_file "$WALL" "lib/wall.sh is missing"
 
-DISINTO_LIST='tools/sprint-grades.sh;tools/sprint-held.sh;tools/grade.sh;tools/grade-threshold.sh;lib/sprint-block.sh;lib/repair-suspend.sh;action-vault/policy.toml;tools/rollout.sh;.woodpecker/**;docs/design/**'
+DISINTO_LIST='tools/sprint-grades.sh;tools/sprint-held.sh;tools/grade.sh;tools/grade-threshold.sh;lib/sprint-block.sh;lib/repair-suspend.sh;action-vault/policy.toml;tools/rollout.sh;.woodpecker/*.yml;docs/design/**'
 OPS_LIST='vault/policy.toml;packs/repair.toml;packs/rollout.toml'
 
 # run_wall CMD... — source lib/wall.sh in a throwaway subshell and run CMD.
@@ -69,7 +69,7 @@ ac_assert_eq "$out" "" "wall_patterns x must print nothing"
 
 # ── AC2: wall_hits picks the walled paths, in input order ────────────────────
 rc=0
-out="$(printf '%s\n' README.md tools/rollout.sh .woodpecker/ci.yml docs/design/notes/a.md docs/x.md \
+out="$(printf '%s\n' README.md tools/rollout.sh .woodpecker/ci.yml docs/design/notes/a.md docs/x.md .woodpecker/agent-smoke.sh \
   | WALL="$WALL" bash -c 'set -euo pipefail; source "$WALL"; wall_hits disinto')" || rc=$?
 ac_assert_eq "$rc" "0" "wall_hits disinto must succeed (got rc $rc)"
 expected="$(printf 'tools/rollout.sh\n.woodpecker/ci.yml\ndocs/design/notes/a.md')"
