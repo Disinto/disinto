@@ -17,7 +17,10 @@ invocation);
 in bare-metal mode the executor also runs from host cron (`lib/ci-setup.sh:65`).
 **Early-exit optimization**: if no new commits since last run (compared via
 `LAST_SHA_FILE`) and no backlog or tech-debt issues exist, the model is not
-invoked — the run exits immediately (no tokens consumed). Otherwise, builds a
+invoked (no tokens consumed); the run still writes the bash-only tape steps —
+sprint outcomes and grades, rejections, the grade threshold, claim proposals
+and checks — through `gardener_idle_steps` (`gardener/idle-steps.sh`, #2148),
+then exits. Otherwise, builds a
 context block from AGENTS.md and the formula, then invokes `agent_run` from
 `lib/agent-sdk.sh` (one-shot `claude -p`, no tmux, no phase files). The bash
 script IS the state machine — it walks the PR to merge via `pr_walk_to_merge`

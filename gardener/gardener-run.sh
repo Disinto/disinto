@@ -47,6 +47,8 @@ source "$FACTORY_ROOT/lib/agent-sdk.sh"
 source "$FACTORY_ROOT/lib/pr-lifecycle.sh"
 # shellcheck source=../lib/gardener-pr.sh
 source "$FACTORY_ROOT/lib/gardener-pr.sh"
+# shellcheck source=idle-steps.sh
+source "$FACTORY_ROOT/gardener/idle-steps.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/gardener/gardener.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -115,6 +117,7 @@ tech_debt_count=$(curl -sf -H "Authorization: token ${FORGE_TOKEN}" \
 
 if [ "$CURRENT_SHA" = "$LAST_SHA" ] && [ "${backlog_count:-0}" -eq 0 ] && [ "${tech_debt_count:-0}" -eq 0 ]; then
   log "no new commits and no issues to groom — skipping"
+  gardener_idle_steps
   exit 0
 fi
 
