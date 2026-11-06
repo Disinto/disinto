@@ -30,7 +30,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/branch-rules.sh"
 # The two lists, in the order of the table in the design note: what grades it,
 # what stops it, what gates it, what rolls it out, the design. Keep this short:
 # every entry means a PR waits for the owner.
-_WALL_DISINTO='tools/sprint-grades.sh;tools/sprint-held.sh;tools/grade.sh;tools/grade-threshold.sh;lib/sprint-block.sh;lib/repair-suspend.sh;action-vault/policy.toml;tools/rollout.sh;.woodpecker/**;docs/design/**'
+_WALL_DISINTO='tools/sprint-grades.sh;tools/sprint-held.sh;tools/grade.sh;tools/grade-threshold.sh;lib/sprint-block.sh;lib/repair-suspend.sh;action-vault/policy.toml;tools/rollout.sh;.woodpecker/*.yml;docs/design/**'
 _WALL_OPS='vault/policy.toml;packs/repair.toml;packs/rollout.toml'
 
 # wall_patterns KIND — print KIND's list joined by ';'. KIND is disinto or
