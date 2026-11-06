@@ -36,7 +36,7 @@ LIVE_LINE='FACTORY_REF        = "live"'
 
 specs=(
   "nomad/jobs/agents-dev-qwen.hcl:dev"
-  "nomad/jobs/agents-gardener-qwen.hcl:gardener"
+  "nomad/jobs/agents-gardener-qwen.hcl:gardener,planner"
   "nomad/jobs/agents-supervisor-opus.hcl:supervisor"
 )
 
@@ -73,7 +73,7 @@ for entry in "${specs[@]}"; do
 
   pinned_role="$(ac_env_value "$env" AGENT_ROLES)"
   ac_assert_eq "$pinned_role" "$role" \
-    "AGENT_ROLES must still pin the single role \"$role\" in $rel (got '$pinned_role')"
+    "AGENT_ROLES must still pin the roles \"$role\" in $rel (got '$pinned_role')"
 
   # ── AC3: no private factory checkout ────────────────────────────────────────
   ac_log "AC3: $rel names no FACTORY_CHECKOUT"

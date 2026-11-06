@@ -20,8 +20,9 @@
 #      with type = "host", source = "machine", read_only = true.
 #   2. Each has a volume_mount with volume = "machine", destination =
 #      "/srv/disinto/machine", read_only = true.
-#   3. Each file still defines exactly one job and pins its single role
-#      (supervisor / gardener) unchanged.
+#   3. Each file still defines exactly one job and pins its roles unchanged
+#      (supervisor: "supervisor"; gardener: "gardener,planner" — the planner
+#      rides the gardener's job, #2151).
 #   4. (optional, when nomad is on PATH) nomad job validate exits 0.
 #   5. INFRASTRUCTURE.md's machine row names both jobs, no longer "none yet".
 #
@@ -41,7 +42,7 @@ SPECS=(
   "$REPO_ROOT/nomad/jobs/agents-supervisor-opus.hcl"
   "$REPO_ROOT/nomad/jobs/agents-gardener-qwen.hcl"
 )
-ROLES=(supervisor gardener)
+ROLES=(supervisor "gardener,planner")
 
 for i in 0 1; do
   spec="${SPECS[$i]}"

@@ -15,7 +15,8 @@
 #   2. agents-gardener-qwen.hcl sets DSH_MODEL
 #   3. DSH_BASE_URL in the gardener job is the same host:port as in the
 #      dev-qwen job (the local llama-server, not Anthropic)
-#   4. AGENT_ROLES is still "gardener" (role pinning survives)
+#   4. AGENT_ROLES is still "gardener,planner" (the role pinning survives; the
+#      planner joined the gardener's job in #2151)
 #   5. cluster-up.sh HOST_VOLUME_DIRS includes /srv/disinto/agent-data-gardener
 #   6. nomad/client.hcl declares host_volume "agent-data-gardener"
 #   7. bash -n — cluster-up.sh stays syntactically valid
@@ -69,10 +70,10 @@ gard_hostport="$(hostport_of "$GQ")"
 ac_assert_eq "$gard_hostport" "$dev_hostport" \
   "gardener-qwen DSH_BASE_URL host:port ($gard_hostport) != dev-qwen ($dev_hostport)"
 
-# 4. The role pinning survives the migration.
-ac_log "checking AGENT_ROLES=gardener"
-grep -Eq '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener"' "$GQ" \
-  || ac_fail "agents-gardener-qwen.hcl must keep AGENT_ROLES = \"gardener\""
+# 4. The role pinning survives the migration (gardener + planner, #2151).
+ac_log "checking AGENT_ROLES=gardener,planner"
+grep -Eq '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener,planner"' "$GQ" \
+  || ac_fail "agents-gardener-qwen.hcl must keep AGENT_ROLES = \"gardener,planner\""
 
 # 5. cluster-up.sh creates the gardener state directory on fresh clusters —
 #    extract the HOST_VOLUME_DIRS array body and check it.
