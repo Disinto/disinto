@@ -129,10 +129,12 @@ __preflight_research_runs() {
 
   # Oldest open issue carrying the `judgment` label (a research run awaiting a
   # human verdict) — age in hours, or `none`
+  # Forgejo ignores a labels= filter for a label the repo lacks and returns every
+  # open issue, so the label is checked again on the response (#2147).
   local _judgment_json
   _judgment_json=$(forge_api GET "/issues?state=open&labels=judgment&type=issues&limit=50" 2>/dev/null || echo "[]")
   local _judg_ages
-  _judg_ages=$(printf '%s' "$_judgment_json" | jq -r '.[] | "\(.number)\t\(.created_at // "")"' 2>/dev/null || echo "")
+  _judg_ages=$(printf '%s' "$_judgment_json" | jq -r '.[] | select(any(.labels[]?; .name == "judgment")) | "\(.number)\t\(.created_at // "")"' 2>/dev/null || echo "")
   local _judg_oldest_h="" _judg_oldest_num="" _num _created _ep _age_h
   while IFS=$'\t' read -r _num _created; do
     [ -n "${_created:-}" ] || continue

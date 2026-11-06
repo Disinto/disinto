@@ -36,8 +36,9 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   and overall health verdict (healthy/unhealthy). An unhealthy verdict files an incident: the supervisor cannot restart a Nomad allocation (#1698). Reports
   **research runs** (added #1322): in-flight count + per-run ages (heartbeat)
   from the run ledger at `${OPS_REPO_ROOT}/runs`, artifacts disk %, and oldest
-  open `judgment`-labeled issue age — the "Research Runs" section is omitted
-  when the ledger directory is absent (not a failure).
+  open `judgment`-labeled issue age (the label is checked on the response: the
+  forge ignores a filter for a label the repo lacks, #2147) — the "Research Runs"
+  section is omitted when the ledger directory is absent (not a failure).
 - `supervisor/evaluate-recipes.sh` — Rule evaluation against the preflight
   output: `disk_pct_gt` does not fire when the disk owner is `neighbours`:
   the box cannot free space other projects use (#2077). When it fires with an

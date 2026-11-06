@@ -93,7 +93,7 @@ printf '{"id":"run-old","started":"rel:5700"}\n' > "$OPS/runs/run-old.json"
 printf '{"id":"run-new","started":"rel:600"}\n' > "$OPS/runs/run-new.json"
 printf '{"id":"run-done","started":"rel:90000","ended":"rel:80000","exit":0}\n' > "$OPS/runs/run-done.json"
 
-JUDG_JSON='[{"number":12,"created_at":"rel:18000"},{"number":13,"created_at":"rel:1800"}]'
+JUDG_JSON='[{"number":12,"created_at":"rel:18000","labels":[{"name":"judgment"}]},{"number":13,"created_at":"rel:1800","labels":[{"name":"judgment"}]}]'
 
 _out="$(run_rr "$OPS" "$JUDG_JSON")" || ac_fail "__preflight_research_runs exited non-zero"
 
