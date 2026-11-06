@@ -284,7 +284,8 @@ handle_ci_exhaustion() {
 #
 # Args: pr_num issue_num [head_sha]
 # Returns: 0=merged, 1=failed (caller may fall back to dev-agent),
-#          2=merge-blocked and escalated (caller must NOT retry or spawn)
+#          2=merge-blocked and escalated, or walled (the owner merges)
+#          (caller must NOT retry or spawn)
 # =============================================================================
 try_direct_merge() {
   local pr_num="$1" issue_num="$2"
@@ -321,6 +322,14 @@ try_direct_merge() {
     mirror_push
     ci_fix_tracker_reset "$pr_num"
     return 0
+  fi
+
+  # The wall (#2158): only the owner can merge a protected-files PR. No
+  # block state, no escalation comment, no dev-agent fallback — the walk
+  # and this poll must not burn rebase sessions on it.
+  if [ "${_PR_MERGE_WALLED:-0}" = 1 ]; then
+    log "PR #${pr_num} (issue #${issue_num}) changes protected files — waits for the owner, no retry, no dev-agent (#2158)"
+    return 2
   fi
 
   local decision

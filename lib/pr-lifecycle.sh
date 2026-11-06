@@ -45,9 +45,11 @@
 #   _PR_MERGE_MISSING_CONTEXTS
 #                         comma-separated required status check contexts not
 #                         satisfied on the head (on 405, if evaluable)
+#   _PR_MERGE_WALLED      1 when the 405 was the wall's (protected files),
+#                         else 0 (#2158)
 #   _PR_WALK_EXIT_REASON  merged | ci_exhausted | review_exhausted |
 #                         ci_timeout | review_timeout | merge_blocked |
-#                         closed_externally | unexpected_verdict
+#                         closed_externally | unexpected_verdict | walled
 #   _PR_FOUND_NUMBER      PR number found (set by pr_find_for_issue)
 #   _PR_FOUND_BRANCH      head branch (set by pr_find_for_issue, empty for prior_art)
 #   _PR_FOUND_MODE        open | prior_art (set by pr_find_for_issue)
@@ -468,7 +470,9 @@ pr_poll_review() {
 # Sets: _PR_MERGE_ERROR (on failure, untruncated),
 #       _PR_MERGE_HEAD_SHA (head SHA, if known),
 #       _PR_MERGE_MISSING_CONTEXTS (required checks not satisfied on the head,
-#       comma-separated; on 405 when evaluable)
+#       comma-separated; on 405 when evaluable),
+#       _PR_MERGE_WALLED (1 when the 405 was the wall's "Changed protected
+#       files" refusal, else 0; #2158)
 # Returns: 0=merged, 1=error, 2=blocked (HTTP 405)
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2034  # _PR_MERGE_* read by callers
@@ -480,6 +484,7 @@ pr_merge() {
   _PR_MERGE_ERROR=""
   _PR_MERGE_HEAD_SHA=""
   _PR_MERGE_MISSING_CONTEXTS=""
+  _PR_MERGE_WALLED=0
 
   merge_data='{"Do":"merge","delete_branch_after_merge":true}'
   if [ -n "$commit_msg" ]; then
@@ -512,6 +517,11 @@ pr_merge() {
       # The wall (#2122): a PR that changes a protected file tells the owner once.
       if declare -F wall_notice_once >/dev/null 2>&1; then
         wall_notice_once "$pr_num" "$pr_json" || true
+      fi
+      # The wall (#2158): "Changed protected files" can only be cleared by
+      # the owner — flag it so callers stop retrying/rebasing.
+      if printf '%s' "$body" | grep -qF 'Changed protected files'; then
+        _PR_MERGE_WALLED=1
       fi
       _PR_MERGE_ERROR="blocked (HTTP 405): ${body}${_PRL_MERGE_DETAIL}"
       _prl_log "PR #${pr_num} merge blocked: ${_PR_MERGE_ERROR}"
@@ -682,8 +692,8 @@ pr_close() {
 # Sets:
 #   _PR_WALK_EXIT_REASON — reason for a non-merge exit (ci_timeout,
 #                           ci_exhausted, review_timeout, review_exhausted,
-#                           closed_externally, unexpected_verdict); "merged"
-#                           on success.
+#                           closed_externally, unexpected_verdict, walled);
+#                           "merged" on success.
 #   PR_WALK_CI_RED        — every CI failure the walk observed (never reset,
 #                           unlike the per-cycle ci_fix_count).
 #   PR_WALK_REVIEW_ROUNDS — review rounds the walk executed (one per
@@ -893,6 +903,13 @@ Fix the issue, run tests, commit, rebase on ${PRIMARY_BRANCH}, and push:
         if [ "$rc" -eq 0 ]; then
           _PR_WALK_EXIT_REASON="merged"
           return 0
+        fi
+        # Merge failed — the wall's 405 cannot be fixed by a rebase.
+        if [ "${_PR_MERGE_WALLED:-0}" = 1 ]; then
+          # The wall (#2158): only the owner can merge this; a rebase cannot help.
+          _prl_log "PR #${pr_num} changes protected files — waits for the owner, no rebase"
+          _PR_WALK_EXIT_REASON="walled"
+          return 1
         fi
         # Merge failed (conflict or HTTP 405) — ask agent to rebase
         _prl_log "merge failed — invoking agent to rebase"
