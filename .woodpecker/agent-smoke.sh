@@ -223,7 +223,10 @@ check_script lib/sprint-filer.sh
 check_script dev/dev-agent.sh
 check_script dev/dev-poll.sh         dev/merge-ready.sh
 check_script dev/phase-test.sh
-check_script gardener/gardener-run.sh    lib/formula-session.sh
+# idle-steps.sh (#2148) is sourced by gardener-run.sh and defines
+# gardener_idle_steps outside lib/, so the resolution check must see it.
+check_script gardener/gardener-run.sh    lib/formula-session.sh gardener/idle-steps.sh
+check_script gardener/idle-steps.sh      lib/env.sh
 check_script review/review-pr.sh         lib/agent-sdk.sh
 check_script review/review-poll.sh
 # pitch-or-idle.sh is sourced by planner-run.sh (#1978), and gaps.sh too
