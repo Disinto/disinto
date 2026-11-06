@@ -76,20 +76,13 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # log() — capture _prl_log / try_direct_merge logging (defined before sourcing).
 log() { printf '%s\n' "$*" >> "$TDM_LOG"; }
 
-# forge_api stub: the PR GET answers with PR_JSON (merged:false); branch
-# protection reports no required status checks.
+# forge_api stub: only the PR GET is hit (merged:false) — diagnostics never
+# reach the API because ci_unsatisfied_required_contexts is stubbed below.
 forge_api() {
   local path="$2"
   case "$path" in
-    "/pulls/${PR_NUMBER}")
-      printf '%s' "$PR_JSON"
-      ;;
-    "/branch_protections/main")
-      printf '{"enable_status_check":false}'
-      ;;
-    *)
-      printf 'null'
-      ;;
+    "/pulls/${PR_NUMBER}") printf '%s' "$PR_JSON" ;;
+    *) printf 'null' ;;
   esac
 }
 
