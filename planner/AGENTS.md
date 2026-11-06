@@ -3,7 +3,7 @@
 
 **Role**: Pitches one sprint toward the vision, or writes nothing. Invoked
 by the polling loop in `docker/agents/entrypoint.sh` every 12 hours
-(`PLANNER_INTERVAL`, default 43200s; #1388). The run calls `planner_pitch_or_idle`. A missing rung is a pitch opened in bash, with no session. Otherwise the session is one `agent_run` (`lib/agent-sdk.sh`); the model is the job's, not a hardcoded opus. No tmux, no phase file.
+(`PLANNER_INTERVAL`, default 43200s; #1388). The run calls `planner_pitch_or_idle`. It holds while a sprint is not graded yet: an approved sprint proposal on the tape with no grade record (`planner/in-flight.sh`, #2150). A missing rung is a pitch opened in bash, with no session. Otherwise the session is one `agent_run` (`lib/agent-sdk.sh`); the model is the job's, not a hardcoded opus. No tmux, no phase file.
 The formula (`formulas/run-planner.toml`) has one step, **propose**: write at most one pitch file, or nothing. It does not triage predictions, does not write prerequisites.md, does not file issues, and does not pitch an access request.
 AGENTS.md maintenance is handled by the Gardener.
 
