@@ -1,4 +1,4 @@
-<!-- last-reviewed: 38390f2f4d7633636fba605d59af237ec59ce4e3 -->
+<!-- last-reviewed: 0a8170f555b2489b80a44b602f67827befa51439 -->
 # Dev Agent
 
 **Role**: Implement issues autonomously — write code, push branches, address
