@@ -150,13 +150,14 @@ short, because each entry means a PR waits for the owner:
 | what rolls it out | `tools/rollout.sh`, `.woodpecker/*.yml` |
 | the design | `docs/design/**` |
 
-The ops repo has no branch rule today, and the gardener pushes to it
-directly. Checked on the live forge on 2026-11-04: the ops repo lists no
-branch protection, and the gardener's catalog commits land on `main`.
-`setup_vault_branch_protection` (`lib/branch-protection.sh`, run by
-`bin/disinto` init) is not in place on this deployment. A rule on its
-`main` protects `vault/policy.toml`, `packs/repair.toml` and
-`packs/rollout.toml`, and leaves every other push as it is.
+Applied on 2026-11-06 with `lib/wall.sh` (#2120). On the disinto repo
+the patterns sit on the existing `main` rule. The ops repo had no
+branch rule before; its `main` now has one that protects
+`vault/policy.toml`, `packs/repair.toml` and `packs/rollout.toml` and
+leaves every other push open. A `gardener-bot` push changing
+`packs/rollout.toml` was refused that day: "branch main is protected
+from changing file packs/rollout.toml". `setup_vault_branch_protection`
+(`lib/branch-protection.sh`) is still not in place on this deployment.
 
 A PR that waits on a protected file tells the owner once, through
 `lib/notice.sh`, so it does not sit unseen.
@@ -189,3 +190,8 @@ sub-issues:
 
 The claim `can-update-self` follows as an ops PR once the sprint's
 effect is met (§8).
+
+All seven were merged as milestone 7 (#2106-#2124) by 2026-11-05. On
+2026-11-06 the owner created `live` and `canary` at `main`'s head,
+applied the four agent jobspecs, restarted the healer and applied the
+wall.
