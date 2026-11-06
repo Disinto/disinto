@@ -9,7 +9,7 @@
 #
 # This test locks in the jobspec that restores the role, asserting the
 # constraints the issue establishes:
-#   1. The job pins exactly one role — AGENT_ROLES = "gardener".
+#   1. The job pins the roles gardener and planner (#2151).
 #   2. Its agent-data host_volume source is distinct from the dev and
 #      review jobs (no state collision), and is declared in nomad/client.hcl
 #      (the jobspec/client.hcl pair must stay in sync or nomad
@@ -40,24 +40,21 @@ ac_assert_file "$DEV_SPEC" "jobspec nomad/jobs/agents-dev-qwen.hcl must exist (b
 REVIEW_SPEC="$REPO_ROOT/nomad/jobs/agents-review-qwen.hcl"
 ac_assert_file "$REVIEW_SPEC" "jobspec nomad/jobs/agents-review-qwen.hcl must exist (baseline for the shared volume source)"
 
-# job "..." block name — one role per job means one job per role.
+# job "..." block name — the gardener job is a single job.
 job_name="$(grep -E '^[[:space:]]*job[[:space:]]+"' "$SPEC" \
   | head -n1 | sed -E 's/.*job[[:space:]]+"([^"]+)".*/\1/')"
 ac_assert_eq "$job_name" "agents-gardener-qwen" \
   "jobspec must define job \"agents-gardener-qwen\""
 
-# ── 1. Exactly one role, pinned to "gardener" ───────────────────────────────
+# ── 1. The roles: gardener, plus the planner since #2151 ─────────────────────
 role_lines="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$SPEC" || true)"
 ac_assert_eq "$role_lines" "1" \
-  "jobspec must set AGENT_ROLES exactly once (one role per job)"
+  "jobspec must set AGENT_ROLES exactly once"
 
 role="$(grep -E '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$SPEC" \
   | head -n1 | sed -E 's/^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*//; s/"//g; s/[[:space:]]+$//')"
-ac_assert_eq "$role" "gardener" \
-  "AGENT_ROLES must pin exactly the single role \"gardener\" (got '$role')"
-case "$role" in
-  *,*) ac_fail "AGENT_ROLES pins more than one role: '$role'" ;;
-esac
+ac_assert_eq "$role" "gardener,planner" \
+  "AGENT_ROLES must pin exactly the roles \"gardener,planner\" (got '$role')"
 
 # Same lane as the other llama agents — the pool is shared (--kv-unified),
 # so the gardener gets the same 100k lane, not a wider one.

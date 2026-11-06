@@ -3,8 +3,8 @@
 # model)
 #
 # Per-role variant of nomad/jobs/agents.hcl for the gardener-qwen bot: same
-# image, volumes, and Vault-templated bot tokens, with AGENT_ROLES pinned to
-# "gardener". Runs against the local llama-server via the dsh harness
+# image, volumes, and Vault-templated bot tokens, with AGENT_ROLES
+# "gardener,planner". Runs against the local llama-server via the dsh harness
 # (AGENT_HARNESS=dsh, DSH_BASE_URL, #1357) — the same local-Qwen path as
 # agents-dev-qwen.hcl and agents-review-qwen.hcl, not the Anthropic API and
 # not the Claude CLI (not what this box runs for qwen roles).
@@ -15,6 +15,11 @@
 # the poll runs gardener/gardener-run.sh, not classify.sh (#1480) — the
 # classify.sh findings (including the deploy-drift check, #1119) run
 # only if a runner exists for the role (#1123).
+#
+# The planner shares this job (#2151): it runs every 12 h, this job already
+# renders FORGE_PLANNER_TOKEN, and the local model server has had no slot cap
+# since 2026-11-01, so a planner session beside a gardener session needs no
+# job of its own.
 #
 # Autocompact lane (#1069):
 #   CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is a percentage of the context window
@@ -207,7 +212,10 @@ job "agents-gardener-qwen" {
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
-        AGENT_ROLES        = "gardener"
+        # gardener plus planner (#2151): the planner's 12 h rung rides this job
+        # — the entrypoint gate is on AGENT_ROLES, and FORGE_PLANNER_TOKEN is
+        # already rendered below.
+        AGENT_ROLES        = "gardener,planner"
         # Follows live: a merge reaches this job only after it held on the
         # canary (#2118, docs/design/notes/self-update.md). Shares the
         # /srv/disinto/project-repos/_factory checkout with the dev job, so
