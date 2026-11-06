@@ -36,6 +36,12 @@ source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 ac_require_cmd bash
 ac_require_cmd grep
 
+# planner_pitch_or_idle now checks the tape for an ungraded sprint (#2150).
+# Point TAPE_DIR at an empty dir so a real tape can never hold this run.
+EMPTY_TAPE="$(mktemp -d)"
+export TAPE_DIR="$EMPTY_TAPE"
+trap 'rm -rf "$EMPTY_TAPE"' EXIT
+
 PLANNER_RUN="$REPO_ROOT/planner/planner-run.sh"
 SOFTWARE_FORMULA="$REPO_ROOT/formulas/run-planner.toml"
 RESEARCH_FORMULA="$REPO_ROOT/formulas/run-planner-research.toml"

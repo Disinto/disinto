@@ -84,6 +84,9 @@ source "$IDLE"
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
+# planner_sprint_in_flight (#2150) reads ${TAPE_DIR}/tape.jsonl: point it at an
+# empty dir so a real tape can never hold these hermetic runs.
+export TAPE_DIR="$T/empty-tape"
 ac_rung_fixture "$T"
 
 # assert_not_opened — the stub was not called.

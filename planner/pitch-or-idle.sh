@@ -11,7 +11,7 @@
 # Functions (sourced by planner/planner-run.sh):
 #   planner_pitch_or_idle
 #     One line, or nothing:
-#       held          planner_pitch_pending printed a number. Do not open.
+#       held          planner_pitch_pending printed a number, or planner_sprint_in_flight printed a ref (#2150). Do not open.
 #       (nothing, 1)  planner_pitch_pending returned 1.
 #       opened <n>    the ladder printed a rung. Write that rung's pitch and
 #                     call planner_pitch_open with the title, the slug (the
@@ -30,8 +30,8 @@
 #     effect path as PROBE_SRC and PROBE_DEST. That path missing, and no
 #     probe file: return 0, do not open. Any other effect: return 1.
 #
-# Sources planner/ladder.sh and planner/pitch-open.sh. No network of its
-# own: the opener it calls is the only forge client.
+# Sources planner/ladder.sh, planner/pitch-open.sh and planner/in-flight.sh.
+# No network of its own: the opener it calls is the only forge client.
 # =============================================================================
 set -euo pipefail
 
@@ -39,6 +39,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/ladder.sh"
 # shellcheck source=pitch-open.sh
 source "$(dirname "${BASH_SOURCE[0]}")/pitch-open.sh"
+# shellcheck source=in-flight.sh
+source "$(dirname "${BASH_SOURCE[0]}")/in-flight.sh"
 
 # Same shape planner/pitch-open.sh accepts as PROBE_DEST. Two dots are
 # rejected even though the character class would allow them.
@@ -130,6 +132,13 @@ planner_pitch_or_idle() {
     return 1
   fi
   if [ -n "$pending" ]; then
+    printf 'held\n'
+    return 0
+  fi
+
+  local in_flight=""
+  in_flight="$(planner_sprint_in_flight)" || return 1
+  if [ -n "$in_flight" ]; then
     printf 'held\n'
     return 0
   fi
