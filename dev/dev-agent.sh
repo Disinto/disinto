@@ -1166,7 +1166,12 @@ if [ "$rc" -eq 0 ]; then
 else
   # Exhausted or unrecoverable failure
   log "PR walk failed: ${_PR_WALK_EXIT_REASON:-unknown}"
-  if dev_walk_reason_terminal "${_PR_WALK_EXIT_REASON:-}"; then
+  if [ "${_PR_WALK_EXIT_REASON:-}" = "walled" ]; then
+    # The wall (#2158): the PR is green and approved, and only the owner can
+    # merge it. Do not block the issue; dev-poll owns the PR from here.
+    log "PR #${PR_NUMBER} changes protected files: #${ISSUE} stays in progress and waits for the owner"
+    outcome="waiting_owner"
+  elif dev_walk_reason_terminal "${_PR_WALK_EXIT_REASON:-}"; then
     # Terminal reason (ci_exhausted, review_exhausted, merge_blocked,
     # closed_externally, ...): the walk is truly over — block the issue and
     # record the blocked outcome, as today.
