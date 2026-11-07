@@ -148,10 +148,11 @@ The architect is poked by the polling loop in `docker/agents/entrypoint.sh`
 on the ARCHITECT_INTERVAL cadence (default 15 min, #1388): the entrypoint
 starts `architect-run.sh` in the background (guarded by `pgrep`), and the
 script's own Forgejo state machine decides what each poke does. The `architect`
-role in `AGENT_ROLES` gates it. On this deployment no job runs the role
-since 2026-11-01: `agents-architect-grok` (Grok 4.7 through dsh, as
-`architect-bot`, #1912) was removed with the other Grok agents; its
-jobspec is in git history.
+role in `AGENT_ROLES` gates it. On this deployment the role runs in the
+gardener's job (`nomad/jobs/agents-gardener-qwen.hcl`, #2165) on the local
+model, as `architect-bot`. `agents-architect-grok` (Grok 4.7, #1912) was
+removed with the other Grok agents on 2026-11-01; its jobspec is in git
+history.
 
 ## State
 

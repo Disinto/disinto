@@ -36,7 +36,7 @@ LIVE_LINE='FACTORY_REF        = "live"'
 
 specs=(
   "nomad/jobs/agents-dev-qwen.hcl:dev"
-  "nomad/jobs/agents-gardener-qwen.hcl:gardener,planner"
+  "nomad/jobs/agents-gardener-qwen.hcl:gardener,planner,architect"
   "nomad/jobs/agents-supervisor-opus.hcl:supervisor"
 )
 

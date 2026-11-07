@@ -4,10 +4,10 @@
 #
 # Per-role variant of nomad/jobs/agents.hcl for the gardener-qwen bot: same
 # image, volumes, and Vault-templated bot tokens, with AGENT_ROLES
-# "gardener,planner". Runs against the local llama-server via the dsh harness
-# (AGENT_HARNESS=dsh, DSH_BASE_URL, #1357) — the same local-Qwen path as
-# agents-dev-qwen.hcl and agents-review-qwen.hcl, not the Anthropic API and
-# not the Claude CLI (not what this box runs for qwen roles).
+# "gardener,planner,architect". Runs against the local llama-server via the
+# dsh harness (AGENT_HARNESS=dsh, DSH_BASE_URL, #1357) — the same local-Qwen
+# path as agents-dev-qwen.hcl and agents-review-qwen.hcl, not the Anthropic
+# API and not the Claude CLI (not what this box runs for qwen roles).
 #
 # The six-role agents.hcl job was split into per-role jobs (one role per
 # job — two claude processes are two llama slots, and the slot count must be
@@ -20,6 +20,14 @@
 # renders FORGE_PLANNER_TOKEN, and the local model server has had no slot cap
 # since 2026-11-01, so a planner session beside a gardener session needs no
 # job of its own.
+#
+# The architect joins this job (#2165): the role only works when a pitch is
+# open — a few times a month — so it needs no job of its own either. This job
+# already renders FORGE_ARCHITECT_TOKEN, the entrypoint pokes
+# architect/architect-run.sh every ARCHITECT_INTERVAL (default 900 s) when the
+# role is listed, and a poke with no open `architect:` PR on the ops repo does
+# nothing and runs no session. architect-run.sh does not pull the ops clone
+# (no ensure_ops_repo), so it cannot collide with the gardener's pull (#2163).
 #
 # Autocompact lane (#1069):
 #   CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is a percentage of the context window
@@ -212,10 +220,13 @@ job "agents-gardener-qwen" {
         ANTHROPIC_BASE_URL = "http://10.10.10.1:8081"
         ANTHROPIC_API_KEY  = "sk-no-key-required"
         CLAUDE_MODEL       = "unsloth/Qwen3.8-27B"
-        # gardener plus planner (#2151): the planner's 12 h rung rides this job
-        # — the entrypoint gate is on AGENT_ROLES, and FORGE_PLANNER_TOKEN is
-        # already rendered below.
-        AGENT_ROLES        = "gardener,planner"
+        # gardener plus planner (#2151) plus architect (#2165): the planner's
+        # 12 h rung and the architect's ARCHITECT_INTERVAL poke ride this job —
+        # the entrypoint gate is on AGENT_ROLES, and FORGE_PLANNER_TOKEN and
+        # FORGE_ARCHITECT_TOKEN are already rendered below. The architect only
+        # works when a pitch is open, a few times a month, so it rides this job
+        # rather than getting one of its own.
+        AGENT_ROLES        = "gardener,planner,architect"
         # Follows live: a merge reaches this job only after it held on the
         # canary (#2118, docs/design/notes/self-update.md). Shares the
         # /srv/disinto/project-repos/_factory checkout with the dev job, so
