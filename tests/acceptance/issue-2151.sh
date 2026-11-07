@@ -11,8 +11,8 @@
 #
 # Read-only checks against the checkout (plus the two existing gardener-job
 # tests, re-run here):
-#   1. agents-gardener-qwen.hcl pins AGENT_ROLES = "gardener,planner" exactly
-#      once.
+#   1. agents-gardener-qwen.hcl pins AGENT_ROLES = "gardener,planner,architect"
+#      exactly once (the architect joined the pin in #2165).
 #   2. Among nomad/jobs/*.hcl other than agents.hcl, exactly one file has an
 #      AGENT_ROLES line containing "planner" — that file is the gardener job.
 #   3. The gardener job still renders FORGE_PLANNER_TOKEN from
@@ -41,17 +41,17 @@ EP="$REPO_ROOT/docker/agents/entrypoint.sh"
 ac_assert_file "$GQ" "jobspec nomad/jobs/agents-gardener-qwen.hcl must exist"
 ac_assert_file "$EP" "docker/agents/entrypoint.sh must exist"
 
-# ── AC1: the gardener job pins gardener,planner exactly once ─────────────────
-ac_log "AC1: AGENT_ROLES = \"gardener,planner\" appears exactly once"
-pins="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener,planner"' "$GQ" || true)"
+# ── AC1: the gardener job pins gardener,planner,architect exactly once ────────
+ac_log "AC1: AGENT_ROLES = \"gardener,planner,architect\" appears exactly once"
+pins="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener,planner,architect"' "$GQ" || true)"
 ac_assert_eq "$pins" "1" \
-  "agents-gardener-qwen.hcl must pin AGENT_ROLES = \"gardener,planner\" exactly once (got $pins)"
+  "agents-gardener-qwen.hcl must pin AGENT_ROLES = \"gardener,planner,architect\" exactly once (got $pins)"
 
-# The header documents the two roles it pins.
+# The header documents the roles it pins.
 grep -qF 'with AGENT_ROLES' "$GQ" \
   || ac_fail "the jobspec header must name the AGENT_ROLES it pins"
-grep -qF '"gardener,planner". Runs against the local llama-server' "$GQ" \
-  || ac_fail "the header must say the job runs AGENT_ROLES \"gardener,planner\""
+grep -qF '"gardener,planner,architect". Runs against the local llama-server' "$GQ" \
+  || ac_fail "the header must say the job runs AGENT_ROLES \"gardener,planner,architect\""
 
 # ── AC2: exactly one per-role job carries the planner ────────────────────────
 ac_log "AC2: among nomad/jobs/*.hcl other than agents.hcl, exactly one carries a planner role"

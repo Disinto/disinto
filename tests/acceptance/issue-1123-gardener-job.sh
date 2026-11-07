@@ -9,7 +9,7 @@
 #
 # This test locks in the jobspec that restores the role, asserting the
 # constraints the issue establishes:
-#   1. The job pins the roles gardener and planner (#2151).
+#   1. The job pins the roles gardener, planner and architect (#2151, #2165).
 #   2. Its agent-data host_volume source is distinct from the dev and
 #      review jobs (no state collision), and is declared in nomad/client.hcl
 #      (the jobspec/client.hcl pair must stay in sync or nomad
@@ -46,15 +46,15 @@ job_name="$(grep -E '^[[:space:]]*job[[:space:]]+"' "$SPEC" \
 ac_assert_eq "$job_name" "agents-gardener-qwen" \
   "jobspec must define job \"agents-gardener-qwen\""
 
-# ── 1. The roles: gardener, plus the planner since #2151 ─────────────────────
+# ── 1. The roles: gardener, plus the planner (#2151) and architect (#2165) ───
 role_lines="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$SPEC" || true)"
 ac_assert_eq "$role_lines" "1" \
   "jobspec must set AGENT_ROLES exactly once"
 
 role="$(grep -E '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$SPEC" \
   | head -n1 | sed -E 's/^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*//; s/"//g; s/[[:space:]]+$//')"
-ac_assert_eq "$role" "gardener,planner" \
-  "AGENT_ROLES must pin exactly the roles \"gardener,planner\" (got '$role')"
+ac_assert_eq "$role" "gardener,planner,architect" \
+  "AGENT_ROLES must pin exactly the roles \"gardener,planner,architect\" (got '$role')"
 
 # Same lane as the other llama agents — the pool is shared (--kv-unified),
 # so the gardener gets the same 100k lane, not a wider one.
