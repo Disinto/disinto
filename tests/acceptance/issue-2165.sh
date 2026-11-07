@@ -36,20 +36,20 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/acceptance-helpers.sh
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd bash grep awk
+ac_require_cmd grep awk
 
-GQ="$REPO_ROOT/nomad/jobs/agents-gardener-qwen.hcl"
-EP="$REPO_ROOT/docker/agents/entrypoint.sh"
+JOBSPEC="$REPO_ROOT/nomad/jobs/agents-gardener-qwen.hcl"
+RUNG="$REPO_ROOT/docker/agents/entrypoint.sh"
 
-ac_assert_file "$GQ" "jobspec nomad/jobs/agents-gardener-qwen.hcl must exist"
-ac_assert_file "$EP" "docker/agents/entrypoint.sh must exist"
+ac_assert_file "$JOBSPEC" "jobspec nomad/jobs/agents-gardener-qwen.hcl must exist"
+ac_assert_file "$RUNG" "docker/agents/entrypoint.sh must exist"
 
 # ── AC1: the gardener job pins gardener,planner,architect exactly once ────────
 ac_log "AC1: AGENT_ROLES = \"gardener,planner,architect\" appears exactly once"
-role_lines="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$GQ" || true)"
+role_lines="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=' "$JOBSPEC" || true)"
 ac_assert_eq "$role_lines" "1" \
   "agents-gardener-qwen.hcl must set AGENT_ROLES exactly once (got $role_lines)"
-pins="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener,planner,architect"' "$GQ" || true)"
+pins="$(grep -cE '^[[:space:]]*AGENT_ROLES[[:space:]]*=[[:space:]]*"gardener,planner,architect"' "$JOBSPEC" || true)"
 ac_assert_eq "$pins" "1" \
   "agents-gardener-qwen.hcl must pin AGENT_ROLES = \"gardener,planner,architect\" exactly once (got $pins)"
 
@@ -63,39 +63,39 @@ architect_jobs="$(awk '
 count="$(printf '%s\n' "$architect_jobs" | awk 'NF { n++ } END { print n + 0 }')"
 ac_assert_eq "$count" "1" \
   "exactly one jobspec besides agents.hcl may list the architect role (got '$architect_jobs')"
-ac_assert_eq "$architect_jobs" "$GQ" \
+ac_assert_eq "$architect_jobs" "$JOBSPEC" \
   "the architect-riding jobspec must be agents-gardener-qwen.hcl (got '$architect_jobs')"
 
 # No other env value moved: the job still pins its lane and the live ref.
 ac_log "AC1c: the rest of the env block is untouched (lane 50, FACTORY_REF live)"
-grep -qE '^[[:space:]]*CLAUDE_AUTOCOMPACT_PCT_OVERRIDE[[:space:]]*=[[:space:]]*"50"' "$GQ" \
+grep -qE '^[[:space:]]*CLAUDE_AUTOCOMPACT_PCT_OVERRIDE[[:space:]]*=[[:space:]]*"50"' "$JOBSPEC" \
   || ac_fail "the autocompact lane must stay at 50"
-grep -qE '^[[:space:]]*FACTORY_REF[[:space:]]*=[[:space:]]*"live"' "$GQ" \
+grep -qE '^[[:space:]]*FACTORY_REF[[:space:]]*=[[:space:]]*"live"' "$JOBSPEC" \
   || ac_fail "the job must still follow live (FACTORY_REF, #2118)"
 
 # ── AC2: the architect token is still rendered from the architect bot KV ──────
 ac_log "AC2: FORGE_ARCHITECT_TOKEN rendered from kv/data/disinto/bots/architect"
-grep -q 'secret "kv/data/disinto/bots/architect"' "$GQ" \
+grep -q 'secret "kv/data/disinto/bots/architect"' "$JOBSPEC" \
   || ac_fail "the gardener job must still read the architect bot token from kv/data/disinto/bots/architect"
-grep -q 'FORGE_ARCHITECT_TOKEN={{ .Data.data.token }}' "$GQ" \
+grep -q 'FORGE_ARCHITECT_TOKEN={{ .Data.data.token }}' "$JOBSPEC" \
   || ac_fail "the gardener job must render FORGE_ARCHITECT_TOKEN from the Vault template"
 
 # ── AC3: the jobspec comments name the architect ──────────────────────────────
 ac_log "AC3: the header and the AGENT_ROLES comment name the architect and #2165"
-grep -qF '"gardener,planner,architect". Runs against the local llama-server' "$GQ" \
+grep -qF '"gardener,planner,architect". Runs against the local llama-server' "$JOBSPEC" \
   || ac_fail "the header must say the job runs AGENT_ROLES \"gardener,planner,architect\""
-grep -qF 'The architect joins this job (#2165)' "$GQ" \
+grep -qF 'The architect joins this job (#2165)' "$JOBSPEC" \
   || ac_fail "the jobspec header must record that the architect joins the gardener's job (#2165)"
-grep -qF 'gardener plus planner (#2151) plus architect (#2165)' "$GQ" \
+grep -qF 'gardener plus planner (#2151) plus architect (#2165)' "$JOBSPEC" \
   || ac_fail "the comment above AGENT_ROLES must name all three roles"
 
 # ── AC4: the entrypoint still starts the architect off AGENT_ROLES ─────────────
 ac_log "AC4: entrypoint.sh architect rung is gated on AGENT_ROLES and runs architect-run.sh"
-grep -qF '== *",architect,"*' "$EP" \
+grep -qF '== *",architect,"*' "$RUNG" \
   || ac_fail "entrypoint.sh must gate the architect rung on AGENT_ROLES containing architect"
-grep -q 'architect/architect-run.sh' "$EP" \
+grep -q 'architect/architect-run.sh' "$RUNG" \
   || ac_fail "entrypoint.sh must start architect/architect-run.sh on the architect rung"
-grep -qE 'ARCHITECT_INTERVAL="\$\{ARCHITECT_INTERVAL:-900\}"' "$EP" \
+grep -qE 'ARCHITECT_INTERVAL="\$\{ARCHITECT_INTERVAL:-900\}"' "$RUNG" \
   || ac_fail "entrypoint.sh must default ARCHITECT_INTERVAL to 900 s"
 
 # ── AC5: the docs name the pairing ────────────────────────────────────────────
