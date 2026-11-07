@@ -7,8 +7,9 @@
 # planner/pitch-or-idle.sh gains an `update-self` rung pitch: title `Self-update
 # through a canary`, effect probes/can-update-self.sh, level `made`, soak 7d.
 # The provision paragraph names a throwaway droplet on DigitalOcean, not the
-# LXD ai-pool. Every other rung's pitch file stays byte-identical: no level
-# line, soak 14d.
+# LXD ai-pool. Rungs other than update-self and provision stay byte-identical:
+# no level line, soak 14d (#2166 later gave provision level `made` and soak 7d,
+# see tests/acceptance/issue-2166.sh).
 #
 # planner/ladder.sh names update-self as rung 2: the ladder only names a rung
 # it has a pitch for (#2124 landed the rung).
@@ -78,15 +79,14 @@ fi
 grep -qF 'effect: probes/can-sense.sh' "$PITCH" \
   || ac_fail "sense pitch must keep effect: probes/can-sense.sh"
 
-ac_log "AC3: provision names DigitalOcean and not ai-pool"
+ac_log "AC3: provision names DigitalOcean, not ai-pool, and aims at made with a 7d soak (#2166)"
 PITCH="$(ac_rung_pitch "$BOX" provision)"
 grep -qF 'DigitalOcean' "$PITCH" || ac_fail "provision pitch must name DigitalOcean"
 if grep -qF 'ai-pool' "$PITCH"; then
   ac_fail "provision pitch must not name ai-pool"
 fi
-if grep -qF 'level:' "$PITCH"; then
-  ac_fail "provision pitch must have no level line"
-fi
+grep -qF 'level: made' "$PITCH" || ac_fail "provision pitch must set level: made (#2166)"
+grep -qF 'soak: 7d' "$PITCH" || ac_fail "provision pitch must set soak: 7d (#2166)"
 
 # rung_golden TITLE EFFECT PARAGRAPH — the whole pitch body a rung with no
 # level and the default soak writes, byte for byte.

@@ -59,8 +59,8 @@ _planner_pitch_slug() {
 # its title. Return 1 for an unknown rung. The paragraph ends with the
 # sentence the owner reads: the planner pitches the rung and does not run it.
 # No filer block, no sub-issues. The effect file is not consulted. Each rung
-# carries its own soak (#1978); update-self aims at level `made` with a 7-day
-# soak (#2123).
+# carries its own soak (#1978); update-self and provision aim at level `made`
+# with a 7-day soak (#2123, #2166).
 _planner_rung_pitch_write() {
   local rung="$1" dest="$2"
   local title effect paragraph level="" soak="14d"
@@ -80,7 +80,9 @@ _planner_rung_pitch_write() {
     provision)
       title="Provision"
       effect="probes/can-provision.sh"
-      paragraph="An action creates a throwaway droplet on DigitalOcean with a token scoped to droplets, reports its address, and deletes it."
+      paragraph="An action creates a throwaway droplet on DigitalOcean with a token scoped to droplets, reports its address, and deletes it. The design is in docs/design/notes/provision.md."
+      level="made"
+      soak="7d"
       ;;
     reach)
       title="Reach the porter"
