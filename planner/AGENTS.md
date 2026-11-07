@@ -20,7 +20,11 @@ cite the rung, not a line number, since entrypoint line numbers drift),
 which passes its project TOML through. Accepts an
 optional project TOML argument, defaults to `projects/disinto.toml`.
 Sources `lib/guard.sh` and calls `check_active planner` first — skips if
-`$FACTORY_ROOT/state/.planner-active` is absent. Then calls
+`$FACTORY_ROOT/state/.planner-active` is absent. After the run lock,
+`planner_wait_for_gardener` (`planner/after-gardener.sh`, #2163) waits while a
+gardener run is in progress, up to `PLANNER_GARDENER_WAIT_S` (default 3 h), so
+the two never pull the ops clone at the same time and the planner reads the
+gardener's fresh grades and claims catalog. Then calls
 `planner_pitch_or_idle` (`planner/pitch-or-idle.sh`). A missing rung is a
 pitch opened in bash, with no session. Otherwise the session is one
 `agent_run` (`lib/agent-sdk.sh`); the model is the job's, not a hardcoded

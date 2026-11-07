@@ -7,7 +7,7 @@
 # IS the state machine. The model is the job's; this script does not set one.
 #
 # Flow:
-#   1. Guards: run lock, memory check
+#   1. Guards: run lock, gardener wait (#2163), memory check
 #   2. Load formula (formulas/run-planner.toml)
 #   3. Context: VISION.md, AGENTS.md, ops:RESOURCES.md, ops:catalog/claims.md,
 #      journal entries
@@ -43,6 +43,9 @@ source "$FACTORY_ROOT/lib/tape.sh"
 source "$SCRIPT_DIR/pitch-or-idle.sh"
 # The gap reader (#2056): challenged can-fix claims the session pitches.
 source "$SCRIPT_DIR/gaps.sh"
+# The gardener wait (#2163): the planner shares the gardener's job, so its run
+# can start beside a running gardener and both pull the ops clone at once.
+source "$SCRIPT_DIR/after-gardener.sh"
 
 LOG_FILE="${DISINTO_LOG_DIR}/planner/planner.log"
 # shellcheck disable=SC2034  # consumed by agent-sdk.sh
@@ -94,6 +97,10 @@ planner_tape_tick() {
 # ── Guards ────────────────────────────────────────────────────────────────
 check_active planner
 acquire_run_lock "/tmp/planner-run.lock"
+# After the lock (so a second planner does not also wait) and before the
+# memory guard and ensure_ops_repo: memory is checked after the gardener has
+# freed it, and the ops clone is never pulled by two organs at once (#2163).
+planner_wait_for_gardener
 memory_guard 2000
 
 log "--- Planner run start ---"
