@@ -19,4 +19,5 @@ implement. Edit it here, by PR, like any other doc.
 | [notes/search-control.md](notes/search-control.md) | Rival attempts (`continued_from`) for experiment sprints and repair. Not built. |
 | [notes/organs.md](notes/organs.md) | The planner and the predictor as proposers, the capability ladder, resources, safety, bootstrap sprints (2026-10-07). |
 | [notes/self-update.md](notes/self-update.md) | The update-self rung (2026-11-04): a merged change runs on one agent, the canary, before the others take it; promote or roll back; the wall on what grades, stops and gates the factory. |
+| [notes/provision.md](notes/provision.md) | The provision rung (2026-11-07): a vault action creates a throwaway DigitalOcean droplet, reads its address and deletes it; the token lives in a team of its own; the first run of the action path. |
 | [notes/issue-writing.md](notes/issue-writing.md) | Scope discipline and disinto conventions for whoever files issues: the owner, an agent session, or the architect. |
