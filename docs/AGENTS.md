@@ -1,4 +1,4 @@
-<!-- last-reviewed: 513880021e6c0cfe0e39c8c6d533b328737faff6 -->
+<!-- last-reviewed: 121e4b4961f25ff1da128fb80c9b59ff230b5be8 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -35,7 +35,10 @@ disinto/                 (code repo)
 │                  gaps.sh (challenged `can-*` claims that are not ladder rungs,
 │                  passed to the session as `gaps:` under `ladder: none`, #2056),
 │                  in-flight.sh (planner_sprint_in_flight — hold while an
-│                  approved sprint sits on the tape ungraded, #2150)
+│                  approved sprint sits on the tape ungraded, #2150),
+│                  after-gardener.sh (planner_wait_for_gardener — wait out a
+│                  running gardener before the planner pulls the ops clone,
+│                  bounded by PLANNER_GARDENER_WAIT_S, #2163)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
 │                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
 │                  write-incident.sh, commit-incidents.sh
@@ -204,7 +207,8 @@ disinto/                 (code repo)
 │                  design/ (proposal-loop.md — how the factory proposes, records
 │                  and learns; notes/ incl. organs.md, self-update.md, issue-writing.md,
 │                  learning-ladder.md, world-model.md, representation.md,
-│                  search-control.md)
+│                  search-control.md, provision.md — the provision rung on
+│                  DigitalOcean, #2167)
 ├── site/          disinto.ai website content
 ├── tests/         Golden suites: 37 `*.bats` files (hire-an-agent-harness.bats pins
 │                  DSH_CONTEXT_WINDOW, calibration.bats, grade.bats, tape.bats,
