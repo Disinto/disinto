@@ -129,6 +129,8 @@ run_emit() {
     source "$REPO_ROOT/lib/tape.sh"
     # shellcheck disable=SC1091
     source "$GUARD"
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     eval "$FN_EMIT"
     emit_tape_outcome "$issue" "$pr" "$merged" "$ci_green"
   ) 2>&1
@@ -180,6 +182,8 @@ run_close() {
     source "$REPO_ROOT/lib/tape.sh"
     # shellcheck disable=SC1091
     source "$GUARD"
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     eval "$FN_CLOSE"
     eval "$FN_REASON"
     signature_for() { :; }

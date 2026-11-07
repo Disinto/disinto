@@ -43,6 +43,9 @@ ac_run_close_subshell() {
     # #1737: close_dev_tape_outcome skips a second merged outcome via this guard.
     # shellcheck disable=SC1091
     source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+    # #2170: close_dev_tape_outcome reads the pick id via this reader.
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     log() { :; }
     signature_for() { :; }
     i=1

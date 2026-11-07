@@ -101,7 +101,12 @@ the issue number — and stores the record's id in
 `/tmp/dev-proposal-id-${PROJECT_NAME:-default}-<issue>` (contents: just the id)
 so the #1399 outcome step can reference it, plus the pick's wall-clock epoch
 (`date -u +%s`) in the sibling `/tmp/dev-proposal-started-${PROJECT_NAME:-default}-<issue>`
-(#1452). A re-pick (no-push -> backlog -> pick again, #1441) finds that same
+(#1452). When that file is missing or empty, for example after a container
+restart empties `/tmp`, every reader recovers the id from the tape through
+`dev_proposal_id` (`lib/dev-proposal-id.sh`, #2170): the newest dev proposal
+for the issue with no merged or rejected outcome. It rewrites the id file,
+and the started file from the proposal's `t`. A re-pick (no-push -> backlog
+-> pick again, #1441) finds that same
 id file and reuses the stored id — it logs the reuse and returns 0 without
 minting a second uuid, appending a second proposal, or rewriting the started
 epoch (so the outcome's duration spans the issue's whole life, not just one
@@ -127,7 +132,7 @@ additionally carry a `signature` field: the reason is resolved via
 `signature_for "$reason" dev` (`lib/signature.sh`, #1607) and passed as the 6th arg
 to `tape_outcome`; an unknown or unresolved reason (empty resolution) leaves the
 record in its pre-#1607 shape (no `signature` field). Merge paths pass no reason
-(4 args, signature-free). A merged outcome is written once per proposal: `emit_tape_outcome` and `close_dev_tape_outcome` skip it when the tape already holds one (`tape_has_merged_outcome`, #1737). No id file (issue predates the proposal step) → skip
+(4 args, signature-free). A merged outcome is written once per proposal: `emit_tape_outcome` and `close_dev_tape_outcome` skip it when the tape already holds one (`tape_has_merged_outcome`, #1737). No id file and the tape holds no open dev proposal for the issue → skip
 silently; any tape failure logs a WARNING; the merge/close/block proceeds unchanged.
 - `dev/merge-ready.sh` — Merge sweeper for fully-baked PRs (`merge_ready_sweep()`),
 called from `dev-poll.sh` before the lock check each poll tick: auto-merges ANY open

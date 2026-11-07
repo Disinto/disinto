@@ -8,20 +8,22 @@
 # just the id — exists and is non-empty, dev-agent exports TAPE_PROPOSAL_ID
 # before formula_session_start "dev", so formula-session (#1391) attaches
 # the run record to that proposal instead of a fresh ULID. Missing or
-# empty id file → TAPE_PROPOSAL_ID stays unset and the run keys on its
-# own ULID (pre-#1398 behavior). No proposal record is created in
-# dev-agent.sh.
+# empty id file → dev_proposal_id (#2170) recovers the id from the tape;
+# if the tape holds no open dev proposal either, TAPE_PROPOSAL_ID stays
+# unset and the run keys on its own ULID (pre-#1398 behavior). No proposal
+# record is created in dev-agent.sh.
 #
 # Acceptance (read-only — no agents started; the export block is extracted
 # from dev/dev-agent.sh and exercised in a subshell with a sentinel
-# PROJECT_NAME and fake id files):
-#   1. wiring: dev-agent.sh reads the id file at the exact project-scoped
-#      path used by the #1398 writer in dev-poll.sh, exports
-#      TAPE_PROPOSAL_ID, and the export precedes formula_session_start
+# PROJECT_NAME, fake id files, and an empty TAPE_DIR):
+#   1. wiring: dev-agent.sh reads the pick id through dev_proposal_id,
+#      whose lib uses the exact project-scoped id-file path written by the
+#      #1398 writer in dev-poll.sh; dev-agent exports TAPE_PROPOSAL_ID, and
+#      the export precedes formula_session_start
 #   2. with a non-empty id file present, the block exports
 #      TAPE_PROPOSAL_ID with exactly the file's contents
-#   3. with the id file missing, empty, or whitespace-only,
-#      TAPE_PROPOSAL_ID stays unset
+#   3. with the id file missing, empty, or whitespace-only (and no
+#      recoverable proposal on the tape), TAPE_PROPOSAL_ID stays unset
 #   4. dev-agent.sh creates no proposal record itself (no tape_proposal
 #      call)
 # =============================================================================
@@ -34,16 +36,21 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
 ac_require_cmd awk
+ac_require_cmd jq
 
 TARGET="$REPO_ROOT/dev/dev-agent.sh"
+LIB="$REPO_ROOT/lib/dev-proposal-id.sh"
 ac_assert_file "$TARGET" "dev/dev-agent.sh must exist"
+ac_assert_file "$LIB" "lib/dev-proposal-id.sh must exist"
 
 # ── 1. Wiring: same project-scoped id-file path as the #1398 writer ────────
 # Fixed-string pattern, not an expansion — disable SC2016.
 # shellcheck disable=SC2016
 ID_FILE_PATTERN='dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}'
-grep -qF "$ID_FILE_PATTERN" "$TARGET" \
-  || ac_fail "dev-agent.sh must read the pick id file at /tmp/${ID_FILE_PATTERN}"
+grep -qF 'dev_proposal_id "$ISSUE"' "$TARGET" \
+  || ac_fail "dev-agent.sh must read the pick id through dev_proposal_id (#2170)"
+grep -qF "$ID_FILE_PATTERN" "$LIB" \
+  || ac_fail "lib/dev-proposal-id.sh must read the pick id file at /tmp/${ID_FILE_PATTERN}"
 grep -qF 'export TAPE_PROPOSAL_ID' "$TARGET" \
   || ac_fail "dev-agent.sh must export TAPE_PROPOSAL_ID from the id file's contents"
 
@@ -66,30 +73,36 @@ if grep -q 'tape_proposal' "$TARGET"; then
 fi
 
 # ── 2-3. Behavior: extract the export block and run it in a subshell ───────
-# The block is top-level in dev-agent.sh: from the PROPOSAL_ID_FILE=
+# The block is top-level in dev-agent.sh: from the PROPOSAL_ID=
 # assignment to its closing column-0 `fi`.
 BLOCK="$(awk '
-  /^PROPOSAL_ID_FILE=/ { grab = 1 }
+  /^PROPOSAL_ID=/ { grab = 1 }
   grab { print }
   grab && /^fi$/ { exit }
 ' "$TARGET")"
 [ -n "$BLOCK" ] || ac_fail "could not extract the TAPE_PROPOSAL_ID export block from dev-agent.sh"
 
 PROJECT_NAME="acceptance-1440"   # sentinel — can never clobber a live id file
+EMPTY_TAPE="$(mktemp -d)"         # dev_proposal_id finds no tape here
 trap 'rm -f /tmp/dev-proposal-id-acceptance-1440-9996 \
   /tmp/dev-proposal-id-acceptance-1440-9997 \
   /tmp/dev-proposal-id-acceptance-1440-9998 \
-  /tmp/dev-proposal-id-acceptance-1440-9999' EXIT
+  /tmp/dev-proposal-id-acceptance-1440-9999 \
+  /tmp/dev-proposal-started-acceptance-1440-* ; rm -rf "$EMPTY_TAPE"' EXIT
 
 # run_block <issue> — run the extracted block in a throwaway subshell with
-# the sentinel PROJECT_NAME, a fake ISSUE, and TAPE_PROPOSAL_ID unset;
-# prints the block's output plus the resulting TAPE_PROPOSAL_ID
-# (<unset> when the block left it unset).
+# the sentinel PROJECT_NAME, a fake ISSUE, an empty TAPE_DIR (so the #2170
+# recovery finds nothing), and TAPE_PROPOSAL_ID unset; prints the block's
+# output plus the resulting TAPE_PROPOSAL_ID (<unset> when unset).
 run_block() {
   local issue="$1"
-  BLOCK_SRC="$BLOCK" PROJECT_NAME="$PROJECT_NAME" ISSUE="$issue" bash -c '
+  BLOCK_SRC="$BLOCK" PROJECT_NAME="$PROJECT_NAME" ISSUE="$issue" \
+  TAPE_DIR="$EMPTY_TAPE" DEV_ID_LIB="$LIB" bash -c '
     set -u
+    unset TAPE_PROPOSAL_ID   # isolate from any inherited session value
     log() { echo "agent: $*"; }
+    # shellcheck disable=SC1091
+    source "$DEV_ID_LIB"
     eval "$BLOCK_SRC"
     printf "TAPE_PROPOSAL_ID=%s\n" "${TAPE_PROPOSAL_ID:-<unset>}"
   ' 2>&1

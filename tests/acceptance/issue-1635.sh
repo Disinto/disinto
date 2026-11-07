@@ -122,6 +122,9 @@ run_emit() {
     export PROJECT_NAME
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/tape.sh"
+    # #2170: emit_tape_proposal's re-pick guard reads the pick id via this reader.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     # #2014: emit_tape_proposal takes the backend from served_model_id first.
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/served-model.sh"

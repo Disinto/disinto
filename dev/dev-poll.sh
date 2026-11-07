@@ -39,6 +39,10 @@ source "$(dirname "$0")/../lib/ci-fix-tracker.sh"
 source "$(dirname "$0")/../lib/tape.sh"
 # shellcheck source=../lib/tape-outcome-guard.sh
 source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
+# #2170: dev_proposal_id recovers the pick's proposal id from the tape when
+# the /tmp id file is gone (a container restart empties /tmp).
+# shellcheck source=../lib/dev-proposal-id.sh
+source "$(dirname "$0")/../lib/dev-proposal-id.sh"
 # shellcheck source=../lib/ci-first-green.sh
 source "$(dirname "$0")/../lib/ci-first-green.sh"
 # shellcheck source=../lib/sprint-block.sh
@@ -572,8 +576,8 @@ issue_is_ready() {
 #             now - start, integer, clamped ≥ 0; omitted (never 0) when the
 #             fresh pick's started file is missing or not an integer
 #
-# No id file (issue predates the proposal step) → skip silently: no record,
-# no log line. Any tape failure logs a warning; the merge/close proceeds
+# No id file and no open dev proposal on the tape (#2170) → skip silently:
+# no record, no log line. Any tape failure logs a warning; the merge/close proceeds
 # unchanged. Defined here (not with the other tape section below) because the
 # pre-lock merge scan runs before that point in the script.
 #
@@ -591,13 +595,15 @@ issue_is_ready() {
 emit_tape_outcome() {
   local issue="$1" pr_num="$2" merged="$3" ci_green="$4"
   local reason="${5:-}"
-  local id_file id review_rounds bits numbers
+  local id review_rounds bits numbers
   local duration_s has_duration signature=""
 
-  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
-  id="$(cat "$id_file" 2>/dev/null)" || id=""
+  # #2170: dev_proposal_id reads the /tmp id file and, when it is missing
+  # (a container restart emptied /tmp), recovers the id from the tape.
+  id="$(dev_proposal_id "$issue")" || id=""
   if [ -z "$id" ]; then
-    # Issue predates the proposal step — nothing to key an outcome on
+    # No id file and the tape holds no open dev proposal for the issue —
+    # nothing to key an outcome on
     return 0
   fi
 
@@ -1480,21 +1486,20 @@ emit_tape_proposal() {
   local milestone_id milestone_desc existing_id
   local payload_ref payloads_json tmp_text
 
-  # Re-pick guard (#1441): after the first pick the id file holds the proposal's
-  # id. If it is present and contains a non-empty id, the proposal is already on
-  # the tape — reuse it and leave the file alone instead of minting a second uuid
-  # for the same decision. A re-queued issue (no-push -> backlog -> pick again)
-  # would otherwise land two samples of one decision on the live tape.
-  # First pick (or a wiped /tmp, which leaves the file missing or empty) falls
-  # through to a fresh proposal. The file path is project-scoped exactly like the
-  # write below, so two projects sharing /tmp can't clobber each other's ids.
-  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${issue}"
-  if [ -f "$id_file" ]; then
-    existing_id="$(cat "$id_file" 2>/dev/null)"
-    if [ -n "$existing_id" ]; then
-      log "tape: reusing existing proposal id ${existing_id} for #${issue} (id file present)"
-      return 0
-    fi
+  # Re-pick guard (#1441): after the first pick dev_proposal_id (#2170) has
+  # the proposal's id — from the id file when /tmp still holds it, recovered
+  # from the tape when a container restart emptied it. If an id exists the
+  # proposal is already on the tape — reuse it and leave the file alone
+  # instead of minting a second uuid for the same decision. A re-queued issue
+  # (no-push -> backlog -> pick again) would otherwise land two samples of
+  # one decision on the live tape. A fresh pick (no id file and no open dev
+  # proposal on the tape) falls through to a fresh proposal. The file path is
+  # project-scoped exactly like the write below, so two projects sharing
+  # /tmp can't clobber each other's ids.
+  existing_id="$(dev_proposal_id "$issue")" || existing_id=""
+  if [ -n "$existing_id" ]; then
+    log "tape: reusing existing proposal id ${existing_id} for #${issue} (id file present)"
+    return 0
   fi
 
   # Fresh uuid for the proposal: uuidgen when present, kernel random uuid

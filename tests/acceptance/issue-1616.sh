@@ -233,6 +233,8 @@ rc=0
   source "$REPO_ROOT/lib/tape.sh"
   # shellcheck source=../../lib/tape-outcome-guard.sh
   source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+  # shellcheck source=../../lib/dev-proposal-id.sh
+  source "$REPO_ROOT/lib/dev-proposal-id.sh"
   if pr_walk_to_merge 55 55 "$WORKTREE" 3 5; then
     walk_rc=0
   else
@@ -268,6 +270,8 @@ rc=0
   source "$REPO_ROOT/lib/tape.sh"
   # shellcheck source=../../lib/tape-outcome-guard.sh
   source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+  # shellcheck source=../../lib/dev-proposal-id.sh
+  source "$REPO_ROOT/lib/dev-proposal-id.sh"
   # Simulated early-exit: a failure walk with no recorded refusal, and
   # PR_WALK_CI_RED / PR_WALK_REVIEW_ROUNDS intentionally left unset so the
   # ${...:-0} defaults yield 0.
