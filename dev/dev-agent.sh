@@ -37,6 +37,10 @@ source "$(dirname "$0")/../lib/tape.sh"
 # #1737: one merged outcome per proposal, shared with dev-poll.sh
 # shellcheck source=../lib/tape-outcome-guard.sh
 source "$(dirname "$0")/../lib/tape-outcome-guard.sh"
+# #2170: dev_proposal_id recovers the pick's proposal id from the tape when
+# the /tmp id file is gone (a container restart empties /tmp).
+# shellcheck source=../lib/dev-proposal-id.sh
+source "$(dirname "$0")/../lib/dev-proposal-id.sh"
 # shellcheck source=../lib/ci-first-green.sh
 source "$(dirname "$0")/../lib/ci-first-green.sh"
 # #1608: reason -> signature lookup, shared with dev-poll.sh (#1609)
@@ -199,9 +203,9 @@ cleanup() {
 #     epoch; omitted (never 0) otherwise.
 #   * children = {}, payloads = [].
 #
-# No id file (missing or empty) -> write nothing (return 0). The id and started
-# files are never deleted. Always returns 0; a tape failure only logs a WARNING
-# and never changes the exit code.
+# No id file and the tape holds no open dev proposal for the issue (#2170) ->
+# write nothing (return 0). The id and started files are never deleted. Always
+# returns 0; a tape failure only logs a WARNING and never changes the exit code.
 close_dev_tape_outcome() {
   if [ "${_DEV_TAPE_OUTCOME_WRITTEN:-0}" = 1 ]; then
     return 0
@@ -215,11 +219,12 @@ close_dev_tape_outcome() {
 
   # Initialised to safe defaults: the function must be set -u safe (it is
   # sourced-run in subshells by the acceptance tests and by dev-poll traps).
-  local id_file="" id="" bits="" numbers="" merged=0
+  local id="" bits="" numbers="" merged=0
   local duration_s="" has_duration=0 reason="" signature=""
 
-  id_file="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}"
-  id="$(cat "$id_file" 2>/dev/null)" || id=""
+  # #2170: dev_proposal_id reads the /tmp id file and, when it is missing
+  # (a container restart emptied /tmp), recovers the id from the tape.
+  id="$(dev_proposal_id "$ISSUE")" || id=""
   if [ -z "$id" ]; then
     return 0
   fi
@@ -997,19 +1002,18 @@ echo '{"status":"ready"}' > "$PREFLIGHT_RESULT"
 export IMPL_SUMMARY_FILE
 
 # Key the tape run off the pick's proposal id (#1440): dev-poll wrote the
-# picked issue's proposal id to this project-scoped id file at pick time
+# picked issue's proposal id to a project-scoped id file at pick time
 # (#1398; contents: just the id), and formula-session attaches the run
 # record to $TAPE_PROPOSAL_ID when set (#1391) — so the run pairs with the
-# pick instead of a fresh ULID. Missing or empty id file (issue predates
-# the pick step) → leave unset; the run keys on its own ULID as before.
-# No proposal record is created here.
-PROPOSAL_ID_FILE="/tmp/dev-proposal-id-${PROJECT_NAME:-default}-${ISSUE}"
-if [ -s "$PROPOSAL_ID_FILE" ]; then
-  PROPOSAL_ID="$(cat "$PROPOSAL_ID_FILE" 2>/dev/null || true)"
-  if [ -n "$PROPOSAL_ID" ]; then
-    export TAPE_PROPOSAL_ID="$PROPOSAL_ID"
-    log "tape: keying run off pick proposal ${PROPOSAL_ID}"
-  fi
+# pick instead of a fresh ULID. dev_proposal_id (#2170) recovers the id from
+# the tape when the /tmp id file is gone (a container restart empties it).
+# No id file and no open dev proposal for the issue on the tape → leave
+# unset; the run keys on its own ULID as before. No proposal record is
+# created here.
+PROPOSAL_ID="$(dev_proposal_id "$ISSUE")" || PROPOSAL_ID=""
+if [ -n "$PROPOSAL_ID" ]; then
+  export TAPE_PROPOSAL_ID="$PROPOSAL_ID"
+  log "tape: keying run off pick proposal ${PROPOSAL_ID}"
 fi
 
 # #1646: the retry budget is this proposal's ledger of failed attempts from the

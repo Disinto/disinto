@@ -104,6 +104,8 @@ run_emit() {
     # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/tape-outcome-guard.sh"
     # shellcheck disable=SC1091  # path only known at runtime
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
+    # shellcheck disable=SC1091  # path only known at runtime
     source "$REPO_ROOT/lib/signature.sh"
     eval "$FN_OUT"
     if [ -n "$reason" ]; then

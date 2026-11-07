@@ -165,15 +165,24 @@ ac_assert_not_sourcing_env() {
 
 # ac_jobspec_env_block <file> — print the body of the file's `env { ... }`
 # stanza, tracked by brace depth so a nested block cannot close it early.
+# Pure bash, no awk: the agents image's awk dialect is not pinned, and the
+# awk reader mis-truncated this block in CI (issue-2117.sh AC2 flake).
 ac_jobspec_env_block() {
-  awk '
-    /^[[:space:]]*env[[:space:]]*\{/ { open = 1; depth = 1; next }
-    open {
-      depth += gsub(/\{/, "{", $0) - gsub(/\}/, "}", $0)
-      print
-      if (!depth) exit
-    }
-  ' "$1"
+  local line opened=0 depth=0 opens closes
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*env[[:space:]]*\{ ]]; then
+      opened=1
+      depth=1
+      continue
+    fi
+    if (( opened )); then
+      opens="${line//[^{]/}"
+      closes="${line//[^\}]/}"
+      depth=$(( depth + ${#opens} - ${#closes} ))
+      printf '%s\n' "$line"
+      (( depth == 0 )) && break
+    fi
+  done < "$1"
 }
 
 # ac_env_value <env-body> <key> — the value of <key> in an env-block body
@@ -421,6 +430,9 @@ ac_run_tape_emit() {
     # #1737: emit_tape_outcome skips a second merged outcome via this guard.
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/tape-outcome-guard.sh"
+    # #2170: the emitters read the pick id via this tape-recovering reader.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     # #2014: emit_tape_proposal takes the backend from served_model_id first.
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/served-model.sh"
@@ -450,6 +462,9 @@ ac_run_sprint_emit() {
     [ "$bare" = "1" ] && set -euo pipefail
     ac_stub_env "$stub_bin" "$tape_dir"
     export FORGE_API="https://forge.example/api/v1"
+    # #2170: emit_tape_proposal's re-pick guard reads the pick id via this reader.
+    # shellcheck disable=SC1090,SC1091
+    source "$REPO_ROOT/lib/dev-proposal-id.sh"
     # shellcheck disable=SC1090,SC1091
     source "$REPO_ROOT/lib/tape.sh"
     source "$REPO_ROOT/lib/sprint-block.sh"

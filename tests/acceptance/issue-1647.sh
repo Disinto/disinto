@@ -75,6 +75,8 @@ source "$REPO_ROOT/lib/tape.sh"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/lib/tape-outcome-guard.sh"
 # shellcheck disable=SC1091
+source "$REPO_ROOT/lib/dev-proposal-id.sh"
+# shellcheck disable=SC1091
 source "$REPO_ROOT/lib/signature.sh"
 
 # Silence the extracted outcome writer. The harness does not define log().
