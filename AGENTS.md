@@ -1,4 +1,4 @@
-<!-- last-reviewed: bb71326d68a1bf7949cfaf85b9f59930d0592056 -->
+<!-- last-reviewed: 513880021e6c0cfe0e39c8c6d533b328737faff6 -->
 # Disinto — Agent Instructions
 
 ## What this repo is
@@ -89,6 +89,8 @@ Flow: `backlog` → `in-progress` → PR → CI → review → merge → `closed
 | `in-triage` | Reproduced, cause unclear; alongside `bug-report`. | reproduce-agent |
 | `rejected` | Cannot reproduce, out of scope, or invalid; or, per the dev-agent refusal protocol (#1613), **needs ops access** (issue needs access this repo's code change can't provide — a secret, the ops repo, a running host, or a human step) or **design conflict** (issue contradicts the current code or a cited design document). | reproduce-agent, humans, dev-agent.sh |
 | `vision` | Goal anchors from VISION.md. | humans |
+| `action` | Outside work from `.forgejo/ISSUE_TEMPLATE/experiment.yaml` (#1337) — an observation/run ticket, not dev work; dev-poll skips it via `_ILC_NON_DEV_LABELS` | issue template, humans |
+| `documentation` | Doc-only work (onboarding/operations guides). | humans |
 | `prediction/unreviewed` | Unprocessed prediction. Open prediction issues stay open until the predictor sprint. | predictor-run.sh |
 | `prediction/dismissed` | Triaged DISMISS. The planner does not relabel or close a prediction. | — |
 | `prediction/actioned` | Promoted or dismissed. Open `prediction/unreviewed` issues stay open until the predictor sprint. | — |
