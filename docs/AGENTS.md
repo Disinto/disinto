@@ -1,4 +1,4 @@
-<!-- last-reviewed: bb71326d68a1bf7949cfaf85b9f59930d0592056 -->
+<!-- last-reviewed: 513880021e6c0cfe0e39c8c6d533b328737faff6 -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.
@@ -18,6 +18,10 @@ disinto/                 (code repo)
 │                  │                 classify.sh — bash-only task classifier
 │                  │                 (emits JSON); not on the scheduler
 │                  │                 (not started by entrypoint.sh, #1480)
+│                  │                 idle-steps.sh — bash-only idle steps
+│                  │                  (gardener_idle_steps: sprint outcomes,
+│                  │                  grades, rejections, claim proposals) run
+│                  │                  when the model is not invoked (#2148)
 │                  best-practices.md — gardener best-practice reference
 │                  dust.jsonl — persistent dust accumulator (JSONL, 30-day TTL)
 │                  pending-actions.json — final manifest (JSON array, committed to PR)
@@ -29,7 +33,9 @@ disinto/                 (code repo)
 │                  pitch-open.sh (open at most one planner pitch, #1976),
 │                  pitch-or-idle.sh (the ladder pitch, or `session`, #1978),
 │                  gaps.sh (challenged `can-*` claims that are not ladder rungs,
-│                  passed to the session as `gaps:` under `ladder: none`, #2056)
+│                  passed to the session as `gaps:` under `ladder: none`, #2056),
+│                  in-flight.sh (planner_sprint_in_flight — hold while an
+│                  approved sprint sits on the tape ungraded, #2150)
 ├── supervisor/    supervisor-run.sh — formula-driven health monitoring
 │                  preflight.sh, evaluate-recipes.sh, recipes.yaml,
 │                  write-incident.sh, commit-incidents.sh
@@ -74,7 +80,15 @@ disinto/                 (code repo)
 │                  pr-author-filter.sh (#1690), pr-review-feedback.sh (#1688),
 │                  pitch.sh / pitch-pr.sh (read + update a pitch on its ops PR, #1906),
 │                  table-column.sh (append a column to a markdown table, #1650),
-│                  wp-agent-health.sh (newest Woodpecker agent contact, #1698)
+│                  wp-agent-health.sh (newest Woodpecker agent contact, #1698),
+│                  wall.sh (the wall: protected files of main, #2120) and
+│                  wall-notice.sh (one owner notice when a PR hits the wall, #2121),
+│                  branch-rules.sh (branch protections via /branch_protections,
+│                  #2110), repair-claim.sh (open the ops PR for a repair claim,
+│                  #2055), repair-suspend.sh (suspend a claim after repeated
+│                  repair failures, #2053), rollout-evidence.sh (per-take rollout
+│                  commit evidence, #2106), notice.sh (queue an owner notice, #2031),
+│                  signature.sh (rubric signature resolution, #1607)
 │                  hooks/ — Claude Code session hooks (on-compact-reinject, on-idle-stop,
 │                  on-phase-change, on-pretooluse-guard, on-session-end, on-stop-failure)
 │                  init/nomad/ — cluster-up.sh, install.sh, forgejo-bootstrap.sh,
@@ -137,6 +151,9 @@ disinto/                 (code repo)
 │                  check-deploy-drift.sh — verify deployed defaults match the repo
 │                  rollout.sh — the update-self rollout tool: canary evidence → verdict; moves live/canary by git push; `tools/rollout.sh tick` is the supervisor's rollout step, promoting or rolling back the open rollout (#2111, #2112, #2113, #2114, #2115; notes/self-update.md)
 │                  calibration.sh — predicted vs actual over the dev-loop tape (#1393)
+│                  calibration-within.sh — the `within` column: time-to-result
+│                  horizon per calibration row, read from the ops `packs/within.toml`
+│                  (#2064)
 │                  claim-proposals.sh — a merged claim becomes a claim-loop proposal (#1641)
 │                  tape-rejections.sh — a closed rejected issue the tape does not hold
 │                  yet becomes a rejected dev proposal (#1631)
@@ -189,11 +206,19 @@ disinto/                 (code repo)
 │                  learning-ladder.md, world-model.md, representation.md,
 │                  search-control.md)
 ├── site/          disinto.ai website content
-├── tests/         Test files (mock-forgejo.py, smoke-init.sh, lib-hvault.bats, lib-generators.bats,
-│                  vault-import.bats, disinto-init-nomad.bats)
+├── tests/         Golden suites: 37 `*.bats` files (hire-an-agent-harness.bats pins
+│                  DSH_CONTEXT_WINDOW, calibration.bats, grade.bats, tape.bats,
+│                  lib-secrets.bats, lib-hvault.bats, lib-generators.bats,
+│                  disinto-init-nomad.bats, vault-import.bats …) plus smoke/unit
+│                  scripts (mock-forgejo.py, smoke-init.sh, smoke-nomad-bootstrap.sh,
+│                  test-caddyfile-routing.sh, release-smoke.sh)
 ├── tests/acceptance/  Acceptance test scripts per issue (issue-<n>.sh); runner at
 │                  tools/run-acceptance.sh; helpers at tests/lib/acceptance-helpers.sh
-├── tests/lib/       Shared test helpers (acceptance-helpers.sh, webhook-route-helpers.sh)
+├── tests/lib/       Shared test helpers (acceptance-helpers.sh,
+│                  acceptance-tape-helpers.sh, acceptance-no-push-harness.sh,
+│                  review-harness.sh, rollout-fixture.sh, forge-stub.sh,
+│                  caddy-stub.sh, healer-stubs.sh, fake-typesafe.sh,
+│                  webhook-route-helpers.sh)
 ├── templates/     Issue templates
 ├── .forgejo/      ISSUE_TEMPLATE/ (bug.yaml, feature.yaml, refactor.yaml,
 │                  experiment.yaml) — the templates promoted issues should follow
@@ -204,9 +229,11 @@ disinto/                 (code repo)
 │                  notify-owner.sh, notices-drain.sh, snapshot-agents.sh,
 │                  snapshot-daemon.sh, snapshot-forge.sh, snapshot-inbox.sh,
 │                  snapshot-nomad.sh, uninstall.sh
-├── tape/          Tape records written by lib/tape.sh (#1389); the dev-loop
-│                  context pack and failure-signature rubric stubs (#1400) were
-│                  removed in #1481. The failure-signature rubric now lives in
+├── tape/          NOT a repo directory: tape records are runtime state written by
+│                  lib/tape.sh (#1389) to `${TAPE_DIR:-/srv/disinto/tape}/tape.jsonl`
+│                  (owner notices queue under `${TAPE_DIR}/notices`, #2031). The
+│                  dev-loop context pack and failure-signature rubric stubs (#1400)
+│                  were removed in #1481. The failure-signature rubric now lives in
 │                  the ops repo (rubrics/<loop>.toml, [map] read by
 │                  lib/signature.sh signature_for) and outcomes may carry a
 │                  signature field (#1607). No context-pack extractor exists.
