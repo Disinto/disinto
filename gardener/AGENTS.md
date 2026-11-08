@@ -1,4 +1,4 @@
-<!-- last-reviewed: 121e4b4961f25ff1da128fb80c9b59ff230b5be8 -->
+<!-- last-reviewed: 1cc85d7c507822827ff59b598de91436ef16d9fe -->
 # Gardener Agent
 
 **Role**: Backlog grooming — detect duplicate issues, missing acceptance

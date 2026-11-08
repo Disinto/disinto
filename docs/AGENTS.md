@@ -1,4 +1,4 @@
-<!-- last-reviewed: 121e4b4961f25ff1da128fb80c9b59ff230b5be8 -->
+<!-- last-reviewed: 1cc85d7c507822827ff59b598de91436ef16d9fe -->
 # Directory Layout Reference
 
 Full directory layout for the disinto factory. See root [AGENTS.md](../AGENTS.md) for the concise overview.

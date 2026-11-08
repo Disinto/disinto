@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "action": "edit_body",
+    "issue": 2173,
+    "body": "Flagged by AI reviewer in PR #2172.\n\n## Problem\nShared acceptance-test readers in tests/lib/acceptance-helpers.sh (and many per-issue acceptance scripts) parse Nomad jobspecs and shell blocks with awk, but docker/agents/Dockerfile installs no awk package: disinto/agents:local is debian:bookworm-slim, and whatever awk the base image ships (Debian default mawk) is neither declared nor pinned. Awk dialects disagree on POSIX character classes and on how gsub rewrites $0, so a reader can silently mis-truncate a block instead of failing. PR #2172 hit exactly this: ac_jobspec_env_block mis-truncated the env { ... } stanza in CI and made tests/acceptance/issue-2117.sh AC2 flaky, forcing a drive-by rewrite of that one helper to pure bash.\n\nThe pattern is still everywhere: ac_extract_fn, ac_env_value and roughly 40 acceptance scripts depend on awk semantics the image does not guarantee. A base-image or distro change then breaks the acceptance gate with no syntax error and no clear signal.\n\n## Suggested fix\n- Pin the awk explicitly in docker/agents/Dockerfile (add gawk or mawk to the apt-get install list) so the CI/agent image has a known dialect.\n- Prefer pure-bash readers in tests/lib/acceptance-helpers.sh for shared helpers (as #2172 did for ac_jobspec_env_block), keeping awk only where a pinned dialect is guaranteed.\n\n---\n*Auto-created from AI review*\n\n## Affected files\n- `docker/agents/Dockerfile` — the `apt-get install` line (no awk is declared today)\n- `tests/lib/acceptance-helpers.sh` — `ac_extract_fn`, `ac_env_value`, `ac_require_cmd`\n- `tests/acceptance/issue-2117.sh` — AC2, the flake PR #2172 hit\n- `tests/acceptance/issue-*.sh` — 141 acceptance scripts currently call `awk` directly\n\n## Acceptance criteria\n- [ ] `docker/agents/Dockerfile` installs an awk implementation explicitly (e.g. `gawk`) in the apt-get list, so the agents/CI image has a declared, pinned dialect.\n- [ ] The shared readers in `tests/lib/acceptance-helpers.sh` that parse jobspecs or shell blocks no longer depend on awk semantics (`ac_extract_fn`, `ac_env_value` rewritten in pure bash, matching `ac_jobspec_env_block`).\n- [ ] `ac_require_cmd awk jq` still holds (the pinned package is present) or is dropped together with the rewrite.\n- [ ] `tests/acceptance/issue-2117.sh` AC2 passes deterministically in CI — no mis-truncated env stanza.\n- [ ] ShellCheck passes on every changed shell file in the PR."
+  },
+  {
+    "action": "add_label",
+    "issue": 2173,
+    "label": "backlog"
+  }
+]

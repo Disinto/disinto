@@ -1,4 +1,4 @@
-<!-- last-reviewed: 121e4b4961f25ff1da128fb80c9b59ff230b5be8 -->
+<!-- last-reviewed: 1cc85d7c507822827ff59b598de91436ef16d9fe -->
 # Supervisor Agent
 
 **Role**: Health monitoring and auto-remediation, executed as a formula-driven
@@ -39,6 +39,11 @@ It sources `lib/guard.sh` and calls `check_active supervisor` first — skips if
   open `judgment`-labeled issue age (the label is checked on the response: the
   forge ignores a filter for a label the repo lacks, #2147) — the "Research Runs"
   section is omitted when the ledger directory is absent (not a failure).
+- `supervisor/recipes.yaml` — The procedural recipe library the tick evaluates:
+  one entry per abnormal signal, mapping a preflight `section` + `rule` +
+  `threshold` to a `severity` (P0–P4) and an `action` (`direct` with an
+  `action_script`, `incident`, `vault`, or `llm`). Read by
+  `evaluate-recipes.sh` before any LLM invocation.
 - `supervisor/evaluate-recipes.sh` — Rule evaluation against the preflight
   output: `disk_pct_gt` does not fire when the disk owner is `neighbours`:
   the box cannot free space other projects use (#2077). When it fires with an
