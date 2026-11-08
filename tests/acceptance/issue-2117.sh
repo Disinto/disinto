@@ -14,8 +14,9 @@
 #
 # Acceptance:
 #   AC1: both lines appear verbatim, exactly once, in the jobspec.
-#   AC2: both sit inside the task's env { ... } block (extracted with awk),
-#        and AGENT_ROLES is still "review".
+#   AC2: both sit inside the task's env { ... } block (extracted with the
+#        pure-bash ac_jobspec_env_block, #2172/#2173), and AGENT_ROLES is
+#        still "review".
 #   AC3: when the nomad CLI is on PATH, `nomad job validate` exits 0 —
 #        mirroring .woodpecker/nomad-validate.yml; the step is skipped when
 #        the CLI is absent.
@@ -30,7 +31,7 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/tests/lib/acceptance-helpers.sh"
 
-ac_require_cmd awk grep sed
+ac_require_cmd grep  # AC1 greps; AC2's readers are pure bash (#2173), AC3 uses the nomad CLI if present
 
 SPEC="$REPO_ROOT/nomad/jobs/agents-review-qwen.hcl"
 ac_assert_file "$SPEC" "jobspec nomad/jobs/agents-review-qwen.hcl must exist"
