@@ -186,13 +186,20 @@ ac_jobspec_env_block() {
 }
 
 # ac_env_value <env-body> <key> — the value of <key> in an env-block body
-# (quotes stripped), or empty when the key is absent.
+# (quotes stripped), or empty when the key is absent. Pure bash, no awk
+# (#2173): matches ac_jobspec_env_block's dialect-free style.
 ac_env_value() {
-  local body="$1" key="$2"
-  printf '%s\n' "$body" \
-    | grep -E "^[[:space:]]*${key}[[:space:]]*=" \
-    | head -n1 \
-    | sed -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//; s/\"//g; s/[[:space:]]+$//"
+  local body="$1" key="$2" line value
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*"$key"[[:space:]]*= ]]; then
+      value="${line#*=}"
+      value="${value#"${value%%[![:space:]]*}"}"  # strip leading whitespace
+      value="${value//\"/}"                       # strip quotes
+      value="${value%"${value##*[![:space:]]}"}"  # strip trailing whitespace
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done <<< "$body"
 }
 
 # ── In-process stub helpers ─────────────────────────────────────────────────
@@ -202,14 +209,20 @@ ac_env_value() {
 
 # ac_extract_fn <name> <file> — print the source of `name()` from the script
 # in <file>: from the column-0 `name() {` header to the next column-0
-# closing brace.
+# closing brace. Pure bash, no awk: the old awk reader depended on dialect
+# semantics the image did not guarantee (#2173).
 ac_extract_fn() {
   local fn="$1" file="$2"
-  awk -v fn="$fn" '
-    $0 ~ "^" fn "\\(\\) " { in_fn = 1; print; next }
-    in_fn && /^\}/ { print; exit }
-    in_fn { print }
-  ' "$file"
+  local line printing=0
+  while IFS= read -r line; do
+    if (( printing )); then
+      printf '%s\n' "$line"
+      [[ "$line" == "}"* ]] && break
+    elif [[ "$line" == "$fn() "* ]]; then
+      printing=1
+      printf '%s\n' "$line"
+    fi
+  done < "$file"
 }
 
 # ac_pick_in_subshell <fn-source> <fn-name> — run the function given by
@@ -232,15 +245,20 @@ ac_pick_in_subshell() {
 # block of docker/agents/entrypoint.sh: from its '# dsh provider settings'
 # comment line to the next blank line. Shared by the dsh seeding tests
 # (issue-2004.sh, issue-2010.sh) so the extractor is not copy-pasted into each
-# one (duplicate-detection, #1134).
+# one (duplicate-detection, #1134). Pure bash, no awk (#2173).
 ac_dsh_seed_block() {
   local entrypoint="$1"
   ac_assert_file "$entrypoint" "docker/agents/entrypoint.sh must exist"
-  awk '
-    /^# dsh provider settings/ { in_block = 1 }
-    in_block && /^[[:space:]]*$/ { exit }
-    in_block { print }
-  ' "$entrypoint"
+  local line in_block=0
+  while IFS= read -r line; do
+    if (( in_block )); then
+      [[ "$line" =~ ^[[:space:]]*$ ]] && break
+      printf '%s\n' "$line"
+    elif [[ "$line" == "# dsh provider settings"* ]]; then
+      in_block=1
+      printf '%s\n' "$line"
+    fi
+  done < "$entrypoint"
 }
 
 # ac_dsh_seed_fixtures <dir> — write two fake provider-settings templates into
@@ -484,14 +502,15 @@ ac_run_sprint_emit() {
 # emitter is wired into a top-level executable: <target-file> exists, sources
 # lib/tape.sh, and contains the literal call <call-text> (e.g.
 # 'emit_tape_proposal "$READY_ISSUE"'), then extract and print <fn-name>()'s
-# source to stdout for use as the extracted function. It also pre-flights
-# awk/jq (awk is used by the extraction, jq by the caller's assertions) so a
-# missing dependency fails fast before any tape work. Shared by the per-issue
-# tape-emitter acceptance tests that exercise the same dev-poll emitter, so the
-# wiring checks are not copy-pasted file-into-file (duplicate-detection).
+# source to stdout for use as the extracted function. It also pre-flights jq
+# (used by the caller's assertions) so a missing dependency fails fast before
+# any tape work. The extraction is pure bash now (#2173), so awk is no longer
+# required here. Shared by the per-issue tape-emitter acceptance tests that
+# exercise the same dev-poll emitter, so the wiring checks are not copy-pasted
+# file-into-file (duplicate-detection).
 ac_tape_emitter_wiring() {
   local target="$1" fn="$2" call="$3"
-  ac_require_cmd awk jq
+  ac_require_cmd jq
   local base="${target##*/}"
   ac_assert_file "$target" "${base} must exist"
   grep -q '^source .*lib/tape\.sh' "$target" \

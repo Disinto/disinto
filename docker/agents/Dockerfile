@@ -1,7 +1,12 @@
 FROM debian:bookworm-slim
 
+# gawk pins the awk dialect (#2173): debian:bookworm-slim ships no declared
+# awk, so acceptance-test readers that call awk would silently run whatever
+# the base image provides. A distro change could then break the acceptance
+# gate with no syntax error; gawk makes the dialect explicit and pinned by
+# the Debian release, like every other distro package here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl git jq tmux python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats zstd \
+    bash curl git jq tmux python3 python3-pip openssh-client ca-certificates age shellcheck procps gosu bats zstd gawk \
     && pip3 install --break-system-packages networkx tomlkit \
     && rm -rf /var/lib/apt/lists/*
 
